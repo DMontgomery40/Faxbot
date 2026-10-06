@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: scripts/send-fax.sh "+15551234567" /abs/path/file.{pdf,txt}
+# Usage: scripts/send-fax.sh "+15551234567" /abs/path/file.{pdf,txt} [--by-call]
+# --by-call places a real call through your carrier even when the number is one of
+# your own (to test your fax line); without it, such a fax goes straight into Received.
 
 TO=${1:-}
 FILE=${2:-}
+BY_CALL=()
+if [[ "${3:-}" == "--by-call" ]]; then
+  BY_CALL=(-F "send_by_call=true")
+fi
 
 if [[ -z "${TO}" || -z "${FILE}" ]]; then
-  echo "Usage: $0 +15551234567 /path/to/file.pdf|.txt" >&2
+  echo "Usage: $0 +15551234567 /path/to/file.pdf|.txt [--by-call]" >&2
   exit 1
 fi
 
@@ -47,4 +53,5 @@ echo "POST ${API_URL}/fax" >&2
 curl -sS -X POST "${API_URL}/fax" \
   "${API_KEY_HEADER[@]}" \
   -F "to=${TO}" \
+  ${BY_CALL[@]+"${BY_CALL[@]}"} \
   -F "file=@${FILE};type=${ct}" | jq .

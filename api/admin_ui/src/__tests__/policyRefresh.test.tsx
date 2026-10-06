@@ -32,7 +32,7 @@ type Scenario = {
   done: () => Promise<unknown>;
 };
 
-const click = async (name: string, role: 'button' | 'tab' = 'button') => { fireEvent.click(await screen.findByRole(role, { name })); };
+const click = async (name: string) => { fireEvent.click(await screen.findByRole('button', { name })); };
 
 const scenarios: Scenario[] = [
   { name: 'Users', screen: (c, m) => <Users client={c} me={m} />, open: () => click('Add person'), dialog: 'Add person',
@@ -50,19 +50,19 @@ const scenarios: Scenario[] = [
       fireEvent.click(within(d).getByLabelText('Send faxes'));
     },
     submit: 'Create role', done: () => screen.findByText('Front desk') },
-  { name: 'Access', screen: (c, m) => <ResourceAccess client={c} me={m} />, open: () => click('Give access'), dialog: 'Give access',
+  { name: 'Access', screen: (c, m) => <ResourceAccess client={c} me={m} section="assignments" />, open: () => click('Give access'), dialog: 'Give access',
     fill: (d) => {
       fireEvent.change(within(d).getByLabelText('Where'), { target: { value: 'res_installation' } });
       fireEvent.change(within(d).getByLabelText('Who'), { target: { value: 'group:grp_front' } });
       fireEvent.change(within(d).getByLabelText('Role'), { target: { value: 'role_fax_operator' } });
     },
     submit: 'Give access', done: () => screen.findByText('Front office') },
-  { name: 'Mailboxes', screen: (c, m) => <ResourceAccess client={c} me={m} />,
-    open: async () => { await click('Mailboxes', 'tab'); await click('Add mailbox'); }, dialog: 'Add mailbox',
+  { name: 'Mailboxes', screen: (c, m) => <ResourceAccess client={c} me={m} section="mailboxes" />,
+    open: () => click('Add mailbox'), dialog: 'Add mailbox',
     fill: (d) => fireEvent.change(within(d).getByLabelText('Mailbox name'), { target: { value: 'Billing' } }),
     submit: 'Add mailbox', done: () => screen.findByText('Billing') },
-  { name: 'Fax numbers', screen: (c, m) => <ResourceAccess client={c} me={m} />,
-    open: async () => { await click('Fax numbers', 'tab'); await click('Add number'); }, dialog: 'Add fax number',
+  { name: 'Fax numbers', screen: (c, m) => <ResourceAccess client={c} me={m} section="numbers" />,
+    open: () => click('Add number'), dialog: 'Add fax number',
     fill: (d) => {
       fireEvent.change(within(d).getByLabelText('Fax number'), { target: { value: '+15550100001' } });
       fireEvent.change(within(d).getByLabelText('Mailbox'), { target: { value: 'mbx_main' } });
@@ -106,6 +106,22 @@ describe('policy version refresh', () => {
       backend.bumpPolicy();
       fireEvent.click(within(dialog).getByRole('button', { name: scenario.submit }));
       expect(await within(dialog).findByText(POLICY_CHANGED)).toBeTruthy();
+    });
+
+  it.each(scenarios.filter((s) => ['Users', 'Keys'].includes(s.name)))(
+    '$name: after a refusal the version is read again once, so saving again after a review works', async (scenario) => {
+      const { client, me } = await signedInClient();
+      render(scenario.screen(client, me));
+      await scenario.open();
+      const dialog = await screen.findByRole('dialog', { name: scenario.dialog });
+      scenario.fill(dialog);
+      await act(() => client.refreshPolicy());
+      backend.bumpPolicy();
+      fireEvent.click(within(dialog).getByRole('button', { name: scenario.submit }));
+      expect(await within(dialog).findByText('Access settings changed; review and save again.')).toBeTruthy();
+      await waitFor(() => expect(client.policyVersion).toBe(backend.state.policyVersion));
+      fireEvent.click(within(dialog).getByRole('button', { name: scenario.submit }));
+      await scenario.done();
     });
 
   it('picks up the policy change from pairing a phone before the next edit', async () => {

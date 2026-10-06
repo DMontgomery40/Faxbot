@@ -5,10 +5,18 @@ aliases live on these fields so callers do not maintain competing field maps.
 """
 from collections.abc import Mapping
 import re
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
 
 from .config_paths import bundled_config_dir
+
+
+# Sinch's basic auth counts only with both a user name and a password; a user name alone would let anyone in.
+SINCH_PASSWORD_NEEDED = 'Enter the password Sinch sends as well; Faxbot does not accept the user name without it.'
+# One plain sentence for a refused setting, where the field's name alone would not say what to do.
+FIELD_SENTENCES = {"FAX_TIME_ZONE": "Choose a time zone from the list, such as America/Denver.",
+                   "SINCH_INBOUND_BASIC_PASS": SINCH_PASSWORD_NEEDED}
 
 
 class ConfigurationValueError(ValueError):
@@ -17,12 +25,72 @@ class ConfigurationValueError(ValueError):
     def __init__(self, issues: list[dict[str, str]]):
         self.issues = tuple(issues)
         fields = ", ".join(item["field"] for item in issues)
-        super().__init__("Invalid configuration fields: " + fields)
+        names = {item["field"] for item in issues}
+        if len(names) == 1 and next(iter(names)) in FIELD_SENTENCES:
+            super().__init__(FIELD_SENTENCES[next(iter(names))])
+        else:
+            super().__init__("Invalid configuration fields: " + fields)
 
+
+# Credentials read from the environment at every start (config_runtime). API_KEY keeps
+# its first-start and owner-recovery rules; DATABASE_URL changes need a datastore transfer.
+ENVIRONMENT_CREDENTIAL_EXCLUSIONS = frozenset({"api_key", "database_url"})
+# Variables of settings an earlier release had and this one removed. A settings file that still
+# names one is accepted and the value ignored, for one release, so the installation still starts.
+# SINCH_INBOUND_VERIFY_SIGNATURE and SINCH_INBOUND_HMAC_SECRET: Sinch's Fax API (v3) signs no webhooks, so
+# the first checked nothing and the second refused every real notification.
+RETIRED_ENVIRONMENT_KEYS = frozenset({"PLUGIN_REGISTRY_PATH", "SINCH_INBOUND_VERIFY_SIGNATURE",
+                                      "SINCH_INBOUND_HMAC_SECRET"})
+ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then run docker compose up -d."
 
 # Fax numbers in settings are saved in E.164; national input uses the country.
 _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",
-                            "signalwire_fax_from_e164"})
+                            "signalwire_fax_from_e164", "efax_caller_id"})
+
+# Read straight from the environment before they became configuration values. A saved
+# configuration from before then takes each variable once, at the next start (config_runtime).
+PROMOTED_FROM_ENVIRONMENT = ("sip_public_address_check_minutes", "enable_s3_diagnostics",
+                             "mobile_local_base", "docs_base_url", "time_zone")
+
+
+def usable_zone(value):
+    """An IANA time zone name from TZ, or '' when it is UTC, empty or not a zone Faxbot can use."""
+    if not isinstance(value, str):
+        return ""
+    name = value.strip().lstrip(":")
+    if not name or name.upper() in {"UTC", "ETC/UTC", "GMT", "ETC/GMT", "UCT", "ZULU", "UNIVERSAL"}:
+        return ""
+    return name if _zone_name(name) else ""
+
+
+def _zone_name(name) -> bool:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    if not isinstance(name, str) or not 0 < len(name) <= 64 or name.startswith("/") or ".." in name:
+        return False
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return False
+    return True
+
+
+# Placeholder numbers earlier releases saved as defaults. A saved configuration that still holds
+# exactly one of them has it cleared once, at the next start (config_runtime); a typed value stays.
+PLACEHOLDER_DEFAULTS = {"fax_station_id": "+10000000000", "fs_caller_id_number": "3035551234"}
+
+
+def _web_address(value) -> bool:
+    if not (type(value) is str and 0 < len(value) <= 2048
+            and all(33 <= ord(character) < 127 for character in value)
+            and not any(character in value for character in '\\<>"\'')):
+        return False
+    try:
+        parts = urlsplit(value)
+        return (parts.scheme in {"http", "https"} and bool(parts.hostname)
+                and parts.username is None and parts.password is None
+                and not parts.query and not parts.fragment and parts.port != 0)
+    except ValueError:
+        return False
 
 
 class ConfigurationValues(BaseModel):
@@ -33,7 +101,8 @@ class ConfigurationValues(BaseModel):
     fax_disabled: bool = Field(False, validation_alias='FAX_DISABLED')
     api_key: str = Field('', validation_alias='API_KEY', repr=False, json_schema_extra={'secret': True})
     require_api_key: bool = Field(False, validation_alias='REQUIRE_API_KEY')
-    fax_backend: str = Field('phaxio', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
+    # Empty means no fax provider is set up yet: a new installation sends and receives nothing until one is chosen.
+    fax_backend: str = Field('', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
     outbound_backend: str = Field('', validation_alias='FAX_OUTBOUND_BACKEND')
     inbound_backend: str = Field('', validation_alias='FAX_INBOUND_BACKEND')
     ami_host: str = Field('asterisk', validation_alias='ASTERISK_AMI_HOST')
@@ -44,20 +113,22 @@ class ConfigurationValues(BaseModel):
     fs_esl_port: int = Field(8021, validation_alias='FREESWITCH_ESL_PORT', ge=1, le=65535)
     fs_esl_password: str = Field('ClueCon', validation_alias='FREESWITCH_ESL_PASSWORD', repr=False, json_schema_extra={'secret': True})
     fs_gateway_name: str = Field('gw_signalwire', validation_alias='FREESWITCH_GATEWAY_NAME')
-    fs_caller_id_number: str = Field('3035551234', validation_alias='FREESWITCH_CALLER_ID_NUMBER')
+    # The number your carrier gave you for FreeSWITCH calls; empty until entered (calls are refused without it).
+    fs_caller_id_number: str = Field('', validation_alias='FREESWITCH_CALLER_ID_NUMBER')
     fs_t38_enable: bool = Field(True, validation_alias='FREESWITCH_T38_ENABLE')
     # SIP trunk for Faxbot's own fax engine (Asterisk). Empty preset keeps the
     # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
     # transport and codecs use the preset's documented values (see sip_trunk.py).
     sip_trunk_preset: str = Field('', validation_alias='SIP_TRUNK_PRESET',
-                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|custom)$')
+                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|custom)$')
     sip_trunk_auth: str = Field('registration', validation_alias='SIP_TRUNK_AUTH', pattern=r'^(?:registration|ip)$')
     sip_trunk_host: str = Field('', validation_alias='SIP_TRUNK_HOST',
                                 pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$')
     sip_trunk_port: int = Field(0, validation_alias='SIP_TRUNK_PORT', ge=0, le=65535)
     sip_trunk_transport: str = Field('', validation_alias='SIP_TRUNK_TRANSPORT', pattern=r'^(?:|udp|tcp|tls)$')
     sip_trunk_username: str = Field('', validation_alias='SIP_TRUNK_USERNAME', pattern=r'^[A-Za-z0-9_.+-]{0,128}$')
-    sip_trunk_password: str = Field('', validation_alias='SIP_TRUNK_PASSWORD', repr=False, json_schema_extra={'secret': True},
+    sip_trunk_password: str = Field('', validation_alias=AliasChoices('SIP_TRUNK_PASSWORD', 'TELNYX_SIP_PASSWORD', 'TELNYX_PASS'),
+                                    repr=False, json_schema_extra={'secret': True},
                                     pattern=r'^(?:[!-:<-\[\]-~](?:[ !-:<-\[\]-~]{0,126}[!-:<-\[\]-~])?)?$')
     sip_trunk_outbound_proxy: str = Field('', validation_alias='SIP_TRUNK_OUTBOUND_PROXY',
                                           pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?)?$')
@@ -65,11 +136,43 @@ class ConfigurationValues(BaseModel):
     sip_trunk_dids: str = Field('', validation_alias='SIP_TRUNK_DIDS',
                                 pattern=r'^(?:\+[1-9][0-9]{6,14}(?:\s*,\s*\+[1-9][0-9]{6,14}){0,99})?$')
     sip_t38_enabled: bool = Field(True, validation_alias='SIP_T38_ENABLED')
-    sip_fax_preference_header: bool = Field(False, validation_alias='SIP_FAX_PREFERENCE_HEADER')
+    # Fax settings, as other fax servers offer them (both of Faxbot's fax engines; see sip_trunk.fax_options).
+    # T.38 error correction: redundant copies of each packet (recommended), forward error correction, or none.
+    sip_t38_error_correction: str = Field('redundancy', validation_alias='SIP_T38_ERROR_CORRECTION',
+                                          pattern=r'^(?:redundancy|fec|none)$')
+    sip_t38_max_datagram: int = Field(400, validation_alias='SIP_T38_MAX_DATAGRAM', ge=100, le=1400)
+    # Highest fax speed in bit/s; audio calls never go above 9600, which survives a voice path better.
+    sip_fax_max_rate: int = Field(14400, validation_alias='SIP_FAX_MAX_RATE')
+    sip_fax_ecm: bool = Field(True, validation_alias='SIP_FAX_ECM')
+    # The best compression Faxbot may agree with the other machine (mh < mr < mmr < jbig).
+    sip_fax_compression: str = Field('jbig', validation_alias='SIP_FAX_COMPRESSION', pattern=r'^(?:mh|mr|mmr|jbig)$')
+    sip_fax_fine: bool = Field(True, validation_alias='SIP_FAX_FINE')
+    # SSL Fax engine (HylaFAX+): offered on every call; fax lines at once; the receiving listener's port,
+    # used only when docker-compose.sslfax.yml publishes it.
+    sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')
+    sip_fax_lines: int = Field(2, validation_alias='SIP_FAX_LINES', ge=1, le=8)
+    sip_sslfax_listener_port: int = Field(10443, validation_alias='SIP_SSLFAX_LISTENER_PORT', ge=1024, le=65535)
+    # On by default: the RFC 6913 Accept-Contact preference only (never Require), which carriers may ignore.
+    sip_fax_preference_header: bool = Field(True, validation_alias='SIP_FAX_PREFERENCE_HEADER')
     sip_trunk_codecs: str = Field('', validation_alias='SIP_TRUNK_CODECS', pattern=r'^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$')
+    # Phone systems only: how Faxbot writes the number it dials. Empty or e164 sends +<country><number>;
+    # local sends the digits a phone at the installation dials, after the optional outside-line prefix.
+    sip_trunk_dial_format: str = Field('', validation_alias='SIP_TRUNK_DIAL_FORMAT', pattern=r'^(?:|e164|local)$')
+    sip_trunk_dial_prefix: str = Field('', validation_alias='SIP_TRUNK_DIAL_PREFIX', pattern=r'^[0-9]{0,4}$')
     # Public address the carrier should send signaling and media to when Asterisk is behind NAT.
     sip_external_address: str = Field('', validation_alias='SIP_EXTERNAL_ADDRESS',
                                       pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$')
+    # How often Faxbot checks its internet address again for the trunk, in minutes; 0 turns the check off.
+    sip_public_address_check_minutes: int = Field(5, validation_alias='SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
+                                                  ge=0, le=1440)
+    # Let Faxbot ask the router (PCP, NAT-PMP or UPnP) to open its published fax ports when the router changes
+    # port numbers, so T.38 fax data can come back; Faxbot closes them when it stops.
+    sip_router_ports: bool = Field(True, validation_alias='SIP_ROUTER_PORTS')
+    # Telnyx API v2 key: Faxbot reads what each trunk call was charged and the trunk numbers' T.38 settings
+    # (telnyx_t38.py). It changes one number's T.38 gateway only when a person selects Turn on T.38. Never used
+    # to place calls.
+    telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
+                                pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})
@@ -91,11 +194,30 @@ class ConfigurationValues(BaseModel):
     documo_api_key: str = Field('', validation_alias='DOCUMO_API_KEY', repr=False, json_schema_extra={'secret': True})
     documo_base_url: str = Field('https://api.documo.com', validation_alias='DOCUMO_BASE_URL')
     documo_use_sandbox: bool = Field(False, validation_alias='DOCUMO_SANDBOX')
-    humblefax_access_key: str = Field('', validation_alias='HUMBLEFAX_ACCESS_KEY', repr=False, json_schema_extra={'secret': True})
-    humblefax_secret_key: str = Field('', validation_alias='HUMBLEFAX_SECRET_KEY', repr=False, json_schema_extra={'secret': True})
+    humblefax_access_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_ACCESS_KEY', 'HUMBLEFAX_API_ACCESS_KEY'),
+                                      repr=False, json_schema_extra={'secret': True})
+    humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),
+                                      repr=False, json_schema_extra={'secret': True})
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
+    # eFax Enterprise API (eFax Corporate): the app ID, API key and user ID from eFax's welcome email.
+    efax_app_id: str = Field('', validation_alias='EFAX_APP_ID', repr=False, json_schema_extra={'secret': True},
+                             pattern=r'^[!-9;-~]{0,256}$')
+    efax_api_key: str = Field('', validation_alias='EFAX_API_KEY', repr=False, json_schema_extra={'secret': True},
+                              pattern=r'^[!-~]{0,256}$')
+    efax_user_id: str = Field('', validation_alias='EFAX_USER_ID', repr=False, json_schema_extra={'secret': True},
+                              pattern=r'^[!-~]{0,256}$')
+    # The eFax number recipients see (custom_CallerID) and the station name on each page (custom_CSID).
+    efax_caller_id: str = Field('', validation_alias='EFAX_CALLER_ID', pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    efax_csid: str = Field('', validation_alias='EFAX_CSID', pattern=r'^[ -~]{0,20}$')
+    # How often Faxbot asks eFax for received faxes, and whether it deletes each one from eFax once stored.
+    efax_poll_seconds: int = Field(60, validation_alias='EFAX_POLL_SECONDS', ge=30, le=3600)
+    efax_delete_after_download: bool = Field(False, validation_alias='EFAX_DELETE_AFTER_DOWNLOAD')
+    # The HMAC secret given to eFax with a notification address; a signed notification makes Faxbot check eFax now.
+    efax_webhook_secret: str = Field('', validation_alias='EFAX_WEBHOOK_SECRET', repr=False,
+                                     json_schema_extra={'secret': True}, pattern=r'^[!-~]{0,256}$')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
-    fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
+    # The fax number printed for the receiving machine; empty means the trunk's caller ID, or none.
+    fax_station_id: str = Field('', validation_alias='FAX_LOCAL_STATION_ID')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
@@ -115,16 +237,16 @@ class ConfigurationValues(BaseModel):
     inbound_token_ttl_minutes: int = Field(60, validation_alias='INBOUND_TOKEN_TTL_MINUTES', ge=1)
     asterisk_inbound_secret: str = Field('', validation_alias='ASTERISK_INBOUND_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_inbound_verify_signature: bool = Field(True, validation_alias='PHAXIO_INBOUND_VERIFY_SIGNATURE')
-    sinch_inbound_verify_signature: bool = Field(True, validation_alias='SINCH_INBOUND_VERIFY_SIGNATURE')
     sinch_inbound_basic_user: str = Field('', validation_alias='SINCH_INBOUND_BASIC_USER')
     sinch_inbound_basic_pass: str = Field('', validation_alias='SINCH_INBOUND_BASIC_PASS', repr=False, json_schema_extra={'secret': True})
-    sinch_inbound_hmac_secret: str = Field('', validation_alias='SINCH_INBOUND_HMAC_SECRET', repr=False, json_schema_extra={'secret': True})
     storage_backend: str = Field('local', validation_alias='STORAGE_BACKEND')
     s3_bucket: str = Field('', validation_alias='S3_BUCKET')
     s3_prefix: str = Field('inbound/', validation_alias='S3_PREFIX')
     s3_region: str = Field('', validation_alias='S3_REGION')
     s3_endpoint_url: str = Field('', validation_alias='S3_ENDPOINT_URL')
     s3_kms_key_id: str = Field('', validation_alias='S3_KMS_KEY_ID')
+    # Diagnostics also ask the S3 bucket whether Faxbot can reach it.
+    enable_s3_diagnostics: bool = Field(False, validation_alias='ENABLE_S3_DIAGNOSTICS')
     inbound_list_rpm: int = Field(30, validation_alias='INBOUND_LIST_RPM', ge=0)
     inbound_get_rpm: int = Field(60, validation_alias='INBOUND_GET_RPM', ge=0)
     admin_allow_restart: bool = Field(False, validation_alias='ADMIN_ALLOW_RESTART')
@@ -143,12 +265,13 @@ class ConfigurationValues(BaseModel):
     enable_persisted_settings: bool = Field(False, validation_alias='ENABLE_PERSISTED_SETTINGS')
     persisted_env_path: str = Field('/faxdata/faxbot.env', validation_alias='PERSISTED_ENV_PATH')
     providers_dir: str = Field(default_factory=lambda: str(bundled_config_dir() / 'providers'), validation_alias='FAXBOT_PROVIDERS_DIR')
-    plugin_registry_path: str = Field(default_factory=lambda: str(bundled_config_dir() / 'plugin_registry.json'), validation_alias='PLUGIN_REGISTRY_PATH')
 
     # Delivery routes: extra outbound providers a fax may use, and the success
     # rate a route needs at a number before it stops being chosen first.
     outbound_routes: str = Field('', validation_alias='FAX_OUTBOUND_ROUTES', pattern=r'^[a-z0-9_.,\s-]*$')
     route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
+    # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
+    local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
     # Default intake email connector; more connectors are managed in the console.
     intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
     intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')
@@ -163,6 +286,19 @@ class ConfigurationValues(BaseModel):
     direct_delivery_enabled: bool = Field(False, validation_alias='DIRECT_DELIVERY_ENABLED')
     direct_organization: str = Field('', validation_alias='DIRECT_ORGANIZATION')
     direct_fax_number: str = Field('', validation_alias='DIRECT_FAX_NUMBER')
+    # Partners on loopback, link-local or private addresses are refused unless this is on.
+    direct_allow_private_peers: bool = Field(False, validation_alias='DIRECT_ALLOW_PRIVATE_PEERS')
+    # Work queue: the team's operational target for acknowledging a received
+    # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
+    work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)
+    # The address paired phones use on the installation's own network; empty offers none.
+    mobile_local_base: str = Field('', validation_alias='MOBILE_LOCAL_BASE')
+    # Where the console's help links point.
+    docs_base_url: str = Field('https://docs.faxbot.net/latest/', validation_alias='DOCS_BASE_URL')
+    # The installation's time zone (IANA name) for times the server writes for people, such as the
+    # received time in an email. At the first start the process's TZ is taken when it names a zone
+    # other than UTC; empty means UTC.
+    time_zone: str = Field('', validation_alias=AliasChoices('FAX_TIME_ZONE', 'TZ'))
 
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
@@ -181,6 +317,31 @@ class ConfigurationValues(BaseModel):
                 raise ValueError("unsupported country")
         return value
 
+    @field_validator("sip_fax_max_rate")
+    @classmethod
+    def require_fax_rate(cls, value):
+        if value not in (14400, 9600, 7200, 4800):
+            raise ValueError("fax speed must be 14400, 9600, 7200 or 4800")
+        return value
+
+    @field_validator("time_zone")
+    @classmethod
+    def require_time_zone(cls, value):
+        if value != "" and not _zone_name(value):
+            raise ValueError("unknown time zone")
+        return value
+
+    @field_validator("docs_base_url", "mobile_local_base")
+    @classmethod
+    def require_web_address(cls, value, info):
+        # The console's help links and the address paired phones use are base addresses:
+        # http or https with a host, no credentials, query or fragment (as access.context checks).
+        if value == "" and info.field_name == "mobile_local_base":
+            return value
+        if not _web_address(value):
+            raise ValueError("invalid web address")
+        return value
+
     @classmethod
     def environment_keys(cls) -> frozenset[str]:
         keys = set()
@@ -188,6 +349,11 @@ class ConfigurationValues(BaseModel):
             alias = field.validation_alias
             keys.update(alias.choices if isinstance(alias, AliasChoices) else [alias])
         return frozenset(keys)
+
+    @classmethod
+    def accepted_environment_keys(cls) -> frozenset[str]:
+        """Variables a settings file may name: every setting's, and retired ones that are ignored."""
+        return cls.environment_keys() | RETIRED_ENVIRONMENT_KEYS
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "ConfigurationValues":
@@ -198,6 +364,12 @@ class ConfigurationValues(BaseModel):
             alias = field.validation_alias
             choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
             for key in choices:
+                if key == "TZ":
+                    # The process's own TZ only suggests the installation's zone: never UTC, never refused.
+                    if usable_zone(environment.get(key)):
+                        candidate[choices[0]] = usable_zone(environment[key])
+                        break
+                    continue
                 if key in environment:
                     candidate[choices[0]] = environment[key]
                     break
@@ -209,6 +381,58 @@ class ConfigurationValues(BaseModel):
             raise ConfigurationValueError(issues) from None
         values._explicit_keys = frozenset(environment.keys()) & cls.environment_keys()
         return values
+
+    @classmethod
+    def environment_credentials(cls, environment: Mapping[str, str]) -> dict[str, tuple[str, str]]:
+        """Credentials the environment supplies, as {field: (variable, value)}.
+
+        Every setting marked secret except API_KEY and DATABASE_URL. An empty
+        variable supplies nothing. Sinch's optional Phaxio fallback is not an
+        explicit Sinch credential.
+        """
+        result = {}
+        for name, field in cls.model_fields.items():
+            if name in ENVIRONMENT_CREDENTIAL_EXCLUSIONS or not (field.json_schema_extra or {}).get("secret"):
+                continue
+            alias = field.validation_alias
+            choices = list(alias.choices if isinstance(alias, AliasChoices) else [alias])
+            if name in {"sinch_api_key", "sinch_api_secret"}:
+                choices = choices[:1]
+            for key in choices:
+                value = environment.get(key)
+                if isinstance(value, str) and value != "":
+                    result[name] = (key, value)
+                    break
+        return result
+
+    @classmethod
+    def environment_adoptions(cls, environment: Mapping[str, str],
+                              saved: "ConfigurationValues") -> dict[str, tuple[str, str]]:
+        """Promoted settings the environment supplies that the saved configuration predates.
+
+        Returns {field: (variable, value)}. A configuration saved since a setting was
+        promoted carries it, so its variable is never taken again: the console and
+        the command line own the value from then on.
+        """
+        result = {}
+        for name in PROMOTED_FROM_ENVIRONMENT:
+            alias = cls.model_fields[name].validation_alias
+            choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
+            if choices[0] in saved._explicit_keys:
+                continue
+            for key in choices:
+                if key not in environment:
+                    continue
+                value = usable_zone(environment[key]) if key == "TZ" else environment[key]
+                if key == "TZ" and not value:
+                    continue  # the process's TZ only suggests a zone; UTC or an unknown one suggests none
+                result[name] = (key, value)
+                break
+        return result
+
+    def placeholder_clearings(self) -> dict[str, str]:
+        """Settings that still hold an earlier release's placeholder number, as {field: ''}."""
+        return {name: "" for name, placeholder in PLACEHOLDER_DEFAULTS.items() if getattr(self, name) == placeholder}
 
     def to_environment(self, *, redact_secrets: bool = False) -> dict[str, str]:
         """Complete literal values; callers choose private or redacted output.
@@ -253,7 +477,16 @@ class ConfigurationValues(BaseModel):
             if isinstance(value, str) and name in _NUMBER_FIELDS:
                 value = self._saved_number(name, value, changes)
             environment[key] = ("true" if value else "false") if isinstance(value, bool) else str(value)
-        return type(self).from_environment(environment)
+        values = type(self).from_environment(environment)
+        if ({"sinch_inbound_basic_user", "sinch_inbound_basic_pass"} & set(changes)
+                and values.sinch_inbound_basic_user and not values.sinch_inbound_basic_pass):
+            raise ConfigurationValueError([{"field": "SINCH_INBOUND_BASIC_PASS", "reason": "required_with_user"}])
+        return values
+
+    @property
+    def sinch_inbound_basic_configured(self) -> bool:
+        """Sinch's basic auth is in force only with both a user name and a password."""
+        return bool(self.sinch_inbound_basic_user and self.sinch_inbound_basic_pass)
 
     def _saved_number(self, name, value, changes):
         """Save numbers entered nationally for the installation country in E.164.
@@ -272,13 +505,16 @@ class ConfigurationValues(BaseModel):
         return stored_number(value, country=country) if value.strip() else value
 
     def validate_provider_selection(self, registry: Mapping[str, object]) -> None:
-        """Require explicit selections in the caller's validated provider registry."""
+        """Require explicit selections in the caller's validated provider registry.
+
+        An empty selection means no provider is set up for that role yet.
+        """
         known = set(registry) - {"_schema"}
         issues = []
         for key, selected in (("FAX_BACKEND", self.fax_backend),
                               ("FAX_OUTBOUND_BACKEND", self.effective_outbound),
                               ("FAX_INBOUND_BACKEND", self.effective_inbound)):
-            if selected not in known:
+            if selected and selected not in known:
                 issues.append({"field": key, "reason": "unknown_provider"})
         if issues:
             raise ConfigurationValueError(issues)

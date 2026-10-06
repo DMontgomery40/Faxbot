@@ -13,42 +13,28 @@ from ..client import segment
 from ..errors import CliError
 from ..output import local_time, text
 
-users = typer.Typer(help='People who sign in to Faxbot, and integrations that use API keys.', no_args_is_help=True)
-integrations = typer.Typer(help='Integrations: identities for apps and devices that use API keys.',
+users = typer.Typer(help='People who sign in to Faxbot, and the apps and devices that use their own key.', no_args_is_help=True)
+integrations = typer.Typer(help='Apps and devices, such as scanners, that use Faxbot with their own key.',
                            no_args_is_help=True)
-groups = typer.Typer(help='Groups of users and integrations that share access.', no_args_is_help=True)
+groups = typer.Typer(help='Groups of people who share the same access.', no_args_is_help=True)
 members = typer.Typer(help='Add people to a group or remove them.', no_args_is_help=True)
-roles = typer.Typer(help='Roles: named sets of permissions.', no_args_is_help=True)
+roles = typer.Typer(help='Roles: named sets of permissions, such as Fax operator, that you give to people.', no_args_is_help=True)
 access = typer.Typer(help='Who holds which role, and where.', no_args_is_help=True)
-resources = typer.Typer(help='Places access can apply to: the whole installation, mailboxes and personal faxes.',
+resources = typer.Typer(help="The places a role can apply to: the whole installation, a mailbox or a person's own faxes.",
                         no_args_is_help=True)
-keys = typer.Typer(help='API keys for apps, scripts, scanners and phones.', no_args_is_help=True)
-sessions = typer.Typer(help='Signed-in browser sessions.', no_args_is_help=True)
+keys = typer.Typer(help='Keys that let apps, scripts, scanners and phones use Faxbot without a password.', no_args_is_help=True)
+sessions = typer.Typer(help='People signed in to the console in a browser.', no_args_is_help=True)
 mailboxes = typer.Typer(help='Mailboxes that hold received faxes.', no_args_is_help=True)
 numbers = typer.Typer(help='Which mailbox receives faxes sent to each of your fax numbers.', no_args_is_help=True)
 audit = typer.Typer(help='The security audit: access changes and sign-ins.', no_args_is_help=True)
-owner = typer.Typer(help='Create an owner with the installation key.', no_args_is_help=True)
+owner = typer.Typer(help='Create an owner, who can do everything in Faxbot, using the installation key.', no_args_is_help=True)
 
 IDS = typer.Option(False, '--ids', help='Also show internal ids.')
 KIND_TEXT = {'user': 'user', 'integration': 'integration', 'bootstrap': 'installation key'}
 SOURCE_TEXT = {'password': 'password', 'key': 'API key', 'bootstrap': 'installation key'}
 
 
-def register(app):
-    app.command('me')(me)
-    app.add_typer(owner, name='owner')
-    app.add_typer(users, name='users')
-    app.add_typer(integrations, name='integrations')
-    groups.add_typer(members, name='members')
-    app.add_typer(groups, name='groups')
-    app.add_typer(roles, name='roles')
-    app.add_typer(access, name='access')
-    app.add_typer(resources, name='resources')
-    app.add_typer(keys, name='keys')
-    app.add_typer(sessions, name='sessions')
-    app.add_typer(mailboxes, name='mailboxes')
-    app.add_typer(numbers, name='numbers')
-    app.add_typer(audit, name='audit')
+groups.add_typer(members, name='members')
 
 
 def _with_id(ids, item_id, row):
@@ -80,7 +66,7 @@ def _show_secret(label, value, after=None):
 # -- me and owner enrollment ------------------------------------------------------
 
 def me():
-    """Show who this API key belongs to and what it may do."""
+    """Show who your key belongs to and what it may do."""
     who = state.api().get('/auth/me')
 
     def human(out):
@@ -96,10 +82,9 @@ def me():
 @owner.command('enroll')
 def owner_enroll(login: str = typer.Option(..., '--login', help='Sign-in name for the new owner.'),
                  name: str = typer.Option(..., '--name', help="The owner's display name.")):
-    """Create a named owner with a temporary password shown once.
+    """Create a named owner, with full control, and a temporary password shown once.
 
-    Use the installation key (API_KEY, or the key from faxbot admin recover-owner),
-    or an existing owner's key. Works for the first owner and to recover access.
+    Use the installation key or an existing owner's API key. This works for the first owner, and to regain access after faxbot system recover-owner.
     """
     api = state.api()
     result = api.post('/auth/owner/enroll', json=api.with_policy({'login': login, 'display_name': name}))
@@ -121,10 +106,10 @@ def _user_rows(items, ids):
 
 @users.command('list')
 def users_list(kind: str = typer.Option('all', '--kind', help='user, integration or all.'),
-               search: str = typer.Option(None, '--search', help='Only names or sign-in names containing this.'),
+               search: str = typer.Option(None, '--search', help='Only users whose name or sign-in name contains this text.'),
                limit: int = typer.Option(None, '--limit', min=1, help='Show at most this many.'),
                ids: bool = IDS):
-    """List users and integrations."""
+    """List people and apps."""
     items = state.api().pages('/access/users', params={'kind': kind, 'q': search}, limit=limit)
     state.out().result(items, lambda out: out.table(
         _columns(ids, ['Name', 'Sign-in name', 'Kind', 'Enabled', 'Last sign-in']), _user_rows(items, ids),
@@ -133,7 +118,7 @@ def users_list(kind: str = typer.Option('all', '--kind', help='user, integration
 
 @users.command('get')
 def users_get(who: str = typer.Argument(..., help='Sign-in name, display name or id.'), ids: bool = IDS):
-    """Show a user or integration, with groups, roles, keys and effective permissions."""
+    """Show a person or app with their groups, roles, keys and what they may do."""
     user = resolve.user(state.api(), who)
 
     def human(out):
@@ -153,7 +138,7 @@ def users_get(who: str = typer.Argument(..., help='Sign-in name, display name or
 @users.command('add')
 def users_add(login: str = typer.Argument(..., help='Sign-in name.'),
               name: str = typer.Option(..., '--name', help='Display name.'),
-              disabled: bool = typer.Option(False, '--disabled', help='Create the user switched off.')):
+              disabled: bool = typer.Option(False, '--disabled', help='Add the person without letting them sign in yet.')):
     """Add a user. Their temporary password is shown once."""
     api = state.api()
     result = api.post('/access/users', json=api.with_policy({'login': login, 'display_name': name,
@@ -168,8 +153,8 @@ def users_update(who: str = typer.Argument(..., help='Sign-in name, display name
                  name: str = typer.Option(None, '--name', help='New display name.'),
                  login: str = typer.Option(None, '--login', help='New sign-in name (users only).'),
                  enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                 disable: bool = typer.Option(False, '--disable', help='Switch off. This ends their sessions and keys.')):
-    """Change a user's or integration's name, sign-in name or whether they can use Faxbot."""
+                 disable: bool = typer.Option(False, '--disable', help='Disable the user. This ends their sessions and stops their keys.')):
+    """Change a person's or app's name, sign-in name, or whether they can use Faxbot."""
     api = state.api()
     body = {key: value for key, value in (('display_name', name), ('login', login),
                                           ('enabled', _enabled(enable, disable))) if value is not None}
@@ -193,8 +178,8 @@ def users_reset_password(who: str = typer.Argument(..., help='Sign-in name, disp
 
 @integrations.command('add')
 def integrations_add(name: str = typer.Argument(..., help='Name, for example "Front desk scanner".'),
-                     disabled: bool = typer.Option(False, '--disabled', help='Create it switched off.')):
-    """Add an integration. Give it a role with 'faxbot access grant', then a key with 'faxbot keys create'."""
+                     disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
+    """Add an app or device, such as a scanner, that uses Faxbot with its own key. Next give it a role, then create its key."""
     api = state.api()
     result = api.post('/access/integrations', json=api.with_policy({'display_name': name, 'enabled': not disabled}))
     state.out().result(result, lambda out: out.line(f"Integration {result['integration'].get('display_name') or name} "
@@ -203,7 +188,7 @@ def integrations_add(name: str = typer.Argument(..., help='Name, for example "Fr
 
 @integrations.command('list')
 def integrations_list(ids: bool = IDS):
-    """List integrations."""
+    """List the apps and devices, such as scanners, that use Faxbot with their own key."""
     items = state.api().pages('/access/users', params={'kind': 'integration'})
     state.out().result(items, lambda out: out.table(
         _columns(ids, ['Name', 'Sign-in name', 'Kind', 'Enabled', 'Last sign-in']), _user_rows(items, ids),
@@ -238,7 +223,7 @@ def groups_get(name: str = typer.Argument(..., help='Group name or id.'), ids: b
 @groups.command('add')
 def groups_add(name: str = typer.Argument(..., help='Group name.'),
                description: str = typer.Option('', '--description', help='What the group is for.'),
-               disabled: bool = typer.Option(False, '--disabled', help='Create it switched off.')):
+               disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add a group."""
     api = state.api()
     result = api.post('/access/groups', json=api.with_policy({'name': name, 'description': description,
@@ -251,7 +236,7 @@ def groups_update(name: str = typer.Argument(..., help='Group name or id.'),
                   new_name: str = typer.Option(None, '--name', help='New name.'),
                   description: str = typer.Option(None, '--description', help='New description.'),
                   enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                  disable: bool = typer.Option(False, '--disable', help="Switch off; members lose the group's roles.")):
+                  disable: bool = typer.Option(False, '--disable', help='Disable the group; members lose its roles.')):
     """Rename a group, change its description or switch it on or off."""
     api = state.api()
     body = {key: value for key, value in (('name', new_name), ('description', description),
@@ -265,7 +250,7 @@ def groups_update(name: str = typer.Argument(..., help='Group name or id.'),
 @members.command('add')
 def members_add(group: str = typer.Argument(..., help='Group name or id.'),
                 who: str = typer.Argument(..., help='Sign-in name, display name or id of the user or integration.')):
-    """Add a user or integration to a group."""
+    """Add a person or app to a group."""
     api = state.api()
     found, person = resolve.group(api, group), resolve.user(api, who)
     result = api.post(f"/access/groups/{segment(found['id'])}/members", json=api.with_policy({
@@ -311,7 +296,7 @@ def roles_get(name: str = typer.Argument(..., help='Role name or id.'), ids: boo
 
 @roles.command('permissions')
 def roles_permissions():
-    """List every permission a role can contain."""
+    """List everything a role can allow."""
     items = state.api().get('/access/permissions')['items']
     state.out().result(items, lambda out: out.table(['Permission', 'Area', 'What it allows'],
         [[item['permission'], item['group'], item['description']] for item in items]))
@@ -324,10 +309,10 @@ PERMISSION = typer.Option(None, '--permission', '-p', help='A permission, for ex
 def roles_add(name: str = typer.Argument(..., help='Role name.'),
               permission: list[str] = PERMISSION,
               description: str = typer.Option('', '--description', help='What the role is for.'),
-              disabled: bool = typer.Option(False, '--disabled', help='Create it switched off.')):
-    """Add a custom role. See 'faxbot roles permissions' for the choices."""
+              disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
+    """Add a role of your own, choosing what it allows. See faxbot access roles permissions for the choices."""
     if not permission:
-        raise CliError('Add at least one --permission. See faxbot roles permissions.')
+        raise CliError('Add at least one --permission. See faxbot access roles permissions.')
     api = state.api()
     result = api.post('/access/roles', json=api.with_policy({'name': name, 'description': description,
         'permissions': sorted(set(permission)), 'enabled': not disabled}))
@@ -343,7 +328,7 @@ def roles_update(name: str = typer.Argument(..., help='Role name or id.'),
                  add: list[str] = typer.Option(None, '--add', help='Add this permission. Repeat for more.'),
                  remove: list[str] = typer.Option(None, '--remove', help='Remove this permission. Repeat for more.'),
                  enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                 disable: bool = typer.Option(False, '--disable', help='Switch off everywhere it is assigned.')):
+                 disable: bool = typer.Option(False, '--disable', help='Disable the role everywhere it is assigned.')):
     """Change a custom role. Built-in roles cannot be changed."""
     api = state.api()
     found = resolve.role(api, name)
@@ -366,10 +351,10 @@ def _assignment_row(item, ids):
 
 
 @access.command('list')
-def access_list(who: str = typer.Option(None, '--who', help='Only this user, integration or group.'),
-                where: str = typer.Option(None, '--on', help='Only this place, such as installation or mailbox:NAME.'),
+def access_list(who: str = typer.Option(None, '--who', help='Only grants for this user, integration or group.'),
+                where: str = typer.Option(None, '--on', help='Only grants on this resource, such as installation or mailbox:NAME.'),
                 ids: bool = IDS):
-    """List who holds which role, and where."""
+    """List who has which role, and where."""
     api = state.api()
     params = {}
     if who:
@@ -382,8 +367,8 @@ def access_list(who: str = typer.Option(None, '--who', help='Only this user, int
                                                     empty='No role assignments.'))
 
 
-WHERE = typer.Option('installation', '--on', help='Where the role applies: installation (default), mailbox:NAME, '
-                                                   'personal:USER, unassigned, or a place from faxbot resources list.')
+WHERE = typer.Option('installation', '--on', help='Where the role applies: installation (the default), mailbox:NAME, '
+                                                   'personal:USER, unassigned, or a resource from faxbot access resources list.')
 
 
 @access.command('grant')
@@ -391,7 +376,7 @@ def access_grant(who: str = typer.Argument(..., help='User, integration or group
                                                      'names overlap.'),
                  role: str = typer.Argument(..., help='Role name, for example "Fax operator".'),
                  where: str = WHERE):
-    """Give a user, integration or group a role."""
+    """Give a person, app or group a role."""
     api = state.api()
     subject, subject_name = resolve.subject(api, who)
     found_role, place = resolve.role(api, role), resolve.resource(api, where)
@@ -425,9 +410,9 @@ KIND_PLACE = {'installation': 'whole installation', 'legacy': 'unassigned faxes'
 
 
 @resources.command('list')
-def resources_list(kind: str = typer.Option(None, '--kind', help='installation, legacy, mailbox or personal.'),
+def resources_list(kind: str = typer.Option(None, '--kind', help='Resource type: installation, legacy, mailbox or personal.'),
                    ids: bool = IDS):
-    """List places that access can apply to."""
+    """List the places a role can apply to."""
     items = state.api().pages('/access/resources', params={'kind': kind})
     state.out().result(items, lambda out: out.table(_columns(ids, ['Name', 'Kind']),
         [_with_id(ids, item['id'], [item['name'], KIND_PLACE.get(item['kind'], item['kind'])]) for item in items]))
@@ -460,7 +445,7 @@ def _key_rows(items):
 
 @keys.command('list')
 def keys_list(who: str = typer.Option(None, '--for', help='Only keys of this user or integration.')):
-    """List API keys. Key secrets are never shown again after they are created."""
+    """List keys and who they belong to. A key itself is shown only once, when it is created."""
     api = state.api()
     params = {'principal_id': resolve.user(api, who)['id']} if who else {}
     items = api.pages('/access/keys', params=params)
@@ -476,7 +461,7 @@ def keys_create(permission: list[str] = typer.Option(..., '--permission', '-p',
                 name: str = typer.Option(None, '--name', help='A name to recognise the key by.'),
                 note: str = typer.Option(None, '--note', help='A note about where the key is used.'),
                 expires: str = typer.Option(None, '--expires', help='Expiry date, for example 2027-01-31.')):
-    """Create an API key. The key is shown once; store it straight away."""
+    """Create a key. It is shown once, so store it straight away."""
     api = state.api()
     if who:
         principal = resolve.user(api, who)
@@ -492,7 +477,7 @@ def keys_create(permission: list[str] = typer.Option(..., '--permission', '-p',
 
 @keys.command('rotate')
 def keys_rotate(key_id: str = typer.Argument(..., help='Key ID or key name.')):
-    """Replace a key's secret. The old secret stops working at once; the new one is shown once."""
+    """Replace a key with a new one. The old one stops working at once; the new one is shown once."""
     api = state.api()
     found = resolve.key(api, key_id)
     result = api.post(f"/access/keys/{segment(found['id'])}/rotate", json=api.with_policy({'version': found['version']}))
@@ -502,7 +487,7 @@ def keys_rotate(key_id: str = typer.Argument(..., help='Key ID or key name.')):
 
 @keys.command('revoke')
 def keys_revoke(key_id: str = typer.Argument(..., help='Key ID or key name.')):
-    """Stop a key for good."""
+    """Revoke a key permanently."""
     api = state.api()
     found = resolve.key(api, key_id)
     result = api.post(f"/access/keys/{segment(found['id'])}/revoke", json=api.with_policy({'version': found['version']}))
@@ -513,15 +498,17 @@ def keys_revoke(key_id: str = typer.Argument(..., help='Key ID or key name.')):
 def keys_approve(key_id: str = typer.Argument(..., help='Key ID of a key that needs review.'),
                  who: str = typer.Option(..., '--for', help='User or integration the key will belong to.'),
                  permission: list[str] = typer.Option(..., '--permission', '-p',
-                                                      help='What the key may do. Repeat for more.'),
+                                                      help='A permission for the key, for example fax:send. Repeat for more.'),
                  where: str = WHERE):
-    """Approve an older key that is waiting for review, choosing its owner and permissions."""
+    """Approve an older key that is waiting for review: choose whose it is and what it may do."""
     api = state.api()
     found, principal = resolve.key(api, key_id), resolve.user(api, who)
     result = api.post(f"/access/keys/{segment(found['id'])}/approve", json=api.with_policy({
         'principal': {'id': principal['id'], 'version': principal['version']},
         'ceiling': _ceiling(api, permission, where), 'version': found['version']}))
-    state.out().result(result, lambda out: out.line(f"API key {found['id']} approved."))
+    # People know a key by its name; the key ID stays in --json output.
+    sentence = f"API key {found['name']} approved." if found.get('name') else 'API key approved.'
+    state.out().result(result, lambda out: out.line(sentence))
 
 
 @keys.command('update')
@@ -550,7 +537,7 @@ def keys_update(key_id: str = typer.Argument(..., help='Key ID or key name.'),
 @sessions.command('list')
 def sessions_list(who: str = typer.Option(None, '--for', help="Another user's sessions. Default: yours."),
                   ids: bool = IDS):
-    """List browser sessions."""
+    """List people signed in to the console."""
     api = state.api()
     params = {'principal_id': resolve.user(api, who)['id']} if who else {}
     items = api.pages('/access/sessions', params=params)
@@ -565,7 +552,7 @@ def sessions_list(who: str = typer.Option(None, '--for', help="Another user's se
 
 
 @sessions.command('revoke')
-def sessions_revoke(session_id: str = typer.Argument(..., help="Session id from 'faxbot sessions list --ids'.")):
+def sessions_revoke(session_id: str = typer.Argument(..., help="Session id from 'faxbot access sessions list --ids'.")):
     """End a session."""
     api = state.api()
     result = api.post(f'/access/sessions/{segment(session_id)}/revoke', json=api.with_policy({}))
@@ -586,7 +573,7 @@ def mailboxes_list(ids: bool = IDS):
 
 @mailboxes.command('add')
 def mailboxes_add(label: str = typer.Argument(..., help='Mailbox name, for example "Front desk".'),
-                  disabled: bool = typer.Option(False, '--disabled', help='Create it switched off.')):
+                  disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add a mailbox."""
     api = state.api()
     result = api.post('/access/mailboxes', json=api.with_policy({'label': label, 'enabled': not disabled}))
@@ -607,13 +594,92 @@ def mailboxes_update(mailbox: str = typer.Argument(..., help='Mailbox name or id
     state.out().result(result, lambda out: out.line(f"Mailbox {result['mailbox'].get('label') or mailbox} updated."))
 
 
+# The providers whose numbers Your numbers lists, as the console names them.
+CARRIERS = {'sip': 'Carrier trunk', 'humblefax': 'HumbleFax', 'efax': 'eFax', 'signalwire': 'SignalWire',
+            'freeswitch': 'FreeSWITCH'}
+NO_MAILBOX = 'No mailbox: received faxes are visible to people with access to everything.'
+
+
+def comparable_number(value):
+    """A fax number in one form for comparing, as the console does: +1 for ten US/Canadian digits."""
+    text = (value or '').strip()
+    digits = ''.join(character for character in text if character.isdigit())
+    if not digits:
+        return ''
+    if text.startswith('+') or (len(digits) == 11 and digits.startswith('1')):
+        return '+' + digits
+    return '+1' + digits if len(digits) == 10 else digits
+
+
+def carried_numbers(settings):
+    """The numbers each provider carries, from the settings document: [(number, provider, in use)]."""
+    hybrid = settings.get('hybrid') or {}
+    backend = (settings.get('backend') or {}).get('type') or ''
+    sending = hybrid.get('outbound_backend') or backend
+    receiving = (hybrid.get('inbound_backend') or backend) if (settings.get('inbound') or {}).get('enabled') else ''
+    extra = [route.strip() for route in ((settings.get('routing') or {}).get('outbound_routes') or '').split(',')]
+    humblefax = settings.get('humblefax') or {}
+    found = [*[('sip', number) for number in ((settings.get('sip') or {}).get('trunk') or {}).get('dids') or []],
+             ('humblefax', humblefax.get('from_number')),
+             *[('humblefax', number) for number in humblefax.get('account_numbers') or []],
+             ('efax', (settings.get('efax') or {}).get('caller_id')),
+             ('signalwire', (settings.get('signalwire') or {}).get('from_fax')),
+             ('freeswitch', (settings.get('fs') or {}).get('caller_id_number'))]
+    result = []
+    for provider, number in found:
+        number = comparable_number(number)
+        if number and (number, provider) not in [(item[0], item[1]) for item in result]:
+            result.append((number, provider, provider in {sending, receiving} or provider in extra))
+    return result
+
+
+def _email_text(connectors, number):
+    if connectors is None:
+        return '-'
+    covering = [item for item in connectors if item.get('enabled') and (
+        item.get('match_number') is None or comparable_number(item['match_number']) == comparable_number(number))]
+    if not covering:
+        return 'Not emailed'
+    recipients = list(dict.fromkeys(address for item in covering for address in item.get('recipients') or []))
+    return 'Emailed to ' + ', '.join(recipients) if recipients else 'Emailed'
+
+
 @numbers.command('list')
 def numbers_list(ids: bool = IDS):
-    """List your fax numbers and the mailbox each one delivers to."""
-    items = state.api().pages('/access/inbound-rules')
-    state.out().result(items, lambda out: out.table(_columns(ids, ['Fax number', 'Mailbox']),
-        [_with_id(ids, item['id'], [item['to_number'], item.get('mailbox_label')]) for item in items],
-        empty='No fax number rules. Received faxes go to the unassigned inbox.'))
+    """List your fax numbers: who provides each one, the mailbox its faxes go to, and whether they are emailed."""
+    from ..errors import CliError
+    api = state.api()
+    rules = api.pages('/access/inbound-rules')
+    try:
+        carried = carried_numbers(api.get('/admin/settings'))
+    except CliError:
+        carried = []  # without settings:read, only the numbers that have a mailbox
+    try:
+        connectors = api.get('/intake/connectors')['connectors']
+    except CliError:
+        connectors = None
+    rows = {}
+    for rule in rules:
+        rows[comparable_number(rule['to_number']) or rule['to_number']] = {
+            'number': rule['to_number'], 'rule': rule, 'providers': []}
+    for number, provider, in_use in carried:
+        row = rows.setdefault(number, {'number': number, 'rule': None, 'providers': []})
+        row['providers'].append({'provider': provider, 'name': CARRIERS[provider], 'in_use': in_use})
+    # --json rows keep the keys an inbound rule had (id, to_number, mailbox_id, mailbox_label, version),
+    # None for a number with no mailbox rule, next to the new ones.
+    found = [{'id': None, 'to_number': row['number'], 'mailbox_id': None, 'mailbox_label': None, 'version': None,
+              **(row['rule'] or {}), **row, 'mailbox': (row['rule'] or {}).get('mailbox_label'),
+              'email': _email_text(connectors, row['number'])} for row in rows.values()]
+
+    def provided(row):
+        return ', '.join(item['name'] + ('' if item['in_use'] else ' (not in use now)')
+                         for item in row['providers']) or '-'
+
+    state.out().result(found, lambda out: out.table(
+        _columns(ids, ['Fax number', 'Provided by', 'Mailbox', 'Email delivery']),
+        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), row['mailbox'] or NO_MAILBOX,
+                                                             row['email']]) for row in found],
+        empty='No fax numbers yet.'))
 
 
 @numbers.command('add')
@@ -630,7 +696,7 @@ def numbers_add(number: str = typer.Argument(..., help='Your fax number, as faxe
 def numbers_update(number: str = typer.Argument(..., help='Fax number of the rule to change.'),
                    new_number: str = typer.Option(None, '--number', help='New fax number.'),
                    mailbox: str = typer.Option(None, '--mailbox', help='New mailbox.')):
-    """Change a fax number rule."""
+    """Change a fax number's mailbox, or the number itself."""
     api = state.api()
     body = {}
     if new_number:
@@ -651,7 +717,7 @@ def audit_list(limit: int = typer.Option(50, '--limit', min=1, help='How many en
                operation: str = typer.Option(None, '--operation', help='Only this kind of action, for example '
                                                                        'create_user.'),
                ids: bool = IDS):
-    """Show the security audit, newest first."""
+    """Show the security log of access changes and sign-ins, newest first."""
     api = state.api()
     params = {'operation': operation}
     if who:

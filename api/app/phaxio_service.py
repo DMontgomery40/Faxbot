@@ -1,7 +1,9 @@
 from typing import Optional, Dict, Any
+import re
+
 import httpx
 
-from .config import settings, reload_settings
+from .config import settings
 from .routing.numbers import canonical_number
 from .callback_locator import callback_url_with_locators
 
@@ -139,6 +141,59 @@ class PhaxioFaxService:
             "error_message": 'Provider reported an error.' if error_message else None,
         }
 
+    # Received faxes (checked against phaxio.com/docs on 2026-10-03):
+    # GET /v2.1/faxes/{id} returns the Fax Object (direction "received",
+    # from_number, to_number, num_pages, status, completed_at in RFC 3339), and
+    # GET /v2.1/faxes/{id}/file returns its PDF. Both use HTTP basic auth with
+    # the API key and secret, and only ever go to api.phaxio.com.
+    RECEIVED_BASE_URL = "https://api.phaxio.com/v2.1"
+
+    @staticmethod
+    def received_fax_id(value: Any) -> str:
+        from .inbound.fetch import FetchError
+        text = str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ''
+        if re.fullmatch(r'[0-9]{1,20}', text) is None:
+            raise FetchError('Phaxio fax IDs are numbers.')
+        return text
+
+    async def get_received_fax(self, fax_id: Any) -> Optional[Dict[str, Any]]:
+        """Phaxio's record of one received fax in this account, or None when it has none."""
+        from .inbound import fetch
+        fax_id = self.received_fax_id(fax_id)
+        if not self.is_configured():
+            raise fetch.FetchError('Enter the Phaxio API key and secret so Faxbot can fetch received faxes.')
+        status, payload = await fetch.get_json(f"{self.RECEIVED_BASE_URL}/faxes/{fax_id}",
+                                               auth=(self.api_key, self.api_secret),
+                                               hosts=fetch.PHAXIO_HOSTS, provider='Phaxio')
+        if status == 404:
+            return None
+        if status in (401, 403):
+            raise fetch.FetchError('Phaxio refused the configured API key.')
+        data = payload.get('data') if payload and payload.get('success') is True else None
+        if status != 200 or not isinstance(data, dict) or str(data.get('id')) != fax_id:
+            raise fetch.FetchError('Phaxio did not answer the fax lookup.')
+        if data.get('direction') != 'received':
+            return None
+
+        def text(name):
+            value = data.get(name)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        pages = data.get('num_pages')
+        return {'id': fax_id, 'status': (text('status') or '').lower(), 'from_number': text('from_number'),
+                'to_number': text('to_number'), 'completed_at': text('completed_at'),
+                'pages': pages if type(pages) is int and pages >= 0 else None,
+                'is_test': data.get('is_test') is True}
+
+    async def download_received_fax(self, fax_id: Any) -> bytes:
+        """The PDF Phaxio holds for one received fax; at most 50 MB."""
+        from .inbound import fetch
+        fax_id = self.received_fax_id(fax_id)
+        if not self.is_configured():
+            raise fetch.FetchError('Enter the Phaxio API key and secret so Faxbot can fetch received faxes.')
+        return await fetch.get_document(f"{self.RECEIVED_BASE_URL}/faxes/{fax_id}/file",
+                                        auth=(self.api_key, self.api_secret),
+                                        hosts=fetch.PHAXIO_HOSTS, provider='Phaxio')
+
     def _map_status(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         status = payload.get("status")
         sid = payload.get('id')
@@ -169,24 +224,3 @@ class PhaxioFaxService:
             "sending": "in_progress",
         }
         return mapping.get(status, status or "queued")
-
-
-_phaxio_service: Optional[PhaxioFaxService] = None
-
-
-def get_phaxio_service() -> Optional[PhaxioFaxService]:
-    """Get singleton Phaxio service instance."""
-    global _phaxio_service
-    # Ensure settings reflect current environment (tests monkeypatch env at runtime)
-    reload_settings()
-    # If not configured, ensure we don't keep a stale instance
-    if not (settings.phaxio_api_key and settings.phaxio_api_secret):
-        _phaxio_service = None
-        return None
-    if _phaxio_service is None:
-        _phaxio_service = PhaxioFaxService(
-            api_key=settings.phaxio_api_key,
-            api_secret=settings.phaxio_api_secret,
-            status_callback_url=settings.phaxio_status_callback_url or None,
-        )
-    return _phaxio_service

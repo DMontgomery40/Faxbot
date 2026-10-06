@@ -23,14 +23,6 @@ Streamable HTTP and SSE requests must each carry the caller's own Faxbot API key
 :material-shield-key: Auth
 : Same as Streamable HTTP. The key must be sent on both `GET /sse` and `POST /messages/`
 
-## WebSocket (Node development bridge)
-
-:material-websocket: Port
-: `3004` (default)
-
-:material-shield-lock: Auth
-: `MCP_WS_API_KEY` (or `API_KEY`) in a header. Connections are refused when neither is set, and keys in the URL are refused
-
 ## Stdio
 
 :material-console-line: Use case

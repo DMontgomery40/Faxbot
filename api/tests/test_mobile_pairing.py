@@ -37,7 +37,11 @@ def pair(client, code, device_name='Synthetic iPhone'):
 
 
 def test_paired_device_sends_faxes_until_its_key_is_revoked(client, monkeypatch):
-    monkeypatch.setenv('MOBILE_LOCAL_BASE', 'http://192.0.2.20:8080')
+    # The address phones use on the installation's own network is a setting (MOBILE_LOCAL_BASE on first start).
+    current = client.get('/admin/settings', headers=B).json()
+    assert client.put('/admin/settings', headers=B, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'],
+        'mobile_local_base': 'http://192.0.2.20:8080'}).status_code == 200
     admin, admin_principal = ready_user(client, 'admin', role='role_administrator')
     code = mint(client, admin.headers())
     paired = pair(client, code)

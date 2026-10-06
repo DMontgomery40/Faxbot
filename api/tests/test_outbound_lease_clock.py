@@ -13,8 +13,12 @@ from api.tests.test_schema import database
 from api.app.outbound_store import DeliveryConflict
 
 
-def after_lock_wait(configuration, monkeypatch, operation, *, deadline=None):
-    """Block the real installation lock until a waiting call's lease has elapsed."""
+def after_lock_wait(configuration, monkeypatch, operation, *, deadline=None, released=None):
+    """Block the real installation lock until a waiting call's lease has elapsed.
+
+    ``released`` (a list) receives the moment the lock was let go, so a test can compare a
+    lease with that moment instead of with a later clock reading that load can delay.
+    """
     entered = threading.Event()
     original = configuration._locked
 
@@ -35,13 +39,15 @@ def after_lock_wait(configuration, monkeypatch, operation, *, deadline=None):
                 assert datetime.utcnow() > deadline
             else:
                 time.sleep(1.2)
+            if released is not None:
+                released.append(datetime.utcnow())
         return future.result(timeout=5)
 
 
 def test_expired_preparation_cannot_receive_grant_after_lock_wait(installation, monkeypatch):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     with pytest.raises(DeliveryConflict, match='lease is no longer current'):
         after_lock_wait(configuration, monkeypatch,
             lambda: delivery.grant_pdf(claim, url='http://localhost/synthetic.pdf', token='synthetic',
@@ -55,7 +61,7 @@ def test_expired_preparation_cannot_receive_grant_after_lock_wait(installation, 
 def test_expired_preparation_cannot_authorize_submission_after_lock_wait(installation, monkeypatch):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     assert after_lock_wait(configuration, monkeypatch,
         lambda: delivery.begin_submission(claim), deadline=claim.expires_at) is False
     assert delivery.get(identity)['state'] == 'preparing'
@@ -65,17 +71,21 @@ def test_expired_preparation_cannot_authorize_submission_after_lock_wait(install
 def test_new_claim_has_live_lease_after_lock_wait(installation, monkeypatch):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = after_lock_wait(configuration, monkeypatch, lambda: delivery.claim('worker', lease_seconds=1))
+    released = []
+    claim = after_lock_wait(configuration, monkeypatch, lambda: delivery.claim('worker', lease_seconds=1),
+                            released=released)
     assert claim.job_id == identity
-    assert claim.expires_at > datetime.utcnow()
-    assert delivery.begin_submission(claim) is True
+    # The 1 s lease starts after the 1.2 s wait: a lease taken before the wait would already
+    # have ended when the lock was let go. Compared with that moment, not with a later clock
+    # reading, so a loaded machine cannot fail it (it did once in the 2026-10-05 gate).
+    assert claim.expires_at > released[0]
 
 
 @pytest.mark.parametrize('state', ['preparing', 'submitting'])
 def test_recovery_considers_leases_expiring_during_lock_wait(installation, monkeypatch, state):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     if state == 'submitting':
         assert delivery.begin_submission(claim)
     assert after_lock_wait(configuration, monkeypatch, delivery.recover_expired, deadline=claim.expires_at) == 1

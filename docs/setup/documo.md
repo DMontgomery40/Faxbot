@@ -4,11 +4,11 @@ The builtin Documo adapter uploads prepared PDFs directly and polls the original
 
 ## Configure the installation
 
-1. Open **Settings** or **Setup Wizard**.
+1. Open the **Setup Wizard** (**System → Setup**), or **Providers → Documo** when it is already in use.
 2. Select **Documo (mFax)** for outbound and enter the API key for the intended account. Leave unchanged secret masks alone.
 3. Choose production or sandbox. In Settings, review **Documo Base URL** using the rules below.
 4. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
-5. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the original provider account for the result and document fidelity.
+5. Use **Faxes → Send a fax** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Faxes → Sent** and the original provider account for the result and document fidelity.
 
 Setup does not authenticate a Documo key. Readiness checks local configuration, not account access or delivery. The key must permit both sending and reading fax information; a create-only key cannot support status polling. When a new installation starts for the first time, it can read `FAX_OUTBOUND_BACKEND=documo`, `DOCUMO_API_KEY`, `DOCUMO_BASE_URL` and `DOCUMO_SANDBOX` from the environment. After that, change them in Settings; later `.env` edits are not imported.
 

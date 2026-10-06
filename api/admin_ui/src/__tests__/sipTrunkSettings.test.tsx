@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import SipTrunkSettings, { connectedTime } from '../components/SipTrunkSettings';
+import SipTrunkSettings, { audioReason, connectedTime, readOn } from '../components/SipTrunkSettings';
 import { server } from '../test/server';
 
 const PRESETS = [
@@ -29,11 +29,20 @@ const CALLS = {
       caller: '+15555550100', called: '+15555550123', started_at: '2026-10-03T12:00:00Z',
       answered_at: '2026-10-03T12:00:08Z', ended_at: '2026-10-03T12:01:13Z', disposition: 'answered',
       connected_seconds: 65, t38: 'yes', pages: 2, fax_status: 'SUCCESS', remote_station_id: null,
-      error_cause: null, fax_preference: false },
+      error_cause: null, fax_preference: false, verdict: 'sent',
+      summary: 'Sent: 2 pages confirmed by the receiving machine.' },
     { id: 'c2', direction: 'inbound', job_id: 'f', attempt_id: null, trunk_preset: 'telnyx', did: '+15555550100',
       caller: '+15555550199', called: '+15555550100', started_at: '2026-10-03T11:00:00Z', answered_at: null,
       ended_at: null, disposition: 'busy', connected_seconds: 0, t38: 'unknown', pages: null, fax_status: null,
-      remote_station_id: null, error_cause: 'busy', fax_preference: false },
+      remote_station_id: null, error_cause: 'busy', fax_preference: false, verdict: null,
+      summary: 'The number was busy.' },
+    { id: 'c3', direction: 'inbound', job_id: null, attempt_id: null, trunk_preset: 'telnyx', did: '+15555550100',
+      caller: '+13035550100', called: '+15555550100', started_at: '2026-10-03T10:00:00Z',
+      answered_at: '2026-10-03T10:00:00Z', ended_at: '2026-10-03T10:00:14Z', disposition: 'answered',
+      connected_seconds: 14, t38: 'yes', pages: 0, fax_status: 'FAILED', remote_station_id: null,
+      error_cause: 'no_t38_data_back: The call dropped prematurely (cause 16)', fax_preference: false,
+      verdict: 'no_t38_data_back',
+      summary: 'A fax call from +13035550100 came in, but no fax data arrived from the carrier.' },
   ],
   next_cursor: 'older',
 };
@@ -62,7 +71,7 @@ describe('SIP trunk settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Mark outgoing calls as fax when they start' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    expect(await screen.findByText('Saved. Apply the trunk to Asterisk to use it.')).toBeTruthy();
+    expect(await screen.findByText('Saved. Select Apply and connect to use it.')).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_fax_preference_header: true,
       sip_trunk_dids: '+15555550100,+15555550101' }]);
   });
@@ -94,7 +103,7 @@ describe('SIP trunk settings', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     }
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    expect(await screen.findByText('Saved. Apply the trunk to Asterisk to use it.')).toBeTruthy();
+    expect(await screen.findByText('Saved. Select Apply and connect to use it.')).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_trunk_caller_id: '01782 684953',
       sip_trunk_dids: '01782 684953,01782 684954' }]);
     expect(await screen.findByText('+441782684954')).toBeTruthy();
@@ -115,6 +124,40 @@ describe('SIP trunk settings', () => {
     expect(await screen.findByText(detail)).toBeTruthy();
   });
 
+  it('shows a trunk password set in .env as set there, without an input', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json({ ...settings(), _meta: { ...META, env_managed: ['sip_trunk_password'] } })),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const password = await screen.findByLabelText('Password');
+    expect((password as HTMLInputElement).value).toBe('Set in .env');
+    expect((password as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText('Change it in .env, then run docker compose up -d.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show Password' })).toBeNull();
+  });
+
+  it('links one carrier documentation page instead of listing every source', async () => {
+    const presets = [{ ...PRESETS[0], sources: [
+      { url: 'https://developers.telnyx.com/docs/voice/sip-trunking/get-started', read_on: '2026-10-03' },
+      { url: 'https://sip.telnyx.com/voice.json', read_on: '2026-10-03' },
+      { url: 'https://support.telnyx.com/en/articles/1130672', read_on: '2026-10-03' }] }, PRESETS[1]];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    const { container } = render(<SipTrunkSettings client={client()} />);
+    const link = await screen.findByRole('link', { name: 'Telnyx documentation' });
+    expect(link.getAttribute('href')).toBe('https://developers.telnyx.com/docs/voice/sip-trunking/get-started');
+    expect(screen.getAllByRole('link').filter((item) => item.textContent?.includes('documentation'))).toHaveLength(1);
+    expect(container.textContent).not.toContain('2026-10-03');
+    expect(container.textContent).not.toContain('support.telnyx.com');
+    expect(container.querySelector('a[href="https://sip.telnyx.com/voice.json"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/read \d/);
+  });
+
   it('offers only the sign-in methods a carrier supports', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
@@ -127,27 +170,234 @@ describe('SIP trunk settings', () => {
     expect(screen.queryByLabelText('Password')).toBeNull();
   });
 
-  it('applies to Asterisk and reports trunk status in plain sentences', async () => {
+  it('says to restart Asterisk by hand when this install does not manage it, and reports trunk status in plain sentences', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
       http.get('/admin/settings', () => HttpResponse.json(settings())),
       http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true,
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'manual',
         message: 'Saved for Asterisk. Restart the Asterisk service to use these settings.' })),
       http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
-        asterisk_connected: true, registration: 'registered',
-        registration_text: "The carrier accepted Faxbot's registration.", reachability: 'reachable',
-        reachability_text: "The carrier answers Faxbot's checks.", message: 'The trunk is ready.' })),
+        asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
+        registration_text: "The carrier accepted Faxbot's registration over TLS.", reachability: 'reachable',
+        reachability_text: "The carrier answered Faxbot's check in 38 ms.", round_trip_ms: 38,
+        internet_address: '198.51.100.7', behind_router: true, port_numbers: 'changes',
+        public_address_text: "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's packets, and the first test fax shows whether it does.",
+        ports_text: 'No ports need to be opened or forwarded.',
+        last_call_text: 'The call connected but no fax data came back from the carrier.',
+        last_call_at: '2026-10-03T12:00:00Z', message: 'The trunk is ready.',
+        engine_state: 'running', engine_audio: true,
+        engine_text: "Faxbot's fast fax service is running on 2 fax lines and sends pages faster when the other fax machine allows it. It sends audio fax because its last T.38 call heard no fax machine." })),
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText('Saved for Asterisk. Restart the Asterisk service to use these settings.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     const status = await screen.findByTestId('sip-trunk-status');
     expect(within(status).getByText('The trunk is ready.')).toBeTruthy();
-    expect(within(status).getByText("The carrier accepted Faxbot's registration.")).toBeTruthy();
-    expect(status.textContent).not.toMatch(/registered|reachable[^.]/);
+    expect(within(status).getByText("The carrier accepted Faxbot's registration over TLS.")).toBeTruthy();
+    expect(within(status).getByText("The carrier answered Faxbot's check in 38 ms.")).toBeTruthy();
+    expect(within(status).getByText(/^Faxbot's internet address is 198.51.100.7; your network changes port numbers/)).toBeTruthy();
+    expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
+    expect(screen.getByText('Automatic: Faxbot found 198.51.100.7. Enter an address only to override it.')).toBeTruthy();
+    expect(within(status).getByText(/^Last call, .*: The call connected but no fax data came back from the carrier\.$/)).toBeTruthy();
+    expect(status.textContent).not.toMatch(/registered|reachable[^.]|no_t38|tls[^.]/);
+    // The console names its own button to try T.38 again after the fast fax service chose audio fax.
+    expect(within(status).getByTestId('engine-text').textContent).toMatch(
+      /last T\.38 call heard no fax machine\. To try T\.38 again, select Apply and connect\.$/);
+  });
+
+  it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {
+    const detail = 'Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address.';
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [{ ...PRESETS[0], port: 5061, transport: 'tls' }] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings({ auth: 'ip' }))),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ detail }, { status: 400 })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByRole('radio', { name: 'Server IP address' });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    expect(await screen.findByText(detail)).toBeTruthy();
+    fireEvent.mouseDown(screen.getByLabelText('Connection type'));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(
+      ['Default: Encrypted (TLS)', 'Encrypted (TLS)', 'TCP', 'UDP (older)']);
+    expect(screen.getByLabelText(/Internet address/).getAttribute('placeholder')).toBe('Automatic');
+  });
+
+  it('offers audio fax for new calls after a T.38 call carried no fax data, saves it and connects again', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let applied = 0;
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
+        asterisk_connected: true, registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
+        reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
+        last_call_text: 'The call connected but no fax data came back from the carrier.',
+        last_call_verdict: 'no_t38_data_back', suggest_audio: writes.length === 0, message: 'The trunk is ready.' })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => {
+        applied += 1;
+        return HttpResponse.json({ ok: true, engine: 'restarting', message: 'Asterisk is restarting to use the new settings.' });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use audio fax for new calls' }));
+    expect(await screen.findByText('New calls send and receive faxes as audio.')).toBeTruthy();
+    expect(within(await screen.findByTestId('sip-trunk-status')).getByText('The trunk is ready.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Use audio fax for new calls' })).toBeNull();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: false }]);
+    expect(applied).toBe(1);
+    expect(document.body.textContent).not.toMatch(/Restart the Asterisk service/);
+  });
+
+  it('saves what was typed, restarts Asterisk, waits for it and shows the trunk check on the same screen', async () => {
+    const order: string[] = [];
+    const statuses = [
+      { engine_restarting: true, asterisk_connected: false, registration: 'unknown', message: 'Asterisk is restarting to use the new settings.' },
+      { engine_restarting: false, asterisk_connected: true, registration: 'not_registered', message: 'Faxbot is not registered with the carrier yet.' },
+      // Registered, but the carrier has not answered a check yet: keep checking instead of showing a red result.
+      { engine_restarting: false, asterisk_connected: true, registration: 'registered', reachability: 'unreachable',
+        reachability_text: "The carrier does not answer Faxbot's checks.", message: "The carrier does not answer Faxbot's checks." },
+      { engine_restarting: false, asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
+        registration_text: "The carrier accepted Faxbot's registration over TLS.", reachability: 'reachable',
+        reachability_text: "The carrier answered Faxbot's check in 38 ms.", internet_address: '198.51.100.7',
+        public_address_text: "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's packets, and the first test fax shows whether it does.",
+        ports_text: 'No ports need to be opened or forwarded.', message: 'The trunk is ready.' },
+    ];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', () => {
+        order.push('save');
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => {
+        order.push('apply');
+        return HttpResponse.json({ ok: true, engine: 'restarting', message: 'Asterisk is restarting to use the new settings.' });
+      }),
+      http.get('/admin/sip/status', () => {
+        order.push('status');
+        return HttpResponse.json({ configured: true, applied: true, reachability: 'unknown', reachability_text: '',
+          ...(statuses.shift() ?? statuses[statuses.length - 1]) });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'connection-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    const status = await screen.findByTestId('sip-trunk-status');
+    expect(within(status).getByText('The trunk is ready.')).toBeTruthy();
+    expect(within(status).getByText("The carrier accepted Faxbot's registration over TLS.")).toBeTruthy();
+    expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
+    expect(order).toEqual(['save', 'apply', 'status', 'status', 'status', 'status']);
+    expect(screen.queryByText("The carrier does not answer Faxbot's checks.")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Restart the Asterisk service/);
+  });
+
+  it('says when Asterisk already uses these settings and still shows the trunk check', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'current',
+        message: 'Saved. Asterisk already uses these settings.' })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true, asterisk_connected: true,
+        registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
+        reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
+        message: 'The trunk is ready.' })),
+    );
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    expect(await screen.findByText('Saved. Asterisk already uses these settings.')).toBeTruthy();
+    expect(within(await screen.findByTestId('sip-trunk-status')).getByText('The trunk is ready.')).toBeTruthy();
+  });
+
+  it('says why Faxbot chose audio fax and offers to try T.38 again', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let applied = 0;
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings(writes.length ? { t38_enabled: true } : {
+        t38_enabled: false, t38_off_reason: 'no_data_back', t38_off_at: '2026-10-03T22:40:00Z' }))),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => { applied += 1; return HttpResponse.json({ ok: true, engine: 'busy',
+        message: 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.' }); }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const reason = await screen.findByTestId('t38-off-reason');
+    expect(reason.textContent).toMatch(/^Off: on .+ a T\.38 fax got no fax data back on this network, so Faxbot uses audio fax\.Try T\.38 again$/);
+    expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP' })).toBeTruthy();
+    expect(screen.queryByText(/T\.38 fax over IP \(recommended\)/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try T.38 again' }));
+    await waitFor(() => expect(applied).toBe(1));
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: true }]);
+    await waitFor(() => expect(screen.queryByTestId('t38-off-reason')).toBeNull());
+    expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP (recommended)' })).toBeTruthy();
+  });
+
+  it('shows the server, port and transport in force when the carrier defaults are used', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [{ ...PRESETS[0], port: 5061, transport: 'tls' }] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    expect(screen.getByLabelText('Server').getAttribute('placeholder')).toBe('sip.telnyx.com');
+    expect(screen.getByText('Leave empty to use sip.telnyx.com.')).toBeTruthy();
+    expect(screen.getByLabelText('Port').getAttribute('placeholder')).toBe('5061');
+    expect(screen.getByText('Leave empty to use 5061.')).toBeTruthy();
+    expect(screen.getByLabelText('Connection type').textContent).toBe('Default: Encrypted (TLS)');
+  });
+
+  it('matches the directions the trunk carries: a receiving-only trunk needs no caller ID', async () => {
+    const receivingOnly = { ...settings(), backend: { type: 'humblefax', disabled: false },
+      hybrid: { outbound_backend: 'humblefax', inbound_backend: 'sip', outbound_override: '', inbound_override: 'sip' },
+      inbound: { enabled: true }, routing: { outbound_routes: '', min_success_percent: 80 } };
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(receivingOnly)),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText(/^Receive faxes with Faxbot's own fax engine over your carrier account\./)).toBeTruthy();
+    const caller = screen.getByLabelText('Caller ID (optional)') as HTMLInputElement;
+    expect(caller.required).toBe(false);
+    expect(screen.queryByText(/^Send and receive faxes/)).toBeNull();
+  });
+
+  it('says so in one sentence when a call keeps Asterisk from restarting', async () => {
+    const busy = 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.';
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'busy', message: busy })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    expect(await screen.findByText(busy)).toBeTruthy();
+    expect(screen.queryByTestId('sip-trunk-status')).toBeNull();
   });
 
   it('shows the missing fields the server names when applying fails', async () => {
@@ -160,7 +410,7 @@ describe('SIP trunk settings', () => {
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('Not saved yet.');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText('Fill in the password before applying.')).toBeTruthy();
   });
 
@@ -184,6 +434,10 @@ describe('SIP trunk settings', () => {
     expect(within(rows[2]).getByText('Received')).toBeTruthy();
     expect(within(rows[2]).getByText('Busy')).toBeTruthy();
     expect(within(rows[2]).getByText('Not known')).toBeTruthy();
+    expect(within(rows[1]).getByText('Sent: 2 pages confirmed by the receiving machine.')).toBeTruthy();
+    expect(within(rows[3]).getByText('A fax call from +13035550100 came in, but no fax data arrived from the carrier.'))
+      .toBeTruthy();
+    expect(table.textContent).not.toContain('no_t38_data_back');
     fireEvent.click(screen.getByRole('button', { name: 'Show older calls' }));
     await waitFor(() => expect(cursors).toEqual([null, 'older']));
   });
@@ -203,5 +457,156 @@ describe('SIP trunk settings', () => {
     expect(connectedTime(42)).toBe('42 s');
     expect(connectedTime(120)).toBe('2 min');
     expect(connectedTime(125)).toBe('2 min 5 s');
+  });
+});
+
+// A phone system on the local network (Avaya IP Office) ---------------------------------------------
+
+const AVAYA = {
+  id: 'avaya-ipoffice', label: 'Avaya IP Office', host: '', port: 5060, transport: 'udp', auth_modes: ['ip'],
+  codecs: ['alaw', 'ulaw'], needs_host: true, ip_dial_prefix: false, kind: 'phone_system',
+  transports: ['udp', 'tcp'], codecs_by_country: true, dial_formats: ['e164', 'local'], audio_by_default: false,
+  t38: 'T.38 with G.711 fallback: on the Faxbot line, set Fax Transport Support to T38 Fallback.',
+  notes: ['IP Office and Faxbot recognise each other by address, so there is no username or password.'],
+  admin_steps: ['System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.', 'T38 Fax tab: keep Use Default Values.'],
+  sources: [{ url: 'https://support.avaya.com/css/public/documents/101065243', read_on: '2026-10-03' }],
+};
+const GAMMA = { ...PRESETS[1], id: 'gamma', label: 'Gamma', host: '', kind: 'carrier', transports: ['udp', 'tcp'],
+  dial_formats: ['e164', 'local'], admin_steps: [] };
+const COMMAND = 'docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d';
+const NOT_STARTED = 'Your phone system cannot reach Faxbot yet, because Faxbot is not published on your local network.';
+
+function phoneStatus(extra: Record<string, unknown> = {}) {
+  return { configured: true, applied: true, asterisk_connected: true, kind: 'phone_system', preset: 'avaya-ipoffice',
+    preset_label: 'Avaya IP Office', registration: 'not_used', registration_text: '', reachability: 'unknown',
+    reachability_text: '', message: NOT_STARTED, ports_text: NOT_STARTED, phone_system: null,
+    phone_system_command: COMMAND, phone_system_setting: 'FAXBOT_LAN_ADDRESS', phone_system_hidden: false, ...extra };
+}
+
+function phoneSettings(trunk: Record<string, unknown> = {}) {
+  return settings({ preset: 'avaya-ipoffice', auth: 'ip', host: '192.168.10.5', username: '', password: '',
+    password_set: false, caller_id: '+442079460000', dids: ['+442079460001'], dial_format: '', dial_prefix: '', ...trunk });
+}
+
+describe('SIP trunk to a phone system', () => {
+  it('shows the phone system fields, the administrator steps and how to publish Faxbot', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(phoneStatus())),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    expect((screen.getByLabelText(/Phone system address/) as HTMLInputElement).value).toBe('192.168.10.5');
+    // Sign-in is by address: no sign-in choice, username, password, proxy or internet address.
+    expect(screen.queryByText('How Faxbot signs in to the carrier')).toBeNull();
+    expect(screen.queryByLabelText('Password')).toBeNull();
+    expect(screen.queryByLabelText('Outbound proxy (optional)')).toBeNull();
+    expect(screen.queryByLabelText('Internet address (optional)')).toBeNull();
+    expect(screen.getByText('Fax numbers your phone system sends to Faxbot')).toBeTruthy();
+    // How the phone system reaches Faxbot: not published yet, with the exact command.
+    const reach = await screen.findByTestId('phone-system-reach');
+    expect(within(reach).getByText(NOT_STARTED)).toBeTruthy();
+    expect(within(reach).getByText(COMMAND)).toBeTruthy();
+    expect(within(reach).getByText(
+      "Set FAXBOT_LAN_ADDRESS in .env to this computer's address on your local network, then run:")).toBeTruthy();
+    // The administrator's checklist, with its dated source.
+    fireEvent.click(screen.getByText('What you set in Avaya'));
+    const steps = screen.getByTestId('phone-system-steps');
+    expect(within(steps).getByText('System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.')).toBeTruthy();
+    expect(within(steps).getByText('support.avaya.com')).toBeTruthy();
+    expect(steps.textContent).toContain(`, read ${readOn('2026-10-03')}`);
+    // Only the transports a phone system takes.
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Connection type' }));
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Default: UDP (older)', 'TCP', 'UDP (older)']);
+  });
+
+  it('lists phone systems apart from carriers and switches to sign-in by address when one is chosen', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { ...META, apply_state: 'applied' } });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('Carrier SIP trunk')).toBeTruthy();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Carrier' }));
+    const listbox = await screen.findByRole('listbox');
+    const entries = Array.from(listbox.children).map((item) => item.textContent);
+    expect(entries).toEqual(['No SIP trunk', 'Carrier', 'Telnyx', 'AnveoDirect', 'Gamma', 'Your phone system',
+      'Avaya IP Office']);
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Avaya IP Office' }));
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Phone system address/), { target: { value: '192.168.10.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-1', sip_trunk_preset: 'avaya-ipoffice',
+      sip_trunk_auth: 'ip', sip_trunk_host: '192.168.10.5' });
+  });
+
+  it('saves the number format, the outside-line prefix and the codec order', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(phoneStatus())),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { ...META, apply_state: 'applied' } });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    expect(screen.queryByLabelText('Outside-line prefix (optional)')).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Number format' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /As a phone here dials it/ }));
+    fireEvent.change(await screen.findByLabelText('Outside-line prefix (optional)'), { target: { value: '9x' } });
+    expect((screen.getByLabelText('Outside-line prefix (optional)') as HTMLInputElement).value).toBe('9');
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Call sound format' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /A-law first \(UK/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-1', sip_trunk_codecs: 'alaw,ulaw',
+      sip_trunk_dial_format: 'local', sip_trunk_dial_prefix: '9' });
+  });
+
+  it('says what to give the administrator once published, and names Docker Desktop or Colima', async () => {
+    const given = 'In your phone system, send fax calls to 192.168.10.20, port 5060 (UDP or TCP), '
+      + 'with media ports 4000–4019: enough for 6 faxes at once.';
+    let status: Record<string, unknown> = phoneStatus({ ports_text: given, message: 'The trunk is ready.',
+      phone_system: { address: '192.168.10.20', sip_port: 5060, media_ports: '4000-4019', faxes_at_once: 6 },
+      phone_system_command: null, phone_system_setting: null });
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(status)),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const reach = await screen.findByTestId('phone-system-reach');
+    await waitFor(() => expect(within(reach).getByText(given)).toBeTruthy());
+    expect(reach.textContent).not.toContain('docker compose');
+    // The trunk check does not repeat what the phone system section already says.
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    expect(await screen.findByTestId('sip-trunk-status')).toBeTruthy();
+    expect(screen.getAllByText(given)).toHaveLength(1);
+    const hidden = "Faxbot runs in Docker Desktop or Colima here, which hide your phone system's address from "
+      + 'Faxbot, so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.';
+    status = { ...status, ports_text: hidden, message: hidden, phone_system_hidden: true };
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    await waitFor(() => expect(within(screen.getByTestId('phone-system-reach')).getByText(hidden)).toBeTruthy());
+  });
+
+  it('says why BT One Voice starts with audio fax', () => {
+    expect(audioReason('carrier', null, 'BT One Voice'))
+      .toBe('Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax.');
   });
 });

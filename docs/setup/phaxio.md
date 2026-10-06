@@ -4,7 +4,7 @@
 
 - Cloud backend for sending faxes via Phaxio (also branded “Phaxio by Sinch”).
 - Easiest option; no SIP or telephony expertise required.
-- Send-only (no receiving).
+- Sends faxes, and can receive them when inbound is enabled with Phaxio; see [Receiving faxes](#receiving-faxes).
 
 ## Prerequisites
 
@@ -133,3 +133,11 @@ How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot 
 ## Related: Sinch Fax API v3
 
 Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.
+
+## Receiving faxes
+
+1. In Settings, turn Inbound on and choose Phaxio for receiving.
+2. Enter the Callback Token (`PHAXIO_CALLBACK_TOKEN`) along with the API key and secret.
+3. In the Phaxio console, set the receive callback URL to your public address followed by `/phaxio-inbound`.
+
+Faxbot checks Phaxio's signature on every notification. It downloads the document from Phaxio's API when the notification does not carry it. A fax shows as **Waiting for the document** until the document has arrived. See [Receiving faxes](../operations/receiving.md) for the statuses, **Fetch again** and what happens when signature checks are off.

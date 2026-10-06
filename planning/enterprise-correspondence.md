@@ -4,7 +4,7 @@
 
 **Status: proposed future work, documented October 3, 2026.** This design folds the correspondence research into Faxbot's normal direction. It does not expand the current Phase 1 implementation or the four-fix batch for destination normalization, TXT pagination, client idempotency, and one-bit PDF images. The [README roadmap](../README.md#roadmap) owns implementation status. Stage labels below describe dependencies, not separate delivery commitments.
 
-Code observations refer to checkout `d0b77d61` on `feat/faxbot-refresh`; they are inspection findings, not new runtime or production verification. Re-check the relevant code before implementing. The [refresh design](../docs/architecture/2026-10-02-faxbot-refresh-design.md), [durable outbound design](../docs/architecture/2026-10-02-faxbot-durable-outbound.md), and [configuration design](../docs/architecture/2026-10-02-faxbot-configuration-activation.md) remain in force.
+Code observations refer to checkout `d0b77d61` on `feat/faxbot-refresh`; they are inspection findings, not new runtime or production verification. Re-check the relevant code before implementing. The [refresh design](2026-10-02-faxbot-refresh-design.md), [durable outbound design](2026-10-02-faxbot-durable-outbound.md), and [configuration design](2026-10-02-faxbot-configuration-activation.md) remain in force.
 
 The product should help an organization receive a document, get it to an accountable person, complete the required action, and retain evidence of what happened. Shared infrastructure must work across companies and industries. Customer names, presumed incumbent systems, and employer-specific rules do not belong in product defaults. Individual integrations and applicability decisions follow later.
 

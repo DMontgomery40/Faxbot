@@ -23,7 +23,7 @@ _bootstrap_values = None
 
 def bootstrap_locations(environment):
     return ConfigurationValues.from_environment({key: environment[key] for key in
-        ('DATABASE_URL', 'FAX_DATA_DIR', 'FAXBOT_PROVIDERS_DIR', 'PLUGIN_REGISTRY_PATH',
+        ('DATABASE_URL', 'FAX_DATA_DIR', 'FAXBOT_PROVIDERS_DIR',
          'FAXBOT_CONFIG_PATH') if key in environment})
 
 
@@ -237,10 +237,6 @@ def get_provider_registry() -> Dict[str, Dict[str, Any]]:
     return _TRAITS_CACHE.get("registry") or {}
 
 
-def get_traits_schema_issues() -> Dict[str, Any]:
-    return _TRAITS_CACHE.get("schema_issues") or {}
-
-
 def get_provider_traits(provider_id: Optional[str]) -> Dict[str, Any]:
     if not provider_id:
         return {}
@@ -257,7 +253,7 @@ def valid_backends() -> set[str]:
     keys.discard("_schema")
     if not keys:
         # Fallback to known providers to avoid treating everything as legacy
-        return {"phaxio", "sinch", "sip", "signalwire", "documo", "humblefax", "freeswitch"}
+        return {"phaxio", "sinch", "sip", "signalwire", "documo", "humblefax", "efax", "freeswitch"}
     return keys
 
 
@@ -312,16 +308,3 @@ def providerTraitValue(direction: str, trait_name: str):
         return tr.get(trait_name)
     except Exception:
         return None
-
-
-def is_inbound_sip() -> bool:
-    # SIP-like inbound if AMI is required by inbound provider
-    return providerHasTrait("inbound", "requires_ami")
-
-
-def is_outbound_cloud() -> bool:
-    try:
-        pid = active_outbound()
-        return (get_provider_traits(pid).get("kind") or "").lower() == "cloud"
-    except Exception:
-        return False

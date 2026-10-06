@@ -10,7 +10,7 @@ import typer
 from typer.core import TyperGroup
 
 from . import profiles, state
-from .commands import access, admin, delivery, fax, operations, settings, setup
+from . import nouns
 from .errors import CliError
 from .output import Output, error
 from .state import State
@@ -18,8 +18,75 @@ from .state import State
 VERSION = '1.0.0'
 
 
+GLOBAL_OPTIONS = ('url', 'key', 'profile', 'json_output', 'quiet')
+
+
+def _option_table_for(param):
+    takes_value = not (param.is_flag or param.count)
+    return {name: takes_value for name in (*param.opts, *param.secondary_opts)}
+
+
+def _option_table(command, ctx):
+    """Every option string of a command, mapped to whether it takes a value."""
+    table = {}
+    for param in command.get_params(ctx):
+        if getattr(param, 'param_type_name', None) == 'option':
+            table.update(_option_table_for(param))
+    return table
+
+
+def hoist_global_options(root, ctx, args):
+    """Move global options written after a subcommand to just before it.
+
+    `faxbot received list --json` then means `faxbot --json received list`. An option
+    the subcommand defines itself (system profiles save --url) stays with it, option
+    values are never mistaken for options, and nothing after `--` moves.
+    """
+    globals_table = {name: value for param in root.get_params(ctx) if param.name in GLOBAL_OPTIONS
+                     for name, value in _option_table_for(param).items()}
+    command, kept, hoisted, insert_at = root, [], [], None
+    position = 0
+    while position < len(args):
+        token = args[position]
+        position += 1
+        if token == '--':
+            kept.append(token)
+            kept.extend(args[position:])
+            break
+        if token.startswith('-') and len(token) > 1:
+            name, has_value = token.split('=', 1)[0], '=' in token
+            own = _option_table(command, ctx)
+            if name in own:
+                kept.append(token)
+                if own[name] and not has_value and position < len(args):
+                    kept.append(args[position])
+                    position += 1
+            elif command is not root and name in globals_table:
+                hoisted.append(token)
+                if globals_table[name] and not has_value and position < len(args):
+                    hoisted.append(args[position])
+                    position += 1
+            else:
+                kept.append(token)
+            continue
+        if hasattr(command, 'get_command'):  # a command group
+            subcommand = command.get_command(ctx, token)
+            if subcommand is not None:
+                if command is root:
+                    insert_at = len(kept)
+                command = subcommand
+        kept.append(token)
+    if not hoisted or insert_at is None:
+        return list(args)
+    return kept[:insert_at] + hoisted + kept[insert_at:]
+
+
 class FaxbotGroup(TyperGroup):
     """Report expected failures as one plain sentence; never print tracebacks or local values."""
+
+    def parse_args(self, ctx, args):
+        # Global options are also accepted after the subcommand: faxbot received list --json.
+        return super().parse_args(ctx, hoist_global_options(self, ctx, args))
 
     def invoke(self, ctx):
         try:
@@ -42,9 +109,9 @@ def _json_mode(ctx):
 
 app = typer.Typer(
     name='faxbot', cls=FaxbotGroup, no_args_is_help=True, pretty_exceptions_enable=False,
-    help='Send and receive faxes and run a Faxbot installation from the command line.\n\n'
-         'Commands talk to a running Faxbot server with an API key. The admin commands work on a '
-         'stopped installation on this computer.',
+    help='Send and receive faxes and look after your Faxbot installation from the command line. Commands work '
+         'with a running Faxbot server and use your key. The system status, migrate, recover-owner, backup and'
+         ' restore commands work on this computer while Faxbot is stopped.',
     context_settings={'help_option_names': ['-h', '--help']},
 )
 
@@ -62,13 +129,13 @@ def main(
                             help='Faxbot server address, for example https://fax.example.com. '
                                  'Defaults to your saved profile, then http://localhost:8080.'),
     key: str = typer.Option(None, '--key', envvar='FAXBOT_API_KEY', metavar='API_KEY', show_default=False,
-                            help='API key to use. Defaults to your saved profile. Prefer the environment '
-                                 'variable or a profile so the key stays out of your shell history.'),
+                            help='The key to use. Defaults to the key in your saved profile. A profile or '
+                                 'FAXBOT_API_KEY keeps the key out of your command history.'),
     profile: str = typer.Option(None, '--profile', envvar='FAXBOT_PROFILE', metavar='NAME',
-                                help='Saved profile to use (see faxbot config).'),
+                                help='Saved profile to use (see faxbot system profiles).'),
     json_output: bool = typer.Option(False, '--json', help='Print results as JSON, for scripts.'),
     quiet: bool = typer.Option(False, '--quiet', '-q',
-                               help='Print nothing on success, except secrets shown only once.'),
+                               help='Print nothing when a command works, except keys and passwords shown only once.'),
     version: bool = typer.Option(False, '--version', callback=_version, is_eager=True,
                                  help='Show the version and exit.'),
 ):
@@ -84,13 +151,7 @@ def main(
                                      client_factory=supplied.get('client_factory')))
 
 
-fax.register(app)
-access.register(app)
-settings.register(app)
-delivery.register(app)
-operations.register(app)
-setup.register(app)
-admin.register(app)
+nouns.register(app)
 
 
 def run():

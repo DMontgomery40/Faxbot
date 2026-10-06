@@ -31,6 +31,9 @@ RUN curl --fail --location --retry 3 --output asterisk.tar.gz \
     && printf '%s\n' '04b2eb1f0f01aa0ad1945b167171843448a51aa6b7c3e806496d434f13a112b7  /usr/src/download-cache/pjproject-2.17.tar.bz2' | sha256sum --check --strict
 
 WORKDIR /usr/src/asterisk-22.11.0
+# Faxbot's own changes to Asterisk, each explained at the top of its file.
+COPY patches/ /usr/src/patches/
+RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward < "$change" || exit 1; done
 RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var \
        --with-pjproject-bundled --with-spandsp \
     && make menuselect.makeopts \
@@ -47,6 +50,18 @@ RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedi
     && test -f /opt/install/usr/lib/asterisk/modules/func_base64.so \
     && test -f /opt/install/usr/lib/asterisk/modules/chan_pjsip.so
 
+# Debian links /var/run to /run. BuildKit will not copy a real directory over
+# that link, so the installed run directory moves to where the link points,
+# and the build stops if any other installed directory would land on a link.
+RUN if [ -d /opt/install/var/run ] && [ ! -L /opt/install/var/run ]; then \
+       mkdir -p /opt/install/run \
+       && cp -a /opt/install/var/run/. /opt/install/run/ \
+       && rm -rf /opt/install/var/run; \
+    fi \
+    && find /opt/install -mindepth 1 -type d -printf '/%P\n' | while read -r path; do \
+       if [ -L "$path" ]; then echo "Installed directory $path would replace a link" >&2; exit 1; fi; \
+    done
+
 FROM base
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 LABEL org.opencontainers.image.title="Faxbot Asterisk" \
@@ -58,7 +73,7 @@ LABEL org.opencontainers.image.title="Faxbot Asterisk" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       bash ca-certificates gettext-base dumb-init tzdata curl netcat-openbsd procps \
+       bash ca-certificates gettext-base dumb-init tzdata curl netcat-openbsd procps iproute2 \
        libedit2 libjansson4 libsqlite3-0 libuuid1 libxml2 libssl3t64 libncurses6 \
        libspandsp2t64 libtiff6 libsrtp2-1 libunbound8 \
     && rm -rf /var/lib/apt/lists/*
@@ -69,10 +84,10 @@ WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
-COPY bin/faxbot-inbound-notify /usr/local/bin/faxbot-inbound-notify
-RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify \
+COPY bin/faxbot-inbound-notify bin/faxbot-public-address /usr/local/bin/
+RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
-    && test -x /usr/bin/envsubst
+    && test -x /usr/bin/envsubst && test -x /usr/bin/ip
 
 VOLUME ["/faxdata"]
 

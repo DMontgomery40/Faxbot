@@ -18,8 +18,15 @@ INTRODUCTION = (
 )
 
 
+def visible(command):
+    """A freshly built command tree without its hidden commands, all the way down."""
+    if isinstance(getattr(command, 'commands', None), dict):
+        command.commands = {name: visible(sub) for name, sub in command.commands.items() if not sub.hidden}
+    return command
+
+
 def render():
-    command = typer.main.get_command(app)
+    command = visible(typer.main.get_command(app))
     context = Context(command, info_name='faxbot')
     context.obj = {MARKUP_MODE_KEY: app.rich_markup_mode}
     body = get_docs_for_click(obj=command, ctx=context, name='faxbot', title='Command line reference')

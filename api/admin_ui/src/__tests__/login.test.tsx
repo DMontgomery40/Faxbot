@@ -8,6 +8,13 @@ function type(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+// Opens a page from the left panel: its area first, then the page's link.
+async function openPage(area: string, page: string) {
+  const areaButton = await screen.findByRole('button', { name: area });
+  if (areaButton.getAttribute('aria-expanded') !== 'true') fireEvent.click(areaButton);
+  fireEvent.click(await screen.findByRole('link', { name: page }));
+}
+
 async function signInWithPassword(login: string, password: string) {
   await screen.findByRole('heading', { name: 'Sign in' });
   type('Username', login);
@@ -33,7 +40,8 @@ describe('console sign-in', () => {
     expect(backend.requestsTo('POST', '/auth/login')[0].body).toEqual({ login: 'admin', password: 'correct horse' });
     expect(screen.queryByText(/local only/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    fireEvent.click(screen.getByTestId('user-menu-button'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in' });
     const logout = backend.requestsTo('POST', '/auth/logout');
     expect(logout).toHaveLength(1);
@@ -111,7 +119,7 @@ describe('console sign-in', () => {
     await signInWithPassword('admin', 'correct horse');
     await screen.findByText('Ada Admin');
     const probesBefore = backend.requestsTo('GET', '/auth/me').length;
-    fireEvent.click(screen.getByRole('tab', { name: 'Jobs' }));
+    await openPage('Faxes', 'Sent');
     await waitFor(() => expect(backend.requestsTo('GET', '/auth/me').length).toBeGreaterThan(probesBefore));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
@@ -123,7 +131,8 @@ describe('console sign-in', () => {
     await signInWithPassword('admin', 'correct horse');
     await screen.findByText('Ada Admin');
     backend.state.session = null;
-    fireEvent.click(screen.getByRole('tab', { name: 'Inbox' }));
+    // Send a fax reads the console context again on entry.
+    await openPage('Faxes', 'Send a fax');
     await screen.findByRole('heading', { name: 'Sign in' });
     expect(screen.getByText('Your session has ended. Sign in again.')).toBeTruthy();
   });
@@ -152,5 +161,43 @@ describe('API client credentials', () => {
     expect(requests[0].headers['x-api-key']).toBe('fbk_live_scan_original');
     expect('x-api-key' in requests[1].headers).toBe(false);
     await waitFor(() => expect(requests).toHaveLength(2));
+  });
+});
+
+describe('A new installation with no owner yet', () => {
+  const FIRST = 'This installation has no owner yet: sign in with the installation key (API_KEY in .env) to create the first owner.';
+
+  it('asks for the installation key first and says why', async () => {
+    backend.state.firstOwner = true;
+    render(<App />);
+    expect((await screen.findByTestId('first-owner')).textContent).toBe(FIRST);
+    expect(screen.getByLabelText('Installation key')).toBeTruthy();
+    expect(screen.queryByLabelText('Username')).toBeNull();
+    type('Installation key', 'bootstrap-secret');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText(/No owner account exists yet/)).toBeTruthy();
+  });
+
+  it('is the usual sign-in once an owner exists', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByLabelText('Username')).toBeTruthy();
+    expect(screen.queryByTestId('first-owner')).toBeNull();
+  });
+
+  it('ends creating the first owner at Setup when no fax provider is set up', async () => {
+    backend.state.firstOwner = true;
+    backend.state.providerView = { plugins_enabled: false, install_enabled: false, active_outbound: '', active_inbound: '' };
+    render(<App />);
+    await screen.findByLabelText('Installation key');
+    type('Installation key', 'bootstrap-secret');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create the first owner' }));
+    type('Username', 'owner');
+    type('Display name', 'Olive Owner');
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+    expect(await screen.findByRole('heading', { name: 'Setup Wizard' })).toBeTruthy();
   });
 });

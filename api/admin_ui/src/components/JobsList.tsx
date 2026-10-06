@@ -31,25 +31,33 @@ import {
   Checkbox,
   FormControlLabel,
 } from '@mui/material';
-import { Refresh as RefreshIcon } from '@mui/icons-material';
+import { Refresh as RefreshIcon, Send as SendIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
-import type { DirectDeliveryRecord } from '../api/deliveryTypes';
-import { ROUTE_LABELS } from './delivery/DeliverySettings';
+import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
+import { providerLabel } from '../providerLabels';
+
 
 interface JobsListProps {
   client: AdminAPIClient;
+  // A fax to open in Job Details on arrival, such as the one Send just queued.
+  openJobId?: string | null;
+  onOpened?: () => void;
+  // Opens Send a fax; absent for people who may not send.
+  onSendFax?: () => void;
 }
 
 const statusOptions = [
-  { value: '', label: 'All Statuses' },
-  { value: 'held', label: 'Held (test)' },
-  { value: 'ready', label: 'Ready' },
+  { value: '', label: 'All' },
+  { value: 'held', label: 'Held test fax' },
+  { value: 'ready', label: 'Ready to send' },
   { value: 'preparing', label: 'Preparing' },
-  { value: 'submitting', label: 'Submitting' },
-  { value: 'in_progress', label: 'In Progress' },
+  { value: 'submitting', label: 'Sending' },
+  { value: 'in_progress', label: 'In progress' },
   { value: 'reconciliation_required', label: 'Needs review' },
-  { value: 'success', label: 'Success' },
+  { value: 'success', label: 'Delivered' },
   { value: 'failed', label: 'Failed' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
@@ -70,7 +78,7 @@ function deliveryNotice(job: FaxJob): string | null {
   if (deliveryState(job) === 'reconciliation_required') {
     return job.dispatch_mode === 'legacy'
       ? 'Imported fax with no delivery record; check your provider account for the outcome.'
-      : "Delivery couldn't be confirmed; check your provider account before resending.";
+      : "Delivery couldn't be confirmed; check your provider account and confirm receipt instead of resending.";
   }
   return null;
 }
@@ -84,13 +92,15 @@ const eventLabels: Record<string, string> = {
   dispatch_paused: 'Sending paused',
   submission_authorized: 'Sending to provider',
   submission_uncertain: 'Provider response unclear',
+  sent_together: 'Going in one call with other faxes to this number',
+  batch_split: 'Going on its own instead of with other faxes',
   preparation_failed: 'Could not prepare fax',
   preparation_expired: 'Preparation timed out',
   provider_observation_refused: 'Provider update ignored',
   terminal_conflict: 'Conflicting provider update ignored',
   late_observation: 'Late provider update',
   provider_observed: 'Provider status update',
-  operator_identity_bound: 'Provider fax ID added',
+  operator_identity_bound: 'Receipt confirmed with the provider fax ID',
   route_assigned: 'Route chosen',
   route_fallback: 'Trying the next route',
 };
@@ -107,6 +117,9 @@ const categoryLabels: Record<string, string> = {
   sid_mismatch: 'Provider fax ID did not match',
   provider_failed: 'The provider reported that the fax failed',
   partner_not_received: 'The direct delivery partner did not receive it',
+  local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
+  partly_sent: 'Part of this fax may have arrived before the call failed',
+  pages_unconfirmed: 'The call ended without confirming which pages arrived',
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct
@@ -139,18 +152,35 @@ function eventDetails(event: DeliveryHistoryEvent): string {
   const details = event.details;
   return [
     details.category && categoryLabels[details.category],
+    details.reason,
     details.status && `Status: ${statusLabel(details.status)}`,
     details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
-    details.actor && `Operator: ${details.actor}`,
+    // details.actor is an internal sign-in ID, so it is not shown.
     details.provider_sid && `Provider fax ID: ${details.provider_sid}`,
-    details.route && `Route: ${ROUTE_LABELS[details.route] ?? (details.route === 'direct' ? 'Direct delivery' : details.route)}`,
+    details.route && `Route: ${details.route === 'direct' ? 'Direct delivery' : providerLabel(details.route)}`,
     details.legacy_status && `Earlier status: ${details.legacy_status}`,
   ].filter(Boolean).join(' • ');
 }
 
 interface DetailSelection { jobId: string }
 
-function JobsList({ client }: JobsListProps) {
+export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
+
+function routeName(route: string): string {
+  if (route === 'local') return 'This Faxbot';
+  return route === 'direct' ? 'Direct delivery' : providerLabel(route);
+}
+
+// The route that carried the fax (its latest attempt), and any route tried before it.
+export function routeText(backend: string, cost?: FaxCost | null): string {
+  const routes = cost?.routes ?? [];
+  if (!routes.length) return providerLabel(backend);
+  const last = routeName(routes[routes.length - 1]);
+  const earlier = routes.slice(0, -1).map(routeName);
+  return earlier.length ? `${last} (after ${earlier.join(', ')})` : last;
+}
+
+function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +199,7 @@ function JobsList({ client }: JobsListProps) {
   const [originalAccountConfirmed, setOriginalAccountConfirmed] = useState(false);
   const detailSelectionRef = useRef<DetailSelection | null>(null);
   const detailActionRef = useRef<object | null>(null);
+  const costs = useFaxCosts(client, jobs);
 
   useEffect(() => {
     setJobDetailOpen(false);
@@ -190,7 +221,7 @@ function JobsList({ client }: JobsListProps) {
       setJobs(data.jobs);
       setTotal(data.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch jobs');
+      setError(err instanceof Error ? err.message : 'Sent faxes could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -271,12 +302,12 @@ function JobsList({ client }: JobsListProps) {
     // Direct delivery records need settings access; without them the dialog works as before.
     setDirectRecords(directResult.status === 'fulfilled' ? directResult.value.deliveries : null);
     if (jobResult.status === 'fulfilled') setSelectedJob(jobResult.value);
-    else setJobActionError(jobResult.reason instanceof Error ? jobResult.reason.message : "Couldn't load job details. Select Reload Delivery to try again.");
+    else setJobActionError(jobResult.reason instanceof Error ? jobResult.reason.message : "Couldn't load this fax. Select Reload to try again.");
     if (deliveryResult.status === 'fulfilled') setDelivery(deliveryResult.value);
-    else setDeliveryError(deliveryResult.reason instanceof Error ? deliveryResult.reason.message : "Couldn't load delivery history. Select Reload Delivery to try again.");
+    else setDeliveryError(deliveryResult.reason instanceof Error ? deliveryResult.reason.message : "Couldn't load the delivery attempts. Select Reload to try again.");
     const newerJob = jobResult.status === 'fulfilled' && deliveryResult.status === 'fulfilled'
       && (jobResult.value.delivery_version ?? 0) > deliveryResult.value.version;
-    if (newerJob) setDeliveryError('This fax changed while loading. Select Reload Delivery to see the latest.');
+    if (newerJob) setDeliveryError('This fax changed while loading. Select Reload to see the latest.');
     const complete = jobResult.status === 'fulfilled' && deliveryResult.status === 'fulfilled' && !newerJob;
     setReviewRequired(!complete);
     return complete;
@@ -298,6 +329,13 @@ function JobsList({ client }: JobsListProps) {
     try { await loadDetail(selection); }
     finally { finishDetailAction(selection, action); }
   };
+
+  // Arriving from Send's "Follow it in Sent" opens that fax's details.
+  useEffect(() => {
+    if (!openJobId) return;
+    onOpened?.();
+    void handleJobClick(openJobId);
+  }, [openJobId]);
 
   const handleCloseJobDetail = () => {
     detailSelectionRef.current = null;
@@ -365,16 +403,16 @@ function JobsList({ client }: JobsListProps) {
       setDelivery(updated);
       setDeliveryError(null);
       setProviderIdDraft('');
-      setJobActionMessage('Provider fax ID added. Use Refresh Status to check delivery.');
+      setJobActionMessage('Receipt confirmed. Select Refresh status to check delivery with the provider.');
       const complete = await loadDetail(selection);
       if (detailSelectionRef.current === selection && !complete) {
-        setJobActionError("Provider fax ID added, but the details couldn't be reloaded. Select Reload Delivery.");
+        setJobActionError("Receipt confirmed, but the details couldn't be reloaded. Select Reload.");
       }
     } catch (err) {
       if (detailSelectionRef.current === selection) {
         setJobActionError(attached
-          ? "Provider fax ID added, but the details couldn't be reloaded. Select Reload Delivery."
-          : err instanceof Error ? err.message : "Couldn't confirm the fax ID was added. Select Reload Delivery to check.");
+          ? "Receipt confirmed, but the details couldn't be reloaded. Select Reload."
+          : err instanceof Error ? err.message : "Couldn't tell whether the receipt was recorded. Select Reload to check.");
       }
     } finally { finishDetailAction(selection, action); }
   };
@@ -415,30 +453,43 @@ function JobsList({ client }: JobsListProps) {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Fax Jobs
-        </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchJobs}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
+      <Box display="flex" justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}
+        flexDirection={{ xs: 'column', sm: 'row' }} gap={2} mb={3}>
+        <Box>
+          <Typography variant="h4" component="h1">
+            Sent
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Faxes sent from this installation, newest first. Select one to see its delivery attempts.
+          </Typography>
+        </Box>
+        <Box display="flex" gap={1}>
+          {onSendFax && (
+            <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}>
+              Send a fax
+            </Button>
+          )}
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchJobs}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={3}>
           <FormControl fullWidth>
-            <InputLabel id="jobs-status-label" shrink>Status Filter</InputLabel>
+            <InputLabel id="jobs-status-label" shrink>Show</InputLabel>
             <Select
               id="jobs-status-filter"
               labelId="jobs-status-label"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              label="Status Filter"
+              label="Show"
               displayEmpty
               renderValue={(value) => statusOptions.find(option => option.value === value)?.label ?? value}
             >
@@ -450,7 +501,7 @@ function JobsList({ client }: JobsListProps) {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            Total: {total} jobs
+            {total} {total === 1 ? 'fax' : 'faxes'}
           </Typography>
         </Grid>
       </Grid>
@@ -470,7 +521,7 @@ function JobsList({ client }: JobsListProps) {
           ) : jobs.length === 0 ? (
             <Box textAlign="center" py={4}>
               <Typography variant="body1" color="text.secondary">
-                No jobs found
+                {statusFilter ? 'No faxes match this filter.' : 'No faxes sent yet.'}
               </Typography>
             </Box>
           ) : (
@@ -478,12 +529,11 @@ function JobsList({ client }: JobsListProps) {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ minWidth: 120 }}>Job ID</TableCell>
-                    <TableCell sx={{ minWidth: 100, display: { xs: 'none', sm: 'table-cell' } }}>To Number</TableCell>
-                    <TableCell sx={{ minWidth: 80 }}>Status</TableCell>
-                    <TableCell sx={{ minWidth: 80, display: { xs: 'none', md: 'table-cell' } }}>Backend</TableCell>
+                    <TableCell sx={{ minWidth: 100 }}>To</TableCell>
+                    <TableCell sx={{ minWidth: 160 }}>Status</TableCell>
+                    <TableCell sx={{ minWidth: 80, display: { xs: 'none', md: 'table-cell' } }}>Route</TableCell>
                     <TableCell sx={{ minWidth: 60, display: { xs: 'none', md: 'table-cell' } }}>Pages</TableCell>
-                    <TableCell sx={{ minWidth: 150, display: { xs: 'none', lg: 'table-cell' } }}>Error</TableCell>
+                    <TableCell sx={{ minWidth: 90, display: { xs: 'none', md: 'table-cell' } }}>Cost</TableCell>
                     <TableCell sx={{ minWidth: 120 }}>Created</TableCell>
                     <TableCell sx={{ minWidth: 120, display: { xs: 'none', sm: 'table-cell' } }}>Updated</TableCell>
                   </TableRow>
@@ -497,11 +547,6 @@ function JobsList({ client }: JobsListProps) {
                       onClick={() => handleJobClick(job.id)}
                     >
                       <TableCell>
-                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
-                          {job.id.slice(0, 8)}...
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
                           {job.to_number}
                         </Typography>
@@ -517,10 +562,31 @@ function JobsList({ client }: JobsListProps) {
                         {deliveryNotice(job) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                           {deliveryNotice(job)}
                         </Typography>}
+                        {togetherLine(job.together) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}
+                          data-testid="job-together">{togetherLine(job.together)}</Typography>}
+                        {job.error && (
+                          // The whole sentence, wrapped between words; never cut mid-word.
+                          <Typography
+                            variant="caption"
+                            color="error"
+                            data-testid="job-error"
+                            sx={{
+                              display: 'block',
+                              mt: 0.5,
+                              maxWidth: 320,
+                              whiteSpace: 'normal',
+                              overflowWrap: 'normal',
+                              wordBreak: 'normal',
+                              fontSize: { xs: '0.6rem', sm: '0.75rem' }
+                            }}
+                          >
+                            {job.error}
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <Typography variant="body2" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
-                          {job.backend}
+                          {routeText(job.backend, costs.get(job.id))}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
@@ -528,23 +594,11 @@ function JobsList({ client }: JobsListProps) {
                           {job.pages || '-'}
                         </Typography>
                       </TableCell>
-                      <TableCell sx={{ maxWidth: 200, display: { xs: 'none', lg: 'table-cell' } }}>
-                        {job.error && (
-                          <Typography
-                            variant="caption"
-                            color="error"
-                            sx={{
-                              display: 'block',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              fontSize: { xs: '0.6rem', sm: '0.75rem' }
-                            }}
-                            title={job.error}
-                          >
-                            {job.error}
-                          </Typography>
-                        )}
+                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
+                        <Typography variant="body2" title={costs.get(job.id)?.summary ?? undefined} data-testid="job-cost"
+                          sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
+                          {costAmount(costs.get(job.id))}
+                        </Typography>
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' } }}>
@@ -566,7 +620,7 @@ function JobsList({ client }: JobsListProps) {
           {jobs.length > 0 && (
             <Box mt={2}>
               <Typography variant="caption" color="text.secondary">
-                Auto-refreshing every 10 seconds • Phone numbers are masked
+                Updates every 10 seconds.
               </Typography>
             </Box>
           )}
@@ -576,7 +630,7 @@ function JobsList({ client }: JobsListProps) {
       {/* Job Detail Modal */}
       <Dialog open={jobDetailOpen} onClose={handleCloseJobDetail} maxWidth="md" fullWidth aria-labelledby="fax-job-details-title">
         <DialogTitle id="fax-job-details-title">
-          Job Details
+          Fax details
         </DialogTitle>
         <DialogContent>
           {detailBusy && <Box display="flex" alignItems="center" gap={1} sx={{ mb: 2 }} role="status">
@@ -592,14 +646,14 @@ function JobsList({ client }: JobsListProps) {
             <List>
               <ListItem>
                 <ListItemText
-                  primary="Job ID"
+                  primary="Fax ID"
                   secondary={detailJob.id}
                 />
               </ListItem>
               <Divider />
               <ListItem>
                 <ListItemText
-                  primary="To Number"
+                  primary="To"
                   secondary={detailJob.to_number}
                 />
               </ListItem>
@@ -628,8 +682,23 @@ function JobsList({ client }: JobsListProps) {
               <Divider />
               <ListItem>
                 <ListItemText
-                  primary="Backend"
-                  secondary={detailJob.backend}
+                  primary="Route"
+                  secondary={<>
+                    {routeText(detailJob.backend, costs.get(detailJob.id))}
+                    {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {detailJob.send_by_call && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-by-call">
+                        {BY_CALL_TEXT}
+                      </Typography>
+                    )}
+                    {costs.get(detailJob.id)?.route_explanation && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-route-reason">
+                        {costs.get(detailJob.id)?.route_explanation}
+                      </Typography>
+                    )}
+                  </>}
                 />
               </ListItem>
               <Divider />
@@ -639,10 +708,17 @@ function JobsList({ client }: JobsListProps) {
                   secondary={detailJob.pages || 'Unknown'}
                 />
               </ListItem>
+              {detailJob.fax_engine?.sentence && (
+                <ListItem data-testid="job-fax-engine">
+                  <ListItemText primary="How the pages went" secondary={detailJob.fax_engine.sentence} />
+                </ListItem>
+              )}
+              <FaxCostItem client={client} jobId={detailJob.id} />
+              <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <Divider />
               <ListItem>
                 <ListItemText
-                  primary="File Name"
+                  primary="Document"
                   secondary={detailJob.file_name || 'Unknown'}
                 />
               </ListItem>
@@ -656,7 +732,7 @@ function JobsList({ client }: JobsListProps) {
               <Divider />
               <ListItem>
                 <ListItemText
-                  primary="Last Updated"
+                  primary="Updated"
                   secondary={formatDate(detailJob.updated_at)}
                 />
               </ListItem>
@@ -665,7 +741,7 @@ function JobsList({ client }: JobsListProps) {
                   <Divider />
                   <ListItem>
                     <ListItemText
-                      primary="Error Details"
+                      primary="What went wrong"
                       secondary={
                         <Alert severity="error" sx={{ mt: 1 }}>
                           <Typography variant="body2">
@@ -680,35 +756,39 @@ function JobsList({ client }: JobsListProps) {
             </List>
           )}
           <Divider sx={{ my: 2 }} />
-          <Typography variant="h6" component="h2" gutterBottom>Delivery History</Typography>
+          <Typography variant="h6" component="h2" gutterBottom>Delivery attempts</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Each try to send this fax and what the provider reported, as Faxbot recorded it.
+          </Typography>
           {deliveryError && <Alert severity="error" sx={{ mb: 2 }}>{deliveryError}</Alert>}
           {reviewRequired && !detailBusy && !deliveryError && !jobActionError && <Alert severity="warning" sx={{ mb: 2 }}>
-            Select Reload Delivery to see the latest details before adding a fax ID.
+            Select Reload to see the latest details before confirming receipt.
           </Alert>}
           {delivery && <>
             {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>
-              <ListItem><ListItemText primary="Original Provider" secondary={delivery.provider_id ?? 'Unavailable'} /></ListItem>
-              <ListItem><ListItemText primary="Original Provider Account" secondary={delivery.profile_id ?? 'Unavailable'} /></ListItem>
+              {/* The account is kept by ID in the API; there is no name to show for it here. */}
+              <ListItem><ListItemText primary="Provider of the latest attempt"
+                secondary={delivery.provider_id ? providerLabel(delivery.provider_id) : 'Unavailable'} /></ListItem>
             </List>
-            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Latest Attempt</Typography>
+            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Latest attempt</Typography>
             {delivery.attempt ? <List dense>
               <ListItem><ListItemText primary="Stage" secondary={statusLabel(delivery.attempt.phase)} /></ListItem>
-              <ListItem><ListItemText primary="Provider Fax ID" secondary={delivery.attempt.provider_sid ?? 'None yet'} /></ListItem>
+              <ListItem><ListItemText primary="Provider fax ID" secondary={delivery.attempt.provider_sid ?? 'None yet'} /></ListItem>
               <ListItem><ListItemText primary="Submitted" secondary={delivery.attempt.submitted_at ? formatDate(delivery.attempt.submitted_at) : 'Not yet'} /></ListItem>
               <ListItem><ListItemText primary="Completed" secondary={delivery.attempt.completed_at ? formatDate(delivery.attempt.completed_at) : 'Not yet'} /></ListItem>
             </List> : <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>No send attempts yet.</Typography>}
             {!delivery.can_bind_provider_identity && !direct?.hideFaxId && delivery.state === 'reconciliation_required' && <Typography
               variant="body2" color="text.secondary" sx={{ my: 2 }}>
-              A provider fax ID can't be added to this fax from here.
+              Receipt can't be confirmed for this fax from here.
             </Typography>}
             {canAttachFaxId && selectedJob && <Box component="form"
               onSubmit={(event) => { event.preventDefault(); void handleAttachProviderIdentity(); }} sx={{ my: 2 }}>
-              <Typography variant="subtitle1" component="h3" gutterBottom>Attach Confirmed Provider Fax ID</Typography>
+              <Typography variant="subtitle1" component="h3" gutterBottom>Confirm receipt</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Adding the ID doesn't resend the fax; it lets Refresh Status check delivery with your provider.
+                If your provider's account shows it accepted this fax, enter the fax ID shown there so Faxbot can follow it. This never sends the fax again.
               </Typography>
-              <TextField fullWidth label="Confirmed provider fax ID" value={providerIdDraft}
+              <TextField fullWidth label="Provider fax ID" value={providerIdDraft}
                 onChange={(event) => {
                   if (detailActionRef.current) return;
                   setProviderIdDraft(event.target.value);
@@ -724,13 +804,13 @@ function JobsList({ client }: JobsListProps) {
                 onChange={(event) => {
                   if (!detailActionRef.current && !reviewRequired) setOriginalAccountConfirmed(event.target.checked);
                 }}
-              />} label="I matched this fax ID in the ORIGINAL provider account shown above against this fax's destination, document and submission time." />
+              />} label="I checked: this fax ID is in the original provider's account and matches this fax's number, document and time." />
               <Button type="submit" variant="contained"
                 disabled={detailBusy || reviewRequired || !validProviderId || !originalAccountConfirmed}>
-                Attach Confirmed Provider Fax ID
+                Confirm receipt
               </Button>
             </Box>}
-            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Delivery Events</Typography>
+            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>What happened</Typography>
             {delivery.events_truncated && <Typography variant="caption" color="text.secondary" display="block" sx={{ my: 1 }}>
               Showing the latest 100 events.
             </Typography>}
@@ -749,8 +829,8 @@ function JobsList({ client }: JobsListProps) {
         </DialogContent>
         <DialogActions>
           {selectedJob && <Button onClick={handleDownloadPdf} disabled={detailBusy}>Download PDF</Button>}
-          {selectedJob && <Button onClick={handleRefreshStatus} disabled={detailBusy}>Refresh Status</Button>}
-          <Button onClick={handleReloadDelivery} disabled={detailBusy}>Reload Delivery</Button>
+          {selectedJob && <Button onClick={handleRefreshStatus} disabled={detailBusy}>Refresh status</Button>}
+          <Button onClick={handleReloadDelivery} disabled={detailBusy}>Reload</Button>
           <Button onClick={handleCloseJobDetail}>Close</Button>
         </DialogActions>
       </Dialog>

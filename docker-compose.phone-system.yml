@@ -1,0 +1,28 @@
+# Only for a phone system on your local network (Avaya IP Office or Aura) that
+# sends faxes to Faxbot and carries Faxbot's faxes out over its own lines.
+# Set FAXBOT_LAN_ADDRESS in .env to this computer's address on that network,
+# then start Faxbot with both files:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d
+#
+# SIP (5060, UDP and TCP) and the media range are published on that address
+# only, never on every interface, so nothing is opened toward the internet.
+# FAXBOT_MEDIA_PORTS sets the media range (default 4000-4019): Asterisk uses
+# its first third for T.38 and the rest for audio, so every three ports carry
+# about one fax at a time (20 ports: 6 faxes at once). Never set more than 100
+# ports: Docker starts one helper process per published port and publishes
+# the whole range before Asterisk starts; Asterisk then refuses a range wider
+# than 100. Do not combine this file with docker-compose.public.yml.
+#
+# The phone system and Faxbot recognise each other by address, so the phone
+# system's own address must reach Asterisk unchanged: Docker Engine on Linux
+# does that; Docker Desktop and Colima replace it, so use a Linux host.
+services:
+  asterisk:
+    environment:
+      - FAXBOT_PHONE_SYSTEM_ADDRESS=${FAXBOT_LAN_ADDRESS:?Set FAXBOT_LAN_ADDRESS in .env to this computer's address on your local network}
+      - FAXBOT_MEDIA_PORTS=${FAXBOT_MEDIA_PORTS:-4000-4019}
+    ports:
+      - "${FAXBOT_LAN_ADDRESS:?Set FAXBOT_LAN_ADDRESS in .env}:5060:5060/udp"
+      - "${FAXBOT_LAN_ADDRESS:?Set FAXBOT_LAN_ADDRESS in .env}:5060:5060/tcp"
+      - "${FAXBOT_LAN_ADDRESS:?Set FAXBOT_LAN_ADDRESS in .env}:${FAXBOT_MEDIA_PORTS:-4000-4019}:${FAXBOT_MEDIA_PORTS:-4000-4019}/udp"

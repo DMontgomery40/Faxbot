@@ -23,6 +23,17 @@ config.attributes["schema_authentication"] = importlib.import_module(package + "
 config.attributes["schema_capabilities"] = importlib.import_module(package + ".schema_capabilities")
 config.attributes["schema_delivery"] = importlib.import_module(package + ".schema_delivery")
 config.attributes["schema_sip"] = importlib.import_module(package + ".schema_sip")
+config.attributes["schema_inbound"] = importlib.import_module(package + ".schema_inbound")
+config.attributes["schema_work"] = importlib.import_module(package + ".schema_work")
+config.attributes["schema_charges"] = importlib.import_module(package + ".schema_charges")
+config.attributes["schema_records"] = importlib.import_module(package + ".schema_records")
+config.attributes["schema_batching"] = importlib.import_module(package + ".schema_batching")
+config.attributes["schema_inbound_sources"] = importlib.import_module(package + ".schema_inbound_sources")
+config.attributes["schema_case_packets"] = importlib.import_module(package + ".schema_case_packets")
+config.attributes["schema_fax_engine"] = importlib.import_module(package + ".schema_fax_engine")
+config.attributes["schema_terminal"] = importlib.import_module(package + ".schema_terminal")
+config.attributes["schema_retired_permissions"] = importlib.import_module(package + ".schema_retired_permissions")
+config.attributes["schema_local_delivery"] = importlib.import_module(package + ".schema_local_delivery")
 
 
 def migrate(connection):

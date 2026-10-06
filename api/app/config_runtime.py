@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import copy_context
 from pathlib import Path
 import asyncio
+import logging
 
 import anyio
 import sqlalchemy as sa
@@ -14,6 +15,7 @@ from .config_activation import ConfigurationManager, ConfigurationActivationErro
 from .config_bootstrap import load_bootstrap_configuration, ConfigurationBootstrapError
 from .config_lifecycle import InstallationLifecycle
 from .config_store import ConfigurationStore, ConfigurationNotInitialized
+from .config_values import ConfigurationValues, ConfigurationValueError
 
 
 async def run_lifecycle_step(operation):
@@ -38,6 +40,48 @@ async def run_lifecycle_step(operation):
         raise
 
 
+def _earlier_release_schema(database_url):
+    """Whether the database still has a release's tables from before saved configuration."""
+    from .schema import create_database_engine
+    try:
+        engine = create_database_engine(database_url)
+    except Exception:
+        return False
+    try:
+        with engine.connect() as connection:
+            tables = set(sa.inspect(connection).get_table_names())
+        return 'fax_jobs' in tables and 'configuration_state' not in tables
+    except sa.exc.SQLAlchemyError:
+        return False
+    finally:
+        engine.dispose()
+
+
+def _earlier_release_records(engine):
+    """Whether the database upgrade found faxes, keys or mailboxes from an earlier release.
+
+    The access migration records what it found in one installation audit entry;
+    a new database records zero of everything.
+    """
+    import json
+    found = ('keys_total', 'outbound_personal', 'outbound_legacy', 'inbound_legacy', 'mailbox_resources')
+    try:
+        with engine.connect() as connection:
+            audit = sa.table('access_audit', sa.column('operation'), sa.column('target_kind'), sa.column('details'))
+            rows = connection.execute(sa.select(audit.c.details).where(
+                audit.c.operation == 'access_migration', audit.c.target_kind == 'installation')).scalars().all()
+    except sa.exc.SQLAlchemyError:
+        return False
+    for details in rows:
+        try:
+            counts = json.loads(details)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(counts, dict) and any(isinstance(counts.get(name), int) and counts[name] > 0 for name in found):
+            return True
+    return False
+
+
 class ConfigurationRuntime:
     def __init__(self, environment):
         self.environment = dict(environment)
@@ -47,6 +91,8 @@ class ConfigurationRuntime:
         self.snapshot = None
         self.candidate = None
         self.serving = False
+        # Settings whose value comes from the environment at every start (names only).
+        self.env_managed = frozenset(ConfigurationValues.environment_credentials(self.environment))
 
     def prepare(self):
         """Called in the actual worker, before preparing any long-lived resources."""
@@ -56,15 +102,19 @@ class ConfigurationRuntime:
         self.lifecycle.acquire()
         try:
             self._require_stopped_schema_upgrade()
+            earlier_schema = _earlier_release_schema(self.locations.database_url)
             with use_configuration(self.locations):
                 db.init_db()
             key_path = self.environment.get('FAXBOT_INSTALLATION_KEY_PATH') or str(directory / '.configuration.key')
             store = ConfigurationStore(db.engine, key_path)
             self.manager = ConfigurationManager(store)
+            initialized = False
             try:
                 snapshot = store.read()
             except ConfigurationNotInitialized:
-                imported = load_bootstrap_configuration(self.environment)
+                initialized = True
+                imported = load_bootstrap_configuration(
+                    self.environment, earlier_release=earlier_schema or _earlier_release_records(db.engine))
                 # The deployment must locate its store and lock/key directory
                 # before reading that store. A legacy file cannot redirect them.
                 if (imported.values.database_url != self.locations.database_url
@@ -78,13 +128,119 @@ class ConfigurationRuntime:
             if (snapshot.active.values.database_url != self.locations.database_url
                     or Path(snapshot.active.values.fax_data_dir).absolute() != directory.absolute()):
                 raise ConfigurationBootstrapError('Deployment storage locations do not match this installation; use the maintenance transfer workflow.')
+            if self.lifecycle.can_promote:
+                # Before any other write: a write saves every setting and ends the adoption.
+                snapshot = self._adopt_promoted_environment(snapshot)
+                snapshot = self._clear_placeholder_numbers(snapshot)
+                snapshot = self._apply_environment_credentials(snapshot)
+                snapshot = self._create_engine_password(snapshot, new_installation=initialized)
             self.snapshot = snapshot
             self.candidate = snapshot.desired if self.lifecycle.can_promote else snapshot.active
             self._check_telephony_drain()
+            self._share_engine_credentials()
             return self
         except BaseException:
             self.lifecycle.close()
             raise
+
+    def _adopt_promoted_environment(self, snapshot):
+        """Settings once read only from the environment keep their variable after an upgrade.
+
+        A saved configuration from before a setting became a configuration value
+        takes the variable once, as one revision by "environment". A value that is
+        not valid is left out with a warning, so the upgrade still starts.
+        """
+        supplied = ConfigurationValues.environment_adoptions(self.environment, snapshot.desired.values)
+        changes = {}
+        for name, (variable, value) in supplied.items():
+            try:
+                snapshot.desired.values.with_patch({name: value})
+            except ConfigurationValueError:
+                logging.getLogger(__name__).warning(
+                    '%s in the environment is not valid; Faxbot kept its saved setting.', variable)
+                continue
+            changes[name] = value
+        if not changes:
+            return snapshot
+        return self.manager.apply_environment(snapshot, changes)
+
+    def _clear_placeholder_numbers(self, snapshot):
+        """Clear an earlier release's made-up station ID and FreeSWITCH caller ID, once.
+
+        A fax machine shows the station ID and the carrier sees the caller ID, so
+        neither may be a number nobody was given. One revision with an audit row.
+        """
+        changes = snapshot.desired.values.placeholder_clearings()
+        if not changes:
+            return snapshot
+        return self.manager.apply_environment(snapshot, changes)
+
+    def _apply_environment_credentials(self, snapshot):
+        """Credentials in the environment are the values in force: record any that changed.
+
+        Runs at startup before serving, under the installation's startup ownership.
+        Unchanged values add no revision; a removed variable leaves the stored value.
+        """
+        supplied = ConfigurationValues.environment_credentials(self.environment)
+        desired = snapshot.desired.values
+        changes = {name: value for name, (_, value) in supplied.items() if getattr(desired, name) != value}
+        if not changes:
+            return snapshot
+        try:
+            return self.manager.apply_environment(snapshot, changes)
+        except ConfigurationValueError:
+            variables = ', '.join(sorted(supplied[name][0] for name in changes))
+            raise ConfigurationBootstrapError(
+                f'A credential set in the environment is not valid ({variables}); fix it in .env, then run docker compose up -d.') from None
+
+    def _uses_engine(self, revision):
+        """Whether this revision connects to Faxbot's fax engine (Asterisk) over its manager port."""
+        from .config_activation import _routes_need_ami
+        store = self.manager.store
+        return (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                    for _, identity in revision.profiles)
+                or _routes_need_ami(revision.values, self.manager.catalog_loader(revision.values)))
+
+    def _create_engine_password(self, snapshot, *, new_installation):
+        """Create the Asterisk manager password the first time the SIP trunk comes into use.
+
+        The password is plumbing between Faxbot's own two containers, so nobody
+        has to type it twice. It is created once, as a setting saved by
+        "system", only while the stored password is still the shipped default,
+        only when no ASTERISK_AMI_PASSWORD is set in the environment (that
+        value always wins), and only when the fax engine connection is new: on
+        a new installation, or when the running settings did not use Asterisk
+        yet. An installation already connected to an Asterisk of its own keeps
+        its password. It takes effect in this same start, before Faxbot
+        connects, and is written for Asterisk by _share_engine_credentials.
+        """
+        import secrets
+        desired = snapshot.desired
+        if ('ami_password' in self.env_managed or desired.values.ami_password not in ('', 'changeme')
+                or not self._uses_engine(desired)):
+            return snapshot
+        if not new_installation and self._uses_engine(snapshot.active):
+            return snapshot
+        try:
+            result = self.manager.patch(snapshot, {'ami_password': secrets.token_urlsafe(24)}, actor='system')
+        except (ConfigurationActivationError, ConfigurationValueError):
+            return snapshot
+        try:
+            from .audit import audit_event
+            audit_event('engine_password_created', backend='sip')
+        except Exception:
+            pass
+        return result
+
+    def _share_engine_credentials(self):
+        """Write the manager login for the Asterisk container when this start connects to it."""
+        from . import sip_trunk
+        try:
+            if self._uses_engine(self.candidate):
+                sip_trunk.write_manager_credentials(self.candidate.values)
+        except OSError:
+            import logging
+            logging.getLogger(__name__).warning('Faxbot could not write the fax engine login for Asterisk.')
 
     def _require_stopped_schema_upgrade(self):
         """Mixed old/new delivery writers cannot coexist during a migration."""
@@ -108,10 +264,15 @@ class ConfigurationRuntime:
         if self.candidate is not self.snapshot.pending:
             return
         store = self.manager.store
-        old_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                      for _, identity in self.snapshot.active.profiles)
-        new_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                      for _, identity in self.candidate.profiles)
+        from .config_activation import _routes_need_ami
+        active, candidate = self.snapshot.active.values, self.candidate.values
+        # A SIP extra route uses the same Asterisk connection as a SIP provider.
+        old_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                       for _, identity in self.snapshot.active.profiles)
+                   or _routes_need_ami(active, self.manager.catalog_loader(active)))
+        new_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                       for _, identity in self.candidate.profiles)
+                   or _routes_need_ami(candidate, self.manager.catalog_loader(candidate)))
         fields = ('ami_host', 'ami_port', 'ami_username', 'ami_password')
         replaces_ami = old_ami and (not new_ami or self.candidate.values.fax_disabled or any(
             getattr(self.snapshot.active.values, field) != getattr(self.candidate.values, field) for field in fields))

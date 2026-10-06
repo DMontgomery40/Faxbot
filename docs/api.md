@@ -10,7 +10,7 @@ Open `/docs` on that server for its Swagger UI (`http://localhost:8080/docs` in 
 
 ## Submit a document
 
-`POST /fax` accepts multipart `to` and `file` fields. `to` is a number with its country code, starting with `+`, or a national number for the installation country (`FAX_DEFAULT_COUNTRY`, default US); Faxbot stores and returns it in E.164 and refuses an incomplete number. Requests with the same `Idempotency-Key` are the same request when their numbers resolve to the same E.164 number with the same document and queue setting; faxes accepted before this release replay only with their original `to` text. A final line break in a TXT file does not add a blank page, and one-bit TIFF pages stay one-bit in the generated PDF. Supported PDF, TXT and TIFF preparation preserves document contents and validates the active upload limit. The optional `queue_only=true` condition refuses a stale queue-only form when sending has become enabled.
+`POST /fax` accepts multipart `to` and `file` fields. `to` is a number with its country code, starting with `+`, or a national number for the installation country (`FAX_DEFAULT_COUNTRY`, default US); Faxbot stores and returns it in E.164 and refuses an incomplete number. Requests with the same `Idempotency-Key` are the same request when their numbers resolve to the same E.164 number with the same document and queue setting; faxes accepted before this release replay only with their original `to` text. A final line break in a TXT file does not add a blank page, and one-bit TIFF pages stay one-bit in the generated PDF. Supported PDF, TXT and TIFF preparation preserves document contents and validates the active upload limit. The optional `queue_only=true` condition refuses a stale queue-only form when sending has become enabled. The optional `send_now=true` sends at once a fax to a number that [sends faxes together](operations/delivery-routes.md#sending-together); faxes already waiting for that number go in the same call.
 
 ```sh
 curl -X POST http://localhost:8080/fax   -H "X-API-Key: $API_KEY"   -F to=+15551234567   -F file=@./synthetic.pdf
@@ -34,7 +34,7 @@ Acceptance captures provider/account credentials, manifest/traits, URLs and conf
 
 ## Provider PDF access
 
-`GET /fax/{job_id}/pdf?token=...` serves the prepared PDF using the accepted token and expiry. It has no API-key header requirement for provider fetching, but rejects an invalid/expired token. A tokenized URL is sensitive. Reopening a job does not mint a new provider URL or retry its attempt. Admin Jobs offers a separate authenticated PDF download.
+`GET /fax/{job_id}/pdf?token=...` serves the prepared PDF using the accepted token and expiry. It has no API-key header requirement for provider fetching, but rejects an invalid/expired token. A tokenized URL is sensitive. Reopening a job does not mint a new provider URL or retry its attempt. The console's **Faxes → Sent** offers a separate authenticated PDF download.
 
 Document conversion never substitutes a placeholder for a missing dependency or disabled sending. Required TIFF conversion fails honestly when Ghostscript is unavailable. Builtin Phaxio/Sinch/SignalWire use PDF paths; captured traits determine whether another provider requires TIFF.
 

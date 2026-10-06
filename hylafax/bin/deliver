@@ -1,0 +1,55 @@
+#!/bin/sh
+# Send the engine's kept reports to Faxbot, oldest first (run as uucp: by the
+# notify script right after a job ends, and by the engine every few seconds).
+#
+# notify and the engine's start write each report into the engine's volume
+# (results/<time>-<name>.report) before anything is sent, so a report Faxbot
+# cannot take now is sent again later, also after a restart, until Faxbot
+# answers. A report Faxbot refuses as malformed moves to results/refused and
+# is not sent again; every other answer keeps it. Faxbot takes the same report
+# twice without change. The shared secret is read from etc/faxbot.conf at
+# send time and never stored with a report or printed.
+set -u
+
+spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
+state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
+outbox=$state/results
+config=$spool/etc/faxbot.conf
+
+[ -d "$outbox" ] && [ ! -L "$outbox" ] || exit 0
+[ -f "$config" ] || exit 1
+url=$(sed -n 's/^url=//p' "$config" | head -1)
+secret=$(sed -n 's/^secret=//p' "$config" | head -1)
+[ -n "$url" ] && [ -n "$secret" ] || exit 1
+
+# One sender at a time; the other one leaves the reports for the next round.
+exec 9>"$outbox/.sending"
+flock -n 9 || exit 0
+
+for report in "$outbox"/*.report; do
+  [ -f "$report" ] && [ ! -L "$report" ] || continue
+  case $report in
+    *-started.report) route=/_internal/hylafax/started ;;
+    *-recv[0-9]*-failed.report) route=/_internal/hylafax/received-failed ;;
+    *) route=/_internal/hylafax/result ;;
+  esac
+  code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
+    --max-time 30 -H @- -H 'Content-Type: application/json' --data-binary "@$report" "$url$route" 2>/dev/null)
+  case $code in
+    2??) rm -f "$report" ;;
+    400|404|409|413|422)
+      mkdir -p "$outbox/refused"
+      mv -f "$report" "$outbox/refused/"
+      printf 'faxbot-deliver: Faxbot refused report %s (answer %s); kept in results/refused\n' \
+        "${report##*/}" "$code" >&2 ;;
+    ''|000|401|403|503)
+      # Faxbot is starting, unreachable or refused the secret: every report waits for the next round.
+      printf 'faxbot-deliver: Faxbot is not taking reports yet (answer %s); trying again\n' "${code:-none}" >&2
+      exit 1 ;;
+    *)
+      # Something wrong with this report only: keep it, and send the ones after it.
+      printf 'faxbot-deliver: report %s not taken (answer %s); trying again later\n' "${report##*/}" "$code" >&2
+      failed=1 ;;
+  esac
+done
+exit "${failed:-0}"

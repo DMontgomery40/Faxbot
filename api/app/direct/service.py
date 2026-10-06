@@ -6,6 +6,7 @@ only a refusal that proves nothing was accepted allows the conventional fax
 route in the same attempt; any other failure after upload is reconciled by
 asking the partner, never by sending again.
 """
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -21,6 +22,7 @@ from ..config_runtime import run_lifecycle_step
 from ..outbound_worker import SubmissionReceipt
 from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
+from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
 from .crypto import (DirectProtocolError, card, canonical, check_card, check_signed, open_document, parse_manifest,
                      parse_timestamp, seal, signed, timestamp, verify)
 from .identity import IdentityUnavailable, identity_path, load_identity
@@ -40,17 +42,30 @@ class PartnerUnreachable(RuntimeError):
     """Nothing reached the partner: the connection could not be opened."""
 
 
-def _naive(moment):
-    return moment.astimezone(timezone.utc).replace(tzinfo=None) if moment.tzinfo else moment
+class PartnerAddressRefused(PartnerUnreachable):
+    """Nothing was sent: the partner's address is not a public Internet address."""
 
 
 class HttpClient:
-    """Production transport to partner installations."""
+    """Production transport to partner installations.
 
-    def __init__(self, *, timeout=60.0):
+    Unless private partners are allowed, each request first checks that the
+    partner's host resolves only to public addresses, then connects to the
+    address it checked (see addresses.py).
+    """
+
+    def __init__(self, *, timeout=60.0, allow_private=lambda: False, resolver=resolve):
         self.timeout = timeout
+        self.allow_private = allow_private
+        self.resolver = resolver
 
     async def request(self, method, url, **kwargs):
+        if not self.allow_private():
+            try:
+                address = await asyncio.to_thread(checked_address, url, resolver=self.resolver)
+            except PartnerAddressError as error:
+                raise PartnerAddressRefused(str(error)) from None
+            url, kwargs = pinned_request(url, address, kwargs)
         try:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
                 response = await client.request(method, url, **kwargs)
@@ -64,12 +79,16 @@ class HttpClient:
 
 
 class DirectService:
-    def __init__(self, engine, *, values, environment=None, http=None):
+    def __init__(self, engine, *, values, environment=None, http=None, resolver=resolve):
         """``values`` returns the active configuration values."""
         self.store = DirectStore(engine)
         self.values = values
         self.environment = environment or {}
-        self.http = http or HttpClient()
+        self.resolver = resolver
+        self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver)
+
+    def _allow_private(self):
+        return bool(getattr(self.values(), 'direct_allow_private_peers', False))
 
     # Identity and card ------------------------------------------------------
     def _path(self):
@@ -109,6 +128,11 @@ class DirectService:
         if (self.values().enforce_public_https and endpoint.scheme != 'https'
                 and endpoint.hostname not in {'localhost', '127.0.0.1', '::1'}):
             raise DirectConflict("The partner's address must use HTTPS.")
+        if not self._allow_private():
+            try:
+                checked_address(fields['endpoint'], resolver=self.resolver)
+            except PartnerAddressError as error:
+                raise DirectConflict(str(error)) from None
         return self.store.add_peer(fields, own_signing_key=self.identity(create=True).signing_key)
 
     # Receiving --------------------------------------------------------------
@@ -250,6 +274,8 @@ class DirectService:
         try:
             status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/verifications', json={
                 'statement': statement.decode('ascii'), 'signature': identity.sign(statement)})
+        except PartnerAddressRefused as error:
+            raise DirectConflict(str(error)) from None
         except PartnerUnreachable:
             raise DirectConflict('Faxbot could not reach the partner; check their address and try again.') from None
         except httpx.HTTPError:
@@ -339,8 +365,10 @@ class _DirectSubmission:
                 'manifest': (None, self.manifest, 'application/json'),
                 'signature': (None, self.signature.encode('ascii'), 'text/plain'),
                 'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
-        except PartnerUnreachable:
+        except PartnerUnreachable as error:
             await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+            if isinstance(error, PartnerAddressRefused):
+                raise DirectRefused(str(error)) from None
             raise DirectRefused('The partner could not be reached; nothing was sent.') from None
         except BaseException:
             await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))

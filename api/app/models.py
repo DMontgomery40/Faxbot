@@ -1,10 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-
-
-class FaxRequest(BaseModel):
-    to: str = Field(..., description="Destination number in E.164 or national format")
 
 
 class FaxJobOut(BaseModel):

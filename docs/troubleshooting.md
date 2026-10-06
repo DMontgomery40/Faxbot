@@ -1,9 +1,9 @@
 # TROUBLESHOOTING.md
 
 ## General
-- 401 Invalid API key: set `API_KEY` and pass `X-API-Key` header.
+- 401 Invalid API key: send a current key as the `X-API-Key` header. Keys belong to users and integrations; `API_KEY` is only the installation key. See [Authentication](security/authentication.md).
 - 413 File too large: adjust `MAX_FILE_SIZE_MB`.
-- 415 Unsupported file type: only PDF and TXT allowed.
+- 415 Unsupported file type: send PDF, TXT or a supported TIFF.
 - Prefer HTTPS for `PUBLIC_API_URL` in production. The cloud backend fetches PDFs from your server; use TLS.
 
 ## Phaxio Backend
@@ -24,7 +24,7 @@
   - API logs show reconnect with exponential backoff.
 - T.38 negotiation failed:
   - Provider supports UDPTL.
-  - Firewall forwards UDP `4000-4999`.
+  - The carrier sends T.38 data back to the path Faxbot's packets came from (no port forwarding is needed; see [Asterisk and SIP](setup/sip-asterisk.md#networking-nothing-to-open)).
   - `pjsip.conf` has `t38_udptl=yes` and redundancy.
 - No fax send:
   - Check Asterisk logs for `SendFAX` and `FaxResult` events.
@@ -50,7 +50,7 @@ See [MCP Transports](mcp/transports.md) for details.
 ### Common MCP Problems
 
 #### MCP Usage Tips
-- Ensure the main Faxbot API is reachable (`FAX_API_URL`) and your `API_KEY` is set.
+- Ensure the main Faxbot API is reachable (`FAX_API_URL`). Stdio servers need `API_KEY`; network servers need each client's own key.
 - For local files, use tooling that can access your filesystem as needed.
 
 #### Connection & Authentication
@@ -60,6 +60,7 @@ See [MCP Transports](mcp/transports.md) for details.
 
 ### Environment
 - `FAX_API_URL` points the MCP server at Faxbot. Only the stdio servers use `API_KEY`; network servers use each client's own key.
+- The servers built into the API (`ENABLE_MCP_HTTP`, `ENABLE_MCP_SSE`) work the same way: each caller sends its own Faxbot key, and the installation key is never used for their tool calls. They read `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS`, `MCP_OAUTH_SUBJECT_KEYS_FILE` and `MCP_RESOURCE_URL` from the API's environment.
 - **Authentication failures**: 
   - stdio: Check that `API_KEY` is a valid Faxbot API key with the permissions the tools need
   - Streamable HTTP and SSE: Check that the client sends its own Faxbot key as `Authorization: Bearer <key>` or `X-API-Key`

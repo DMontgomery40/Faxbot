@@ -7,8 +7,7 @@ PLUGIN_FIELDS = {
                'inbound_verify_signature': 'phaxio_inbound_verify_signature'},
     'sinch': {'project_id': 'sinch_project_id', 'api_key': 'sinch_api_key',
               'api_secret': 'sinch_api_secret', 'base_url': 'sinch_base_url',
-              'inbound_basic_user': 'sinch_inbound_basic_user', 'inbound_basic_pass': 'sinch_inbound_basic_pass',
-              'inbound_hmac_secret': 'sinch_inbound_hmac_secret', 'inbound_verify_signature': 'sinch_inbound_verify_signature'},
+              'inbound_basic_user': 'sinch_inbound_basic_user', 'inbound_basic_pass': 'sinch_inbound_basic_pass'},
     'signalwire': {'space_url': 'signalwire_space_url', 'project_id': 'signalwire_project_id',
                    'api_token': 'signalwire_api_token', 'fax_from_e164': 'signalwire_fax_from_e164',
                    'sms_from_e164': 'signalwire_sms_from_e164', 'callback_url': 'signalwire_status_callback_url',
@@ -17,6 +16,9 @@ PLUGIN_FIELDS = {
     'documo': {'api_key': 'documo_api_key', 'base_url': 'documo_base_url', 'sandbox': 'documo_use_sandbox'},
     'humblefax': {'access_key': 'humblefax_access_key', 'secret_key': 'humblefax_secret_key',
                   'from_number': 'humblefax_from_number'},
+    'efax': {'app_id': 'efax_app_id', 'api_key': 'efax_api_key', 'user_id': 'efax_user_id',
+             'caller_id': 'efax_caller_id', 'csid': 'efax_csid', 'poll_seconds': 'efax_poll_seconds',
+             'delete_after_download': 'efax_delete_after_download', 'webhook_secret': 'efax_webhook_secret'},
     'sip': {'ami_host': 'ami_host', 'ami_port': 'ami_port', 'ami_username': 'ami_username',
             'ami_password': 'ami_password', 'inbound_secret': 'asterisk_inbound_secret'},
     'freeswitch': {'esl_host': 'fs_esl_host', 'esl_port': 'fs_esl_port', 'esl_password': 'fs_esl_password',
@@ -25,3 +27,8 @@ PLUGIN_FIELDS = {
            'endpoint_url': 's3_endpoint_url', 'kms_key_id': 's3_kms_key_id'},
     'local': {},
 }
+
+# Plugin settings an earlier release had and this one removed: an older configuration that names one is
+# accepted and the value ignored. Sinch's Fax API (v3) signs no webhooks, so inbound_verify_signature
+# checked nothing and inbound_hmac_secret refused every real notification.
+RETIRED_PLUGIN_FIELDS = {'sinch': frozenset({'inbound_verify_signature', 'inbound_hmac_secret'})}

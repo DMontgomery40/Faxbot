@@ -1,7 +1,12 @@
 """Starting rate cards from a shipped JSON file, used only while the table is empty.
 
-The file lists advertised carrier prices with their source and date. Entries
+The file lists advertised carrier prices with their source and date, under
+``providers`` the advertised prices of cloud fax providers, and under ``plans``
+flat monthly plans (a ``monthly_fee`` with nothing charged per fax). Entries
 that do not validate are skipped; operators edit the cards in the console.
+
+``cards_in_use`` picks the shipped cards for the providers an installation
+uses, so a provider in use with a published price never shows "no price".
 """
 from datetime import datetime
 import json
@@ -55,7 +60,11 @@ def load_cards(path=None):
     except (OSError, ValueError):
         return []
     cards = []
-    for entry in _entries(document):
+    extra = []
+    for key in ('providers', 'plans'):
+        listed = document.get(key) if isinstance(document, dict) else None
+        extra += listed if isinstance(listed, list) else []
+    for entry in _entries(document) + extra:
         if not isinstance(entry, dict):
             continue
         try:
@@ -66,7 +75,30 @@ def load_cards(path=None):
                 parse_amount(str(entry.get('per_minute', '0'))), parse_amount(str(entry.get('per_page', '0'))),
                 parse_amount(str(entry.get('per_call', entry.get('setup', '0')))), _increment(entry),
                 int(entry.get('minimum_seconds', 0)), entry.get('source_url') or entry.get('source') or None,
-                _date(entry.get('captured_on') or entry.get('advertised_on'))))
+                _date(entry.get('captured_on') or entry.get('advertised_on')),
+                None if entry.get('monthly_fee') in (None, '') else parse_amount(str(entry['monthly_fee']), whole_digits=4)))
         except (InvalidRateCard, ValueError, TypeError):
             continue
     return cards
+
+
+def cards_in_use(values, cards):
+    """The shipped cards for providers this installation sends or receives with.
+
+    The SIP trunk's cards are its carrier's (``sip-<preset>``); a provider that
+    only sends gets its sending card, one that receives its receiving card.
+    """
+    sending = {values.effective_outbound, *values.outbound_route_providers} - {''}
+    receiving = {values.effective_inbound} - {''}
+    preset = getattr(values, 'sip_trunk_preset', '') or ''
+    chosen = []
+    for card in cards:
+        if card.provider_id.startswith('sip-'):
+            if not preset or card.provider_id != f'sip-{preset}':
+                continue
+            used = 'sip' in (sending if card.direction == 'outbound' else receiving)
+        else:
+            used = card.provider_id in (sending if card.direction == 'outbound' else receiving)
+        if used:
+            chosen.append(card)
+    return chosen

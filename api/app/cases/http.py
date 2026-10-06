@@ -47,6 +47,19 @@ def _entry_view(entry):
             'fax_id': entry['source_job_id']}
 
 
+@router.get('', dependencies=[Depends(require_permission('settings:read'))])
+async def recent_cases(request: Request, limit: int = Query(default=50, ge=1, le=200)):
+    """The newest cases this installation sent packets for, with recipient and document counts."""
+    ledger = _ledger(request)
+    try:
+        cases = await run_lifecycle_step(lambda: ledger.recent(limit))
+    except DeliveryStoreError:
+        raise HTTPException(503, detail='Case records are unavailable.') from None
+    return {'cases': [{'case_id': case['case_id'], 'to': case['recipient'], 'documents': case['documents'],
+                       'accepted': case['accepted'], 'pages': case['pages'], 'last_sent_at': case['last_sent_at'],
+                       'accepts_references': case['accepts_references']} for case in cases]}
+
+
 @router.get('/{case_id}/documents', dependencies=[Depends(require_permission('settings:read'))])
 async def case_documents(case_id: str, request: Request, to: str = Query(...)):
     case_id, recipient = _inputs(case_id, to, request)

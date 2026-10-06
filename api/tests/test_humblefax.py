@@ -173,12 +173,14 @@ def test_settings_use_documented_aliases_and_redact_both_keys():
     assert redacted['HUMBLEFAX_FROM_NUMBER'] == '13035550199'
     view = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', values), None))
+    # account_numbers are read from HumbleFax outside the snapshot; never under the test harness.
     assert view['humblefax'] == {'access_key': '***', 'secret_key': '***',
-                                 'from_number': '13035550199', 'configured': True}
+                                 'from_number': '13035550199', 'account_numbers': [], 'configured': True}
     assert ACCESS not in json.dumps(view) and SECRET not in json.dumps(view)
     empty = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', ConfigurationValues.from_environment({})), None))
-    assert empty['humblefax'] == {'access_key': '', 'secret_key': '', 'from_number': '', 'configured': False}
+    assert empty['humblefax'] == {'access_key': '', 'secret_key': '', 'from_number': '', 'account_numbers': [],
+                                  'configured': False}
 
 
 @pytest.mark.parametrize('number', ['+2025550123', '303-555-0199', '22025550123', '0025550123', '+442071234567', ' 3035550199'])
@@ -366,7 +368,9 @@ def test_unusable_create_reply_is_sanitized_and_not_retried(fake, document, stat
 def test_poll_maps_documented_humblefax_states_to_faxbot_states(fake, wire_status, expected):
     fake.reply(200, sent(status=wire_status))
     adapter, transport = service(fake)
-    assert asyncio.run(adapter.get_fax_status('123456')) == {'provider_sid': '123456', 'status': expected}
+    result = asyncio.run(adapter.get_fax_status('123456'))
+    assert {key: result[key] for key in ('provider_sid', 'status')} == {'provider_sid': '123456', 'status': expected}
+    assert ('failure' in result) == (expected == 'failed')
     [request] = fake.requests
     assert request['method'] == 'GET' and request['path'] == '/sentFax/123456'
     assert request['headers']['authorization'] == BASIC
@@ -569,3 +573,22 @@ async def test_unready_account_or_unsupported_destination_fails_before_submissio
     record = attempt(store, job)
     assert record['error_category'] == category and record['submitted_at'] is None
     assert fake.requests == []
+
+
+@pytest.mark.parametrize(('reason', 'sentence'), [
+    ('No fax machine detected at destination', 'No fax machine answered at that number.'),
+    ('Line busy', 'The number was busy each time HumbleFax called.'),
+    ('No answer', 'Nobody answered the call.'),
+    ('Number not in service', 'The number could not be reached.'),
+    ('Something new <script>', 'HumbleFax could not deliver the fax.'),
+])
+def test_a_failed_fax_says_why_in_faxbots_words(fake, reason, sentence):
+    """HumbleFax's failureReason (GetSentFax recipients) becomes one plain sentence, never its own text."""
+    payload = sent(status='failure')
+    payload['data']['sentFax']['recipients'] = [{'status': 'failure', 'failureReason': reason, 'error': reason,
+                                                 'numAttempts': 1}]
+    fake.reply(200, payload)
+    adapter, _ = service(fake)
+    result = asyncio.run(adapter.get_fax_status('123456'))
+    assert result['status'] == 'failed' and result['failure'] == sentence
+    assert reason not in result['failure'] or reason == sentence

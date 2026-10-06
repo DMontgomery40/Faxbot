@@ -80,28 +80,34 @@ class RequestIdentity:
                    tuple(legacy_fingerprints))
 
 
-def intent_fingerprint(*, version, to, queue_only, document_sha256):
-    """Version 1 binds ``to`` as entered; version 2 binds the canonical destination."""
-    if version not in (1, 2) or not isinstance(to, str) or type(queue_only) is not bool:
+def intent_fingerprint(*, version, to, queue_only, document_sha256, by_call=False):
+    """Version 1 binds ``to`` as entered; version 2 binds the canonical destination.
+
+    ``by_call`` (a real call even to one of the installation's own numbers) is bound only when
+    set, so requests made before it existed keep their fingerprints.
+    """
+    if (version not in (1, 2) or not isinstance(to, str) or type(queue_only) is not bool
+            or type(by_call) is not bool):
         raise ValueError('Invalid fax request identity.')
-    intent = json.dumps({'version': version, 'to': to, 'queue_only': queue_only,
-                         'document_sha256': document_sha256},
-                        sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    intent = {'version': version, 'to': to, 'queue_only': queue_only, 'document_sha256': document_sha256}
+    if by_call:
+        intent['by_call'] = True
+    intent = json.dumps(intent, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(intent.encode()).hexdigest()
 
 
-def request_fingerprints(*, entered, destination, queue_only, document_sha256):
+def request_fingerprints(*, entered, destination, queue_only, document_sha256, by_call=False):
     """Return ``(fingerprint, legacy_fingerprints)`` for one request.
 
     ``destination`` is the canonical number resolved for this request, or None
     when it cannot be resolved; only an exact version-1 replay can then match.
     """
     legacy = intent_fingerprint(version=1, to=entered, queue_only=queue_only,
-                                document_sha256=document_sha256)
+                                document_sha256=document_sha256, by_call=by_call)
     if destination is None:
         return legacy, ()
     return intent_fingerprint(version=2, to=destination, queue_only=queue_only,
-                              document_sha256=document_sha256), (legacy,)
+                              document_sha256=document_sha256, by_call=by_call), (legacy,)
 
 
 async def digest_upload(upload, *, max_bytes):

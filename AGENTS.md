@@ -4,9 +4,16 @@ Faxbot is one self-hosted fax product: a FastAPI backend, React Admin Console, p
 
 The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. This is documented future work; preserve the current Phase 1 and four-fix implementation scope.
 
+## Who reads what Faxbot writes
+
+- At a company running Faxbot, staff never open the console or the docs; they get their faxes by email. Everyone who reads the console, the `faxbot` command line and the docs is the administrator who set Faxbot up and handles its exceptions, usually the same person who runs its server, network and provider accounts.
+- Speak to that person directly and tell them what to set and where ("In your phone system, send fax calls to 192.168.1.20, port 5060"). Never write "ask your administrator", "give this to your administrator", "ask whoever installed Faxbot" or anything else that treats the reader as someone without access. The reader is that person.
+- Name another party only when real companies really do have one: the fax carrier or provider, a partner who manages an Avaya or BT phone system, the recipient's fax machine. Even then, give the reader the exact settings to check or pass on.
+- Keep developer material (API internals, revision IDs, plugin manifests, environment variables) in developer reference pages, out of operator guides and screens.
+
 ## Start here
 
-- [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the old `docs/architecture/` page is a pointer. Do not use legacy migration/mirror scripts for routine updates or target planning with generated patches.
+- [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the earlier design records (`planning/2026-10-02-*.md`) live there too. Do not target planning with generated patches.
 - Read [README.md](README.md) for current capabilities and its [roadmap](README.md#roadmap) for planned work. Verify against the current checkout before treating a capability as complete.
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Preserve unrelated changes and coordinate when another agent owns the same files.
 - Historical Markdown from 2025 is kept locally under `.archived/`, preserving its original paths. That folder is excluded from Git and Docker builds. Use current docs for instructions; do not restore archived pages to navigation or treat their old plans as active work.
@@ -18,15 +25,17 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 | Area | Code | Read first |
 | --- | --- | --- |
-| Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](docs/architecture/2026-10-02-faxbot-durable-outbound.md) |
+| Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](planning/2026-10-02-faxbot-durable-outbound.md) |
 | Route selection, cost estimates, and charge reconciliation | `api/app/routing/` | [Delivery routes and case packets](docs/operations/delivery-routes.md) |
+| Received-fax notifications, document fetching and provenance | `api/app/inbound/` | [Receiving faxes](docs/operations/receiving.md) |
 | Intake and email delivery | `api/app/intake/` | [Intake](docs/operations/intake.md) |
+| Work queue, acknowledgement targets, evidence export and generic import | `api/app/work/` | [Work](docs/operations/work.md) |
 | Encrypted delivery and peer verification | `api/app/direct/` | [Direct delivery](docs/operations/direct-delivery.md) |
 | Accepted case documents and packet preparation | `api/app/cases/` | [Case packets](docs/operations/delivery-routes.md#case-packets) |
 | Document conversion and request identity | `api/app/conversion.py`, `api/app/request_identity.py` | [Conversion implementation](api/app/conversion.py), [held test jobs](docs/setup/test-mode.md) |
-| Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](docs/architecture/2026-10-02-faxbot-configuration-activation.md) |
+| Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](planning/2026-10-02-faxbot-configuration-activation.md) |
 | Console and clients | `api/admin_ui/`, `sdks/`, `node_mcp/`, `python_mcp/` | [Console](docs/admin-console.md), [SDKs](docs/sdks/index.md), [MCP](docs/mcp/index.md) |
-| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json`, `config/plugin_registry.json` | [Schema design](docs/architecture/2026-10-02-faxbot-schema-foundation.md), [plugin registry](docs/plugins/registry.md) |
+| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json` | [Schema design](planning/2026-10-02-faxbot-schema-foundation.md) |
 | Future enterprise workflows, templates and setup | Extend existing access, intake, delivery and configuration boundaries; proposed modules are not current APIs | [Enterprise architecture and acceptance criteria](planning/enterprise-correspondence.md) |
 
 ## Enterprise planning boundaries
@@ -43,13 +52,14 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 - Adding, changing, or removing a capability includes updating `README.md` and its bottom-of-file roadmap immediately, in the same change as the implementation. Do not defer this to a later release or documentation pass.
 - Describe the behavior users can actually use, including material setup requirements and limits. Move a roadmap item to implemented only when its usable implementation and relevant checks are complete. Keep partial work and experiments explicitly unfinished.
-- Update affected operator/API/client documentation and links alongside the README. Add new documentation pages to `mkdocs.yml` when appropriate. Update this guide when the project direction or important entry points change.
+- Guides in `docs/` (setup, how-to, behavior and limits) are written by Docs Autopilot from the merged code, not by the agent that wrote the code: it sees only the code and the docs, so it reports what the code does and catches contradictions. After merging a wave, run the Docs Autopilot workflow on the integration branch (`apply`, base = the commit before the wave) and review its pull request like any other. Builders keep generated references current (`make cli-docs`, `scripts/docs_ai/generate_reference.py`), add new pages to `mkdocs.yml` when a feature needs one, and update this guide when the project direction or important entry points change. Docs Autopilot's own rules (who reads the guides, how to write them, what to propose and report) live in `scripts/docs_ai/generate_docs_from_diff.py`: `READER_RULE`, `proposal_prompt` and `audit_prompt`. When the guides keep getting something wrong, fix it there, not by editing lines in `docs/`.
 - Keep the roadmap in the README as the shared status source; do not create a competing roadmap. Research ideas, synthetic benchmark results, and advertised prices must not become claims of shipped behavior or measured financial savings.
 - Before reporting completion, check that capability descriptions, roadmap status, examples, and links agree with the code. Summarize relevant validation and any remaining limitations.
+- Write documentation (MkDocs pages, the README, `planning/` and internal notes) in clear, natural prose. Take ASD-STE100 Simplified Technical English as loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, and use one term for one thing. Never chop explanations into clipped fragments; read it back as a person would. Keep technical precision, and say plainly what is unverified or uncertain.
 
 ## Engineering boundaries
 
-- Preserve the public fax API, authorization checks, immutable attempt/provider bindings, and original document content. Make schema changes through additive migrations following the existing frozen-schema pattern.
+- Preserve the public fax API, authorization checks, immutable attempt/provider bindings, and original document content. Make schema changes through additive migrations following the existing frozen-schema pattern. The one owner-approved exception is the 2026-10-05 legacy cleanup: migration 0018 removes the Terminal from the built-in Host Operator role and 0019 removes retired permissions and the grants that named them (0019 writes an audit row with what it removed); both downgrades put them back. Don't use them as a pattern for new migrations.
 - Never blindly retransmit after an uncertain provider or direct-delivery outcome. Client idempotency and transport reconciliation are different responsibilities; retain both.
 - Unknown cost is not zero cost. Keep estimated, provider-reported, and settlement observations separate, and apply billing increments per attempt.
 - Direct delivery requires verified peers; case-document reuse requires recipient approval. Keep capability and fallback limits visible in the relevant documentation.

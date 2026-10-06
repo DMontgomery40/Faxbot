@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -7,6 +7,8 @@ import {
   CircularProgress,
   Stack,
   Fade,
+  Checkbox,
+  FormControlLabel,
   Grow,
   useTheme,
   useMediaQuery,
@@ -27,12 +29,18 @@ import {
 } from './common/ResponsiveFormFields';
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
+import type { BatchingCheck } from '../api/batchingTypes';
+import type { RecommendedRoute } from '../api/deliveryTypes';
+import { routeCostSentence } from './delivery/shared';
+import { countPdfPages } from './common/pdfPages';
 
 interface SendFaxProps {
   client: AdminAPIClient;
   config: AdminConfig | null;
   configLoading: boolean;
   configError: string | null;
+  // Open this fax in Sent (the confirmation links to it).
+  onOpenJob?: (jobId: string) => void;
 }
 
 interface SubmissionIntent {
@@ -58,13 +66,13 @@ function submissionKey(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function acceptanceMessage(response: FaxSendResult): string {
+function acceptanceMessage(response: FaxSendResult, to?: string): string {
   switch ((response.delivery_state || response.status).toLowerCase()) {
     case 'held':
-      return 'Test fax queued. It is held and will not be sent.';
+      return to ? `Test fax for ${to} queued. It is held and will not be sent.` : 'Test fax queued. It is held and will not be sent.';
     case 'ready':
     case 'queued':
-      return 'Fax queued for sending.';
+      return to ? `Fax queued for ${to}.` : 'Fax queued for sending.';
     case 'preparing':
       return 'Fax is being prepared.';
     case 'submitting':
@@ -74,18 +82,18 @@ function acceptanceMessage(response: FaxSendResult): string {
     case 'completed':
       return 'Fax delivered.';
     case 'failed':
-      return 'Fax failed. See Jobs for details.';
+      return 'Fax failed. See Sent for details.';
     case 'cancelled':
     case 'canceled':
       return 'Fax cancelled.';
     case 'reconciliation_required':
-      return "Faxbot couldn't confirm whether this fax was sent. Check Jobs before sending it again.";
+      return "Faxbot couldn't confirm whether this fax was sent. Check Sent before sending it again.";
     default:
       return 'Fax submitted.';
   }
 }
 
-function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
+function SendFax({ client, config, configLoading, configError, onOpenJob }: SendFaxProps) {
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -93,10 +101,54 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string; to?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
   const intentRef = useRef<SubmissionIntent | null>(null);
   const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
+
+  // A number that sends faxes together offers "Send now" (go at once, taking the faxes waiting for it).
+  const [together, setTogether] = useState<BatchingCheck | null>(null);
+  const [sendNow, setSendNow] = useState(false);
+  // One of this installation's own numbers: delivered inside Faxbot unless the sender asks for a real call.
+  const [byCall, setByCall] = useState(false);
+  useEffect(() => {
+    setTogether(null);
+    setSendNow(false);
+    if (!/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.checkBatching(toNumber)
+        .then((answer) => { if (live) setTogether(answer.sends_together ? answer : null); })
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber]);
+
+  // How many pages the chosen PDF has, so the estimate is for this document.
+  const [pages, setPages] = useState<number | null>(null);
+  useEffect(() => {
+    setPages(null);
+    if (!file) return undefined;
+    let live = true;
+    void countPdfPages(file).then((count) => { if (live) setPages(count); });
+    return () => { live = false; };
+  }, [file]);
+
+  // The route Faxbot would use for this number and what this fax costs there, before sending.
+  // People who may not read routing settings see the form without it.
+  const [route, setRoute] = useState<RecommendedRoute | null>(null);
+  useEffect(() => {
+    setRoute(null);
+    if (!/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.getDestination(normalizeFaxDestination(toNumber), pages ?? undefined)
+        .then((detail) => { if (live) setRoute(detail.recommended_routes[0] ?? null); })
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber, pages]);
+  const costSentence = route ? routeCostSentence(route, pages) : null;
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
@@ -169,14 +221,15 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
       savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
-        { queueOnly: intent.queueOnly, idempotencyKey: intent.key });
+        { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
+          byCall: route?.route === 'local' && byCall });
       const state = (response.delivery_state || response.status).toLowerCase();
+      const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
         type: state === 'reconciliation_required' ? 'warning' : state === 'failed' ? 'error'
           : state === 'success' || state === 'completed' ? 'success' : 'info',
-        message: acceptanceMessage(response),
+        message: acceptanceMessage(response, to),
         jobId: response.id,
-        to: typeof response.to === 'string' && response.to ? response.to : undefined,
       });
       
       // Clear form on success; a new send gets a new key, even for the same document and number.
@@ -218,7 +271,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   return (
     <Box onKeyPress={handleKeyPress}>
       <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
-        {faxDisabled ? 'Queue Test Fax' : 'Send Fax'}
+        {faxDisabled ? 'Queue a test fax' : 'Send a fax'}
       </Typography>
 
       {configLoading && <Alert severity="info" sx={{ mb: 3 }}>Loading send settings…</Alert>}
@@ -279,6 +332,33 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                   errorMessage={fileError ?? undefined}
                   icon={<DocumentIcon />}
                 />
+
+                {route && (
+                  <Box data-testid="send-route">
+                    <Typography variant="body2">Faxbot will send it through {route.label}.</Typography>
+                    <Typography variant="body2" color="text.secondary">{route.explanation}</Typography>
+                    {costSentence && (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
+                    )}
+                  </Box>
+                )}
+
+                {route?.route === 'local' && (
+                  <FormControlLabel data-testid="send-by-call"
+                    control={<Checkbox checked={byCall} onChange={(e) => setByCall(e.target.checked)}
+                      disabled={!configReady || loading} />}
+                    label="Send it through your carrier with a real call instead, to test your fax line" />
+                )}
+
+                {together && (
+                  <Box data-testid="send-now">
+                    <Typography variant="body2" color="text.secondary">{together.sentence}</Typography>
+                    <FormControlLabel
+                      control={<Checkbox checked={sendNow} onChange={(e) => setSendNow(e.target.checked)}
+                        disabled={!configReady || loading} />}
+                      label="Send now (faxes already waiting for this number go in the same call)" />
+                  </Box>
+                )}
 
                 <Box sx={{ 
                   display: 'flex', 
@@ -360,21 +440,13 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                 <Typography variant="body1" fontWeight={500}>
                   {result.message}
                 </Typography>
-                {result.to && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                    Fax number: <strong>{result.to}</strong>
-                  </Typography>
-                )}
-                {result.jobId && (
-                  <Box sx={{ mt: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      Job ID: <strong>{result.jobId}</strong>
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      You can track the status in the Jobs tab
-                    </Typography>
-                  </Box>
-                )}
+                {result.jobId && (onOpenJob ? (
+                  <Button size="small" sx={{ mt: 1, px: 0 }} onClick={() => onOpenJob(result.jobId!)}>
+                    See it in Sent
+                  </Button>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>See it in Sent.</Typography>
+                ))}
               </Box>
             </Alert>
           </Grow>
@@ -418,7 +490,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                     Job Status
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Follow each fax in the Jobs tab; delivery time depends on your provider.
+                    Follow each fax under Faxes, Sent; delivery time depends on your provider.
                   </Typography>
                 </Box>
               </Stack>

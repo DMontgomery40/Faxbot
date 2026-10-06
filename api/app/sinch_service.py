@@ -1,8 +1,9 @@
 from typing import Optional, Dict, Any, Tuple
 import httpx
 import os
+import re
 
-from .config import settings, reload_settings
+from .config import settings
 from .routing.numbers import canonical_number
 
 
@@ -93,6 +94,58 @@ class SinchFaxService:
             raise RuntimeError('Sinch status request failed.') from None
         return self._fax_response(resp)
 
+    # Received faxes (checked against developers.sinch.com on 2026-10-03):
+    # GET /v3/projects/{projectId}/faxes/{id} returns the fax (direction
+    # "INBOUND", from, to, numberOfPages, status, completedTime) and
+    # GET /v3/projects/{projectId}/faxes/{id}/file returns its document. Both
+    # use HTTP basic auth with the key ID and secret, and only ever go to a
+    # documented Sinch Fax API host.
+    @staticmethod
+    def received_fax_id(value: Any) -> str:
+        from .inbound.fetch import FetchError
+        text = value.strip() if isinstance(value, str) else ''
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', text) is None:
+            raise FetchError('This is not a Sinch fax ID.')
+        return text
+
+    def _received_url(self, fax_id: str, suffix: str = '') -> str:
+        from .inbound import fetch
+        if not self.is_configured():
+            raise fetch.FetchError('Enter the Sinch project ID, key ID and secret so Faxbot can fetch received faxes.')
+        if re.fullmatch(r'[A-Za-z0-9-]{1,64}', self.project_id or '') is None:
+            raise fetch.FetchError('The Sinch project ID in settings is not valid.')
+        url = f"{self.base_url.rstrip('/')}/projects/{self.project_id}/faxes/{self.received_fax_id(fax_id)}{suffix}"
+        return fetch.require_host(url, fetch.SINCH_HOSTS, 'Sinch')
+
+    async def get_received_fax(self, fax_id: Any) -> Optional[Dict[str, Any]]:
+        """Sinch's record of one received fax in this project, or None when it has none."""
+        from .inbound import fetch
+        fax_id = self.received_fax_id(fax_id)
+        status, data = await fetch.get_json(self._received_url(fax_id), auth=self._auth(),
+                                            hosts=fetch.SINCH_HOSTS, provider='Sinch')
+        if status == 404:
+            return None
+        if status in (401, 403):
+            raise fetch.FetchError('Sinch refused the configured key.')
+        if status != 200 or not isinstance(data, dict) or data.get('id') != fax_id:
+            raise fetch.FetchError('Sinch did not answer the fax lookup.')
+        if str(data.get('direction') or '').upper() != 'INBOUND':
+            return None
+
+        def text(name):
+            value = data.get(name)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        pages = data.get('numberOfPages')
+        return {'id': fax_id, 'status': (text('status') or '').lower(), 'from_number': text('from'),
+                'to_number': text('to'), 'completed_at': text('completedTime'),
+                'pages': pages if type(pages) is int and pages >= 0 else None, 'is_test': False}
+
+    async def download_received_fax(self, fax_id: Any) -> bytes:
+        """The document Sinch holds for one received fax; at most 50 MB."""
+        from .inbound import fetch
+        return await fetch.get_document(self._received_url(fax_id, '/file'), auth=self._auth(),
+                                        hosts=fetch.SINCH_HOSTS, provider='Sinch')
+
     async def send_fax_file(self, to_number: str, file_path: str) -> Dict[str, Any]:
         """Create a fax by posting the file directly as multipart/form-data.
 
@@ -110,22 +163,3 @@ class SinchFaxService:
         except (httpx.HTTPError, httpx.InvalidURL, OSError):
             raise RuntimeError('Sinch multipart create request failed.') from None
         return self._fax_response(resp)
-
-
-_sinch_service: Optional[SinchFaxService] = None
-
-
-def get_sinch_service() -> Optional[SinchFaxService]:
-    global _sinch_service
-    reload_settings()
-    if not (settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret):
-        _sinch_service = None
-        return None
-    if _sinch_service is None:
-        _sinch_service = SinchFaxService(
-            project_id=settings.sinch_project_id,
-            api_key=settings.sinch_api_key,
-            api_secret=settings.sinch_api_secret,
-            base_url=os.getenv("SINCH_BASE_URL") or None,
-        )
-    return _sinch_service

@@ -17,6 +17,12 @@ from app.config_values import ConfigurationValues
 JOB = "0123456789abcdef0123456789abcdef"
 ATTEMPT = "11111111-2222-4333-8444-555555555555"
 ACK_UUID = "ABCDEF01-2345-4678-9ABC-DEF012345678"
+# A hang guard, never a timing assumption: each wait that uses it ends as soon as its condition holds. A loaded
+# machine (a Docker image build alongside, 5 October 2026) can take seconds to reconnect after the client's
+# 1 s back-off, or stall between an action and its acknowledgement.
+CONDITION_TIMEOUT = 30.0
+# Only for tests whose action is never acknowledged: the timeout is what they wait for.
+UNACKNOWLEDGED_TIMEOUT = 0.05
 
 
 def test_native_preparation_is_explicit_and_matches_the_issued_contract():
@@ -159,7 +165,12 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
         "Hangup",
         "UserEvent",
         "Return",
+        "Gosub",
     }
+    # The only subroutine is the base64 helper, which itself only sets variables.
+    assert all("Gosub(faxbot-b64,s,1(" in line for line in send + terminal if ",Gosub(" in line)
+    helper = contexts["faxbot-b64"]
+    assert all(re.search(r",(Set|GotoIf|Return)\(", line) for line in helper if not line.startswith("#"))
     assert applications.count("SendFAX") == 1
     assert sum("UserEvent(FaxResult," in line for line in send) == 0
     assert sum("UserEvent(FaxResult," in line for line in terminal) == 1
@@ -211,8 +222,10 @@ class StreamWriter:
 
 
 @asynccontextmanager
-async def connected_stream(monkeypatch):
-    monkeypatch.setattr(ami, "ORIGINATE_RESPONSE_TIMEOUT_SECONDS", 0.05, raising=False)
+async def connected_stream(monkeypatch, response_timeout=CONDITION_TIMEOUT):
+    """An in-memory connection. A test that acknowledges its action keeps the hang guard (a stall between the
+    write and the acknowledgement must not time the action out); one that never does passes a short timeout."""
+    monkeypatch.setattr(ami, "ORIGINATE_RESPONSE_TIMEOUT_SECONDS", response_timeout, raising=False)
     client = ami.AMIClient()
     client.reader = asyncio.StreamReader()
     client.writer = writer = StreamWriter()
@@ -372,7 +385,7 @@ async def test_ami_uncertain_failure_cleans_pending_without_replaying(
     monkeypatch, failure
 ):
     """Each uncertain outcome must issue once and leave no stale future for reconnect."""
-    async with connected_stream(monkeypatch) as (client, writer):
+    async with connected_stream(monkeypatch, UNACKNOWLEDGED_TIMEOUT) as (client, writer):
         task = asyncio.create_task(
             client.originate_sendfax(
                 JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
@@ -393,7 +406,7 @@ async def test_ami_uncertain_failure_cleans_pending_without_replaying(
             else (TimeoutError, ConnectionError)
         )
         with pytest.raises(expected):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert len(writer.writes) == 1
         assert not client._pending_actions
 
@@ -438,13 +451,14 @@ async def test_ami_reconnect_never_reissues_the_unacknowledged_native_action():
     client = ami.AMIClient()
     try:
         with use_configuration(values):
-            await asyncio.wait_for(client.connect(), 2)
-            await asyncio.wait_for(logins.get(), 1)
+            await asyncio.wait_for(client.connect(), CONDITION_TIMEOUT)
+            await asyncio.wait_for(logins.get(), CONDITION_TIMEOUT)
             with pytest.raises(ConnectionError):
                 await client.originate_sendfax(
                     JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
                 )
-        await asyncio.wait_for(logins.get(), 3)
+        # The supervisor logs in again after its 1 s back-off; however long that takes, it never replays.
+        await asyncio.wait_for(logins.get(), CONDITION_TIMEOUT)
         await client.close()
         await asyncio.gather(*peers)
         assert len(writers) == 2
@@ -605,7 +619,9 @@ def fs_boundary(monkeypatch):
         return f"+OK Job-UUID: {ACK_UUID}\n"
 
     monkeypatch.setattr(freeswitch_service.subprocess, "check_output", output)
-    return calls
+    # FreeSWITCH needs the caller ID the carrier gave; there is no made-up default any more.
+    with use_configuration(ConfigurationValues.from_environment({"FREESWITCH_CALLER_ID_NUMBER": "+15555550100"})):
+        yield calls
 
 
 def test_freeswitch_returns_canonical_acceptance_uuid_with_bounded_single_command(
@@ -780,7 +796,11 @@ def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id
     assert fields["CallerID"] == "+15555550100"
     variables = _asterisk_variable_assignments(fields["Variable"])
     assert base64.b64decode(variables["FAXSTATION64"]).decode() == "+15555550111"
-    assert "PJSIP_HEADER(add,Accept-Contact)" not in variables
+    # The fax preference is on by default and can be turned off.
+    assert "PJSIP_HEADER(add,Accept-Contact)" in variables
+    plain = ami.originate_fields_for(_trunk(SIP_FAX_PREFERENCE_HEADER="false"), JOB, "+15555550123", "/fax/a.tif",
+                                     attempt_id=ATTEMPT)
+    assert "PJSIP_HEADER(add,Accept-Contact)" not in _asterisk_variable_assignments(plain["Variable"])
     flowroute = ami.originate_fields_for(
         _trunk(SIP_TRUNK_PRESET="flowroute", SIP_TRUNK_USERNAME="12345678"), JOB, "+15555550123",
         "/fax/a.tif", attempt_id=ATTEMPT)
@@ -841,7 +861,7 @@ async def test_every_listener_hears_each_event_and_a_failing_one_cannot_stop_the
 
 @pytest.mark.asyncio
 async def test_submission_is_announced_before_the_wire_even_when_never_acknowledged(monkeypatch):
-    async with connected_stream(monkeypatch) as (client, writer):
+    async with connected_stream(monkeypatch, UNACKNOWLEDGED_TIMEOUT) as (client, writer):
         submissions = []
         client.on_submission(lambda event: submissions.append((event, len(writer.writes))))
         with use_configuration(_trunk(SIP_FAX_PREFERENCE_HEADER="true")):
@@ -871,9 +891,27 @@ def test_outbound_result_reports_answer_end_media_and_remote_station_without_new
     send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
     assert send[1] == "same => n,Set(FAXBOT_ANSWERED=${EPOCH})"
     event = next(line for line in terminal if "UserEvent(FaxResult," in line)
-    for field in ("Mode:${FAXMODE}", "Station64:${BASE64_ENCODE(${REMOTESTATIONID})}",
+    assert "same => n(emit),Gosub(faxbot-b64,s,1(FAXBOT_STATION64,REMOTESTATIONID))" in terminal
+    for field in ("Mode:${FAXMODE}", "Station64:${FAXBOT_STATION64}",
                   "Answered:${FAXBOT_ANSWERED}", "Ended:${EPOCH}", "Cause:${HANGUPCAUSE}"):
         assert field in event
+
+
+def test_the_sip_call_id_is_captured_encoded_for_every_call_report():
+    """The carrier bills each call under its SIP Call-ID; every call report carries it, base64 encoded."""
+    # Read once, then encoded by the helper (an empty Call-ID stays empty without a warning).
+    capture = 'Gosub(faxbot-b64,s,1(FAXBOT_CALLID64,FAXBOT_CALLID))'
+    assert sum('Set(FAXBOT_CALLID=${CHANNEL(pjsip,call-id)})' in line
+               for line in _context_lines("faxbot-send") + _context_lines("faxbot-inbound-receive")) == 2
+    send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
+    receive, done = _context_lines("faxbot-inbound-receive"), _context_lines("faxbot-inbound-done")
+    assert sum(capture in line for line in send) == 1 and sum(capture in line for line in receive) == 1
+    answer = next(index for index, line in enumerate(receive) if "Answer()" in line)
+    assert any(capture in line for line in receive[:answer])
+    reports = [line for line in terminal + done if "UserEvent(" in line]
+    assert len(reports) == 3 and all(",CallID64:${FAXBOT_CALLID64}" in line for line in reports)
+    shell = next(line for line in done if "SHELL(" in line)
+    assert "callid64=${FILTER(" in shell
 
 
 def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_shell():
@@ -884,16 +922,17 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     assert any("FAXBOT_CALLER=${FILTER(0123456789+,${CALLERID(num)})}" in line for line in receive)
     assert any("hangup_handler_push)=faxbot-inbound-done" in line for line in receive)
     assert sum("ReceiveFAX(" in line for line in receive) == 1
-    system = [line for line in done if "System(" in line]
-    assert len(system) == 1
+    system = [line for line in done if "SHELL(" in line or "System(" in line]
+    assert len(system) == 1 and "SHELL(/usr/local/bin/faxbot-inbound-notify " in system[0]
     command = system[0]
     assert "ENV(" not in "\n".join(entry + receive + done)
     assert "CALLERID" not in command and "REMOTESTATIONID" not in command and "EXTEN" not in command
     for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
-                            "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXSTATUS", "FAXPAGES", "FAXMODE",
-                            "UNIQUEID"}, variable
-    for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}"):
+                            "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
+                            "FAXMODE", "UNIQUEID"}, variable
+    for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
+                "${FAXBOT_CALLID64}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw
     assert done[-1].endswith("Return()")
 
@@ -921,7 +960,7 @@ async def test_status_query_keeps_allowlisted_fields_and_drops_auth_details(monk
         client.on_fax_result(fax_events.append)
         for frame in frames:
             client.reader.feed_data(frame.encode())
-        response, events = await asyncio.wait_for(task, 1)
+        response, events = await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert response == {"response": "Success", "value": "", "message": "Following"}
         assert events == [{"ObjectName": "trunk-registration", "Status": "Registered",
                            "ServerUri": "sip:sip.telnyx.com:5060"}]
@@ -941,5 +980,30 @@ async def test_status_query_never_connects_and_cleans_up_on_disconnect(monkeypat
         await writer.requests.get()
         client.reader.feed_eof()
         with pytest.raises(ConnectionError):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert not client._queries
+
+
+def test_an_empty_station_id_is_the_trunk_caller_id_and_none_without_a_trunk():
+    trunk = ami.originate_fields_for(_trunk(FAX_LOCAL_STATION_ID=""), JOB, "+15555550123", "/fax/a.tif",
+                                     attempt_id=ATTEMPT)
+    station = _asterisk_variable_assignments(trunk["Variable"])["FAXSTATION64"]
+    assert base64.b64decode(station).decode() == "+15555550100" == trunk["CallerID"]
+    legacy = ami.originate_fields_for(ConfigurationValues.from_environment({}), JOB, "+15555550123", "/fax/a.tif",
+                                      attempt_id=ATTEMPT)
+    # No made-up station ID: the dialplan skips an empty one (station-empty).
+    assert _asterisk_variable_assignments(legacy["Variable"])["FAXSTATION64"] == ""
+    assert ConfigurationValues.from_environment({}).fax_station_id == ""
+
+
+
+def test_every_trunk_fax_falls_back_to_audio_when_the_carrier_refuses_t38():
+    """T.38 first, then audio on the same call: SendFAX and ReceiveFAX on the trunk carry option f.
+
+    Without it a refused T.38 re-INVITE aborts the fax ("Audio FAX not allowed ... aborting"), which
+    turned every HumbleFax call to the Telnyx number away on 2026-10-04 once T.38 came back on.
+    """
+    text = (Path(__file__).resolve().parents[2] / "asterisk/etc/asterisk/extensions.conf").read_text()
+    calls = re.findall(r"(SendFAX|ReceiveFAX)\(\$\{[A-Z0-9_]+\}(?:,([a-zA-Z]*))?\)", text)
+    trunk = [(app, options) for app, options in calls if app == "ReceiveFAX" or "z" in options]
+    assert trunk and all("f" in options for _, options in trunk), calls

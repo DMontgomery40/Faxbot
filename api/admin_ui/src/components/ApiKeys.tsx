@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -25,7 +26,7 @@ import KeyIcon from '@mui/icons-material/VpnKey';
 import PhoneIcon from '@mui/icons-material/PhoneIphone';
 import AdminAPIClient from '../api/client';
 import type { AccessKey, AccessUser, AuthMe } from '../api/types';
-import { endOfLocalDay, formatServerTime, isPast, localDay } from '../api/time';
+import { endOfLocalDay, formatServerTime, isPast, localDay, parseServerTime } from '../api/time';
 import SecretDialog, { type SecretReveal } from './access/SecretDialog';
 import PairPhoneDialog from './access/PairPhoneDialog';
 import {
@@ -50,6 +51,9 @@ import { grantable } from './access/permissions';
 interface ApiKeysProps {
   client: AdminAPIClient;
   me: AuthMe;
+  // Show only the signed-in person's own keys (My API keys), with a way back to every key.
+  onlyMine?: boolean;
+  onShowAll?: () => void;
 }
 
 type Principal = Pick<AccessUser, 'id' | 'kind' | 'display_name' | 'version'>;
@@ -71,6 +75,16 @@ type Pending = { action: 'rotate' | 'revoke'; keyId: string };
 
 const KIND_LABEL: Record<string, string> = { user: 'Person', integration: 'Integration', bootstrap: 'Installation key' };
 
+// Faxbot records a key's use at most once a minute, so a use in the last two minutes is "just now".
+const JUST_NOW_MS = 2 * 60 * 1000;
+
+export function lastUsedText(value: string | null | undefined, now = Date.now()): string {
+  const used = parseServerTime(value);
+  if (!used) return 'Never';
+  const age = now - used.getTime();
+  return age >= -JUST_NOW_MS && age < JUST_NOW_MS ? 'just now' : formatServerTime(value, 'Never');
+}
+
 function keyStatus(key: AccessKey): { label: string; tone: 'success' | 'default' | 'warning' | 'error' } {
   if (key.revoked_at) return { label: 'Revoked', tone: 'default' };
   if (key.pending_review) return { label: 'Needs review', tone: 'warning' };
@@ -82,7 +96,7 @@ const emptyDraft = (permissions: string[]): KeyDraft => ({ principalId: '', name
 
 const keyName = (key: AccessKey) => key.name || 'Unnamed key';
 
-export default function ApiKeys({ client, me }: ApiKeysProps) {
+export default function ApiKeys({ client, me, onlyMine = false, onShowAll }: ApiKeysProps) {
   const { isMobile } = useSmallScreens();
   const catalogue = useCatalogue(client);
   const allowed = useMemo(() => grantable(me), [me]);
@@ -270,6 +284,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
   };
 
   const permissionsOf = (key: AccessKey) => [...new Set(key.ceiling.map((entry) => entry.permission))];
+  const shown = onlyMine ? keys.filter((key) => key.principal.id === me.principal.id) : keys;
 
   return (
     <Box>
@@ -286,13 +301,21 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
 
       <ErrorBanner error={error} onReload={() => void reload()} onClose={() => setError(null)} />
 
+      {onlyMine && (
+        <Alert severity="info" sx={{ mb: 2 }} data-testid="only-my-keys"
+          action={onShowAll && <Button color="inherit" size="small" onClick={onShowAll}>Show all</Button>}>
+          These are only the keys that belong to you.
+        </Alert>
+      )}
+
       {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} />
-        : keys.length === 0 ? (
-          <EmptyState icon={<KeyIcon />} title="No API keys" text="Create a key for an app, scanner or phone that sends faxes."
+        : shown.length === 0 ? (
+          <EmptyState icon={<KeyIcon />} title="No API keys"
+            text={onlyMine ? 'You have not made any keys for yourself.' : 'Create a key for an app, scanner or phone that sends faxes.'}
             action={<Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} sx={{ borderRadius: 2 }}>Create key</Button>} />
         ) : isMobile ? (
           <Stack spacing={2}>
-            {keys.map((key) => {
+            {shown.map((key) => {
               const status = keyStatus(key);
               return (
                 <Card key={key.id} sx={{ borderRadius: 2 }}>
@@ -304,7 +327,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                       </Box>
                       <Typography variant="body2">Belongs to {key.principal.display_name}</Typography>
                       <Typography variant="body2" color="text.secondary">Expires: {formatServerTime(key.expires_at, 'Never')}</Typography>
-                      <Typography variant="body2" color="text.secondary">Last used: {formatServerTime(key.last_used_at, 'Never')}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last used: {lastUsedText(key.last_used_at)}</Typography>
                       <PermissionChips permissions={permissionsOf(key)} />
                       <Box>{actions(key)}</Box>
                     </Stack>
@@ -328,7 +351,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {keys.map((key) => {
+                {shown.map((key) => {
                   const status = keyStatus(key);
                   return (
                     <TableRow key={key.id} hover>
@@ -342,7 +365,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                       </TableCell>
                       <TableCell><PermissionChips permissions={permissionsOf(key)} limit={4} /></TableCell>
                       <TableCell>{formatServerTime(key.expires_at, 'Never')}</TableCell>
-                      <TableCell>{formatServerTime(key.last_used_at, 'Never')}</TableCell>
+                      <TableCell>{lastUsedText(key.last_used_at)}</TableCell>
                       <TableCell><StatusChip label={status.label} tone={status.tone} /></TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{actions(key)}</TableCell>
                     </TableRow>

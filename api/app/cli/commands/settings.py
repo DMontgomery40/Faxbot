@@ -2,23 +2,20 @@
 import typer
 
 from .. import profiles, state
-from ..client import segment
-from ..errors import CliError, EXIT_NOT_FOUND
+from ..errors import CliError, EXIT_CONFLICT, EXIT_NOT_FOUND
 from ..output import local_time, text
+from ...provider_labels import provider_label
 
-settings = typer.Typer(help='Installation settings. Secrets are always shown masked.', no_args_is_help=True)
+
+def _provider(identity):
+    """A provider's one plain name for people; JSON output keeps the id."""
+    return provider_label(identity) if identity else None
+
+settings = typer.Typer(help='Every Faxbot setting: show, change, check and save them. Passwords and keys are never shown.', no_args_is_help=True)
 providers = typer.Typer(help='Fax providers: which are installed and whether the active one is ready.',
                         no_args_is_help=True)
 diagnostics = typer.Typer(help='Check the installation without sending a fax.', no_args_is_help=True)
-pair = typer.Typer(help='Pair the Faxbot iPhone app (or a script acting as a phone).', no_args_is_help=True)
-
-
-def register(app):
-    app.add_typer(settings, name='settings')
-    app.add_typer(providers, name='providers')
-    app.command('health')(health)
-    app.add_typer(diagnostics, name='diagnostics')
-    app.add_typer(pair, name='pair')
+pair = typer.Typer(help='Pair the Faxbot iPhone app with this installation.', no_args_is_help=True)
 
 
 def _flatten(prefix, value, rows):
@@ -31,20 +28,29 @@ def _flatten(prefix, value, rows):
 
 @settings.command('get')
 def settings_get(section: str = typer.Argument(None, help='Only this section, for example limits or inbound.')):
-    """Show the installation settings, including changes waiting for a restart."""
+    """Show the settings, including changes waiting for a restart."""
     current = state.api().get('/admin/settings')
     meta = current.get('_meta', {})
     shown = current
     if section:
         if section not in current or section == '_meta':
-            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot settings get' to see them.",
+            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot system settings get' to see them.",
                            EXIT_NOT_FOUND)
         shown = {section: current[section]}
+
+    managed = set(meta.get('env_managed') or [])
 
     def human(out):
         rows = []
         _flatten('', {key: value for key, value in shown.items() if key != '_meta'}, rows)
+        for row in rows:
+            if row[0].replace('.', '_') in managed:
+                row[1] = 'set in .env'
         out.table(['Setting', 'Value'], rows)
+        if managed:
+            out.line('Set in .env (change them there, then run docker compose up -d): ' + ', '.join(sorted(managed)))
+        if not (current.get('backend') or {}).get('type') and (not section or section in {'backend', 'hybrid'}):
+            out.line('No fax provider set up yet.')
         if meta.get('apply_state') == 'pending_restart':
             out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
     state.out().result(shown if section else current, human)
@@ -61,6 +67,21 @@ def _value(raw):
     return raw
 
 
+def _request_names():
+    """Each setting's name in a settings change, by its own name and by that name.
+
+    Settings are accepted by their configuration names too (fax_backend is sent as
+    backend). The server converts text to numbers and yes/no itself, so values of
+    known settings are sent as typed: a fax number such as 3035551234 stays text.
+    """
+    from ...config_values import ConfigurationValues
+    names = {}
+    for name, field in ConfigurationValues.model_fields.items():
+        sent = (field.json_schema_extra or {}).get('patch_name', name)
+        names[name] = names[sent] = sent
+    return names
+
+
 @settings.command('set')
 def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
                                                          help='Settings to change, for example max_file_size_mb=20 '
@@ -68,21 +89,24 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
                  secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                   help='Ask for this setting without showing what you type, for '
                                                        'passwords and provider keys. Repeat for more.'),
-                 as_text: bool = typer.Option(False, '--text', help='Keep every value as text (no true/false or '
-                                                                    'number conversion).')):
-    """Change settings. Faxbot checks the whole result before saving it."""
+                 as_text: bool = typer.Option(False, '--text', help='Send every value exactly as typed.')):
+    """Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it."""
     changes = {}
+    known = _request_names()
     for item in assignments or []:
         name, separator, raw = item.partition('=')
         if not separator or not name.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
-        changes[name.strip()] = raw if as_text else _value(raw)
+        name = name.strip()
+        changes[known.get(name, name)] = raw if as_text or name in known else _value(raw)
     for name in secret or []:
-        changes[name] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
+        changes[known.get(name, name)] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
     if not changes:
         raise CliError('Nothing to change. Give NAME=VALUE pairs or --secret NAME.')
     api = state.api()
     current = api.get('/admin/settings')
+    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
+        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
     result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
 
     def human(out):
@@ -98,17 +122,16 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
 VALIDATE_FIELDS = (('phaxio_api_key', 'PHAXIO_API_KEY'), ('phaxio_api_secret', 'PHAXIO_API_SECRET'),
                    ('sinch_project_id', 'SINCH_PROJECT_ID'), ('sinch_api_key', 'SINCH_API_KEY'),
                    ('sinch_api_secret', 'SINCH_API_SECRET'), ('ami_host', 'AMI_HOST'),
-                   ('ami_username', 'AMI_USERNAME'), ('ami_password', 'AMI_PASSWORD'))
+                   ('ami_username', 'AMI_USERNAME'), ('ami_password', 'AMI_PASSWORD'),
+                   ('efax_app_id', 'EFAX_APP_ID'), ('efax_api_key', 'EFAX_API_KEY'), ('efax_user_id', 'EFAX_USER_ID'))
 
 
 @settings.command('validate')
-def settings_validate(backend: str = typer.Argument(..., help='Provider to check: phaxio, sinch or sip.'),
-                      ami_port: int = typer.Option(None, '--ami-port', help='Asterisk manager port (sip).')):
-    """Check provider credentials without saving them or sending a fax.
+def settings_validate(backend: str = typer.Argument(..., help='Provider whose credentials to check: phaxio, sinch, efax or sip.'),
+                      ami_port: int = typer.Option(None, '--ami-port', help='SIP only: the Asterisk manager interface port, if not 5038.')):
+    """Check a provider's credentials without saving them or sending a fax.
 
-    Credentials are read from the environment so they stay out of your shell
-    history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY,
-    SINCH_API_SECRET, AMI_HOST, AMI_USERNAME and AMI_PASSWORD.
+    Credentials are read from these environment variables so they stay out of your shell history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax credentials can end the eFax session Faxbot was using; Faxbot signs in again by itself.
     """
     import os
     body = {'backend': backend}
@@ -126,16 +149,33 @@ def settings_validate(backend: str = typer.Argument(..., help='Provider to check
     state.out().result(result, human)
 
 
+@settings.command('reload')
+def settings_reload():
+    """Read the saved settings again and show any changes still waiting for a restart."""
+    result = state.api().post('/admin/settings/reload', json={})
+    meta = result.get('_meta', {})
+
+    def human(out):
+        out.line('Faxbot read its saved settings again.')
+        if meta.get('apply_state') == 'pending_restart':
+            out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
+    state.out().result(result, human)
+
+
 @settings.command('persist')
 def settings_persist():
-    """Write the full settings, including secrets, to the installation's private recovery file. Owners only."""
+    """Save every setting to the server's recovery file (owners only). Goes away in the next release; use 'faxbot system backup'."""
     result = state.api().post('/admin/settings/persist', json={})
-    state.out().result(result, lambda out: out.line(f"Settings written to {result.get('path')} on the server."))
+
+    def human(out):
+        out.line(f"Settings written to {result.get('path')} on the server.")
+        out.line("The recovery copy goes away in the next release. To back up everything, run 'faxbot system backup'.")
+    state.out().result(result, human)
 
 
 @settings.command('export')
 def settings_export():
-    """Print the settings as environment lines. Secrets are replaced with ***."""
+    """Print every setting, one per line, as it would appear in a settings file. Passwords and keys are shown as ***."""
     result = state.api().get('/admin/settings/export')
 
     def human(out):
@@ -148,7 +188,7 @@ def settings_export():
 
 @providers.command('list')
 def providers_list():
-    """List installed fax and storage providers and which ones are in use."""
+    """List the fax and storage providers installed, and which ones are in use."""
     api = state.api()
     try:
         items = api.get('/plugins')['items']
@@ -161,7 +201,8 @@ def providers_list():
                    'configured': config.get('backend_configured', {})}
 
         def fallback(out):
-            out.fields([('Sending provider', hybrid.get('outbound')), ('Receiving provider', hybrid.get('inbound')),
+            out.fields([('Sending provider', _provider(hybrid.get('outbound'))),
+                        ('Receiving provider', _provider(hybrid.get('inbound'))),
                         ('Credentials saved for', [name for name, ok in summary['configured'].items()
                                                    if ok is True and not name.endswith('_default')])])
         state.out().result(summary, fallback)
@@ -180,17 +221,51 @@ def providers_callbacks():
         empty='The receiving provider needs no callback address.'))
 
 
+# A provider's section in the settings document, when it is not named after the provider.
+_SECTIONS = {'freeswitch': 'fs', 's3': 'storage', 'local': 'storage'}
+FREESWITCH_RETIRING = 'FreeSWITCH is removed in the next release. Choose another provider with the Setup wizard.'
+# What each role uses, as the setting that chooses it.
+_ROLES = {'outbound': 'outbound_backend', 'inbound': 'inbound_backend', 'storage': 'storage_backend'}
+
+
+def _provider_fields(provider):
+    """The provider's id and {its setting name: setting}; an unknown provider is a not-found error."""
+    from ...config_plugin_fields import PLUGIN_FIELDS
+    name = provider.strip().lower()
+    if name not in PLUGIN_FIELDS:
+        raise CliError(f"There is no provider named '{provider}'. Run 'faxbot providers list' to see them.",
+                       EXIT_NOT_FOUND)
+    return name, PLUGIN_FIELDS[name]
+
+
+def _in_use(current, name):
+    hybrid, storage = current.get('hybrid') or {}, current.get('storage') or {}
+    return {'outbound': hybrid.get('outbound_backend') == name, 'inbound': hybrid.get('inbound_backend') == name,
+            'storage': storage.get('backend') == name}
+
+
 @providers.command('config')
 def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
-                     role: str = typer.Option(None, '--role', help='outbound, inbound or storage.')):
-    """Show a provider's settings. Secrets are masked."""
-    result = state.api().get(f'/plugins/{segment(provider)}/config', params={'role': role})
+                     role: str = typer.Option(None, '--role', help='Only say whether it is used for outbound '
+                                                                   '(sending), inbound (receiving) or storage.')):
+    """Show a provider's settings. Passwords and keys are hidden."""
+    name, _ = _provider_fields(provider)
+    if role is not None and role not in _ROLES:
+        raise CliError('Choose --role outbound, inbound or storage.')
+    current = state.api().get('/admin/settings')
+    used = _in_use(current, name)
+    result = {'provider': name, 'in_use': {role: used[role]} if role else used,
+              'settings': current.get(_SECTIONS.get(name, name)) or {}}
+    words = {'outbound': 'sending', 'inbound': 'receiving', 'storage': 'storage'}
 
     def human(out):
         rows = []
-        _flatten('', result.get('settings', {}), rows)
-        out.fields([('Provider', provider), ('Role', result.get('role')), ('In use', result.get('enabled'))])
+        _flatten('', result['settings'], rows)
+        roles = [words[item] for item, on in result['in_use'].items() if on]
+        out.fields([('Provider', _provider(name)), ('In use for', ', '.join(roles) if roles else 'nothing')])
         out.table(['Setting', 'Value'], rows, empty='This provider has no settings.')
+        if name == 'freeswitch':
+            out.line(FREESWITCH_RETIRING)
     state.out().result(result, human)
 
 
@@ -199,44 +274,100 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                         assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
-                                                         help='Ask for this setting without showing it. Repeat for more.'),
-                        role: str = typer.Option(None, '--role', help='outbound, inbound or storage.'),
-                        enable: bool = typer.Option(False, '--enable', help='Use this provider for the role.'),
-                        disable: bool = typer.Option(False, '--disable', help='Stop using this provider for the role.')):
-    """Change a provider's settings, or start or stop using it."""
-    if enable and disable:
-        raise CliError('Choose --enable or --disable, not both.')
+                                                         help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
+                        role: str = typer.Option(None, '--role', help='With --enable: outbound (sending), inbound '
+                                                                      '(receiving) or storage.'),
+                        enable: bool = typer.Option(False, '--enable', help='Use this provider for sending, receiving or storage '
+                                                                     '(choose which with --role).')):
+    """Change a provider's settings, or start using it for sending, receiving or storage."""
+    name, fields = _provider_fields(provider)
+    known = _request_names()
+
+    def setting(key):
+        target = fields.get(key) or (key if key in fields.values() else None)
+        if target is None:
+            raise CliError(f"{_provider(name)} has no setting named '{key}'. Run 'faxbot providers show {name}' "
+                           'to see them.')
+        return known.get(target, target)
+
     changes = {}
     for item in assignments or []:
-        name, separator, raw = item.partition('=')
-        if not separator or not name.strip():
+        key, separator, raw = item.partition('=')
+        if not separator or not key.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
-        changes[name.strip()] = _value(raw)
-    for name in secret or []:
-        changes[name] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
-    body = {'role': role}
-    if changes:
-        body['settings'] = changes
-    if enable or disable:
-        body['enabled'] = enable
-    if not changes and not (enable or disable):
-        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME, --enable or --disable.')
+        changes[setting(key.strip())] = raw
+    for key in secret or []:
+        changes[setting(key)] = typer.prompt(f'Value for {key}', hide_input=True, confirmation_prompt=True)
+    if enable:
+        if role not in _ROLES:
+            raise CliError('Add --role outbound, inbound or storage to say what to use it for.')
+        changes[known.get(_ROLES[role], _ROLES[role])] = name
+    elif role is not None:
+        raise CliError('--role goes with --enable.')
+    if not changes:
+        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME or --enable.')
     api = state.api()
-    current = api.get(f'/plugins/{segment(provider)}/config', params={'role': role})
-    result = api.put(f'/plugins/{segment(provider)}/config',
-                     json={**body, 'expected_revision_id': current['_meta']['desired_revision_id']})
-    state.out().result(result, lambda out: out.line(
-        'Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
-        if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.'))
+    current = api.get('/admin/settings')
+    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
+        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
+    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    def human(out):
+        out.line('Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
+                 if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.')
+        if name == 'freeswitch':
+            out.line(FREESWITCH_RETIRING)
+    state.out().result(result, human)
 
 
-@providers.command('registry')
-def providers_registry():
-    """List providers available to install from the provider registry."""
-    result = state.api().get('/plugin-registry')
-    items = result.get('items', []) if isinstance(result, dict) else []
-    state.out().result(result, lambda out: out.table(['Provider', 'Name', 'Description'],
-        [[item.get('id'), item.get('name'), item.get('description')] for item in items], empty='The registry is empty.'))
+def efax_status():
+    """Show whether Faxbot is collecting your received faxes from eFax, when it last checked, and faxes still stored at eFax."""
+    result = state.api().get('/admin/inbound/efax')
+
+    def human(out):
+        if not result.get('receiving'):
+            out.line('Faxbot is not collecting received faxes from eFax; eFax is not set up to receive.')
+        else:
+            out.line('Faxbot collects your received faxes from eFax.')
+            checked = local_time(result.get('checked_at'), empty=None)
+            out.line(result.get('problem') or (f'Faxbot last checked eFax at {checked}.' if checked
+                                               else 'Faxbot has not checked eFax yet.'))
+        for note in result.get('notes') or []:
+            out.line(note)
+    state.out().result(result, human)
+
+
+def providers_import(source: str = typer.Argument(..., metavar='FILE',
+                                                  help="A JSON file of provider descriptions, or a Markdown file with "
+                                                       "them in code blocks; '-' reads standard input.")):
+    """Add several fax services at once from a file of their descriptions."""
+    import json
+    import sys
+    if source == '-':
+        text = sys.stdin.read()
+    else:
+        try:
+            with open(source, encoding='utf-8') as handle:
+                text = handle.read()
+        except OSError:
+            raise CliError(f'Cannot read {source}.') from None
+    try:
+        document = json.loads(text)
+    except ValueError:
+        body = {'markdown': text}
+    else:
+        if isinstance(document, dict) and isinstance(document.get('items'), list):
+            document = document['items']
+        body = {'items': document if isinstance(document, list) else [document]}
+    result = state.api().post('/admin/plugins/http/import-manifests', json=body)
+
+    def human(out):
+        for item in result.get('imported') or []:
+            out.line(f"Added the provider {item.get('name') or item.get('id')}.")
+        for item in result.get('errors') or []:
+            out.line(f"Could not add one provider: {item.get('error')}")
+        if not result.get('imported') and not result.get('errors'):
+            out.line('No providers were added.')
+    state.out().result(result, human)
 
 
 def _manifest(path):
@@ -251,16 +382,16 @@ def _manifest(path):
 
 
 @providers.command('validate')
-def providers_validate(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
-    """Check an HTTP provider manifest without installing it or sending anything."""
+def providers_validate(manifest: str = typer.Argument(..., help='The file that describes the fax service (JSON).')):
+    """Check the file that describes a fax service before you add it. Nothing is installed or sent."""
     result = state.api().post('/admin/plugins/http/validate', json={'manifest': _manifest(manifest), 'render_only': True})
     state.out().result(result, lambda out: out.line('The manifest is valid.' if result.get('ok', True)
                                                     else 'The manifest has problems: ' + text(result.get('error'))))
 
 
 @providers.command('install')
-def providers_install(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
-    """Install an HTTP provider from its manifest."""
+def providers_install(manifest: str = typer.Argument(..., help='The file that describes the fax service (JSON).')):
+    """Install a custom HTTP fax provider from its manifest file."""
     result = state.api().post('/admin/plugins/http/install', json={'manifest': _manifest(manifest)})
     state.out().result(result, lambda out: out.line(f"Provider {result.get('id')} installed. Configure it with "
                                                     f"faxbot providers configure {result.get('id')}."))
@@ -272,7 +403,7 @@ def providers_status():
     result = state.api().get('/admin/health-status')
 
     def human(out):
-        out.fields([('Provider', result.get('backend')), ('Ready', result.get('backend_healthy')),
+        out.fields([('Provider', _provider(result.get('backend'))), ('Ready', result.get('backend_healthy')),
                     ('Receiving faxes', result.get('inbound_enabled')), ('API keys set up', result.get('api_keys_configured')),
                     ('Checked', local_time(result.get('timestamp')))])
         jobs = result.get('jobs')
@@ -282,7 +413,7 @@ def providers_status():
 
 
 def health():
-    """Check that the server answers and whether it is ready to send faxes (exit code 1 when not). No key needed."""
+    """Check that Faxbot answers and is ready to send faxes. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready."""
     api = state.api()
     live = api.get('/health', auth=False)
     ready = api.get('/health/ready', auth=False, allow=(503,))
@@ -292,10 +423,12 @@ def health():
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
                     ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Provider', (ready or {}).get('backend')), ('Database', checks.get('db')),
+                    ('Provider', _provider((ready or {}).get('backend'))), ('Database', checks.get('db')),
                     ('Ghostscript', checks.get('ghostscript'))])
         for warning in (ready or {}).get('warnings') or []:
             out.line('Warning: ' + warning)
+        if (ready or {}).get('message'):
+            out.line(ready['message'])
     state.out().result(result, human)
     if (ready or {}).get('status') != 'ready':
         raise typer.Exit(1)
@@ -303,7 +436,7 @@ def health():
 
 @diagnostics.command('database')
 def diagnostics_database():
-    """Show whether the database answers and how many records you can see."""
+    """Show whether Faxbot can reach its database, and how many records you can see."""
     result = state.api().get('/admin/db-status')
 
     def human(out):
@@ -316,28 +449,56 @@ def diagnostics_database():
     state.out().result(result, human)
 
 
+_DIAGNOSTICS_WORDS = {'ok': 'Working', 'attention': 'Needs attention', 'problem': 'Not working', 'off': 'Not in use'}
+
+
+def _print_report(result):
+    def human(out):
+        if not result.get('checked_at'):
+            out.line('Diagnostics have not run yet. Run: faxbot system diagnostics run')
+            return
+        out.line(f"{result.get('summary')} (checked {result.get('checked_at_text')})")
+        for section in result.get('sections') or []:
+            out.line('')
+            out.line(section['title'])
+            for item in section['checks']:
+                line = f"  {_DIAGNOSTICS_WORDS.get(item['status'], item['status'])}: {item['title']}. {item['sentence']}"
+                if item.get('fix'):
+                    line += f" ({item['fix']['label']} in the console.)"
+                out.line(line)
+    state.out().result(result, human)
+
+
 @diagnostics.command('run')
 def diagnostics_run():
-    """Run the installation checks and list anything that needs attention."""
-    result = state.api().post('/admin/diagnostics/run')
+    """Check sending, receiving, the fax engine, this server and security now. Sends nothing, changes nothing."""
+    _print_report(state.api().post('/admin/diagnostics/report'))
+
+
+@diagnostics.command('show')
+def diagnostics_show():
+    """Show the last diagnostics results without checking again."""
+    _print_report(state.api().get('/admin/diagnostics/report'))
+
+
+@diagnostics.command('engine')
+def diagnostics_engine(view: str = typer.Argument(..., metavar='VIEW',
+                                                 help='registrations, contacts, calls or faxes.')):
+    """List what the fax engine reports now: trunk sign-ins, checked addresses, calls or faxes."""
+    result = state.api().get(f'/admin/diagnostics/engine/{view}')
 
     def human(out):
-        summary = result.get('summary', {})
-        out.fields([('Healthy', summary.get('healthy'))])
-        for issue in summary.get('critical_issues') or []:
-            out.line('Problem: ' + str(issue))
-        for warning in summary.get('warnings') or []:
-            out.line('Warning: ' + str(warning))
-        rows = [[f'{section} {name}'.replace('_', ' '), outcome]
-                for section, values in (result.get('check_outcomes') or {}).items()
-                for name, outcome in values.items() if outcome in {'pass', 'fail', 'warning'}]
-        out.table(['Check', 'Result'], rows, empty='No checks ran.')
+        out.line(result['title'])
+        if result['rows']:
+            out.table(result['columns'], result['rows'])
+        if result.get('message'):
+            out.line(result['message'])
     state.out().result(result, human)
 
 
 @pair.command('new')
 def pair_new():
-    """Create a six-digit code that pairs one phone. It works once, for five minutes."""
+    """Create a six-digit pairing code for one phone. It works once, within five minutes."""
     result = state.api().post('/admin/tunnel/pair')
     out = state.out()
     out.result(result, lambda o: o.line(f"Valid once, until {local_time(result['expires_at'])}. Enter it in the "
@@ -347,10 +508,10 @@ def pair_new():
 
 @pair.command('device')
 def pair_device(code: str = typer.Argument(..., help='The six-digit pairing code.'),
-                device_name: str = typer.Option('Command line', '--device-name', help='Name the key is listed under.'),
+                device_name: str = typer.Option('Command line', '--device-name', help='Device name shown on the new key.'),
                 save_profile: str = typer.Option(None, '--save-profile', metavar='NAME',
                                                  help='Save the new key in this profile instead of printing it.')):
-    """Do what the phone does with a pairing code: exchange it for the device's own API key."""
+    """Test pairing as if this computer were a phone: exchange a pairing code for the device's own API key."""
     api = state.api()
     result = api.post('/mobile/pair', auth=False, json={'code': code, 'device_name': device_name})
     out = state.out()

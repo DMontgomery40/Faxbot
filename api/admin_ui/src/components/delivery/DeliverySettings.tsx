@@ -21,7 +21,9 @@ import type { Settings } from '../../api/types';
 import { ResponsiveFormSection } from '../common/ResponsiveFormFields';
 import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
+import EnvSetField, { environmentManaged } from '../common/EnvSetField';
 import { numberHint, settingsNumberFormat } from '../common/numbers';
+import { providerLabel } from '../../providerLabels';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
 import { DeliveryError } from './shared';
@@ -29,13 +31,10 @@ import { DeliveryError } from './shared';
 type FormValue = string | number | boolean;
 type Values = Record<string, FormValue>;
 
-// The same names the delivery routes screen uses.
-export const ROUTE_LABELS: Record<string, string> = {
-  phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo', humblefax: 'HumbleFax',
-  sip: 'Your SIP trunk (Asterisk)', freeswitch: 'Your SIP trunk (FreeSWITCH)',
-};
+const routeLabel = (id: string) => providerLabel(id);
 
-const routeLabel = (id: string) => ROUTE_LABELS[id] ?? id;
+// One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
+export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
@@ -53,11 +52,13 @@ export function deliveryEditorValues(data: Settings): Values {
   if (data.routing) {
     values.outbound_routes = parseRoutes(data.routing.outbound_routes).join(',');
     values.route_min_success_percent = data.routing.min_success_percent;
+    values.local_delivery_enabled = data.routing.local_delivery ?? true;
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
     values.direct_organization = data.direct.organization;
     values.direct_fax_number = data.direct.fax_number;
+    values.direct_allow_private_peers = data.direct.allow_private_peers ?? false;
   }
   if (data.intake) {
     values.intake_email_enabled = data.intake.email_enabled;
@@ -83,6 +84,7 @@ export function providersSetUp(values: Values, sipPasswordIsDefault: boolean): s
   if (filled('signalwire_space_url', 'signalwire_project_id', 'signalwire_api_token')) result.push('signalwire');
   if (filled('documo_api_key')) result.push('documo');
   if (filled('humblefax_access_key', 'humblefax_secret_key')) result.push('humblefax');
+  if (filled('efax_app_id', 'efax_api_key', 'efax_user_id')) result.push('efax');
   if (filled('ami_username', 'ami_password') && !sipPasswordIsDefault) result.push('sip');
   for (const field of ['backend', 'outbound_backend', 'inbound_backend']) {
     if (values[field] === 'freeswitch' && !result.includes('freeswitch')) result.push('freeswitch');
@@ -166,6 +168,7 @@ function SwitchField({ label, helper, checked, onChange }: {
 }
 
 const KEY_LOCATION = 'Kept on this server in a private file in the fax data folder, unless the installation names another file. It is never shown or exported, so include it in server backups.';
+const PRIVATE_PEERS_HELP = 'Off: Faxbot only sends documents to partners on the public internet. Turn this on only for partners on a network you control.';
 const SUBJECT_HELP = 'Can include {from_number}, {to_number}, {pages} and {received_at}.';
 const SECURITY_OPTIONS = [
   { value: 'starttls', label: 'STARTTLS' }, { value: 'tls', label: 'TLS' }, { value: 'none', label: 'None' },
@@ -180,13 +183,19 @@ interface SectionsProps {
   showCurrentValue: boolean;
   outbound: string;
   canWrite: boolean;
+  // Show only these sections (a console page shows its own part); all four when absent.
+  only?: DeliverySection[];
 }
 
 // The anchor the Inbox's "Email delivery settings" link opens.
 export const EMAIL_DELIVERY_SECTION = 'email-delivery';
 
+export const DELIVERY_SECTIONS = ['routes', 'direct', 'intake', 'email'] as const;
+export type DeliverySection = typeof DELIVERY_SECTIONS[number];
+
 // The Delivery routes, Direct delivery, Intake defaults and Email delivery sections of Settings.
-export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound, canWrite }: SectionsProps) {
+export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound, canWrite, only }: SectionsProps) {
+  const shows = (section: DeliverySection) => !only || only.includes(section);
   const [card, setCard] = useState<string | null>(null);
   const [cardError, setCardError] = useState<unknown>(null);
   const [cardBusy, setCardBusy] = useState(false);
@@ -215,7 +224,7 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
 
   return (
     <>
-      {settings.routing && (
+      {settings.routing && shows('routes') && (
         <ResponsiveFormSection title="Delivery routes" subtitle="Other providers a fax may use, and how reliable a route must be."
           icon={<AltRouteIcon />}>
           <RouteOrderEditor value={form.outbound_routes} onChange={(next) => onChange('outbound_routes', next)}
@@ -223,10 +232,13 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             outbound={outbound} />
           {text('Minimum delivery rate (%)', 'route_min_success_percent',
             'A route that delivers less than this share of recent faxes to a number is tried last for that number.', 'number')}
+          <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
+            onChange={(checked) => onChange('local_delivery_enabled', checked)}
+            helper={LOCAL_DELIVERY_HELP} />
         </ResponsiveFormSection>
       )}
 
-      {settings.direct && (
+      {settings.direct && shows('direct') && (
         <ResponsiveFormSection title="Direct delivery" subtitle="Exchange documents with other Faxbot installations, with no fax call."
           icon={<HandshakeIcon />}>
           <SwitchField label="Use direct delivery" checked={Boolean(form.direct_delivery_enabled)}
@@ -236,6 +248,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           {text('Our fax number', 'direct_fax_number', numberHint(settingsNumberFormat(settings), 'The number partners fax you at'))}
           <ResponsiveSettingItem icon={<VpnKeyIcon />} label="Private key" editValue="On this server"
             helperText={KEY_LOCATION} showCurrentValue={false} />
+          <SwitchField label="Allow partners on private networks (advanced)" checked={Boolean(form.direct_allow_private_peers)}
+            onChange={(checked) => onChange('direct_allow_private_peers', checked)}
+            helper={PRIVATE_PEERS_HELP} />
           {notice && <Alert severity="success" onClose={() => setNotice(null)}>{notice}</Alert>}
           {cardError ? <DeliveryError error={cardError} onClose={() => setCardError(null)} /> : null}
           <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
@@ -247,32 +262,35 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
         </ResponsiveFormSection>
       )}
 
+      {(shows('intake') || shows('email')) && (
       <Box id={EMAIL_DELIVERY_SECTION} sx={{ scrollMarginTop: 80 }}>
-      {settings.intake && (
-        <ResponsiveFormSection title="Intake defaults"
-          subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here; changes take effect within a few minutes."
+      {settings.intake && shows('intake') && (
+        <ResponsiveFormSection title="Email delivery for the whole installation"
+          subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here. Changes take effect as soon as you apply them."
           icon={<MoveToInboxIcon />}>
           <SwitchField label="Email received faxes" checked={Boolean(form.intake_email_enabled)}
             onChange={(checked) => onChange('intake_email_enabled', checked)}
             helper="Faxbot emails each received document, with the original PDF attached." />
           {text('Email server', 'intake_smtp_host', 'For example, smtp.example.org.')}
-          {text('Port', 'intake_smtp_port', 'Usually 587 for STARTTLS or 465 for TLS.', 'number')}
+          {text('Port', 'intake_smtp_port', 'Usually 587, or 465. Your email provider says which.', 'number')}
           <ResponsiveSettingItem icon={<SettingsIcon />} label="Security" value={loaded.intake_smtp_security ?? ''}
             editValue={form.intake_smtp_security ?? 'starttls'} onChange={(value) => onChange('intake_smtp_security', value)}
             type="select" options={SECURITY_OPTIONS} showCurrentValue={showCurrentValue} />
           {text('User name', 'intake_smtp_username', 'Leave empty if the server needs no sign-in.')}
           <Box>
+            {environmentManaged(settings).has('intake_smtp_password') ? <EnvSetField fullWidth size="small" label="Email password" /> :
             <SecretInput fullWidth size="small" label="Email password" value={String(form.intake_smtp_password ?? '')}
               onChange={(value) => onChange('intake_smtp_password', value)}
-              helperText={loaded.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : 'Leave empty if the server needs no sign-in.'} />
+              helperText={loaded.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : 'Leave empty if the server needs no sign-in.'} />}
           </Box>
           {text('Sent from', 'intake_email_from', 'For example, fax@example.org.')}
           {text('Recipients', 'intake_email_to', 'Email addresses, separated by commas.')}
           {text('Subject', 'intake_email_subject', SUBJECT_HELP)}
         </ResponsiveFormSection>
       )}
-      <EmailDelivery client={client} canWrite={canWrite} />
+      {shows('email') && <EmailDelivery client={client} canWrite={canWrite} />}
       </Box>
+      )}
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />
     </>
@@ -322,15 +340,16 @@ export function DeliveryWizardFields({ settings, config, baseline, onChange, out
             onChange={(event) => onChange('intake_email_enabled', event.target.checked)} />} label="Email each received fax" />
           {config.intake_email_enabled && <>
             {field('Email server', 'intake_smtp_host')}
-            {field('Port', 'intake_smtp_port', 'Usually 587 for STARTTLS or 465 for TLS.', true)}
+            {field('Port', 'intake_smtp_port', 'Usually 587, or 465. Your email provider says which.', true)}
             <TextField select fullWidth disabled={disabled} label="Security" value={config.intake_smtp_security ?? 'starttls'} sx={{ mt: 2 }}
               onChange={(event) => onChange('intake_smtp_security', event.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}>
               {SECURITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </TextField>
             {field('User name', 'intake_smtp_username')}
+            {environmentManaged(settings).has('intake_smtp_password') ? <EnvSetField fullWidth label="Email password" sx={{ mt: 2 }} /> :
             <SecretInput fullWidth disabled={disabled} label="Email password" value={String(config.intake_smtp_password ?? '')} sx={{ mt: 2 }}
               onChange={(value) => onChange('intake_smtp_password', value)}
-              helperText={baseline.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : undefined} />
+              helperText={baseline.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : undefined} />}
             {field('Sent from', 'intake_email_from', 'For example, fax@example.org.')}
             {field('Recipients', 'intake_email_to', 'Email addresses, separated by commas.')}
           </>}

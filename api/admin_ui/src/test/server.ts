@@ -20,13 +20,13 @@ export const ALL_PERMISSIONS: Array<[string, string]> = [
   ['grants:manage', 'identity'], ['sessions:read', 'identity'], ['sessions:revoke', 'identity'],
   ['settings:read', 'config'], ['settings:write', 'config'], ['providers:read', 'config'], ['providers:write', 'config'],
   ['providers:install', 'config'], ['diagnostics:read', 'host'], ['logs:read', 'audit'], ['audit:read', 'audit'],
-  ['tunnels:read', 'host'], ['tunnels:manage', 'host'], ['tunnels:pair', 'host'], ['host:restart', 'host'],
-  ['host:actions', 'host'], ['host:terminal', 'host'], ['owner:recover', 'identity'], ['mailboxes:read', 'mailbox'],
+  ['tunnels:pair', 'host'], ['host:restart', 'host'],
+  ['host:terminal', 'host'], ['owner:recover', 'identity'], ['mailboxes:read', 'mailbox'],
   ['mailboxes:manage', 'mailbox'],
 ];
 
 const ADMIN_PERMISSIONS = ALL_PERMISSIONS.map(([permission]) => permission)
-  .filter((permission) => !['host:restart', 'host:actions', 'host:terminal', 'owner:recover', 'diagnostics:read', 'settings:read'].includes(permission));
+  .filter((permission) => !['host:restart', 'host:terminal', 'owner:recover', 'diagnostics:read', 'settings:read'].includes(permission));
 
 interface Principal {
   id: string;
@@ -120,6 +120,12 @@ function createState() {
     country: 'US',
     numberExample: '(201) 555-0123',
     resolveNumber: ((value: string) => value) as (value: string) => string | null,
+    // The provider hints in /auth/context, and whether sign-in still needs a first owner.
+    providerView: null as null | { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string;
+      extra_routes?: string[]; trunk_preset?: string },
+    // Names the installation gives its providers, such as the trunk's carrier.
+    providerNames: {} as Record<string, string>,
+    firstOwner: false,
   };
 }
 
@@ -138,6 +144,44 @@ export const backend = {
 const s = () => backend.state;
 const nextId = (prefix: string) => `${prefix}_${++s().sequence}`;
 const json = (body: JsonBodyType, status = 200) => HttpResponse.json(body, { status });
+
+// GET /routing/recommendations/receiving for a new installation: too little call history to advise.
+export function newReceivingAdvice() {
+  const window = (start: string, end: string) => ({ start, end, days: 30 });
+  return {
+    days: 30, estimate: true, carrier: 'Telnyx',
+    sentence: 'Faxbot needs 60 days of call history to advise on shared lines; it has none yet.',
+    windows: { choose: window('2026-08-06T00:00:00', '2026-09-05T00:00:00'),
+      check: window('2026-09-05T00:00:00', '2026-10-05T00:00:00') },
+    history: { enough: false, first_call_at: null, days: 0 },
+    pool: { state: 'too_little_history', numbers: [],
+      sentence: 'Faxbot needs 60 days of call history to advise on shared lines; it has none yet.' },
+    quiet_numbers: { state: 'too_little_history', numbers: [], monthly_total: [],
+      sentence: 'Faxbot needs 30 days of call history to tell which numbers are quiet; it has none yet.' },
+    connections: { sentence: 'Telnyx is your only fax service, so there is no second monthly fee to save.',
+      items: [{ name: 'Telnyx', kind: 'trunk', monthly_fee: [{ currency: 'USD', amount: '0.00' }] }] },
+    prices: [{ label: 'Telnyx inbound channel, US', read_on: '2026-10-05', source_url: 'https://telnyx.com/pricing/elastic-sip',
+      text: '$12.00 a month each for the first 10, $11.00 for the next 40, $9.00 for the next 200 and $8.00 after 250' }],
+  };
+}
+
+// GET /routing/savings for an installation that has saved nothing yet.
+export function emptySavings() {
+  const part = (sentence: string) => ({ estimate: true, saved: [], sentence });
+  return {
+    days: 30, since: '2026-09-04T00:00:00', estimate: true, total_saved: [],
+    sentence: 'Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.',
+    sending_together: { ...part('No faxes were sent together in the last 30 days.'),
+      numbers: 0, calls: 0, faxes: 0, calls_saved: 0, priced_calls: 0 },
+    direct_delivery: { ...part('No documents went straight to a partner in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    case_packets: { ...part('No case packet in the last 30 days left out a document the recipient already had.'),
+      counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0, documents_left_out: 0,
+      pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    own_numbers: { ...part('No faxes went to your own numbers in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
+  };
+}
 const fail = (status: number, detail: string) => json({ detail }, status);
 
 async function capture(request: Request, path: string): Promise<Json | null> {
@@ -290,8 +334,10 @@ const accessHandlers = [
       ? { fax_disabled: true, max_file_size_mb: 10, default_country: s().country, number_example: s().numberExample } : null,
     inbound_enabled: true,
     branding: { docs_base: 'https://docs.faxbot.net/latest/', logo_path: '/admin/ui/faxbot_full_logo.png' },
-    provider_view: null,
+    provider_view: s().providerView,
+    provider_names: s().providerNames,
   })),
+  http.get('/auth/setup', () => json({ first_owner: s().firstOwner })),
   guarded('post', '/auth/logout', () => {
     s().session = null;
     return json({ ok: true });
@@ -579,15 +625,68 @@ const consoleHandlers = [
   http.get('/admin/health-status', () => json({ timestamp: now(), backend: 'phaxio', backend_healthy: true,
     jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })),
   http.get('/admin/config', () => json({ fax_disabled: true, max_file_size_mb: 10 })),
+  // Public liveness and readiness: up and ready unless a test says otherwise.
+  http.get('/health', () => json({ status: 'ok' })),
+  http.get('/health/ready', () => json({ status: 'ready', backend: 'phaxio', checks: {}, warnings: [] })),
   http.get('/admin/fax-jobs', () => json({ total: 0, jobs: [] })),
   http.get('/inbound', () => json([])),
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),
   // Delivery routes, intake and direct delivery: empty until a test says otherwise.
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
+  // One fax's cost: nothing to say for a fax that placed no call.
+  http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
+  http.get('/routing/inbound-costs', () => json({ costs: {} })),
+  http.get('/routing/fax-costs', () => json({ costs: {} })),
+  // Savings: nothing saved yet, every part an estimate.
+  http.get('/routing/savings', () => json(emptySavings())),
+  // Sending recommendations: no number has enough delivered faxes on two routes yet.
+  http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
+    empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),
+  // Receiving recommendations: too little call history yet.
+  http.get('/routing/recommendations/receiving', () => json(newReceivingAdvice())),
+  // Plans: no fax service with a monthly fee.
+  http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
+    empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
+  // Case packets: none sent yet.
+  http.get('/cases', () => json({ cases: [] })),
+  // The audit log: nothing recorded yet.
+  http.get('/access/audit', () => json({ items: [], next_cursor: null })),
+  // The database: a file on the data volume, reachable.
+  http.get('/admin/db-status', () => json({ url: 'sqlite:////faxdata/faxbot.db', engine: 'sqlite', connected: true, error: null,
+    counts: { fax_jobs: 0, inbound_fax: 0, api_keys: null },
+    sqlite: { path: '/faxdata/faxbot.db', exists: true, size_bytes: 4096, persistent_volume: true } })),
+  // A number with no history and no route recommendation yet.
+  http.get('/routing/destinations/:number', ({ params }) => json({ number: params.number, display_name: null, notes: null,
+    preferred_route: null, accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [],
+    direct_partner: null, recommended_routes: [], available_routes: [] })),
+  // The work queue: nothing assigned until a test says otherwise.
+  http.get('/work', () => json({ items: [] })),
+  http.get('/work/settings', () => json({ acknowledge_hours: 24, mailboxes: [] })),
   http.get('/intake/items', () => json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // SIP trunk call history (the Dashboard names a received call that left no fax).
+  http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
+  // The network check for fax over IP: nothing to show until a test says otherwise.
+  http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),
+  // Telnyx's T.38 setting on the trunk numbers: nothing to show until a test says otherwise.
+  http.get('/admin/sip/telnyx', () => json({ applies: false, numbers: [], connection_texts: [], text: null })),
+  // Published plans for providers in use with no rate card yet: none.
+  http.get('/routing/published-plans/in-use', () => json({ items: [] })),
+  // Work counts for the Overview's Needs attention card: nothing waiting.
+  http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
+  // Sending together: no number sends faxes together until a test says otherwise.
+  http.get('/batching/check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
+    sends_together: false, wait_minutes: null, sentence: null })),
+  http.get('/batching/faxes/:jobId', () => json({ state: null, sentence: null })),
+  http.get('/batching/numbers/:number', ({ params }) => json({ number: params.number, enabled: false,
+    max_wait_minutes: 10, max_pages: 30, mixed_senders: false, version: 0, saves_money: false,
+    route_sentence: 'Faxbot sends faxes together only over its own SIP trunk; faxes to this number go through Phaxio, so they go straight away.',
+    state_sentence: 'Off: faxes to this number go straight away.', agreement: null, history: [],
+    savings: { calls: 0, faxes: 0, calls_saved: 0, estimated_saving: [], is_estimate: true,
+      sentence: 'No faxes to this number have been sent together in the last 30 days.' },
+    agreement_text: 'This recipient has agreed to receive several documents in one call.' })),
 ];
 
 export const server = setupServer(...accessHandlers, ...consoleHandlers);

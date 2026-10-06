@@ -48,28 +48,53 @@ def migrated_id(domain, *parts):
     return uuid.uuid5(NAMESPACE, json.dumps([domain, *parts], ensure_ascii=True, separators=(',', ':'))).hex
 
 
-def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(database, monkeypatch):
-    monkeypatch.setenv('FAXBOT_API_KEY', 'must-not-be-read-or-persisted')
-    upgrade_schema(database)
-    rows = snapshot(database)
-    assert TABLES <= rows.keys()
-    assert rows['alembic_version'] == [{'version_num': HEAD}]
-    assert {r['id'] for r in rows['access_permissions']} == PERMISSIONS
-    assert len(PERMISSIONS) == 36
-    assert {r['id'] for r in rows['access_roles']} == {
-        'role_owner', 'role_administrator', 'role_fax_operator',
-        'role_fax_viewer', 'role_auditor', 'role_host_operator',
-    }
+WORK = {'work:read', 'work:manage', 'work:export', 'work:import'}
+# Removed by 0019: they guard no route any more.
+RETIRED = {'host:actions', 'tunnels:read', 'tunnels:manage'}
+
+
+def _memberships(rows):
     memberships = {}
     for row in rows['access_role_permissions']:
         memberships.setdefault(row['role_id'], set()).add(row['permission_id'])
-    assert memberships == {
+    return memberships
+
+
+def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(database, monkeypatch):
+    monkeypatch.setenv('FAXBOT_API_KEY', 'must-not-be-read-or-persisted')
+    at_revision(database, '0005_access_control')
+    enrolled = snapshot(database)
+    assert {r['id'] for r in enrolled['access_permissions']} == PERMISSIONS
+    assert len(PERMISSIONS) == 36
+    builtin = {
         'role_owner': PERMISSIONS,
         'role_administrator': PERMISSIONS - {'host:restart', 'host:actions', 'host:terminal', 'owner:recover'},
         'role_fax_operator': {'fax:send', 'fax:read', 'fax:document', 'fax:refresh', 'inbound:list', 'inbound:read', 'inbound:document'},
         'role_fax_viewer': {'fax:read', 'fax:document', 'inbound:list', 'inbound:read', 'inbound:document'},
         'role_auditor': {'audit:read', 'fax:read', 'inbound:list', 'inbound:read'},
         'role_host_operator': {'host:restart', 'host:actions', 'host:terminal', 'diagnostics:read', 'settings:read'},
+    }
+    assert _memberships(enrolled) == builtin
+    upgrade_schema(database)
+    rows = snapshot(database)
+    assert TABLES <= rows.keys()
+    assert rows['alembic_version'] == [{'version_num': HEAD}]
+    # 0011 adds the four work permissions to the catalogue and the built-in roles; 0019 removes three.
+    assert {r['id'] for r in rows['access_permissions']} == (PERMISSIONS | WORK) - RETIRED
+    assert len((PERMISSIONS | WORK) - RETIRED) == 37
+    assert {r['id'] for r in rows['access_roles']} == {
+        'role_owner', 'role_administrator', 'role_fax_operator',
+        'role_fax_viewer', 'role_auditor', 'role_host_operator',
+    }
+    assert _memberships(rows) == {
+        **builtin,
+        'role_owner': (PERMISSIONS | WORK) - RETIRED,
+        'role_administrator': (builtin['role_administrator'] | WORK) - RETIRED,
+        'role_fax_operator': builtin['role_fax_operator'] | {'work:read', 'work:manage'},
+        'role_fax_viewer': builtin['role_fax_viewer'] | {'work:read'},
+        'role_auditor': builtin['role_auditor'] | {'work:read', 'work:export'},
+        # 0018 gives the terminal to the Owner role only; 0019 retires host:actions.
+        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'} - RETIRED,
     }
     assert rows['access_principals'][0]['id'] == 'bootstrap'
     assert rows['access_principals'][0]['kind'] == 'bootstrap'
@@ -126,7 +151,10 @@ def test_0004_enrollment_preserves_all_rows_and_narrows_unproven_authority(datab
     upgrade_schema(database)
     after = snapshot(database)
     for name, rows in before.items():
-        if name != 'alembic_version':
+        if name == 'fax_jobs':
+            # 0020 adds a nullable column to every sent fax; nothing else in the row changes.
+            assert [{k: v for k, v in row.items() if k != 'send_by_call'} for row in after[name]] == rows
+        elif name != 'alembic_version':
             assert after[name] == rows
     bindings = {r['id']: r for r in after['access_key_bindings']}
     assert set(bindings) == {case[0] for case in cases}

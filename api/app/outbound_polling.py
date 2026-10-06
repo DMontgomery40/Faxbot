@@ -35,9 +35,11 @@ class OutboundPoller:
                            sinch=not manifest and configuration.provider_id == 'sinch')
         identity = '\0'.join((attempt_id, receipt.provider_sid, receipt.status))
         key = 'poll:' + hashlib.sha256(identity.encode()).hexdigest()
+        # A provider adapter's own plain sentence for a failure (never the provider's text).
+        failure = result.get('failure') if isinstance(result, dict) and receipt.status == 'failed' else None
         return await run_lifecycle_step(lambda: self.store.observe(job_id,
             attempt_id=attempt_id, profile_id=profile.id, provider_sid=receipt.provider_sid,
-            status=receipt.status, event_key=key))
+            status=receipt.status, event_key=key, error=failure if isinstance(failure, str) else None))
 
     async def step(self):
         job_id = await run_lifecycle_step(self.store.reserve_poll)

@@ -29,6 +29,12 @@ Both organizations do these steps, each for the other.
 4. The partner reads the code from that fax. In their console they select **Confirm a code** next to your organization and enter it. Their Faxbot sends the code back to you, signed with their key.
 5. The partner now shows as **Verified**. Faxes you send to their number go directly.
 
+### Partner addresses
+
+Faxbot only talks to partners on the public Internet. When you add a partner, and again before every request to it, Faxbot looks up the address on the partner's card. If it points to this computer, a private network (such as 10.x, 192.168.x or an IPv6 unique-local address), a link-local or cloud metadata address, or a multicast or unspecified address, Faxbot refuses with one sentence and sends nothing. Requests go to the address Faxbot checked, so a later change to the partner's DNS cannot redirect them.
+
+For partners on a network you control, such as two installations on the same VPN, an owner can turn the check off with `DIRECT_ALLOW_PRIVATE_PEERS=true` (`faxbot system settings set direct_allow_private_peers=true`). It is off by default.
+
 The code proves that whoever holds the partner's key also receives faxes at the partner's number. Codes expire after 7 days, and five wrong codes close it; send a new code to try again.
 
 A verified partner stays verified for a year. **Remove** stops direct delivery to and from that partner at once.
@@ -45,7 +51,7 @@ A verified partner stays verified for a year. **Remove** stops direct delivery t
 
 - When the partner cannot be reached, or signs a refusal, nothing was delivered. Faxbot sends the fax normally in the same attempt.
 - When the answer is lost after the document was sent, Faxbot does not send it again. It asks the partner whether the document arrived. If the partner confirms receipt, the fax is marked delivered. If the partner signs that it never arrived, Faxbot sends an ordinary fax.
-- When the partner has turned direct delivery off, its Faxbot answers as if the feature did not exist. The fax waits for confirmation, and you can check it in **Jobs**.
+- When the partner has turned direct delivery off, its Faxbot answers as if the feature did not exist. The fax waits for confirmation, and you can check it in **Faxes → Sent**.
 
 ## API
 

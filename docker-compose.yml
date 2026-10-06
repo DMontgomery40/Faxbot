@@ -1,22 +1,27 @@
-version: "3.9"
-
 services:
   api:
     build:
       context: .
       dockerfile: ./api/Dockerfile
+    # Start again after any exit, including Restart API in the console (it exits
+    # with code 0), until someone stops the service on purpose.
+    restart: unless-stopped
+    # Settings for a new installation's first start. Optional: without it Faxbot starts with defaults.
     env_file:
-      - ./.env
+      - path: ./.env
+        required: false
     environment:
       - FAX_DATA_DIR=/faxdata
       - ENABLE_LOCAL_ADMIN=true
       - ADMIN_ALLOW_RESTART=true
-      # Optional: auto-load persisted .env settings on startup
-      - ENABLE_PERSISTED_SETTINGS=true
       # Persist DB to volume so jobs/keys/inbox survive rebuilds
       - DATABASE_URL=sqlite:////faxdata/faxbot.db
     volumes:
       - faxdata:/faxdata
+      # The SSL Fax engine's settings (Faxbot writes them) and what the engine
+      # hands back (its status and received faxes; Faxbot only reads them).
+      - hylafax-settings:/faxdata/hylafax
+      - hylafax-out:/faxdata/hylafax-out:ro
     ports:
       - "8080:8080"
     # Note: Asterisk dependency is optional - only needed for SIP backend
@@ -27,28 +32,61 @@ services:
     build:
       context: ./asterisk
       dockerfile: Dockerfile
+    restart: unless-stopped
     env_file:
-      - ./.env
+      - path: ./.env
+        required: false
     environment:
       - TZ=${TZ:-UTC}
     volumes:
       - faxdata:/faxdata
-    ports:
-      - "5060:5060/udp"
-      - "5060:5060/tcp"
-      # AMI (5038) is intentionally not exposed; keep internal only.
-      - "4000-4999:4000-4999/udp" # UDPTL for T.38
+      # Asterisk tells the SSL Fax engine which fax lines it loaded.
+      - hylafax-settings:/faxdata/hylafax
+    # No published ports. Asterisk registers with the carrier and starts every
+    # call's audio and fax data from inside, so the carrier answers on those
+    # flows and nothing has to reach in. (Publishing the old 1000-port media
+    # range started one docker-proxy process per port and exhausted small hosts.)
+    # A carrier that signs in by IP address needs a public host: add
+    # -f docker-compose.public.yml, see docs/setup/sip-trunk.md.
+    # The manager port (5038) stays private on the compose network.
+
+  # Faxbot's SSL Fax engine (HylaFAX+ 7.0.11): places and answers trunk faxes
+  # through Asterisk's IAX lines and sends pages over SSL Fax when the other
+  # fax machine supports it. It waits until Faxbot writes its settings (Apply on
+  # the trunk page); while it is not running Faxbot uses its built-in engine.
+  # No published ports: job submission (4559) and the fax lines (4569 on
+  # Asterisk) stay on the compose network. See docs/setup/sslfax.md.
+  # The engine reads fax and TLS data from other machines, so it never gets
+  # Faxbot's data folder: its settings read-only, one folder it hands faxes
+  # and its status back in, and its own volume.
+  hylafax:
+    build:
+      context: ./hylafax
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - hylafax-settings:/faxdata/hylafax:ro
+      - hylafax-out:/faxdata/hylafax-out
+      - hylafax:/var/lib/faxbot-engine
 
   # Optional: Faxbot MCP Server for AI integration
+  # Each MCP client sends its own Faxbot API key with every request, so the MCP
+  # services get no Faxbot key. Values come from .env next to this file when set.
   faxbot-mcp:
     build:
       context: ./node_mcp
       dockerfile: Dockerfile
-    env_file:
-      - ./.env
     environment:
       - FAX_API_URL=http://api:8080
-      - API_KEY=${API_KEY}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - OAUTH_ISSUER=${OAUTH_ISSUER:-}
+      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE:-}
+      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL:-}
+      - MCP_OAUTH_SUBJECT_KEYS_FILE=${MCP_OAUTH_SUBJECT_KEYS_FILE:-}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-}
     depends_on:
       - api
     ports:
@@ -58,18 +96,21 @@ services:
     stdin_open: true
     tty: true
 
+  # Python MCP over SSE, only for older clients that cannot use Streamable HTTP.
+  # Removed in the next release; use faxbot-mcp (Streamable HTTP).
   faxbot-mcp-py-sse:
     build:
       context: ./python_mcp
       dockerfile: Dockerfile.sse
-    env_file:
-      - ./.env
     environment:
       - FAX_API_URL=http://api:8080
-      - API_KEY=${API_KEY}
-      - OAUTH_ISSUER=${OAUTH_ISSUER}
-      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE}
-      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - OAUTH_ISSUER=${OAUTH_ISSUER:-}
+      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE:-}
+      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL:-}
+      - MCP_OAUTH_SUBJECT_KEYS_FILE=${MCP_OAUTH_SUBJECT_KEYS_FILE:-}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-}
     depends_on:
       - api
     ports:
@@ -79,17 +120,16 @@ services:
     stdin_open: true
     tty: true
 
-  # Optional: MCP Inspector (web UI) to explore tools/resources/prompts
-  mcp-inspector:
-    image: ghcr.io/modelcontextprotocol/inspector:latest
-    ports:
-      - "6274:6274"  # UI
-      - "6277:6277"  # Proxy
-    profiles:
-      - mcp
-    stdin_open: true
-    tty: true
-
 volumes:
   faxdata:
+    driver: local
+  # The SSL Fax engine's own volume: its certificate and key (made once at its
+  # first start), received faxes and reports waiting for Faxbot.
+  hylafax:
+    driver: local
+  # The SSL Fax engine's settings, written by Faxbot and Asterisk (read-only for the engine).
+  hylafax-settings:
+    driver: local
+  # What the SSL Fax engine hands back: its status and received faxes (read-only for Faxbot).
+  hylafax-out:
     driver: local

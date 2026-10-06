@@ -1,81 +1,54 @@
-
 # Scripts and Tests
 
-A practical catalog of helper scripts and core API tests so you can validate Faxbot quickly. Where noted, helpers read values from `.env`. Every API request needs a Faxbot API key. On an existing installation, change server settings in [Settings](../admin-console/settings.md); editing `.env` later does not change them.
+The helper scripts and core API tests below let you check Faxbot quickly. Some helpers read values from `.env`, as noted, and every API request needs a Faxbot API key. On an existing installation, change server settings in [Settings](../admin-console/settings.md); later edits to `.env` don't change them.
 
-## Admin Console workflows
+## In the console
 
-In **Tools → Scripts & Tests**, **Open Keys**, **Open Send Fax**, and **Open Settings** navigate to their existing console workflows. Opening these pages does not create a credential, submit a fax, or save configuration. Review the destination, document and send mode in Send Fax, and check in Settings whether changes are waiting for a restart.
+**System → Developer → Scripts & checks** has tools for checking Faxbot by hand. None of them sends a fax or changes a setting.
 
-**Show Config** reads configured inbound callback information. It does not prove provider reachability or fax receipt. The separate inbound helper creates a persisted synthetic record; it is not a provider-delivery check. Container actions can affect the host, including tunnels, and remain subject to the installation execution gate.
+- **Add a test fax** puts a one-page fax in **Received**, marked as a test everywhere. It goes through owners, mailbox rules and email delivery just like a real fax, but no call is made. Receiving has to be on.
+- **How the receiving provider reaches Faxbot** shows the address to give a provider that calls Faxbot when a fax arrives (Phaxio, Sinch, SignalWire, eFax notifications), with a copy button and a link to that provider's guide. With a carrier trunk it shows whether received faxes reach Faxbot, and for a provider Faxbot collects faxes from, such as HumbleFax, it tells you there is nothing to set.
+- **Fax engine** lists what Faxbot's own fax engine reports right now: trunk sign-ins, the addresses it checks, and calls and faxes in progress. The command line has the same lists: `faxbot system diagnostics engine registrations|contacts|calls|faxes`.
 
-Disabled sending holds outbound jobs without a provider attempt. It does not simulate delivery, and enabling sending does not automatically transmit held jobs.
+To see whether everything is working, use [Diagnostics](../admin-console/diagnostics.md).
 
-## Auth and API basics
+## Sign-in and API basics
 
-- `scripts/run-uvicorn-dev.sh`
-    - Starts the API from your working tree (no Docker). Accepts `PORT` (default 8080). Good for rapid iteration.
-- `scripts/smoke-auth.sh`
-    - Creates a venv, installs API deps, and runs a minimal auth smoke test with pytest.
-- `scripts/curl-auth-demo.sh`
-    - Hits a running API; mints a DB key via admin endpoint, sends a TXT/PDF fax, then fetches job status.
+- `scripts/run-uvicorn-dev.sh` starts the API from your working tree without Docker, on `127.0.0.1` with sending turned off. `PORT` sets the port (default 8080).
+- `scripts/smoke-auth.sh` runs the API key tests with the repository's virtual environment. It doesn't need a server.
+- `scripts/curl-auth-demo.sh` walks through the key flow against a running Faxbot with sending turned off: it creates a send-and-read key, queues a one-page fax, reads its status and revokes the key. The fax is queue-only, so Faxbot refuses it if sending is on, and the demo never places a call. It needs `API_KEY` (an admin API key) and `FAX_API_URL`.
 
 ## Send and status helpers
 
-- `scripts/send-fax.sh "<+15551234567>" /abs/path/file.pdf|.txt`
-    - Posts PDF or TXT to `/fax` with a Faxbot API key from `FAXBOT_API_KEY`, or from `API_KEY` in the repository `.env` when `FAXBOT_API_KEY` is not set. It stops with a message if neither is set. `FAX_API_URL` in `.env` sets the server address. A returned job ID means the fax was accepted, not delivered.
-- `scripts/get-status.sh <job_id>`
-    - Reads `/fax/{id}` with the same key and address rules and prints JSON with `jq`. Reading a job does not send or retry it.
+- `scripts/send-fax.sh "<+15551234567>" /abs/path/file.pdf|.txt` sends a PDF or TXT file to `/fax`. It uses the key in `FAXBOT_API_KEY`, or `API_KEY` from the repository's `.env` if that isn't set, and stops with a message if neither is. `FAX_API_URL` sets the server address. With sending on, this sends a real fax; a returned job ID means Faxbot accepted the fax, not that it was delivered.
+- `scripts/get-status.sh <job_id>` reads `/fax/{id}` with the same key and address rules and prints the JSON with `jq`. Reading a job never sends or retries it.
 
-## Inbound helpers
+## Received-fax helpers
 
-- `scripts/bootstrap-inbound.sh`
-    - Legacy bootstrap helper: edits `.env`, starts Compose and invokes the internal inbound smoke. It does not change settings on an existing installation. Configure inbound handling, the internal secret and authentication in Settings first; a synthetic smoke record is not proof of provider receipt or a usable inbound PDF.
-- `scripts/inbound-internal-smoke.sh`
-    - Posts a simulated internal Asterisk inbound event, lists `/inbound`, and downloads `/inbound/{id}/pdf` using a freshly minted read token.
-- `scripts/e2e-inbound-sip.sh`
-    - Checks health and Asterisk registration, mints an inbound read token, watches `/inbound` for a new item after you fax to your DID, and downloads the PDF when available.
+Both helpers use `API_KEY` (an admin API key) and `FAX_API_URL`. Each creates a read-only key for received faxes and revokes it when it finishes.
 
-## Cloud ingress (Phaxio) helper
-
-- `scripts/setup-phaxio-tunnel.sh`
-    - Legacy bootstrap helper: starts a tunnel, edits `.env` (`PUBLIC_API_URL`, `PHAXIO_CALLBACK_URL`, `FAX_BACKEND=phaxio`) and stops/restarts Compose. It does not change an existing installation. For an existing installation, start the tunnel manually and apply its URL in Settings as described in [the Phaxio delivery check](phaxio-e2e-test.md).
+- `scripts/inbound-smoke.sh` (`make inbound-smoke`) adds a test fax without a call, reads it with the read-only key, downloads its PDF and checks that the file really is a PDF.
+- `scripts/inbound-watch.sh` (`make inbound-e2e`) first shows the carrier trunk's status, when a carrier trunk receives your faxes. It then waits for the next fax you send to one of your numbers and downloads its PDF. `WAIT_MINUTES` sets how long it waits (default 10).
 
 ## Environment and terminal helpers
 
-- `scripts/load-env.sh`
-    - Utility to export variables from `.env` into the current shell. Sourced by most scripts.
-- `scripts/install-terminal-deps.sh`
-    - Installs Python and UI dependencies used by the Admin Console’s Terminal feature. See Terminal guide.
-
-## Release (maintainers)
-
-- `scripts/release_npm.sh`
-    - Publishes Node packages (`node_mcp`, `sdks/node`) to npm. Requires `npm login` or `NPM_TOKEN`.
-- `scripts/release_pypi.sh`
-    - Builds and uploads Python packages (`sdks/python`, `python_mcp`) to PyPI. Requires `twine` auth.
+- `scripts/load-env.sh` exports the variables in `.env` into the current shell. Most scripts source it.
+- `scripts/install-terminal-deps.sh` installs the Python and console dependencies for the Admin Console's Terminal. See the Terminal guide.
 
 ## Node MCP scripts
-Helper scripts for the Node MCP server (AI assistant integration). Requires a running Faxbot API; inherits `FAX_API_URL` and `API_KEY` from your environment. Only the stdio server uses `API_KEY`; the Streamable HTTP server uses each client's own Faxbot key.
 
-- `node_mcp/scripts/start-stdio.sh`
-    - Launches stdio transport (`src/servers/stdio.js`). Best for desktop assistants; uses `filePath` (no base64).
-- `node_mcp/scripts/start-http.sh`
-    - Launches the Streamable HTTP server on port 3001 (`src/servers/http.js`).
-- The Node package has no SSE server; use `python_mcp/server.py` for SSE-only clients.
-- `node_mcp/scripts/test-stdio.js "<to>" <filePath>`
-    - Spawns the stdio server and calls the `send_fax` tool using a local file path. Example:
-        - `node node_mcp/scripts/test-stdio.js "+15551234567" /abs/path/sample.pdf`
-- `node_mcp/scripts/call-send-fax.js "<to>" <filePath>`
-    - Calls the `send_fax` tool handler directly (bypasses transport) for quick local testing.
+These scripts run the Node MCP server, the AI assistant integration. They need a running Faxbot API and read `FAX_API_URL` and `API_KEY` from your environment. Only the stdio server uses `API_KEY`; the Streamable HTTP server uses each client's own Faxbot API key.
 
-Notes
+- `node_mcp/scripts/start-stdio.sh` starts the stdio server (`src/servers/stdio.js`). It suits desktop assistants and takes a `filePath` rather than base64.
+- `node_mcp/scripts/start-http.sh` starts the Streamable HTTP server on port 3001 (`src/servers/http.js`).
+- The Node package has no SSE server. For clients that only support SSE, use `python_mcp/server.py`.
+- `node_mcp/scripts/test-stdio.js "<to>" <filePath>` starts the stdio server and calls the `send_fax` tool with a local file, for example `node node_mcp/scripts/test-stdio.js "+15551234567" /abs/path/sample.pdf`.
+- `node_mcp/scripts/call-send-fax.js "<to>" <filePath>` calls the `send_fax` tool handler directly, without a transport, for quick local tests.
 
-- Streamable HTTP and SSE send files as base64 within a 16 MB JSON body limit, so base64 overhead counts toward that limit. REST uploads use the active configured raw-file limit (default 10 MB).
-- Prefer stdio + `filePath` to avoid base64 overhead for desktop integrations.
+Streamable HTTP and SSE send files as base64 inside a JSON body limited to 16 MB, and the base64 overhead counts toward that limit. REST uploads use the configured file size limit (10 MB by default). For desktop assistants, stdio with `filePath` avoids the overhead entirely.
 
-## API tests overview
+## API tests
 
-Follow the maintained [API Tests Overview](api-tests.md) for isolated development-environment commands and the coverage map. The production image does not bundle the suite, so the legacy `make test` target is not a supported suite runner.
+The [API Tests Overview](api-tests.md) has the commands for an isolated development environment and a map of what the tests cover. From a checkout, `make test` runs them the way CI does.
 
-For operator checks, [disabled sending](../setup/test-mode.md) accepts real documents as held jobs without issuing a provider attempt. Held jobs never transmit automatically when sending is enabled and cannot be marked delivered by fabricated callbacks.
+For operator checks, turn [sending off](../setup/test-mode.md): Faxbot then accepts real documents as held jobs and makes no provider attempt for them. Held jobs never go out on their own when you turn sending back on, and a fake callback can't mark one as delivered.

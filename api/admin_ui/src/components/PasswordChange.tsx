@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Alert, Box, Button, CircularProgress, Container, Paper, TextField, Typography } from '@mui/material';
+import {
+  Alert, Box, Button, CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle, Paper, TextField, Typography,
+} from '@mui/material';
 import AdminAPIClient, { AdminAPIError } from '../api/client';
 
 interface PasswordChangeProps {
@@ -79,5 +81,85 @@ export default function PasswordChange({ client, displayName, onChanged, onSignO
         </Paper>
       </Container>
     </Box>
+  );
+}
+
+interface PasswordChangeDialogProps {
+  client: AdminAPIClient;
+  open: boolean;
+  onClose: () => void;
+  // Called after the password changed, so the console can read the signed-in identity again.
+  onChanged?: () => void;
+}
+
+// The same change from the user menu, for a person who chooses to change their password.
+export function PasswordChangeDialog({ client, open, onClose, onChanged }: PasswordChangeDialogProps) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const ready = Boolean(current && next && next === confirm);
+
+  const close = () => {
+    if (busy) return;
+    setCurrent('');
+    setNext('');
+    setConfirm('');
+    setError(null);
+    setDone(false);
+    onClose();
+  };
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!ready || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.changePassword(current, next);
+      setDone(true);
+      onChanged?.();
+    } catch (failure) {
+      setError(changeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="password-change-title">
+      <Box component="form" onSubmit={submit} noValidate>
+        <DialogTitle id="password-change-title">Change password</DialogTitle>
+        <DialogContent>
+          {done ? (
+            <Alert severity="success" role="status">Your password was changed.</Alert>
+          ) : (
+            <>
+              {error && <Alert severity="error" role="alert" sx={{ mb: 2 }}>{error}</Alert>}
+              <TextField fullWidth label="Current password" type="password" autoComplete="current-password"
+                value={current} onChange={(e) => setCurrent(e.target.value)} sx={{ mt: 1 }} autoFocus />
+              <TextField fullWidth label="New password" type="password" autoComplete="new-password"
+                value={next} onChange={(e) => setNext(e.target.value)} sx={{ mt: 2 }} />
+              <TextField fullWidth label="Confirm new password" type="password" autoComplete="new-password"
+                value={confirm} onChange={(e) => setConfirm(e.target.value)} sx={{ mt: 2 }}
+                error={mismatch} helperText={mismatch ? 'The passwords do not match.' : ' '} />
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={close} disabled={busy}>{done ? 'Close' : 'Cancel'}</Button>
+          {!done && (
+            <Button type="submit" variant="contained" disabled={!ready || busy}
+              startIcon={busy ? <CircularProgress size={18} color="inherit" /> : undefined}>
+              Change password
+            </Button>
+          )}
+        </DialogActions>
+      </Box>
+    </Dialog>
   );
 }

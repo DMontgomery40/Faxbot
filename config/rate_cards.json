@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices for calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. Prices are advertised starting or typical rates, not quotes; confirm them against your carrier account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the carrier does not publish it.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only. receiving_prices: what a carrier charges for receiving, read for the receiving recommendations (shared inbound channels in price tiers, received-call rates by number type, number rental and any monthly trunk fee); they are never added as rate cards.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -66,7 +66,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://signalwire.com/pricing/rates",
-      "sources": ["https://signalwire.com/pricing/rates", "https://signalwire.com/pricing"],
+      "sources": [
+        "https://signalwire.com/pricing/rates",
+        "https://signalwire.com/pricing"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Programmable voice local outbound rate. SignalWire also lists SIP and WebRTC at $0.003 per minute each way; the page does not say whether that applies in addition to the voice rate. Its managed fax product is a separate $0.0095 per minute. No billing increment is published, so a whole-minute assumption is the cautious estimate."
     },
@@ -86,7 +89,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://signalwire.com/pricing/rates",
-      "sources": ["https://signalwire.com/pricing/rates", "https://signalwire.com/pricing"],
+      "sources": [
+        "https://signalwire.com/pricing/rates",
+        "https://signalwire.com/pricing"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Programmable voice local inbound rate; see the outbound card about the separate SIP rate. No billing increment is published."
     },
@@ -106,7 +112,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://sinch.com/voice/pricing/",
-      "sources": ["https://sinch.com/voice/pricing/", "https://sinch.com/voice/sip-trunking/elastic/"],
+      "sources": [
+        "https://sinch.com/voice/pricing/",
+        "https://sinch.com/voice/sip-trunking/elastic/"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Sinch says Elastic SIP Trunking has per-minute rates and monthly number fees but does not show them on its pages without an account. Enter your contracted rates."
     },
@@ -126,7 +135,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://sinch.com/voice/pricing/",
-      "sources": ["https://sinch.com/voice/pricing/", "https://sinch.com/voice/sip-trunking/elastic/"],
+      "sources": [
+        "https://sinch.com/voice/pricing/",
+        "https://sinch.com/voice/sip-trunking/elastic/"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Rates are not published; enter your contracted rates."
     },
@@ -170,7 +182,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://anveodirect.com/prices/did",
-      "sources": ["https://anveodirect.com/prices/did", "https://www.anveodirect.com/about/faq"],
+      "sources": [
+        "https://anveodirect.com/prices/did",
+        "https://www.anveodirect.com/about/faq"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Per-minute number with ten inbound channels. Prime numbers instead buy channels at $11.25 per month plus $14 setup each. AnveoDirect requires $25 of prepaid funds. The inbound billing increment is not published."
     },
@@ -220,6 +235,589 @@
       ],
       "advertised_on": "2026-10-03",
       "notes": "Inbound calls bill in whole minutes, rounded up."
+    },
+    {
+      "provider_id": "sip-gamma",
+      "provider": "sip",
+      "preset": "gamma",
+      "label": "Gamma SIP trunk, UK, outbound",
+      "direction": "outbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://gammagroup.co/products/sip-trunking-call-management/",
+      "sources": [
+        "https://gammagroup.co/products/sip-trunking-call-management/",
+        "https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Gamma's own page gives only a range, £3 to £150 a month per SIP channel plus £50 to £150 a month service rental, and no per-minute price; Gamma sells through resellers, who set the rates (read October 3, 2026). Enter your reseller's rates."
+    },
+    {
+      "provider_id": "sip-gamma",
+      "provider": "sip",
+      "preset": "gamma",
+      "label": "Gamma SIP trunk, UK, inbound",
+      "direction": "inbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://gammagroup.co/products/sip-trunking-call-management/",
+      "sources": [
+        "https://gammagroup.co/products/sip-trunking-call-management/",
+        "https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Gamma's own page gives only a range, £3 to £150 a month per SIP channel plus £50 to £150 a month service rental, and no per-minute price; Gamma sells through resellers, who set the rates (read October 3, 2026). Enter your reseller's rates."
+    },
+    {
+      "provider_id": "sip-bt-one-voice",
+      "provider": "sip",
+      "preset": "bt-one-voice",
+      "label": "BT One Voice SIP trunk, UK, outbound",
+      "direction": "outbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+      "sources": [
+        "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+        "https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "BT prices One Voice SIP trunks in each customer's contract and publishes none (checked October 3, 2026). Enter your contracted rates."
+    },
+    {
+      "provider_id": "sip-bt-one-voice",
+      "provider": "sip",
+      "preset": "bt-one-voice",
+      "label": "BT One Voice SIP trunk, UK, inbound",
+      "direction": "inbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+      "sources": [
+        "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+        "https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "BT prices One Voice SIP trunks in each customer's contract and publishes none (checked October 3, 2026). Enter your contracted rates."
+    },
+    {
+      "provider_id": "sip-telstra-sip-connect",
+      "provider": "sip",
+      "preset": "telstra-sip-connect",
+      "label": "Telstra SIP Connect, Australia, outbound",
+      "direction": "outbound",
+      "currency": "AUD",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf",
+      "sources": [
+        "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
+    },
+    {
+      "provider_id": "sip-telstra-sip-connect",
+      "provider": "sip",
+      "preset": "telstra-sip-connect",
+      "label": "Telstra SIP Connect, Australia, inbound",
+      "direction": "inbound",
+      "currency": "AUD",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf",
+      "sources": [
+        "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
+    }
+  ],
+  "plans": [
+    {
+      "provider_id": "humblefax",
+      "label": "HumbleFax unlimited plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "10.00",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "source_url": "https://humblefax.com/faq",
+      "advertised_on": "2026-10-03",
+      "notes": "The HumbleFax FAQ, read October 3, 2026: \"$10 per month to send and receive unlimited faxes. You receive your own dedicated local phone number.\" and \"No gimmicks, no hidden fees, no overage charges.\" Faxes are included in the plan, so Faxbot adds nothing per fax.",
+      "sources": [
+        "https://humblefax.com/faq",
+        "https://humblefax.com/"
+      ],
+      "includes": "unlimited faxing",
+      "includes_number": true,
+      "includes_number_read_on": "2026-10-05",
+      "includes_number_note": "The HumbleFax FAQ, read again October 5, 2026: the plan comes with a dedicated local fax number that receives faxes into your email inbox. The FAQ explains bringing an existing number to HumbleFax but not moving a number away from it."
+    }
+  ],
+  "providers": [
+    {
+      "provider_id": "phaxio",
+      "label": "Phaxio, US and Canada, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.07",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://www.phaxio.com/pricing/",
+      "sources": [
+        "https://www.phaxio.com/pricing/",
+        "https://www.phaxio.com/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "7 cents per page in the US and Canada; 5 cents from 50,000 pages a month and 4 cents from 100,000. Numbers are $2 a month."
+    },
+    {
+      "provider_id": "phaxio",
+      "label": "Phaxio, US and Canada, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.07",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://www.phaxio.com/",
+      "sources": [
+        "https://www.phaxio.com/",
+        "https://www.phaxio.com/pricing/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "The homepage says send and receive starting at 7 cents per page; caller name is 1 cent more per fax received."
+    },
+    {
+      "provider_id": "sinch",
+      "label": "Sinch Fax API, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.045",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://sinch.com/voice/fax-api/",
+      "sources": [
+        "https://sinch.com/voice/fax-api/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Flat rate of $0.045 per page; the page lists no separate sending and receiving rates and no number fee."
+    },
+    {
+      "provider_id": "sinch",
+      "label": "Sinch Fax API, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.045",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://sinch.com/voice/fax-api/",
+      "sources": [
+        "https://sinch.com/voice/fax-api/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Flat rate of $0.045 per page, the same for receiving."
+    },
+    {
+      "provider_id": "signalwire",
+      "label": "SignalWire Fax, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0.0095",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://signalwire.com/pricing/fax",
+      "sources": [
+        "https://signalwire.com/pricing/fax"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "$0.0095 per minute for the 48 contiguous states and Canada. No billing increment is published, so whole minutes is the cautious estimate."
+    },
+    {
+      "provider_id": "signalwire",
+      "label": "SignalWire Fax, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0.0095",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://signalwire.com/pricing/fax",
+      "sources": [
+        "https://signalwire.com/pricing/fax"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "$0.0095 per minute inbound; the number is a voice number at $0.50 a month."
+    }
+  ],
+  "reference_plans": [
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Personal plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "18.99",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 200,
+      "overage_per_page": "0.10",
+      "includes": "200 pages a month to the US and Canada",
+      "setup_fee": null,
+      "api_access_stated": false,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026 (its published offer data): 200 pages a month to the US and Canada, $0.10 per additional page, 1 user, 1 fax number; $18.99 a month billed monthly or $15.83 a month ($189.96 a year) billed annually. The US page offers the eFax API with eFax Corporate only."
+    },
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Business plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "39.99",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 500,
+      "overage_per_page": "0.07",
+      "includes": "500 pages a month to 51 countries",
+      "setup_fee": null,
+      "api_access_stated": false,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026: 500 pages a month to 51 countries, $0.07 per page over the plan (or $25 for each extra 500 pages), 5 users (+$10 a month each), 1 fax number (+$5 a month each); $39.99 a month billed monthly or $33.33 a month ($399.96 a year) billed annually. The US page offers the eFax API with eFax Corporate only."
+    },
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Corporate (API)",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing",
+        "https://www.efax.com/products/fax-api"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026: eFax Corporate, which includes the full eFax API, is priced by custom quote. No published price; add your rate."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Plus plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "16.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 150,
+      "overage_per_page": "0.10",
+      "includes": "150 pages sent and 150 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $16.95 a month billed monthly or $14.13 a month ($169.50 a year) billed annually, $10 set-up fee, 150 pages sent and 150 received a month, 10 cents per additional page. The page lists the API as available on this plan; confirm with eFax Australia."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Pro plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "18.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 200,
+      "overage_per_page": "0.10",
+      "includes": "200 pages sent and 200 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $18.95 a month billed monthly or $15.80 a month ($189.90 a year) billed annually, $10 set-up fee, 200 pages sent and 200 received a month, 10 cents per additional page."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Pro2 plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "23.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 300,
+      "overage_per_page": "0.10",
+      "includes": "300 pages sent and 300 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $23.95 a month billed monthly or $19.95 a month ($239.50 a year) billed annually, $10 set-up fee, 300 pages sent and 300 received a month, 10 cents per additional page."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Corporate (API, Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026: eFax Corporate has custom pricing plans. No published price; add your rate."
+    },
+    {
+      "provider_id": "efax",
+      "country": "GB",
+      "label": "eFax (UK)",
+      "direction": "outbound",
+      "currency": "GBP",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://ww2.efax.com/uk/",
+      "sources": [
+        "https://ww2.efax.com/uk/",
+        "https://enterprise.efax.eu/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax UK, read October 4, 2026: the UK site's plan and sign-up links lead to eFax's US price page and a US dollar checkout when read from the US, so no UK price could be read; eFax Corporate in the UK is sold through enterprise.efax.eu by quote. No published price; add your rate."
+    }
+  ],
+  "receiving_prices": [
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_channel",
+      "label": "Telnyx inbound channel, US",
+      "currency": "USD",
+      "tiers": [
+        {
+          "channels": 10,
+          "monthly_fee": "12"
+        },
+        {
+          "channels": 40,
+          "monthly_fee": "11"
+        },
+        {
+          "channels": 200,
+          "monthly_fee": "9"
+        },
+        {
+          "channels": null,
+          "monthly_fee": "8"
+        }
+      ],
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130678-channel-billing-and-how-to-use-it"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Monthly price of each inbound channel: the first 10 channels at $12, the next 40 at $11, the next 200 at $9 and any beyond 250 at $8. Channels replace per-minute billing for calls received on the numbers that share them. Only standard local numbers can use channels; toll-free and international numbers stay billed by the minute. A call that arrives while every channel is in use hears a busy tone instead of being billed by the minute. Channel-billed and per-minute numbers can be on the same account."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_per_minute",
+      "number_type": "local",
+      "label": "Telnyx received calls, US local number",
+      "currency": "USD",
+      "per_minute": "0.0032",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130659-billing-increments"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Starting rate for calls received on a local number. Telnyx bills 60/60: every call is rounded up to whole minutes, with a one-minute minimum."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_per_minute",
+      "number_type": "toll_free",
+      "label": "Telnyx received calls, US toll-free number",
+      "currency": "USD",
+      "per_minute": "0.015",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130659-billing-increments"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Starting rate for calls received on a toll-free number, billed in whole minutes."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "number_rental",
+      "number_type": "local",
+      "label": "Telnyx US local number",
+      "currency": "USD",
+      "monthly_fee": "1",
+      "source_url": "https://telnyx.com/pricing/numbers",
+      "sources": [
+        "https://telnyx.com/pricing/numbers"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "From $1 a month. Text messaging on the number costs $0.10 a month more, which a fax number does not need."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "number_rental",
+      "number_type": "toll_free",
+      "label": "Telnyx US toll-free number",
+      "currency": "USD",
+      "monthly_fee": "1",
+      "source_url": "https://telnyx.com/pricing/numbers",
+      "sources": [
+        "https://telnyx.com/pricing/numbers"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "From $1 a month. Text messaging on the number costs $0.10 a month more, which a fax number does not need."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "trunk",
+      "label": "Telnyx SIP trunk",
+      "currency": "USD",
+      "monthly_fee": "0",
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Telnyx lists a $0 platform fee and pay-as-you-go calls with no contract, so a trunk has no monthly fee of its own."
     }
   ]
 }

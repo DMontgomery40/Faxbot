@@ -13,6 +13,10 @@ import time
 
 import pytest
 
+# A hang guard, never a timing assumption: a wait that uses it ends as soon as the worker answers, and a
+# loaded machine can take seconds to start a Python worker. Waits that prove a bound keep their own short limits.
+CONDITION_TIMEOUT = 30.0
+
 
 def lifecycle_module():
     try:
@@ -63,7 +67,7 @@ finally:
 """
 
 
-def message(process, *, timeout=2):
+def message(process, *, timeout=CONDITION_TIMEOUT):
     if not select.select([process.stdout], [], [], timeout)[0]:
         return None
     payload = process.stdout.readline()
@@ -112,7 +116,7 @@ def worker():
 def test_startup_serializes_workers_and_only_stopped_installation_can_promote(tmp_path, worker):
     first = worker(tmp_path)
     assert message(first) == {"state": "acquired", "can_promote": True}
-    second = worker(tmp_path)
+    second = worker(tmp_path, timeout=CONDITION_TIMEOUT)  # waits for the first to serve, however slow
     assert message(second, timeout=0.1) is None
     assert command(first, "serve") == {"state": "serving", "can_promote": False}
     assert message(second) == {"state": "acquired", "can_promote": False}
@@ -302,7 +306,7 @@ def test_startup_gate_is_held_during_real_downgrade_unlock_window(tmp_path, work
             # flock conversions may unlock before relocking. Expose that OS
             # window with a real release and an independent competing starter.
             real_flock(descriptor, fcntl.LOCK_UN)
-            contender = worker(tmp_path)
+            contender = worker(tmp_path, timeout=CONDITION_TIMEOUT)
             contenders.append(contender)
             assert message(contender, timeout=0.1) is None
         return real_flock(descriptor, operation)

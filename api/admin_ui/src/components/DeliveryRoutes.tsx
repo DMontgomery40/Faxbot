@@ -1,14 +1,32 @@
 // Delivery routes: what faxing costs by provider, each fax number's routes and
-// reliability, the prices Faxbot uses, and direct delivery partners.
+// reliability, the prices Faxbot uses, and direct delivery partners. A console
+// page can show one of these parts on its own.
 import { useCallback, useEffect, useState } from 'react';
-import { Box, Card, CardContent, Grid, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import AdminAPIClient from '../api/client';
-import type { Destination, DirectPartner, ProviderCosts, RateCard } from '../api/deliveryTypes';
+import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts } from '../api/deliveryTypes';
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
 import RateCards from './delivery/RateCards';
-import { formatMinutes, formatMoneyList } from './delivery/shared';
+import Spending from './delivery/Spending';
+
+export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners';
+
+const SECTIONS: Record<DeliveryRoutesSection, { title: string; text: string }> = {
+  spending: { title: 'Spending', text: 'What your carriers charged over the last 30 days, with rate-card estimates for faxes they have not billed yet.' },
+  numbers: { title: 'Fax numbers', text: 'How each number has been reached and what it cost.' },
+  rates: { title: 'Prices & plans', text: 'Advertised prices Faxbot uses to estimate costs and choose the cheapest route.' },
+  partners: { title: 'Direct partners', text: 'Organizations that receive your documents directly, with no fax call.' },
+};
+
+// The page title and sentence when one part is shown on its own page.
+const PAGES: Record<DeliveryRoutesSection, { title: string; text: string }> = {
+  spending: { title: 'Spending', text: SECTIONS.spending.text },
+  numbers: { title: 'Recipients', text: 'The fax numbers you send to and what each one cost.' },
+  rates: { title: 'Prices & plans', text: SECTIONS.rates.text },
+  partners: { title: 'Partners', text: SECTIONS.partners.text },
+};
 
 function Section({ title, text, children }: { title: string; text: string; children: React.ReactNode }) {
   return (
@@ -20,75 +38,67 @@ function Section({ title, text, children }: { title: string; text: string; child
   );
 }
 
-function Spending({ providers }: { providers: ProviderCosts[] }) {
-  if (providers.length === 0) {
-    return <Typography color="text.secondary">No faxes have been sent in the last 30 days.</Typography>;
-  }
-  return (
-    <Grid container spacing={2}>
-      {providers.map((provider) => (
-        <Grid item xs={12} sm={6} md={4} key={provider.provider_id}>
-          <Card variant="outlined" sx={{ borderRadius: 2, height: '100%' }}>
-            <CardContent>
-              <Typography variant="subtitle1">{provider.label}</Typography>
-              <Typography variant="h5" component="p" sx={{ my: 1 }}>{formatMoneyList(provider.estimated_cost, 'No price set')}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                {provider.attempts} {provider.attempts === 1 ? 'fax' : 'faxes'}, {provider.successes} delivered, {formatMinutes(provider.billed_minutes)}, {provider.billed_pages} {provider.billed_pages === 1 ? 'page' : 'pages'}
-              </Typography>
-              {provider.reported_cost.length > 0 && (
-                <Typography variant="body2" color="text.secondary">Charged by the provider: {formatMoneyList(provider.reported_cost)}</Typography>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-      ))}
-    </Grid>
-  );
-}
-
-export default function DeliveryRoutes({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
+export default function DeliveryRoutes({ client, canWrite, section }: { client: AdminAPIClient; canWrite: boolean; section?: DeliveryRoutesSection }) {
   const [state, setState] = useState<LoadState>('loading');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [providers, setProviders] = useState<ProviderCosts[]>([]);
+  const [received, setReceived] = useState<ReceivedCosts[]>([]);
+  const [carrier, setCarrier] = useState<CarrierChargeStatus | null>(null);
   const [cards, setCards] = useState<RateCard[]>([]);
   const [partners, setPartners] = useState<DirectPartner[]>([]);
+  const shows = (part: DeliveryRoutesSection) => !section || section === part;
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
+    const wants = (part: DeliveryRoutesSection) => !section || section === part;
     try {
       const [routes, costs, rates, peers] = await Promise.all([
-        client.listDestinations(), client.getRouteCosts(), client.listRateCards(), client.listDirectPartners(),
+        wants('numbers') ? client.listDestinations() : null,
+        wants('spending') ? client.getRouteCosts() : null,
+        wants('rates') ? client.listRateCards() : null,
+        // The recipients list names the partner each number belongs to, when partners can be read.
+        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(() => null) : null,
       ]);
-      setDestinations(routes.destinations);
-      setProviders(costs.providers);
-      setCards(rates.cards);
-      setPartners(peers.peers);
+      if (routes) setDestinations(routes.destinations);
+      if (costs) {
+        setProviders(costs.providers);
+        setReceived(costs.received ?? []);
+        setCarrier(costs.carrier_charges ?? null);
+      }
+      if (rates) setCards(rates.cards);
+      if (peers) setPartners(peers.peers);
       setState('ready');
     } catch (failure) {
       setState(loadFailure(failure));
     }
-  }, [client]);
+  }, [client, section]);
 
   useEffect(() => { void load(); }, [load]);
 
+  const header = section
+    ? <ScreenHeader title={PAGES[section].title} onRefresh={() => void load()} busy={state === 'loading'} subtitle={PAGES[section].text} />
+    : <ScreenHeader title="Delivery routes" onRefresh={() => void load()} busy={state === 'loading'}
+      subtitle="What sending costs, which route each fax number uses, and partners who receive documents directly." />;
+  // On its own page a part needs no second heading.
+  const part = (key: DeliveryRoutesSection, children: React.ReactNode) => (section
+    ? <Box component="section" mb={4}>{children}</Box>
+    : <Section title={SECTIONS[key].title} text={SECTIONS[key].text}>{children}</Section>);
+
   return (
     <Box>
-      <ScreenHeader title="Delivery routes" onRefresh={() => void load()} busy={state === 'loading'}
-        subtitle="What sending costs, which route each fax number uses, and partners who receive documents directly." />
+      {header}
       {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} /> : (
         <>
-          <Section title="Spending" text="Estimated from your rate cards for the last 30 days.">
-            <Spending providers={providers} />
-          </Section>
-          <Section title="Fax numbers" text="How each number has been reached and what it cost.">
-            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()} />
-          </Section>
-          <Section title="Rate cards" text="Advertised prices Faxbot uses to estimate costs and choose the cheapest route.">
-            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
-          </Section>
-          <Section title="Direct partners" text="Organizations that receive your documents directly, with no fax call.">
-            <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />
-          </Section>
+          {shows('spending') && part('spending',
+            <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
+              onChanged={() => void load()} />)}
+          {shows('numbers') && part('numbers',
+            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
+              partners={section === 'numbers' ? partners : null} />)}
+          {shows('rates') && part('rates',
+            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />)}
+          {shows('partners') && part('partners',
+            <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />)}
         </>
       )}
     </Box>

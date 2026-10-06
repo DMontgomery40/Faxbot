@@ -1,17 +1,38 @@
 #!/bin/sh
-# Tell Faxbot about one received fax. Called from the faxbot-inbound-done
-# dialplan with key=value words that the dialplan already reduced to safe
-# characters; each value is checked again here before it enters the JSON body.
-# The shared secret and API address come from the environment and are never
-# printed. A request is repeated only when the API could not be reached at all.
+# Hand one received fax to Faxbot. Called (through SHELL) from the
+# faxbot-inbound-done dialplan with key=value words that the dialplan already
+# reduced to safe characters; each value is checked again here before it
+# enters the JSON body. The shared secret and API address come from the
+# environment or Faxbot's data folder and are never printed.
+#
+# Prints one word for the dialplan: "ok", or why the hand-over failed:
+#   no_secret      no inbound secret yet (Faxbot writes one on Apply to Asterisk)
+#   refused        Faxbot refused the secret
+#   not_receiving  receiving is turned off in Faxbot
+#   unreadable     the image is missing or outside the inbound folder
+#   unreachable    Faxbot could not be reached
+#   failed         Faxbot answered with an error
+# A failure also goes to standard error and the exit status is 1. The image
+# stays where it is; Faxbot brings in an image that was never handed over by
+# itself once the cause is fixed. A request is repeated only when Faxbot could
+# not be reached or was still starting; the hand-over is idempotent per call.
 set -u
 
+data=${FAXBOT_DATA_DIR:-/faxdata}
 file='' did='' caller='' status='' pages='' mode='' started='' answered='' ended='' uniqueid='' station64=''
+callid64=''
+
+fail() {
+  printf '%s\n' "$1"
+  printf 'faxbot-inbound-notify: received fax %s was not handed to Faxbot (%s)\n' "${uniqueid:-unknown}" "$1" >&2
+  exit 1
+}
+
 for word in "$@"; do
   key=${word%%=*}
   value=${word#*=}
   case $key in
-    file) case $value in /faxdata/inbound/*.tiff) file=$value ;; esac ;;
+    file) case $value in "$data"/inbound/*.tiff) file=$value ;; esac ;;
     did) did=$(printf '%s' "$value" | tr -cd '0123456789+') ;;
     caller) caller=$(printf '%s' "$value" | tr -cd '0123456789+') ;;
     status) status=$(printf '%s' "$value" | tr -cd 'A-Z_') ;;
@@ -22,22 +43,23 @@ for word in "$@"; do
     ended) ended=$(printf '%s' "$value" | tr -cd '0-9') ;;
     uniqueid) uniqueid=$(printf '%s' "$value" | tr -cd '0-9.') ;;
     station64) station64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=') ;;
+    callid64) callid64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=') ;;
   esac
 done
 case $file in
-  /faxdata/inbound/*.tiff) ;;
-  *) exit 0 ;;
+  "$data"/inbound/*.tiff) ;;
+  *) fail unreadable ;;
 esac
 case $file in
-  *[!A-Za-z0-9/._-]*) exit 0 ;;
+  *[!A-Za-z0-9/._-]*) fail unreadable ;;
 esac
-[ -f "$file" ] || exit 0
+[ -f "$file" ] || fail unreadable
 secret=${ASTERISK_INBOUND_SECRET:-}
-# Faxbot's Apply writes the console-set secret here (mode 0600).
-if [ -z "$secret" ] && [ -f /faxdata/asterisk/inbound.secret ]; then
-  secret=$(cat /faxdata/asterisk/inbound.secret)
+# Faxbot writes the secret here (mode 0600) when it starts and on Apply to Asterisk.
+if [ -z "$secret" ] && [ -f "$data/asterisk/inbound.secret" ]; then
+  secret=$(cat "$data/asterisk/inbound.secret")
 fi
-[ -n "$secret" ] || exit 0
+[ -n "$secret" ] || fail no_secret
 
 number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
 text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
@@ -47,20 +69,32 @@ case $mode in
   *) t38=null ;;
 esac
 
-body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s}}' \
+body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s,"sip_call_id_b64":%s}}' \
   "$file" "$(text "$did")" "$(text "$caller")" "$(text "$status")" "$(number "$pages")" "$(text "$uniqueid")" \
   "$(text "$did")" "$(text "$caller")" "$(number "$started")" "$(number "$answered")" "$(number "$ended")" \
-  "$(number "$pages")" "$t38" "$(text "$station64")")
+  "$(number "$pages")" "$t38" "$(text "$station64")" "$(text "$callid64")")
 
 url="${FAXBOT_API_URL:-http://api:8080}/_internal/asterisk/inbound"
 attempt=0
 while [ "$attempt" -lt 5 ]; do
   attempt=$((attempt + 1))
-  printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null --connect-timeout 5 --max-time 60 \
-    -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url" 2>/dev/null
+  code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
+    --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url" 2>/dev/null)
   result=$?
+  if [ "$result" -eq 0 ]; then
+    case $code in
+      2??) printf 'ok\n'; exit 0 ;;
+      401|403) fail refused ;;
+      404) fail not_receiving ;;
+      400|413|422) fail unreadable ;;
+      503) ;;  # Faxbot is starting; try again.
+      *) fail failed ;;
+    esac
+  elif [ "$result" -ne 7 ]; then
+    # Sent but no answer: Faxbot may have it, and a repeat could not help.
+    fail unreachable
+  fi
   # 7: could not connect, so Faxbot cannot have received this fax yet.
-  [ "$result" -eq 7 ] || exit 0
-  sleep 3
+  sleep "${FAXBOT_NOTIFY_RETRY_SECONDS:-3}"
 done
-exit 0
+fail unreachable

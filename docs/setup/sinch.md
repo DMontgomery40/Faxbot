@@ -8,7 +8,7 @@ When to use
 
 Key differences vs `phaxio` backend
 - `phaxio`: Provider fetches your PDF via `PUBLIC_API_URL` and posts status to `/phaxio-callback` (HMAC verification supported). No Sinch project ID required.
-- `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Outbound status polling uses the accepted job’s captured Sinch account and remote fax ID; inbound webhook ingestion is separate.
+- `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Outbound status polling uses the accepted job’s captured Sinch account and remote fax ID; inbound webhook ingestion is separate (see Receiving faxes below).
 
 Configuration
 
@@ -58,7 +58,7 @@ print('Queued', job['id'])
 ```
 
 Status updates
-- Read `GET /fax/{id}` or Jobs for stored delivery state. Supported status polling uses the original captured account/remote ID and does not resubmit. An unknown outcome requires reconciliation with that account, not a blind retry.
+- Read `GET /fax/{id}` or **Faxes → Sent** for stored delivery state. Supported status polling uses the original captured account/remote ID and does not resubmit. An unknown outcome requires reconciliation with that account, not a blind retry.
 
 Notes
 - Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.
@@ -69,3 +69,7 @@ Troubleshooting
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
 - 415: unsupported file type → only PDF/TXT.
 - Sinch API errors: verify Project ID, API key/secret, and region.
+
+## Receiving faxes
+
+Set the incoming fax webhook of your Sinch fax service to your public address followed by `/sinch-inbound`. Protect it with basic auth (`SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS`). Faxbot then accepts the document Sinch attaches. Without basic auth, Faxbot confirms each fax in your Sinch project before recording it, and downloads the document from Sinch's API. See [Receiving faxes](../operations/receiving.md).

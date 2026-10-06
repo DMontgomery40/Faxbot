@@ -27,10 +27,6 @@ class Api:
         self._client = None
         self._owned = False
 
-    @property
-    def has_key(self):
-        return bool(self._key)
-
     def _http(self):
         if self._client is None:
             self._client, self._owned = self._factory(self.url, self._timeout)
@@ -51,7 +47,7 @@ class Api:
         if auth:
             if not self._key:
                 raise CliError("No API key. Use --key, set FAXBOT_API_KEY, or save one with "
-                               "'faxbot config set-profile'.", EXIT_AUTHENTICATION)
+                               "'faxbot system profiles save'.", EXIT_AUTHENTICATION)
             sent['X-API-Key'] = self._key
         sent.update(headers or {})
         if params:

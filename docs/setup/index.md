@@ -2,6 +2,8 @@
 
 Pick your backend and environment, then deploy.
 
+A new installation starts with no fax provider: the console, `faxbot system health` and `/health/ready` say "No fax provider set up yet." and sending is refused until you choose one in Settings or set `FAX_BACKEND` before the first start. The Dashboard's **Set up a fax provider** button opens Settings → Setup. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio.
+
 <div class="grid cards" markdown>
 
 - :material-fax: **Phaxio (Cloud)**  
@@ -19,6 +21,10 @@ Pick your backend and environment, then deploy.
 - :material-cloud-upload-outline: **HumbleFax (Cloud)**  
   Direct upload for sending only; no public document URL needed.  
   [Guide](humblefax.md)
+
+- :material-cloud-sync: **eFax (Cloud, US, UK and Australia)**  
+  The eFax Enterprise API: sends, and receives by asking eFax, so no public address is needed.  
+  [Guide](efax.md)
 
 - :material-server: **SIP/Asterisk (Self‑hosted)**  
   Full control with your SIP trunk.  
@@ -45,7 +51,7 @@ Pick your backend and environment, then deploy.
 ---
 
 ## What to choose
-- Cloud: Phaxio, Sinch Fax API v3, SignalWire, Documo or HumbleFax (HumbleFax sends only)
+- Cloud: Phaxio, Sinch Fax API v3, SignalWire, Documo, HumbleFax (sends only) or eFax
 - Self‑hosted: SIP/Asterisk (AMI + T.38)
 
 ## Checklist
@@ -61,6 +67,7 @@ Pick your backend and environment, then deploy.
 - SignalWire (Cloud): [signalwire.md](signalwire.md)
 - Documo mFax (Cloud): [documo.md](documo.md)
 - HumbleFax (Cloud, sending only): [humblefax.md](humblefax.md)
+- eFax (Cloud, US, UK and Australia): [efax.md](efax.md)
 - SIP/Asterisk (Self‑hosted): [sip-asterisk.md](sip-asterisk.md)
 - SIP trunk with your own carrier: [sip-trunk.md](sip-trunk.md)
 - Deployment: [../deployment.md](../deployment.md)

@@ -76,7 +76,7 @@ def test_two_store_stale_editor_cannot_overwrite_committed_change(mworld, entity
         receipt = w.call('create_custom_role', T.CustomRoleValues('Original', '', True, frozenset()))
         method = 'update_custom_role_on'
         one = T.CustomRoleValues('First', '', True, frozenset({'host:terminal'}))
-        two = T.CustomRoleValues('Second', '', True, frozenset({'host:actions'}))
+        two = T.CustomRoleValues('Second', '', True, frozenset({'host:restart'}))
         table = 'access_roles'
     expected = w.policy()
     def first(c):

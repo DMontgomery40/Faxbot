@@ -13,7 +13,7 @@ Who can do what after signing in is covered in [Access Control](access-control.m
 
 The sign-in screen offers two ways in.
 
-**Username and password.** People get a username from an Owner or Administrator on the **Users** screen, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
+**Username and password.** People get a username from an Owner or Administrator under **Access → Users**, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
 
 **API key.** Select **Sign in with API key** and paste a Faxbot API key. The console then works with exactly the permissions that key has. The session ends when the key expires or is revoked, even if the session's own time has not run out.
 
@@ -45,7 +45,7 @@ Console sessions need HTTPS. There are two exceptions:
 - **Local development.** `scripts/run-uvicorn-dev.sh`, or `python -m api.app.server --loopback --port 8080` from the repository root, listens only on `127.0.0.1` and allows sessions over plain HTTP from `http://localhost` and `http://127.0.0.1` on that port.
 - **Private networks.** Setting `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` in the deployment environment allows sessions over plain HTTP. Use it only on a private network or VPN that you control, such as a WireGuard or Tailscale network. On any other network the session cookie can be read in transit. This is a deployment setting; it is not available on the Settings screen.
 
-API keys work over any transport, HTTP or HTTPS, and from any client, including the desktop app. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
+API keys work over any transport, HTTP or HTTPS, and from any client. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
 
 ## API keys
 

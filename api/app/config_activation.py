@@ -18,7 +18,7 @@ class ConfigurationActivationError(ValueError):
 
 
 _MAINTENANCE_FIELDS = frozenset({'database_url', 'fax_data_dir', 'providers_dir',
-                                 'plugin_registry_path', 'faxbot_config_path', 'persisted_env_path'})
+                                 'faxbot_config_path', 'persisted_env_path'})
 _RESTART_FIELDS = frozenset({'enable_mcp_sse', 'mcp_sse_path', 'enable_mcp_http', 'mcp_http_path',
     'require_mcp_oauth', 'oauth_issuer', 'oauth_audience', 'oauth_jwks_url',
     'audit_log_enabled', 'audit_log_format', 'audit_log_file', 'audit_log_syslog', 'audit_log_syslog_address',
@@ -133,7 +133,8 @@ def compile_profiles(values, catalog, state):
         _validate_manifest_settings(definition.manifest.as_dict() if definition.manifest is not None else None, settings)
     profiles = {}
     for role, identity in [('outbound', values.effective_outbound), ('inbound', values.effective_inbound)]:
-        if not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
+        # No provider set up for this role yet: it has no profile, as when the role is turned off.
+        if not identity or not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
             continue
         definition = _effective_definition(values, catalog.get(identity))
         traits = definition.traits.as_dict()
@@ -146,6 +147,24 @@ def compile_profiles(values, catalog, state):
             raise ConfigurationActivationError('Selected manifest cannot send faxes.')
         profiles[role] = profile
     return profiles
+
+
+def _routes_need_ami(values, catalog):
+    """Whether an extra outbound route (FAX_OUTBOUND_ROUTES) sends through Asterisk.
+
+    Asterisk connects at startup for such a route too, so adding or removing one
+    waits for a restart like changing the provider.
+    """
+    for identity in values.outbound_route_providers:
+        if identity not in catalog.provider_ids:
+            continue
+        try:
+            traits = _effective_definition(values, catalog.get(identity)).traits.as_dict()
+        except (ConfigurationActivationError, ValueError, KeyError, AttributeError):
+            continue
+        if traits.get('requires_ami') is True:
+            return True
+    return False
 
 
 class ConfigurationManager:
@@ -186,9 +205,11 @@ class ConfigurationManager:
         self._validate_maintenance(expected, values)
         profiles = compile_profiles(values, catalog, state)
         restart = any(getattr(values, name) != getattr(expected.active.values, name) for name in _RESTART_FIELDS)
-        old_ami = any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
-                      for _, identity in expected.active.profiles)
-        new_ami = any(profile.traits.get('requires_ami', False) for profile in profiles.values())
+        old_ami = (any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
+                       for _, identity in expected.active.profiles)
+                   or _routes_need_ami(expected.active.values, catalog))
+        new_ami = (any(profile.traits.get('requires_ami', False) for profile in profiles.values())
+                   or _routes_need_ami(values, catalog))
         restart = restart or old_ami != new_ami or ((old_ami or new_ami)
             and any(getattr(values, name) != getattr(expected.active.values, name) for name in _AMI_FIELDS))
         return profiles, restart
@@ -210,6 +231,14 @@ class ConfigurationManager:
         if changes.get('inbound_enabled') is not None:
             state['roles']['inbound']['enabled'] = values.inbound_enabled
         return values, state
+
+    def apply_environment(self, expected, changes):
+        """Credentials the environment supplies at startup (config_runtime); never an HTTP path."""
+        values, state = self._patch_values(expected, changes)
+        catalog = self._catalog_for(expected, values)
+        profiles, restart = self._prepare_apply(expected, values, state, catalog)
+        return self.store.apply_environment(expected, values, restart_required=restart, providers=profiles,
+                                            plugins=state, fields=tuple(changes))
 
     def patch(self, expected, changes, *, actor):
         """Trusted internal edit; human adapters use patch_authorized."""

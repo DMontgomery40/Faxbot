@@ -10,6 +10,8 @@ from email.utils import formatdate
 import smtplib
 import ssl
 
+from .. import people_time
+
 
 class DefiniteFailure(RuntimeError):
     """Nothing was delivered. ``temporary`` failures may be retried."""
@@ -33,17 +35,17 @@ def _number(value):
     return value or 'an unknown number'
 
 
-def describe(item):
-    moment = item['received_at']
-    received = f'{moment.day} {moment:%B %Y} at {moment:%H:%M} UTC'
+def describe(item, time_zone=''):
+    """The email body's sentence; the received time is in the installation's time zone (UTC when unset)."""
+    received = people_time.date_and_time(item['received_at'], time_zone)
     pages = item.get('pages')
     count = '' if not pages else (', 1 page' if pages == 1 else f', {pages} pages')
     kind = 'Direct delivery' if item.get('source') == 'direct' else 'Fax'
     return f"{kind} from {_number(item.get('from_number'))} to {_number(item.get('to_number'))}{count}, received {received}."
 
 
-def subject_for(template, item):
-    received = item['received_at'].strftime('%Y-%m-%d %H:%M UTC')
+def subject_for(template, item, time_zone=''):
+    received = people_time.date_and_time(item['received_at'], time_zone)
     return template.format(from_number=_number(item.get('from_number')), to_number=_number(item.get('to_number')),
                            pages=item.get('pages') or '', received_at=received)[:200]
 
@@ -54,14 +56,14 @@ def message_id(item_id, sender):
     return f'<intake-{item_id}@{domain}>'
 
 
-def build_message(settings, item, document, *, filename):
+def build_message(settings, item, document, *, filename, time_zone=''):
     message = EmailMessage()
     message['From'] = settings.from_address
     message['To'] = ', '.join(settings.recipients)
-    message['Subject'] = subject_for(settings.subject_template, item)
+    message['Subject'] = subject_for(settings.subject_template, item, time_zone)
     message['Date'] = formatdate(usegmt=True)
     message['Message-ID'] = message_id(item['id'], settings.from_address)
-    message.set_content(describe(item) + '\n')
+    message.set_content(describe(item, time_zone) + '\n')
     message.add_attachment(document, maintype='application', subtype='pdf', filename=filename)
     return message
 

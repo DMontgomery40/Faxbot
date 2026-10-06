@@ -90,7 +90,8 @@ class IntakeWorker:
             store.record_failed(item, message='The saved email password could not be read; enter it again.',
                                 connector_id=connector.id)
             return
-        message = build_message(connector.settings, item, document, filename=attachment_name(item))
+        message = build_message(connector.settings, item, document, filename=attachment_name(item),
+                                time_zone=getattr(self.values(), 'time_zone', '') or '')
         try:
             delivery = self.sender(connector.settings, password, message)
         except DefiniteFailure as error:

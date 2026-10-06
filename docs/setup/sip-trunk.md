@@ -4,19 +4,24 @@ Faxbot can send and receive ordinary faxes with its own fax engine (Asterisk wit
 
 You can use a trunk for sending only, receiving only, or both.
 
+If your office has an Avaya phone system, Faxbot can fax through it instead of through its own carrier account: see [Avaya IP Office and Aura](avaya.md). For the UK and Australia, see [United Kingdom](#united-kingdom) and [Australia](#australia).
+
 ## Telnyx (recommended)
 
 Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start with.
 
 ### In the Telnyx portal
 
-1. Create a SIP connection that uses **credentials** for authentication. Note its username and password.
+1. Create a SIP connection that uses **credentials** for authentication. Note its username and password: Faxbot needs the **SIP connection's** password (connection → **Authentication and routing**), not your Telnyx account password. A wrong one shows as "Telnyx refused the username or password. Use the SIP connection's password, not your Telnyx account password." in **Check trunk status**.
 2. Give the connection an **outbound voice profile** so it can place calls.
 3. Under the connection's codecs, keep only **G.711 U** and **G.711 A**.
 4. Set **T.38 fax re-invite initiated by** to **Telnyx**. When you send a fax, Telnyx switches the call to T.38 as soon as the receiving machine answers. Faxbot also works with **Customer**, but then it waits about ten seconds before switching the call itself. This option does not affect faxes you receive: Faxbot switches those calls to T.38 itself.
 5. Buy or port a number, assign it to the connection, and turn on **Enable T.38 Fax Gateway** for that number.
+6. Leave **Encrypted Media (SRTP)** off: Telnyx does not support it with T.38. A credential connection has no inbound transport to choose: Telnyx sends incoming calls down the encrypted connection Faxbot registers over.
 
 A Telnyx trial account can only call verified numbers until you upgrade it.
+
+In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 setting on each trunk number and lets Faxbot show call charges. Under **Providers → Carrier trunk**, **Fax over IP (T.38) at Telnyx** reports what Telnyx shows and offers **Turn on T.38** for a number that has it off. Faxbot changes only the number you select. If Telnyx refuses the change, open **Numbers → My Numbers**, select the gear next to that number, open **Expert Configuration**, and tick **Enable T.38 Fax Gateway**.
 
 ### In Faxbot
 
@@ -25,14 +30,14 @@ A Telnyx trial account can only call verified numbers until you upgrade it.
 | Carrier | Telnyx |
 | How Faxbot signs in | Username and password |
 | Server | Leave empty to use `sip.telnyx.com` |
-| Port | Leave empty to use 5060 |
-| Transport | Leave as the default, UDP |
-| Username and password | The connection's credentials |
+| Port | Leave empty to use 5061 |
+| Transport | Leave as the default, **Default: Encrypted (TLS)**. Choose **TCP** if the encrypted connection fails, and **UDP (older)** only as a last resort |
+| Username and password | The SIP connection's credentials (connection → Authentication and routing), not your Telnyx account login |
 | Caller ID | Your Telnyx number in international format, such as `+17205550100` |
 | Fax numbers on this trunk | The same number, in the same format |
 | Use T.38 fax over IP | On |
 
-Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Save trunk settings**, **Apply to Asterisk**, restart the Asterisk service, and select **Check trunk status**.
+Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Apply and connect**; Faxbot saves the form, restarts Asterisk with the trunk and shows the trunk check.
 
 ## Choose a carrier
 
@@ -45,7 +50,12 @@ Faxbot has settings ready for these carriers. Each preset uses the carrier's own
 | Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | T.38 is not documented by the carrier; confirm it with Sinch support and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
 | AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. T.38 is not documented on its connection page; confirm it with AnveoDirect first. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
+| Gamma (UK) | Server IP address only | The SIP server address your Gamma reseller gives you; give them your static public address | Gamma lists T.38, and a phone system maker tested T.38 fax over it. See [United Kingdom](#united-kingdom). |
+| BT One Voice (UK) | Server IP address only | The BT SIP server address from your turn-up sheet; give BT your static public address and port | BT turns T.38 into audio fax inside its network, so a new BT trunk starts with audio fax. See [United Kingdom](#united-kingdom). |
+| Telstra SIP Connect (Australia) | Username and password, over TCP | The SIP domain from your Telstra order as the server, Telstra's SBC address as the outbound proxy | Telstra does not state T.38 support. See [Australia](#australia). |
 | Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot dials numbers in E.164 with a plus sign. |
+
+Gamma, BT One Voice and Telstra SIP Connect offer **Number format**: **International, with + and the country code**, or **As a phone here dials it** (`01632960123` in the UK), for a carrier that wants national numbers. Their settings are tested against Faxbot's own Asterisk standing in for the carrier; none has been tested on a live trunk yet.
 
 Carrier pages used for the presets:
 
@@ -54,6 +64,39 @@ Carrier pages used for the presets:
 - Sinch: [Elastic SIP Trunking](https://developers.sinch.com/docs/est), [test plan](https://developers.sinch.com/docs/est/test-plan), [LiveKit guide](https://developers.sinch.com/docs/est/integration-guides/livekit), [Ribbon guide](https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc)
 - AnveoDirect: [FAQ](https://www.anveodirect.com/about/faq)
 - Flowroute: [points of presence](https://developer.flowroute.com/docs/inbound-and-outbound-calling-with-flowroute-new-pops/), [IP authentication](https://support.bcmone.com/flowroute-support/docs/set-up-ip-based-authentication-for-outbound-calls), [faxing](https://flowroute.com/faxing/)
+- Gamma: [Swyx interoperability sheet](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK), [Yeastar UK provider list](https://www.yeastar.com/itsp-partners/united-kingdom/), [SIP trunking](https://gammagroup.co/products/sip-trunking-call-management/)
+- BT One Voice: [technical outline](https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf), [UK datasheet](https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf)
+- Telstra SIP Connect: [3CX setup guide](https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/), [Our Customer Terms, SIP Connect section](https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf)
+
+## United Kingdom
+
+Openreach says "By 31 January 2027, all traditional phone lines will be going digital". Its [switch-off page](https://www.openreach.com/upgrading-the-UK-to-digital-phone-lines) lists alarms, CCTV, payment terminals, telecare devices and lift phones as things to check (read 3 October 2026). BT is plainer about fax:
+
+- On **BT Digital Voice**, "Generally, fax is supported ... although it's not 100% guaranteed", and BT suggests sending no more than 10 pages at a time ([BT help](https://www.bt.com/help/landline/digital-voice--will-my-existing-phone-and-fax-machine-still-work)).
+- On **BT Cloud Voice Express**, "some analogue devices which use a traditional phone line may no longer work, including: Tills, EPOS, Oyster, Fax machines", and "BT is not able to guarantee that all analogue devices will work with an ATA". BT advises "Changing to digital alternatives" ([BT Business help](https://business.bt.com/help/guides/getting-started-with-your-bt-business-products/using-your-cloud-voice-express-phone-service/)).
+
+Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP trunk that carries T.38 or over a cloud fax provider, instead of a fax machine on a digital line.
+
+| BT product | Use with Faxbot |
+| --- | --- |
+| **BT One Voice SIP Trunk** | The **BT One Voice** preset. BT recognises Faxbot by its address and port, with no registration, so Faxbot needs a host with a static public address (see [Server IP sign-in](#server-ip-sign-in-needs-a-public-host)). BT's technical outline says "T.38 Fax over IP is internally transcoded to Fax via G.711 pass-through", so a new BT trunk starts with audio fax and the switch says "Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax." **Try T.38 again** is there if you want it. A-law first in the UK. |
+| **BT Cloud Voice SIP-T** | **Another carrier**, signing in with the username and password BT gives you. BT's [connectivity guide](https://business.bt.com/content/dam/bt-business/pdfs/help-and-support/phone-systems/connecting-phone-systems-direct-to-cloud-voice-sip/cv-sip-native-connectivity-customer-guide.pdf) says nothing about fax or T.38, so send test faxes first. |
+| **BT Cloud Voice, Cloud Voice Express, Digital Voice, Cloud Work** | Not fax products, by BT's own account. Use a T.38 trunk (Gamma, or Telnyx with UK numbers) or a cloud fax provider such as eFax instead. |
+
+**Gamma** is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it ([Swyx, updated 17 June 2024](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK)). Choose the **Gamma** preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use **Another carrier** for those. **Telnyx** has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.
+
+No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Tools → Delivery routes**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
+
+## Australia
+
+- **Telstra SIP Connect**: the **Telstra SIP Connect** preset registers with a username and password over TCP.
+  - Enter the SIP domain from your Telstra order as the server, Telstra's SBC address as **Outbound proxy**, and the authentication user ID and password Telstra gives you. These settings follow [3CX's Telstra guide](https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/).
+  - Telstra does not state T.38 support anywhere Faxbot could read, so T.38 stays on and Faxbot switches new calls to audio fax by itself if T.38 fax data does not come back.
+  - Telstra's customer terms say the charges "are set out in your application form", so no price is published.
+- **Telnyx** has Australian numbers and is the quickest start, as in the UK.
+- Yeastar's [Australian provider list](https://www.yeastar.com/itsp-partners/australia/) marks Aatrox Communications and Binary Elements for T.38, both with registration. Use **Another carrier** for them.
+
+A-law comes first for UK and Australian installations; an Avaya phone system preset picks the order from the installation country.
 
 ## What you need from the carrier
 
@@ -64,35 +107,100 @@ Carrier pages used for the presets:
 
 ## Set it up
 
-1. In the console, open **Settings**, choose **SIP/Asterisk** as the provider, and find **Carrier SIP trunk**. The setup wizard shows the same form.
-2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
+1. In the console, open the **Setup Wizard**, choose your carrier (or phone system) for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; Afterwards, **Providers** shows the same form on the page named after your carrier (such as **Providers → Telnyx**).
+2. Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example `sip.telnyx.com`, `5061`, **Default: Encrypted (TLS)**) until you type your own. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
-4. Select **Save trunk settings**, then **Apply to Asterisk**, then restart the Asterisk service (for example `docker compose restart asterisk`).
-5. Select **Check trunk status**. "The trunk is ready." means the carrier accepted Faxbot and answers its checks.
+4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot providers trunk apply` does the same.
+   When Asterisk already runs exactly these settings, nothing restarts and the result says "Saved. Asterisk already uses these settings." Until a trunk is set up for each direction that uses it, Faxbot's readiness and the Dashboard say "No SIP trunk is set up. Choose your carrier to start." (or "Some trunk settings are missing.").
+5. **Check trunk status** repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot providers trunk status`.
+
+### What Apply and connect does with Asterisk
+
+In the Docker Compose install, Asterisk shares Faxbot's data folder and Docker starts it again whenever it stops, so Faxbot restarts it to load the trunk; nothing has to be typed on the server. Faxbot restarts it only when it is not already running exactly these settings, and only when no call is up: during a call, Apply and connect says "Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends." and changes nothing else. Faxbot restarts rather than reloads because a running Asterisk never reloads its transport settings (protocol, port, internet address), and a password change alone does not make it register again.
+
+When Asterisk runs elsewhere and does not share Faxbot's data folder, Apply and connect writes the files and says "Saved for Asterisk. Restart the Asterisk service to use these settings." An Asterisk set up before this release may answer "Asterisk does not let Faxbot restart it yet"; restart the Asterisk service once and Faxbot can restart it from then on.
+
+The behaviour rests on Asterisk 22 itself (read 2026-10-04 UTC): the manager `Command` action needs the `command` permission and `CoreShowChannels` the `system` or `reporting` permission (`main/manager.c`); `core stop gracefully` "Causes Asterisk to not accept new calls, and exit when all active calls have terminated normally" (`main/asterisk.c`); a transport is "not fully reloadable, not reloading: protocol, bind, TLS ..." unless `allow_reload` is set (`res/res_pjsip/config_transport.c`); and an outbound registration registers again on reload only when the registration itself changed (`res/res_pjsip_outbound_registration.c`), all at https://github.com/asterisk/asterisk/tree/22 . The actions are described at https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/Command/ and https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/PJSIPRegister/ .
+
+**Check trunk status** answers in one sentence per line:
+
+- how the carrier answered, for example "The carrier accepted Faxbot's registration over TLS." and "The carrier answered Faxbot's check in 38 ms.";
+- Faxbot's internet address, which it learns itself with STUN (from the carrier's STUN server when there is one, compared with a second public STUN server), and whether your network keeps or changes port numbers on the way out;
+- "No ports need to be opened or forwarded." for username and password sign-in, unless the network check below says T.38 fax data cannot come back;
+- whether fax over IP (T.38) can work on your network (see [Network for fax over IP](#network-for-fax-over-ip));
+- the newest call, in the same sentence Recent calls shows.
 
 If you manage settings with an environment file instead of the console, set the `SIP_TRUNK_*` values below and run `docker compose run --rm api python -m app.sip_trunk write`, then restart Asterisk.
 
 | Setting | Meaning |
 | --- | --- |
-| `SIP_TRUNK_PRESET` | `telnyx`, `signalwire`, `sinch`, `anveo`, `flowroute` or `custom` |
+| `SIP_TRUNK_PRESET` | `telnyx`, `signalwire`, `sinch`, `anveo`, `flowroute`, `gamma`, `bt-one-voice`, `telstra-sip-connect`, `avaya-ipoffice`, `avaya-aura` or `custom` |
 | `SIP_TRUNK_AUTH` | `registration` (username and password) or `ip` |
 | `SIP_TRUNK_HOST`, `SIP_TRUNK_PORT`, `SIP_TRUNK_TRANSPORT` | Leave empty to use the preset's server, port and transport |
-| `SIP_TRUNK_USERNAME`, `SIP_TRUNK_PASSWORD` | Carrier credentials; the password is stored as a secret |
+| `SIP_TRUNK_USERNAME`, `SIP_TRUNK_PASSWORD` | Carrier credentials; the password is stored as a secret. The password is read from the environment at every start, also as `TELNYX_SIP_PASSWORD` or `TELNYX_PASS` |
 | `SIP_TRUNK_OUTBOUND_PROXY` | Only if the carrier asks for one |
 | `SIP_TRUNK_CALLER_ID` | Your carrier-authorized number, such as `+15551234567` |
 | `SIP_TRUNK_DIDS` | Your fax numbers on this trunk, separated by commas |
 | `SIP_T38_ENABLED` | `true` by default |
-| `SIP_FAX_PREFERENCE_HEADER` | `false` by default; see below |
-| `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
-| `SIP_EXTERNAL_ADDRESS` | Your public IP address, only when Asterisk is behind a router or firewall |
+| `SIP_FAX_PREFERENCE_HEADER` | `true` by default; see below |
+| `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset (for Avaya and BT One Voice, the order the installation country uses) |
+| `SIP_TRUNK_DIAL_FORMAT` | `e164` (`+441632960123`) or `local` (`01632960123`, as a phone at the installation dials it), where the preset offers the choice |
+| `SIP_TRUNK_DIAL_PREFIX` | Up to four digits before a number dialled the local way, such as `9` for a phone system's outside line |
+| `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
+| `SIP_ROUTER_PORTS` | `true` by default: Faxbot may open its published fax ports on your router (see [Network for fax over IP](network.md)); `false` stops it and closes any it opened |
+| `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off. Read at the first start; after that it is a setting (see below) |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
-Open UDP 5060 (or the carrier's port) and UDP 4000 to 4999 to the Asterisk host: T.38 uses 4000 to 4499 and audio uses 4500 to 4999. Keep the Asterisk manager port, 5038, private.
+### Behind a router: nothing to open for calls and audio fax
 
-If Asterisk is behind a router or firewall, or runs in Docker with port publishing, enter your public IP address under **Public IP address**. Without it, the carrier is told a private address and calls connect with no fax data. On a server with a public address you can leave it empty.
+With username and password sign-in you don't open, publish or forward any port for calls and audio fax, and the default Docker Compose file publishes none. Fax over IP (T.38) can need more on some networks; see [Network for fax over IP](network.md).
 
-**Apply to Asterisk** also saves the inbound secret from **Inbound Receiving**, so Asterisk can report received faxes to Faxbot.
+Behind a router, the fax engine (Asterisk) registers with the carrier over one encrypted connection (for Telnyx, TLS on port 5061) and keeps it alive with a keepalive and a carrier check every 30 seconds. Over UDP the carrier check runs every 25 seconds and registration renews every two minutes, which stays inside common router timeouts. The carrier sends incoming calls back over that same connection. On every call the fax engine sends the first audio and fax over IP (T.38) packets itself, plus a small audio keepalive every two seconds when nothing else is being sent, so your router lets the carrier's answer back in on the same path.
+
+Leave **Internet address** empty. It is only an override for a host whose address you want to state yourself, and if you enter one that differs from what Faxbot sees, **Check trunk status** tells you.
+
+Faxbot finds its internet address with STUN when you select **Apply and connect**, and checks again every five minutes. You can change the interval with **Check the internet address every … minutes** under **Providers → Carrier trunk**, or with `faxbot system settings set sip_public_address_check_minutes=10`; `0` stops the repeat. A change takes effect from the next check, without a restart.
+
+Faxbot only tells the carrier its internet address when your network keeps port numbers, because then the address and port are exactly right and the call doesn't depend on the carrier following Faxbot's packets. When your network changes port numbers, an internet address with the wrong port would mislead the carrier, so Faxbot leaves it out and lets the carrier follow its packets instead. The fax engine reads the address when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." For a fax engine that Faxbot doesn't manage, it tells you to restart the Asterisk service instead.
+
+Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying that Faxbot isn't registered over the encrypted connection, set **Transport** to TCP, apply again and restart Asterisk.
+
+All of this relies on carriers sending their packets back to wherever Faxbot's packets came from. Telnyx does that for audio, but not for fax over IP (T.38), as measured on 3 and 4 October 2026: on a network that changes port numbers, Telnyx's fax data never reaches Faxbot. Fax over IP (T.38) therefore needs a network that keeps port numbers, and the network check below finds out which kind you have and tells you what to do. If a call runs into the problem anyway, it connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier."
+
+### Network for fax over IP
+
+Faxbot checks its network when it starts, when you select **Apply and connect**, every few minutes and when you select **Check again** under **Network for fax over IP** on the carrier's page (or with `faxbot providers trunk network status|check`). Fax over IP (T.38) then follows the check by itself. When the carrier's fax data can't come back, Faxbot turns fax over IP (T.38) off and gives the reason: "Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed." Once the network is fixed, Faxbot turns it back on, and it never sends a fax a second time because of this.
+
+When the router directly in front of Faxbot's computer changes port numbers, Faxbot can open its fax ports on that router itself. [Network for fax over IP](network.md) has the fix for each platform: Colima, Docker Desktop, Linux behind a router and cloud servers.
+
+### When T.38 data does not come back: audio fax
+
+Sometimes a call switches to fax over IP (T.38) and no fax data comes back, and Faxbot reports "The call connected but no fax data came back from the carrier." The carrier isn't sending fax data back along Faxbot's path, even though it may still send audio that way.
+
+Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message; a plain hang-up, a busy line or the other side hanging up never triggers it. When it switches, Faxbot turns off **Use T.38 fax over IP** (the settings history records "system"), reconnects the carrier trunk once no call is in progress, and shows a sentence next to the switch such as "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.", together with **Try T.38 again**. It never sends the failed fax again; send it yourself when you're ready.
+
+The fast fax service handles this on its own. After one of its T.38 calls hears no fax machine, it uses audio fax for its next calls, while the trunk's **Use T.38 fax over IP** setting and the built-in fax engine stay as they are. The trunk page reports the change under **Check trunk status**; select **Apply and connect** there to let the fast fax service try T.38 again. The same rule applies: a plain hang-up, a busy line or the other side hanging up does not trigger it, and Faxbot never sends the failed fax again.
+
+If fax over IP (T.38) is off and the most recent fax over IP (T.38) call got no fax data back (for example, because someone turned it off by hand right after such a call), Faxbot takes that call as the reason and says so in the same way.
+
+New calls stay on audio fax: Faxbot declines the carrier's switch to fax over IP (T.38) and sends at up to 9600 bit/s with error correction, which copes better with a voice path.
+
+If the failed call happened on a network that changed port numbers and a later network check finds the network fixed, Faxbot turns fax over IP (T.38) back on by itself. If it happened on a network that keeps port numbers, the carrier is the cause, and audio fax stays until you choose otherwise.
+
+A carrier trunk on a network that changes port numbers starts with audio fax (see [Network for fax over IP](#network-for-fax-over-ip)). `faxbot providers trunk mode audio` turns on audio fax by hand, and `faxbot providers trunk status` tells you why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+
+### Server IP sign-in needs a public host
+
+A carrier that signs in by IP address (AnveoDirect, Gamma, BT One Voice, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply and connect** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+```
+
+See [Asterisk and SIP](sip-asterisk.md#carriers-that-sign-in-by-ip-address) for the ports. Keep the Asterisk manager port, 5038, private.
+
+**Check trunk status** says "Received faxes reach Faxbot: ready." when the trunk receives and the inbound secret Faxbot keeps is written where Asterisk reads it. **Apply and connect** also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in **Inbound Receiving** or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see [Receiving faxes](../operations/receiving.md#asterisk)).
 
 ## T.38
 
@@ -102,13 +210,13 @@ A carrier listing T.38 support does not guarantee every call completes as T.38. 
 
 ### Fax preference on outgoing calls
 
-**Mark outgoing calls as fax when they start** adds a standard fax marker (RFC 6913) to each new outgoing call. Some carriers use it to pick a fax-capable route; others ignore it. It is off by default. It only describes the call; Faxbot never places a second call because of it, and never resends a fax whose outcome is unknown.
+**Mark outgoing calls as fax when they start** adds a standard fax marker (RFC 6913) to each new outgoing call. Some carriers use it to pick a fax-capable route; others ignore it. It is on by default: it is a preference (`Accept-Contact`, never `Require`), so a carrier that does not know it still connects the call. Turn it off only if your carrier refuses calls that carry it. It only describes the call; Faxbot never places a second call because of it, and never resends a fax whose outcome is unknown.
 
 ## Caller ID
 
 Faxbot sends only the caller ID you enter, and you should enter only a number your carrier has assigned to you or verified for you. Carriers reject calls with numbers they have not authorized. Faxbot never presents a number you do not control.
 
-The fax header and station ID that appear on the received pages are separate settings.
+The fax header and station ID that appear on the received pages are separate settings. Leave the station ID empty to send the trunk's caller ID as the station ID; Faxbot never sends a made-up one.
 
 ## Keep your fax number
 
@@ -130,10 +238,45 @@ Carriers bill fax calls like voice calls: by connected minutes, rounded up to th
 | Sinch | not published | not published | not published | not published |
 | AnveoDirect | about $0.00186, varies by number | $0.004 | $0.15, plus $0.25 setup | outbound per second; inbound not published |
 | Flowroute | $0.00833 | $0.005 | $1.00 | outbound 6 seconds; inbound whole minutes |
+| Gamma (GBP) | not published | not published | not published | not published |
+| BT One Voice (GBP) | not published | not published | not published | not published |
+| Telstra SIP Connect (AUD) | not published | not published | not published | not published |
+
+An Avaya phone system has no rate card: the carrier behind it bills the calls, so add your own rate for it.
 
 Rounding applies to each call separately. With whole-minute billing, a 59-second call and a 61-second call are billed as three minutes, not two. A fax of 20 pages usually takes 10 to 11 minutes on the line.
 
 Check your carrier account for your actual rates before you rely on these figures.
+
+### How actual charges arrive (Telnyx)
+
+The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Costs → Spending**, in Sent's fax details and in Received.
+
+1. In the Telnyx portal, create an API key (**Account settings → Keys & credentials → API keys**).
+2. Add it to `.env` and restart:
+
+   ```env
+   TELNYX_API_KEY=KEY...
+   ```
+
+   ```bash
+   docker compose up -d
+   ```
+
+The key is read at every start and never shown in the console. Faxbot only reads billing records with it; it never places calls or changes your Telnyx account.
+
+About once a minute, Faxbot asks Telnyx for the billing records (detail records) of finished calls and matches each one to its own call record:
+
+- by the call's SIP Call-ID, which Asterisk records for every call;
+- otherwise, only when exactly one call has the same numbers and was answered and ended within 45 seconds of the Telnyx record, and that record fits no other call. If Faxbot did not learn the number a received call dialled, the caller's number must match instead; time alone never decides.
+
+A record that could fit more than one call is never guessed. It stays unmatched, the call's cost stays unknown, and Spending counts it as "could not be matched".
+
+Telnyx usually has a call's record within minutes. Until then the fax shows "Cost not reported yet." A record without a price stays unknown, never zero. Faxbot asks again with growing gaps, checks once more a day after the call to settle the charge, and stops asking after 7 days. If Telnyx later reports a different amount, the new amount replaces the old one and both are kept. A charge never changes a fax's delivery status, and a failed call that Telnyx charged for still counts toward that fax's cost.
+
+Faxbot also reads the trunk's Telnyx records for the last two days once an hour, to find calls it has no record of, such as a received fax whose hand-over failed. Their charges count in Spending on their own line. A charge is shown on a received fax only when exactly one fax matches it by number and time. This needs the trunk's fax numbers and caller ID filled in.
+
+To ask Telnyx straight away, select **Check Telnyx charges now** under Spending, or run `faxbot costs reconcile`.
 
 ## How Faxbot records each call
 
@@ -143,8 +286,20 @@ For every call on the trunk Faxbot keeps a call record:
 - when the call started, was answered and ended, and the connected seconds;
 - the result: answered, busy, network busy, no answer, failed, or not known yet;
 - whether the call used T.38, how many pages moved, and the other machine's station ID;
-- the reason a call or fax failed.
+- the reason a call or fax failed, and one sentence about what happened.
 
 A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.
 
-**Recent calls** under the trunk settings lists them, newest first. Delivery routes use the connected seconds to estimate what each fax cost.
+**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot providers trunk calls` prints the same list). When a fax over the trunk fails, **Faxes → Sent** shows the same sentence for that fax; when the other fax machine was the problem, Sent says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
+
+| Sentence | What it means |
+| --- | --- |
+| Sent: 2 pages confirmed by the receiving machine. / Received: 2 pages. | The fax went through. |
+| The call connected but no fax data came back from the carrier. | The carrier never sent fax data back to Faxbot's path; the network, not the other fax machine, failed. This is the pattern of a carrier that does not follow Faxbot's packets. |
+| The call connected but no sound came back from the carrier. | The call stayed audio and not one audio packet arrived. |
+| The call connected but the other end did not answer as a fax machine. | Sound came back, but no fax signal: often a person or a voice line answered. |
+| The other fax machine answered but the fax failed: … | The network worked; the fax machines did not finish. The reason is the fax engine's own. |
+| A fax call from +1 303 … came in, but no pages arrived. | Someone called your fax number and no page was received, so Received has nothing; the Overview names the newest such call from the last day. |
+| The number was busy. / Nobody answered the call. | The call never connected. |
+
+Faxbot tells "no fax data came back" apart from a fax failure by the result of the call: no page and no station ID from the other machine, and either no audio packet at all or a fax engine ending that means nothing ever arrived (a first-message timeout, or the other side hanging up first). After a switch to T.38, Asterisk no longer counts audio packets, so only the fax engine's ending decides. Delivery routes use the connected seconds to estimate what each fax cost.

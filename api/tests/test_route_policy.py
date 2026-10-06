@@ -35,14 +35,8 @@ CONVERTED = [
     ("POST", "/admin/plugins/http/import-manifests", {"items": [MANIFEST]}),
     ("GET", "/admin/logs", None),
     ("GET", "/admin/logs/tail", None),
-    ("GET", "/admin/actions", None),
-    ("POST", "/admin/actions/run", {"id": "python_version"}),
-    ("GET", "/admin/tunnel/status", None),
-    ("POST", "/admin/tunnel/config", {"enabled": False, "provider": "none"}),
-    ("POST", "/admin/tunnel/test", None),
     ("GET", "/admin/inbound/callbacks", None),
     ("POST", "/admin/inbound/simulate", {}),
-    ("POST", "/admin/diagnostics/run", None),
     ("POST", "/admin/settings/persist", {}),
 ]
 
@@ -155,10 +149,6 @@ def test_bootstrap_key_reaches_each_permission_family(client, tmp_path):
     assert _call(client, "GET", "/admin/inbound/callbacks", None, ADMIN).status_code == 200
     assert _call(client, "GET", "/admin/health-status", None, ADMIN).json()["require_auth"] is True
     assert _call(client, "GET", "/admin/logs", None, ADMIN).status_code == 200
-    assert _call(client, "GET", "/admin/tunnel/status", None, ADMIN).json()["provider"] == "none"
-    configured = _call(client, "POST", "/admin/tunnel/config", {"enabled": False, "provider": "none"}, ADMIN)
-    assert configured.status_code == 200 and configured.json()["status"] == "disabled"
-    assert _call(client, "POST", "/admin/diagnostics/run", None, ADMIN).status_code == 200
 
     installed = _call(client, "POST", "/admin/plugins/http/install", {"manifest": MANIFEST}, ADMIN)
     assert installed.status_code == 200, installed.text
@@ -192,14 +182,13 @@ def test_administrator_reads_operations_but_cannot_use_host_or_recovery(client):
     headers, principal = _role_key(client, role_id="role_administrator")
     assert _call(client, "GET", "/admin/logs", None, headers).status_code == 200
     assert _call(client, "GET", "/admin/health-status", None, headers).status_code == 200
-    assert _call(client, "GET", "/admin/tunnel/status", None, headers).status_code == 200
     assert _call(client, "POST", "/admin/plugins/http/install", {"manifest": MANIFEST}, headers).status_code == 200
-    for method, path in (("POST", "/admin/restart"), ("GET", "/admin/actions"), ("POST", "/admin/settings/persist")):
+    for method, path in (("POST", "/admin/restart"), ("POST", "/admin/terminal/ticket"), ("POST", "/admin/settings/persist")):
         assert _call(client, method, path, {} if method == "POST" else None, headers).status_code == 403
     assert _audits(client, "host.restart") == [
         ("denied", principal, {"request": "POST /admin/restart", "reason": "forbidden"})]
-    assert _audits(client, "host.actions") == [
-        ("denied", principal, {"request": "GET /admin/actions", "reason": "forbidden"})]
+    assert _audits(client, "host.terminal") == [
+        ("denied", principal, {"request": "POST /admin/terminal/ticket", "reason": "forbidden"})]
 
 
 def test_recovery_export_requires_complete_owner_authority(client, tmp_path):
@@ -209,25 +198,6 @@ def test_recovery_export_requires_complete_owner_authority(client, tmp_path):
     assert _audits(client, "owner.recover") == [
         ("denied", principal, {"request": "POST /admin/settings/persist", "reason": "owner_required"})]
     assert not (tmp_path / "recovery").exists()
-
-
-def test_host_action_is_rechecked_and_audited_immediately_before_execution(client, monkeypatch):
-    monkeypatch.setenv("ENABLE_ADMIN_EXEC", "true")
-    operator, principal = _role_key(client, role_id="role_host_operator")
-    ran = _call(client, "POST", "/admin/actions/run", {"id": "python_version"}, operator)
-    assert ran.status_code == 200 and ran.json()["ok"] is True
-    assert _audits(client, "host.actions") == [
-        ("allowed", principal, {"request": "POST /admin/actions/run"}),
-        ("allowed", principal, {"request": "POST /admin/actions/run", "action": "python_version"})]
-
-    # A denial at the recheck is a 403 and the action never starts.
-    calls = []
-    monkeypatch.setitem(main._ACTIONS_REGISTRY["python_version"], "runner", lambda: calls.append(1))
-    def revoked(*args, **kwargs):
-        raise MutationDeniedError(MutationReason.FORBIDDEN)
-    monkeypatch.setattr(main, "authorize_operation", revoked)
-    denied = _call(client, "POST", "/admin/actions/run", {"id": "python_version"}, operator)
-    assert denied.status_code == 403 and calls == []
 
 
 def test_manifest_install_keeps_the_v3_plugins_gate(isolated_installation, monkeypatch, tmp_path):
@@ -241,11 +211,11 @@ def test_manifest_install_keeps_the_v3_plugins_gate(isolated_installation, monke
 def test_browser_session_needs_csrf_for_converted_mutations(client):
     login = client.post("/auth/key-login", json={"api_key": BOOTSTRAP})
     assert login.status_code == 200, login.text
-    body = {"enabled": False, "provider": "none"}
-    assert client.get("/admin/tunnel/status").status_code == 200
-    assert client.post("/admin/tunnel/config", json=body).status_code == 403
+    body = {"backend": "sinch"}
+    assert client.get("/admin/logs").status_code == 200
+    assert client.post("/admin/settings/validate", json=body).status_code == 403
     csrf = client.get("/auth/me").json()["csrf_token"]
-    assert client.post("/admin/tunnel/config", json=body, headers={"X-CSRF-Token": csrf}).status_code == 200
+    assert client.post("/admin/settings/validate", json=body, headers={"X-CSRF-Token": csrf}).status_code == 200
 
 
 def test_fax_send_is_checked_at_the_personal_container(client):

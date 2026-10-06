@@ -14,8 +14,7 @@ async function signedInClient() {
 describe('resource access', () => {
   it('keeps the mailbox draft on a policy conflict, then creates it after Reload', async () => {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Mailboxes' }));
+    render(<ResourceAccess client={client} me={me} section="mailboxes" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add mailbox' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add mailbox' });
     fireEvent.change(within(dialog).getByLabelText('Mailbox name'), { target: { value: 'Billing' } });
@@ -23,14 +22,14 @@ describe('resource access', () => {
 
     backend.bumpPolicy(); // another administrator changed access meanwhile
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add mailbox' }));
-    expect(await within(dialog).findByText('Access policy changed. Reload and try again.')).toBeTruthy();
+    expect(await within(dialog).findByText('Access settings changed; review and save again.')).toBeTruthy();
     expect((within(dialog).getByLabelText('Mailbox name') as HTMLInputElement).value).toBe('Billing');
     expect(backend.requestsTo('POST', '/access/mailboxes')[0].body).toEqual({ label: 'Billing', enabled: true, expected_policy_version: 7 });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reload' }));
     // Reload refreshes the policy version without discarding the draft.
     await waitFor(() => expect(client.policyVersion).toBe(8));
-    await waitFor(() => expect(within(dialog).queryByText('Access policy changed. Reload and try again.')).toBeNull());
+    await waitFor(() => expect(within(dialog).queryByText('Access settings changed; review and save again.')).toBeNull());
     expect((within(dialog).getByLabelText('Mailbox name') as HTMLInputElement).value).toBe('Billing');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add mailbox' }));
     expect(await screen.findByText('Billing')).toBeTruthy();
@@ -40,7 +39,7 @@ describe('resource access', () => {
 
   it('warns that installation-wide access covers every fax and mailbox', async () => {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
+    render(<ResourceAccess client={client} me={me} section="assignments" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Give access' }));
     const dialog = await screen.findByRole('dialog', { name: 'Give access' });
     fireEvent.change(within(dialog).getByLabelText('Where'), { target: { value: 'res_installation' } });
@@ -67,8 +66,7 @@ describe('fax numbers follow the installation country', () => {
 
   async function openAddNumber() {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Fax numbers' }));
+    render(<ResourceAccess client={client} me={me} section="numbers" />);
     const add = await screen.findByRole('button', { name: 'Add number' });
     await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(add);

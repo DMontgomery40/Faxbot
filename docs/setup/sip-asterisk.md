@@ -1,59 +1,71 @@
-# SIP_SETUP.md
+# Asterisk and SIP
 
 ## Overview
-- Self-hosted backend using Asterisk and a SIP trunk with T.38 fax.
-- Send-only. You don’t need to accept inbound faxes to send.
-- Full control, no per-fax cloud charges (you still pay your trunk provider).
-- Requires some networking setup; this guide assumes minimal prior knowledge.
+- Faxbot's own fax engine: Asterisk sends and receives faxes over a SIP trunk from your carrier, with T.38 fax over IP.
+- No per-fax cloud charges; your carrier bills the calls by the minute.
+- No router changes: you do not open, publish or forward any port. [Carrier SIP trunk](sip-trunk.md) covers choosing and setting up the trunk in the console.
+- Receiving: see [Receiving faxes](../operations/receiving.md#asterisk). The dialplan hands each fax over with an inbound secret that Faxbot creates (a value set in Settings or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead), and the fax image must be inside the data folder (`/faxdata/inbound/`).
 
 ## What Is SIP? (Crash Course)
-- SIP (Session Initiation Protocol): signaling protocol to set up calls over the internet.
-- SIP Trunk: your account/connection to a carrier that places calls to the PSTN.
-- DID (Direct Inward Dialing): a phone number you can buy from a SIP provider. For sending only, a DID is optional but recommended so your caller ID is valid.
-- T.38: a protocol for fax over IP using UDPTL; more reliable than voice codecs for fax.
-- UDPTL: the transport for T.38; you must open/forward a port range for it.
-- AMI (Asterisk Manager Interface): how the API tells Asterisk to start a fax call.
-- E.164: the international phone number format (e.g., `+15551234567`). Use E.164 for destinations and caller IDs when possible.
+- SIP (Session Initiation Protocol): the signaling that sets up calls over the internet.
+- SIP trunk: your account with a carrier that connects calls to the telephone network.
+- DID: a phone number on that account. Faxes to it reach Faxbot; it is also your caller ID.
+- T.38: fax over IP, carried in UDPTL packets; more reliable than fax over a voice codec.
+- AMI (Asterisk Manager Interface): how the Faxbot API starts fax calls and hears their results.
+- E.164: the international number format, for example `+15551234567`.
 
 ## Requirements
-- A SIP trunk that supports T.38 over UDPTL
-- A public/static IP or NAT configured to forward required ports (below)
-- Docker and Docker Compose
+- A SIP trunk that supports T.38 (Telnyx is the tested preset).
+- Docker and Docker Compose.
+- Nothing else on your network: no public address, no port forwarding, no firewall rule for incoming traffic.
 
-## Networking
-- SIP signaling: `5060/tcp+udp`
-- AMI (Manager): `5038/tcp` (internal only; do not expose publicly)
-- T.38 UDPTL media: `4000–4999/udp`
-- If behind NAT, forward 5060 (tcp+udp) and 4000–4999/udp to the Asterisk host. Keep 5038 internal.
+## Networking: nothing to open
 
-Tips:
-- Many home routers call this “port forwarding” or “virtual servers”.
-- If your provider supports registration, the trunk will stay up behind NAT; still forward UDPTL.
+Faxbot behaves like a phone behind a router, not like a server:
 
-Why port forwarding is needed (simple analogy):
-- Think of your router like an office front desk. Internet calls arrive at the front desk but don’t know which room (device) to go to.
-- Port forwarding is the instruction to the front desk: “When fax data comes for room 4000–4999 (UDPTL), send it to the Asterisk machine.”
-- Without it, the fax data can’t reach your server, and calls fail or time out.
-- If you use a cloud VM instead of your home network, you don’t need a home router—just open those ports in the VM’s firewall.
+- **Signaling.** Asterisk registers with the carrier using your SIP username and password, over one encrypted (TLS) connection by default, and keeps that connection alive with keepalives and regular carrier checks. The carrier sends incoming calls back over the same connection, so nothing has to reach in.
+- **Address.** Faxbot learns its own internet address with STUN; nobody types it. **Check trunk status** shows the address and whether your network keeps or changes port numbers. When it keeps them, Asterisk advertises that exact address from its next start, with its own container subnet as the local network (the image includes `iproute2` to read it); when it changes them, Asterisk advertises nothing extra and the carrier follows Faxbot's packets.
+- **Fax data.** On every call, in both directions, Asterisk sends the first audio and T.38 packets itself. Your router then lets the carrier's answer back in on the same path. Carriers built for this (Telnyx is one) send their media wherever Faxbot's packets come from.
+- **Docker.** The default `docker-compose.yml` publishes no SIP or media port. Inside the container Asterisk uses UDP 4000 to 4499 for T.38 and 4500 to 4999 for audio, but only for packets it starts. The manager port, 5038, stays private on the Compose network.
 
-How to set up port forwarding on a typical home router:
-1) Find your router brand/model (sticker on the device) and log into its admin page (often 192.168.0.1 or 192.168.1.1).
-2) Reserve a fixed LAN IP for the machine running Asterisk (DHCP reservation), e.g., 192.168.1.50.
-3) Create port forward rules:
-   - UDP 4000–4999 → 192.168.1.50
-   - UDP 5060 and TCP 5060 → 192.168.1.50
-4) Save and reboot if required.
-5) On your server firewall, also allow those ports.
+Faxbot's loopback proof (`make native-proof`) shows that both directions work when Faxbot's address in the call setup cannot be reached, as long as the carrier sends its media back to the path Faxbot's packets came from. It also runs Faxbot behind a router container that hides it the way a home router does: Faxbot registers through the router over UDP or TCP, the stand-in carrier sends its incoming call down that registration, and a two-page T.38 fax goes through in both directions, including through a router that changes port numbers. If your carrier only sends media to the address in the call setup, the call connects but no fax data arrives. Advertising the exact internet address does not reliably fix that: when the carrier's first packet reaches your router before Faxbot's, the router can give Faxbot's own flow a different port. Faxbot then shows "The call connected but no fax data came back from the carrier." for that call. In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
 
-If you’re on CGNAT (carrier-grade NAT) or can’t port forward:
-- Use a cloud VM (e.g., small Linux instance) with a public IP and open the same ports there.
-- Or choose the Phaxio cloud backend instead of SIP.
+### Carriers that sign in by IP address
+
+AnveoDirect, Gamma, BT One Voice, and Telnyx or Flowroute when set to IP sign-in, send calls to a fixed public address, which a router does not pass on. Use them only on a host with its own public address. Start Compose with the public override:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+```
+
+It publishes SIP on 5060 (UDP and TCP) and 5061 (TCP), plus one 32-port media range, 4000 to 4031 UDP. Asterisk then uses exactly that range: the first third for T.38 and the rest for audio, enough for about ten calls at once. The range stays small because Docker starts one helper process per published port, and a 1000-port range used up a 4 GB host. Open the same ports in the host firewall.
+
+### A phone system on your local network
+
+An Avaya IP Office or Aura phone system sends calls to Faxbot on your local network. Set `FAXBOT_LAN_ADDRESS` in `.env` to this computer's address on that network and start Compose with the phone system override:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d
+```
+
+It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` (default 4000 to 4019 UDP) on that address only. Never set more than 100 ports: Docker publishes the whole range before Asterisk starts, and Asterisk then refuses it. Asterisk tells the phone system that address in every call. Use a Linux host. See [Avaya IP Office and Aura](avaya.md).
 
 ## Configure API and Asterisk separately
 
-On an existing installation, select SIP for the desired outbound direction and edit AMI/station/header fields in Settings. Apply with the loaded revision, complete any pending installation-wide restart and confirm active identity. These canonical API values are not replaced by later `.env` edits.
+On an existing installation, choose your carrier or phone system (under **Your own fax line through a carrier** or **Your phone system**) for sending, receiving or both in the Setup Wizard and select **Restart now** when it asks.
 
-Asterisk trunk/transport settings are separate deployment inputs rendered at that container’s startup. Configure its environment and align the API’s canonical AMI credentials with the rendered manager credentials. For first bootstrap, the API names below can also be supplied in `.env`:
+### The fax engine login: nothing to type
+
+Faxbot and Asterisk share one manager login (the Asterisk Manager Interface, port 5038, private to the Compose network). You do not have to choose it or type it twice:
+
+- The first time Faxbot starts with the SIP trunk in use, it creates a random manager password (saved as a setting by "system"), and before it connects it writes the username and password to `/faxdata/asterisk/manager.credentials`, readable only by its owner. It writes the file again at every start that uses the trunk and on **Apply and connect**.
+- Asterisk's start script turns its manager port on with that login. An Asterisk that started before the file existed runs with the manager port off and watches the file; when Faxbot writes it, Asterisk stops gracefully within seconds (once no call is up), Docker starts it again with the login, and Faxbot, which keeps retrying, signs in.
+- `ASTERISK_AMI_USERNAME` and `ASTERISK_AMI_PASSWORD` in `.env` always win: both containers read them, and Asterisk then ignores the file.
+- An installation that already used its own Asterisk with the shipped default password keeps that password; set `ASTERISK_AMI_PASSWORD` in `.env` to replace it.
+
+The Setup Wizard shows these fields only under **Advanced: fax engine connection**, for a fax engine you run yourself.
+
+The trunk itself is set up on the **Carrier SIP trunk** screen: **Apply and connect** writes the trunk file Asterisk loads at start and, in the Docker Compose install, restarts Asterisk to load it once no call is up (see [Carrier SIP trunk](sip-trunk.md)). For first bootstrap, the API names below can also be supplied in `.env`:
 ```
 FAX_BACKEND=sip
 
@@ -61,14 +73,8 @@ FAX_BACKEND=sip
 ASTERISK_AMI_HOST=asterisk
 ASTERISK_AMI_PORT=5038
 ASTERISK_AMI_USERNAME=api
+# Optional: without it Faxbot creates the manager password itself (see above)
 ASTERISK_AMI_PASSWORD=change_me_safe
-
-# SIP trunk (from your provider)
-SIP_USERNAME=your_username
-SIP_PASSWORD=your_password
-SIP_SERVER=sip.provider.example
-SIP_FROM_USER=+15551234567
-SIP_FROM_DOMAIN=sip.provider.example
 
 # Presentation
 FAX_LOCAL_STATION_ID=+15551234567
@@ -79,7 +85,7 @@ FAX_HEADER=Your Org Name
 ```
 docker compose up -d --build
 ```
-- API on `8080`, Asterisk on `5060/udp`, `5060/tcp`, AMI on `5038`, UDPTL `4000–4999/udp`.
+- The API listens on `8080`. Asterisk publishes nothing; the API reaches its manager port over the Compose network.
 
 ## How It Works
 1. API converts input file to PDF, then to fax-optimized TIFF (Ghostscript).
@@ -92,14 +98,14 @@ docker compose up -d --build
 - Asterisk: `docker compose logs -f asterisk`
 - Inside Asterisk shell: `docker exec -it <asterisk_container> asterisk -rvvv`
   - Check module load: `module show like fax`
-  - Call flow: watch for `SendFAX` and `FaxResult` events
+  - Registration: `pjsip show registrations`
+  - Call flow: watch for `SendFAX` and `FaxResult` events; `pjsip set logger on` shows the SIP messages.
 
 ## Common Pitfalls
-- T.38 disabled at provider → enable UDPTL and verify `udptl.conf` range.
-- NAT issues → enable `rtp_symmetric`, `force_rport`, correct `match` and `from_domain`.
-- Wrong credentials → check `pjsip.conf` generated from templates (envsubst in `start.sh`).
+- T.38 disabled at the carrier → turn on the carrier's T.38 gateway for your number.
+- Calls connect but no fax data arrives → the carrier did not send its media back to Faxbot's path. Use a host with a public address, or a cloud fax provider.
+- Wrong credentials → **Check trunk status** on the Carrier SIP trunk screen says the carrier rejected the username or password.
 - Ghostscript missing → required conversion fails honestly; install it before submitting. No stub or placeholder counts as prepared fax content.
-- CGNAT / no port forwarding → use a cloud VM or Phaxio backend.
 
 ## Test Send
 ```bash
@@ -113,7 +119,7 @@ curl -X POST http://localhost:8080/fax \
 
     - Open Admin Console → Send Fax  
     - Enter a valid E.164 number; attach a small PDF  
-    - Watch Jobs for status; see Asterisk logs if calls fail
+    - Watch **Faxes → Sent** for status; see Asterisk logs if calls fail
 
 ## Choosing a SIP Provider (T.38)
 Pick one of these two (beginner-friendly):
@@ -135,53 +141,18 @@ Notes:
 - Always ask your provider to confirm T.38 support and sign a BAA if you’ll transmit PHI.
 - Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages.
 
-## TLS Signaling & VPN Examples (Advanced)
-
-### PJSIP TLS Transport (example)
-```
-[transport-tls]
-type=transport
-protocol=tls
-bind=0.0.0.0:5061
-method=tlsv1_2
-local_net=10.0.0.0/8
-cert_file=/etc/asterisk/keys/asterisk.pem
-priv_key_file=/etc/asterisk/keys/asterisk.key
-ca_list_file=/etc/asterisk/keys/ca.crt
-external_media_address=<public_ip>
-external_signaling_address=<public_ip>
-```
-
-Then reference `transport=transport-tls` in your trunk endpoint/registration if your provider supports TLS.
-
-### Site‑to‑Site VPN (WireGuard sketch)
-- Provision a WireGuard tunnel between your Asterisk host and the SIP provider’s VPN endpoint.
-- Route provider IP ranges through the WG interface; restrict firewall to permit SIP/T.38 only via the tunnel.
-- Example (Asterisk side `/etc/wireguard/wg0.conf`):
-```
-[Interface]
-PrivateKey = <your_private_key>
-Address = 10.7.0.2/32
-
-[Peer]
-PublicKey = <provider_public_key>
-Endpoint = <provider_vpn_host>:51820
-AllowedIPs = <provider_sip_subnets>
-PersistentKeepalive = 25
-```
-
-Restart Asterisk with `external_*` addresses set to the tunnel’s public IP if required.
-
 ## Understanding the Asterisk Configuration
-- `asterisk/etc/asterisk/templates/pjsip.conf.template` is rendered from the Asterisk container environment at startup. Without trunk configuration, startup stays offline with no registration.
-- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Ensure these match the API’s active canonical AMI credentials. Manager access is disabled when Asterisk deployment AMI credentials are omitted; supplying both renders the account.
+- Faxbot renders the whole trunk (`pjsip.conf`) from its settings; **Apply and connect** writes it to `<FAX_DATA_DIR>/asterisk/pjsip.conf` and Asterisk loads it at start. At each start Asterisk also records the trunk it loaded (`pjsip.conf.started`) and the time it started (`engine-started`) in that folder, so Faxbot can tell whether a restart is needed and that it may restart this Asterisk. Without a trunk, Asterisk starts offline with no registration.
+- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Without them, the start script reads `/faxdata/asterisk/manager.credentials`, which Faxbot writes; with neither, manager access stays off until Faxbot writes the file. The account may originate calls, read status, list channels and run the one command Faxbot uses to restart Asterisk (`core stop gracefully`).
+- When the passwords differ, Faxbot still starts so you can fix it from the console. The dashboard, Settings, readiness (`/health/ready`), Diagnostics and **Check trunk status** say "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.", new faxes are refused with that sentence (held test faxes are still accepted), and Faxbot keeps trying to sign in. When Asterisk is not running at all, the sentence is "Faxbot can't reach its fax engine. Check that the Asterisk service is running."
+- `modules.conf` skips modules a fax server does not use, and small files such as `cdr.conf` and `pjproject.conf` stand in for configuration those modules would otherwise report missing, so a healthy start logs no ERROR lines. An ERROR in the Asterisk log means something needs attention, such as a received fax that could not be handed to Faxbot.
 - The dedicated `faxbot-send` context executes `SendFAX()` and emits the terminal result from its hangup handler. The older `faxout` context remains for compatibility; the new originate path does not use it.
 - The API listens for that event via AMI to update job status.
 
 ## Minimal Telephony Glossary
 - SIP: signaling protocol for VoIP calls.
 - SIP Trunk: your carrier connection for inbound/outbound PSTN calls.
-- DID: a phone number; optional for send-only but helpful for caller ID.
+- DID: a phone number; also your caller ID.
 - T.38: fax-over-IP protocol (preferred over G.711 for reliable faxing).
-- UDPTL: transport used by T.38; requires UDP port range open.
+- UDPTL: the packets T.38 travels in; Asterisk sends them first, so no port has to be opened.
 - AMI: Asterisk Manager Interface; API uses it to originate calls and receive events.

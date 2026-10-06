@@ -17,9 +17,9 @@ from ..config_profiles import ConfigurationDocument
 # Everything not explicitly ordinary is Owner-protected, including future fields.
 # These sets classify canonical values, never submitted aliases or secret masks.
 _ORDINARY_FIELDS = frozenset({
-    'route_min_success_percent', 'intake_email_subject',
+    'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours',
     'max_file_size_mb', 'fax_disabled', 'fax_header', 'fax_station_id', 'fax_default_country',
-    'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days',
+    'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days', 'time_zone',
 })
 _PROVIDER_FIELDS = frozenset({
     'fax_backend', 'outbound_backend', 'inbound_backend',
@@ -29,7 +29,10 @@ _PROVIDER_FIELDS = frozenset({
     'sip_trunk_preset', 'sip_trunk_auth', 'sip_trunk_host', 'sip_trunk_port', 'sip_trunk_transport',
     'sip_trunk_username', 'sip_trunk_password', 'sip_trunk_outbound_proxy', 'sip_trunk_caller_id',
     'sip_trunk_dids', 'sip_t38_enabled', 'sip_fax_preference_header', 'sip_trunk_codecs',
-    'sip_external_address',
+    'sip_t38_error_correction', 'sip_t38_max_datagram', 'sip_fax_max_rate', 'sip_fax_ecm', 'sip_fax_compression',
+    'sip_fax_fine', 'sip_sslfax_enabled', 'sip_fax_lines', 'sip_sslfax_listener_port',
+    'sip_trunk_dial_format', 'sip_trunk_dial_prefix',
+    'sip_external_address', 'sip_public_address_check_minutes', 'sip_router_ports', 'telnyx_api_key',
     'phaxio_api_key', 'phaxio_api_secret', 'phaxio_callback_token',
     'phaxio_status_callback_url',
     'sinch_base_url', 'sinch_project_id', 'sinch_api_key', 'sinch_api_secret',
@@ -39,14 +42,18 @@ _PROVIDER_FIELDS = frozenset({
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
     'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number',
+    'efax_app_id', 'efax_api_key', 'efax_user_id', 'efax_caller_id', 'efax_csid', 'efax_poll_seconds',
+    'efax_delete_after_download', 'efax_webhook_secret',
     'outbound_routes', 'direct_delivery_enabled', 'direct_organization', 'direct_fax_number',
     'intake_email_enabled', 'intake_smtp_host', 'intake_smtp_port', 'intake_smtp_security',
     'intake_smtp_username', 'intake_smtp_password', 'intake_email_from', 'intake_email_to',
     'inbound_enabled', 'asterisk_inbound_secret', 'sinch_inbound_basic_user',
-    'sinch_inbound_basic_pass', 'sinch_inbound_hmac_secret',
+    'sinch_inbound_basic_pass',
     'storage_backend', 's3_bucket', 's3_prefix', 's3_region', 's3_endpoint_url',
-    's3_kms_key_id',
+    's3_kms_key_id', 'enable_s3_diagnostics',
 })
+# Owner-protected like public_api_url: mobile_local_base is where paired phones send
+# their keys, and docs_base_url is where the console's help links send people.
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,17 @@ def _policy_values(values: ConfigurationValues) -> dict:
         # inherit a fallback. Compare canonical presence as well as the value.
         result[name] = (value, key in environment)
     return result
+
+
+def owner_only_fields() -> frozenset[str]:
+    """Settings only the installation's owner may change, by the names a settings change sends."""
+    names = set()
+    for name, field in ConfigurationValues.model_fields.items():
+        if name in _ORDINARY_FIELDS or name in _PROVIDER_FIELDS:
+            continue
+        extra = field.json_schema_extra if isinstance(field.json_schema_extra, dict) else {}
+        names.add(extra.get('patch_name', name))
+    return frozenset(names)
 
 
 def configuration_requirements(

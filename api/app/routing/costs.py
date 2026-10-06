@@ -13,6 +13,8 @@ MICROS = 1_000_000
 ESTIMATE_SETUP_SECONDS = 30
 ESTIMATE_SECONDS_PER_PAGE = 30
 MAX_RATE_MICROS = 100 * MICROS
+# A monthly plan fee fits a 32-bit integer column: at most 2,000 per month.
+MAX_MONTHLY_MICROS = 2000 * MICROS
 
 
 class InvalidRateCard(ValueError):
@@ -37,6 +39,14 @@ class RateCard:
     minimum_seconds: int
     source_url: str | None
     captured_on: datetime
+    # A flat monthly plan fee, if any: shared by every fax, never added to one fax's cost.
+    monthly_fee_micros: int | None = None
+
+    @property
+    def flat_plan(self):
+        """A monthly fee with nothing charged per minute, page or call: faxes are included in the plan."""
+        return (bool(self.monthly_fee_micros) and self.per_minute_micros == 0 and self.per_page_micros == 0
+                and self.per_call_micros == 0)
 
     def __post_init__(self):
         if (not isinstance(self.provider_id, str)
@@ -61,6 +71,9 @@ class RateCard:
             raise InvalidRateCard('The source must be a web address.')
         if not isinstance(self.captured_on, datetime):
             raise InvalidRateCard('Record the date these prices were advertised.')
+        if self.monthly_fee_micros is not None and (type(self.monthly_fee_micros) is not int
+                                                    or not 0 <= self.monthly_fee_micros <= MAX_MONTHLY_MICROS):
+            raise InvalidRateCard('A monthly fee is zero or more and at most 2,000.')
 
 
 def billed_seconds(card, seconds):
@@ -86,16 +99,63 @@ def estimate_cost(card, pages):
     return attempt_cost(card, seconds=seconds, pages=pages, delivered=True)
 
 
-def parse_amount(value):
+def rate_text(card):
+    """A card's price in its own units: "$0.005 a minute, at least 1 minute", "$0.07 a page".
+
+    None for a flat plan or a card that charges nothing per fax.
+    """
+    if card is None or card.flat_plan:
+        return None
+    parts = []
+    if card.per_call_micros:
+        parts.append(f'{money_text(card.per_call_micros, card.currency)} a call')
+    if card.per_minute_micros:
+        least = billed_seconds(card, 1)
+        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} seconds'
+        parts.append(f'{money_text(card.per_minute_micros, card.currency)} a minute, at least {floor}')
+    if card.per_page_micros:
+        parts.append(f'{money_text(card.per_page_micros, card.currency)} a page')
+    return ' plus '.join(parts) or None
+
+
+def parse_amount(value, *, whole_digits=3):
     """Decimal text such as "0.0095" to micros; at most six decimal places."""
     if isinstance(value, bool):
         raise InvalidRateCard('Enter prices as numbers, such as 0.0095.')
     if isinstance(value, int):
         value = str(value)
-    if not isinstance(value, str) or re.fullmatch(r'[0-9]{1,3}(?:\.[0-9]{1,6})?', value.strip()) is None:
+    if (not isinstance(value, str)
+            or re.fullmatch(r'[0-9]{1,%d}(?:\.[0-9]{1,6})?' % whole_digits, value.strip()) is None):
         raise InvalidRateCard('Enter prices as numbers with up to six decimal places, such as 0.0095.')
     whole, _, fraction = value.strip().partition('.')
     return int(whole) * MICROS + int((fraction + '000000')[:6])
+
+
+def money_text(micros, currency):
+    """Money for a sentence: "$0.005" for US dollars, "0.005 EUR" otherwise."""
+    amount = format_amount(abs(micros))
+    sign = '-' if micros < 0 else ''
+    return f'{sign}${amount}' if currency == 'USD' else f'{sign}{amount} {currency}'
+
+
+def plan_fee_text(micros, currency):
+    """A monthly fee for a sentence, without cents when it is whole: "$10", "$9.99"."""
+    if micros % MICROS == 0:
+        whole = micros // MICROS
+        return f'${whole}' if currency == 'USD' else f'{whole} {currency}'
+    return money_text(micros, currency)
+
+
+def plan_fee_for_days(card, days):
+    """A flat plan's fee for a period, pro-rated by days: a 30-day period counts one monthly fee."""
+    if not card.monthly_fee_micros or days <= 0:
+        return 0
+    return _ceil_div(card.monthly_fee_micros * days, 30)
+
+
+def money_list_text(amounts):
+    """{currency: micros} as one phrase, such as "$0.015" or "$0.01 + 0.02 EUR"."""
+    return ' + '.join(money_text(micros, currency) for currency, micros in sorted(amounts.items()))
 
 
 def format_amount(micros):

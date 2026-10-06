@@ -1,3 +1,4 @@
+import type { FaxTogetherSummary } from './batchingTypes';
 // TypeScript types for the admin API
 
 // Active operator fields consumed by Send and Plugins. The shell builds this
@@ -16,6 +17,8 @@ export interface HealthStatus {
   timestamp: string;
   backend: string;
   backend_healthy: boolean;
+  // One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
+  backend_message?: string | null;
   jobs: {
     queued: number;
     in_progress: number;
@@ -62,6 +65,12 @@ export interface FaxJob extends DeliveryMetadata {
   created_at: string;
   updated_at: string;
   file_name?: string;
+  // Present when the fax waited, or went, with other faxes to the same number.
+  together?: FaxTogetherSummary | null;
+  // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
+  fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
+  // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
+  send_by_call?: boolean;
 }
 
 export interface DeliveryHistoryEvent {
@@ -77,6 +86,7 @@ export interface DeliveryHistoryEvent {
     provider_sid?: string;
     legacy_status?: string;
     route?: string;
+    reason?: string;
   };
 }
 
@@ -155,6 +165,20 @@ export interface Settings {
     access_key: string;
     secret_key: string;
     from_number: string;
+    // The fax numbers on the HumbleFax account, read from HumbleFax.
+    account_numbers?: string[];
+    configured: boolean;
+  };
+  efax?: {
+    app_id: string;
+    api_key: string;
+    user_id: string;
+    caller_id: string;
+    csid: string;
+    poll_seconds: number;
+    delete_after_download: boolean;
+    webhook_secret?: string;
+    webhook_secret_set?: boolean;
     configured: boolean;
   };
   sinch: {
@@ -181,8 +205,13 @@ export interface Settings {
     ami_username: string;
     ami_password: string;
     ami_password_is_default: boolean;
+    // Faxbot has written this login where its own Asterisk reads it.
+    ami_password_shared?: boolean;
     station_id: string;
     configured: boolean;
+    // A key Faxbot uses only to read what Telnyx charged for each trunk call.
+    telnyx_api_key?: string;
+    telnyx_api_key_set?: boolean;
   };
   fs?: {
     esl_host?: string;
@@ -190,6 +219,8 @@ export interface Settings {
     esl_password?: string;
     gateway_name?: string;
     caller_id_number?: string;
+    // Why FreeSWITCH cannot send yet, in a sentence; null when nothing is missing.
+    problem?: string | null;
     t38_enable?: boolean;
   };
   security: {
@@ -207,6 +238,8 @@ export interface Settings {
     s3_prefix?: string;
     s3_endpoint_url?: string;
     s3_kms_key_id?: string;
+    // Diagnostics also check that Faxbot can reach the S3 bucket.
+    s3_diagnostics?: boolean;
   };
   database?: {
     url: string;
@@ -218,6 +251,8 @@ export interface Settings {
   routing?: {
     outbound_routes: string;
     min_success_percent: number;
+    // Faxes to the installation's own numbers become received faxes here, with no call.
+    local_delivery?: boolean;
   };
   intake?: {
     email_enabled: boolean;
@@ -234,6 +269,12 @@ export interface Settings {
     enabled: boolean;
     organization: string;
     fax_number: string;
+    allow_private_peers?: boolean;
+  };
+  // The header text and station ID faxes sent over the carrier trunk carry.
+  sender?: {
+    header: string;
+    station_id: string;
   };
   numbers?: {
     default_country: string;
@@ -248,6 +289,22 @@ export interface Settings {
     syslog_address: string;
   };
   persisted?: { enabled: boolean; path: string };
+  // The installation's time zone (an IANA name such as America/Denver); '' when none is set.
+  installation?: { time_zone: string };
+  // The address paired phones use on the installation's own network.
+  mobile?: { local_base: string };
+  // Where the console's help links point.
+  developer?: { docs_base_url: string };
+  // Whether the console may restart Faxbot.
+  restart?: { allowed: boolean };
+  // The older settings file, read once when a new installation first starts (read only).
+  legacy_config?: { path: string };
+  // Where provider plugin files are read from (read only).
+  plugin_files?: { providers_dir: string };
+  // Environment-only settings, shown read-only, by variable name.
+  deployment?: Record<string, DeploymentValue>;
+  // Settings only the owner may change, by the names a settings change sends.
+  owner_only?: string[];
   mcp?: {
     sse_enabled: boolean;
     sse_path: string;
@@ -268,12 +325,9 @@ export interface Settings {
       verify_signature: boolean;
     };
     sinch?: {
-      verify_signature: boolean;
       basic_auth_configured: boolean;
-      hmac_configured: boolean;
       basic_user?: string;
       basic_pass?: string;
-      hmac_secret?: string;
     };
   };
   features?: {
@@ -329,28 +383,22 @@ export interface PluginConfigurationPatch {
   settings?: Record<string, unknown>;
 }
 
-export type DiagnosticsValue = string | number | boolean | null | DiagnosticsValue[] | { [key: string]: DiagnosticsValue };
-export type DiagnosticsOutcome = 'pass' | 'fail' | 'warning' | 'info' | 'not_applicable';
-
-export interface DiagnosticsResult {
-  timestamp: string;
-  backend: string;
-  default_backend: string;
-  outbound_backend: string;
-  inbound_backend: string;
-  configuration: {
-    active_revision_id: string;
-    desired_revision_id: string;
-    generation: number;
-    pending_restart: boolean;
-  };
-  checks: Record<string, Record<string, DiagnosticsValue>>;
-  check_outcomes: Record<string, Record<string, DiagnosticsOutcome>>;
-  summary: {
-    healthy: boolean;
-    critical_issues: string[];
-    warnings: string[];
-  };
+// Diagnostics report (/admin/diagnostics/report): one sentence and at most one fix per check.
+export type DiagnosticsStatus = 'ok' | 'attention' | 'problem' | 'off';
+export interface DiagnosticsFinding {
+  id: string;
+  section: string;
+  title: string;
+  status: DiagnosticsStatus;
+  sentence: string;
+  fix: { label: string; page: string | null } | null;
+}
+export interface DiagnosticsReport {
+  checked_at: string | null;
+  checked_at_text: string;
+  status: DiagnosticsStatus | null;
+  summary: string | null;
+  sections: Array<{ id: string; title: string; checks: DiagnosticsFinding[] }>;
 }
 
 export interface ValidationResult {
@@ -367,21 +415,26 @@ export interface InboundFax {
   id: string;
   fr?: string;
   to?: string;
+  // waiting (the document is still being fetched), received, or failed.
   status: string;
   backend: string;
   pages?: number;
+  size_bytes?: number | null;
+  // When Faxbot recorded the fax; source_received_at is the provider's own time.
   received_at?: string;
-}
-
-// Tunnel types
-export interface TunnelStatus {
-  enabled: boolean;
-  provider: 'none' | 'cloudflare' | 'wireguard' | 'tailscale';
-  status: 'disabled' | 'connecting' | 'connected' | 'error';
-  public_url?: string;
-  local_ip?: string;
-  last_checked?: string;
-  error_message?: string;
+  mailbox?: string | null;
+  status_text?: string | null;
+  source_received_at?: string | null;
+  provider_fax_id?: string | null;
+  sha256?: string | null;
+  is_test?: boolean;
+  retry_at?: string | null;
+  problem?: string | null;
+  can_fetch_again?: boolean;
+  // Brought in later from an image the fax engine could not hand over.
+  recovered?: boolean;
+  // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
+  provider_note?: string | null;
 }
 
 // Authentication and access management (/auth/*, /access/*). Datetimes are
@@ -412,16 +465,55 @@ export interface AuthMe {
 export interface ConsoleContext {
   policy_version: number;
   permissions: string[];
-  navigation: { jobs: boolean; inbox: boolean; send: boolean };
+  navigation: { jobs: boolean; inbox: boolean; send: boolean; work?: boolean };
   send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
-  provider_view: { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string } | null;
+  provider_view: {
+    plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string;
+    // Further sending routes, and the carrier or phone system preset the trunk uses.
+    extra_routes?: string[]; trunk_preset?: string;
+  } | null;
+  // Names this installation gives its providers, such as the trunk's carrier ({ sip: 'Telnyx' }).
+  provider_names?: Record<string, string>;
 }
 
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;
+}
+
+// GET /access/audit: one security audit entry, newest first.
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: { id: string; display_name: string | null } | null;
+  // How the person or system was signed in when it happened.
+  credential_kind: 'session' | 'key' | 'bootstrap' | 'system';
+  operation: string;
+  target: { kind: string; id: string; name: string | null } | null;
+  outcome: 'allowed' | 'denied';
+  policy_version: number | null;
+  details: Record<string, unknown>;
+}
+
+// GET /admin/db-status: the database Faxbot uses and whether it can reach it.
+export interface DatabaseStatus {
+  url: string;
+  engine: 'sqlite' | 'postgres' | 'mysql' | 'unknown';
+  connected: boolean;
+  error: string | null;
+  // Rows this person can see; api_keys is null without keys:manage.
+  counts: { fax_jobs?: number; inbound_fax?: number; api_keys?: number | null };
+  sqlite: { path: string; exists: boolean; size_bytes?: number; modified?: string; persistent_volume?: boolean } | null;
+}
+
+// An environment-only setting: whether it is set, and its value unless it is a secret.
+export interface DeploymentValue {
+  set: boolean;
+  value: string | null;
+  // ENABLE_ADMIN_EXEC only: whether the terminal is on.
+  effective?: boolean;
 }
 
 export type PermissionGroup = 'fax' | 'inbound' | 'identity' | 'config' | 'host' | 'mailbox' | 'audit';
@@ -540,4 +632,110 @@ export interface InboundRule {
   mailbox_id: string;
   mailbox_label: string;
   version: number;
+}
+
+// Work queue: received documents with an owner, an acknowledgement target and a history.
+export type WorkView = 'all' | 'mine' | 'unassigned' | 'overdue';
+export type WorkStateKey = 'waiting' | 'assigned' | 'overdue' | 'escalated' | 'acknowledged' | 'done';
+export type WorkAction = 'assign' | 'acknowledge' | 'done' | 'reopen' | 'export' | 'document';
+
+export interface WorkPerson {
+  id: string;
+  name: string | null;
+}
+
+export interface WorkItem {
+  id: string;
+  inbound_fax_id: string;
+  state: 'open' | 'acknowledged' | 'done';
+  state_key: WorkStateKey;
+  state_text: string;
+  due_text: string;
+  due_at: string | null;
+  due_hours: number | null;
+  due_source: 'mailbox' | 'installation' | null;
+  available_at: string;
+  from_number: string | null;
+  to_number: string | null;
+  pages: number | null;
+  mailbox: string | null;
+  owner: WorkPerson | null;
+  backup: WorkPerson | null;
+  assigned_at: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  escalated_at: string | null;
+  done_at: string | null;
+  done_by: string | null;
+  done_note: string | null;
+  duplicate_of: { id: string; available_at: string } | null;
+  is_mine: boolean;
+  overdue: boolean;
+  is_test?: boolean;
+  version: number;
+  actions: WorkAction[];
+  owner_can_see?: boolean | null;
+}
+
+export interface WorkCounts {
+  open: number;
+  acknowledged: number;
+  done: number;
+  unassigned: number;
+  mine: number;
+  overdue: number;
+}
+
+export interface WorkEvent {
+  kind: string;
+  occurred_at: string;
+  actor: string | null;
+  text: string;
+}
+
+export interface WorkAssignee {
+  id: string;
+  name: string;
+  login: string;
+}
+
+export interface WorkMailboxSetting {
+  mailbox_id: string;
+  label: string;
+  enabled: boolean;
+  acknowledge_hours: number | null;
+  backup: WorkPerson | null;
+  version: number;
+  people: WorkAssignee[];
+}
+
+export interface WorkSettings {
+  acknowledge_hours: number;
+  mailboxes: WorkMailboxSetting[];
+}
+
+export interface ImportManifest {
+  source_system: string;
+  operation_id: string;
+  revision?: string;
+  source_received_at?: string;
+  to_number?: string;
+  from_number?: string;
+  pages?: number;
+}
+
+export interface ImportResult {
+  import_id: string;
+  inbound_id: string;
+  status: 'received' | 'duplicate';
+}
+
+// GET /admin/inbound/efax: Faxbot checking eFax for received faxes, and copies left at eFax.
+export interface EfaxStatus {
+  receiving: boolean;
+  checked_at: string | null;
+  problem: string | null;
+  pending_deletions: number;
+  stopped_deletions: number;
+  notes: string[];
 }

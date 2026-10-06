@@ -27,8 +27,8 @@ PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff
 
 
 def private_response_path(path):
-    return path in {'/fax', '/inbound', '/plugins', '/plugin-registry'} or path.startswith(
-        ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/'))
+    return path in {'/fax', '/inbound', '/plugins', '/work', '/imports'} or path.startswith(
+        ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/', '/work/', '/imports/'))
 
 
 class BrowserRequestVerificationError(AccessError):
@@ -53,6 +53,15 @@ def private_operation(operation):
     return wrapped
 
 
+KEY_OWNER_RESET = 'The owner of this key must set a new password before it can be used.'
+SESSION_RESET = 'Choose a new password before continuing.'
+
+
+def _reset_message(request):
+    """A temporary password blocks its owner's keys and sessions; say which one was used."""
+    return KEY_OWNER_RESET if request.headers.get('x-api-key') is not None else SESSION_RESET
+
+
 async def access_error_response(request, error):
     headers = dict(PRIVATE_HEADERS)
     if isinstance(error, AuthenticationThrottledError):
@@ -73,6 +82,8 @@ async def access_error_response(request, error):
         status = {'not_found':404, 'invalid_target':404, 'invalid_input':400}.get(error.code, 403)
         message = {400:'Invalid fax request.', 403:'This operation is not permitted.',
                    404:'Fax not found.'}[status]
+        if error.code == 'reset_required':
+            message = _reset_message(request)
     elif isinstance(error, (SessionDeniedError, MutationDeniedError)):
         code = error.code
         status = {'invalid_input':400, 'duplicate':400, 'invalid_target':404, 'stale_version':409}.get(code, 403)
@@ -80,6 +91,8 @@ async def access_error_response(request, error):
             409:'Access policy changed. Reload and try again.', 403:'This operation is not permitted.'}[status]
         message = {'duplicate':'That name is already in use.', 'last_owner':'The installation must keep at least one owner.',
             'owner_required':'Only an owner can do this.'}.get(code, message)
+        if code == 'reset_required':
+            message = _reset_message(request)
     elif isinstance(error, InvalidCredentialInputError):
         status, message = 400, 'Invalid credential input.'
     else:
@@ -262,6 +275,7 @@ class ConsoleNavigationResponse(AuthOutput):
     jobs: bool
     inbox: bool
     send: bool
+    work: bool = False
 
 
 class ConsoleSendResponse(AuthOutput):
@@ -281,6 +295,9 @@ class ConsoleProviderResponse(AuthOutput):
     install_enabled: bool
     active_outbound: str
     active_inbound: str
+    # Further sending routes after the outbound provider, and the trunk's carrier or phone system preset.
+    extra_routes: list[str] = []
+    trunk_preset: str = ''
 
 
 class ConsoleContextResponse(AuthOutput):
@@ -293,6 +310,8 @@ class ConsoleContextResponse(AuthOutput):
     inbound_enabled: bool | None
     branding: ConsoleBrandingResponse
     provider_view: ConsoleProviderResponse | None
+    # Names that depend on this installation, such as the carrier the trunk connects to ({'sip': 'Telnyx'}).
+    provider_names: dict[str, str] = {}
 
 
 class AuthSessionSummaryResponse(AuthOutput):
@@ -418,6 +437,23 @@ async def me(request: Request, identity=Depends(require_identity)):
     return await run_lifecycle_step(lambda: _me(runtime(request), identity))
 
 
+class AuthSetupResponse(BaseModel):
+    first_owner: bool
+
+
+@router.get('/setup', response_model=AuthSetupResponse, summary='Sign-in setup',
+    description='Public. Whether the installation still has no named Owner, so the sign-in page asks for the '
+        'installation key that creates the first one. Nothing else is disclosed; once an Owner exists it is false.')
+async def sign_in_setup(request: Request):
+    service = runtime(request)
+
+    @private_operation
+    def read():
+        with service.store.transaction() as connection:
+            return {'first_owner': not _Graph(connection, service.store.tables).owners(service.credential_codec)}
+    return await run_lifecycle_step(read)
+
+
 @router.get('/context', response_model=ConsoleContextResponse,
     summary='Console context',
     description='Current permission-scoped navigation and active configuration hints. '
@@ -426,7 +462,13 @@ async def console_context(request: Request, identity=Depends(require_identity)):
     service = runtime(request)
     @private_operation
     def snapshot():
-        return service.context.snapshot(identity.actor)
+        result = service.context.snapshot(identity.actor)
+        # The work queue is visible with work:read on any received document, like the Inbox.
+        with service.store.transaction() as connection:
+            source = service.control._current_source_on(connection, identity.actor, utcnow())
+            result['navigation']['work'] = bool(not source.reset_required and service.context._has_scope_on(
+                connection, identity.actor, source, 'work:read', ('mailbox', 'legacy', 'inbound')))
+        return result
     return await run_lifecycle_step(snapshot)
 
 

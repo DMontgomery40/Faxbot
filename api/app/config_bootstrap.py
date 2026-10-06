@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import json
 
 from .config_file import ConfigurationFileError, read_configuration_text, read_environment
-from .config_plugin_fields import PLUGIN_FIELDS
+from .config_plugin_fields import PLUGIN_FIELDS, RETIRED_PLUGIN_FIELDS
 from .config_plugin_secrets import reject_masked_plugin_secrets
 from .config_profiles import ConfigurationDocument, ConfigurationRecordError
 from .config_values import ConfigurationValues, ConfigurationValueError
@@ -73,6 +73,8 @@ def _import_plugins(values, environment, legacy):
         settings = entry.get('settings', {})
         if provider in PLUGIN_FIELDS:
             fields = PLUGIN_FIELDS[provider]
+            retired = RETIRED_PLUGIN_FIELDS.get(provider, frozenset())
+            settings = {key: value for key, value in settings.items() if key not in retired}
             if set(settings) - set(fields):
                 raise ConfigurationBootstrapError('Unsupported legacy plugin setting.')
             patch = {fields[key]: value for key, value in settings.items()}
@@ -95,8 +97,19 @@ def _import_plugins(values, environment, legacy):
     return values, state
 
 
-def load_bootstrap_configuration(environment: Mapping[str, str]) -> BootstrapConfiguration:
-    """Only call when canonical state is absent, or for an explicit import preview."""
+# Releases before saved configuration sent and received with Phaxio when FAX_BACKEND was unset.
+EARLIER_RELEASE_BACKEND = 'phaxio'
+
+
+def load_bootstrap_configuration(environment: Mapping[str, str], *,
+                                 earlier_release: bool = False) -> BootstrapConfiguration:
+    """Only call when canonical state is absent, or for an explicit import preview.
+
+    A new installation starts with no fax provider unless FAX_BACKEND names one.
+    ``earlier_release`` marks a database upgraded from a release before saved
+    configuration: without FAX_BACKEND it keeps that release's Phaxio default,
+    so its sending does not stop. A legacy plugin file still decides first.
+    """
     try:
         # Read the switch/path before validating values that the enabled artifact
         # may intentionally override. Never update os.environ.
@@ -104,8 +117,10 @@ def load_bootstrap_configuration(environment: Mapping[str, str]) -> BootstrapCon
             ('ENABLE_PERSISTED_SETTINGS', 'PERSISTED_ENV_PATH') if key in environment})
         merged = {key: value for key, value in environment.items() if key in ConfigurationValues.environment_keys()}
         if switches.enable_persisted_settings:
-            merged.update(read_environment(switches.persisted_env_path, allowed_keys=ConfigurationValues.environment_keys()))
-        values = ConfigurationValues.from_environment(merged)
+            merged.update(read_environment(switches.persisted_env_path,
+                                           allowed_keys=ConfigurationValues.accepted_environment_keys()))
+        defaults = {'FAX_BACKEND': EARLIER_RELEASE_BACKEND} if earlier_release and 'FAX_BACKEND' not in merged else {}
+        values = ConfigurationValues.from_environment({**merged, **defaults})
         text = read_configuration_text(values.faxbot_config_path, missing_ok=True)
         legacy = json.loads(text) if text is not None else None
         values, plugins = _import_plugins(values, merged, legacy)

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -15,6 +15,7 @@ import {
   Zoom,
   useTheme,
 } from '@mui/material';
+import AdminAPIClient from '../api/client';
 
 interface LoginScreenProps {
   notice?: string;
@@ -30,6 +31,18 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A new installation has no owner yet: the first sign-in uses the installation key.
+  const [firstOwner, setFirstOwner] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void AdminAPIClient.needsFirstOwner().then((needed) => {
+      if (!live || !needed) return;
+      setFirstOwner(true);
+      setMode('key');
+    });
+    return () => { live = false; };
+  }, []);
 
   const switchMode = (next: 'password' | 'key') => {
     setMode(next);
@@ -116,7 +129,7 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
                   Send, receive and manage faxes for this installation
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {['Send', 'Jobs', 'Inbox', 'Users', 'Keys'].map((item) => <Chip key={item} label={item} size="small" />)}
+                  {['Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs'].map((item) => <Chip key={item} label={item} size="small" />)}
                 </Box>
               </Box>
             </Slide>
@@ -136,8 +149,15 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
                 Sign in
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {mode === 'password' ? 'Use your Faxbot username and password.' : 'Use an API key issued for this installation.'}
+                {mode === 'password' ? 'Use your Faxbot username and password.'
+                  : firstOwner ? 'Use the installation key.' : 'Use an API key issued for this installation.'}
               </Typography>
+
+              {firstOwner && mode === 'key' && (
+                <Alert severity="info" sx={{ mt: 2, borderRadius: 2 }} data-testid="first-owner">
+                  This installation has no owner yet: sign in with the installation key (API_KEY in .env) to create the first owner.
+                </Alert>
+              )}
 
               {message && (
                 <Alert severity={error ? 'error' : 'info'} sx={{ mt: 2, borderRadius: 2 }} role="alert">
@@ -170,7 +190,7 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
               ) : (
                 <TextField
                   fullWidth
-                  label="API key"
+                  label={firstOwner ? 'Installation key' : 'API key'}
                   type="password"
                   autoComplete="off"
                   value={apiKey}

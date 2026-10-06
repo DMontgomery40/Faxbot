@@ -1,6 +1,6 @@
 # HumbleFax
 
-The builtin HumbleFax adapter uploads prepared PDFs directly and polls the original account for status. It sends faxes only; it does not receive them. A public document URL is not needed. Submission acknowledgement is separate from delivery.
+The builtin HumbleFax adapter uploads prepared PDFs directly and polls the original account for status. It sends faxes only, and only to US and Canadian numbers (+1): Faxbot refuses other destinations before contacting HumbleFax. It does not receive faxes. A public document URL is not needed. Submission acknowledgement is separate from delivery.
 
 ## Create API keys
 
@@ -10,14 +10,21 @@ The builtin HumbleFax adapter uploads prepared PDFs directly and polls the origi
 
 ## Configure the installation
 
-1. Open **Settings** or **Setup Wizard**.
+1. Open the **Setup Wizard** (**System → Setup**), or **Providers → HumbleFax** when it is already in use.
 2. Select **HumbleFax** as the outbound provider.
 3. Paste the access key and secret key. Leave unchanged secret masks alone.
 4. Optional: enter **HumbleFax From Number** as 10 digits, or 11 digits starting with `1` (for example `13035550199`). It must be a fax number on the same HumbleFax account.
 5. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
-6. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the HumbleFax sent history for the result and document fidelity.
+6. Use **Faxes → Send a fax** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Faxes → Sent** and the HumbleFax sent history for the result and document fidelity.
 
-Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it can read `FAX_OUTBOUND_BACKEND=humblefax`, `HUMBLEFAX_ACCESS_KEY`, `HUMBLEFAX_SECRET_KEY` and `HUMBLEFAX_FROM_NUMBER` from the environment. After that, change them in Settings; later `.env` edits are not imported.
+Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it reads `FAX_OUTBOUND_BACKEND=humblefax` and `HUMBLEFAX_FROM_NUMBER` from the environment; change them in Settings after that. The keys are read from the environment at every start:
+
+| Setting | Also accepted |
+| --- | --- |
+| `HUMBLEFAX_ACCESS_KEY` | `HUMBLEFAX_API_ACCESS_KEY` |
+| `HUMBLEFAX_SECRET_KEY` | `HUMBLEFAX_API_SECRET_KEY` |
+
+While a key is set in `.env`, Settings shows it as **Set in .env**; change it there, then run `docker compose up -d`.
 
 ## Destinations
 
@@ -47,6 +54,7 @@ HumbleFax cancellation, webhooks and inbound faxes are not implemented by this a
 - Faxbot stores the credentials encrypted in its database. The exported `.env` template hides them and is not a backup.
 - When HumbleFax rejects the key pair, it creates no fax and Faxbot does not resend. The job still shows that it requires reconciliation. Recreate or recopy both keys from **Developer Settings**, apply them in Settings, then send a new fax. Editing current credentials does not replace an accepted attempt's captured account.
 - A sender number that is not on the account is rejected by HumbleFax. Clear **HumbleFax From Number** to use the account default.
+- Faxbot reads the numbers your HumbleFax API user can send from (HumbleFax's GetUser, read-only, kept for an hour, never while sending) and lists them under Numbers → Your numbers and in `faxbot numbers list`. A sent fax's status also tells Faxbot the number it went from.
 - HumbleFax documents a limit of 5 requests per second per IP address and blocks an address for 60 seconds when it is exceeded. Read failures and rate limits preserve uncertainty; inspect the original fax before considering another submission.
 - Document retention, caller name and account notifications are HumbleFax account settings, not controls enforced by this panel. Faxbot always asks HumbleFax not to add a cover sheet.
 - Confirm HumbleFax's compliance terms before sending protected health information. See [HIPAA requirements](../HIPAA_REQUIREMENTS.md).

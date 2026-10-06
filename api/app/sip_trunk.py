@@ -7,6 +7,13 @@ page and date each fact was read. ``render_pjsip`` turns the active settings
 into a complete ``pjsip.conf``; ``write_asterisk_configuration`` stores it where
 the Asterisk container reads it at start (``<FAX_DATA_DIR>/asterisk/pjsip.conf``).
 
+A preset is either a carrier or a phone system (an office PBX such as Avaya IP
+Office or Aura). With a phone system, Faxbot's one trunk goes to the PBX on the
+local network, which keeps its own carrier lines; the PBX and Faxbot recognise
+each other by address, and Asterisk tells the PBX the address Faxbot is
+published on (``docker-compose.phone-system.yml``) instead of its internet
+address.
+
 Rendering never logs. The SIP password appears only in the returned text and in
 the private file written with mode 0600; errors name fields, never values.
 """
@@ -23,6 +30,8 @@ READ_ON = '2026-10-03'
 ENDPOINT = 'trunk-endpoint'
 INBOUND_CONTEXT = 'faxbot-inbound'
 FAX_PREFERENCE = '*;+sip.fax="t38"'
+CARRIER = 'carrier'
+PHONE_SYSTEM = 'phone_system'
 
 
 class TrunkConfigurationError(ValueError):
@@ -61,30 +70,48 @@ class TrunkPreset:
     t38: str = ''
     notes: tuple[str, ...] = ()
     sources: tuple[Source, ...] = field(default_factory=tuple)
+    # CARRIER, or PHONE_SYSTEM for a PBX on the local network that keeps the carrier lines.
+    kind: str = CARRIER
+    # Signaling transports a person may choose; ``transport`` is the default.
+    transports: tuple[str, ...] = ('tls', 'tcp', 'udp')
+    # G.711 order from the installation country: A-law first, mu-law first in North America and Japan.
+    codecs_by_country: bool = False
+    # Number formats a person may choose (SIP_TRUNK_DIAL_FORMAT); empty means no choice.
+    dial_formats: tuple[str, ...] = ()
+    # New trunks start with audio fax because the carrier turns T.38 into audio itself (sip_fax_mode.CARRIER).
+    audio_by_default: bool = False
+    # What the phone system's administrator sets, in order (shown as a checklist with the sources).
+    admin_steps: tuple[str, ...] = ()
 
     @property
     def needs_host(self):
         return not self.host
 
+    @property
+    def phone_system(self):
+        return self.kind == PHONE_SYSTEM
+
 
 PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
-        id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5060, transport='udp',
+        # Encrypted signaling by default: one outbound connection that home-router
+        # SIP helpers cannot rewrite, and Telnyx sends incoming calls down it.
+        id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5061, transport='tls',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='e164',
         signaling_addresses=('192.76.120.10', '64.16.250.10'),
-        t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number, and set the connection '
-             'option "T.38 fax re-invite initiated by" to Telnyx. For faxes you send, Telnyx then switches the '
-             'call to T.38 as soon as the receiving machine answers. Faxbot also works with Customer, but then '
-             'Faxbot waits about ten seconds before switching the call itself. For faxes you receive, Faxbot '
-             'switches the call to T.38 whichever option you choose.'),
-        notes=('Telnyx accepts credentials (registration) or IP address authentication.',
+        t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number and set '
+             '"T.38 fax re-invite initiated by" to Telnyx.'),
+        notes=('Use a credential connection, and enter the SIP connection\'s password (connection → Authentication '
+               'and routing), not your Telnyx account password.',
+               'Telnyx sends incoming calls down the encrypted connection Faxbot registers over; there is no '
+               'inbound transport to set for a credential connection.',
                'The caller ID must be a number on your Telnyx account or one Telnyx has verified.',
-               'The US signaling addresses are 192.76.120.10 and 64.16.250.10.',
                'Choose an outbound voice profile for the connection so it can place calls.',
                'Keep only the G.711 U and G.711 A codecs on the connection.'),
-        sources=(Source('https://sip.telnyx.com/voice.json'),
+        # The first source is the page the console links as the carrier's documentation.
+        sources=(Source('https://developers.telnyx.com/docs/voice/sip-trunking/get-started'),
+                 Source('https://sip.telnyx.com/voice.json'),
                  Source('https://sip.telnyx.com/'),
-                 Source('https://developers.telnyx.com/docs/voice/sip-trunking/get-started'),
                  Source('https://developers.telnyx.com/docs/voice/sip-trunking/authentication/credential-types'),
                  Source('https://developers.telnyx.com/docs/voice/sip-trunking/configuration/caller-id-policy'),
                  Source('https://support.telnyx.com/en/articles/1130672-fax-service-with-telnyx-via-t-38-or-g711'),
@@ -110,8 +137,8 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                'Faxbot signs in to Sinch with a username and password, because Sinch does not publish '
                'the addresses it sends calls from on a page Faxbot could verify.',
                'Sinch expects called numbers and caller ID in E.164 format with a plus sign.'),
-        sources=(Source('https://developers.sinch.com/docs/est/test-plan'),
-                 Source('https://developers.sinch.com/docs/est'),
+        sources=(Source('https://developers.sinch.com/docs/est'),
+                 Source('https://developers.sinch.com/docs/est/test-plan'),
                  Source('https://developers.sinch.com/docs/est/integration-guides/livekit'),
                  Source('https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc'),
                  Source('https://sinch.com/voice/sip-trunking/elastic/')),
@@ -138,6 +165,116 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                  Source('https://flowroute.com/faxing/')),
     ),
     TrunkPreset(
+        # UK. Gamma is sold through resellers; it recognises the PBX or fax server by its public address.
+        id='gamma', label='Gamma', host='', port=5060, transport='udp', transports=('udp', 'tcp'),
+        auth_modes=('ip',), codecs=('alaw', 'ulaw'), dial_format='e164', dial_formats=('e164', 'local'),
+        t38='Gamma lists T.38 for fax, and a phone system maker tested T.38 fax over Gamma in June 2024.',
+        notes=('Gamma recognises Faxbot by your static public IP address; give it to your Gamma reseller.',
+               'Enter the SIP server address and number format your reseller gives you.',
+               'Keep only G.711 on the trunk: G.729 breaks fax.',
+               'Faxbot tested these settings against its own Asterisk standing in for the carrier; '
+               'a live Gamma trunk has not been tested yet.'),
+        sources=(Source('https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK'),
+                 Source('https://www.yeastar.com/itsp-partners/united-kingdom/')),
+    ),
+    TrunkPreset(
+        # UK, also sold in Australia and the US. IP peering; BT transcodes T.38 to G.711 pass-through.
+        id='bt-one-voice', label='BT One Voice', host='', port=5060, transport='udp', transports=('udp', 'tcp'),
+        auth_modes=('ip',), codecs=('alaw', 'ulaw'), codecs_by_country=True, dial_format='e164',
+        dial_formats=('e164', 'local'), audio_by_default=True,
+        t38='BT accepts T.38 but turns it into audio fax inside its network, so Faxbot starts with audio fax.',
+        notes=('BT recognises Faxbot by its static public IP address and port; give them to BT at turn-up.',
+               'Enter the BT SIP server address and number format from your turn-up sheet.',
+               'For BT Cloud Voice SIP-T, choose Another carrier and sign in with the username and password '
+               'BT gives you.',
+               'Faxbot tested these settings against its own Asterisk standing in for the carrier; '
+               'a live BT One Voice trunk has not been tested yet.'),
+        sources=(Source('https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/'
+                        'One_Voice_SIP_trunking_technical_Outline.pdf'),
+                 Source('https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/'
+                        'bt_one_voice_sip_trunk_uk_datasheet.pdf')),
+    ),
+    TrunkPreset(
+        # Australia. Registration over TCP to Telstra's SBC; Telstra states nothing about T.38.
+        id='telstra-sip-connect', label='Telstra SIP Connect', host='', port=5060, transport='tcp',
+        transports=('tcp', 'udp'), auth_modes=('registration',), codecs=('alaw', 'ulaw'), dial_format='e164',
+        dial_formats=('e164', 'local'),
+        t38=('Telstra does not state T.38 support. Faxbot tries T.38 and uses audio fax for new calls if T.38 '
+             'fax data does not come back.'),
+        notes=('Enter the SIP domain from your Telstra order as the server, and Telstra\'s SBC address as the '
+               'outbound proxy.',
+               'Sign in with the authentication user ID and password Telstra gives you.',
+               'Faxbot tested these settings against its own Asterisk standing in for the carrier; '
+               'a live Telstra SIP Connect trunk has not been tested yet.'),
+        sources=(Source('https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/'),
+                 Source('https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/'
+                        'sip-connect.pdf')),
+    ),
+    TrunkPreset(
+        # A phone system: Faxbot is a SIP line of IP Office on the local network (Avaya DevConnect notes).
+        id='avaya-ipoffice', label='Avaya IP Office', host='', port=5060, transport='udp', transports=('udp', 'tcp'),
+        auth_modes=('ip',), codecs=('alaw', 'ulaw'), codecs_by_country=True, dial_format='e164',
+        dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38='T.38 with G.711 fallback: on the Faxbot line, set Fax Transport Support to T38 Fallback.',
+        notes=('Faxbot connects to IP Office as a SIP line on your local network; IP Office keeps its own '
+               'carrier lines.',
+               'IP Office and Faxbot recognise each other by address, so there is no username or password.',
+               'Keep only G.711 on every line a fax passes through: G.729 breaks fax.',
+               'Faxbot tested this setup against a second Asterisk standing in for the phone system, with T.38 '
+               'and audio fax both ways; a real IP Office has not been tested yet.'),
+        admin_steps=(
+            'System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.',
+            'Line, New, SIP Line. On the SIP Line tab, set ITSP Domain Name to Faxbot\'s address.',
+            'Transport tab: ITSP Proxy Address is Faxbot\'s address, Layer 4 Protocol UDP, Send Port and '
+            'Listen Port 5060.',
+            'SIP URI tab: add one URI with its own Incoming Group and Outgoing Group; Local URI and Contact can be '
+            '* so the fax numbers pass through.',
+            'VoIP tab: Codec Selection Custom with only G.711 ALAW and G.711 ULAW, tick Re-invite Supported, '
+            'Fax Transport Support T38 Fallback, DTMF Support RFC2833/RFC4733, Media Security Disabled.',
+            'T38 Fax tab: keep Use Default Values.',
+            'Incoming Call Route on the carrier line: send each fax number to the Faxbot line.',
+            'Route calls from the Faxbot line to the carrier line like calls from a phone; if that needs an '
+            'outside-line prefix such as 9, enter it in Faxbot too.',
+            'Carrier line, VoIP tab: Fax Transport Support T38 Fallback (G.711 if the carrier has no T.38), '
+            'and only G.711 codecs.',
+            'If T38 is not offered on your IP Office (some Linux-based systems), choose G.711 there and turn off '
+            'T.38 in Faxbot.',
+        ),
+        sources=(Source('https://support.avaya.com/css/public/documents/101065243'),
+                 Source('https://support.avaya.com/css/public/documents/100172137')),
+    ),
+    TrunkPreset(
+        # A phone system: Faxbot is a trusted SIP entity of Session Manager (Avaya Aura CM7/SM7 notes).
+        id='avaya-aura', label='Avaya Aura', host='', port=5060, transport='udp', transports=('udp', 'tcp'),
+        auth_modes=('ip',), codecs=('alaw', 'ulaw'), codecs_by_country=True, dial_format='e164',
+        dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38=('T.38 with G.711 fallback: set FAX Mode to t.38-standard in the codec set Communication Manager '
+             'uses toward Faxbot.'),
+        notes=('Faxbot connects to Session Manager as a trusted SIP entity on your local network; enter Session '
+               'Manager\'s address.',
+               'Session Manager and Faxbot recognise each other by address, so there is no username or password.',
+               'Keep only G.711 on every trunk a fax passes through: G.729 breaks fax.',
+               'Faxbot tested this setup against a second Asterisk standing in for the phone system, with T.38 '
+               'and audio fax both ways; a real Aura system has not been tested yet.'),
+        admin_steps=(
+            'Communication Manager, change ip-codec-set: G.711A first (UK and Australia) or G.711MU first (US), '
+            'no G.729; on page 2, FAX Mode t.38-standard, Redundancy 0, ECM y, Modem off.',
+            'change ip-network-region: use that codec set.',
+            'add signaling-group: Group Type sip, to Session Manager over TCP or TLS, Peer Detection Enabled y '
+            'with Peer Server SM, DTMF over IP rtp-payload.',
+            'add trunk-group: Group Type sip, Service Type tie, with enough members for the faxes sent at once.',
+            'Route the fax numbers to that trunk group.',
+            'Session Manager (System Manager, Elements, Routing): add a SIP Entity for Faxbot with Faxbot\'s '
+            'address, an Entity Link to it on UDP or TCP port 5060 with Trust State Trusted, a Routing Policy to '
+            'it, and Dial Patterns for the fax numbers.',
+            'If a Session Border Controller sits in between, tick T.38 Support in its interworking profile.',
+            'If T.38 calls are refused with 488 Not Acceptable Here, set ECM to n in the codec set.',
+        ),
+        sources=(Source('https://www.virginmediabusiness.co.uk/help/s/WSIPT_Avaya_CM7_SM7_ASBCE7.pdf'),
+                 Source('https://support.avaya.com/css/public/documents/100172137'),
+                 Source('https://support.avaya.com/kb/public/SOLN268281')),
+    ),
+    TrunkPreset(
         id='custom', label='Another carrier', host='', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='entered',
         notes=('Use the host, port and credentials your carrier gave you.',),
@@ -145,8 +282,22 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
 )}
 
 _DEFAULT_PORTS = {'udp': 5060, 'tcp': 5060, 'tls': 5061}
+# Placeholders asterisk/bin/faxbot-public-address replaces at every Asterisk start.
+PUBLIC_ADDRESS = '@FAXBOT_PUBLIC_ADDRESS@'
+LOCAL_NET = '@FAXBOT_LOCAL_NET@'
 PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8')
+# The address docker-compose.phone-system.yml publishes Asterisk on; asterisk/bin/faxbot-lan-address
+# fills it in at every start, or removes the lines when Faxbot is not published on the local network.
+LAN_ADDRESS = '@FAXBOT_LAN_ADDRESS@'
 _DIGITS = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
+
+
+def country_codecs(country) -> tuple[str, ...]:
+    """G.711 order for the installation country: mu-law first in North America and Japan, else A-law first."""
+    import phonenumbers
+    country = str(country or '').strip().upper()
+    mu_law = country == 'JP' or phonenumbers.country_code_for_region(country) == 1
+    return ('ulaw', 'alaw') if mu_law else ('alaw', 'ulaw')
 
 
 @dataclass(frozen=True)
@@ -166,10 +317,60 @@ class Trunk:
     fax_preference: bool
     codecs: tuple[str, ...]
     external_address: str = ''
+    dial_format: str = 'e164'
+    dial_prefix: str = ''
+    country: str = 'US'
 
 
 def configured(values) -> bool:
     return bool(getattr(values, 'sip_trunk_preset', ''))
+
+
+# Fax settings shared by both fax engines (the built-in one and the SSL Fax engine).
+FAX_RATES = (14400, 9600, 7200, 4800)
+AUDIO_MAX_RATE = 9600
+COMPRESSIONS = ('mh', 'mr', 'mmr', 'jbig')
+
+
+@dataclass(frozen=True)
+class FaxOptions:
+    t38_error_correction: str = 'redundancy'
+    t38_max_datagram: int = 400
+    max_rate: int = 14400
+    ecm: bool = True
+    compression: str = 'jbig'
+    fine: bool = True
+    sslfax: bool = True
+    lines: int = 2
+    listener_port: int = 10443
+
+    def rate_for(self, *, t38: bool, override=None) -> int:
+        """The highest speed for one call: the setting, a recipient's own limit, and 9600 on audio calls."""
+        rate = self.max_rate if override is None else min(self.max_rate, override)
+        return rate if t38 else min(rate, AUDIO_MAX_RATE)
+
+
+def fax_options(values) -> FaxOptions:
+    """The fax settings in effect; anything missing or out of range falls back to the recommended value."""
+    defaults = FaxOptions()
+
+    def pick(name, allowed, default):
+        value = getattr(values, name, default)
+        return value if value in allowed else default
+    ec = pick('sip_t38_error_correction', ('redundancy', 'fec', 'none'), defaults.t38_error_correction)
+    datagram = getattr(values, 'sip_t38_max_datagram', defaults.t38_max_datagram)
+    lines = getattr(values, 'sip_fax_lines', defaults.lines)
+    port = getattr(values, 'sip_sslfax_listener_port', defaults.listener_port)
+    return FaxOptions(
+        t38_error_correction=ec,
+        t38_max_datagram=datagram if isinstance(datagram, int) and 100 <= datagram <= 1400 else defaults.t38_max_datagram,
+        max_rate=pick('sip_fax_max_rate', FAX_RATES, defaults.max_rate),
+        ecm=bool(getattr(values, 'sip_fax_ecm', True)),
+        compression=pick('sip_fax_compression', COMPRESSIONS, defaults.compression),
+        fine=bool(getattr(values, 'sip_fax_fine', True)),
+        sslfax=bool(getattr(values, 'sip_sslfax_enabled', True)),
+        lines=lines if isinstance(lines, int) and 1 <= lines <= 8 else defaults.lines,
+        listener_port=port if isinstance(port, int) and 1024 <= port <= 65535 else defaults.listener_port)
 
 
 def effective_trunk(values, *, for_calls=False) -> Trunk:
@@ -189,6 +390,8 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
     if not host:
         missing.append('sip_trunk_host')
     transport = values.sip_trunk_transport or preset.transport
+    if transport not in preset.transports:
+        missing.append('sip_trunk_transport')
     if auth == 'registration':
         if not values.sip_trunk_username:
             missing.append('sip_trunk_username')
@@ -201,13 +404,24 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
     if missing:
         raise TrunkConfigurationError(missing)
     port = values.sip_trunk_port or (preset.port if transport == preset.transport else _DEFAULT_PORTS[transport])
-    codecs = tuple(values.sip_trunk_codecs.split(',')) if values.sip_trunk_codecs else preset.codecs
+    if values.sip_trunk_codecs:
+        codecs = tuple(values.sip_trunk_codecs.split(','))
+    else:
+        codecs = country_codecs(values.fax_default_country) if preset.codecs_by_country else preset.codecs
+    # A chosen number format applies only where the preset offers the choice; the
+    # outside-line prefix only to numbers written the way a phone here dials them.
+    dial_format = values.sip_trunk_dial_format if values.sip_trunk_dial_format in preset.dial_formats else ''
+    dial_format = dial_format or preset.dial_format
     return Trunk(preset=preset, auth=auth, host=host, port=port, transport=transport,
                  username=values.sip_trunk_username, password=values.sip_trunk_password,
-                 outbound_proxy=values.sip_trunk_outbound_proxy, caller_id=values.sip_trunk_caller_id,
+                 outbound_proxy='' if preset.phone_system else values.sip_trunk_outbound_proxy,
+                 caller_id=values.sip_trunk_caller_id,
                  dids=values.sip_trunk_did_list, t38=values.sip_t38_enabled,
                  fax_preference=values.sip_fax_preference_header, codecs=codecs,
-                 external_address=values.sip_external_address)
+                 # A phone system is reached on the local network, never at the internet address.
+                 external_address='' if preset.phone_system else values.sip_external_address,
+                 dial_format=dial_format, dial_prefix=values.sip_trunk_dial_prefix if dial_format == 'local' else '',
+                 country=values.fax_default_country)
 
 
 def dial_number(trunk: Trunk, number: str) -> str:
@@ -219,13 +433,28 @@ def dial_number(trunk: Trunk, number: str) -> str:
     """
     from .routing.numbers import canonical_number
     canonical = canonical_number(number)
-    if trunk.preset.dial_format != 'digits':
+    if trunk.dial_format == 'local':
+        dialled = trunk.dial_prefix + local_digits(canonical, trunk.country)
+        # The fax engine takes at most 20 digits; a longer number is refused before any call.
+        if not re.fullmatch(r'[0-9]{3,20}', dialled):
+            raise ValueError('The number is too long to dial through this phone system.')
+        return dialled
+    if trunk.dial_format != 'digits':
         # 'e164' and 'entered' both send the canonical number with its plus sign.
         return canonical
     digits = canonical[1:]
     if trunk.auth == 'ip' and trunk.preset.ip_dial_prefix:
         return trunk.username + '*' + digits
     return digits
+
+
+def local_digits(canonical: str, country: str) -> str:
+    """The digits a phone in ``country`` dials for this number: national form at home, else with the
+    country's international prefix (GB: 02079460000 and 0016502530000; US: 16502530000 and 011442079460000)."""
+    import phonenumbers
+    formatted = phonenumbers.format_out_of_country_calling_number(phonenumbers.parse(canonical),
+                                                                  str(country or 'US').upper())
+    return re.sub(r'[^0-9]', '', formatted)
 
 
 def _transport_section(trunk: Trunk):
@@ -236,12 +465,29 @@ def _transport_section(trunk: Trunk):
                   'ca_list_file=/etc/ssl/certs/ca-certificates.crt', 'verify_server=yes']
     else:
         lines.append('bind=0.0.0.0:5060')
-    if trunk.external_address:
+    if trunk.transport != 'udp':
+        # Keep the one outbound connection (and every NAT mapping on its way)
+        # alive, and notice quickly when a router drops it silently.
+        lines += ['tcp_keepalive_enable=yes', 'tcp_keepalive_idle_time=30',
+                  'tcp_keepalive_interval_time=10', 'tcp_keepalive_probe_count=3']
+    if trunk.preset.phone_system:
+        # The phone system sends calls and media to the address Faxbot is published on in the local
+        # network; Asterisk fills it in at start (or drops these lines). No local_net: the phone system
+        # is itself on a private network and is the only SIP peer, so every message names that address
+        # and the Docker network's own address never appears in SIP or SDP.
+        lines += [f'external_media_address={LAN_ADDRESS}', f'external_signaling_address={LAN_ADDRESS}']
+    elif trunk.external_address:
         # Behind NAT, advertise the public address to the carrier; private
         # networks (including Docker's) keep their own addresses.
         lines += [f'external_media_address={trunk.external_address}',
                   f'external_signaling_address={trunk.external_address}',
                   *(f'local_net={network}' for network in PRIVATE_NETWORKS)]
+    else:
+        # Nobody typed an address: the Asterisk container fills these in at
+        # start from what Faxbot's STUN probe found (only on a network that
+        # keeps port numbers, with its own subnet as local_net), or removes them.
+        lines += [f'external_media_address={PUBLIC_ADDRESS}', f'external_signaling_address={PUBLIC_ADDRESS}',
+                  f'local_net={LOCAL_NET}']
     return name, lines
 
 
@@ -258,12 +504,17 @@ def render_pjsip(values) -> str:
     preset = trunk.preset
     transport, transport_lines = _transport_section(trunk)
     registration = trunk.auth == 'registration'
+    udp = trunk.transport == 'udp'
     lines = [
         f'; Faxbot SIP trunk for {preset.label}, written by Faxbot from its settings.',
         '; Change the trunk in Faxbot settings; edits to this file are replaced.',
-        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', '',
+        # Every flow starts from Faxbot's side and is kept alive from it, so no
+        # router port has to be opened: keepalives on the TCP/TLS connection,
+        # carrier checks every 25 s on UDP (under common 30 s NAT timeouts).
+        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', 'keep_alive_interval=30', '',
         *transport_lines, '',
-        '[trunk-aor]', 'type=aor', f'contact={_uri(trunk)}', 'qualify_frequency=60', '',
+        '[trunk-aor]', 'type=aor', f'contact={_uri(trunk)}', f'qualify_frequency={25 if udp else 30}',
+        'qualify_timeout=3.0', '',
     ]
     if registration:
         lines += ['[trunk-auth]', 'type=auth', 'auth_type=userpass',
@@ -273,11 +524,17 @@ def render_pjsip(values) -> str:
         lines.append('outbound_auth=trunk-auth')
     lines += [f'context={INBOUND_CONTEXT}', 'disallow=all', 'allow=' + ','.join(trunk.codecs)]
     if trunk.t38:
-        lines += ['t38_udptl=yes', 't38_udptl_ec=redundancy', 't38_udptl_maxdatagram=400', 't38_udptl_nat=yes']
+        # Fax settings: T.38 error correction and the largest packet the carrier accepts.
+        options = fax_options(values)
+        lines += ['t38_udptl=yes', f't38_udptl_ec={options.t38_error_correction}',
+                  f't38_udptl_maxdatagram={options.t38_max_datagram}', 't38_udptl_nat=yes']
     else:
         lines.append('t38_udptl=no')
+    # Answer media where the carrier's packets come from, reuse the signaling
+    # connection for requests within a call, and send a packet every two
+    # seconds when no audio flows so the router keeps the media path open.
     lines += ['rtp_symmetric=yes', 'force_rport=yes', 'rewrite_contact=yes', 'direct_media=no',
-              'send_pai=yes', f'from_domain={trunk.host}']
+              'rtp_keepalive=2', 'send_pai=yes', f'from_domain={trunk.host}']
     if trunk.outbound_proxy:
         lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
     lines.append('')
@@ -288,7 +545,10 @@ def render_pjsip(values) -> str:
         lines += ['[trunk-registration]', 'type=registration', f'transport={transport}',
                   'outbound_auth=trunk-auth', f'server_uri={_uri(trunk)}',
                   f'client_uri={_uri(trunk, trunk.username)}', f'contact_user={trunk.username}',
-                  'retry_interval=60', 'forbidden_retry_interval=600', 'expiration=300',
+                  # Re-register often enough to refresh a UDP mapping; never give up
+                  # on an unattended fax server (max_retries=0 would mean no retries).
+                  f'expiration={120 if udp else 300}', 'retry_interval=60', 'forbidden_retry_interval=600',
+                  'fatal_retry_interval=120', 'max_retries=10000', 'auth_rejection_permanent=no',
                   'line=yes', f'endpoint={ENDPOINT}']
         if trunk.outbound_proxy:
             lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
@@ -304,26 +564,205 @@ def secret_path(values) -> Path:
     return Path(values.fax_data_dir) / 'asterisk' / 'inbound.secret'
 
 
-def write_asterisk_configuration(values) -> Path:
+def public_address_path(values) -> Path:
+    """What Faxbot's STUN probe found, read by the Asterisk container at start."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'public-address'
+
+
+def write_public_address(values, probe, *, exact=None) -> bool:
+    """Record the probe for the next Asterisk start; True when the advertised address would change.
+
+    Asterisk advertises the address only when the network keeps port numbers,
+    so a probe without that is recorded with ``ports_preserved`` false.
+    ``exact`` True says the address and port numbers are exact anyway, because
+    the router opened Faxbot's fax ports to the same numbers (sip_network).
+    """
+    import json
+    path = public_address_path(values)
+    preserved = bool(probe and probe.public_ip and probe.ports == 'preserved')
+    record = {'ip': probe.public_ip if probe else None,
+              'ports_preserved': bool(probe and probe.public_ip and (preserved or exact)),
+              'probed_at': int(probe.probed_at) if probe else None}
+    if exact and not preserved and record['ports_preserved']:
+        record['router_ports'] = True
+    before = read_public_address(values)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(path, json.dumps(record) + '\n')
+    advertised = lambda item: item.get('ip') if item and item.get('ports_preserved') else None  # noqa: E731
+    return advertised(before) != advertised(record)
+
+
+def read_public_address(values):
+    """The recorded probe, or None."""
+    import json
+    try:
+        return json.loads(public_address_path(values).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def lan_address_path(values) -> Path:
+    """Written by the Asterisk container at start when docker-compose.phone-system.yml publishes it."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'lan-address'
+
+
+_OCTET = r'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+_IPV4 = re.compile(rf'{_OCTET}(?:\.{_OCTET}){{3}}', re.ASCII)
+
+
+def read_lan_address(values):
+    """Where a phone system reaches Faxbot ({address, sip_port, media_ports, faxes_at_once}), or None."""
+    import json
+    try:
+        record = json.loads(lan_address_path(values).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or not _IPV4.fullmatch(str(record.get('address', ''))):
+        return None
+    ports = re.fullmatch(r'([0-9]{4,5})-([0-9]{4,5})', str(record.get('media_ports', '')), re.ASCII)
+    if not ports or int(ports.group(1)) > int(ports.group(2)):
+        return None
+    first, last = int(ports.group(1)), int(ports.group(2))
+    return {'address': record['address'], 'sip_port': 5060, 'media_ports': f'{first}-{last}',
+            'media_first': first, 'media_last': last, 'faxes_at_once': faxes_at_once(first, last)}
+
+
+def faxes_at_once(first: int, last: int) -> int:
+    """Faxes a media range carries at once: its first third is T.38 (one port per fax), the rest
+    audio (two ports per fax), as asterisk/start.sh divides it."""
+    count = last - first + 1
+    udptl = count // 3
+    return max(0, min(udptl, (count - udptl) // 2))
+
+
+def manager_credentials_path(values) -> Path:
+    """The manager login Asterisk's start script reads when the environment sets none."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'manager.credentials'
+
+
+_MANAGER_USERNAME = re.compile(r'[A-Za-z0-9_-]{1,64}')
+
+
+def _manager_login_usable(username, password) -> bool:
+    """What asterisk/start.sh accepts: a plain username and a password manager.conf can hold."""
+    return bool(_MANAGER_USERNAME.fullmatch(username or '') and username.lower() != 'general' and password
+                and password == password.strip() and not re.search(r'[\x00-\x1f\x7f;\\]', password))
+
+
+def write_manager_credentials(values):
+    """Write Faxbot's manager username and password for Asterisk (mode 0600); None when unusable.
+
+    Asterisk's start script turns its manager port on with this login, and
+    restarts itself when the file changes, so the two containers never need a
+    password typed twice. ASTERISK_AMI_PASSWORD in the environment still wins
+    in both containers.
+    """
+    if not _manager_login_usable(values.ami_username, values.ami_password):
+        return None
+    path = manager_credentials_path(values)
+    text = f'{values.ami_username}\n{values.ami_password}\n'
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if path.read_text(encoding='utf-8') == text:
+            return path
+    except OSError:
+        pass
+    _write_private(path, text)
+    return path
+
+
+def manager_credentials_shared(values) -> bool:
+    """Whether the file Asterisk reads holds exactly the login Faxbot uses."""
+    try:
+        return manager_credentials_path(values).read_text(encoding='utf-8') == \
+            f'{values.ami_username}\n{values.ami_password}\n'
+    except OSError:
+        return False
+
+
+def engine_marker_path(values) -> Path:
+    """Written by the Asterisk container at every start (asterisk/start.sh)."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'engine-started'
+
+
+def started_configuration_path(values) -> Path:
+    """The trunk file exactly as Asterisk loaded it at its last start, before addresses were filled in."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'pjsip.conf.started'
+
+
+def engine_managed(values) -> bool:
+    """Whether Asterisk shares Faxbot's data folder, as in the Docker Compose install.
+
+    Such an Asterisk reads what Faxbot writes at every start, and Docker starts
+    it again after it stops, so Faxbot can restart it to load new settings.
+    """
+    return engine_marker_path(values).is_file()
+
+
+def engine_uses_current(values) -> bool:
+    """Whether the running Asterisk loaded exactly these trunk settings and internet address."""
+    try:
+        started = started_configuration_path(values).read_bytes()
+        expected = render_pjsip(values).encode()
+    except (OSError, TrunkConfigurationError):
+        return False
+    if started != expected:
+        return False
+    from . import hylafax_engine
+    if not hylafax_engine.iax_current(values):
+        return False
+    if PUBLIC_ADDRESS not in expected.decode():
+        return True
+    record = read_public_address(values) or {}
+    wanted = record.get('ip') if record.get('ports_preserved') and record.get('ip') else ''
+    return applied_public_address(values) == wanted
+
+
+def applied_public_address(values):
+    """The address Asterisk advertised when it last started: an address, '' for none, None if unknown."""
+    try:
+        return (public_address_path(values).with_name('public-address.applied')).read_text().strip()
+    except OSError:
+        return None
+
+
+def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
     """Atomically write the private files the Asterisk container reads.
 
     ``pjsip.conf`` is loaded when Asterisk starts. ``inbound.secret`` holds the
-    shared secret the inbound dialplan sends with each received fax, so a
-    secret set in the console reaches Asterisk too; it is removed when unset.
+    shared secret the inbound dialplan sends with each received fax; the
+    console's Apply always passes one (Faxbot creates it when none is set). It
+    is removed only when no secret is known at all.
     """
     text = render_pjsip(values)
     target = configuration_path(values)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     _write_private(target, text)
-    secret = secret_path(values)
-    if values.asterisk_inbound_secret:
-        _write_private(secret, values.asterisk_inbound_secret)
+    secret = inbound_secret or values.asterisk_inbound_secret
+    if secret:
+        write_inbound_secret(values, secret)
     else:
         try:
-            secret.unlink()
+            secret_path(values).unlink()
         except FileNotFoundError:
             pass
+    # The SSL Fax engine's settings and its fax lines for Asterisk (iax.conf).
+    from . import hylafax_engine
+    hylafax_engine.write_engine_files(values, secret)
     return target
+
+
+def write_inbound_secret(values, secret: str) -> Path:
+    """Write the inbound secret the Asterisk notify script reads with each received fax (mode 0600)."""
+    path = secret_path(values)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if path.read_text(encoding='utf-8') == secret:
+            return path
+    except OSError:
+        pass
+    _write_private(path, secret)
+    return path
 
 
 def _write_private(target: Path, text: str):
@@ -351,16 +790,28 @@ def preset_catalog():
         'codecs': list(preset.codecs), 'needs_host': preset.needs_host,
         'ip_dial_prefix': preset.ip_dial_prefix, 't38': preset.t38, 'notes': list(preset.notes),
         'sources': [{'url': source.url, 'read_on': source.read_on} for source in preset.sources],
+        'kind': preset.kind, 'transports': list(preset.transports), 'codecs_by_country': preset.codecs_by_country,
+        'dial_formats': list(preset.dial_formats), 'audio_by_default': preset.audio_by_default,
+        'admin_steps': list(preset.admin_steps),
     } for preset in PRESETS.values()]
 
 
 def main(argv=None):
-    """``python -m app.sip_trunk write``: render from this process's settings."""
+    """``python -m app.sip_trunk write`` renders from this process's settings;
+    ``probe`` prints what STUN shows about this network as JSON and one sentence."""
+    import json
     import sys
     from .config_values import ConfigurationValues, ConfigurationValueError
+    from . import stun
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ['probe']:
+        preset = os.environ.get('SIP_TRUNK_PRESET', '')
+        result = stun.probe(stun.servers_for(preset))
+        label = PRESETS[preset].label if preset in PRESETS and preset != 'custom' else 'the carrier'
+        print(json.dumps({**result.as_dict(), 'text': stun.address_sentence(result, carrier=label)}, indent=2))
+        return 0
     if arguments != ['write']:
-        print('Usage: python -m app.sip_trunk write', file=sys.stderr)
+        print('Usage: python -m app.sip_trunk write|probe', file=sys.stderr)
         return 2
     try:
         values = ConfigurationValues.from_environment(os.environ)

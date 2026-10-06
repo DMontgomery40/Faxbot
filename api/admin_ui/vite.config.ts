@@ -29,7 +29,6 @@ export default defineConfig({
       '/fax': api,
       '/inbound': api,
       '/plugins': api,
-      '/plugin-registry': api,
       '/health': api,
       '/mcp': api,
       '/mobile': api

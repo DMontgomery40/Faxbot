@@ -2,15 +2,32 @@
 
 The `faxbot` command does what the Admin Console does, from a terminal or a script: send faxes, read received ones, manage users and keys, change settings, check delivery costs, pair phones. The console's built-in terminal is the one exception; you are already in one. It talks to a running Faxbot server with an API key, the same way the SDKs do.
 
-A few commands under `faxbot admin` work on a **stopped** installation instead, straight from its database and files: owner recovery, backup, restore, database upgrade and status.
+Five `faxbot system` commands work on a **stopped** installation instead, straight from its database and files: `status`, `migrate`, `recover-owner`, `backup` and `restore`.
 
 Every command and option is listed in the [command line reference](../reference/cli.md).
+
+## How commands are grouped
+
+`faxbot send` and `faxbot status` send a fax and follow it. Everything else sits under the same eight areas as the console:
+
+| Command | What it covers |
+| --- | --- |
+| `faxbot received` | Received faxes, their owners and their email delivery |
+| `faxbot sent` | Sent faxes, their documents and their delivery |
+| `faxbot numbers` | Your fax numbers, mailboxes and email delivery settings |
+| `faxbot recipients` | The numbers you fax: routes, sending together, partners and case packets |
+| `faxbot providers` | Fax providers, their settings and your phone line (`faxbot providers trunk`) |
+| `faxbot costs` | Spending, carrier charges, prices and plans |
+| `faxbot access` | People, groups, roles, keys, sign-ins and paired phones |
+| `faxbot system` | Settings, checks, logs, the security log, profiles, backups and restarts |
+
+Command names from before these eight areas, such as `faxbot jobs list`, no longer work. The [release notes](../release-notes.md#renamed-commands) list the new name for each.
 
 ## Install
 
 The command line ships with the API in `api/app/cli`.
 
-- **Docker:** the image includes it. Run `docker compose exec api faxbot health`.
+- **Docker:** the image includes it. Run `docker compose exec api faxbot system health`.
 - **From a checkout:** install the API requirements, then run it from the `api` folder:
 
     ```bash
@@ -19,7 +36,7 @@ The command line ships with the API in `api/app/cli`.
     python -m app.cli --help
     ```
 
-    `make cli ARGS="health"` does the same from the repository root.
+    `make cli ARGS="system health"` does the same from the repository root.
 
 - **As a `faxbot` command:** `pip install -e api` installs the `faxbot` script from the checkout. Install the requirements first.
 
@@ -32,20 +49,20 @@ Every remote command needs the server address and an API key:
 ```bash
 export FAXBOT_URL=https://fax.example.com
 export FAXBOT_API_KEY=fbk_live_...
-faxbot me
+faxbot access me
 ```
 
-`faxbot me` shows who the key belongs to and what it may do. Create a key for yourself in the console, or with `faxbot keys create`.
+`faxbot access me` shows who the key belongs to and what it may do. Create a key for yourself in the console, or with `faxbot access keys create`.
 
 ### Profiles
 
 A profile saves the address and key, so you do not need the variables:
 
 ```bash
-faxbot --url https://fax.example.com config set-profile clinic
+faxbot --url https://fax.example.com system profiles save clinic
 ```
 
-You are asked for the API key without it being shown. Profiles live in `~/.config/faxbot/config.toml`, which only you can read (mode 600). Saving a profile makes it the default unless you add `--no-use`; choose another with `--profile NAME`, `FAXBOT_PROFILE`, or `faxbot config use NAME`. `faxbot config show` lists profiles without showing keys.
+You are asked for the API key without it being shown. Profiles live in `~/.config/faxbot/config.toml`, which only you can read (mode 600). Saving a profile makes it the default unless you add `--no-use`; choose another with `--profile NAME`, `FAXBOT_PROFILE`, or `faxbot system profiles use NAME`. `faxbot system profiles list` lists profiles without showing keys.
 
 The order is: `--url` and `--key`, then `FAXBOT_URL` and `FAXBOT_API_KEY`, then the profile, then `http://localhost:8080`. A saved key is only ever sent to the address saved with it: when `--url` or `FAXBOT_URL` names a different server, give that server's key with `--key` or `FAXBOT_API_KEY`.
 
@@ -54,20 +71,22 @@ The order is: `--url` and `--key`, then `FAXBOT_URL` and `FAXBOT_API_KEY`, then 
 ```bash
 faxbot send +15551234567 referral.pdf          # send a fax
 faxbot status <fax id>                         # where it is now
-faxbot jobs list                               # sent faxes, newest first
-faxbot inbound list                            # received faxes
-faxbot inbound pdf <received fax id> -o fax.pdf
-faxbot users add jsmith --name "Jane Smith"    # shows a temporary password once
-faxbot access grant jsmith "Fax operator"
-faxbot integrations add "Front desk scanner"   # an identity for an app or device
-faxbot access grant "Front desk scanner" "Fax operator"
-faxbot keys create --for "Front desk scanner" -p fax:send -p fax:read   # shows the key once
-faxbot routing costs
+faxbot sent list                               # sent faxes, newest first
+faxbot received list                           # received faxes
+faxbot received pdf <received fax id> -o fax.pdf
+faxbot received recover                        # bring in faxes the phone line received but did not hand over
+faxbot providers trunk apply                   # connect the saved phone line and show its check
+faxbot access users add jsmith --name "Jane Smith"    # shows a temporary password once
+faxbot access grants add jsmith "Fax operator"
+faxbot access integrations add "Front desk scanner"   # an app or device with its own key
+faxbot access grants add "Front desk scanner" "Fax operator"
+faxbot access keys create --for "Front desk scanner" -p fax:send -p fax:read   # shows the key once
+faxbot costs spending
 ```
 
 Users, groups, roles, mailboxes and keys are named the way people know them: a sign-in name, a group name, a mailbox label. Add `--ids` to a list to see internal ids, and use an id when two names are the same.
 
-Secrets that Faxbot shows only once (new API keys, temporary passwords, the device key from pairing and the recovered installation key) are printed once and never saved. Settings and provider credentials are always shown masked. Enter secrets with the hidden prompts (`faxbot settings set --secret NAME`, `faxbot providers configure phaxio --secret api_key`) rather than on the command line, where they would stay in your shell history.
+Secrets that Faxbot shows only once (new API keys, temporary passwords, the device key from pairing and the recovered installation key) are printed once and never saved. Settings and provider credentials are always shown masked. Enter secrets with the hidden prompts (`faxbot system settings set --secret NAME`, `faxbot providers configure phaxio --secret api_key`) rather than on the command line, where they would stay in your shell history.
 
 Each change to users and access sends the access version Faxbot reported a moment before. If someone else changes access at the same moment, the command stops with "Access settings changed while this command was running. Run it again."
 
@@ -85,7 +104,7 @@ Use `--idempotency-key` on `faxbot send` when a script might run twice: sending 
 `--quiet` prints nothing on success, except a secret shown only once, which it prints alone on one line:
 
 ```bash
-token=$(faxbot --quiet keys rotate 1a2b3c4d5e6f)
+token=$(faxbot --quiet access keys rotate 1a2b3c4d5e6f)
 ```
 
 ### Exit codes
@@ -102,38 +121,38 @@ token=$(faxbot --quiet keys rotate 1a2b3c4d5e6f)
 | 7 | Too many requests; wait and try again. |
 | 8 | Faxbot could not be reached or could not finish right now. |
 | 9 | Faxbot did not accept the values given. |
-| 10 | Faxbot is running, so a local admin command refused to start. |
+| 10 | Faxbot is running, so a command for a stopped installation refused to start. |
 
 With `--json`, a failure prints `{"error": {"message": ..., "exit_code": ..., "status": ..., "detail": ...}}`.
 
 ## Local administration
 
-`faxbot admin` commands open the installation directly. They read the same settings as the server: `DATABASE_URL`, `FAX_DATA_DIR`, `FAXBOT_INSTALLATION_KEY_PATH` and `FAXBOT_DIRECT_KEY_PATH` (or `--database-url`, `--data-dir`, `--key-file`, `--direct-key-file`). Run them where the server runs, with the same environment.
+`faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` open the installation directly. They read the same settings as the server: `DATABASE_URL`, `FAX_DATA_DIR`, `FAXBOT_INSTALLATION_KEY_PATH` and `FAXBOT_DIRECT_KEY_PATH` (or `--database-url`, `--data-dir`, `--key-file` and `--direct-key-file` after the command). Run them where the server runs, with the same environment.
 
 They refuse to run while Faxbot is running: when a server answers at the configured address, or when the installation's lock files show a running server. Stop Faxbot first. With Docker:
 
 ```bash
 docker compose stop api
-docker compose run --rm --no-deps api faxbot admin status
+docker compose run --rm --no-deps api faxbot system status
 docker compose start api
 ```
 
 ### Status and upgrade
 
-- `faxbot admin status` shows the database schema version, whether settings changes are waiting for a restart, whether an installation key is set, and how many users, owners, keys, sessions and faxes there are. It never shows secrets.
-- `faxbot admin migrate` upgrades the database to this version of Faxbot through the same locked upgrade the server runs at start.
+- `faxbot system status` shows whether the database is up to date, whether settings changes are waiting for a restart, whether an installation key is set, and how many users, owners, keys, sessions and faxes there are. It never shows secrets.
+- `faxbot system migrate` upgrades the database to this version of Faxbot through the same locked upgrade the server runs at start.
 
 ### Recover owner access
 
 Use this when nobody can sign in as an owner and the installation key (`API_KEY`) is empty or lost. If you still have the installation key, you do not need it: sign in with the key as described in [Access control](../security/access-control.md#recover-owner-access).
 
 1. Stop Faxbot.
-2. Run `faxbot admin recover-owner`. It saves a fresh installation key in the installation's settings, with an entry in the security audit, and shows the key **once**. Store it in a password manager. Anything that used the old installation key stops working.
+2. Run `faxbot system recover-owner`. It saves a fresh installation key in the installation's settings, with an entry in the security audit, and shows the key **once**. Store it in a password manager. Anything that used the old installation key stops working.
 3. Start Faxbot.
 4. Create an owner with the new key:
 
     ```bash
-    FAXBOT_API_KEY=<the new key> faxbot owner enroll --login jsmith --name "Jane Smith"
+    FAXBOT_API_KEY=<the new key> faxbot access owner enroll --login jsmith --name "Jane Smith"
     ```
 
 5. Sign in to the console with that name and the temporary password it shows, and choose a new password.
@@ -143,14 +162,14 @@ Editing `.env` does not change the installation key of an existing installation;
 ### Backup and restore
 
 ```bash
-faxbot admin backup /backups/faxbot-2026-10-03
+faxbot system backup /backups/faxbot-2026-10-03
 ```
 
 With Docker, mount a folder from the host for the backup, outside the data volume:
 
 ```bash
 docker compose stop api
-docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot admin backup /backups/2026-10-03
+docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot system backup /backups/2026-10-03
 docker compose start api
 ```
 
@@ -167,7 +186,7 @@ The backup contains private keys and fax documents. The folder is created readab
 To restore, stop Faxbot, point the environment at the installation's usual locations and run:
 
 ```bash
-faxbot admin restore /backups/faxbot-2026-10-03
+faxbot system restore /backups/faxbot-2026-10-03
 ```
 
-Restore checks every file against the manifest first, and refuses a backup with changed, missing or added files. It does not replace an existing database, data folder or key unless you add `--force`. Restore to the same database and data folder locations the installation used: Faxbot refuses to start when its saved locations do not match. A PostgreSQL backup must be restored with the same Faxbot version that made it; a SQLite backup from an older version can be restored and then upgraded with `faxbot admin migrate`.
+Restore checks every file against the manifest first, and refuses a backup with changed, missing or added files. It does not replace an existing database, data folder or key unless you add `--force`. Restore to the same database and data folder locations the installation used: Faxbot refuses to start when its saved locations do not match. A PostgreSQL backup must be restored with the same Faxbot version that made it; a SQLite backup from an older version can be restored and then upgraded with `faxbot system migrate`.

@@ -16,14 +16,20 @@ OWN_AUTHENTICATION = {
     ("GET", "/health/ready"): "public readiness without private state",
     ("POST", "/auth/login"): "password login",
     ("POST", "/auth/key-login"): "key-to-session login",
+    ("GET", "/auth/setup"): "public: only whether a first owner is still needed, for the sign-in page",
     ("GET", "/fax/{job_id}/pdf"): "short-lived provider document token",
     ("GET", "/inbound/{inbound_id}/pdf"): "inbound:document via identity, or the fax's unexpired download token (checked in the handler)",
     ("POST", "/phaxio-callback"): "verified provider callback",
     ("POST", "/signalwire-callback"): "verified provider callback",
     ("POST", "/phaxio-inbound"): "verified provider ingest",
     ("POST", "/sinch-inbound"): "verified provider ingest",
+    ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
+    ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",
+    ("POST", "/_internal/hylafax/started"): "the SSL Fax engine's own secret (faxes it took before a restart)",
+    ("POST", "/_internal/hylafax/inbound"): "the SSL Fax engine's own secret; images in its out folder only",
+    ("POST", "/_internal/hylafax/received-failed"): "the SSL Fax engine's own secret (a received call that left no fax)",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
     # Direct delivery partners carry no API key: each request is verified against
@@ -37,11 +43,14 @@ OWN_AUTHENTICATION = {
     ("GET", "/redoc"): "API description",
 }
 # Static files carry no authority. /admin/ui exists only with ENABLE_LOCAL_ADMIN at import.
-STATIC_MOUNTS = {"/admin/ui", "/assets"}
+STATIC_MOUNTS = {"/admin/ui"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
 PENDING: dict = {}
-PRIVILEGED = {"host:restart", "host:actions", "host:terminal", "providers:install", "owner:recover"}
+# Routes kept for one release with a deprecation note in the API description.
+RETIRING = {("GET", "/plugins"), ("GET", "/plugins/{plugin_id}/config"), ("PUT", "/plugins/{plugin_id}/config"),
+            ("POST", "/admin/settings/persist"), ("POST", "/_internal/freeswitch/outbound_result")}
+PRIVILEGED = {"host:restart", "host:terminal", "providers:install", "owner:recover"}
 # Routes converted from require_admin: (permission, audited).
 CONVERTED = {
     ("POST", "/admin/settings/validate"): ("providers:write", False),
@@ -53,16 +62,11 @@ CONVERTED = {
     ("POST", "/admin/plugins/http/import-manifests"): ("providers:install", True),
     ("GET", "/admin/logs"): ("logs:read", False),
     ("GET", "/admin/logs/tail"): ("logs:read", False),
-    ("GET", "/admin/actions"): ("host:actions", True),
-    ("POST", "/admin/actions/run"): ("host:actions", True),
-    ("GET", "/admin/tunnel/status"): ("tunnels:read", False),
-    ("POST", "/admin/tunnel/config"): ("tunnels:manage", False),
-    ("POST", "/admin/tunnel/test"): ("tunnels:read", False),
     ("POST", "/admin/tunnel/pair"): ("tunnels:pair", False),
     ("POST", "/admin/terminal/ticket"): ("host:terminal", True),
     ("GET", "/admin/inbound/callbacks"): ("providers:read", False),
     ("POST", "/admin/inbound/simulate"): ("providers:write", False),
-    ("POST", "/admin/diagnostics/run"): ("diagnostics:read", False),
+    ("POST", "/inbound/{inbound_id}/fetch"): ("providers:write", True),
     ("POST", "/admin/settings/persist"): ("owner:recover", True),
 }
 
@@ -118,7 +122,33 @@ def test_converted_routes_declare_their_exact_permission():
     assert persist.complete_owner is True
 
 
+# New routes that read installation-wide evidence: (permission, audited).
+READS = {
+    ("GET", "/routing/recommendations/sending"): ("settings:read", False),
+    ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
+    ("GET", "/routing/recommendations/plans"): ("settings:read", False),
+}
+
+
+def test_recommendation_reads_need_settings_read():
+    routes = dict(_routes())
+    declared = {key: [(rule.permission, rule.audit) for rule in _declared(routes[key])] for key in READS}
+    assert declared == {key: [expected] for key, expected in READS.items()}
+
+
 def test_privileged_permissions_are_always_audited():
     unaudited = [(key, rule.permission) for key, calls in _routes() for rule in _declared(calls)
                  if rule.permission in PRIVILEGED and not rule.audit]
     assert unaudited == []
+
+
+def test_routes_removed_next_release_are_marked_deprecated_and_say_what_replaces_them():
+    from app import main
+    paths = main.app.openapi()["paths"]
+    for method, path in RETIRING:
+        operation = paths[path][method.lower()]
+        assert operation.get("deprecated") is True, (method, path)
+        assert "next release" in (operation.get("description") or ""), (method, path)
+    marked = {(method.upper(), path) for path, operations in paths.items()
+              for method, operation in operations.items() if isinstance(operation, dict) and operation.get("deprecated")}
+    assert marked == RETIRING

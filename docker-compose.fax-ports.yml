@@ -1,0 +1,27 @@
+# Only when Faxbot's network check says T.38 fax data cannot come back
+# (Providers -> your carrier -> Network for fax over IP, or
+# `faxbot providers trunk network status`) and tells you to forward Faxbot's
+# fax ports: Docker Desktop, or a router that changes port numbers.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.fax-ports.yml up -d
+#
+# Faxbot then asks your router to open these ports itself (PCP, NAT-PMP or
+# UPnP; switch: Let Faxbot open its fax ports on your router). If the router
+# refuses, forward UDP ports 4000-4039 to this computer yourself and enter your
+# internet address under Internet address. Asterisk records the published
+# range at start, so the network check knows the ports are there. Audio fax
+# and registration with a username and password need none of this. See
+# docs/setup/network.md.
+#
+# Forty ports on purpose: Docker starts one helper process per published port.
+# Asterisk uses exactly this range, the first third for T.38 and the rest for
+# audio (asterisk/start.sh), which carries 13 fax calls at once (each uses one
+# T.38 port and two audio ports). Do not combine this file with
+# docker-compose.public.yml or docker-compose.phone-system.yml, which publish
+# their own range.
+services:
+  asterisk:
+    environment:
+      - FAXBOT_MEDIA_PORTS=4000-4039
+    ports:
+      - "4000-4039:4000-4039/udp"

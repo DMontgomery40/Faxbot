@@ -61,8 +61,8 @@ def test_ingest_routes_by_number_digits_and_audits_a_system_actor(iw):
     audits = iw.audit('inbound.receive')
     assert len(audits) == 4
     assert all(a['actor_principal_id'] is None and a['actor_session_id'] is None for a in audits)
-    # Random audit ids are hex and can contain '555'; check the recorded fields only.
-    recorded = repr([{k: v for k, v in a.items() if k != 'id'} for a in audits])
+    # Random audit and resource ids are hex and can contain '555'; check the recorded fields only.
+    recorded = repr([{k: v for k, v in a.items() if k not in ('id', 'target_id')} for a in audits])
     assert '555' not in recorded and 'token-' not in recorded
     assert {json.loads(a['details'])['placement'] for a in audits} == {'mailbox', 'unassigned'}
 

@@ -44,7 +44,7 @@ class ConfigurationWorld(World):
         self.catalog = catalog()
         self.manager = ConfigurationManager(self.configuration, catalog_loader=lambda values: self.catalog)
         self.initial = self.manager.initialize({'FAXBOT_CONFIG_PATH': str(tmp_path / 'absent.json'),
-            'FEATURE_V3_PLUGINS': 'true', 'PHAXIO_API_KEY': 'synthetic-provider-secret'})
+            'FEATURE_V3_PLUGINS': 'true', 'FAX_BACKEND': 'phaxio', 'PHAXIO_API_KEY': 'synthetic-provider-secret'})
         self.actor = self.user('editor')
 
     def grant(self, permissions):

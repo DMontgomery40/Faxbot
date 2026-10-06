@@ -5,7 +5,7 @@ The Admin Console includes a built‑in terminal that provides direct shell acce
 ## Features
 
 - Full TTY with `xterm-256color`, history, and standard shortcuts
-- Opens only for people with the Host Operator or Owner role
+- Opens for the Owner role by default. You can grant `host:terminal` through a custom role.
 - Container‑aware; works in Docker and local dev
 
 !!! tip
@@ -25,7 +25,7 @@ The terminal is off unless the installation allows host commands. Set `ENABLE_AD
 
 ## Who can use it
 
-Using the terminal needs the `host:terminal` permission. The built-in **Host Operator** and **Owner** roles include it; **Administrator** does not, and neither does `keys:manage`. Give the Host Operator role on the **Access** screen to the people who look after the server. See [Access Control](security/access-control.md).
+Using the terminal needs the `host:terminal` permission. The built-in **Owner** role includes it; **Host Operator** and **Administrator** do not. You can grant it through a custom role on the **Access** screen. See [Access Control](security/access-control.md).
 
 ## Usage
 
@@ -45,5 +45,5 @@ The console first asks the server for a one-time ticket that is valid for 60 sec
 ## Troubleshooting
 
 - If the console says the terminal is not available, check `ENABLE_ADMIN_EXEC` and run `./scripts/install-terminal-deps.sh` on manual installs.
-- If the terminal closes right away, check that you still have the Host Operator or Owner role and that your session has not ended.
+- If the terminal closes right away, check that your account still has the `host:terminal` permission and that your session has not ended.
 - If it never connects, check that the API is running and look at the browser console.

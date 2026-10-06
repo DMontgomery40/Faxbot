@@ -25,6 +25,9 @@ import sqlalchemy as sa
 from .errors import EXIT_CONFLICT, EXIT_FAILURE, EXIT_NOT_FOUND, EXIT_RUNNING, CliError
 
 LOCK_FILES = frozenset({'.faxbot-startup.lock', '.faxbot-serving.lock'})
+# The SSL Fax engine's out folder (its status and received images, which Faxbot has already stored):
+# the engine writes it and Faxbot only reads it (read-only in Compose), so backup and restore leave it.
+ENGINE_OUT = 'hylafax-out'
 BACKUP_FORMAT = 'faxbot-backup'
 BACKUP_VERSION = 1
 _SQLITE_COMPANIONS = ('', '-wal', '-shm', '-journal')
@@ -349,7 +352,7 @@ def _dump_sqlite(installation, target):
 
 def _excluded_data(installation):
     """Data folder entries a backup must not copy as data: locks, the live database and the keys."""
-    excluded = {installation.data_dir / name for name in LOCK_FILES}
+    excluded = {installation.data_dir / name for name in (*LOCK_FILES, ENGINE_OUT)}
     if installation.sqlite_path is not None:
         excluded |= {Path(str(installation.sqlite_path) + suffix) for suffix in _SQLITE_COMPANIONS}
     return excluded | {installation.key_path, installation.direct_key_path}
@@ -377,7 +380,8 @@ def backup(installation, target):
     skipped = 0
     for root, directories, names in os.walk(installation.data_dir):
         root_path = Path(root)
-        directories[:] = [name for name in directories if not (root_path / name).is_symlink()]
+        directories[:] = [name for name in directories
+                          if not (root_path / name).is_symlink() and root_path / name not in excluded]
         for name in names:
             path = root_path / name
             if path in excluded:
@@ -564,7 +568,14 @@ def restore(installation, source, *, force=False):
         for entry in list(installation.data_dir.iterdir()):
             if entry in keep or entry.name in LOCK_FILES:
                 continue
-            if entry.is_dir() and not entry.is_symlink():
+            if entry.is_dir() and not entry.is_symlink() and os.path.ismount(entry):
+                # A volume mounted inside the data folder (the engine's settings in Compose): empty it only.
+                for inner in list(entry.iterdir()):
+                    if inner.is_dir() and not inner.is_symlink():
+                        shutil.rmtree(inner)
+                    else:
+                        inner.unlink()
+            elif entry.is_dir() and not entry.is_symlink():
                 shutil.rmtree(entry)
             else:
                 entry.unlink()
@@ -573,7 +584,7 @@ def restore(installation, source, *, force=False):
                 path.unlink()
     restored = 0
     for name in sorted(manifest['files']):
-        if name.startswith('data/'):
+        if name.startswith('data/') and not name.startswith(f'data/{ENGINE_OUT}/'):
             _private_copy(source / name, installation.data_dir / Path(name).relative_to('data'))
             restored += 1
     _private_copy(source / 'keys' / 'installation.key', installation.key_path)

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Card,
   CardContent,
@@ -8,11 +11,15 @@ import {
   Alert,
   Paper,
   CircularProgress,
-  Grid,
   Chip,
   Switch,
   FormControlLabel,
   Stack,
+  Link,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -26,34 +33,96 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
   Public as PublicIcon,
+  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
-import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
+import { DELIVERY_SECTIONS, DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues, type DeliverySection } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
+import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
+import RestartNotice from './common/RestartFaxbot';
+import { DeploymentRows } from './common/Deployment';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
-import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
+import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
+import { BUILTIN_PROVIDERS, PROVIDER_LABELS, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
+import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SettingsProps {
   client: AdminAPIClient;
   // May this account change settings (email delivery actions are shown only then).
   canWrite?: boolean;
+  // May this account restart Faxbot (host:restart); the restart message then offers Restart now.
+  canRestart?: boolean;
   // A section to scroll to once settings load, such as the email delivery settings.
   focus?: string | null;
   onFocused?: () => void;
+  // Show only these sections, under this page title (a console page shows its own part of the settings).
+  sections?: SettingsSection[];
+  title?: string;
+  // Is this person the installation's owner? Owner-only settings are shown disabled to everyone else.
+  isOwner?: boolean;
+}
+
+// The parts of the settings document a console page can show on its own.
+export type SettingsSection =
+  | 'providers' | 'inbound' | 'routes'
+  | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire'
+  | 'direct' | 'intake' | 'email'
+  | 'security' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
+  | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit' | 'installation-key';
+
+// Sections whose settings each have their own Apply, so one refusal never fails another change.
+const OWN_APPLY_SECTIONS = new Set<SettingsSection>(['diagnostics']);
+
+export const OWNER_ONLY_SENTENCE = 'Only the owner of this installation can change this.';
+
+// The server says the same: Sinch's user name counts only with its password, or anyone could send faxes in.
+export const SINCH_PASSWORD_NEEDED = 'Enter the password Sinch sends as well; Faxbot does not accept the user name without it.';
+
+/** The sentence to show when a save would leave Sinch's user name without a password; null otherwise. */
+export function sinchBasicProblem(form: Record<string, unknown>, fields: string[]): string | null {
+  if (!fields.includes('sinch_inbound_basic_user') && !fields.includes('sinch_inbound_basic_pass')) return null;
+  const user = String(form.sinch_inbound_basic_user ?? '').trim();
+  const password = String(form.sinch_inbound_basic_pass ?? '');
+  return user && !password ? SINCH_PASSWORD_NEEDED : null;
+}
+
+// One sentence on a provider's own page: whether Faxbot uses it now. The trunk is
+// named by its carrier ("Telnyx") once one is chosen.
+export function providerUseSentence(provider: string, directions: { sending: string; receiving: string }): string {
+  const label = providerLabel(provider);
+  const name = provider === 'sip' && label === PROVIDER_LABELS.sip ? 'your phone carrier' : label;
+  const sends = directions.sending === provider;
+  const receives = directions.receiving === provider;
+  if (sends && receives) return `Faxbot sends and receives faxes through ${name}.`;
+  if (sends) return `Faxbot sends faxes through ${name}.`;
+  if (receives) return `Faxbot receives faxes through ${name}.`;
+  return `Faxbot does not use ${name} now. To use it, choose Add or change a provider.`;
 }
 
 type FormValue = string | number | boolean;
 type SettingsForm = Record<string, FormValue>;
+
+// The trunk section, opened from the Inbox receiving status.
+const SIP_TRUNK_SECTION = 'sip-trunk';
+
+const ENV_IMPORT_HELP = 'Decided where Faxbot is installed, not here: when it is on, a fresh installation takes its settings from the recovery copy saved under Storage & retention.';
 
 // Limits checked before saving, so a value the server would refuse gets a plain sentence.
 const FIELD_RANGES: Record<string, { min: number; max: number; message: string }> = {
   route_min_success_percent: { min: 0, max: 100, message: 'Enter a minimum delivery rate from 0 to 100.' },
   intake_smtp_port: { min: 1, max: 65535, message: 'Enter an email server port from 1 to 65535.' },
 };
+
+// Files Faxbot reads its settings and plugins from, shown read-only in System > Developer.
+const READ_ONLY_FILES: Array<{ field: string; label: string; value: (data: SettingsType) => string | undefined }> = [
+  { field: 'persisted_env_path', label: 'Recovery .env file', value: (data) => data.persisted?.path },
+  { field: 'providers_dir', label: 'Provider plugin folder', value: (data) => data.plugin_files?.providers_dir },
+  { field: 'faxbot_config_path', label: 'Older settings file, read when Faxbot was first installed', value: (data) => data.legacy_config?.path },
+];
 
 // Each control starts with the loaded settings, including redacted secrets.
 // Comparing against this snapshot prevents unrelated edits from writing masks,
@@ -71,6 +140,11 @@ function editorValues(data: SettingsType): SettingsForm {
     audit_log_syslog: data.audit?.syslog ?? false,
     audit_log_syslog_address: data.audit?.syslog_address ?? '',
     enable_persisted_settings: data.persisted?.enabled ?? false,
+    admin_allow_restart: data.restart?.allowed ?? false,
+    enable_s3_diagnostics: data.storage.s3_diagnostics ?? false,
+    mobile_local_base: data.mobile?.local_base ?? '',
+    docs_base_url: data.developer?.docs_base_url ?? '',
+    telnyx_api_key: data.sip.telnyx_api_key ?? '',
     feature_v3_plugins: data.features?.v3_plugins ?? false,
     feature_plugin_install: data.features?.plugin_install ?? false,
     fax_disabled: data.backend.disabled,
@@ -90,17 +164,13 @@ function editorValues(data: SettingsType): SettingsForm {
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
+    ...efaxEditorValues(data),
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
     ami_username: data.sip.ami_username,
     ami_password: data.sip.ami_password,
     fax_station_id: data.sip.station_id,
-    fs_esl_host: data.fs?.esl_host ?? '',
-    fs_esl_port: data.fs?.esl_port ?? 8021,
-    fs_esl_password: data.fs?.esl_password ?? '',
-    fs_gateway_name: data.fs?.gateway_name ?? '',
-    fs_caller_id_number: data.fs?.caller_id_number ?? '',
-    fs_t38_enable: data.fs?.t38_enable ?? true,
+    ...(data.sender ? { fax_header: data.sender.header } : {}),
     signalwire_space_url: data.signalwire?.space_url ?? '',
     signalwire_project_id: data.signalwire?.project_id ?? '',
     signalwire_api_token: data.signalwire?.api_token ?? '',
@@ -113,10 +183,8 @@ function editorValues(data: SettingsType): SettingsForm {
     inbound_token_ttl_minutes: data.inbound.token_ttl_minutes ?? 60,
     asterisk_inbound_secret: data.inbound.sip?.asterisk_secret ?? '',
     phaxio_inbound_verify_signature: data.inbound.phaxio?.verify_signature ?? true,
-    sinch_inbound_verify_signature: data.inbound.sinch?.verify_signature ?? true,
     sinch_inbound_basic_user: data.inbound.sinch?.basic_user ?? '',
     sinch_inbound_basic_pass: data.inbound.sinch?.basic_pass ?? '',
-    sinch_inbound_hmac_secret: data.inbound.sinch?.hmac_secret ?? '',
     storage_backend: data.storage.backend,
     s3_bucket: data.storage.s3_bucket,
     s3_region: data.storage.s3_region ?? '',
@@ -143,7 +211,9 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps) {
+function Settings({ client, canWrite = false, canRestart = false, focus, onFocused, sections, title, isOwner = true }: SettingsProps) {
+  // Without sections, the whole settings document is shown.
+  const shows = (section: SettingsSection) => !sections || sections.includes(section);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -155,6 +225,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const [needsReload, setNeedsReload] = useState(false);
   const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
+  // Why sending cannot work right now, such as the fax engine refusing Faxbot's login.
+  const [engineMessage, setEngineMessage] = useState<string | null>(null);
+  // Whether the installation lets the console restart Faxbot (ADMIN_ALLOW_RESTART).
+  const [allowRestart, setAllowRestart] = useState(false);
+  const [restarted, setRestarted] = useState(false);
+  // A switch change waiting for the person to confirm it, such as turning sending off.
+  const [confirming, setConfirming] = useState<{ field: string; value: boolean; title: string; text: string; action: string } | null>(null);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -172,8 +249,33 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const loadedOutbound = settings?.hybrid?.outbound_backend ?? settings?.backend.type ?? '';
   const loadedInbound = settings?.hybrid?.inbound_backend ?? settings?.backend.type ?? '';
   const effectiveOutbound = form.outbound_backend || form.backend || loadedOutbound;
+  // Credentials supplied by .env: shown as set there, never editable or revealable here.
+  const envSet = environmentManaged(settings);
+  const envField = (field: string) => (envSet.has(field) ? {
+    onChange: undefined,
+    showCurrentValue: false,
+    helperText: ENV_SET_HELP,
+    renderControl: ({ id, labelledBy, describedBy }: { id: string; labelledBy: string; describedBy?: string }) => (
+      <EnvSetField id={id} fullWidth size="small" withHelp={false}
+        inputProps={{ 'aria-labelledby': labelledBy, 'aria-describedby': describedBy }} />
+    ),
+  } : {});
   const effectiveInbound = form.inbound_backend || form.backend || loadedInbound;
+  // Sending and Receiving, as the Setup Wizard shows them.
+  const providerChoice = {
+    sending: String(form.outbound_backend || form.backend || ''),
+    receiving: form.inbound_enabled ? String(form.inbound_backend || form.backend || '') : '',
+  };
   const providerSelected = (provider: string) => effectiveOutbound === provider || effectiveInbound === provider;
+  // A provider's own page shows its settings whether or not it is in use, with one sentence saying which.
+  const providerShown = (provider: string, section: SettingsSection) => (sections ? sections.includes(section) : providerSelected(provider));
+  // On a provider's own page its name is already the page title, so its section is the account.
+  const providerTitle = (name: string) => (sections ? 'Account' : name);
+  const providerStatus = (provider: string) => (sections && settings ? (
+    <Typography variant="body2" sx={{ mb: 2 }} data-testid="provider-use">
+      {providerUseSentence(provider, loadedDirections(settings))}
+    </Typography>
+  ) : null);
   const changedFields = Object.keys(form).filter((field) => form[field] !== loadedForm[field]);
 
   const hydrate = (data: SettingsType) => {
@@ -185,10 +287,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
     setNeedsReload(false);
   };
 
-  const applySettings = async () => {
+  const applySettings = async (only?: string[]) => {
     if (actionFence.current || loading) return;
     if (!desiredRevision) {
-      setError('Load Settings before applying changes.');
+      setError('Select Reload before applying changes.');
       return;
     }
     actionFence.current = true;
@@ -198,11 +300,18 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       setLoading(true);
       setError(null);
       setSnack(null);
+      const problem = only ? null : directionProblem(providerChoice);
+      if (problem) throw new Error(problem);
       const patch: SettingsPatch = { expected_revision_id: desiredRevision };
-      for (const field of changedFields) {
+      const fields = only ? changedFields.filter((field) => only.includes(field)) : changedFields;
+      const sinchProblem = sinchBasicProblem(form, fields);
+      if (sinchProblem) throw new Error(sinchProblem);
+      // Edits to other settings stay on screen after a partial apply.
+      const kept = Object.fromEntries(changedFields.filter((field) => !fields.includes(field)).map((field) => [field, form[field]]));
+      for (const field of fields) {
         const value = form[field];
         if (typeof loadedForm[field] === 'number' && (value === '' || !Number.isFinite(Number(value)) || !Number.isSafeInteger(Number(value)))) {
-          throw new Error(`Enter a whole number for ${field.replace(/_/g, ' ')}. An empty number does not clear the setting.`);
+          throw new Error('Enter a whole number. An empty box does not clear the setting.');
         }
         patch[field] = typeof loadedForm[field] === 'number' ? Number(value) : value;
         const range = FIELD_RANGES[field];
@@ -223,15 +332,21 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
         if (epoch !== requestEpoch.current) return;
         if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
         hydrate(data);
+        if (only) setForm((previous) => ({ ...previous, ...kept }));
       } catch {
         if (epoch !== requestEpoch.current) return;
-        setError('The page could not refresh. Click Load Settings before making more changes.');
+        setError('The page could not refresh. Select Reload before making more changes.');
       }
     } catch (err) {
       if (epoch !== requestEpoch.current) return;
       const message = err instanceof Error ? err.message : 'Failed to apply settings';
       if (!writeStarted) {
         setError(message);
+        return;
+      }
+      // A partial apply that was refused changed nothing: say why and keep editing.
+      if (only && (isForbidden(err) || plainRefusal(err))) {
+        setError(isForbidden(err) ? 'You do not have permission to change this setting.' : plainRefusal(err));
         return;
       }
       setNeedsReload(true);
@@ -252,6 +367,11 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
     }
   };
 
+  // Settings only the owner may change: shown, but disabled with one sentence, to everyone else.
+  const ownerOnly = new Set(settings?.owner_only ?? []);
+  const locked = (field: string) => !isOwner && ownerOnly.has(field);
+  const withOwnerNote = (field: string, helperText: string) => (locked(field)
+    ? [helperText, OWNER_ONLY_SENTENCE].filter(Boolean).join(' ') : helperText);
   const textField = (label: string, field: string, helperText = '', type: 'text' | 'password' | 'number' = 'text') => (
     <ResponsiveSettingItem
       icon={type === 'password' ? <SecurityIcon /> : <SettingsIcon />}
@@ -259,9 +379,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       value={loadedForm[field] ?? ''}
       editValue={form[field] ?? ''}
       onChange={(value) => handleForm(field, type === 'number' && value !== '' ? Number(value) : value)}
-      helperText={helperText}
+      helperText={withOwnerNote(field, helperText)}
       type={type}
       showCurrentValue={!pendingRestart}
+      disabled={locked(field)}
     />
   );
   const toggleField = (label: string, field: string, helperText = '') => (
@@ -271,12 +392,53 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       value={loadedForm[field] ? 'Enabled' : 'Disabled'}
       editValue={form[field] ?? false}
       onChange={(value) => handleForm(field, value === 'true')}
-      helperText={helperText}
+      helperText={withOwnerNote(field, helperText)}
       type="select"
       options={[{ value: 'true', label: 'Enabled' }, { value: 'false', label: 'Disabled' }]}
       showCurrentValue={!pendingRestart}
+      disabled={locked(field)}
     />
   );
+
+  // A switch; `confirmOff` asks before turning it off (one sentence), never before turning it on.
+  const switchField = (label: string, field: string, helperText: string,
+    options: { inverted?: boolean; disabled?: boolean; confirmOff?: { title: string; text: string; action: string } } = {}) => {
+    const value = Boolean(form[field]);
+    const note = withOwnerNote(field, helperText);
+    return (
+      <Box sx={{ px: 2 }} data-testid={`switch-${field}`}>
+        <FormControlLabel
+          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled || locked(field)}
+            onChange={(event) => {
+              const next = options.inverted ? !event.target.checked : event.target.checked;
+              if (!event.target.checked && options.confirmOff) {
+                setConfirming({ field, value: next, ...options.confirmOff });
+                return;
+              }
+              handleForm(field, next);
+            }} />}
+          label={label} />
+        {note && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{note}</Typography>}
+      </Box>
+    );
+  };
+  const readOnlyField = (label: string, field: string, value: string | undefined) => (
+    <ResponsiveSettingItem key={field} icon={<StorageIcon />} label={label} value={value ?? ''}
+      editValue={value || 'Not set'} showCurrentValue={false}
+      helperText={field === 'faxbot_config_path' ? 'Set when Faxbot started. (FAXBOT_CONFIG_PATH)' : 'Read only. Changing it is a planned maintenance task.'} />
+  );
+  // Receiving goes through the receiving provider chosen in the Setup wizard; some providers only send.
+  const receiver = String(effectiveInbound || '');
+  const receiverName = receiver ? providerLabel(receiver) : '';
+  const receiverCanReceive = !!receiver && (!BUILTIN_PROVIDERS.includes(receiver) || RECEIVING_PROVIDERS.has(receiver));
+  const receivingSentence = !receiver
+    ? 'No provider receives faxes yet. To receive, choose Add or change a provider.'
+    : !receiverCanReceive
+      // While receiving is on, the warning below says what to do.
+      ? (form.inbound_enabled ? '' : `${receiverName} cannot receive faxes. To receive, choose Add or change a provider.`)
+      : form.inbound_enabled
+        ? `Faxes arrive through ${receiverName}.`
+        : `Turn this on to receive faxes through ${receiverName}.`;
 
   const fetchSettings = async () => {
     if (actionFence.current) return;
@@ -287,14 +449,21 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       setLoading(true);
       const data = await client.getSettings();
       if (epoch !== requestEpoch.current) return;
-      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded. Click Load Settings to try again.');
+      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded. Select Reload to try again.');
       hydrate(data);
       try {
         const cfg = await client.getConfig();
-        if (epoch === requestEpoch.current) setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+        if (epoch === requestEpoch.current) {
+          setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+          setAllowRestart(cfg?.allow_restart === true);
+        }
       } catch { /* Settings remain usable when branding is unavailable. */ }
+      try {
+        const message = await client.getFaxEngineMessage();
+        if (epoch === requestEpoch.current) setEngineMessage(message);
+      } catch { /* Readiness is optional here; Diagnostics shows it in full. */ }
     } catch (err) {
-      if (epoch === requestEpoch.current) setError(err instanceof Error ? err.message : 'Failed to fetch settings');
+      if (epoch === requestEpoch.current) setError(err instanceof Error ? err.message : 'Settings could not be loaded.');
     } finally {
       if (epoch === requestEpoch.current) setLoading(false);
     }
@@ -317,6 +486,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   useEffect(() => {
     if (!settings || !focus) return;
     if (focus === 'email') document.getElementById(EMAIL_DELIVERY_SECTION)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    if (focus === 'trunk') document.getElementById(SIP_TRUNK_SECTION)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     onFocused?.();
   }, [settings, focus, onFocused]);
 
@@ -327,7 +497,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       const data = await client.exportSettings();
       setEnvContent(data.env);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export settings');
+      setError(err instanceof Error ? err.message : 'Settings could not be exported.');
     } finally {
       setLoading(false);
     }
@@ -357,558 +527,49 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
     );
   };
 
-  return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Settings
-        </Typography>
-        <Box>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchSettings}
-            disabled={loading}
-            sx={{ mr: 1 }}
-          >
-            Load Settings
-          </Button>
-          <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
-            Export .env
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={async () => {
-              try {
-                setLoading(true); setError(null);
-                const res = await client.persistSettings();
-                setSnack(`Recovery .env saved to ${res.path}. A full backup also needs the database and installation key.`);
-              } catch (e: any) {
-                setError(e?.message || 'Failed to save on server');
-              } finally { setLoading(false); }
-            }}
-            disabled={loading}
-          >
-            Write recovery .env
-          </Button>
-
-        </Box>
-      </Box>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-      {settings && needsReload && !loading && !error ? (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          Editing is paused. Click Load Settings to continue.
-        </Alert>
-      ) : settings && pendingRestart && !needsReload ? (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          {restartMessage}
-        </Alert>
-      ) : null}
-
-      {loading && !settings ? (
-        <Box display="flex" justifyContent="center" py={4}>
-          <CircularProgress />
-        </Box>
-      ) : settings ? (
-        <Box>
-        <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
-        <Stack spacing={3}>
-          {/* Backend Configuration */}
-          <ResponsiveFormSection
-            title="Backend Configuration"
-            subtitle="Choose the default provider and optional outbound and inbound overrides"
-            icon={<CloudIcon />}
-          >
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Default Provider"
-              value={settings.backend.type.toUpperCase()}
-              editValue={form.backend ?? settings.backend.type}
-              onChange={(value) => handleForm('backend', value)}
-              helperText="Used for sending and receiving unless an override is set below."
-              type="select"
-              options={[
-                { value: 'phaxio', label: 'Phaxio' },
-                { value: 'sinch', label: 'Sinch' },
-                { value: 'signalwire', label: 'SignalWire' },
-                { value: 'documo', label: 'Documo' },
-                { value: 'humblefax', label: 'HumbleFax' },
-                { value: 'sip', label: 'SIP/Asterisk' },
-                { value: 'freeswitch', label: 'FreeSWITCH' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Outbound Provider"
-              value={loadedOutbound.toUpperCase()}
-              editValue={form.outbound_backend ?? ''}
-              helperText="Provider used to send faxes."
-              onChange={(value) => handleForm('outbound_backend', value)}
-              type="select"
-              options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
-                { value: 'phaxio', label: 'Phaxio (Cloud)' },
-                { value: 'sinch', label: 'Sinch (Cloud)' },
-                { value: 'signalwire', label: 'SignalWire (Cloud)' },
-                { value: 'documo', label: 'Documo (Cloud)' },
-                { value: 'humblefax', label: 'HumbleFax (Cloud)' },
-                { value: 'sip', label: 'SIP/Asterisk (Self-hosted)' },
-                { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Inbound Provider"
-              value={loadedInbound.toUpperCase()}
-              editValue={form.inbound_backend ?? ''}
-              helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
-              onChange={(value) => handleForm('inbound_backend', value)}
-              type="select"
-              options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
-                { value: 'phaxio', label: 'Phaxio (Webhook)' },
-                { value: 'sinch', label: 'Sinch (Webhook)' },
-                { value: 'sip', label: 'SIP/Asterisk (Internal)' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            {form.inbound_backend === '' && (
-              <Chip
-                label={`Inbound uses the default provider (${String(form.backend)}).`}
-                color="info"
-                size="small"
-                variant="outlined"
-                sx={{ mt: 1, borderRadius: 1 }}
-              />
-            )}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-              <Chip
-                label={settings.backend.disabled ? 'Fax sending is off' : 'Fax sending is on'}
-                color={settings.backend.disabled ? 'error' : 'success'}
-                size="small"
-                variant="outlined"
-                sx={{ borderRadius: 1 }}
-              />
-            </Box>
-            {settings.numbers && (
-              <ResponsiveSettingItem
-                icon={<PublicIcon />}
-                label="Installation country"
-                value={countryName(String(loadedForm.fax_default_country ?? settings.numbers.default_country))}
-                helperText={COUNTRY_HELP}
-                showCurrentValue={!pendingRestart}
-                renderControl={({ id, labelledBy, describedBy }) => (
-                  <CountryField id={id} labelledBy={labelledBy} describedBy={describedBy} size="small"
-                    value={String(form.fax_default_country ?? settings.numbers!.default_country)}
-                    countries={settings.numbers!.supported_countries}
-                    disabled={!canEdit}
-                    onChange={(code) => handleForm('fax_default_country', code)} />
-                )}
-              />
-            )}
-          </ResponsiveFormSection>
-
-          {/* Security Settings */}
-          <ResponsiveFormSection
-            title="Security Settings"
-            subtitle="Configure authentication, HTTPS, and audit logging"
-            icon={<SecurityIcon />}
-          >
-            <ResponsiveSettingItem
-              icon={<CheckCircleIcon color="success" />}
-              label="Authentication"
-              editValue="Required"
-              helperText="Every request needs a signed-in person or an API key; manage them in Keys and Users."
-              showCurrentValue={false}
-            />
-            
-            <ResponsiveSettingItem
-              icon={settings.security.enforce_https ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="HTTPS Enforced"
-              value={settings.security.enforce_https ? 'Yes' : 'No'}
-              editValue={form.enforce_public_https ?? settings.security.enforce_https}
-              helperText="Require HTTPS for public document links."
-              onChange={(value) => handleForm('enforce_public_https', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Yes (Enforced)' },
-                { value: 'false', label: 'No' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            
-            <ResponsiveSettingItem
-              icon={settings.security.audit_enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Audit Logging"
-              value={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
-              editValue={form.audit_log_enabled ?? settings.security.audit_enabled}
-              helperText="Record admin actions and fax activity; view them in the Logs tab."
-              onChange={(value) => handleForm('audit_log_enabled', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            
-            <ResponsiveSettingItem
-              icon={settings.persisted?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Allow .env import for first bootstrap"
-              value={settings.persisted?.enabled ? 'Enabled' : 'Disabled'}
-              editValue={form.enable_persisted_settings ?? settings.persisted?.enabled ?? false}
-              helperText="Lets a .env file set up a new Faxbot once; later edits to the file are ignored."
-              onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            {textField('Public API URL', 'public_api_url', 'Public address of this server, used for document links and provider callbacks.')}
-            {textField('Audit Log Format', 'audit_log_format')}
-            {textField('Audit Log File', 'audit_log_file', 'Leave empty to stop writing audit logs to a file.')}
-            {toggleField('Audit Syslog', 'audit_log_syslog')}
-            {textField('Audit Syslog Address', 'audit_log_syslog_address')}
-          </ResponsiveFormSection>
-
-          {/* VPN Tunnel (iOS connectivity) */}
-          <TunnelSettings
-            client={client}
-            docsBase={docsBase}
-            hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
-          />
-
-          {/* Backend-Specific Configuration */}
-          {providerSelected('phaxio') && (
-                  <ResponsiveSettingSection
-                    title="PHAXIO Configuration"
-                    subtitle="Configure your Phaxio API credentials and settings"
-                  >
-                    <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                      <Chip
-                        label="Faxbot: Phaxio Setup"
-                        component="a"
-                        href={docsLink('phaxio', docsBase)}
-                        target="_blank"
-                        rel="noreferrer"
-                        clickable
-                        size="small"
-                        variant="outlined"
-                      />
-                    </Box>
-                    
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.phaxio.api_key)}
-                      label="API Key"
-                      value={settings.phaxio.api_key?.replace(/./g, '*').slice(0, 20) || ''}
-                      editValue={form.phaxio_api_key ?? ''}
-                      helperText="Find this in the Phaxio console; keep it secret."
-                      placeholder="Update PHAXIO_API_KEY"
-                      onChange={(value) => handleForm('phaxio_api_key', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (!!settings.phaxio.api_key)}
-                    />
-                    
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.phaxio.api_secret)}
-                      label="API Secret"
-                      value={settings.phaxio.api_secret?.replace(/./g, '*').slice(0, 20) || ''}
-                      editValue={form.phaxio_api_secret ?? ''}
-                      helperText="Shown next to the API key in the Phaxio console."
-                      placeholder="Update PHAXIO_API_SECRET"
-                      onChange={(value) => handleForm('phaxio_api_secret', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (!!settings.phaxio.api_secret)}
-                    />
-                    
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.phaxio.callback_token)}
-                      label="Callback Token"
-                      value={settings.phaxio.callback_token ?? ''}
-                      editValue={form.phaxio_callback_token ?? ''}
-                      helperText="The Callback Token from the Phaxio console (not the API secret), used to verify status callbacks."
-                      placeholder="Update PHAXIO_CALLBACK_TOKEN"
-                      onChange={(value) => handleForm('phaxio_callback_token', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && !!settings.phaxio.callback_token}
-                    />
-
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.phaxio.callback_url)}
-                      label="Outbound Callback URL Override"
-                      value={settings.phaxio.callback_url ?? ''}
-                      editValue={form.phaxio_status_callback_url ?? ''}
-                      helperText="Leave empty to use /phaxio-callback on the Public API URL."
-                      placeholder="https://localhost:8080/phaxio-callback"
-                      onChange={(value) => handleForm('phaxio_status_callback_url', value)}
-                      showCurrentValue={!pendingRestart && (!!settings.phaxio.callback_url)}
-                    />
-                    {toggleField('Authenticated Phaxio Outbound Callbacks', 'phaxio_verify_signature', 'When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.')}
-                  </ResponsiveSettingSection>
-                )}
-
-                {providerSelected('sinch') && (
-                  <ResponsiveSettingSection title="Sinch Configuration" subtitle="Configure your Sinch fax endpoint and credentials">
-                    {textField('Sinch Project ID', 'sinch_project_id')}
-                    {textField('Sinch Base URL', 'sinch_base_url', 'Leave empty to use the standard Sinch endpoint.')}
-                    {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
-                    {textField('Sinch API Secret', 'sinch_api_secret', 'Leave unchanged to keep the saved secret.', 'password')}
-                  </ResponsiveSettingSection>
-                )}
-
-                {providerSelected('documo') && (
-                  <ResponsiveSettingSection
-                    title="Documo Configuration"
-                    subtitle="Configure your Documo API settings"
-                  >
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings?.documo?.configured)}
-                      label="Documo API Key"
-                      value={settings?.documo?.configured ? 'Configured' : ''}
-                      editValue={form.documo_api_key ?? ''}
-                      helperText="Enter your Documo API key for authentication."
-                      placeholder="DOCUMO_API_KEY"
-                      onChange={(value) => handleForm('documo_api_key', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (settings?.documo?.configured)}
-                    />
-                    
-                    {textField('Documo Base URL', 'documo_base_url')}
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(true)}
-                      label="Sandbox Mode"
-                      value={settings.documo?.sandbox ? 'Sandbox' : 'Production'}
-                      editValue={form.documo_use_sandbox ?? settings.documo?.sandbox ?? false}
-                      helperText="Send through Documo’s sandbox instead of production."
-                      onChange={(value) => handleForm('documo_use_sandbox', value === 'true')}
-                      type="select"
-                      options={[
-                        { value: 'false', label: 'Production' },
-                        { value: 'true', label: 'Sandbox' }
-                      ]}
-                      showCurrentValue={false}
-                    />
-                  </ResponsiveSettingSection>
-                )}
-
-                {providerSelected('humblefax') && (
-                  <ResponsiveSettingSection
-                    title="HumbleFax Configuration"
-                    subtitle="Configure your HumbleFax API keys"
-                  >
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
-                      label="HumbleFax Access Key"
-                      value={settings?.humblefax?.configured ? 'Configured' : ''}
-                      editValue={form.humblefax_access_key ?? ''}
-                      helperText="Enter the access key from your HumbleFax account."
-                      placeholder="HUMBLEFAX_ACCESS_KEY"
-                      onChange={(value) => handleForm('humblefax_access_key', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
-                    />
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
-                      label="HumbleFax Secret Key"
-                      value={settings?.humblefax?.configured ? 'Configured' : ''}
-                      editValue={form.humblefax_secret_key ?? ''}
-                      helperText="Enter the secret key from your HumbleFax account."
-                      placeholder="HUMBLEFAX_SECRET_KEY"
-                      onChange={(value) => handleForm('humblefax_secret_key', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
-                    />
-                    {textField('HumbleFax From Number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
-                  </ResponsiveSettingSection>
-                )}
-
-                {providerSelected('sip') && (
-                  <ResponsiveSettingSection
-                    title="SIP / Asterisk Configuration"
-                    subtitle="Configure your Asterisk AMI connection settings"
-                  >
+  // The fax engine's manager connection and the secret it sends with each received fax.
+  const amiFields = () => settings && (
+    <>
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.sip.ami_host)}
-                      label="AMI Host"
+                      label="Fax engine address"
                       value={settings.sip.ami_host || ''}
                       editValue={form.ami_host ?? ''}
-                      helperText='Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").'
-                      placeholder="ASTERISK_AMI_HOST"
+                      helperText="The fax engine's name on this server's private network, usually asterisk."
+                      placeholder="For example, asterisk"
                       onChange={(value) => handleForm('ami_host', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.ami_host)}
                     />
                     
-                    {textField('AMI Port', 'ami_port', '', 'number')}
-                    {textField('AMI Username', 'ami_username')}
+                    {textField('Fax engine port', 'ami_port', '', 'number')}
+                    {textField('Fax engine user name', 'ami_username')}
                     <ResponsiveSettingItem
                       icon={settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
-                      label="AMI Password"
-                      value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
+                      label="Fax engine password"
+                      value={settings.sip.ami_password_is_default ? 'Still the default password (not safe)' : 'Own password set'}
                       editValue={form.ami_password ?? ''}
-                      helperText="Must match Asterisk manager.conf and must not be the default; never expose port 5038 publicly."
-                      placeholder="Update ASTERISK_AMI_PASSWORD"
+                      helperText="Must match the fax engine's own setting and must not be the default. Never open its port to the internet."
+                      placeholder="Enter a new password"
                       onChange={(value) => handleForm('ami_password', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!settings.sip.ami_password_is_default)}
+                      {...envField('ami_password')}
                     />
-                    
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.sip.station_id)}
-                      label="Station ID"
-                      value={settings.sip.station_id || ''}
-                      editValue={form.fax_station_id ?? ''}
-                      helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number')}
-                      placeholder={settingsNumberFormat(settings)?.international || undefined}
-                      onChange={(value) => handleForm('fax_station_id', value)}
-                      showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
-                    />
-                    <SipTrunkSettings client={client} />
-                  </ResponsiveSettingSection>
-                )}
-
-          {/* Feature Flags */}
-          <ResponsiveFormSection
-            title="Feature Flags"
-            subtitle="Optional features; some take effect after a restart."
-            icon={<SettingsIcon />}
-          >
-            <Stack spacing={2}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.feature_v3_plugins ?? settings?.features?.v3_plugins ?? false)}
-                    onChange={(e) => handleForm('feature_v3_plugins', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Enable v3 Plugin System"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Activates the new modular plugin architecture for fax providers
-              </Typography>
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.fax_disabled ?? settings?.backend?.disabled ?? false)}
-                    onChange={(e) => handleForm('fax_disabled', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Disable outbound fax sending"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Stops sending; faxes submitted while sending is off stay on hold after you turn it back on.
-              </Typography>
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.inbound_enabled ?? settings?.inbound?.enabled ?? false)}
-                    onChange={(e) => handleForm('inbound_enabled', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Enable Inbound Fax Receiving"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Allow receiving faxes (requires additional configuration based on backend)
-              </Typography>
-
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.feature_plugin_install ?? settings?.features?.plugin_install ?? false)}
-                    onChange={(e) => handleForm('feature_plugin_install', e.target.checked)}
-                    disabled
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Allow Remote Plugin Installation (Advanced)"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4 }}>
-                Disabled by default for security. Enable only in trusted environments.
-              </Typography>
-            </Stack>
-
-          </ResponsiveFormSection>
-
-          {/* Inbound Receiving */}
-          <ResponsiveFormSection
-            title="Inbound Receiving"
-            subtitle="Configure inbound fax receiving and storage settings"
-            icon={<CheckCircleIcon />}
-          >
-            <ResponsiveSettingItem
-              icon={settings.inbound?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Enable Inbound"
-              value={settings.inbound?.enabled ? 'Enabled' : 'Disabled'}
-              editValue={form.inbound_enabled ?? settings.inbound?.enabled ?? false}
-              helperText="Allow receiving faxes (requires additional configuration based on backend)"
-              onChange={(value) => handleForm('inbound_enabled', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
-              <Alert severity="warning">
-                HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
-              </Alert>
-            )}
-
-            <ResponsiveSettingItem
-              icon={<SettingsIcon />}
-              label="Retention Days"
-              value={String(settings.inbound?.retention_days ?? 30)}
-              editValue={form.inbound_retention_days ?? settings.inbound?.retention_days ?? 30}
-              helperText="How long to keep inbound fax files before automatic cleanup"
-              onChange={(value) => handleForm('inbound_retention_days', value === '' ? '' : Number(value))}
-              type="number"
-              placeholder={String(settings.inbound?.retention_days ?? 30)}
-              showCurrentValue={!pendingRestart}
-            />
-            
-            <ResponsiveSettingItem
-              icon={<SettingsIcon />}
-              label="Token TTL (minutes)"
-              value={String(settings.inbound?.token_ttl_minutes ?? 60)}
-              editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
-              helperText="How long PDF download tokens remain valid"
-              onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
-              type="number"
-              placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
-              showCurrentValue={!pendingRestart}
-            />
-
-            {effectiveInbound === 'sip' && (
+    </>
+  );
+  const inboundSecret = () => settings && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
-                  label="Asterisk Inbound Secret"
-                  value={lastGeneratedSecret ? 'New secret (copy below)' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
+                  label="Fax engine secret for received faxes"
+                  value={lastGeneratedSecret ? 'New secret, shown below' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
                   editValue={form.asterisk_inbound_secret ?? ''}
-                  helperText="Shared secret your Asterisk dialplan sends when posting inbound faxes to Faxbot; keep it private."
+                  helperText="The fax engine sends this with each fax it receives, so Faxbot knows the fax is real. Keep it private."
                   onChange={(value) => handleForm('asterisk_inbound_secret', value)}
-                  placeholder="ASTERISK_INBOUND_SECRET"
+                  placeholder="Secret"
                   type="password"
                   showCurrentValue={false}
+                  {...envField('asterisk_inbound_secret')}
                 />
                 <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
                   <Button 
@@ -927,11 +588,11 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                         setLastGeneratedSecret(b64);
                         handleForm('asterisk_inbound_secret', b64);
                         setSnack('New secret generated. Apply settings to save it.');
-                      } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
+                      } catch(e:any){ setError(e?.message||'A new secret could not be made.'); }
                     }}
                     sx={{ borderRadius: 1 }}
                   >
-                    Generate
+                    Make a new secret
                   </Button>
                   <Button 
                     size="small" 
@@ -955,96 +616,552 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   </Alert>
                 )}
               </Box>
+  );
+
+  return (
+    <Box>
+      <Box display="flex" justifyContent={sections && !title ? 'flex-end' : 'space-between'} alignItems="center" mb={3}>
+        {(!sections || title) && (
+          <Typography variant="h4" component="h1">
+            {sections ? title : 'Settings'}
+          </Typography>
+        )}
+        <Box>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchSettings}
+            disabled={loading}
+            sx={{ mr: 1 }}
+          >
+            Reload
+          </Button>
+          {shows('backup') && (<>
+          <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
+            Export settings
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={async () => {
+              try {
+                setLoading(true); setError(null);
+                const res = await client.persistSettings();
+                setSnack(`Recovery copy saved to ${res.path}. A full backup also needs the database and the installation key.`);
+              } catch (e: any) {
+                setError(e?.message || 'The recovery copy could not be saved.');
+              } finally { setLoading(false); }
+            }}
+            disabled={loading}
+          >
+            Save a recovery copy
+          </Button>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }} data-testid="recovery-retiring">
+            The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot system backup).
+          </Typography>
+          </>)}
+
+        </Box>
+      </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+      {engineMessage && (shows('providers') || shows('trunk')) && (
+        <Alert severity="error" sx={{ mb: 3 }} data-testid="engine-message">
+          {engineMessage}
+        </Alert>
+      )}
+      {settings && needsReload && !loading && !error ? (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Editing is paused. Select Reload to continue.
+        </Alert>
+      ) : settings && pendingRestart && !needsReload ? (
+        <Box sx={{ mb: 3 }}>
+          <RestartNotice client={client} text={restartMessage} canRestart={canRestart && allowRestart}
+            onBack={async () => { await fetchSettings(); setRestarted(true); }} />
+        </Box>
+      ) : settings && restarted && !needsReload ? (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setRestarted(false)}>
+          Faxbot restarted and is using the saved settings.
+        </Alert>
+      ) : null}
+
+      {loading && !settings ? (
+        <Box display="flex" justifyContent="center" py={4}>
+          <CircularProgress />
+        </Box>
+      ) : settings ? (
+        <Box>
+        <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
+        <Stack spacing={3}>
+          {/* Fax providers: the same two choices as the Setup Wizard */}
+          {shows('providers') && (
+          <ResponsiveFormSection
+            title="Fax providers"
+            subtitle="Which provider sends your faxes and which receives them"
+            icon={<CloudIcon />}
+          >
+            {/* On the console's In use page the providers are listed above, and changed in the Setup wizard. */}
+            {!sections && (
+            <Box sx={{ px: 2 }} data-testid="provider-directions">
+              <ProviderDirectionFields value={providerChoice} disabled={!canEdit} saved={loadedDirections(settings)}
+                onChange={(next) => {
+                  if (!canEdit || actionFence.current) return;
+                  setForm((prev) => ({ ...prev, ...directionFields(next, settings) }));
+                }} />
+              {!pendingRestart && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  {`In use: ${directionSummary(loadedDirections(settings).sending, loadedDirections(settings).receiving)}`}
+                </Typography>
+              )}
+            </Box>
             )}
+            {!effectiveOutbound && (
+              <Typography variant="body2" sx={{ px: 2 }} data-testid="no-provider">
+                No fax provider set up yet.{' '}
+                <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link>
+              </Typography>
+            )}
+            {effectiveOutbound === 'humblefax' && (
+              <Typography variant="body2" sx={{ px: 2 }} data-testid="humblefax-countries">
+                HumbleFax sends only to US and Canadian numbers.
+              </Typography>
+            )}
+
+            {switchField('Sending is on', 'fax_disabled',
+              'Off: Faxbot stops sending. Faxes submitted while sending is off stay on hold after you turn it back on.',
+              { inverted: true, confirmOff: { title: 'Turn off sending?', action: 'Turn off sending',
+                text: 'Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.' } })}
+            {settings.numbers && (
+              <ResponsiveSettingItem
+                icon={<PublicIcon />}
+                label="Installation country"
+                value={countryName(String(loadedForm.fax_default_country ?? settings.numbers.default_country))}
+                helperText={COUNTRY_HELP}
+                showCurrentValue={!pendingRestart}
+                renderControl={({ id, labelledBy, describedBy }) => (
+                  <CountryField id={id} labelledBy={labelledBy} describedBy={describedBy} size="small"
+                    value={String(form.fax_default_country ?? settings.numbers!.default_country)}
+                    countries={settings.numbers!.supported_countries}
+                    disabled={!canEdit}
+                    onChange={(code) => handleForm('fax_default_country', code)} />
+                )}
+              />
+            )}
+          </ResponsiveFormSection>
+          )}
+
+          {/* Security Settings */}
+          {shows('security') && (
+          <ResponsiveFormSection
+            title="Security"
+            subtitle="How people sign in and how this server is reached."
+            icon={<SecurityIcon />}
+          >
+            <ResponsiveSettingItem
+              icon={<CheckCircleIcon color="success" />}
+              label="Authentication"
+              editValue="Required"
+              helperText="Every request needs a signed-in person or an API key; manage them in Keys and Users."
+              showCurrentValue={false}
+            />
+            
+            <ResponsiveSettingItem
+              icon={settings.security.enforce_https ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="Require HTTPS for document links"
+              value={settings.security.enforce_https ? 'Yes' : 'No'}
+              editValue={form.enforce_public_https ?? settings.security.enforce_https}
+              helperText={withOwnerNote('enforce_public_https', "Links to fax documents work only over a secure connection.")}
+              onChange={(value) => handleForm('enforce_public_https', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Yes' },
+                { value: 'false', label: 'No' }
+              ]}
+              showCurrentValue={!pendingRestart}
+              disabled={locked('enforce_public_https')}
+            />
+            
+            
+            {/* enable_persisted_settings is read from the environment when a new installation first starts. */}
+            <ResponsiveSettingItem
+              icon={<StorageIcon />}
+              label="Restore from the recovery copy on a fresh start"
+              editValue={settings.persisted?.enabled ? 'On' : 'Off'}
+              helperText={`${ENV_IMPORT_HELP} This setting goes away in the next release.`}
+              showCurrentValue={false}
+            />
+            {textField("This server's public address", 'public_api_url', 'The address people and fax services use to reach Faxbot, such as https://fax.example.com.')}
+            <DeploymentRows settings={settings}
+              names={['FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'FAXBOT_CONSOLE_ORIGINS', 'ENABLE_LOCAL_ADMIN']} />
+          </ResponsiveFormSection>
+          )}
+
+          {/* System > Audit log: the event record Logs reads */}
+          {shows('audit') && (
+          <ResponsiveFormSection title="Event recording" icon={<SettingsIcon />}
+            subtitle="Faxbot can record what happens, such as sign-ins and sent faxes, for the Logs page. Changes take effect after Faxbot restarts.">
+            {switchField('Record events', 'audit_log_enabled', 'Sign-ins, setting changes and fax activity, shown in Logs.')}
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="How each event is written"
+              value={loadedForm.audit_log_format === 'text' ? 'Plain text' : 'Structured'}
+              editValue={form.audit_log_format ?? 'json'}
+              helperText={withOwnerNote('audit_log_format', 'Structured is easier for other programs to read.')}
+              onChange={(value) => handleForm('audit_log_format', value)}
+              type="select"
+              options={[{ value: 'json', label: 'Structured' }, { value: 'text', label: 'Plain text' }]}
+              showCurrentValue={!pendingRestart}
+              disabled={locked('audit_log_format')}
+            />
+            {textField('Also save events in a file on the server', 'audit_log_file', 'Leave empty to keep them only in Logs.')}
+            {switchField('Also send events to the system log', 'audit_log_syslog', 'For servers that collect logs in one place.')}
+            {textField('Address of the system log', 'audit_log_syslog_address', "Leave this as it is unless the server's log collector uses another address.")}
+          </ResponsiveFormSection>
+          )}
+
+          {/* Backend-Specific Configuration */}
+          {providerShown('phaxio', 'phaxio') && (
+                  <ResponsiveSettingSection
+                    title={providerTitle('Phaxio')}
+                    subtitle="Your Phaxio account"
+                  >
+                    {providerStatus('phaxio')}
+                    <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+                      <Chip
+                        label="Phaxio setup guide"
+                        component="a"
+                        href={docsLink('phaxio', docsBase)}
+                        target="_blank"
+                        rel="noreferrer"
+                        clickable
+                        size="small"
+                        variant="outlined"
+                      />
+                    </Box>
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.api_key)}
+                      label="API Key"
+                      value={settings.phaxio.api_key?.replace(/./g, '*').slice(0, 20) || ''}
+                      editValue={form.phaxio_api_key ?? ''}
+                      helperText="Copy it from your Phaxio account and keep it private."
+                      placeholder="Enter a new API key"
+                      onChange={(value) => handleForm('phaxio_api_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (!!settings.phaxio.api_key)}
+                      {...envField('phaxio_api_key')}
+                    />
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.api_secret)}
+                      label="API Secret"
+                      value={settings.phaxio.api_secret?.replace(/./g, '*').slice(0, 20) || ''}
+                      editValue={form.phaxio_api_secret ?? ''}
+                      helperText="Shown next to the API key in your Phaxio account."
+                      placeholder="Enter a new API secret"
+                      onChange={(value) => handleForm('phaxio_api_secret', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (!!settings.phaxio.api_secret)}
+                      {...envField('phaxio_api_secret')}
+                    />
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.callback_token)}
+                      label="Callback Token"
+                      value={settings.phaxio.callback_token ?? ''}
+                      editValue={form.phaxio_callback_token ?? ''}
+                      helperText="From your Phaxio account (not the API secret). Faxbot uses it to check that status updates come from Phaxio."
+                      placeholder="Enter a new callback token"
+                      onChange={(value) => handleForm('phaxio_callback_token', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && !!settings.phaxio.callback_token}
+                      {...envField('phaxio_callback_token')}
+                    />
+
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.callback_url)}
+                      label="Address for Phaxio status updates (optional)"
+                      value={settings.phaxio.callback_url ?? ''}
+                      editValue={form.phaxio_status_callback_url ?? ''}
+                      helperText="Leave it empty: Faxbot uses its own public address."
+                      placeholder="https://localhost:8080/phaxio-callback"
+                      onChange={(value) => handleForm('phaxio_status_callback_url', value)}
+                      showCurrentValue={!pendingRestart && (!!settings.phaxio.callback_url)}
+                    />
+                    {toggleField('Check that status updates come from Phaxio', 'phaxio_verify_signature', "When off, Faxbot ignores Phaxio's status updates and asks Phaxio about each fax instead.")}
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('sinch', 'sinch') && (
+                  <ResponsiveSettingSection title={providerTitle('Sinch')} subtitle="Your Sinch account">
+                    {providerStatus('sinch')}
+                    {textField('Sinch Project ID', 'sinch_project_id')}
+                    {textField('Sinch address (optional)', 'sinch_base_url', 'Leave it empty to use the usual Sinch address.')}
+                    {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
+                    {textField('Sinch API Secret', 'sinch_api_secret', 'Leave unchanged to keep the saved secret.', 'password')}
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('documo', 'documo') && (
+                  <ResponsiveSettingSection
+                    title={providerTitle('Documo')}
+                    subtitle="Your Documo account"
+                  >
+                    {providerStatus('documo')}
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.documo?.configured)}
+                      label="Documo API Key"
+                      value={settings?.documo?.configured ? 'Configured' : ''}
+                      editValue={form.documo_api_key ?? ''}
+                      helperText="Copy it from your Documo account."
+                      placeholder="Documo API key"
+                      onChange={(value) => handleForm('documo_api_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (settings?.documo?.configured)}
+                      {...envField('documo_api_key')}
+                    />
+                    
+                    {textField('Documo address (optional)', 'documo_base_url', 'Leave it empty to use the usual Documo address.')}
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(true)}
+                      label="Documo test mode"
+                      value={settings.documo?.sandbox ? 'Test (sandbox)' : 'Real faxes'}
+                      editValue={form.documo_use_sandbox ?? settings.documo?.sandbox ?? false}
+                      helperText="Test mode sends nothing to real fax numbers."
+                      onChange={(value) => handleForm('documo_use_sandbox', value === 'true')}
+                      type="select"
+                      options={[
+                        { value: 'false', label: 'Real faxes' },
+                        { value: 'true', label: 'Test (sandbox)' }
+                      ]}
+                      showCurrentValue={false}
+                    />
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('humblefax', 'humblefax') && (
+                  <ResponsiveSettingSection
+                    title={providerTitle('HumbleFax')}
+                    subtitle="Your HumbleFax account"
+                  >
+                    {providerStatus('humblefax')}
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
+                      label="HumbleFax Access Key"
+                      value={settings?.humblefax?.configured ? 'Configured' : ''}
+                      editValue={form.humblefax_access_key ?? ''}
+                      helperText="Enter the access key from your HumbleFax account."
+                      placeholder="Access key"
+                      onChange={(value) => handleForm('humblefax_access_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                      {...envField('humblefax_access_key')}
+                    />
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
+                      label="HumbleFax Secret Key"
+                      value={settings?.humblefax?.configured ? 'Configured' : ''}
+                      editValue={form.humblefax_secret_key ?? ''}
+                      helperText="Enter the secret key from your HumbleFax account."
+                      placeholder="Secret key"
+                      onChange={(value) => handleForm('humblefax_secret_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                      {...envField('humblefax_secret_key')}
+                    />
+                    {textField('Send from this HumbleFax number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('efax', 'efax') && (
+                  <ResponsiveSettingSection title={providerTitle('eFax')} subtitle="Your eFax Enterprise account">
+                    {providerStatus('efax')}
+                    <EfaxSettings values={form} onChange={handleForm} settings={settings} disabled={!canEdit}
+                      receives={effectiveInbound === 'efax' && !!form.inbound_enabled} docsHref={docsLink('efax', docsBase)}
+                      client={client} />
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('sip', 'trunk') && (
+                  <ResponsiveSettingSection
+                    title={sections ? 'Settings' : 'Your fax line'}
+                    subtitle={sections ? 'Your fax line, its numbers and how Faxbot connects to it.' : 'Your fax line and how Faxbot connects to its fax engine.'}
+                  >
+                    {providerStatus('sip')}
+                    {!sections && amiFields()}
+                    {/* On the console's own pages the station ID is under Numbers, Sender identity. */}
+                    {!sections && (
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.sip.station_id)}
+                      label="Station ID"
+                      value={settings.sip.station_id || ''}
+                      editValue={form.fax_station_id ?? ''}
+                      helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number')}
+                      placeholder={settingsNumberFormat(settings)?.international || undefined}
+                      onChange={(value) => handleForm('fax_station_id', value)}
+                      showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
+                    />
+                    )}
+                    <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} presetChosenElsewhere={Boolean(sections)} /></Box>
+                    {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'telnyx' || settings.sip.telnyx_api_key_set) && (
+                      <Box sx={{ mt: 2 }} data-testid="telnyx-key">
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.telnyx_api_key_set)}
+                          label="Telnyx API key"
+                          value={settings.sip.telnyx_api_key_set ? 'Saved' : ''}
+                          editValue={form.telnyx_api_key ?? ''}
+                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) on your numbers; it changes a number only when you select Turn on T.38."
+                          placeholder="Telnyx API key"
+                          onChange={(value) => handleForm('telnyx_api_key', value)}
+                          type="password"
+                          showCurrentValue={!pendingRestart && !!settings.sip.telnyx_api_key_set}
+                          {...envField('telnyx_api_key')}
+                        />
+                      </Box>
+                    )}
+                    {sections && (
+                      <Accordion disableGutters variant="outlined" sx={{ mt: 2 }} data-testid="fax-engine-connection">
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Typography>Fax engine connection (advanced)</Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Typography variant="body2" sx={{ mb: 2 }}>
+                            Faxbot sets this up itself. Change it only if you run your own fax engine.
+                          </Typography>
+                          {amiFields()}
+                          {inboundSecret()}
+                          <DeploymentRows settings={settings} names={['FAXBOT_MEDIA_PORTS', 'FAXBOT_PHONE_SYSTEM_ADDRESS']} />
+                        </AccordionDetails>
+                      </Accordion>
+                    )}
+                  </ResponsiveSettingSection>
+                )}
+
+          {/* Provider plugins (System > Developer) */}
+          {shows('plugins') && (
+          <ResponsiveFormSection
+            title="Plugin settings"
+            subtitle="Provider plugins installed on this server; changes take effect after a restart."
+            icon={<SettingsIcon />}
+          >
+            {switchField('Use provider plugins', 'feature_v3_plugins',
+              'Lets Faxbot send and receive through provider plugins installed on this server. Goes away in the next release.')}
+            {switchField('Allow remote plugin installation (advanced)', 'feature_plugin_install',
+              'Off by default for security. Turn on only in trusted environments.', { disabled: true })}
+          </ResponsiveFormSection>
+          )}
+
+          {/* Inbound Receiving */}
+          {shows('inbound') && (
+          <ResponsiveFormSection
+            title="Receiving"
+            icon={<CheckCircleIcon />}
+          >
+            {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
+              { disabled: !form.inbound_enabled && !receiverCanReceive })}
+            {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
+              <Alert severity="warning">
+                HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
+              </Alert>
+            )}
+
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Keep received faxes for (days)"
+              value={String(settings.inbound?.retention_days ?? 30)}
+              editValue={form.inbound_retention_days ?? settings.inbound?.retention_days ?? 30}
+              helperText="After this many days Faxbot deletes a received fax's file. 0 keeps them."
+              onChange={(value) => handleForm('inbound_retention_days', value === '' ? '' : Number(value))}
+              type="number"
+              placeholder={String(settings.inbound?.retention_days ?? 30)}
+              showCurrentValue={!pendingRestart}
+            />
+            
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Download links work for (minutes)"
+              value={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
+              helperText={withOwnerNote('inbound_token_ttl_minutes', "How long a link to download a received fax keeps working.")}
+              onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
+              type="number"
+              placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              showCurrentValue={!pendingRestart}
+              disabled={locked('inbound_token_ttl_minutes')}
+            />
+
+            {/* On the console's own pages this secret is in the trunk's fax engine connection box. */}
+            {effectiveInbound === 'sip' && !sections && inboundSecret()}
 
             {effectiveInbound === 'phaxio' && (
               <ResponsiveSettingItem
                 icon={settings.inbound?.phaxio?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                label="Verify Phaxio Inbound Signature"
+                label="Check that received faxes come from Phaxio"
                 value={settings.inbound?.phaxio?.verify_signature ? 'Enabled' : 'Disabled'}
                 editValue={form.phaxio_inbound_verify_signature ?? settings.inbound?.phaxio?.verify_signature ?? false}
-                helperText="Enable HMAC signature verification for Phaxio inbound webhooks (recommended for security)"
+                helperText={withOwnerNote('phaxio_inbound_verify_signature', "Recommended. Faxbot accepts a received fax only when Phaxio signed it.")}
                 onChange={(value) => handleForm('phaxio_inbound_verify_signature', value === 'true')}
                 type="select"
                 options={[
-                  { value: 'true', label: 'Enabled (Recommended)' },
+                  { value: 'true', label: 'On (recommended)' },
                   { value: 'false', label: 'Disabled' }
                 ]}
                 showCurrentValue={!pendingRestart}
+                disabled={locked('phaxio_inbound_verify_signature')}
               />
             )}
 
             {effectiveInbound === 'sinch' && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
-                  icon={settings.inbound?.sinch?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                  label="Verify Sinch Inbound Signature"
-                  value={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
-                  editValue={form.sinch_inbound_verify_signature ?? settings.inbound?.sinch?.verify_signature ?? false}
-                  helperText="Enable HMAC signature verification for Sinch inbound webhooks"
-                  onChange={(value) => handleForm('sinch_inbound_verify_signature', value === 'true')}
-                  type="select"
-                  options={[
-                    { value: 'true', label: 'Enabled' },
-                    { value: 'false', label: 'Disabled' }
-                  ]}
-                  showCurrentValue={!pendingRestart}
-                />
-                
-                <ResponsiveSettingItem
                   icon={settings.inbound?.sinch?.basic_auth_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                  label="Sinch Inbound Basic Auth User"
+                  label="User name Sinch sends with received faxes (optional)"
                   value={settings.inbound?.sinch?.basic_auth_configured ? 'Configured' : 'Not configured'}
                   editValue={form.sinch_inbound_basic_user ?? ''}
-                  helperText="Optional: require HTTP Basic credentials on Sinch callbacks."
+                  helperText="Set the same user name and password in Sinch, and Faxbot requires them."
                   onChange={(value) => handleForm('sinch_inbound_basic_user', value)}
-                  placeholder="SINCH_INBOUND_BASIC_USER"
+                  placeholder="User name"
                   showCurrentValue={false}
                 />
                 
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
-                  label="Sinch Inbound Basic Auth Password"
+                  label="Password Sinch sends with received faxes"
                   value=""
                   editValue={form.sinch_inbound_basic_pass ?? ''}
-                  helperText="Password for Basic authentication"
+                  helperText="Set the same password in Sinch."
                   onChange={(value) => handleForm('sinch_inbound_basic_pass', value)}
-                  placeholder="SINCH_INBOUND_BASIC_PASS"
+                  placeholder="Password"
                   type="password"
                   showCurrentValue={false}
-                />
-                
-                <ResponsiveSettingItem
-                  icon={settings.inbound?.sinch?.hmac_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                  label="Sinch Inbound HMAC Secret"
-                  value={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
-                  editValue={form.sinch_inbound_hmac_secret ?? ''}
-                  helperText="Optional: verify Sinch callbacks with this shared secret; set the same value in Sinch."
-                  onChange={(value) => handleForm('sinch_inbound_hmac_secret', value)}
-                  placeholder="SINCH_INBOUND_HMAC_SECRET"
-                  type="password"
-                  showCurrentValue={false}
+                  {...envField('sinch_inbound_basic_pass')}
                 />
               </Box>
             )}
           </ResponsiveFormSection>
+          )}
 
           <DeliverySettingsSections client={client} settings={settings} form={form} loaded={loadedForm}
-            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} canWrite={canWrite} />
+            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} canWrite={canWrite}
+            only={sections?.filter((section): section is DeliverySection => DELIVERY_SECTIONS.includes(section as DeliverySection))} />
 
           {/* SignalWire (cloud) */}
-          {providerSelected('signalwire') && (
+          {providerShown('signalwire', 'signalwire') && (
             <ResponsiveFormSection
-              title="SignalWire Configuration"
-              subtitle="Configure your SignalWire fax settings"
+              title={providerTitle('SignalWire')}
+              subtitle="Your SignalWire account"
               icon={<CloudIcon />}
             >
+              {providerStatus('signalwire')}
               <ResponsiveSettingItem
                 icon={<CloudIcon />}
                 label="Space URL"
                 value={settings.signalwire?.space_url || ''}
                 editValue={form.signalwire_space_url ?? ''}
-                helperText="Your SignalWire space URL (e.g., example.signalwire.com)"
+                helperText="Your SignalWire space address, such as example.signalwire.com."
                 onChange={(value) => handleForm('signalwire_space_url', value)}
                 placeholder="example.signalwire.com"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.space_url)}
@@ -1055,9 +1172,9 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 label="Project ID"
                 value={settings.signalwire?.project_id || ''}
                 editValue={form.signalwire_project_id ?? ''}
-                helperText="Your SignalWire project identifier"
+                helperText="Shown in your SignalWire account."
                 onChange={(value) => handleForm('signalwire_project_id', value)}
-                placeholder="SIGNALWIRE_PROJECT_ID"
+                placeholder="Project ID"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.project_id)}
               />
               
@@ -1066,16 +1183,17 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 label="API Token"
                 value={settings.signalwire?.api_token ? '***' : ''}
                 editValue={form.signalwire_api_token ?? ''}
-                helperText="Your SignalWire API token for authentication"
+                helperText="Copy it from your SignalWire account."
                 onChange={(value) => handleForm('signalwire_api_token', value)}
-                placeholder="SIGNALWIRE_API_TOKEN"
+                placeholder="API token"
                 type="password"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.api_token)}
+                {...envField('signalwire_api_token')}
               />
               
               <ResponsiveSettingItem
                 icon={<SettingsIcon />}
-                label="From (fax)"
+                label="Send faxes from"
                 value={settings.signalwire?.from_fax || ''}
                 editValue={form.signalwire_fax_from_e164 ?? ''}
                 helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number')}
@@ -1083,69 +1201,31 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 placeholder={settingsNumberFormat(settings)?.international || undefined}
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.from_fax)}
               />
-              {textField('SignalWire Outbound Callback URL Override', 'signalwire_status_callback_url', 'Leave empty to use /signalwire-callback on the Public API URL.')}
-              {textField('SignalWire Webhook Signing Key', 'signalwire_webhook_signing_key', 'Leave unchanged to keep the saved signing key.', 'password')}
-              {textField('SignalWire From (SMS)', 'signalwire_sms_from_e164', 'Leave unchanged to keep the saved number.')}
-              {textField('SignalWire Status Poll Seconds', 'signalwire_status_poll_seconds', 'Zero disables status polling.', 'number')}
+              {textField('Address for SignalWire status updates (optional)', 'signalwire_status_callback_url', 'Leave it empty: Faxbot uses its own public address.')}
+              {textField('SignalWire signing key', 'signalwire_webhook_signing_key', 'Leave unchanged to keep the saved signing key.', 'password')}
+              {textField('Send text messages from', 'signalwire_sms_from_e164', 'Leave unchanged to keep the saved number.')}
+              {textField('Ask SignalWire for status every (seconds)', 'signalwire_status_poll_seconds', "0 stops asking; Faxbot then waits for SignalWire's updates.", 'number')}
             </ResponsiveFormSection>
           )}
 
           {/* Storage Configuration */}
-          {/* FreeSWITCH (self-hosted) */}
-          {providerSelected('freeswitch') && (
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
-                  {textField('ESL Host', 'fs_esl_host', 'FreeSWITCH ESL host on the private network.')}
-                  {textField('ESL Port', 'fs_esl_port', 'FreeSWITCH ESL port.', 'number')}
-                  {textField('ESL Password', 'fs_esl_password', 'Leave unchanged to keep the saved password, or clear it to remove it.', 'password')}
-                  {textField('Gateway Name', 'fs_gateway_name')}
-                  {textField('Caller ID Number', 'fs_caller_id_number')}
-                  {toggleField('Enable FreeSWITCH T.38', 'fs_t38_enable')}
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>Outbound Result Hook (copyable)</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Add this to your outbound dialplan (before hangup) to post result details back to Faxbot. Replace YOUR_SECRET with your <code>ASTERISK_INBOUND_SECRET</code> (shared internal secret).
-                    </Typography>
-                    <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto', fontSize: '0.75rem' }}>
-{`<action application="set" data="api_hangup_hook=system curl -s -X POST \
-  -H 'Content-Type: application/json' \
-  -H 'X-Internal-Secret: YOUR_SECRET' \
-  -d '{\"job_id\":\"${'${faxbot_job_id}'}\",\"fax_status\":\"${'${fax_success}'}\",\"fax_result_text\":\"${'${fax_result_text}'}\",\"fax_document_transferred_pages\":${'${fax_document_transferred_pages}'},\"uuid\":\"${'${uuid}'}\"}' \
-  http://api:8080/_internal/freeswitch/outbound_result"/>`}
-                    </Box>
-                    <Button size="small" sx={{ mt: 1 }} onClick={async ()=>{
-                      try {
-                        const text = `<action application=\"set\" data=\"api_hangup_hook=system curl -s -X POST \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-Internal-Secret: YOUR_SECRET' \\\n+  -d '{\\\"job_id\\\":\\\"${'${faxbot_job_id}'}\\\",\\\"fax_status\\\":\\\"${'${fax_success}'}\\\",\\\"fax_result_text\\\":\\\"${'${fax_result_text}'}\\\",\\\"fax_document_transferred_pages\\\":${'${fax_document_transferred_pages}'},\\\"uuid\\\":\\\"${'${uuid}'}\\\"}' \\\n+  http://api:8080/_internal/freeswitch/outbound_result\"/>`;
-                        await navigator.clipboard.writeText(text);
-                        setSnack('Copied');
-                      } catch {}
-                    }}>Copy snippet</Button>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                      Use service name "api" for Docker Compose networking; otherwise set your API host. Ensure your dialplan sets <code>faxbot_job_id</code> (the originate flow sets it automatically).
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
+          {shows('storage') && (
           <ResponsiveFormSection
-            title="Storage Configuration"
-            subtitle="Configure file storage backend and S3 settings"
+            title="Where faxes are kept"
+            subtitle="On this server, or in S3 storage (Amazon S3 or a compatible service)."
             icon={<StorageIcon />}
           >
             <ResponsiveSettingItem
               icon={getStatusIcon(settings.storage?.backend === 's3')}
-              label="Storage Backend"
-              value={(settings.storage?.backend ?? 'local').toUpperCase()}
+              label="Keep fax files"
+              value={settings.storage?.backend === 's3' ? 'In S3 storage' : 'On this server'}
               editValue={form.storage_backend ?? settings.storage?.backend ?? 'local'}
               helperText="Where fax files are stored: on this server, or in your S3 bucket."
               onChange={(value) => handleForm('storage_backend', value)}
               type="select"
               options={[
-                { value: 'local', label: 'Local' },
-                { value: 's3', label: 'S3' }
+                { value: 'local', label: 'On this server' },
+                { value: 's3', label: 'In S3 storage' }
               ]}
               showCurrentValue={!pendingRestart}
             />
@@ -1157,53 +1237,53 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   label="S3 Bucket"
                   value={settings.storage?.s3_bucket || ''}
                   editValue={form.s3_bucket ?? ''}
-                  helperText="Your S3 bucket name for storing fax files"
+                  helperText="The bucket's name in your AWS account."
                   onChange={(value) => handleForm('s3_bucket', value)}
-                  placeholder="S3_BUCKET"
+                  placeholder="my-fax-bucket"
                   showCurrentValue={!pendingRestart && (!!settings.storage?.s3_bucket)}
                 />
                 
                 <ResponsiveSettingItem
                   icon={<CloudIcon />}
-                  label="S3 Region"
+                  label="AWS region"
                   value={settings.storage?.s3_region || ''}
                   editValue={form.s3_region ?? ''}
-                  helperText="AWS region where your S3 bucket is located"
+                  helperText="Where the bucket is, such as us-east-1."
                   onChange={(value) => handleForm('s3_region', value)}
-                  placeholder="S3_REGION"
+                  placeholder="us-east-1"
                   showCurrentValue={!pendingRestart && (!!settings.storage?.s3_region)}
                 />
                 
                 <ResponsiveSettingItem
                   icon={<SettingsIcon />}
-                  label="S3 Prefix"
+                  label="Folder in the bucket (optional)"
                   value={settings.storage?.s3_prefix || ''}
                   editValue={form.s3_prefix ?? ''}
-                  helperText="Optional prefix for organizing files within the bucket"
+                  helperText="Faxbot keeps its files under this folder name."
                   onChange={(value) => handleForm('s3_prefix', value)}
-                  placeholder="S3_PREFIX"
+                  placeholder="faxes/"
                   showCurrentValue={!pendingRestart && (!!settings.storage?.s3_prefix)}
                 />
                 
                 <ResponsiveSettingItem
                   icon={<CloudIcon />}
-                  label="S3 Endpoint URL"
+                  label="Storage address (optional)"
                   value={settings.storage?.s3_endpoint_url || ''}
                   editValue={form.s3_endpoint_url ?? ''}
-                  helperText="Custom S3 endpoint for S3-compatible services (MinIO, etc.)"
+                  helperText="Only for S3-compatible storage other than Amazon, such as MinIO."
                   onChange={(value) => handleForm('s3_endpoint_url', value)}
-                  placeholder="S3_ENDPOINT_URL"
+                  placeholder="Only for S3-compatible storage"
                   showCurrentValue={!pendingRestart && (!!settings.storage?.s3_endpoint_url)}
                 />
                 
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
-                  label="S3 KMS Key ID"
+                  label="Encryption key (optional)"
                   value={settings.storage?.s3_kms_enabled ? 'Configured' : 'Not set'}
                   editValue={form.s3_kms_key_id ?? ''}
-                  helperText="Enable server-side encryption with KMS by specifying a CMK (recommended for PHI)"
+                  helperText="An AWS KMS key that encrypts each file. Recommended for health information."
                   onChange={(value) => handleForm('s3_kms_key_id', value)}
-                  placeholder="S3_KMS_KEY_ID"
+                  placeholder="KMS key ID"
                   showCurrentValue={false}
                 />
                 
@@ -1211,34 +1291,61 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   <Button 
                     variant="outlined" 
                     onClick={async () => { 
-                      try { 
-                        setLoading(true); 
-                        const diag = await (client as any).runDiagnostics?.(); 
-                        if (diag?.checks?.storage?.type === 's3') { 
-                          const st = diag.checks.storage; 
-                          const ok = st.accessible === true || st.bucket_set; 
-                          setSnack(ok ? 'S3 validation passed' : ('S3 validation incomplete' + (st.error ? (': ' + st.error) : ''))); 
-                        } else { 
-                          setSnack('Diagnostics did not include S3 checks. Enable ENABLE_S3_DIAGNOSTICS=true on server for full validation.'); 
-                        } 
-                      } catch(e: any) { 
-                        setError(e?.message || 'S3 validation failed'); 
+                      try {
+                        setLoading(true);
+                        // The diagnostics report checks the saved bucket (read-only) when its check is turned on.
+                        const report = await client.checkDiagnosticsNow();
+                        const storage = report.sections.flatMap((section) => section.checks)
+                          .find((check) => check.id === 'server.storage');
+                        if (!storage) {
+                          setSnack('Save your storage settings first, then check again.');
+                        } else if (storage.status === 'attention') {
+                          setSnack('Turn on Also check the S3 bucket under System → Diagnostics, then check again.');
+                        } else {
+                          setSnack(storage.sentence);
+                        }
+                      } catch(e: any) {
+                        setError(e?.message || 'The bucket could not be checked.'); 
                       } finally { 
                         setLoading(false); 
                       } 
                     }}
                     sx={{ borderRadius: 2 }}
                   >
-                    Validate S3
+                    Check the bucket
                   </Button>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, display: 'block', mt: 1 }}>
-                    Full validation requires ENABLE_S3_DIAGNOSTICS=true on server and proper AWS credentials via env/role.
+                    A full check needs Also check the S3 bucket turned on under System → Diagnostics, and AWS access for this server.
                   </Typography>
                 </Box>
               </Box>
             )}
+            <DeploymentRows settings={settings} names={['FAXBOT_INSTALLATION_KEY_PATH', 'FAXBOT_DIRECT_KEY_PATH']} />
           </ResponsiveFormSection>
+          )}
 
+          {/* Sender identity: on its own page under Numbers. */}
+          {sections?.includes('identity') && (
+          <ResponsiveFormSection title="Sender identity" icon={<SettingsIcon />}
+            subtitle="What the receiving fax machine shows for faxes Faxbot sends over your carrier trunk or phone system.">
+            {textField('Header text', 'fax_header', 'Printed at the top of each page, usually your organization name.')}
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Station ID"
+              value={settings.sip.station_id || ''}
+              editValue={form.fax_station_id ?? ''}
+              helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number, shown to the receiving fax machine')}
+              placeholder={settingsNumberFormat(settings)?.international || undefined}
+              onChange={(value) => handleForm('fax_station_id', value)}
+              showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ px: 2 }}>
+              Faxes sent through a fax service such as Phaxio or HumbleFax show the name and number set in that service's account.
+            </Typography>
+          </ResponsiveFormSection>
+          )}
+
+          {shows('mcp') && (
           <ResponsiveFormSection title="MCP Configuration" subtitle="Connections for AI assistants; changes take effect after a restart." icon={<SettingsIcon />}>
             {toggleField('Enable MCP SSE', 'enable_mcp_sse')}
             {textField('MCP SSE Path', 'mcp_sse_path')}
@@ -1248,22 +1355,26 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             {textField('OAuth Issuer', 'oauth_issuer')}
             {textField('OAuth Audience', 'oauth_audience')}
             {textField('OAuth JWKS URL', 'oauth_jwks_url')}
+            <DeploymentRows settings={settings} showNames names={['MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS',
+              'MCP_OAUTH_SUBJECT_KEYS_FILE', 'MCP_RESOURCE_URL', 'MCP_HTTP_PORT']} />
           </ResponsiveFormSection>
+          )}
 
           {/* Advanced Settings */}
+          {shows('advanced') && (
           <ResponsiveFormSection
-              title="Advanced Settings"
-              subtitle="Database, rate limiting, and upload configuration"
+              title="Limits and cleanup"
+              subtitle="The database, how much each key may ask for, and how long files are kept."
               icon={<SettingsIcon />}
             >
               <Stack spacing={3}>
                 <Box>
                   <ResponsiveSettingItem
                     icon={<StorageIcon />}
-                    label="Database URL (redacted, read-only)"
+                    label="Database (read only)"
                     value={settings.database?.url ?? ''}
                     editValue={settings.database?.url ?? ''}
-                    helperText={`Driver: ${settings.database?.scheme ?? 'unknown'}. Credentials are hidden.`}
+                    helperText="Passwords in it are hidden."
                     showCurrentValue={false}
                   />
                   <Alert severity="info" sx={{ mt: 2 }}>
@@ -1273,7 +1384,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
 
                 {/* Upload Limits */}
                 <ResponsiveTextField
-                  label="Max Upload Size (MB)"
+                  label="Largest document (MB)"
                   value={String(form.max_file_size_mb ?? settings.limits?.max_file_size_mb ?? 10)}
                   onChange={(value) => handleForm('max_file_size_mb', value === '' ? '' : Number(value))}
                   placeholder="10"
@@ -1284,38 +1395,41 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
 
                 {/* Rate Limiting */}
                 <ResponsiveTextField
-                  label="Global Rate Limit (RPM)"
+                  label="Requests per minute for each key"
                   value={String(form.max_requests_per_minute ?? settings.limits?.rate_limit_rpm ?? 60)}
                   onChange={(value) => handleForm('max_requests_per_minute', value === '' ? '' : Number(value))}
                   placeholder="60"
-                  helperText="Requests per minute allowed for each API key; 0 turns the limit off."
+                  helperText={withOwnerNote('max_requests_per_minute', "How many requests each key may make per minute. 0 turns the limit off.")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('max_requests_per_minute')}
                 />
 
                 <ResponsiveTextField
-                  label="Inbound List RPM"
+                  label="Received-fax lists per minute"
                   value={String(form.inbound_list_rpm ?? settings.limits?.inbound_list_rpm ?? 30)}
                   onChange={(value) => handleForm('inbound_list_rpm', value === '' ? '' : Number(value))}
                   placeholder="30"
-                  helperText="Requests per minute for each API key when listing inbound faxes."
+                  helperText={withOwnerNote('inbound_list_rpm', "How often each key may list received faxes, per minute.")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('inbound_list_rpm')}
                 />
 
                 <ResponsiveTextField
-                  label="Inbound Get RPM"
+                  label="Received-fax downloads per minute"
                   value={String(form.inbound_get_rpm ?? settings.limits?.inbound_get_rpm ?? 60)}
                   onChange={(value) => handleForm('inbound_get_rpm', value === '' ? '' : Number(value))}
                   placeholder="60"
-                  helperText="Rate limit for fetching inbound fax metadata/PDF (per key)."
+                  helperText={withOwnerNote('inbound_get_rpm', "How often each key may open or download a received fax, per minute.")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('inbound_get_rpm')}
                 />
 
-                {textField('PDF Token TTL (minutes)', 'pdf_token_ttl_minutes', '', 'number')}
-                {textField('Artifact TTL (days)', 'artifact_ttl_days', 'Days to keep sent fax files; 0 keeps them indefinitely.', 'number')}
-                {textField('Cleanup Interval (minutes)', 'cleanup_interval_minutes', '', 'number')}
+                {textField('Document links for fax services work for (minutes)', 'pdf_token_ttl_minutes', 'How long a fax service may fetch a document Faxbot sends through it.', 'number')}
+                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', '0 keeps them.', 'number')}
+                {textField('Clean up old files every (minutes)', 'cleanup_interval_minutes', '', 'number')}
                 <Alert 
                   severity="info" 
                   sx={{ 
@@ -1324,30 +1438,91 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   }}
                 >
                   <Typography variant="body2">
-                    For HIPAA environments, set reasonable RPM limits and keep upload size within policy.
+                    For health information, keep these limits and the largest document size within your policy.
                   </Typography>
                 </Alert>
               </Stack>
             </ResponsiveFormSection>
+          )}
+
+          {/* System > Diagnostics */}
+          {shows('diagnostics') && (
+          <ResponsiveFormSection title="Diagnostics options" icon={<SettingsIcon />}>
+            {[
+              ['enable_s3_diagnostics', 'Also check the S3 bucket',
+                'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.'],
+              ['admin_allow_restart', 'Allow restarting Faxbot from here',
+                'Turn this on only if Faxbot starts again by itself after it stops. Docker Compose installs do; elsewhere, check your service manager.'],
+            ].map(([field, label, help]) => (
+              <Box key={field} sx={{ mb: 2 }}>
+                {switchField(label, field, help)}
+                <Box sx={{ px: 2, mt: 1 }}>
+                  <Button size="small" variant="outlined" onClick={() => void applySettings([field])}
+                    disabled={!canEdit || !changedFields.includes(field)} aria-label={`Apply: ${label}`}>
+                    Apply
+                  </Button>
+                </Box>
+              </Box>
+            ))}
+            <DeploymentRows settings={settings} names={['TZ']} />
+          </ResponsiveFormSection>
+          )}
+
+          {/* Access > Keys & phones: the installation key (api_key), shown read-only and never by value */}
+          {sections?.includes('installation-key') && (
+          <ResponsiveFormSection title="Installation key" icon={<SecurityIcon />}>
+            <ResponsiveSettingItem icon={<SecurityIcon />} label="Installation key"
+              editValue={settings.security.api_key ? 'Set in .env' : 'Not set'} showCurrentValue={false}
+              helperText="Set when Faxbot was first installed. Faxbot never shows it; only the owner can replace it." />
+          </ResponsiveFormSection>
+          )}
+
+          {/* Access > Keys & phones */}
+          {shows('phones') && (
+          <ResponsiveFormSection title="Phones on your network" icon={<PublicIcon />}>
+            {textField('Address phones use on your network', 'mobile_local_base',
+              "Enter this computer's address on your office network, for phones there to use. Leave it empty if phones connect only over the internet.")}
+          </ResponsiveFormSection>
+          )}
+
+          {/* System > Developer */}
+          {shows('developer') && (
+          <ResponsiveFormSection title="Developer settings" subtitle="Help links and the files Faxbot reads." icon={<SettingsIcon />}>
+            {textField('Documentation address', 'docs_base_url', 'Where help links in the console point.')}
+            {READ_ONLY_FILES.map(({ field, label, value }) => readOnlyField(label, field, value(settings)))}
+            <DeploymentRows settings={settings} showNames names={['FAXBOT_ALLOW_INSECURE_LOOPBACK']} />
+          </ResponsiveFormSection>
+          )}
         </Stack>
         </Box>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={applySettings} disabled={!canEdit || changedFields.length === 0}>
+          {!(sections && sections.every((section) => OWN_APPLY_SECTIONS.has(section))) && (
+          <Button variant="contained" onClick={() => void applySettings()} disabled={!canEdit || changedFields.length === 0}>
             Apply settings
           </Button>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
-            Refresh
-          </Button>
+          )}
         </Box>
 
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          Click "Load Settings" to view and edit settings.
+          Select Reload to view and edit settings.
         </Typography>
       )}
 
-      {envContent && (
+      <Dialog open={confirming !== null} onClose={() => setConfirming(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{confirming?.title}</DialogTitle>
+        <DialogContent><Typography variant="body2">{confirming?.text}</Typography></DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirming(null)}>Cancel</Button>
+          <Button variant="contained" color="warning" onClick={() => {
+            if (confirming) handleForm(confirming.field, confirming.value);
+            setConfirming(null);
+          }}>{confirming?.action}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {envContent && shows('backup') && (
         <Card sx={{ mt: 3 }}>
           <CardContent>
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>

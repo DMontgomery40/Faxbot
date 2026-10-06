@@ -27,7 +27,6 @@ import {
   Phone, 
   WarningAmber,
   Search as SearchIcon,
-  CloudDownload as CloudDownloadIcon,
   Science as ScienceIcon,
   Upload as UploadIcon,
   ExpandMore as ExpandMoreIcon,
@@ -95,7 +94,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
-  const [registry, setRegistry] = useState<PluginItem[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
   const [note, setNote] = useState<string>('');
   const [configOpen, setConfigOpen] = useState(false);
@@ -133,9 +131,8 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       if (!before._meta?.desired_revision_id) {
         throw new Error('Plugin settings could not be loaded. Refresh to try again.');
       }
-      const [listRes, regRes, active] = await Promise.all([
+      const [listRes, active] = await Promise.all([
         client.listPlugins(),
-        client.getPluginRegistry(),
         client.getConfig(),
       ]);
       const after = await client.getSettings();
@@ -146,7 +143,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
         throw new Error('Settings changed while plugins were loading. Refresh to see the current values.');
       }
       setItems(listRes.items || []);
-      setRegistry(regRes.items || []);
       setSettings(after);
       setActiveProviders({
         outbound: active.hybrid?.outbound ?? active.backend,
@@ -323,17 +319,12 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const matches = (p: PluginItem) => {
     if (!query) return true;
     const q = query.toLowerCase();
-    const inReg = p.source === 'manifest' ? undefined : (registry || []).find(r => r.id === p.id);
-    const hay = `${p.id} ${p.name} ${p.description || inReg?.description || ''}`.toLowerCase();
+    const hay = `${p.id} ${p.name} ${p.description || ''}`.toLowerCase();
     return hay.includes(q);
   };
   
   const byCategory = (cat: string) => (items || []).filter(p => (p.categories || []).includes(cat)).filter(matches);
   
-  const registryOnly = () => {
-    const installed = new Set((items || []).map(i => i.id));
-    return (registry || []).filter(r => !installed.has(r.id) && matches(r as any));
-  };
   const renderedClientEpoch = clientEpoch.current;
   const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
   const showRestartNotice = settings?._meta?.apply_state === 'pending_restart'
@@ -353,6 +344,9 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
             In use: {activeProviders.outbound} for outbound faxes, {activeProviders.storage} for storage.
           </Typography>
         )}
+        <Alert severity="info" sx={{ mt: 2, borderRadius: 2 }} data-testid="plugins-retiring">
+          Provider plugins and this page go away in the next release. Set up built-in providers in System → Setup.
+        </Alert>
       </Box>
 
       <Stack spacing={3}>
@@ -361,7 +355,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
             size="medium" 
             fullWidth 
             label="Search plugins"
-            placeholder="Search curated plugins…" 
+            placeholder="Search plugins…" 
             value={query} 
             onChange={(e) => setQuery(e.target.value)}
             InputProps={{
@@ -416,7 +410,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               activeProvider={activeProviders?.outbound}
               onActivate={handleMakeActiveOutbound} 
               onConfigure={handleConfigure} 
-              registry={registry} 
               docsBase={docsBase}
               icon={<Phone />}
             />
@@ -429,16 +422,8 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               activeProvider={activeProviders?.storage}
               onActivate={undefined} 
               onConfigure={handleConfigure} 
-              registry={registry} 
               docsBase={docsBase}
               icon={<StorageIcon />}
-            />
-            
-            <Discover 
-              title="Discover (Curated Registry)" 
-              items={registryOnly()} 
-              docsBase={docsBase}
-              icon={<CloudDownloadIcon />}
             />
             
             {/* HTTP Manifest Tester */}
@@ -611,23 +596,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                       >
                         Import
                       </Button>
-                      <Button 
-                        size="medium" 
-                        variant="outlined"
-                        onClick={async () => {
-                          try {
-                            setError(''); setNote(''); setBulkImportRes(null);
-                            const res = await client.importHttpManifests({ source: 'repo_scrape' });
-                            setBulkImportRes(res);
-                            await load();
-                          } catch (e: any) {
-                            setError(e?.message || 'Import from repo failed');
-                          }
-                        }}
-                        sx={{ borderRadius: 2 }}
-                      >
-                        Import from repo scrape
-                      </Button>
                     </Stack>
                     
                     {bulkImportRes && (
@@ -687,7 +655,6 @@ function Section({
   activeProvider,
   onActivate, 
   onConfigure, 
-  registry,
   docsBase,
   icon 
 }: { 
@@ -698,12 +665,10 @@ function Section({
   activeProvider?: string;
   onActivate?: (id: string) => void; 
   onConfigure?: (p: PluginItem) => void; 
-  registry: PluginItem[];
   docsBase?: string;
   icon?: React.ReactNode;
 }) {
   const joinCaps = (caps: string[]) => caps.join(', ');
-  const regIndex = new Map((registry || []).map(r => [r.id, r] as const));
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -714,11 +679,10 @@ function Section({
     >
       <Grid container spacing={2}>
         {(items || []).map(p => {
-          const reg = p.source === 'manifest' ? undefined : regIndex.get(p.id);
-          const desc = p.description || reg?.description;
+          const desc = p.description;
           const learn = p.source === 'manifest'
             ? p.learn_more
-            : curatedDocsLink(p.learn_more || reg?.learn_more, docsBase);
+            : curatedDocsLink(p.learn_more, docsBase);
           
           return (
             <Grid item xs={12} sm={6} lg={4} key={p.id}>
@@ -838,92 +802,6 @@ function Section({
           </Grid>
         )}
       </Grid>
-    </ResponsiveFormSection>
-  );
-}
-
-function Discover({ title, items, icon, docsBase }: { title: string; items: any[]; icon?: React.ReactNode; docsBase?: string }) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  
-  return (
-    <ResponsiveFormSection
-      title={title}
-      icon={icon}
-    >
-      {(!items || items.length === 0) ? (
-        <Alert severity="info" sx={{ borderRadius: 2 }}>
-          No matches found in the curated registry.
-        </Alert>
-      ) : (
-        <Grid container spacing={2}>
-          {items.map((r) => (
-            <Grid item xs={12} sm={6} lg={4} key={r.id}>
-              <Card 
-                variant="outlined"
-                sx={{
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  borderRadius: 2,
-                  transition: 'all 0.3s ease',
-                  '&:hover': {
-                    transform: isMobile ? undefined : 'translateY(-2px)',
-                    boxShadow: theme.palette.mode === 'dark'
-                      ? '0 4px 12px rgba(0,0,0,0.4)'
-                      : '0 4px 12px rgba(0,0,0,0.1)',
-                  }
-                }}
-              >
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                      {r.name}
-                    </Typography>
-                    <Chip 
-                      size="small" 
-                      label={r.version || '1.x'}
-                      sx={{ borderRadius: 1 }}
-                    />
-                  </Box>
-                  
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                    {r.description || 'No description.'}
-                  </Typography>
-                  
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {(r.categories || []).map((cat: string) => (
-                      <Chip 
-                        key={cat} 
-                        size="small" 
-                        variant="outlined" 
-                        sx={{ borderRadius: 1 }} 
-                        label={cat} 
-                      />
-                    ))}
-                  </Box>
-                </CardContent>
-                
-                <CardActions sx={{ p: 2, pt: 0 }}>
-                  {r.learn_more ? (
-                    <MLink href={curatedDocsLink(r.learn_more, docsBase)} target="_blank" rel="noreferrer" sx={{ fontSize: '0.875rem' }}>
-                      Learn more
-                    </MLink>
-                  ) : (
-                    <Tooltip title="Remote install is disabled by default for security.">
-                      <span>
-                        <Button size="small" disabled sx={{ borderRadius: 1 }}>
-                          Install Disabled
-                        </Button>
-                      </span>
-                    </Tooltip>
-                  )}
-                </CardActions>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
-      )}
     </ResponsiveFormSection>
   );
 }

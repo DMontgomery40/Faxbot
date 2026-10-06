@@ -253,6 +253,11 @@ async def test_definite_failure_falls_back_to_the_next_route_at_most_twice(multi
     assert kinds.count('route_fallback') == 1 and kinds.count('claimed') == 2
     fallback = next(event for event in delivery.operator_view(job)['events'] if event['kind'] == 'route_fallback')
     assert fallback['details'] == {'category': 'provider_failed'}
+    # Sent shows the route that carried the last attempt and the one tried before it.
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.spending import Spending
+    cost = Spending(routes, CarrierChargeStore(configuration.engine)).job(job)
+    assert (cost['route'], cost['routes']) == ('phaxio', ['signalwire', 'phaxio'])
 
 
 @pytest.mark.asyncio
@@ -304,6 +309,38 @@ async def test_uncertain_outcomes_are_never_requeued(multi):
     assert delivery.requeue_after_failure(job, attempt_id=attempt, category='provider_failed') is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('how', ['observed', 'unconfirmed'])
+async def test_pages_that_may_have_arrived_never_take_another_route(multi, monkeypatch, how):
+    """A send whose pages may have arrived unconfirmed (pages_unconfirmed: the fax engine's "No response to
+    EOP" with no page counted) waits for a person: neither the failure's own policy nor the scheduler sends it
+    on another route (PR #33 round 6)."""
+    from api.app.routing.fallback import FallbackPolicy
+    _, delivery, routes, _ = multi
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', FallbackPolicy(FallbackScheduler(delivery, routes)))
+    job = accept(multi)
+
+    class Unconfirmed(Inner):
+        async def submit(self):
+            self.used.append(self.current)
+            return SubmissionReceipt('FX1', 'in_progress')
+    await OutboundWorker(delivery, RoutedTransport(Unconfirmed(delivery, []))).step()
+    row = delivery.get(job)
+    attempt, profile = row['attempt_id'], delivery.attempt_context(job, row['attempt_id'])[1]
+    if how == 'observed':
+        assert delivery.observe(job, attempt_id=attempt, profile_id=profile.id, provider_sid='FX1', status='failed',
+                                event_key=f'{attempt}:engine:failed', error='The other fax machine did not confirm '
+                                'the pages.', error_category='pages_unconfirmed')
+        assert delivery.get(job)['state'] == 'failed'
+    else:
+        assert delivery.record_unconfirmed(job, attempt_id=attempt, profile_id=profile.id,
+                                           event_key=f'{attempt}:engine:failed')
+        assert delivery.get(job)['state'] == 'reconciliation_required'
+    assert 'route_fallback' not in [event['kind'] for event in delivery.history(job)]
+    assert FallbackScheduler(delivery, routes).step() is False
+    assert delivery.get(job)['attempt_id'] == attempt
+
+
 def test_requeue_cap_and_partner_refusal_rules(multi):
     configuration, delivery, _, _ = multi
     job = accept(multi)
@@ -317,3 +354,92 @@ def test_requeue_cap_and_partner_refusal_rules(multi):
     assert delivery.fallback_count(job) == 2
     with pytest.raises(ValueError):
         delivery.requeue_after_failure(job, attempt_id='x', category='timeout')
+
+
+@pytest.mark.parametrize('environment, expected', [
+    ({'FAX_BACKEND': 'phaxio'}, False),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'humblefax, sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'humblefax'}, False),
+    ({'FAX_BACKEND': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_INBOUND_BACKEND': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip', 'FAX_DISABLED': 'true'}, False),
+    ({}, False),
+])
+def test_asterisk_connects_for_sip_as_provider_or_as_an_extra_route(environment, expected):
+    from api.app import main
+    from api.app.config import use_configuration
+    values = ConfigurationValues.from_environment({'FAX_DISABLED': 'false', **environment})
+    with use_configuration(values):
+        assert main._ami_required() is expected
+
+
+_NATIVE_NO_DATA = {'Event': 'UserEvent', 'UserEvent': 'FaxResult', 'Status': 'FAILED',
+                   'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Station64': '',
+                   'Answered': '1791075343', 'Ended': '1791075367', 'Cause': '16'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('handler,event,state,sentence', [
+    ('_handle_fax_result', _NATIVE_NO_DATA, 'failed',
+     'The call connected but no fax data came back from the carrier.'),
+    ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Error': 'Received no response to DCS or TCF',
+                            'Station64': 'KzE1NTU1NTUwMTk5'}, 'failed',
+     'The other fax machine answered but the fax did not finish.'),
+    ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '5'}, 'failed',
+     'The number was busy.'),
+    ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Status': 'SUCCESS', 'Pages': '2'}, 'success', None),
+])
+async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(database, tmp_path, monkeypatch,
+                                                                        handler, event, state, sentence):
+    """Jobs show why a fax over Faxbot's own trunk failed, instead of a bare failure."""
+    from api.app import main
+    upgrade_schema(database)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    data = tmp_path / 'faxdata'
+    data.mkdir()
+    values = ConfigurationValues.from_environment({**ENVIRONMENT, 'FAX_OUTBOUND_ROUTES': 'sip',
+                                                   'FAX_DATA_DIR': str(data)})
+    phaxio = ProviderConfiguration('phaxio', credentials={'api_key': 'k', 'api_secret': 's'})
+    snapshot = configuration.initialize(values, actor='test', providers={'outbound': phaxio})
+    delivery, routes = OutboundStore(configuration), RouteStore(database)
+    routes.replace_cards([card('phaxio', page='0.07'), card('sip', minute='0.005')])
+    job = accept((configuration, delivery, routes, snapshot))
+    write_pdf(data / (job + '.pdf'), pages=1)
+
+    class Ami:
+        _connected = asyncio.Event()
+    Ami._connected.set()
+    inner = Inner(delivery, [SubmissionReceipt(job, 'in_progress')])
+    inner.ami = Ami()
+    await OutboundWorker(delivery, RoutedTransport(inner)).step()
+    attempt = delivery.get(job)['attempt_id']
+    monkeypatch.setattr(main, '_deliveries', lambda: delivery)
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', None)
+    fields = {**event, 'JobID': job, 'AttemptID': attempt, 'ActionID': f'faxbot:{job}:{attempt}'}
+    getattr(main, handler)(fields)
+    assert delivery.get(job)['state'] == state
+    with database.connect() as connection:
+        row = connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == job)).mappings().one()
+    assert (row['status'], row['error']) == (state, sentence)
+    # Jobs read the error through the same sanitizer; the sentence comes back whole.
+    assert main.sanitize_error(row['error']) == sentence
+
+
+def test_a_fax_to_the_trunks_own_number_never_goes_over_that_trunk_as_another_route(database):
+    """A fallback once faxed the Telnyx number over the Telnyx trunk: the call only rang the trunk itself."""
+    from api.app.routing.plan import RoutePlanner
+    upgrade_schema(database)
+    routes = RouteStore(database)
+    routes.replace_cards([card('phaxio', page='0.07'), card('sip', minute='0.005')])
+    values = ConfigurationValues.from_environment({**ENVIRONMENT, 'FAX_OUTBOUND_ROUTES': 'sip',
+                                                   'SIP_TRUNK_DIDS': '+17205550100, +17205550101'})
+    planner = RoutePlanner(routes)
+    own = planner.plan(to_number='(720) 555-0101', bound='phaxio', values=values, pages=2, alternates=True)
+    assert [choice.route.key for choice in own.choices] == ['phaxio']
+    # The fallback after the main route failed finds nothing left, so nothing is sent again.
+    retry = planner.plan(to_number='+17205550100', bound='phaxio', values=values, pages=2, alternates=True,
+                         exclude={'phaxio'})
+    assert all(choice.route.key != 'sip' for choice in retry.choices)
+    other = planner.plan(to_number='+12025550123', bound='phaxio', values=values, pages=2, alternates=True)
+    assert 'sip' in [choice.route.key for choice in other.choices]

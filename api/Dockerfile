@@ -29,7 +29,7 @@ COPY api/app /app/app
 COPY api/alembic /app/alembic
 COPY api/alembic.ini /app/alembic.ini
 
-# The faxbot command line, for example: docker compose exec api faxbot health
+# The faxbot command line, for example: docker compose exec api faxbot system health
 RUN printf '#!/bin/sh\nexec env PYTHONPATH=/app python -m app.cli "$@"\n' > /usr/local/bin/faxbot \
     && chmod 755 /usr/local/bin/faxbot
 
@@ -42,8 +42,6 @@ COPY python_mcp /app/python_mcp
 # Copy admin UI build from the first stage
 COPY --from=admin-ui-builder /build/dist /app/admin_ui/dist
 
-# Copy assets for the admin UI
-COPY assets /app/assets
 
 # Data volume mounted at /faxdata by compose
 

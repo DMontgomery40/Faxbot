@@ -1,99 +1,68 @@
-
 # Admin Console
+
+The console is the web app Faxbot serves at `/admin/ui/`. Sign in with a username and password, or with an API key. Every screen follows the signed-in person's permissions: a page they may not use is not shown, and the server enforces the same rules.
+
+## Eight areas
+
+The left panel lists eight areas. Each holds a few pages.
 
 <div class="grid cards" markdown>
 
-- :material-wrench: **Setup Wizard**  
-  Select backend, paste creds, apply.  
-  [Open](admin-console/setup-wizard.md)
+- :material-view-dashboard: **Overview**
+  What needs a person now, and what sending costs.
+  [Open](admin-console/overview.md)
 
-- :material-cog: **Settings**  
-  Backend/security/storage controls with helper text.  
-  [Open](admin-console/settings.md)
+- :material-fax: **Faxes**
+  Received, Sent and Send a fax.
+  [Open](admin-console/faxes.md)
 
-- :material-stethoscope: **Diagnostics**  
-  Health checks and actionable fixes.  
-  [Open](admin-console/diagnostics.md)
+- :material-dialpad: **Numbers**
+  Your numbers, mailboxes, email delivery and sender identity.
+  [Open](admin-console/numbers.md)
 
-- :material-key-variant: **API Keys**  
-  Mint, rotate, revoke; scopes and rate limits.  
-  [Open](admin-console/api-keys.md)
+- :material-contacts: **Recipients**
+  The numbers you fax, partners and case packets.
+  [Open](admin-console/recipients.md)
 
-- :material-puzzle-outline: **Plugin Registry**\
-  Discover providers and configure installed plugins.\
-  [Open](plugins/registry.md)
+- :material-cloud: **Providers**
+  What sends and receives, and each provider in use.
+  [Open](admin-console/providers.md)
+
+- :material-cash: **Costs**
+  Spending, prices and plans, savings and recommendations.
+  [Open](admin-console/costs.md)
+
+- :material-lock-open: **Access**
+  Users, groups, roles, keys and phones, and sessions.
+  [Open](admin-console/access.md)
+
+- :material-cog: **System**
+  Setup, security, storage, audit log, diagnostics, logs and Developer.
+  [Open](admin-console/system.md)
 
 </div>
 
-The Admin Console lets you manage keys, jobs, inbound inbox, diagnostics, and settings without editing `.env` by hand.
+## Finding your way
 
-- Local‑only by default; access is restricted to loopback in current builds
-- Works with any backend (Phaxio, Sinch, SIP/Asterisk, SignalWire)
-- Provides copy‑ready configuration after validation
+- **An address for every page.** Each page has its own address, such as `#/providers/trunk` or `#/system/audit`. Back, Forward, reload and shared links open the same page. Older addresses keep working and open the page that now does that job.
+- **Where you are.** The line above each page names its area and page; select the area to go back to it.
+- **Your menu.** The lower-left menu shows who is signed in and their role. It offers Change password, My sessions, My API keys, Appearance (Light, Dark or Match my system) and Sign out.
+- **Providers by name.** The trunk is named by its carrier or phone system ("Telnyx", "Avaya IP Office") everywhere: Overview, Sent, Received, Spending and the command line. When a saved change switches providers or carriers, every page shows the new names at once.
 
-## Usage
+## Saving settings
 
-- Access at `http://localhost:8080/admin/ui/` when the API is running
-- If the UI is unavailable, set the deployment gate `ENABLE_LOCAL_ADMIN=true` and install the built UI at `/app/admin_ui/dist` in the container or `api/admin_ui/dist` locally, then restart the serving API. These mount/gate inputs remain deployment environment settings; canonical runtime edits use [Settings](admin-console/settings.md).
-- Explore tabs for Dashboard, Send, Jobs, Inbound, Keys, Settings, Diagnostics
+Settings pages show what is saved and change it with **Apply settings**. Some changes take effect at once; others wait until Faxbot restarts, and the page says so with **Restart now** when restarting from the console is allowed. See [Saving settings](admin-console/settings.md).
 
-### Plugins (preview)
-- Enable v3 plugins through canonical Settings on an existing installation and inspect the apply state. The tab appears when the active feature is enabled.
-- Plugins edits desired provider settings and direction selection with a loaded revision guard. Its result identifies active or pending changes; it does not write a separate authoritative runtime JSON file.
+Settings only the owner may change are shown, but disabled, to everyone else, with "Only the owner of this installation can change this." Settings set when Faxbot was installed (environment-only settings) are shown read-only where they matter, with "Set when Faxbot started" or "Not set"; a secret's value is never shown.
 
-## Demo (Simulated)
+## When the console does not load
 
-- Hosted demo with simulated data: https://faxbot.net/admin-demo/
-- No external calls; intended for showcasing the workflow
+The console is served when the deployment sets `ENABLE_LOCAL_ADMIN=true` and the built console is at `/app/admin_ui/dist` in the container (`api/admin_ui/dist` locally). Those are deployment settings, not console settings. Storage credentials for S3 come from the server's own environment or role; the console never stores or shows them. Where several API processes run, a change that waits for a restart needs every process stopped and started again.
 
-## Desired settings, activation and recovery
+## The command line
 
-Setup Wizard and Settings load canonical desired values and the revision they edit. Apply saves only changed fields with that revision; conflicts retain the draft for explicit reload/review. The response distinguishes active values from desired changes pending restart. For pending changes, stop every API worker and restart the installation, then verify the active/desired identity. A readonly reload does not activate pending configuration, and restarting one process while other workers remain running is insufficient.
+`faxbot`, the command line, follows the same eight areas: `faxbot received`, `sent`, `numbers`, `recipients`, `providers`, `costs`, `access` and `system`. See the [command line reference](reference/cli.md).
 
-A redacted export is a desired template, not persistence or a complete backup. Settings can write a private recovery environment file; it does not promote pending settings. Preserve the database, installation encryption key and document artifacts for recovery. Environment and legacy JSON inputs bootstrap an installation without canonical state; subsequent `.env` edits do not override its saved revision. See [Settings](admin-console/settings.md) and [Setup](admin-console/setup-wizard.md).
+## Demo (simulated)
 
-The optional Diagnostics **Restart API** action exits one process when allowed. Arrange an installation-wide stop/start through the process manager for pending activation; do not treat that button alone as a coordinated restart.
-
-## Storage (S3)
-
-- In Settings, select S3 for artifact storage and edit its values (`S3_BUCKET`, `S3_REGION`, optional `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_KMS_KEY_ID`).
-- IAM credentials must come from the runtime (environment or role). The Admin Console does not store or display secrets.
-- Validate S3:
-  - Enable `ENABLE_S3_DIAGNOSTICS=true` on the API to allow Diagnostics to `HeadBucket` and surface `checks.storage.accessible`.
-  - Otherwise, Diagnostics will show only presence checks.
-  - Best practice: apply settings, then run Diagnostics to verify access, and perform an end‑to‑end inbound test.
-
-## Dashboard & Diagnostics
-
-- Dashboard describes the active outbound configuration and durable delivery counts. Desired pending settings can differ from the running provider.
-- Diagnostics runs a comprehensive check (backend credentials/config, storage, inbound flags, security posture) and shows recommendations.
-
-### Under the Hood
-- The console reads settings from `GET /admin/settings` and health from `GET /admin/health-status`
-- Apply calls `PUT /admin/settings` with changed fields and the loaded desired revision; `_meta` reports active/pending state
-- `POST /admin/settings/reload` only reads durable state
-- `POST /admin/settings/persist` writes a recovery file; it does not become the authoritative settings store
-- Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
-
-## Inbound Controls (v2)
-
-- The Inbox shows each received fax with its email delivery status and a **Retry delivery** action; email delivery is set up in Settings. See [Intake](operations/intake.md).
-- Toggle inbound receiving on/off and configure retention/token TTL in Settings.
-- Backend-specific auth:
-  - SIP/Asterisk: set `ASTERISK_INBOUND_SECRET` for the private `/_internal/asterisk/inbound` route.
-  - Phaxio: enable HMAC verification for inbound webhooks.
-  - Sinch: configure Basic auth and/or HMAC verification for inbound callbacks.
-
-## Outbound PDFs (v2)
-
-- From Jobs, open a job to view details and download the outbound PDF (admin-only). The API generates a PDF per job before dispatching to the selected backend.
-## MCP (v2)
-
-- Embedded Python MCP SSE server is available under `/mcp/sse`.
-- In the UI (MCP tab), enable SSE and optionally require OAuth/JWT.
-- Health check: “SSE Healthy” chip reflects `/mcp/sse/health` status.
-- “Claude Desktop Config” block provides a copy‑ready config snippet.
-- Notes
-  - For HIPAA, enable OAuth/JWT and configure issuer/audience/JWKS.
-  - When disabled, SSE runs without auth for local development only.
-  - Pending MCP/OAuth changes require every API worker to stop and the installation restart; verify active/desired identity afterward.
+A hosted demo with simulated data is at <https://faxbot.net/admin-demo/>. It makes no external calls.

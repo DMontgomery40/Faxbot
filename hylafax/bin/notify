@@ -1,0 +1,102 @@
+#!/bin/sh
+# Report one finished fax job to Faxbot. faxq runs this (as uucp, in the spool
+# folder) with: qfile why jobtime [next-try]. Faxbot asks for it on every job.
+#
+# The body carries the job's own record (pages, dials, the fax machine's
+# answer) and, from the call's session log, whether the pages went over SSL
+# Fax and how long the transfer took. Text values are base64 encoded. The
+# report is kept in the engine's volume first and then sent (bin/deliver); one
+# Faxbot cannot take now is sent again every few seconds, also after a restart,
+# until Faxbot answers. The shared secret never goes into the report.
+set -u
+
+qfile=${1:-}
+why=$(printf '%s' "${2:-}" | tr -cd 'a-z_')
+jobtime=$(printf '%s' "${3:-}" | tr -cd '0-9:')
+config=etc/faxbot.conf
+
+fail() {
+  printf 'faxbot-notify: job result not delivered to Faxbot (%s)\n' "$1" >&2
+  exit 1
+}
+
+case $qfile in
+  doneq/q[0-9]*|sendq/q[0-9]*) ;;
+  *) fail 'unexpected job file' ;;
+esac
+[ -f "$qfile" ] || fail 'job file missing'
+[ -f "$config" ] || fail 'no Faxbot address'
+engine=$(sed -n 's/^engine=//p' "$config" | head -1 | tr -cd 'a-f0-9')
+outbox=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}/results
+[ -d "$outbox" ] && [ ! -L "$outbox" ] || fail 'no report folder'
+
+field() { sed -n "s/^$1://p" "$qfile" | head -1; }
+digits() { field "$1" | tr -cd '0-9'; }
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+
+tag=$(field jobtag | tr -cd 'a-f0-9.')
+jobid=$(digits jobid)
+commid=$(field commid | tr -cd '0-9')
+state=$(digits state)
+npages=$(digits npages)
+totpages=$(digits totpages)
+ndials=$(digits ndials)
+totdials=$(digits totdials)
+tottries=$(digits tottries)
+status_text=$(field status)
+status_code=$(field statuscode | tr -cd 'A-Za-z0-9')
+csi=$(field csi)
+signalrate=$(field signalrate)
+dataformat=$(field dataformat)
+
+# What the call's session log says about SSL Fax and the page transfer.
+log=''
+[ -n "$commid" ] && [ -f "log/c$commid" ] && log="log/c$commid"
+sslfax=false
+offered=''
+refused=false
+transfer=''
+session=''
+if [ -n "$log" ]; then
+  # The other machine takes SSL Fax: it said so when it answered, or named its own connection.
+  if grep -q -E 'REMOTE supports internet fax|REMOTE (CSA|TSA) "ssl://' "$log"; then
+    offered=true
+  elif grep -q -E 'SEND recv DIS|REMOTE best rate' "$log"; then
+    offered=false
+  fi
+  grep -q 'Refusing SSL Fax host' "$log" && refused=true
+  if grep -q 'SSL Fax connection was successful' "$log"; then
+    sslfax=true
+  elif grep -q 'SSL Fax connection detected' "$log" && ! grep -q 'SSL Fax client accept failure' "$log"; then
+    sslfax=true
+  fi
+  # "(docq/... sent in 0:00:12)": the whole document's transfer time.
+  transfer=$(grep -E 'SEND FAX .*docq/.* sent in [0-9:]+\)' "$log" | tail -1 \
+    | sed -E 's/.* sent in ([0-9:]+)\).*/\1/' | awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }')
+  # Seconds from SESSION BEGIN to SESSION END (same day).
+  session=$(awk '/SESSION BEGIN/ { split($3, a, ":"); b = a[1] * 3600 + a[2] * 60 + a[3] }
+                 /SESSION END/ { split($3, a, ":"); e = a[1] * 3600 + a[2] * 60 + a[3] }
+                 END { if (b != "" && e != "" && e >= b) printf "%d", e - b + 0.5 }' "$log")
+fi
+case $signalrate in *SSL*) sslfax=true ;; esac
+# Speed and compression only when the session agreed them: the job file holds the requested ones until
+# then, so a call that never trained (or never reached SSL Fax) reports neither.
+if [ -z "$log" ] || { ! grep -q 'TRAINING succeeded' "$log" && [ "$sslfax" != true ]; }; then
+  signalrate=''
+  dataformat=''
+fi
+
+case $offered in true|false) ;; *) offered=null ;; esac
+body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s}' \
+  "$tag" "$engine" "$commid" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
+  "$(number "$ndials")" "$(number "$totdials")" "$(number "$tottries")" "$(b64 "$status_text")" "$status_code" \
+  "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
+  "$(number "$transfer")" "$(number "$session")")
+
+# Keep the report, then send it once now; the engine sends whatever is left every few seconds.
+temporary=$(mktemp "$outbox/.report.XXXXXX") || fail 'report not kept'
+printf '%s\n' "$body" > "$temporary" || { rm -f "$temporary"; fail 'report not kept'; }
+mv -f "$temporary" "$outbox/$(date +%s)-job$jobid-$why.report" || { rm -f "$temporary"; fail 'report not kept'; }
+FAXBOT_HYLAFAX_SPOOL=$(pwd) sh "$(dirname "$0")/deliver" || true
+exit 0

@@ -11,6 +11,7 @@ MCP_ALLOWED_ORIGINS, OAUTH_ISSUER, OAUTH_AUDIENCE, OAUTH_JWKS_URL,
 MCP_OAUTH_SUBJECT_KEYS_FILE, MCP_RESOURCE_URL.
 Run: uvicorn server:app --host 0.0.0.0 --port 3003
 """
+import logging
 import os
 from typing import Optional
 
@@ -29,6 +30,8 @@ def create_app(*, api_base_url: str = FAX_API_URL, api_key: str = '',
                require_oauth: bool = True, oauth_issuer: str = OAUTH_ISSUER,
                oauth_audience: str = OAUTH_AUDIENCE, oauth_jwks_url: str = OAUTH_JWKS_URL, **options) -> Starlette:
     """SSE app. ``api_key`` is accepted for compatibility and unused."""
+    logging.getLogger('faxbot.mcp').warning('The SSE transport is removed in the next release; use Streamable HTTP '
+                                            '(http_server.py).')
     return create_network_app('sse', api_base_url=api_base_url, api_config_provider=api_config_provider,
                               require_oauth=require_oauth, oauth_issuer=oauth_issuer,
                               oauth_audience=oauth_audience, oauth_jwks_url=oauth_jwks_url, **options)

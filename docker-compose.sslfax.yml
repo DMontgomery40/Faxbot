@@ -1,0 +1,17 @@
+# Optional: let other fax machines connect to Faxbot for SSL Fax.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.sslfax.yml up -d
+#
+# Without this file Faxbot still sends and receives over SSL Fax whenever the
+# other machine offers its own connection; with it, Faxbot also offers one.
+# Publishes one TCP port (10443 unless SIP_SSLFAX_LISTENER_PORT in .env says
+# otherwise; keep it equal to the listener port in Faxbot's fax settings) and
+# tells the SSL Fax engine it is published. Forward the same port on your
+# router to this computer. Faxbot cannot tell from inside your network whether
+# the forward works; see docs/setup/sslfax.md.
+services:
+  hylafax:
+    environment:
+      - FAXBOT_SSLFAX_PUBLISHED_PORT=${SIP_SSLFAX_LISTENER_PORT:-10443}
+    ports:
+      - "${SIP_SSLFAX_LISTENER_PORT:-10443}:${SIP_SSLFAX_LISTENER_PORT:-10443}/tcp"

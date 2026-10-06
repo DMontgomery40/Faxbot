@@ -119,7 +119,6 @@ def test_bootstrap_and_provider_endpoint_fields_share_complete_redacted_projecti
         'PERSISTED_ENV_PATH': '/private/faxbot.env',
         'SINCH_BASE_URL': 'https://provider.example.invalid/v3',
         'FAXBOT_PROVIDERS_DIR': '/private/providers',
-        'PLUGIN_REGISTRY_PATH': '/private/registry.json',
         'PHAXIO_API_KEY': 'synthetic-secret-key',
         'DATABASE_URL': 'postgresql://operator:synthetic-password@db.invalid/faxbot',
     })
@@ -131,7 +130,6 @@ def test_bootstrap_and_provider_endpoint_fields_share_complete_redacted_projecti
     assert exported['DATABASE_URL'] == '***'
     assert exported['ENABLE_PERSISTED_SETTINGS'] == 'true'
     assert exported['FAXBOT_PROVIDERS_DIR'] == '/private/providers'
-    assert exported['PLUGIN_REGISTRY_PATH'] == '/private/registry.json'
     assert 'synthetic-secret-key' not in str(exported)
     assert 'synthetic-password' not in str(exported)
     assert {'ENABLE_PERSISTED_SETTINGS', 'PHAXIO_CALLBACK_URL', 'SINCH_BASE_URL'} <= values.environment_keys()
@@ -143,13 +141,17 @@ def test_unknown_provider_selection_cannot_fall_back_to_legacy_or_schema_metadat
     registry = {'_schema': {'version': 1}, 'phaxio': {'id': 'phaxio'}, 'sip': {'id': 'sip'}}
     known = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_BACKEND': 'sip'})
     known.validate_provider_selection(registry)
-    for selector in ('misspelled-provider', '_schema', ''):
-        field = 'FAX_OUTBOUND_BACKEND' if selector else 'FAX_BACKEND'
-        unknown = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', field: selector})
-        with pytest.raises(ConfigurationValueError) as error:
-            unknown.validate_provider_selection(registry)
-        assert field in {item['field'] for item in error.value.issues}
+    for selector in ('misspelled-provider', '_schema'):
+        for field in ('FAX_BACKEND', 'FAX_OUTBOUND_BACKEND'):
+            unknown = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', field: selector})
+            with pytest.raises(ConfigurationValueError) as error:
+                unknown.validate_provider_selection(registry)
+            assert field in {item['field'] for item in error.value.issues}
     assert known.effective_outbound == 'sip'
+    # An empty selection means no provider is set up yet; it is valid and selects nothing.
+    unset = ConfigurationValues.from_environment({})
+    unset.validate_provider_selection(registry)
+    assert (unset.fax_backend, unset.effective_outbound, unset.effective_inbound) == ('', '', '')
 
 
 def test_masks_returned_for_short_or_newline_ending_secrets_cannot_be_saved_as_credentials():

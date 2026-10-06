@@ -2,29 +2,34 @@
 
 Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.md), goes into one intake queue. Faxbot then delivers each one to where your staff already look. Today that is an email inbox, with the original PDF attached.
 
-In the Admin Console, the **Inbox** shows each received fax with its email delivery, and **Settings** holds the email delivery setup. Select **Email delivery settings** at the top of the Inbox to go there.
+In the Admin Console, **Faxes → Received** shows each received fax with its email delivery, and **Numbers → Email delivery** holds the email delivery setup. Select **Email delivery settings** at the top of Received to go there.
 
-## Delivery status in the Inbox
+A fax enters the queue only after its real document has arrived and been checked; see [Receiving faxes](receiving.md).
+
+Email delivery is not acknowledgement: to give each received document an owner who acknowledges it, see [Work](work.md).
+
+## Delivery status in Received
 
 Each received fax shows one of these in its **Email delivery** column (a line on each card on phones):
 
 | Status | Meaning |
 | --- | --- |
 | Delivered to (addresses) | The email server accepted it, at the time shown. |
+| Waiting for the document | The fax's document has not arrived yet. Email delivery starts when it does. |
 | Waiting for email delivery | Faxbot will deliver it shortly, or it is waiting for you to send it. |
 | Not delivered | Faxbot could not deliver it. The line below says why. |
-| No email delivery set up for this number | No email delivery covered the number the fax was sent to when it arrived. After setting one up, select **Retry delivery**. |
+| No email delivery set up for this number | No email delivery covered the number the fax was sent to when it arrived. **Retry delivery** appears once an email delivery covers the number. |
 | - | An older fax with no delivery record, such as one received without a document. |
 
-Documents received by direct delivery have no fax record; the Inbox lists them under **Received by direct delivery**.
+Documents received by direct delivery have no fax record; Received lists them under **Received by direct delivery**.
 
 A document is delivered at most once on its own. **Retry delivery** sends a waiting or undelivered document again; use it after fixing the problem the status describes. It needs permission to change settings.
 
-People who cannot read the installation's deliveries (`mailboxes:read`) see the Inbox without the delivery column.
+People who cannot read the installation's deliveries (`mailboxes:read`) see Received without the delivery column.
 
 ## Set up email delivery
 
-In **Settings**, under **Email delivery**:
+Under **Numbers → Email delivery**:
 
 1. Select **Add email delivery**.
 2. Enter a name, the recipient addresses, and your email server, port, security and sign-in details.
@@ -32,7 +37,7 @@ In **Settings**, under **Email delivery**:
 4. To deliver only faxes sent to one of your numbers, enter that number. Leave it empty to deliver faxes for every number.
 5. Save, then select **Send test email** to check the settings.
 
-Each email carries one sentence describing the fax, such as "Fax from +1 555 010 9999 to +1 555 010 0001, 3 pages, received 3 October 2026 at 14:05 UTC.", and the original PDF as an attachment.
+Each email carries one sentence describing the fax, such as "Fax from +1 555 010 9999 to +1 555 010 0001, 3 pages, received 3 October 2026 at 2:05 PM MDT.", and the original PDF as an attachment. The time is in the installation's time zone (System → Setup, or `faxbot system settings set time_zone=America/Denver`); with none set it says UTC. A new installation takes its zone from the server's `TZ` when that names a zone other than UTC. The subject's `{received_at}` uses the same time.
 
 When a fax number has its own email delivery, Faxbot uses it. Otherwise it uses the email delivery with no number.
 

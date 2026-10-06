@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      latest:
+        description: 'Also make this version the default ("latest") on docs.faxbot.net'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,7 +23,8 @@ jobs:
       source_ref: ${{ github.head_ref || github.ref_name }}
   publish:
     needs: preview
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Pushes to main publish and become latest; a person can also publish any branch by hand.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
       # Keep every source version eligible; a shared group drops pending runs.
@@ -46,6 +52,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.sha }}
           FAXBOT_DOCS_BUILT_SITE: ${{ runner.temp }}/docs-artifact/site
+          PUBLISH_LATEST: ${{ github.event_name == 'workflow_dispatch' && inputs.latest }}
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           python -c 'import json,os; from pathlib import Path; data=json.loads(Path("docs/generated/provenance.json").read_text()); assert data["source_sha"] == os.environ["SOURCE_SHA"] and not data["source_tree_dirty"]'
@@ -57,8 +64,15 @@ jobs:
             git fetch origin gh-pages
             git branch --force gh-pages origin/gh-pages
             MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
-            if [ "$MAIN_SHA" = "$SOURCE_SHA" ]; then
-              mike deploy --branch gh-pages --update-aliases "$SOURCE_SHA" latest
+            if [ "$MAIN_SHA" = "$SOURCE_SHA" ] || [ "$PUBLISH_LATEST" = "true" ]; then
+              # An early deploy published a version literally named "latest", which
+              # stops "latest" from becoming an alias. Remove only that version, in a
+              # new gh-pages commit, so earlier history stays in Git.
+              if git show gh-pages:versions.json | python -c 'import json,sys; sys.exit(0 if any(v["version"] == "latest" for v in json.load(sys.stdin)) else 1)'; then
+                mike delete --branch gh-pages latest
+              fi
+              # Redirect aliases: GitHub Pages does not serve symlinked folders reliably.
+              mike deploy --branch gh-pages --update-aliases --alias-type=redirect "$SOURCE_SHA" latest
               mike set-default --branch gh-pages latest
             else
               mike deploy --branch gh-pages "$SOURCE_SHA"

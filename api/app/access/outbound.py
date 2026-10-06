@@ -79,7 +79,8 @@ class AuthorizedOutbound:
                 raise IdempotencyConflict()
             return row["id"]
 
-    def accept(self, actor, revision, job, *, request_identity=None):
+    def accept(self, actor, revision, job, *, request_identity=None, also=None):
+        """``also(connection, now)`` runs last in the same transaction (a fax that waits to go with others)."""
         with self._transaction(actor) as (connection, now):
             if request_identity is not None:
                 row = self._candidate(connection, actor, request_identity, now)
@@ -91,4 +92,6 @@ class AuthorizedOutbound:
                 connection, revision, job, request_identity=request_identity
             )
             self.resources.record_outbound_on(connection, actor, job["id"], now=now)
+            if also is not None:
+                also(connection, now)
             return profile

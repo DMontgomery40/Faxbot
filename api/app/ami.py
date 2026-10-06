@@ -3,6 +3,7 @@ import base64
 import contextlib
 import logging
 import re
+import time
 from typing import Dict, List, Optional, Callable
 from uuid import uuid4
 from .config import settings
@@ -16,8 +17,27 @@ AMI_MAX_LINE_BYTES = 1024
 # status reply (notably AuthDetail events, which carry the SIP password) is
 # dropped as it is read and never stored, returned or logged.
 STATUS_EVENT_FIELDS = {
-    "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg"),
+    "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg", "Transport"),
+    "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
+    # PJSIPShowEndpoint: only the contact's status. Its EndpointDetail and AuthDetail events are dropped.
+    "contactstatusdetail": ("URI", "Status", "RoundtripUsec"),
+    # Counted before Faxbot restarts Asterisk, and listed under System → Developer → Scripts & checks.
+    "coreshowchannel": ("Uniqueid", "Channel", "ChannelStateDesc", "CallerIDNum", "Exten", "Duration"),
+    "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
+    # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.
+    "peerentry": ("ObjectName", "Status"),
 }
+# One plain sentence for each state of Faxbot's connection to its fax engine
+# (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
+# send all show the same sentence.
+ENGINE_LOGIN_REJECTED = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches."
+ENGINE_UNREACHABLE = "Faxbot can't reach its fax engine. Check that the Asterisk service is running."
+ENGINE_CONNECTING = "Faxbot is still connecting to its fax engine."
+ENGINE_NOT_IN_USE = "Faxbot connects to its fax engine when the SIP trunk is the provider in use."
+
+
+class AMILoginRejected(ConnectionError):
+    """Asterisk answered the login with an error: the manager username or password does not match."""
 
 
 def _validate_headers(fields: Dict[str, str]):
@@ -53,6 +73,8 @@ def prepare_originate_fields(
     station_id: Optional[str] = None,
     dial: Optional[str] = None,
     fax_preference: bool = False,
+    max_rate: Optional[int] = None,
+    ecm: Optional[bool] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -99,6 +121,13 @@ def prepare_originate_fields(
     variables = {"JOBID": job_id, "FAXFILE": tiff_path, **metadata}
     if attempt_id is not None:
         variables["FAXATTEMPT"] = attempt_id
+    # This call's highest speed and error correction (fax settings and the recipient's own limits).
+    if max_rate is not None:
+        if max_rate not in (14400, 9600, 7200, 4800):
+            raise ValueError("Unsupported AMI fax speed")
+        variables["FAXBOT_MAXRATE"] = str(max_rate)
+    if ecm is not None:
+        variables["FAXBOT_ECM"] = "yes" if ecm else "no"
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -119,23 +148,26 @@ def prepare_originate_fields(
     return fields
 
 
-def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
+def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
     (ValueError naming fields only) when the trunk cannot place calls. Without
-    one, the original station-ID behavior is unchanged.
+    one, the call carries the station ID as before; an empty station ID sends none.
+    An empty station ID on a trunk call means the trunk's caller ID.
+    ``call`` (hylafax_engine.CallSettings) adds this call's speed and error correction.
     """
     from . import sip_trunk
+    limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=values.fax_station_id,
-                                        header=values.fax_header, attempt_id=attempt_id)
+                                        header=values.fax_header, attempt_id=attempt_id, **limits)
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
         job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
-        attempt_id=attempt_id, station_id=values.fax_station_id,
-        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference)
+        attempt_id=attempt_id, station_id=values.fax_station_id or None,
+        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
 
 
 async def _login(
@@ -163,7 +195,7 @@ async def _login(
             if not line:
                 if "Response" in fields:
                     if fields["Response"].lower() != "success":
-                        raise ConnectionError("AMI login rejected")
+                        raise AMILoginRejected("AMI login rejected")
                     return
                 fields = {}
             elif ":" in line:
@@ -186,6 +218,33 @@ class AMIClient:
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
         self._queries: Dict[str, Dict[str, object]] = {}
+        # Why the last connection attempt failed ("login_rejected" or
+        # "unreachable"); None after a successful login or before any attempt.
+        self.problem: Optional[str] = None
+        # When the current connection logged in (time.monotonic), so a restart
+        # Faxbot asked for can tell the new connection from the old one.
+        self.connected_at: Optional[float] = None
+
+    def engine_message(self) -> Optional[str]:
+        """The plain sentence for a missing connection, or None while connected."""
+        if self._connected.is_set():
+            return None
+        if self._connection_task is None:
+            return ENGINE_NOT_IN_USE
+        return {"login_rejected": ENGINE_LOGIN_REJECTED, "unreachable": ENGINE_UNREACHABLE}.get(
+            self.problem, ENGINE_CONNECTING)
+
+    async def settle(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for a connection; stop early when the login is refused.
+
+        Startup uses this so a quick connection is in place before the worker
+        runs, without ever blocking startup on Asterisk.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self._connected.is_set() and self.problem != "login_rejected" and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+        return self._connected.is_set()
 
     async def connect(self):
         async with self._conn_lock:
@@ -220,12 +279,20 @@ class AMIClient:
                     settings.ami_username,
                     settings.ami_password,
                 )
+                self.problem = None
+                self.connected_at = time.monotonic()
                 self._connected.set()
                 delay = 1.0
                 await self._read_loop()
             except asyncio.CancelledError:
                 raise
+            except AMILoginRejected:
+                self.problem = "login_rejected"
+                logging.getLogger(__name__).warning(
+                    "Asterisk refused Faxbot's manager login; check that the Asterisk manager password matches. Retrying"
+                )
             except Exception:
+                self.problem = "unreachable"
                 logging.getLogger(__name__).warning(
                     "AMI connection unavailable; retrying"
                 )
@@ -251,6 +318,7 @@ class AMIClient:
             supervisor.cancel()
             await asyncio.gather(supervisor, return_exceptions=True)
         self._connected.clear()
+        self.problem = None
         await self._close_writer()
 
     async def _read_loop(self):
@@ -307,6 +375,10 @@ class AMIClient:
             event == "userevent" and fields.get("userevent", "").lower() == "faxresult"
         ):
             self._emit("FaxResult", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxinboundcall":
+            self._emit("FaxInboundCall", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
+            self._emit("FaxEngineCall", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -356,6 +428,47 @@ class AMIClient:
             for key in ("response", "done"):
                 if not query[key].done():
                     query[key].cancel()
+
+    async def active_calls(self) -> int:
+        """How many channels (calls) Asterisk has up now; raises ConnectionError or TimeoutError."""
+        response, events = await self.status_query({"Action": "CoreShowChannels"}, collect=True)
+        if response["response"].lower() != "success":
+            raise PermissionError("AMI channel list refused")
+        return len(events)
+
+    async def iax_lines_ready(self, prefix: str) -> int:
+        """How many IAX peers named ``prefix``* are registered and answer Asterisk's checks."""
+        response, events = await self.status_query({"Action": "IAXpeerlist"}, collect=True)
+        if response["response"].lower() != "success":
+            raise PermissionError("AMI peer list refused")
+        return sum(1 for event in events if str(event.get("ObjectName", "")).startswith(prefix)
+                   and str(event.get("Status", "")).upper().startswith("OK"))
+
+    async def db_put(self, family: str, key: str, value: str):
+        """Store one value in Asterisk's database (the SSL Fax engine's call plans); raises when not stored."""
+        await self._send_action({"Action": "DBPut", "ActionID": "faxbot-db:" + uuid4().hex,
+                                 "Family": family, "Key": key, "Val": value})
+
+    async def db_del(self, family: str, key: str):
+        """Remove one value from Asterisk's database; raises when Asterisk did not confirm."""
+        await self._send_action({"Action": "DBDel", "ActionID": "faxbot-db:" + uuid4().hex,
+                                 "Family": family, "Key": key})
+
+    async def stop_gracefully(self) -> bool:
+        """Ask Asterisk to stop once no call is up; Docker starts it again and it reloads its files.
+
+        True when Asterisk accepted or began stopping (the connection may close
+        before any reply); False when the manager account may not run commands.
+        """
+        try:
+            response, _ = await self.status_query({"Action": "Command", "Command": "core stop gracefully"})
+        except (ConnectionError, TimeoutError):
+            return True
+        if response["response"].lower() == "success":
+            return True
+        if "permission" in response["message"].lower():
+            return False
+        raise ConnectionError("AMI command failed")
 
     def _emit(self, name: str, msg: Dict[str, str]):
         for cb in list(self._listeners.get(name, ())):
@@ -412,13 +525,14 @@ class AMIClient:
         tiff_path: str,
         *,
         attempt_id: Optional[str] = None,
+        call=None,
     ):
         """Await acceptance of one Originate action; acceptance is not delivery.
 
         Submission listeners hear about the call after validation and before
         the action is written, so an unacknowledged call still leaves a record.
         """
-        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id)
+        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call)
         self._emit("Submission", {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
             "CallerID": fields["CallerID"], "Preset": settings.sip_trunk_preset or "",
@@ -434,6 +548,14 @@ class AMIClient:
 
     def on_submission(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("Submission", cb)
+
+    def on_engine_call(self, cb: Callable[[Dict[str, str]], None]):
+        """A trunk call the SSL Fax engine placed or answered (the dialplan's FaxEngineCall event)."""
+        self._listen("FaxEngineCall", cb)
+
+    def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
+        """A received call that left no fax image (the dialplan's FaxInboundCall event)."""
+        self._listen("FaxInboundCall", cb)
 
 
 ami_client = AMIClient()

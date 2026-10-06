@@ -1,35 +1,31 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
-  Typography,
-  Alert,
-  Grid,
   CircularProgress,
-  useTheme,
-  useMediaQuery,
-  Stack,
-  Paper,
-  Fade,
   IconButton,
-  Tooltip,
-  Chip,
   Link,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Tooltip,
+  Typography,
 } from '@mui/material';
 import {
-  PlayArrow as RunIcon,
-  Clear as ClearIcon,
-  VpnKey as KeyIcon,
-  CallReceived as InboundIcon,
-  Settings as SettingsIcon,
-  Send as SendIcon,
   ContentCopy as CopyIcon,
-  Terminal as TerminalIcon,
-  Info as InfoIcon,
+  MoveToInbox as InboundIcon,
+  Router as EngineIcon,
+  Link as LinkIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import type { EngineView } from '../api/client';
 import { docsLink } from '../docsLinks';
 import type { AdminDestination } from '../navigation';
+import { providerLabel } from '../providerLabels';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
 interface Props {
@@ -38,444 +34,172 @@ interface Props {
   docsBase?: string;
 }
 
-const documentationLinkSx = {
-  '&:focus-visible': {
-    outline: '2px solid',
-    outlineColor: 'primary.main',
-    outlineOffset: 2,
-  },
+type Callbacks = {
+  backend?: string;
+  callbacks?: Array<{ name: string; url: string; notes?: string }>;
+  receiving?: { ready: boolean; message: string };
 };
 
-const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string }> = ({ lines, loading, title }) => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
-  const handleCopy = () => {
-    if (lines.length > 0) {
-      navigator.clipboard.writeText(lines.join('\n'));
-    }
-  };
+type EngineResult = { title: string; columns: string[]; rows: string[][]; available: boolean; message: string | null };
 
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        bgcolor: theme.palette.mode === 'dark' ? '#0B0F14' : '#1e1e1e',
-        border: '1px solid',
-        borderColor: theme.palette.mode === 'dark' ? '#1f2937' : 'rgba(0,0,0,0.2)',
-        borderRadius: 2,
-        p: { xs: 1.5, sm: 2 },
-        fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, monospace',
-        fontSize: isMobile ? '0.75rem' : '0.85rem',
-        height: isMobile ? 150 : 200,
-        overflowY: 'auto',
-        position: 'relative',
-        '&::-webkit-scrollbar': {
-          width: 8,
-        },
-        '&::-webkit-scrollbar-track': {
-          backgroundColor: 'rgba(255,255,255,0.05)',
-        },
-        '&::-webkit-scrollbar-thumb': {
-          backgroundColor: 'rgba(255,255,255,0.2)',
-          borderRadius: 4,
-        },
-      }}
-    >
-      {title && (
-        <Box sx={{ 
-          position: 'sticky', 
-          top: 0, 
-          bgcolor: 'inherit',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-          mb: 1,
-          pb: 0.5
-        }}>
-          <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>
-            {title}
-          </Typography>
-        </Box>
-      )}
-      
-      {lines.length > 0 && (
-        <Tooltip title="Copy output">
-          <IconButton
-            size="small"
-            onClick={handleCopy}
-            sx={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              color: 'rgba(255,255,255,0.6)',
-              '&:hover': {
-                color: 'rgba(255,255,255,0.9)',
-              }
-            }}
-          >
-            <CopyIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      )}
-      
-      {loading ? (
-        <Box display="flex" alignItems="center" gap={1} sx={{ color: '#90caf9' }}>
-          <CircularProgress size={16} sx={{ color: 'inherit' }} /> 
-          <span>Running…</span>
-        </Box>
-      ) : null}
-      
-      {lines.map((l, i) => (
-        <div 
-          key={i} 
-          style={{ 
-            whiteSpace: 'pre-wrap', 
-            wordBreak: 'break-word',
-            color: l.startsWith('[✓]') ? '#7EE83F' : 
-                   l.startsWith('[!]') || l.startsWith('[error]') ? '#FF7B72' :
-                   l.startsWith('[i]') ? '#79C0FF' : '#C9D1D9',
-            lineHeight: 1.4
-          }}
-        >
-          {l}
-        </div>
-      ))}
-      
-      {!loading && lines.length === 0 && (
-        <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>
-          Output will appear here...
-        </Typography>
-      )}
-    </Paper>
-  );
-};
+// Providers with their own setup guide.
+const GUIDES = ['phaxio', 'sinch', 'signalwire', 'documo', 'humblefax', 'efax', 'sip'] as const;
+
+const ENGINE_VIEWS: Array<{ id: EngineView; label: string }> = [
+  { id: 'registrations', label: 'Trunk sign-ins' },
+  { id: 'contacts', label: 'Checked addresses' },
+  { id: 'calls', label: 'Calls in progress' },
+  { id: 'faxes', label: 'Faxes in progress' },
+];
 
 const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
-  const [error, setError] = useState<string>('');
-  const [busyInbound, setBusyInbound] = useState<boolean>(false);
-  const [busyInfo, setBusyInfo] = useState<boolean>(false);
-  const [inboundLines, setInboundLines] = useState<string[]>([]);
-  const [infoLines, setInfoLines] = useState<string[]>([]);
-  const [toNumber, setToNumber] = useState<string>('');
-  const [backend, setBackend] = useState<string>('');
-  const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
-  const [actions, setActions] = useState<Array<{ id: string; label: string }>>([]);
-  const [actionOutput, setActionOutput] = useState<Record<string, string>>({});
-  const [activeActionTab, setActiveActionTab] = useState<string>('');
+  const [inboundEnabled, setInboundEnabled] = useState(false);
+  const [callbacks, setCallbacks] = useState<Callbacks | null>(null);
+  const [toNumber, setToNumber] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [addError, setAddError] = useState('');
+  const [engine, setEngine] = useState<EngineResult | null>(null);
+  const [engineView, setEngineView] = useState<EngineView | null>(null);
+  const [engineError, setEngineError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState('');
 
-  const theme = useTheme();
-
-  const docsUrl = docsLink('scripts', docsBase);
-
-  const pushInbound = (line: string) => setInboundLines((prev) => [...prev, line]);
-  const clearInbound = () => setInboundLines([]);
-  const pushInfo = (line: string) => setInfoLines((prev) => [...prev, line]);
-  const clearInfo = () => setInfoLines([]);
-
-  React.useEffect(() => {
-    (async () => {
+  useEffect(() => {
+    void (async () => {
       try {
-        const s = await client.getSettings();
-        const b = (s as any)?.backend?.type || '';
-        setBackend(b);
-        setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
-        // Load container actions
-        try {
-          const al = await (client as any).listActions?.();
-          if (al?.enabled && Array.isArray(al.items)) {
-            const filtered = (al.items as any[])
-              .filter((a) => !a.backend || a.backend.includes('*') || a.backend.includes(b))
-              .map((a) => ({ id: a.id, label: a.label }));
-            setActions(filtered);
-            if (filtered.length > 0) setActiveActionTab(filtered[0].id);
-          }
-        } catch {}
-      } catch (e: any) {
-        setError(e?.message || 'Failed to load settings');
-      }
+        const settings = await client.getSettings();
+        setInboundEnabled(Boolean((settings as any)?.inbound?.enabled));
+      } catch { /* the cards below say what they need */ }
+      try { setCallbacks(await client.getInboundCallbacks()); } catch { setCallbacks(null); }
     })();
   }, [client]);
 
-  const runInboundSim = async () => {
-    setError(''); clearInbound(); setBusyInbound(true);
+  const receiver = callbacks?.backend ? providerLabel(callbacks.backend) : '';
+  const guide = GUIDES.find((page) => page === callbacks?.backend);
+
+  const addTestFax = async () => {
+    setAdding(true); setAdded(false); setAddError('');
     try {
-      pushInbound('[i] Simulating inbound (admin)');
-      const res = await client.simulateInbound({ ...(toNumber.trim() ? { to: toNumber.trim() } : {}), pages: 1, status: 'received' });
-      pushInbound(`[✓] Inbound created: ${res.id}`);
-      pushInbound('[i] Listing inbound…');
-      const list = await client.listInbound();
-      pushInbound(`Count: ${list.length}`);
-      const first = list.find((i: any)=> i.id === (res as any).id) || list[0];
-      if (first) pushInbound(JSON.stringify(first, null, 2));
-      else pushInbound('[!] Could not find the simulated item in list');
-    } catch (e: any) {
-      setError(e?.message || 'Inbound simulation failed (enable inbound and admin scopes)');
+      await client.simulateInbound({ ...(toNumber.trim() ? { to: toNumber.trim() } : {}), pages: 1, status: 'received' });
+      setAdded(true);
+    } catch {
+      setAddError("The test fax couldn't be added. Check that receiving is on, then try again.");
     } finally {
-      setBusyInbound(false);
+      setAdding(false);
     }
   };
 
-  const runCallbacksInfo = async () => {
-    setError(''); clearInfo(); setBusyInfo(true);
+  const showEngine = async (view: EngineView) => {
+    setEngineView(view); setBusy(true); setEngineError('');
     try {
-      pushInfo('[i] Fetching configured inbound callbacks…');
-      const info = await client.getInboundCallbacks();
-      pushInfo(JSON.stringify(info, null, 2));
-    } catch (e: any) {
-      setError(e?.message || 'Failed to fetch callbacks');
-    } finally { setBusyInfo(false); }
+      setEngine(await client.getEngineView(view));
+    } catch {
+      setEngine(null);
+      setEngineError('Faxbot could not ask its fax engine. Try again in a moment.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(url);
+    } catch { setCopied(''); }
   };
 
   return (
-    <Box sx={{ p: { xs: 2, sm: 0 } }}>
-      <Box 
-        sx={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: { xs: 'flex-start', sm: 'center' },
-          flexDirection: { xs: 'column', sm: 'row' },
-          gap: 2,
-          mb: 3
-        }}
-      >
-        <Box>
-          <Typography variant="h4" component="h1" gutterBottom>
-            Scripts & Tests
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Try inbound faxes, check callbacks and run container checks
-          </Typography>
-        </Box>
-      </Box>
+    <Box>
+      <Typography variant="h4" component="h1" gutterBottom>Scripts & checks</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Tools for checking Faxbot by hand. Nothing here sends a fax or changes a setting.{' '}
+        <Link href={docsLink('scripts', docsBase)} target="_blank" rel="noreferrer">How to use them</Link>
+      </Typography>
 
-      <Alert 
-        severity="info" 
-        icon={<InfoIcon />}
-        sx={{ mb: 3, borderRadius: 2 }}
-      >
-        <Typography variant="body2">
-          Learn more in the docs: <Link href={docsUrl} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Scripts & Tests</Link>.
-        </Typography>
-      </Alert>
-
-      {error && (
-        <Fade in>
-          <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
-            {error}
-          </Alert>
-        </Fade>
-      )}
-
-      <Grid container spacing={3}>
-        {/* Keys and Send Fax shortcuts */}
-        <Grid item xs={12} lg={6}>
-          <ResponsiveFormSection
-            title="Keys and Send Fax"
-            subtitle="Shortcuts to API keys and sending"
-            icon={<KeyIcon />}
-          >
+      <Stack spacing={3}>
+        <ResponsiveFormSection title="Add a test fax" subtitle="A one-page fax in Received, marked as a test everywhere" icon={<InboundIcon />}>
+          {inboundEnabled ? (
             <Stack spacing={2}>
               <Typography variant="body2" color="text.secondary">
-                Create an API key or send a test fax to a number you control.
+                The test fax goes through the same steps as a real one{receiver ? ` from ${receiver}` : ''}: owners, mailbox
+                rules and email delivery. No call is made.
               </Typography>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                <Button
-                  variant="outlined"
-                  onClick={() => onNavigate('keys')}
-                  disabled={busyInbound || busyInfo}
-                  startIcon={<KeyIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Open Keys
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={() => onNavigate('send')}
-                  disabled={busyInbound || busyInfo}
-                  startIcon={<SendIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Open Send Fax
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+                <ResponsiveTextField label="Your fax number it arrives on (optional)" value={toNumber} onChange={setToNumber} />
+                <Button variant="contained" onClick={addTestFax} disabled={adding}
+                  startIcon={adding ? <CircularProgress size={16} color="inherit" /> : <InboundIcon />}>
+                  Add a test fax
                 </Button>
               </Stack>
+              {added && (
+                <Alert severity="success" onClose={() => setAdded(false)}
+                  action={<Button color="inherit" size="small" onClick={() => onNavigate('faxes/received')}>Open Received</Button>}>
+                  A test fax was added to Received.
+                </Alert>
+              )}
+              {addError && <Alert severity="error" onClose={() => setAddError('')}>{addError}</Alert>}
             </Stack>
-          </ResponsiveFormSection>
-        </Grid>
+          ) : (
+            <Typography variant="body2" color="text.secondary">Receiving is turned off, so there is nowhere to add a test fax.</Typography>
+          )}
+        </ResponsiveFormSection>
 
-        {/* Inbound Simulation */}
-        {inboundEnabled && (
-          <Grid item xs={12} lg={6}>
-            <ResponsiveFormSection
-              title={`Inbound (${backend || 'backend'})`}
-              subtitle="Simulate and list inbound faxes"
-              icon={<InboundIcon />}
-            >
-              <Stack spacing={2}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <ResponsiveTextField
-                    label="To number (optional)" 
-                    value={toNumber} 
-                    onChange={setToNumber}
-                  />
-                  <Stack direction="row" spacing={1}>
-                    <Button 
-                      variant="contained" 
-                      onClick={runInboundSim} 
-                      disabled={busyInbound || busyInfo}
-                      startIcon={busyInbound ? <CircularProgress size={16} /> : <RunIcon />}
-                      sx={{ borderRadius: 2, minWidth: 80 }}
-                    >
-                      {busyInbound ? 'Running' : 'Run'}
-                    </Button>
-                    <Button 
-                      variant="outlined"
-                      onClick={clearInbound} 
-                      disabled={busyInbound || busyInfo}
-                      startIcon={<ClearIcon />}
-                      sx={{ borderRadius: 2 }}
-                    >
-                      Clear
-                    </Button>
-                  </Stack>
-                </Stack>
-                <ConsoleBox lines={inboundLines} loading={busyInbound} />
-              </Stack>
-            </ResponsiveFormSection>
-          </Grid>
-        )}
-
-        {/* Provider and callback settings */}
-        <Grid item xs={12} lg={6}>
-          <ResponsiveFormSection
-            title="Provider and Callback Settings"
-            subtitle="Credentials, secrets and callback URLs"
-            icon={<SettingsIcon />}
-          >
+        <ResponsiveFormSection title={receiver ? `How ${receiver} reaches Faxbot` : 'How received faxes reach Faxbot'}
+          subtitle="What the provider that receives your faxes needs from you" icon={<LinkIcon />}>
+          {!callbacks ? (
+            <Typography variant="body2" color="text.secondary">Faxbot could not read its receiving settings.</Typography>
+          ) : callbacks.receiving ? (
+            <Alert severity={callbacks.receiving.ready ? 'success' : 'warning'}>{callbacks.receiving.message}</Alert>
+          ) : callbacks.callbacks && callbacks.callbacks.length > 0 ? (
             <Stack spacing={2}>
-              <Typography variant="body2" color="text.secondary">
-                Set provider credentials, inbound secrets and callback URLs in Settings.
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Asterisk sends the inbound secret in the X-Internal-Secret header, and Phaxio status callbacks need their own callback token.
-              </Typography>
-              <Box>
-                <Button
-                  variant="contained"
-                  onClick={() => onNavigate('settings')}
-                  disabled={busyInbound || busyInfo}
-                  startIcon={<SettingsIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Open Settings
-                </Button>
-              </Box>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <Link href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>SIP/Asterisk setup guide</Link>
-                <Link href={docsLink('phaxio', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Phaxio setup guide</Link>
-              </Stack>
-            </Stack>
-          </ResponsiveFormSection>
-        </Grid>
-
-        {/* Inbound Callbacks Info */}
-        <Grid item xs={12}>
-          <ResponsiveFormSection
-            title={backend === 'phaxio' ? 'Phaxio Inbound Callback' : 
-                   backend === 'sinch' ? 'Sinch Inbound Callback' : 
-                   backend === 'sip' ? 'Asterisk Inbound (internal)' : 'Inbound Callback'}
-            subtitle="View current callback configuration"
-            icon={<InfoIcon />}
-          >
-            <Stack spacing={2}>
-              <Stack direction="row" spacing={1}>
-                <Button 
-                  variant="contained" 
-                  onClick={runCallbacksInfo} 
-                  disabled={busyInfo || busyInbound}
-                  startIcon={busyInfo ? <CircularProgress size={16} /> : <InfoIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  {busyInfo ? 'Loading' : 'Show Config'}
-                </Button>
-                <Button 
-                  variant="outlined"
-                  onClick={clearInfo} 
-                  disabled={busyInfo || busyInbound}
-                  startIcon={<ClearIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Clear
-                </Button>
-              </Stack>
-              <ConsoleBox lines={infoLines} loading={busyInfo} />
-            </Stack>
-          </ResponsiveFormSection>
-        </Grid>
-
-        {/* Container Checks */}
-        {actions.length > 0 && (
-          <Grid item xs={12}>
-            <ResponsiveFormSection
-              title="Container Checks"
-              subtitle="Run diagnostic scripts in the container"
-              icon={<TerminalIcon />}
-            >
-              <Stack spacing={2}>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {actions.map((a) => (
-                    <Chip
-                      key={a.id}
-                      label={a.label}
-                      onClick={async () => {
-                        setActiveActionTab(a.id);
-                        setBusyInfo(true);
-                        try {
-                          const r = await (client as any).runAction?.(a.id);
-                          setActionOutput((prev) => ({ 
-                            ...prev, 
-                            [a.id]: (r?.stdout || '') + (r?.stderr ? "\n[stderr]\n" + r.stderr : '') 
-                          }));
-                        } catch (e: any) {
-                          setActionOutput((prev) => ({ ...prev, [a.id]: e?.message || 'Failed' }));
-                        } finally { 
-                          setBusyInfo(false); 
-                        }
-                      }}
-                      variant={activeActionTab === a.id ? "filled" : "outlined"}
-                      color={activeActionTab === a.id ? "primary" : "default"}
-                      sx={{ 
-                        cursor: 'pointer',
-                        borderRadius: 2,
-                        '&:hover': {
-                          backgroundColor: theme.palette.action.hover,
-                        }
-                      }}
-                      disabled={busyInbound || busyInfo}
-                    />
-                  ))}
+              {callbacks.callbacks.map((item) => (
+                <Box key={item.url}>
+                  <Typography variant="subtitle2">{item.name}</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{item.url}</Typography>
+                    <Tooltip title={copied === item.url ? 'Copied' : 'Copy address'}>
+                      <IconButton size="small" aria-label={`Copy ${item.name} address`} onClick={() => void copy(item.url)}><CopyIcon fontSize="small" /></IconButton>
+                    </Tooltip>
+                  </Box>
+                  {item.notes && <Typography variant="body2" color="text.secondary">{item.notes}</Typography>}
                 </Box>
-                
-                {activeActionTab && (
-                  <ConsoleBox 
-                    lines={(actionOutput[activeActionTab]?.split('\n') || []).slice(0, 400)} 
-                    loading={busyInfo && activeActionTab === actions.find(a => !actionOutput[a.id])?.id}
-                    title={actions.find(a => a.id === activeActionTab)?.label}
-                  />
-                )}
-              </Stack>
-            </ResponsiveFormSection>
-          </Grid>
-        )}
-      </Grid>
-      
-      <Alert 
-        severity="info" 
-        icon={false}
-        sx={{ mt: 3, borderRadius: 2 }}
-      >
-        <Typography variant="caption" color="text.secondary">
-          <strong>Tip:</strong> Providers need public HTTPS callback URLs; check them in Settings.
-        </Typography>
-      </Alert>
+              ))}
+              {guide && <Link href={docsLink(guide, docsBase)} target="_blank" rel="noreferrer">{receiver} setup guide</Link>}
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {receiver ? `Faxbot collects received faxes from ${receiver} itself, so there is no address to give ${receiver}.`
+                : 'No provider receives faxes for Faxbot.'}
+            </Typography>
+          )}
+        </ResponsiveFormSection>
+
+        <ResponsiveFormSection title="Fax engine" subtitle="What Faxbot's own fax engine reports right now" icon={<EngineIcon />}>
+          <Stack spacing={2}>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {ENGINE_VIEWS.map((view) => (
+                <Button key={view.id} size="small" variant={engineView === view.id ? 'contained' : 'outlined'}
+                  disabled={busy} onClick={() => void showEngine(view.id)}>{view.label}</Button>
+              ))}
+            </Box>
+            {engineError && <Alert severity="error">{engineError}</Alert>}
+            {engine && engine.rows.length > 0 && (
+              <Box sx={{ overflowX: 'auto' }}>
+                <Table size="small" aria-label={engine.title}>
+                  <TableHead><TableRow>{engine.columns.map((column) => <TableCell key={column}>{column}</TableCell>)}</TableRow></TableHead>
+                  <TableBody>
+                    {engine.rows.map((row, index) => (
+                      <TableRow key={index}>{row.map((cell, cellIndex) => <TableCell key={cellIndex} sx={{ overflowWrap: 'anywhere' }}>{cell}</TableCell>)}</TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            )}
+            {engine?.message && <Typography variant="body2" color="text.secondary">{engine.message}</Typography>}
+          </Stack>
+        </ResponsiveFormSection>
+      </Stack>
     </Box>
   );
 };

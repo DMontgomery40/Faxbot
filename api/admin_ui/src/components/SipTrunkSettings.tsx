@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   Fade,
   FormControl,
   FormControlLabel,
   FormLabel,
   InputLabel,
   Link,
+  ListSubheader,
   MenuItem,
   Radio,
   RadioGroup,
@@ -28,16 +33,35 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
-import type { NumberFormat, SettingsPatch } from '../api/types';
+import type { NumberFormat, Settings, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
+import InboundRecovery from './InboundRecovery';
+import NetworkForFax from './NetworkForFax';
+import TelnyxT38 from './TelnyxT38';
+import FaxSettings from './FaxSettings';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
   // The setup wizard shows the trunk form without the call history.
   showCalls?: boolean;
+  // The setup wizard shares its settings revision and hears about saves, so
+  // neither form is refused for the other's change.
+  revision?: string;
+  onSaved?: () => void | Promise<void>;
+  // Whether the form has changes that are not saved yet.
+  onDirtyChange?: (dirty: boolean) => void;
+  // The trunk receives faxes: say whether a received fax can reach Faxbot.
+  showReceiving?: boolean;
+  // How often and how long Apply and connect checks the trunk after a restart.
+  pollMs?: number;
+  waitMs?: number;
+  // The carrier or phone system was chosen in the Setup wizard: name it instead of offering every one.
+  presetChosenElsewhere?: boolean;
 }
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string } | null;
@@ -45,7 +69,54 @@ type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string
 const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
-  fax_preference_header: false, codecs: '', external_address: '',
+  fax_preference_header: true, codecs: '', external_address: '', dial_format: '', dial_prefix: '',
+  public_address_check_minutes: 5,
+  // Fax settings: the recommended values.
+  t38_error_correction: 'redundancy', t38_max_datagram: 400, fax_max_rate: 14400, fax_ecm: true,
+  fax_compression: 'jbig', fax_fine: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
+};
+
+// What the phone system section shows: how the phone system reaches Faxbot, from the trunk check.
+type Reach = Pick<SipTrunkStatus, 'phone_system' | 'phone_system_command' | 'phone_system_setting'
+  | 'phone_system_hidden' | 'ports_text'>;
+
+const isPhoneSystem = (preset?: SipPreset) => preset?.kind === 'phone_system';
+const TRANSPORTS_OFFERED: Array<'tls' | 'tcp' | 'udp'> = ['tls', 'tcp', 'udp'];
+
+// A source's read date in the reader's own words ('2026-10-03' is a calendar day, not a moment).
+export function readOn(day: string): string {
+  const [year, month, date] = day.split('-').map(Number);
+  if (!year || !month || !date) return day;
+  return new Date(year, month - 1, date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+// Plain names for the signaling transport; encrypted is the default for carriers that offer it.
+const TRANSPORT_TEXT: Record<string, string> = {
+  tls: 'Encrypted (TLS)',
+  tcp: 'TCP',
+  udp: 'UDP (older)',
+};
+const DEFAULT_PORTS: Record<string, number> = { udp: 5060, tcp: 5060, tls: 5061 };
+
+// Which directions the trunk carries, from the saved provider choice.
+type TrunkUse = { sends: boolean; receives: boolean };
+
+function trunkUse(settings: Settings): TrunkUse {
+  const sending = settings.hybrid?.outbound_backend ?? settings.backend.type;
+  const receiving = settings.hybrid?.inbound_backend ?? settings.backend.type;
+  const routes = String(settings.routing?.outbound_routes ?? '').split(',').map((route) => route.trim());
+  return { sends: sending === 'sip' || routes.includes('sip'), receives: !!settings.inbound.enabled && receiving === 'sip' };
+}
+
+const INTRO: Record<string, string> = {
+  both: 'Send and receive faxes with Faxbot\'s own fax engine over your carrier account.',
+  receives: 'Receive faxes with Faxbot\'s own fax engine over your carrier account.',
+  sends: 'Send faxes with Faxbot\'s own fax engine over your carrier account.',
+};
+const PHONE_INTRO: Record<string, string> = {
+  both: 'Send and receive faxes with Faxbot\'s own fax engine through your office phone system and its lines.',
+  receives: 'Receive faxes with Faxbot\'s own fax engine through your office phone system and its lines.',
+  sends: 'Send faxes with Faxbot\'s own fax engine through your office phone system and its lines.',
 };
 
 const RESULT_TEXT: Record<SipCallRecord['disposition'], string> = {
@@ -79,7 +150,34 @@ function failure(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
+// Asterisk is back and the carrier has refused Faxbot or answered its check.
+function settled(status: SipTrunkStatus): boolean {
+  if (status.engine_restarting || !status.asterisk_connected) return false;
+  if (status.registration === 'rejected') return true;
+  return ['registered', 'not_used'].includes(status.registration) && status.reachability === 'reachable';
+}
+
+// Why Faxbot uses audio fax for new calls, in one sentence.
+export function audioReason(reason: string | null | undefined, at?: string | null, carrier?: string): string | null {
+  if (reason === 'no_data_back') {
+    const date = at ? new Date(at) : null;
+    const day = date && !Number.isNaN(date.getTime())
+      ? `on ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })} ` : '';
+    return `Off: ${day}a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.`;
+  }
+  if (reason === 'network') {
+    return carrier === 'Telnyx'
+      ? 'Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed.'
+      : 'Off: your network changes port numbers, so fax over IP (T.38) most likely cannot work; Faxbot sends audio fax until the network is fixed.';
+  }
+  if (reason === 'carrier') {
+    return `Off: ${carrier || 'your carrier'} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.`;
+  }
+  return null;
+}
+
+function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange,
+  showReceiving = false, pollMs = 2000, waitMs = 60000, presetChosenElsewhere = false }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -94,8 +192,19 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [callsNote, setCallsNote] = useState<string | null>(null);
   const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
+  const [passwordInEnv, setPasswordInEnv] = useState(false);
+  const [use, setUse] = useState<TrunkUse | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [handover, setHandover] = useState<{ ready: boolean; text: string } | null>(null);
+  const [reach, setReach] = useState<Reach | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
+  const expectedRevision = sharedRevision ?? revision;
+  const dirty = !!form.password || !!didEntry.trim() || (Object.keys(EMPTY) as Array<keyof TrunkValues>)
+    .some((key) => key !== 'password' && key !== 'password_set' && JSON.stringify(form[key]) !== JSON.stringify(saved[key]));
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const load = useCallback(async () => {
     try {
@@ -105,7 +214,9 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       setSaved(trunk);
       setForm(trunk);
       setRevision(settings._meta?.desired_revision_id);
+      setPasswordInEnv(environmentManaged(settings).has('sip_trunk_password'));
       setNumberFormat(settingsNumberFormat(settings));
+      setUse(settings.backend && settings.inbound ? trunkUse(settings) : null);
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Trunk settings could not be loaded. Try again.') });
     }
@@ -123,6 +234,32 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   }, [client]);
 
   useEffect(() => { void load(); }, [load]);
+  // Received faxes: shown as soon as the form opens, from the same check as trunk status.
+  useEffect(() => {
+    if (!showReceiving) return;
+    let current = true;
+    client.getSipStatus().then((result) => {
+      if (current && result.handover_text) setHandover({ ready: !!result.handover_ready, text: result.handover_text });
+    }).catch(() => undefined);
+    return () => { current = false; };
+  }, [client, showReceiving]);
+  useEffect(() => {
+    if (status?.handover_text) setHandover({ ready: !!status.handover_ready, text: status.handover_text });
+  }, [status]);
+  // A saved phone system: say at once how it reaches Faxbot, from the same check as trunk status.
+  const savedPhone = isPhoneSystem(presets.find((item) => item.id === saved.preset));
+  useEffect(() => {
+    if (!savedPhone) {
+      setReach(null);
+      return;
+    }
+    let current = true;
+    client.getSipStatus().then((result) => { if (current) setReach(result); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [client, savedPhone, saved.preset]);
+  useEffect(() => {
+    if (status && status.kind === 'phone_system') setReach(status);
+  }, [status]);
   useEffect(() => { if (showCalls) void loadCalls(); }, [showCalls, loadCalls]);
 
   const update = <K extends keyof TrunkValues>(key: K, value: TrunkValues[K]) =>
@@ -134,6 +271,11 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       ...current,
       preset: id,
       auth: next && !next.auth_modes.includes(current.auth) ? next.auth_modes[0] : current.auth,
+      // A transport or number format the new preset does not offer goes back to its default.
+      transport: next && current.transport && !(next.transports ?? TRANSPORTS_OFFERED).includes(current.transport as 'udp')
+        ? '' : current.transport,
+      dial_format: next && current.dial_format && !(next.dial_formats ?? []).includes(current.dial_format as 'e164')
+        ? '' : current.dial_format,
     }));
   };
 
@@ -145,14 +287,22 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
     setDidEntry('');
   };
 
-  const save = async () => {
-    const patch: SettingsPatch = { expected_revision_id: revision };
+  // Save what changed in the form; true when nothing typed is left unsaved.
+  const saveForm = async (quiet = false): Promise<boolean> => {
+    const patch: SettingsPatch = { expected_revision_id: expectedRevision };
     const fields: Array<[keyof TrunkValues, string]> = [
       ['preset', 'sip_trunk_preset'], ['auth', 'sip_trunk_auth'], ['host', 'sip_trunk_host'],
       ['port', 'sip_trunk_port'], ['transport', 'sip_trunk_transport'], ['username', 'sip_trunk_username'],
       ['outbound_proxy', 'sip_trunk_outbound_proxy'], ['caller_id', 'sip_trunk_caller_id'],
       ['t38_enabled', 'sip_t38_enabled'], ['fax_preference_header', 'sip_fax_preference_header'],
-      ['external_address', 'sip_external_address'],
+      ['external_address', 'sip_external_address'], ['codecs', 'sip_trunk_codecs'],
+      ['dial_format', 'sip_trunk_dial_format'], ['dial_prefix', 'sip_trunk_dial_prefix'],
+      ['public_address_check_minutes', 'sip_public_address_check_minutes'],
+      // Fax settings.
+      ['t38_error_correction', 'sip_t38_error_correction'], ['t38_max_datagram', 'sip_t38_max_datagram'],
+      ['fax_max_rate', 'sip_fax_max_rate'], ['fax_ecm', 'sip_fax_ecm'], ['fax_compression', 'sip_fax_compression'],
+      ['fax_fine', 'sip_fax_fine'], ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
+      ['sslfax_listener_port', 'sip_sslfax_listener_port'],
     ];
     // The caller ID keeps its spaces while typed and is trimmed when saved.
     const current: TrunkValues = { ...form, caller_id: form.caller_id.trim() };
@@ -162,35 +312,84 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
     if (form.dids.join(',') !== saved.dids.join(',')) patch.sip_trunk_dids = form.dids.join(',');
     if (form.password) patch.sip_trunk_password = form.password;
     if (Object.keys(patch).length === 1) {
-      setNotice({ severity: 'info', text: 'Nothing to save.' });
-      return;
+      if (!quiet) setNotice({ severity: 'info', text: 'Nothing to save.' });
+      return true;
     }
-    setBusy(true);
     try {
       const result = await client.updateSettings(patch);
-      setNotice({
-        severity: 'success',
-        text: result._meta.apply_state === 'pending_restart'
-          ? 'Saved. Restart Faxbot, then apply the trunk to Asterisk.'
-          : 'Saved. Apply the trunk to Asterisk to use it.',
-      });
+      if (!quiet) {
+        setNotice({
+          severity: 'success',
+          text: result._meta.apply_state === 'pending_restart'
+            ? 'Saved. Restart Faxbot, then select Apply and connect.'
+            : 'Saved. Select Apply and connect to use it.',
+        });
+      }
       await load();
+      await onSaved?.();
+      return true;
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'The trunk settings could not be saved. Try again.') });
+      return false;
+    }
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await saveForm();
     } finally {
       setBusy(false);
     }
   };
 
-  const apply = async () => {
+  // Check the trunk until Asterisk is back and the carrier has answered, or the wait ends.
+  const waitForTrunk = async () => {
+    const started = Date.now();
+    let latest: SipTrunkStatus | null = null;
+    while (alive.current) {
+      try {
+        latest = await client.getSipStatus();
+      } catch {
+        latest = null;
+      }
+      if ((latest && settled(latest)) || Date.now() - started >= waitMs) break;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return latest;
+  };
+
+  // Write the trunk for Asterisk, let Faxbot restart Asterisk when needed, then show the trunk check.
+  const connect = async (savedText?: string) => {
+    const result = await client.applySipTrunk();
+    if (result.engine === 'restarting' || result.engine === 'current') {
+      setConnecting(true);
+      setNotice({ severity: 'info', text: result.engine === 'restarting'
+        ? 'The fax engine is restarting to use these settings. Checking the carrier…' : 'Checking the carrier…' });
+      const latest = await waitForTrunk();
+      if (!alive.current) return;
+      setConnecting(false);
+      setNotice(savedText ? { severity: 'success', text: savedText }
+        : result.engine === 'current' ? { severity: 'success', text: result.message } : null);
+      if (latest) setStatus(latest);
+      else setNotice({ severity: 'error', text: 'Trunk status is not available right now.' });
+      return;
+    }
+    setNotice({ severity: result.engine === 'manual' || !result.engine ? 'success' : 'warning', text: result.message });
+  };
+
+  const applyAndConnect = async () => {
     setBusy(true);
+    setStatus(null);
     try {
-      const result = await client.applySipTrunk();
-      setNotice({ severity: 'success', text: result.message });
+      if (await saveForm(true)) await connect();
     } catch (error) {
-      setNotice({ severity: 'error', text: failure(error, 'The trunk could not be applied to Asterisk. Try again.') });
+      setNotice({ severity: 'error', text: failure(error, 'Faxbot could not start using these settings. Try again.') });
     } finally {
-      setBusy(false);
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
     }
   };
 
@@ -205,26 +404,89 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
     }
   };
 
+  // Offered after a T.38 call carried no fax data; Faxbot never changes the mode by itself.
+  const useAudioFax = async () => {
+    setBusy(true);
+    try {
+      await client.updateSettings({ expected_revision_id: expectedRevision, sip_t38_enabled: false });
+      setStatus(null);
+      await load();
+      await onSaved?.();
+      await connect('New calls send and receive faxes as audio.');
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'Audio fax could not be turned on. Try again.') });
+    } finally {
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
+    }
+  };
+
+  // Turn T.38 back on after Faxbot chose audio fax, and connect the trunk with it.
+  const tryT38Again = async () => {
+    setBusy(true);
+    try {
+      await client.updateSettings({ expected_revision_id: expectedRevision, sip_t38_enabled: true });
+      setStatus(null);
+      await load();
+      await onSaved?.();
+      await connect('New calls try T.38 again.');
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'T.38 could not be turned back on. Try again.') });
+    } finally {
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
+    }
+  };
+
+  const offReason = !form.t38_enabled && !saved.t38_enabled
+    ? audioReason(saved.t38_off_reason, saved.t38_off_at, presets.find((item) => item.id === saved.preset)?.label) : null;
   const statusSeverity = status?.message === 'The trunk is ready.' ? 'success'
-    : status && (status.registration === 'rejected' || status.reachability === 'unreachable') ? 'error' : 'info';
+    : status && (status.registration === 'rejected' || status.reachability === 'unreachable'
+      || (!!status.ports_text && status.ports_text === status.message)) ? 'error' : 'info';
   const needsHost = !!preset && (preset.needs_host || preset.id === 'custom');
+  const sends = use ? use.sends : true;
+  const transportInForce = form.transport || preset?.transport || 'udp';
+  const portInForce = preset ? (transportInForce === preset.transport ? preset.port : DEFAULT_PORTS[transportInForce]) : 5060;
   const prefixLogin = !!preset?.ip_dial_prefix && form.auth === 'ip';
+  const phone = isPhoneSystem(preset);
+  const directions = use?.sends && !use.receives ? 'sends' : use?.receives && !use.sends ? 'receives' : 'both';
+  const carriers = presets.filter((item) => !isPhoneSystem(item));
+  const phoneSystems = presets.filter(isPhoneSystem);
+  const formats = preset?.dial_formats ?? [];
+  const localNumbers = form.dial_format === 'local';
+  // The vendor names the checklist: "What you set in Avaya".
+  const vendor = preset?.label.split(' ')[0] ?? '';
 
   return (
     <Stack spacing={2} data-testid="sip-trunk-settings">
-      <Typography variant="h6">Carrier SIP trunk</Typography>
+      <Typography variant="h6">{phone ? 'SIP trunk to your phone system' : 'Carrier SIP trunk'}</Typography>
       <Typography variant="body2" color="text.secondary">
-        Send and receive faxes with Faxbot's own fax engine over your carrier account. Your carrier bills these calls by the minute.
+        {phone ? `${PHONE_INTRO[directions]} The carrier behind your phone system bills these calls.`
+          : `${INTRO[directions]} Your carrier bills these calls by the minute.`}
       </Typography>
 
+      {presetChosenElsewhere && preset ? (
+        <Typography variant="body2" data-testid="sip-preset-chosen">
+          {phone ? `Phone system: ${preset.label}.` : `Carrier: ${preset.id === 'custom' ? 'your own carrier' : preset.label}.`}
+          {' '}To use another, choose Add or change a provider.
+        </Typography>
+      ) : (
       <FormControl fullWidth size="small">
         <InputLabel id="sip-preset-label">Carrier</InputLabel>
         <Select labelId="sip-preset-label" label="Carrier" value={form.preset}
           onChange={(event) => choosePreset(String(event.target.value))}>
           <MenuItem value=""><em>No SIP trunk</em></MenuItem>
-          {presets.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+          {phoneSystems.length > 0 && <ListSubheader>Carrier</ListSubheader>}
+          {carriers.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+          {phoneSystems.length > 0 && <ListSubheader>Your phone system</ListSubheader>}
+          {phoneSystems.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
         </Select>
       </FormControl>
+      )}
 
       {preset && (
         <>
@@ -232,19 +494,13 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             {preset.notes.map((note) => <Typography key={note} variant="body2">{note}</Typography>)}
             {preset.t38 && <Typography variant="body2">{preset.t38}</Typography>}
             {preset.sources.length > 0 && (
-              <Typography variant="body2" color="text.secondary">
-                Carrier documentation, read {preset.sources[0].read_on}:{' '}
-                {preset.sources.map((source, index) => (
-                  <span key={source.url}>
-                    {index > 0 && ', '}
-                    <Link href={source.url} target="_blank" rel="noreferrer">{new URL(source.url).hostname}</Link>
-                  </span>
-                ))}
+              <Typography variant="body2">
+                <Link href={preset.sources[0].url} target="_blank" rel="noreferrer">{preset.label} documentation</Link>
               </Typography>
             )}
           </Box>
 
-          <FormControl>
+          {!phone && <FormControl>
             <FormLabel id="sip-auth-label">How Faxbot signs in to the carrier</FormLabel>
             <RadioGroup row aria-labelledby="sip-auth-label" value={form.auth}
               onChange={(event) => update('auth', event.target.value as TrunkValues['auth'])}>
@@ -255,24 +511,49 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                 <FormControlLabel value="ip" control={<Radio />} label="Server IP address" />
               )}
             </RadioGroup>
-          </FormControl>
+          </FormControl>}
+
+          {phone && (preset.admin_steps ?? []).length > 0 && (
+            <Accordion disableGutters variant="outlined" data-testid="phone-system-steps">
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>{`What you set in ${vendor}`}</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box component="ol" sx={{ pl: 3, mt: 0 }}>
+                  {(preset.admin_steps ?? []).map((step) => (
+                    <li key={step}><Typography variant="body2">{step}</Typography></li>
+                  ))}
+                </Box>
+                <Typography variant="body2" fontWeight={600}>Sources</Typography>
+                {preset.sources.map((source) => (
+                  <Typography key={source.url} variant="body2">
+                    <Link href={source.url} target="_blank" rel="noreferrer">{new URL(source.url).hostname}</Link>
+                    {`, read ${readOn(source.read_on)}`}
+                  </Typography>
+                ))}
+              </AccordionDetails>
+            </Accordion>
+          )}
 
           <Stack direction={narrow ? 'column' : 'row'} spacing={2}>
-            <TextField size="small" fullWidth label="Server" value={form.host}
-              required={needsHost} placeholder={preset.host || 'sip.example.com'}
-              helperText={needsHost ? 'The SIP server name your carrier gave you.' : `Leave empty to use ${preset.host}.`}
+            <TextField size="small" fullWidth label={phone ? 'Phone system address' : 'Server'} value={form.host}
+              required={needsHost} placeholder={phone ? '192.168.1.10' : preset.host || 'sip.example.com'}
+              InputLabelProps={{ shrink: true }}
+              helperText={phone ? `${preset.label}'s address on your local network.`
+                : needsHost ? 'The server name your carrier gave you.' : `Leave empty to use ${preset.host}.`}
               onChange={(event) => update('host', event.target.value.trim())} />
             <TextField size="small" label="Port" type="number" value={form.port || ''}
-              placeholder={String(preset.port)} sx={{ minWidth: 120 }}
+              placeholder={String(portInForce)} sx={{ minWidth: 120 }} InputLabelProps={{ shrink: true }}
+              helperText={form.port ? undefined : `Leave empty to use ${portInForce}.`}
               onChange={(event) => update('port', Number(event.target.value) || 0)} />
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel id="sip-transport-label">Transport</InputLabel>
-              <Select labelId="sip-transport-label" label="Transport" value={form.transport}
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id="sip-transport-label" shrink>Connection type</InputLabel>
+              <Select labelId="sip-transport-label" label="Connection type" value={form.transport} displayEmpty notched
                 onChange={(event) => update('transport', String(event.target.value))}>
-                <MenuItem value="">{`Default (${preset.transport.toUpperCase()})`}</MenuItem>
-                <MenuItem value="udp">UDP</MenuItem>
-                <MenuItem value="tcp">TCP</MenuItem>
-                <MenuItem value="tls">TLS</MenuItem>
+                <MenuItem value="">{`Default: ${TRANSPORT_TEXT[preset.transport] ?? preset.transport.toUpperCase()}`}</MenuItem>
+                {(preset.transports ?? TRANSPORTS_OFFERED).filter((name) => TRANSPORTS_OFFERED.includes(name))
+                  .sort((a, b) => TRANSPORTS_OFFERED.indexOf(a) - TRANSPORTS_OFFERED.indexOf(b))
+                  .map((name) => <MenuItem key={name} value={name}>{TRANSPORT_TEXT[name]}</MenuItem>)}
               </Select>
             </FormControl>
           </Stack>
@@ -282,7 +563,8 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
               <TextField size="small" fullWidth label={prefixLogin ? 'Tech prefix' : 'Username'} value={form.username}
                 helperText={prefixLogin ? 'The eight-digit prefix from your Flowroute account.' : undefined}
                 onChange={(event) => update('username', event.target.value.trim())} />
-              {form.auth === 'registration' && (
+              {form.auth === 'registration' && passwordInEnv && <EnvSetField size="small" fullWidth label="Password" />}
+              {form.auth === 'registration' && !passwordInEnv && (
                 <SecretInput size="small" fullWidth label="Password" value={form.password}
                   placeholder={saved.password_set ? 'Saved; type a new one to replace it' : ''}
                   helperText={saved.password_set ? 'A password is saved.' : 'Not saved yet.'}
@@ -291,23 +573,78 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             </Stack>
           )}
 
-          <TextField size="small" fullWidth label="Outbound proxy (optional)" value={form.outbound_proxy}
+          {!phone && <TextField size="small" fullWidth label="Outbound proxy (optional)" value={form.outbound_proxy}
             helperText="Only if your carrier asks for one."
-            onChange={(event) => update('outbound_proxy', event.target.value.trim())} />
+            onChange={(event) => update('outbound_proxy', event.target.value.trim())} />}
 
-          <TextField size="small" fullWidth label="Public IP address (optional)" value={form.external_address}
-            placeholder="203.0.113.10"
-            helperText="Only if Asterisk is behind a router or firewall: the address your carrier should send calls and fax data to."
-            onChange={(event) => update('external_address', event.target.value.trim())} />
+          {!phone && <TextField size="small" fullWidth label="Internet address (optional)" value={form.external_address}
+            placeholder="Automatic"
+            helperText={status?.internet_address && !form.external_address
+              ? `Automatic: Faxbot found ${status.internet_address}. Enter an address only to override it.`
+              : 'Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it.'}
+            onChange={(event) => update('external_address', event.target.value.trim())} />}
 
-          <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"
-            placeholder={numberPlaceholder(numberFormat)}
-            helperText="A number your carrier has assigned to you or verified for you. Faxbot never sends any other number."
+          {/* Only an address Faxbot finds itself is checked again. */}
+          {!phone && !form.external_address && (
+            <TextField size="small" label="Check the internet address every … minutes" type="number"
+              value={form.public_address_check_minutes ?? 5} sx={{ maxWidth: 360 }}
+              inputProps={{ min: 0, max: 1440 }}
+              helperText="How often Faxbot checks whether your internet address changed. Enter 0 to stop checking."
+              onChange={(event) => update('public_address_check_minutes',
+                Math.min(1440, Math.max(0, Math.round(Number(event.target.value) || 0))))} />
+          )}
+
+          {(phone || preset.codecs_by_country) && (
+            <FormControl size="small" fullWidth>
+              <InputLabel id="sip-codecs-label" shrink>Call sound format</InputLabel>
+              <Select labelId="sip-codecs-label" label="Call sound format" value={form.codecs} displayEmpty notched
+                onChange={(event) => update('codecs', String(event.target.value))}>
+                <MenuItem value="">{'Default: A-law first, or \u00b5-law first in North America and Japan'}</MenuItem>
+                <MenuItem value="alaw,ulaw">A-law first (UK, Europe and Australia)</MenuItem>
+                <MenuItem value="ulaw,alaw">{'\u00b5-law first (North America)'}</MenuItem>
+              </Select>
+            </FormControl>
+          )}
+
+          {formats.length > 1 && (
+            <Stack direction={narrow ? 'column' : 'row'} spacing={2}>
+              <FormControl size="small" fullWidth>
+                <InputLabel id="sip-dial-format-label">Number format</InputLabel>
+                <Select labelId="sip-dial-format-label" label="Number format" value={form.dial_format || 'e164'}
+                  onChange={(event) => update('dial_format', String(event.target.value))}>
+                  <MenuItem value="e164">
+                    {`International, with + and the country code${numberFormat ? ` (${numberFormat.international})` : ''}`}
+                  </MenuItem>
+                  <MenuItem value="local">
+                    {`As a phone here dials it${numberFormat ? ` (${numberFormat.national})` : ''}`}
+                  </MenuItem>
+                </Select>
+              </FormControl>
+              {localNumbers && (
+                <TextField size="small" fullWidth label="Outside-line prefix (optional)" value={form.dial_prefix}
+                  inputProps={{ inputMode: 'numeric', maxLength: 4 }}
+                  helperText={phone ? 'Digits your phone system needs before an outside number, such as 9.'
+                    : 'Digits your carrier needs before each number, if any.'}
+                  onChange={(event) => update('dial_prefix', event.target.value.replace(/[^0-9]/g, ''))} />
+              )}
+            </Stack>
+          )}
+
+          <TextField size="small" fullWidth label={sends ? 'Caller ID' : 'Caller ID (optional)'} value={form.caller_id}
+            required={sends} type="tel" placeholder={numberPlaceholder(numberFormat)}
+            helperText={phone
+              ? 'The fax number your phone system shows for faxes Faxbot sends.'
+              : sends
+                ? 'A number your carrier has assigned to you or verified for you. Faxbot never sends any other number.'
+                : 'Needed only when the trunk sends faxes: a number your carrier has assigned to you or verified for you.'}
             onChange={(event) => update('caller_id', event.target.value)} />
 
           <Box>
-            <Typography variant="subtitle2">Fax numbers on this trunk</Typography>
-            <Typography variant="body2" color="text.secondary">{numberHint(numberFormat, 'The numbers your carrier sends to this trunk')}</Typography>
+            <Typography variant="subtitle2">{phone ? 'Fax numbers your phone system sends to Faxbot' : 'Fax numbers on this trunk'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              {numberHint(numberFormat, phone ? 'The fax numbers your phone system routes to Faxbot'
+                : 'The numbers your carrier sends to this trunk')}
+            </Typography>
             <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', my: 1 }} useFlexGap>
               {form.dids.length === 0 && <Typography variant="body2">No numbers yet.</Typography>}
               {form.dids.map((number) => (
@@ -325,7 +662,13 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
 
           <FormControlLabel
             control={<Switch checked={form.t38_enabled} onChange={(event) => update('t38_enabled', event.target.checked)} />}
-            label="Use T.38 fax over IP (recommended)" />
+            label={offReason ? 'Use T.38 fax over IP' : 'Use T.38 fax over IP (recommended)'} />
+          {offReason && (
+            <Box data-testid="t38-off-reason" sx={{ mt: -1 }}>
+              <Typography variant="body2" color="text.secondary">{offReason}</Typography>
+              <Button size="small" onClick={tryT38Again} disabled={busy}>Try T.38 again</Button>
+            </Box>
+          )}
           <FormControlLabel
             control={<Switch checked={form.fax_preference_header}
               onChange={(event) => update('fax_preference_header', event.target.checked)} />}
@@ -333,14 +676,44 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
           <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
             Some carriers use this to pick a fax-capable route; others ignore it. Faxbot never calls again because of it.
           </Typography>
+          <FaxSettings form={form} update={update} />
         </>
       )}
 
+      {phone && reach && (reach.ports_text || reach.phone_system_command) && (
+        <Box data-testid="phone-system-reach">
+          <Typography variant="subtitle2">Reaching Faxbot from your phone system</Typography>
+          <Alert severity={reach.phone_system_hidden ? 'error' : reach.phone_system_command ? 'warning' : 'success'}
+            sx={{ mt: 1 }}>
+            <Typography variant="body2">{reach.ports_text}</Typography>
+            {reach.phone_system_command && (
+              <>
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  {`Set ${reach.phone_system_setting} in .env to this computer's address on your local network, then run:`}
+                </Typography>
+                <Box component="code" sx={{ display: 'block', mt: 0.5, p: 1, borderRadius: 1, bgcolor: 'action.hover',
+                  fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto', whiteSpace: 'pre' }}>
+                  {reach.phone_system_command}
+                </Box>
+              </>
+            )}
+          </Alert>
+        </Box>
+      )}
+
+      {!phone && saved.preset && <NetworkForFax client={client} onChanged={load} refresh={status} />}
+      {saved.preset === 'telnyx' && <TelnyxT38 client={client} refresh={status} />}
+
       <Stack direction={narrow ? 'column' : 'row'} spacing={1}>
         <Button variant="contained" onClick={save} disabled={busy}>Save trunk settings</Button>
-        <Button variant="outlined" onClick={apply} disabled={busy || !saved.preset}>Apply to Asterisk</Button>
+        <Button variant="outlined" onClick={applyAndConnect} disabled={busy || !(saved.preset || form.preset)}
+          startIcon={connecting ? <CircularProgress size={16} color="inherit" /> : undefined}>Apply and connect</Button>
         <Button variant="outlined" onClick={checkStatus} disabled={busy}>Check trunk status</Button>
       </Stack>
+
+      {showReceiving && handover && (
+        <Alert severity={handover.ready ? 'success' : 'warning'} data-testid="sip-handover">{handover.text}</Alert>
+      )}
 
       <Fade in={!!notice} unmountOnExit>
         <Alert severity={notice?.severity ?? 'info'} onClose={() => setNotice(null)}>{notice?.text}</Alert>
@@ -353,6 +726,36 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             <>
               <Typography variant="body2">{status.registration_text}</Typography>
               <Typography variant="body2">{status.reachability_text}</Typography>
+            </>
+          )}
+          {status?.configured && (
+            <>
+              {status.public_address_text && <Typography variant="body2">{status.public_address_text}</Typography>}
+              {status.engine_text && (
+                <Typography variant="body2" data-testid="engine-text">
+                  {status.engine_audio ? `${status.engine_text} To try T.38 again, select Apply and connect.`
+                    : status.engine_text}
+                </Typography>
+              )}
+              {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
+                && <Typography variant="body2">{status.ports_text}</Typography>}
+              {!showReceiving && status.handover_text && status.handover_text !== status.message
+                && <Typography variant="body2">{status.handover_text}</Typography>}
+              {status.last_call_text && (
+                <Typography variant="body2">
+                  {`Last call${status.last_call_at ? `, ${when(status.last_call_at)}` : ''}: ${status.last_call_text}`}
+                </Typography>
+              )}
+              {status.suggest_audio && (
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="body2">
+                    Audio fax may still work when T.38 data cannot come back through your network.
+                  </Typography>
+                  <Button size="small" variant="outlined" sx={{ mt: 1 }} onClick={useAudioFax} disabled={busy}>
+                    Use audio fax for new calls
+                  </Button>
+                </Box>
+              )}
             </>
           )}
         </Alert>
@@ -375,6 +778,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                     <Typography variant="body2">
                       {RESULT_TEXT[call.disposition]}, {connectedTime(call.connected_seconds)}, {call.pages ?? 0} pages, T.38 {call.t38 === 'yes' ? 'yes' : call.t38 === 'no' ? 'no' : 'not known'}
                     </Typography>
+                    {call.summary && <Typography variant="body2">{call.summary}</Typography>}
                   </CardContent>
                 </Card>
               ))}
@@ -390,6 +794,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                   <TableCell>Connected</TableCell>
                   <TableCell>Pages</TableCell>
                   <TableCell>T.38</TableCell>
+                  <TableCell>What happened</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -402,12 +807,14 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                     <TableCell>{connectedTime(call.connected_seconds)}</TableCell>
                     <TableCell>{call.pages ?? '—'}</TableCell>
                     <TableCell>{call.t38 === 'yes' ? 'Yes' : call.t38 === 'no' ? 'No' : 'Not known'}</TableCell>
+                    <TableCell>{call.summary ?? ''}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           ))}
           {nextCursor && <Button sx={{ mt: 1 }} onClick={() => loadCalls(nextCursor)}>Show older calls</Button>}
+          <InboundRecovery client={client} onRecovered={() => { void loadCalls(); }} />
         </Box>
       )}
     </Stack>

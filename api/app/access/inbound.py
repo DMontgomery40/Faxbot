@@ -104,8 +104,8 @@ class InboundResources:
             {'source': 'provider', 'placement': 'mailbox' if route is not None else 'unassigned'}, now)
         return ResourceRef(identity)
 
-    def accept(self, values, *, now=None, country=DEFAULT_COUNTRY):
-        """Insert one provider inbound row with its resource and audit, atomically.
+    def insert_on(self, connection, values, now, *, country=DEFAULT_COUNTRY):
+        """Insert one inbound row and place it; the caller owns the access transaction.
 
         Received numbers are stored in E.164 when they can be read for the
         installation country, and as received otherwise; no fax is dropped.
@@ -117,11 +117,25 @@ class InboundResources:
         for field in ('to_number', 'from_number'):
             if isinstance(values.get(field), str) and values[field].strip():
                 values[field] = stored_number(values[field].strip(), country=country)
+        self.store.require_lock_on(connection)
+        connection.execute(faxes.insert().values(**values))
+        return self.record_inbound_on(connection, values['id'], values.get('to_number'), now, country=country)
+
+    def accept(self, values, *, now=None, country=DEFAULT_COUNTRY):
+        """Insert one provider inbound row with its resource and audit, atomically."""
         with self.store.transaction() as connection:
-            moment = now or _utcnow()
-            connection.execute(faxes.insert().values(**values))
-            return self.record_inbound_on(connection, values['id'], values.get('to_number'), moment,
-                                          country=country)
+            return self.insert_on(connection, values, now or _utcnow(), country=country)
+
+    def imports_table(self):
+        """The 0010 acquisition records, reflected once; None before that migration."""
+        if not hasattr(self, '_imports'):
+            try:
+                self._imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=self.store.engine)
+            except sa.exc.NoSuchTableError:
+                return None
+            except sa.exc.SQLAlchemyError:
+                raise AccessUnavailableError() from None
+        return self._imports
 
     def backfill_on(self, connection, now):
         """Place every resource-less inbound row under legacy; repeated runs change nothing."""
@@ -182,7 +196,7 @@ class AuthorizedInboundQueries:
         parent = resources.alias('mailbox_resource')
         query = sa.select(faxes.c.id, faxes.c.from_number.label('fr'), faxes.c.to_number.label('to'),
             faxes.c.status, faxes.c.backend, faxes.c.pages, faxes.c.size_bytes, faxes.c.created_at,
-            faxes.c.received_at, faxes.c.updated_at,
+            faxes.c.received_at, faxes.c.updated_at, faxes.c.sha256, faxes.c.provider_sid, faxes.c.pdf_path,
             sa.func.coalesce(mailboxes.c.label, faxes.c.mailbox_label).label('mailbox')).select_from(
                 faxes.outerjoin(resources, sa.and_(resources.c.inbound_fax_id == faxes.c.id, resources.c.kind == 'inbound'))
                 .outerjoin(parent, sa.and_(parent.c.id == resources.c.parent_id, parent.c.kind == 'mailbox'))
@@ -217,7 +231,7 @@ class AuthorizedInboundQueries:
                     return []
                 query = query.where(parent.c.mailbox_id == mailbox_id)
             rows = connection.execute(query.order_by(faxes.c.received_at.desc(), faxes.c.id.desc()).limit(limit)).mappings().all()
-            return [dict(row) for row in rows]
+            return self._with_acquisition(connection, rows)
 
     def item(self, actor, inbound_id):
         with self.store.transaction() as connection:
@@ -226,14 +240,42 @@ class AuthorizedInboundQueries:
             row = connection.execute(query.where(self.tables['inbound_faxes'].c.id == inbound_id)).mappings().one_or_none()
             if row is None:
                 raise FaxAccessError('not_found')
-            return dict(row)
+            return self._with_acquisition(connection, [row])[0]
+
+    def _with_acquisition(self, connection, rows):
+        """Add each fax's acquisition state, read in one query; never duplicates a fax."""
+        from ..inbound.acquisition import describe
+        imports = self.resources.imports_table()
+        found = {}
+        identities = [row['id'] for row in rows]
+        if imports is not None and identities:
+            for record in connection.execute(sa.select(imports).where(imports.c.inbound_fax_id.in_(identities))
+                                             .order_by(imports.c.created_at, imports.c.id)).mappings():
+                found.setdefault(record['inbound_fax_id'], dict(record))
+        now = self._clock()
+        result = []
+        for row in rows:
+            row = dict(row)
+            record = found.get(row['id'])
+            row.update(describe(row, record, now=now))
+            for private in ('pdf_path', 'provider_sid'):
+                row.pop(private, None)
+            result.append(row)
+        return result
 
     def document(self, actor, inbound_id):
         faxes = self.tables['inbound_faxes']
         with self.store.transaction() as connection:
             self.resources.require_inbound_on(connection, actor, inbound_id, 'inbound:document', now=self._clock())
-            path = connection.execute(sa.select(faxes.c.pdf_path).where(faxes.c.id == inbound_id)).scalar_one_or_none()
-            return {'id': inbound_id, 'pdf_path': path}
+            row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.status, faxes.c.sha256).where(
+                faxes.c.id == inbound_id)).first()
+            return {'id': inbound_id, 'pdf_path': row.pdf_path if row else None,
+                    'status': row.status if row else None, 'sha256': row.sha256 if row else None}
+
+    def require_fetchable(self, actor, inbound_id):
+        """A person may ask to fetch again only a fax they can read."""
+        with self.store.transaction() as connection:
+            self.resources.require_inbound_on(connection, actor, inbound_id, 'inbound:read', now=self._clock())
 
     def shared_document(self, inbound_id, token):
         """The per-fax download link token issued at ingest; it expires and is never a session."""
@@ -242,7 +284,8 @@ class AuthorizedInboundQueries:
         faxes = self.tables['inbound_faxes']
         try:
             with self.store.engine.connect() as connection:
-                row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.pdf_token, faxes.c.pdf_token_expires_at)
+                row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.pdf_token, faxes.c.pdf_token_expires_at,
+                                                   faxes.c.status, faxes.c.sha256)
                     .where(faxes.c.id == inbound_id)).first()
         except sa.exc.SQLAlchemyError:
             raise AccessUnavailableError() from None
@@ -254,4 +297,4 @@ class AuthorizedInboundQueries:
             raise FaxAccessError('forbidden')
         if row.pdf_token_expires_at is None or self._clock() > row.pdf_token_expires_at:
             raise FaxAccessError('forbidden')
-        return {'id': inbound_id, 'pdf_path': row.pdf_path}
+        return {'id': inbound_id, 'pdf_path': row.pdf_path, 'status': row.status, 'sha256': row.sha256}

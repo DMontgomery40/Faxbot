@@ -1,4 +1,6 @@
-import type { SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
+import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -11,12 +13,14 @@ import type {
   PluginConfigurationPatch,
   ConfigurationWriteResult,
   PluginRole,
-  DiagnosticsResult,
+  DiagnosticsReport,
   ValidationResult,
   InboundFax,
   AuthMe,
   ConsoleContext,
   Page,
+  AuditEntry,
+  DatabaseStatus,
   PermissionInfo,
   AccessRole,
   AccessUser,
@@ -41,11 +45,24 @@ import type {
   DirectPartner,
   EmailConnector,
   EmailConnectorInput,
+  FaxCost,
   IntakeCounts,
   IntakeItem,
-  ProviderCosts,
-  RateCard,
+  PublishedPlans, RateCard,
+  ReconcileResult,
+  RouteCostsResponse,
+  CaseDocuments,
+  CasePacket,
+  CaseSummary,
+  Savings,
+  SendingRecommendations,
+  ReceivingRecommendations,
+  PlanRecommendations,
 } from './deliveryTypes';
+import type {
+  ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
+} from './types';
+import type { EfaxStatus } from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -95,10 +112,17 @@ const safeReconciliationInputDetails = new Map<string, string>([
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const CSRF_FAILURE = 'Browser request verification failed';
 export const TRANSPORT_REFUSED = 'Credential transport or browser origin is not allowed.';
-export const POLICY_CHANGED = 'Access policy changed. Reload and try again.';
+export const POLICY_CHANGED = 'Access settings changed; review and save again.';
 
 export function normalizeFaxDestination(number: string): string {
   return number.replace(/[\s\-\(\)]/g, '');
+}
+
+// The installation does not allow restarting Faxbot from the console (ADMIN_ALLOW_RESTART is off).
+export class RestartNotAllowed extends Error {
+  constructor() {
+    super("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+  }
 }
 
 export class AdminAPIError extends Error {
@@ -120,6 +144,17 @@ export function plainRefusal(error: unknown): string | null {
 
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
+
+// The server's fixed refusal for plugin routes while provider plugins are turned off.
+const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
+
+// Faxbot's fixed sentences for a missing connection to its fax engine (Asterisk).
+export const FAX_ENGINE_SENTENCES = new Set([
+  "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.",
+  "Faxbot can't reach its fax engine. Check that the Asterisk service is running.",
+  'Faxbot is still connecting to its fax engine.',
+  'Faxbot connects to its fax engine when the SIP trunk is the provider in use.',
+]);
 
 export function configurationWriteRejected(error: unknown): boolean {
   return error instanceof AdminAPIError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
@@ -208,13 +243,17 @@ type RequestOptions = { method?: string; body?: string | FormData; headers?: Rec
 type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean };
 type PolicyResult = { policy_version: number };
 
-export class AdminAPIClient {
+export type EngineView = 'registrations' | 'contacts' | 'calls' | 'faxes';
+
+class AdminAPIClient {
   private baseURL: string;
   private credential: ClientCredential;
   private onUnauthorized?: () => void;
   // Last access policy version seen from /auth/me or a management reply.
   policyVersion: number | null = null;
   private policyRefresh: Promise<void> | null = null;
+  // Told the setting names of each saved change, or none after Faxbot restarts.
+  private settingsListeners = new Set<(changed: string[]) => void>();
 
   constructor(credential: ClientCredential = { kind: 'session', csrf: null }, options: ClientOptions = {}) {
     this.baseURL = window.location.origin;
@@ -284,7 +323,7 @@ export class AdminAPIClient {
       if (path === '/admin/restart' && response.status === 403) {
         // Decode only this fixed refusal; arbitrary error details stay opaque.
         if (await readDetail(response) === 'Restart not allowed') {
-          throw new Error("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+          throw new RestartNotAllowed();
         }
       }
       if (extras.manifestValidation && (response.status === 400 || response.status === 409)) {
@@ -306,10 +345,18 @@ export class AdminAPIClient {
   // new one from the reply.
   private async accessWrite<T extends object>(path: string, body: object, method: 'POST' | 'PATCH' = 'POST'): Promise<T & PolicyResult> {
     if (this.policyRefresh) await this.policyRefresh;
-    const result = await this.json<T & PolicyResult>(path, {
-      method,
-      body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
-    });
+    let result: T & PolicyResult;
+    try {
+      result = await this.json<T & PolicyResult>(path, {
+        method,
+        body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
+      });
+    } catch (error) {
+      // Someone else changed access meanwhile: read the current version once, so
+      // saving again after a review is not refused for the same reason.
+      if (error instanceof AdminAPIError && error.status === 409) await this.refreshPolicy();
+      throw error;
+    }
     if (Number.isSafeInteger(result?.policy_version)) this.policyVersion = result.policy_version;
     return result;
   }
@@ -321,6 +368,18 @@ export class AdminAPIClient {
 
   static async keyLogin(apiKey: string): Promise<{ ok: true; password_change_required: boolean }> {
     return new AdminAPIClient().json('/auth/key-login', { method: 'POST', body: JSON.stringify({ api_key: apiKey }) }, { quiet401: true });
+  }
+
+  // Public: whether this installation still has no owner, so sign-in asks for the installation key first.
+  static async needsFirstOwner(): Promise<boolean> {
+    try {
+      const res = await fetch(`${window.location.origin}/auth/setup`, { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) return false;
+      const body = await res.json();
+      return body?.first_owner === true;
+    } catch {
+      return false;
+    }
   }
 
   async me(extras: { quiet401?: boolean } = {}): Promise<AuthMe> {
@@ -540,7 +599,20 @@ export class AdminAPIClient {
 
   async updateSettings(settings: SettingsPatch): Promise<ConfigurationWriteResult> {
     const res = await this.fetch('/admin/settings', { method: 'PUT', body: JSON.stringify(settings) });
-    return configurationResult(await res.json());
+    const result = configurationResult(await res.json());
+    this.announceSettingsChanged(Object.keys(settings).filter((name) => name !== 'expected_revision_id'));
+    return result;
+  }
+
+  // Listen for saved settings changes; returns the function that stops listening.
+  onSettingsChanged(listener: (changed: string[]) => void): () => void {
+    this.settingsListeners.add(listener);
+    return () => { this.settingsListeners.delete(listener); };
+  }
+
+  // Settings changed: these names were saved, or none when Faxbot is back from a restart.
+  announceSettingsChanged(changed: string[] = []): void {
+    for (const listener of [...this.settingsListeners]) listener(changed);
   }
 
   async reloadSettings(): Promise<Settings> {
@@ -549,6 +621,16 @@ export class AdminAPIClient {
 
   async restart(): Promise<any> {
     return this.json('/admin/restart', { method: 'POST' });
+  }
+
+  // Whether the API answers its liveness check; false while it restarts or is unreachable.
+  async isServing(): Promise<boolean> {
+    try {
+      const res = await this.send('/health', {}, { quiet401: true });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   // SIP trunk for Faxbot's own fax engine
@@ -560,7 +642,7 @@ export class AdminAPIClient {
     return this.json('/admin/sip/status');
   }
 
-  async applySipTrunk(): Promise<{ ok: true; message: string }> {
+  async applySipTrunk(): Promise<SipApplyResult> {
     return this.json('/admin/sip/apply', { method: 'POST' });
   }
 
@@ -568,13 +650,66 @@ export class AdminAPIClient {
     return this.json(`/admin/sip/calls${query(params)}`);
   }
 
-  // Diagnostics
-  async runDiagnostics(): Promise<DiagnosticsResult> {
-    return this.json('/admin/diagnostics/run', { method: 'POST' });
+  // The network check for fax over IP: the last result, and Check again.
+  async getSipNetwork(): Promise<SipNetworkReport> {
+    return this.json('/admin/sip/network');
+  }
+
+  async checkSipNetwork(): Promise<SipNetworkReport> {
+    return this.json('/admin/sip/network/check', { method: 'POST' });
+  }
+
+  // Telnyx's fax over IP (T.38) setting on each trunk number, and turning it on for one number.
+  async getTelnyxT38(): Promise<TelnyxT38Report> {
+    return this.json('/admin/sip/telnyx');
+  }
+
+  async turnOnTelnyxT38(number: string): Promise<TelnyxT38Report> {
+    return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/t38`, { method: 'POST' });
+  }
+
+  // Bring in faxes the SIP trunk received but could not hand to Faxbot.
+  async recoverInbound(): Promise<{ found: number; imported: number; waiting: number; message: string }> {
+    return this.json('/admin/inbound/recover', { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  // The security audit log, newest first; filters by person, action and what was changed.
+  async listAudit(params: { cursor?: string | null; limit?: number; actor_id?: string; operation?: string; target_id?: string } = {}): Promise<Page<AuditEntry>> {
+    return this.json(`/access/audit${query({ cursor: params.cursor, limit: params.limit ?? 50, actor_id: params.actor_id,
+      operation: params.operation, target_id: params.target_id })}`);
+  }
+
+  // The database Faxbot uses and whether it can reach it.
+  async getDatabaseStatus(): Promise<DatabaseStatus> {
+    return this.json('/admin/db-status');
+  }
+
+  // The last diagnostics report, without contacting anything; empty until the first run.
+  async getDiagnosticsReport(): Promise<DiagnosticsReport> {
+    return this.json('/admin/diagnostics/report');
+  }
+
+  // One read-only list from the fax engine (System → Developer → Scripts & checks).
+  async getEngineView(view: EngineView): Promise<{ view: EngineView; title: string; columns: string[]; rows: string[][];
+    available: boolean; message: string | null }> {
+    return this.json(`/admin/diagnostics/engine/${view}`);
+  }
+
+  // Run every diagnostics check now (read-only: nothing is sent or changed).
+  async checkDiagnosticsNow(): Promise<DiagnosticsReport> {
+    return this.json('/admin/diagnostics/report', { method: 'POST' });
   }
 
   async getHealthStatus(): Promise<HealthStatus> {
     return this.json('/admin/health-status');
+  }
+
+  // The fax engine sentence from public readiness (it answers 503 while not ready), or null.
+  async getFaxEngineMessage(): Promise<string | null> {
+    const res = await this.send('/health/ready', {}, { quiet401: true });
+    if (res.status !== 200 && res.status !== 503) return null;
+    const body = await res.json().catch(() => null);
+    return typeof body?.message === 'string' && FAX_ENGINE_SENTENCES.has(body.message) ? body.message : null;
   }
 
   // MCP
@@ -614,7 +749,9 @@ export class AdminAPIClient {
 
   private async deliveryRequest(jobId: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
     const attaching = confirmation !== undefined;
-    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/${attaching ? 'reconcile' : 'delivery'}`, {
+    // Two literal paths, so the console's callers of each route can be found by reading the source.
+    const path = attaching ? `/admin/fax-jobs/${id(jobId)}/reconcile` : `/admin/fax-jobs/${id(jobId)}/delivery`;
+    const res = await this.send(path, {
       method: attaching ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json' },
       ...(attaching ? { body: JSON.stringify(confirmation) } : {}),
@@ -656,6 +793,11 @@ export class AdminAPIClient {
     return this.json('/inbound');
   }
 
+  // Ask Faxbot to fetch a received fax's document again now.
+  async fetchInboundAgain(inboundId: string): Promise<InboundFax> {
+    return this.json(`/inbound/${id(inboundId)}/fetch`, { method: 'POST', body: '{}' });
+  }
+
   async downloadInboundPdf(inboundId: string): Promise<Blob> {
     const res = await this.send(`/inbound/${id(inboundId)}/pdf`);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
@@ -667,30 +809,13 @@ export class AdminAPIClient {
     return this.json('/admin/inbound/callbacks');
   }
 
+  // Whether Faxbot is checking eFax for received faxes, and faxes still stored at eFax.
+  async getEfaxStatus(): Promise<EfaxStatus> {
+    return this.json('/admin/inbound/efax');
+  }
+
   async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {
     return this.json('/admin/inbound/simulate', { method: 'POST', body: JSON.stringify(opts) });
-  }
-
-  // Admin actions (container exec — allowlisted)
-  async listActions(): Promise<{ enabled: boolean; items: Array<{ id: string; label: string; backend?: string[] }> }> {
-    return this.json('/admin/actions');
-  }
-
-  async runAction(actionId: string): Promise<{ ok: boolean; id: string; code?: number; stdout?: string; stderr?: string }> {
-    return this.json('/admin/actions/run', { method: 'POST', body: JSON.stringify({ id: actionId }) });
-  }
-
-  // Tunnel
-  async getTunnelStatus(): Promise<any> {
-    return this.json('/admin/tunnel/status');
-  }
-
-  async setTunnelConfig(payload: any): Promise<any> {
-    return this.json('/admin/tunnel/config', { method: 'POST', body: JSON.stringify(payload || {}) });
-  }
-
-  async testTunnel(): Promise<{ ok: boolean; message?: string; target?: string }> {
-    return this.json('/admin/tunnel/test', { method: 'POST' });
   }
 
   async createTunnelPairing(): Promise<{ code: string; expires_at: string }> {
@@ -700,11 +825,15 @@ export class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
     if (options.queueOnly) formData.append('queue_only', 'true');
+    // Only for a number that sends faxes together: go at once, taking the faxes waiting for it.
+    if (options.sendNow) formData.append('send_now', 'true');
+    // A real call through the carrier even to one of this installation's own numbers (test faxes).
+    if (options.byCall) formData.append('send_by_call', 'true');
 
     const res = await this.send('/fax', {
       method: 'POST',
@@ -728,6 +857,8 @@ export class AdminAPIClient {
         throw new FaxRefusedError(sentence ?? 'The fax was not accepted; check the number and the document, then try again.');
       }
       if (res.status === 503 && typeof detail === 'string') {
+        // Refused before acceptance because the fax engine is not connected; nothing was sent.
+        if (FAX_ENGINE_SENTENCES.has(detail)) throw new FaxRefusedError(detail);
         const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
         if (uncertain) {
           throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);
@@ -741,7 +872,13 @@ export class AdminAPIClient {
 
   // v3 Plugins (feature-gated)
   async listPlugins(): Promise<{ items: any[] }> {
-    return this.json('/plugins');
+    try {
+      return await this.json('/plugins');
+    } catch (error) {
+      // With provider plugins turned off (the default) there are simply no installed plugins to list.
+      if (error instanceof AdminAPIError && error.status === 404 && error.detail === PLUGINS_TURNED_OFF) return { items: [] };
+      throw error;
+    }
   }
 
   async getPluginConfig(pluginId: string, role?: PluginRole): Promise<PluginConfiguration> {
@@ -751,10 +888,6 @@ export class AdminAPIClient {
   async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<ConfigurationWriteResult> {
     const res = await this.fetch(`/plugins/${id(pluginId)}/config`, { method: 'PUT', body: JSON.stringify(payload || {}) });
     return configurationResult(await res.json());
-  }
-
-  async getPluginRegistry(): Promise<{ items: any[] }> {
-    return this.json('/plugin-registry');
   }
 
   // Manifest providers
@@ -782,7 +915,7 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async importHttpManifests(payload: { items?: any[]; markdown?: string; source?: 'repo_scrape' }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }> {
+  async importHttpManifests(payload: { items?: any[]; markdown?: string }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }> {
     const result = await this.json<any>('/admin/plugins/http/import-manifests', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
     return {
       ...result,
@@ -824,20 +957,92 @@ export class AdminAPIClient {
     return this.json('/routing/destinations');
   }
 
-  async getDestination(number: string): Promise<DestinationDetail> {
-    return this.json(`/routing/destinations/${id(number)}`);
+  // The route order for the next fax to a number; with `pages`, each estimate is for a fax that long.
+  async getDestination(number: string, pages?: number): Promise<DestinationDetail> {
+    return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
   }
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
-  async getRouteCosts(): Promise<{ since: string; providers: ProviderCosts[] }> {
+  // Numbers where another route cost less per delivered fax over the last 30 days (Costs → Recommendations).
+  async getSendingRecommendations(): Promise<SendingRecommendations> {
+    return this.json('/routing/recommendations/sending');
+  }
+
+  async getRouteCosts(): Promise<RouteCostsResponse> {
     return this.json('/routing/costs');
+  }
+
+  // Ask the SIP trunk carrier now what each open call cost; never changes a delivery.
+  async reconcileCharges(): Promise<ReconcileResult> {
+    return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
+  }
+
+  async getFaxCost(jobId: string): Promise<FaxCost> {
+    return this.json(`/routing/faxes/${id(jobId)}/cost`);
+  }
+
+  // Costs for several sent faxes at once, for the Sent list; faxes this person cannot read are left out.
+  async getFaxCosts(jobIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
+    return this.json(`/routing/fax-costs${query({ ids: jobIds.join(',') })}`);
+  }
+
+  // One fax machine's own limits (highest speed, error correction) and whether it takes SSL Fax.
+  async getFaxLimits(number: string): Promise<RecipientFaxLimits> {
+    return this.json(`/routing/destinations/${id(number)}/fax-limits`);
+  }
+
+  async saveFaxLimits(number: string, body: { max_rate: number | null; ecm: boolean | null }): Promise<RecipientFaxLimits> {
+    return this.json(`/routing/destinations/${id(number)}/fax-limits`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Sending short faxes to the same number together in one call.
+  async getBatching(number: string): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`);
+  }
+
+  async saveBatching(number: string, body: BatchingSave): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async turnOffBatching(number: string): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`, { method: 'DELETE' });
+  }
+
+  async checkBatching(to: string): Promise<BatchingCheck> {
+    return this.json(`/batching/check${query({ to: normalizeFaxDestination(to) })}`);
+  }
+
+  async getFaxTogether(jobId: string): Promise<FaxTogether> {
+    return this.json(`/batching/faxes/${id(jobId)}`);
+  }
+
+  async sendWaitingFaxNow(jobId: string): Promise<FaxTogether> {
+    return this.json(`/batching/faxes/${id(jobId)}/send-now`, { method: 'POST', body: '{}' });
+  }
+
+  async getInboundCost(inboundId: string): Promise<FaxCost> {
+    return this.json(`/routing/inbound/${id(inboundId)}/cost`);
+  }
+
+  // Costs for several received faxes at once; faxes this person cannot read are left out.
+  async getInboundCosts(inboundIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
+    return this.json(`/routing/inbound-costs${query({ ids: inboundIds.join(',') })}`);
   }
 
   async listRateCards(): Promise<{ cards: RateCard[] }> {
     return this.json('/routing/rate-cards');
+  }
+
+  async getPublishedPlans(providerId: string): Promise<PublishedPlans> {
+    return this.json(`/routing/published-plans?provider_id=${encodeURIComponent(providerId)}`);
+  }
+
+  // Published plans for each sending provider in use that has no sending rate card yet.
+  async getPublishedPlansInUse(): Promise<{ items: PublishedPlans[] }> {
+    return this.json('/routing/published-plans/in-use');
   }
 
   async saveRateCards(cards: RateCard[]): Promise<{ cards: RateCard[] }> {
@@ -899,6 +1104,100 @@ export class AdminAPIClient {
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Work queue
+  async listWork(params: { view?: WorkView; mailbox?: string; limit?: number } = {}): Promise<{ items: WorkItem[] }> {
+    return this.json(`/work${query(params)}`);
+  }
+
+  async workCounts(): Promise<WorkCounts> {
+    return this.json('/work/counts');
+  }
+
+  async getWork(itemId: string): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}`);
+  }
+
+  async workHistory(itemId: string): Promise<{ events: WorkEvent[] }> {
+    return this.json(`/work/${id(itemId)}/history`);
+  }
+
+  async workAssignees(itemId: string): Promise<{ people: WorkAssignee[] }> {
+    return this.json(`/work/${id(itemId)}/assignees`);
+  }
+
+  async assignWork(itemId: string, principalId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/assign`, { method: 'POST', body: JSON.stringify({ principal_id: principalId, version }) });
+  }
+
+  async acknowledgeWork(itemId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/acknowledge`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async completeWork(itemId: string, note: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/done`, { method: 'POST', body: JSON.stringify({ note, version }) });
+  }
+
+  async reopenWork(itemId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/reopen`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async exportWork(itemId: string): Promise<Blob> {
+    const res = await this.fetch(`/work/${id(itemId)}/export`);
+    return res.blob();
+  }
+
+  async getWorkSettings(): Promise<WorkSettings> {
+    return this.json('/work/settings');
+  }
+
+  async saveWorkMailbox(entry: { mailbox_id: string; acknowledge_hours: number | null; backup_principal_id: string | null; version: number }): Promise<WorkSettings> {
+    return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
+  }
+
+  // What sending together, direct delivery and case packets saved in the last `days` (estimates).
+  async getSavings(days?: number): Promise<Savings> {
+    return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →
+  // Recommendations). The advice is chosen on the `days` before the last `days` and checked on the last `days`.
+  async getReceivingRecommendations(days?: number): Promise<ReceivingRecommendations> {
+    return this.json(`/routing/recommendations/receiving${query({ days })}`);
+  }
+
+  // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
+  async getPlanRecommendations(): Promise<PlanRecommendations> {
+    return this.json('/routing/recommendations/plans');
+  }
+
+  // The newest cases this installation sent packets for, with recipient and counts.
+  async listCases(): Promise<{ cases: CaseSummary[] }> {
+    return this.json('/cases');
+  }
+
+  // Case packets: what a recipient already holds for a case, and sending only what is new.
+  async getCaseDocuments(caseId: string, to: string): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/documents${query({ to: normalizeFaxDestination(to) })}`);
+  }
+
+  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string }>, preview: boolean): Promise<CasePacket> {
+    const formData = new FormData();
+    formData.append('to', normalizeFaxDestination(to));
+    formData.append('preview', preview ? 'true' : 'false');
+    for (const document of documents) {
+      formData.append('documents', document.file);
+      formData.append('titles', document.title);
+    }
+    return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
+  }
+
+  async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('manifest', JSON.stringify(manifest));
+    return this.json('/imports', { method: 'POST', body: formData });
   }
 }
 

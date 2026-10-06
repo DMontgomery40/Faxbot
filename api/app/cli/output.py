@@ -1,5 +1,6 @@
 """Human output (rich tables, local times) and machine output (--json)."""
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import json
 import sys
 
@@ -50,11 +51,72 @@ def text(value, empty='-'):
     return str(value)
 
 
-def money(amounts):
-    """[{'currency': 'USD', 'amount': '0.07'}] as '0.07 USD'."""
-    if not amounts:
+# Symbols for the installation's own currency; any other currency keeps its code, as in the console.
+SYMBOLS = {'USD': '$', 'CAD': '$', 'AUD': '$', 'NZD': '$', 'SGD': '$', 'HKD': '$', 'GBP': '£', 'EUR': '€',
+           'JPY': '¥', 'INR': '₹', 'CHF': 'CHF '}
+COUNTRY_CURRENCY = {
+    'US': 'USD', 'PR': 'USD', 'CA': 'CAD', 'GB': 'GBP', 'AU': 'AUD', 'NZ': 'NZD', 'SG': 'SGD', 'HK': 'HKD', 'JP': 'JPY',
+    'IN': 'INR', 'CH': 'CHF', 'IE': 'EUR', 'DE': 'EUR', 'FR': 'EUR', 'ES': 'EUR', 'IT': 'EUR', 'NL': 'EUR', 'BE': 'EUR',
+    'AT': 'EUR', 'PT': 'EUR', 'FI': 'EUR', 'GR': 'EUR', 'LU': 'EUR'}
+
+
+def home_currency():
+    """The installation's currency, from its country; read once per command, US dollars when unknown."""
+    from . import state
+    from .errors import CliError
+    current = state.current()
+    if current.home_currency is None:
+        try:
+            country = (current.api().get('/auth/context').get('send') or {}).get('default_country')
+        except (CliError, AttributeError):
+            country = None
+        current.home_currency = COUNTRY_CURRENCY.get(country or 'US', 'USD')
+    return current.home_currency
+
+
+def money_amount(item, home=None):
+    """One amount as the console shows it: "$0.005", "$1.50", or "0.005 EUR" outside the installation's currency.
+
+    Two decimal places, or up to four for amounts under ten cents.
+    """
+    try:
+        amount = Decimal(str(item['amount']))
+    except (InvalidOperation, KeyError, TypeError):
         return '-'
-    return ', '.join(f"{item['amount']} {item['currency']}" for item in amounts)
+    places = 4 if amount != 0 and abs(amount) < Decimal('0.1') else 2
+    shown = f'{abs(amount):.{places}f}'
+    while places > 2 and shown.endswith('0'):
+        shown, places = shown[:-1], places - 1
+    sign = '-' if amount < 0 else ''
+    currency = item.get('currency') or ''
+    symbol = SYMBOLS.get(currency) if currency == (home or home_currency()) else None
+    return f'{sign}{symbol}{shown}' if symbol else f'{sign}{shown} {currency}'.strip()
+
+
+def money(amounts, empty='-'):
+    """[{'currency': 'USD', 'amount': '0.07'}] as '$0.07'; several currencies are joined with '+'."""
+    if not amounts:
+        return empty
+    home = home_currency()
+    return ' + '.join(money_amount(item, home) for item in amounts)
+
+
+def cost_amount(cost):
+    """A cost column's short amount: what was charged, or the estimate marked as one, as the console shows it."""
+    state = (cost or {}).get('state')
+    if not cost or state == 'none':
+        return '-'
+    if state == 'reported':
+        return money(cost.get('reported_cost'))
+    if state == 'partial':
+        return f"{money(cost.get('reported_cost'))} charged so far"
+    if state == 'included':
+        return 'In your plan'
+    if state == 'local':
+        return 'No call'
+    if state == 'unmatched':
+        return 'Unknown'
+    return f"{money(cost['estimated_cost'])} estimate" if cost.get('estimated_cost') else 'Not reported yet'
 
 
 class Output:

@@ -25,7 +25,7 @@ def test_editor_projects_whole_desired_candidate_and_identifies_pending_restart(
     assert view['mcp']['http_enabled'] is True
     assert view['_meta'] == {
         'active_revision_id': 'active-revision', 'desired_revision_id': 'desired-revision',
-        'generation': 7, 'apply_state': 'pending_restart', 'pending_fields': ['enable_mcp_http'],
+        'generation': 7, 'apply_state': 'pending_restart', 'pending_fields': ['enable_mcp_http'], 'env_managed': [],
     }
     assert frame.active.values.fax_backend == 'phaxio'
     assert frame.active.values.fax_disabled is True
@@ -62,7 +62,7 @@ def test_hybrid_effective_and_raw_selection_come_from_values_not_process_environ
     assert view['hybrid'] == expected
     assert view['_meta'] == {
         'active_revision_id': 'active-revision', 'desired_revision_id': 'active-revision',
-        'generation': 7, 'apply_state': 'applied', 'pending_fields': [],
+        'generation': 7, 'apply_state': 'applied', 'pending_fields': [], 'env_managed': [],
     }
     assert os.environ == before
 
@@ -77,6 +77,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
         'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access', 'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret',
         'SIGNALWIRE_WEBHOOK_SIGNING_KEY': 'synthetic-webhook-key', 'ASTERISK_AMI_PASSWORD': 'synthetic-ami-password',
         'FREESWITCH_ESL_PASSWORD': 'synthetic-esl-password', 'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret',
+        # SINCH_INBOUND_HMAC_SECRET is retired (Sinch signs no webhooks): a stale value is read and never shown.
         'SINCH_INBOUND_BASIC_PASS': 'synthetic-basic-password', 'SINCH_INBOUND_HMAC_SECRET': 'synthetic-hmac-secret',
         'INTAKE_SMTP_PASSWORD': 'synthetic-intake-password',
         'DATABASE_URL': 'postgresql://synthetic-user:synthetic-db-password@db.invalid/faxbot?token=synthetic-query-secret',
@@ -90,7 +91,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert view['signalwire']['api_token'] == view['signalwire']['webhook_signing_key'] == '***'
     assert view['sip']['ami_password'] == view['fs']['esl_password'] == '***'
     assert view['inbound']['sip']['asterisk_secret'] == '***'
-    assert view['inbound']['sinch']['basic_pass'] == view['inbound']['sinch']['hmac_secret'] == '***'
+    assert view['inbound']['sinch']['basic_pass'] == '***' and 'hmac_secret' not in view['inbound']['sinch']
     assert view['intake']['smtp_password'] == '***'
     assert view['database']['url'] == '***'
     serialized = json.dumps(view)
@@ -111,13 +112,53 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['signalwire']['webhook_signing_key'] == ''
     assert empty['sip']['ami_password'] == empty['fs']['esl_password'] == ''
     assert empty['inbound']['sip']['asterisk_secret'] == ''
-    assert empty['inbound']['sinch']['basic_pass'] == empty['inbound']['sinch']['hmac_secret'] == ''
+    assert empty['inbound']['sinch']['basic_pass'] == ''
     assert empty['intake']['smtp_password'] == ''
     assert empty['database']['url'] == ''
     assert empty['phaxio']['configured'] is False
     assert empty['documo']['configured'] is False
     assert empty['humblefax']['configured'] is False
     assert empty['signalwire']['configured'] is False
+
+
+# Every masked value in the editor view; each is a credential or the database URL.
+MASKED_PATHS = {
+    'security.api_key', 'phaxio.api_key', 'phaxio.api_secret', 'phaxio.callback_token', 'sinch.api_key',
+    'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
+    'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',
+    'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'sip.telnyx_api_key', 'fs.esl_password',
+    'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'intake.smtp_password',
+    'database.url',
+}
+
+
+def _masked(view, prefix=''):
+    for key, value in view.items():
+        path = prefix + key
+        if isinstance(value, dict):
+            yield from _masked(value, path + '.')
+        elif value == '***':
+            yield path
+
+
+def test_only_credentials_are_masked_and_fax_numbers_show_as_stored():
+    """The station ID showed as *** in the Setup Wizard; numbers are not secrets."""
+    from api.app.config_views import project_admin_settings
+    from api.app.config_values import ConfigurationValues
+
+    environment = {}
+    for name, field in ConfigurationValues.model_fields.items():
+        alias = field.validation_alias
+        alias = alias if isinstance(alias, str) else alias.choices[0]
+        if (field.json_schema_extra or {}).get('secret') or name == 'database_url':
+            environment[alias] = 'sqlite:////faxdata/faxbot.db' if name == 'database_url' else 'synthetic-secret-value'
+    environment.update({'FAX_LOCAL_STATION_ID': '+13035550100', 'SIGNALWIRE_FAX_FROM_E164': '+13035550101',
+                        'SIGNALWIRE_SMS_FROM_E164': '+13035550102'})
+    view = project_admin_settings(snapshot(environment))
+    assert set(_masked(view)) == MASKED_PATHS
+    assert view['sip']['station_id'] == '+13035550100'
+    assert (view['signalwire']['from_fax'], view['signalwire']['from_sms']) == ('+13035550101', '+13035550102')
+    assert 'synthetic-secret-value' not in json.dumps(view)
 
 
 @pytest.mark.parametrize(('url', 'scheme', 'persistent'), [
@@ -168,9 +209,18 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
         'require_oauth': False, 'oauth': {'issuer': '', 'audience': 'audience', 'jwks_url': 'https://issuer.example.invalid/jwks'},
     }
     assert view['features'] == {'v3_plugins': False, 'fax_disabled': False, 'inbound_enabled': False, 'plugin_install': False}
+    assert view['restart'] == {'allowed': False}
+    assert set(view['legacy_config']) == {'path'}
+    # Without an environment every environment-only setting reads as not set.
+    assert all(entry['set'] is False and entry['value'] is None for entry in view['deployment'].values())
+    assert {'admin_allow_restart', 'docs_base_url', 'mobile_local_base', 'feature_v3_plugins',
+            'feature_plugin_install', 'audit_log_enabled'} <= set(view['owner_only'])
+    assert not {'fax_header', 'enable_s3_diagnostics', 'backend', 'inbound_enabled'} & set(view['owner_only'])
+    assert set(view['plugin_files']) == {'providers_dir'}
     assert view['storage'] == {
         'backend': 'local', 's3_bucket': 'complete-bucket', 's3_prefix': '', 's3_region': 'us-east-1',
         's3_endpoint_url': 'https://storage.example.invalid', 's3_kms_key_id': 'kms-key-identifier', 's3_kms_enabled': True,
+        's3_diagnostics': False,
     }
     assert view['inbound']['enabled'] is False
     assert view['inbound']['retention_days'] == 0
@@ -189,15 +239,37 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
         'DIRECT_DELIVERY_ENABLED': 'false', 'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': '+12025550123',
     }))
     # The raw list is kept as written so an editor can show and save it unchanged.
-    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0}
+    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0, 'local_delivery': True}
     assert view['intake'] == {
         'email_enabled': True, 'smtp_host': 'smtp.example.invalid', 'smtp_port': 465, 'smtp_security': 'tls',
         'smtp_username': 'fax', 'smtp_password': '', 'email_from': 'fax@example.invalid',
         'email_to': 'desk@example.invalid', 'email_subject': 'Fax for {to_number}',
     }
-    assert view['direct'] == {'enabled': False, 'organization': 'County Clinic', 'fax_number': '+12025550123'}
+    assert view['direct'] == {'enabled': False, 'organization': 'County Clinic', 'fax_number': '+12025550123',
+                              'allow_private_peers': False}
 
     defaults = project_admin_settings(snapshot())
-    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80}
+    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80, 'local_delivery': True}
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
-    assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': ''}
+    assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}
+    assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}
+
+
+def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret(monkeypatch):
+    from api.app import config_views
+    from api.app.config_views import deployment_view
+
+    # No shipped environment-only setting is secret today; a synthetic one keeps the redaction rule tested.
+    monkeypatch.setattr(config_views, 'DEPLOYMENT_VARIABLES', config_views.DEPLOYMENT_VARIABLES + ('SYNTHETIC_SECRET',))
+    monkeypatch.setattr(config_views, 'SECRET_DEPLOYMENT_VARIABLES', frozenset({'SYNTHETIC_SECRET'}))
+    view = deployment_view({'FAXBOT_CONSOLE_ORIGINS': ' https://fax.example ', 'SYNTHETIC_SECRET': 'synthetic-secret-value',
+                            'ENABLE_LOCAL_ADMIN': 'true', 'TZ': '', 'UNRELATED': 'x'})
+    assert set(view) == set(config_views.DEPLOYMENT_VARIABLES)
+    assert view['FAXBOT_CONSOLE_ORIGINS'] == {'set': True, 'value': 'https://fax.example'}
+    assert view['SYNTHETIC_SECRET'] == {'set': True, 'value': None}
+    assert view['TZ'] == {'set': False, 'value': None}
+    assert 'synthetic-secret-value' not in repr(view)
+    # The terminal follows the console when ENABLE_ADMIN_EXEC is not set, and ENABLE_ADMIN_EXEC when it is.
+    assert view['ENABLE_ADMIN_EXEC'] == {'set': False, 'value': None, 'effective': True}
+    assert deployment_view({'ENABLE_LOCAL_ADMIN': 'true', 'ENABLE_ADMIN_EXEC': 'false'})['ENABLE_ADMIN_EXEC']['effective'] is False
+    assert deployment_view({})['ENABLE_ADMIN_EXEC']['effective'] is False
