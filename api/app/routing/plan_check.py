@@ -82,24 +82,43 @@ def _route_key(provider_id):
     return 'sip' if provider_id == 'sip' or provider_id.startswith('sip-') else provider_id
 
 
-def _own_numbers(values, country):
+def _own_numbers(values, country, accounts):
     found = [*getattr(values, 'sip_trunk_did_list', ()), getattr(values, 'sip_trunk_caller_id', '')]
     for fields in PROVIDER_NUMBERS.values():
         found += [getattr(values, field, '') or '' for field in fields]
+    found += [number for numbers in accounts.values() for number in numbers]
     return {stored_number(number, country=country) for number in found if number}
 
 
-def _plan_numbers(values, key, country):
+def _plan_numbers(values, key, country, accounts):
+    """The plan's own numbers: the configured one, then those the provider's account reports."""
     if key == 'sip':
         found = [*getattr(values, 'sip_trunk_did_list', ()), getattr(values, 'sip_trunk_caller_id', '')]
     else:
         found = [getattr(values, field, '') or '' for field in PROVIDER_NUMBERS.get(key, ())]
+    found += list(accounts.get(key, ()))
     return list(dict.fromkeys(stored_number(number, country=country) for number in found if number))
 
 
+def known_account_numbers(values):
+    """{provider: numbers} each provider's account reports as its own, from Faxbot's cache.
+
+    HumbleFax's come from its GetUser answer, the same cached read the provider
+    settings show (``humblefax_service.account_numbers``); never read while sending.
+    """
+    found = {}
+    access, secret = getattr(values, 'humblefax_access_key', ''), getattr(values, 'humblefax_secret_key', '')
+    if access and secret:
+        from ..humblefax_service import account_numbers
+        found['humblefax'] = tuple(account_numbers(access, secret) or ())
+    return found
+
+
 class PlanCheck:
-    def __init__(self, routes, values, *, now=None, days=WINDOW_DAYS, bound=None, path=None):
+    def __init__(self, routes, values, *, now=None, days=WINDOW_DAYS, bound=None, path=None, accounts=None):
+        """``accounts``: {provider: numbers} each provider's account reports as its own (HumbleFax's account numbers)."""
         self.routes, self.values, self.days, self.path = routes, values, days, path
+        self.accounts = dict(accounts or {})
         self.now = (now or utcnow()).replace(microsecond=0)
         self.country = getattr(values, 'fax_default_country', 'US') or 'US'
         self.preset = (getattr(values, 'sip_trunk_preset', '') or '').strip()
@@ -109,7 +128,7 @@ class PlanCheck:
                                   min_attempts=MIN_ATTEMPTS)
         self.bound = bound or getattr(values, 'effective_outbound', '') or ''
         self.extras = extra_routes(values, self.bound) if self.bound else []
-        self.own = _own_numbers(values, self.country)
+        self.own = _own_numbers(values, self.country, self.accounts)
         self._evidence = None
         self._stats = {}
 
@@ -224,7 +243,7 @@ class PlanCheck:
         latest = windows[0]
         carried = latest['sent'] + latest['received']
         full = latest['seconds'] >= self.days * DAY - DAY  # a day's grace for the first day's first record
-        numbers = _plan_numbers(self.values, key, self.country)
+        numbers = _plan_numbers(self.values, key, self.country, self.accounts)
         includes_number = bool(numbers or shipped_numbers_included(self.path).get(key) or latest['received'])
         carrier = self.label('sip') if self.preset else None
         monthly = carrier_prices(self.preset).rental.get('local') if includes_number and carrier and key != 'sip' \
@@ -357,6 +376,10 @@ class PlanCheck:
                                    'You pay no monthly fee for a fax service, so there is no plan to review.')}
 
 
-def plan_report(routes, values, *, now=None, days=WINDOW_DAYS, bound=None, suggested=(), path=None):
-    """``bound`` is the outbound provider of the active configuration, when known; else the configured one."""
-    return PlanCheck(routes, values, now=now, days=days, bound=bound, path=path).report(suggested)
+def plan_report(routes, values, *, now=None, days=WINDOW_DAYS, bound=None, suggested=(), path=None, accounts=None):
+    """``bound`` is the outbound provider of the active configuration, when known; else the configured one.
+
+    ``accounts`` maps a provider to the numbers its account reports (default: Faxbot's cached reads).
+    """
+    accounts = known_account_numbers(values) if accounts is None else accounts
+    return PlanCheck(routes, values, now=now, days=days, bound=bound, path=path, accounts=accounts).report(suggested)

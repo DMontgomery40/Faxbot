@@ -147,6 +147,29 @@ def test_a_plan_whose_number_receives_faxes_says_to_move_the_number_first(plans)
                                   'faxes it.')
 
 
+def test_the_number_humblefax_reports_for_the_account_counts_when_none_is_configured(plans, monkeypatch):
+    """from_number unset, but HumbleFax's account answer (the cached GetUser read) names the plan's number."""
+    from api.app import humblefax_service
+    multi, routes = plans
+    sent(multi, routes, 'humblefax', HUMBLE, ['success'] * 2)  # HumbleFax faxing its own number: tests
+    sent(multi, routes, 'humblefax', CLINIC, ['success'] * 3)
+    reads = []
+    monkeypatch.setattr(humblefax_service, 'account_numbers',
+                        lambda access, secret, **kwargs: reads.append(access) or (HUMBLE,))
+    (plan,) = report(routes, humblefax_access_key='synthetic-access', humblefax_secret_key='synthetic-secret')['plans']
+    assert reads == ['synthetic-access']
+    latest = plan['windows'][0]
+    assert (latest['sent'], latest['own_numbers']) == (5, 2)
+    assert latest['other_way'] == money(3 * estimate_cost(TELNYX_OUT, 3))
+    assert plan['state'] == 'review'
+    assert plan['caveats'][:2] == [f'Before you cancel, move your HumbleFax number, {HUMBLE}, to Telnyx if anyone '
+                                   'still faxes it.', '2 of these faxes were tests to your own numbers.']
+    # With no keys there is no account to ask, and nothing is read.
+    reads.clear()
+    (plan,) = report(routes)['plans']
+    assert reads == [] and plan['windows'][0]['own_numbers'] == 0
+
+
 def test_an_unreliable_alternative_suggests_nothing(plans):
     multi, routes = plans
     sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)
