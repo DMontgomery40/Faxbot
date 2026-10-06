@@ -26,18 +26,36 @@ test: test-local
 # VENV can point at an existing venv, e.g. make test-local VENV=/path/to/.venv
 VENV ?= .venv
 PYTEST_ARGS ?=
+# PGDB names a disposable PostgreSQL test database for the PostgreSQL schema variants; the
+# server URL without a database name is read from PG_URL_FILE (one line, kept out of the repo).
+PGDB ?=
+PG_URL_FILE ?= $(HOME)/.config/faxbot/postgres-test-url
+# The whole suite is the combined gate; it runs only with FULL_GATE=1.
+FULL_GATE ?=
+# Node 24 for the console checks; empty uses whatever node is on PATH.
+NODE_BIN ?= $(firstword $(wildcard /opt/homebrew/opt/node@24/bin))
+VITEST_ARGS ?=
 
-.PHONY: venv test-local ui-build
+.PHONY: venv test-local ui-build ui-check
 
 venv:
 	uv venv --python 3.11 $(VENV) && uv pip install --python $(VENV)/bin/python -r api/requirements.txt -r python_mcp/requirements.txt
 
-# Same command and env as the test-api CI job; set FAXBOT_SCHEMA_TEST_POSTGRES_URL to include the PostgreSQL schema tests.
+# Same command and env as the test-api CI job. Name the files to run:
+#   make test-local PYTEST_ARGS='tests/test_routing_http.py' PGDB=faxbot_test_x
+# PGDB (or FAXBOT_SCHEMA_TEST_POSTGRES_URL) adds the PostgreSQL schema variants.
+# The whole suite runs only as the combined gate: make test-local FULL_GATE=1
 test-local:
-	cd api && mkdir -p faxdata && FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-}" $(abspath $(VENV))/bin/python -m pytest -q $(PYTEST_ARGS)
+	@if [ -z "$(strip $(PYTEST_ARGS))" ] && [ "$(FULL_GATE)" != 1 ]; then echo "Name the test files to run, for example PYTEST_ARGS='tests/test_cli.py'. The whole suite is the combined gate: add FULL_GATE=1."; exit 2; fi
+	@if [ -n "$(PGDB)" ] && [ ! -s "$(PG_URL_FILE)" ]; then echo "PGDB needs the PostgreSQL server URL in $(PG_URL_FILE)."; exit 2; fi
+	cd api && mkdir -p faxdata && FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$(if $(PGDB),$$(cat '$(PG_URL_FILE)')/$(PGDB),$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-})" $(abspath $(VENV))/bin/python -m pytest -q -p no:cacheprovider $(PYTEST_ARGS)
 
 ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
+
+# Console checks: vitest, type check and build (VITEST_ARGS narrows vitest to named files).
+ui-check:
+	cd api/admin_ui && export PATH="$(if $(NODE_BIN),$(NODE_BIN):)$$PATH" && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npx vitest run $(VITEST_ARGS) && npx tsc --noEmit && npm run build
 
 # T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax,
 # a stand-in phone system on a local network faxes with Faxbot both ways, and
