@@ -12,8 +12,11 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr, Va
 from .config_paths import bundled_config_dir
 
 
+# Sinch's basic auth counts only with both a user name and a password; a user name alone would let anyone in.
+SINCH_PASSWORD_NEEDED = 'Enter the password Sinch sends as well; Faxbot does not accept the user name without it.'
 # One plain sentence for a refused setting, where the field's name alone would not say what to do.
-FIELD_SENTENCES = {"FAX_TIME_ZONE": "Choose a time zone from the list, such as America/Denver."}
+FIELD_SENTENCES = {"FAX_TIME_ZONE": "Choose a time zone from the list, such as America/Denver.",
+                   "SINCH_INBOUND_BASIC_PASS": SINCH_PASSWORD_NEEDED}
 
 
 class ConfigurationValueError(ValueError):
@@ -477,7 +480,16 @@ class ConfigurationValues(BaseModel):
             if isinstance(value, str) and name in _NUMBER_FIELDS:
                 value = self._saved_number(name, value, changes)
             environment[key] = ("true" if value else "false") if isinstance(value, bool) else str(value)
-        return type(self).from_environment(environment)
+        values = type(self).from_environment(environment)
+        if ({"sinch_inbound_basic_user", "sinch_inbound_basic_pass"} & set(changes)
+                and values.sinch_inbound_basic_user and not values.sinch_inbound_basic_pass):
+            raise ConfigurationValueError([{"field": "SINCH_INBOUND_BASIC_PASS", "reason": "required_with_user"}])
+        return values
+
+    @property
+    def sinch_inbound_basic_configured(self) -> bool:
+        """Sinch's basic auth is in force only with both a user name and a password."""
+        return bool(self.sinch_inbound_basic_user and self.sinch_inbound_basic_pass)
 
     def _saved_number(self, name, value, changes):
         """Save numbers entered nationally for the installation country in E.164.

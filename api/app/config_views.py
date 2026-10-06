@@ -336,7 +336,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'basic_user': values.sinch_inbound_basic_user,
                 'basic_pass': mask_secret(values.sinch_inbound_basic_pass),
                 'hmac_secret': mask_secret(values.sinch_inbound_hmac_secret),
-                'basic_auth_configured': bool(values.sinch_inbound_basic_user),
+                'basic_auth_configured': bool(values.sinch_inbound_basic_user and values.sinch_inbound_basic_pass),
                 'hmac_configured': bool(values.sinch_inbound_hmac_secret),
             },
         },

@@ -274,6 +274,87 @@ def test_unauthenticated_or_unknown_notifications_store_nothing(isolated_install
     assert 'attacker.example' not in providers.hosts()
 
 
+def _sinch_event(fax_id, **fax):
+    return {'event': 'INCOMING_FAX', 'fax': {'id': fax_id, 'direction': 'INBOUND', 'from': FROM, 'to': TO,
+                                            'numberOfPages': 1, 'completedTime': '2026-10-03T14:00:00Z', **fax}}
+
+
+def _basic(user, password):
+    return {'Authorization': 'Basic ' + base64.b64encode(f'{user}:{password}'.encode()).decode()}
+
+
+def test_a_sinch_user_name_without_a_password_authenticates_nothing(isolated_installation, monkeypatch, providers):
+    """Only a user name set (from .env): a request with that name and a blank password is not authenticated."""
+    environment(monkeypatch, SINCH_INBOUND_BASIC_USER='synthetic-sinch-webhook')
+    forged = dict(_sinch_event('01FORGEDFAX'), file=base64.b64encode(pdf_bytes('forged document')).decode())
+    with client() as http:
+        # Not authenticated, so it is only a hint: Sinch does not know this fax, and nothing is kept.
+        assert http.post('/sinch-inbound', json=forged, headers=_basic('synthetic-sinch-webhook', '')).json() == {
+            'status': 'ignored'}
+        assert rows(isolated_installation, 'inbound_imports') == [] and rows(isolated_installation, 'inbound_faxes') == []
+        # A fax Sinch knows is confirmed by lookup and fetched from Sinch, never taken from the request.
+        providers.sinch('01SYNTHETICFAX2')
+        document = pdf_bytes('the real Sinch document')
+        providers.files[('sinch', '01SYNTHETICFAX2')] = (200, document)
+        known = dict(_sinch_event('01SYNTHETICFAX2'), file=base64.b64encode(pdf_bytes('forged document')).decode(),
+                     padding='x' * 200_000)
+        assert http.post('/sinch-inbound', json=known, headers=_basic('synthetic-sinch-webhook', '')).json() == {
+            'status': 'ok'}
+        assert step() is True
+        assert only_fax(http)['sha256'] == hashlib.sha256(document).hexdigest()
+        [record] = rows(isolated_installation, 'inbound_imports')
+        report = json.loads(record['report'])
+        # Only Sinch's own record is kept, not the unauthenticated body.
+        assert report == {'verified_by': 'lookup', 'notification': {
+            'id': '01SYNTHETICFAX2', 'to_number': TO, 'from_number': FROM, 'pages': 1,
+            'completed_at': '2026-10-03T14:00:00Z'}}
+        # The settings page does not call a user name alone "configured".
+        assert http.get('/admin/settings', headers=ADMIN).json()['inbound']['sinch']['basic_auth_configured'] is False
+
+
+def test_sinch_basic_auth_with_both_set_authenticates(isolated_installation, monkeypatch, providers):
+    environment(monkeypatch, SINCH_INBOUND_BASIC_USER='synthetic-sinch-webhook',
+                SINCH_INBOUND_BASIC_PASS='synthetic-webhook-pass')
+    with client() as http:
+        assert http.post('/sinch-inbound', json=_sinch_event('01BASICFAX'),
+                         headers=_basic('synthetic-sinch-webhook', '')).status_code == 401
+        assert http.post('/sinch-inbound', json=_sinch_event('01BASICFAX'),
+                         headers=_basic('synthetic-sinch-webhook', 'wrong')).status_code == 401
+        event = dict(_sinch_event('01BASICFAX'), note='y' * 100_000)
+        assert http.post('/sinch-inbound', json=event,
+                         headers=_basic('synthetic-sinch-webhook', 'synthetic-webhook-pass')).json() == {'status': 'ok'}
+        [record] = rows(isolated_installation, 'inbound_imports')
+        report = json.loads(record['report'])
+        assert report['verified_by'] == 'basic auth' and report['notification']['fax']['id'] == '01BASICFAX'
+        # Authenticated notifications are kept as evidence, cut short: long text is cut, the whole stays small.
+        assert report['notification']['note'] == 'y' * 500 and len(record['report']) <= 8 * 1024
+
+
+def test_saving_a_sinch_user_name_without_a_password_is_refused(isolated_installation, monkeypatch):
+    from app.config_values import SINCH_PASSWORD_NEEDED, ConfigurationValueError, ConfigurationValues
+    base = ConfigurationValues.from_environment({})
+    with pytest.raises(ConfigurationValueError) as refused:
+        base.with_patch({'sinch_inbound_basic_user': 'synthetic-sinch-webhook'})
+    assert str(refused.value) == SINCH_PASSWORD_NEEDED
+    both = base.with_patch({'sinch_inbound_basic_user': 'synthetic-sinch-webhook',
+                            'sinch_inbound_basic_pass': 'synthetic-webhook-pass'})
+    assert both.sinch_inbound_basic_configured
+    # Clearing the password while the user name stays is refused too; clearing both is fine.
+    with pytest.raises(ConfigurationValueError):
+        both.with_patch({'sinch_inbound_basic_pass': ''})
+    assert not both.with_patch({'sinch_inbound_basic_user': '', 'sinch_inbound_basic_pass': ''}).sinch_inbound_basic_configured
+    # An unrelated change saves even on an installation whose .env holds only the user name.
+    lone = ConfigurationValues.from_environment({'SINCH_INBOUND_BASIC_USER': 'synthetic-sinch-webhook'})
+    assert lone.with_patch({'max_file_size_mb': 12}).max_file_size_mb == 12
+    environment(monkeypatch)
+    with client() as http:
+        current = http.get('/admin/settings', headers=ADMIN).json()
+        saved = http.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'],
+            'sinch_inbound_basic_user': 'synthetic-sinch-webhook'})
+        assert saved.status_code == 400 and saved.json()['detail'] == SINCH_PASSWORD_NEEDED
+
+
 def test_with_checks_off_a_notification_is_only_a_hint_confirmed_by_lookup(isolated_installation, monkeypatch,
                                                                          providers):
     environment(monkeypatch, PHAXIO_INBOUND_VERIFY_SIGNATURE='false')
