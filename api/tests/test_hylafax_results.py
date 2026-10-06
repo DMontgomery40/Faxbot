@@ -248,15 +248,45 @@ def test_a_send_the_other_machine_answered_carries_the_engines_own_reason(monkey
     assert calls == [('observed', 'failed', 'The call ended after 1 page; the rest was not confirmed.')]
 
 
-def test_a_send_the_other_machine_answered_without_a_page_says_it_answered(monkeypatch):
-    """No page, but the other machine sent its ID: it answered, so never "did not answer as a fax machine"."""
+def test_a_send_the_other_machine_answered_without_a_confirmed_page_waits_for_a_person(monkeypatch):
+    """No page confirmed, but the other machine sent its ID and the engine got no answer to EOP: page 1 may
+    have printed. The fax waits for a person and is never sent again by itself (PR #33 round 6)."""
     row = {'verdict': 'remote_fax_failed', 'ended_at': '2026-10-05T01:00:40Z', 't38': 'no',
            'error_cause': 'remote_fax_failed: No response to EOP repeated 3 tries E151'}
     payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
                'remote_station_b64': base64.b64encode(b'+1 303 426 5097').decode(),
                'status_b64': base64.b64encode(b'No response to EOP repeated 3 tries {E151}').decode()}
-    _, calls, _ = result_route(monkeypatch, payload, row)
-    assert calls == [('observed', 'failed', 'The other fax machine answered but the fax did not finish.')]
+    answer, calls, _ = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'uncertain'}
+    assert calls == [('uncertain', JOB, ATTEMPT, f'{ATTEMPT}:hylafax:failed')]
+
+
+@pytest.mark.parametrize('verdict, expected', [
+    (sip_calls.NO_FAX_SIGNAL, 'failed'), ('no_media_back', 'failed'), ('no_fax_answer', 'failed'),
+    ('remote_fax_failed', 'uncertain'), (None, 'uncertain'),
+])
+def test_an_open_ending_fails_for_certain_only_when_the_trunk_heard_no_fax_machine(monkeypatch, verdict, expected):
+    """The engine's words leave it open ("Remote hangup", no code); the trunk may know no fax machine was ever
+    heard, and only then has nothing been delivered."""
+    row = {'verdict': verdict, 'ended_at': '2026-10-05T01:00:40Z', 't38': 'no', 'error_cause': None}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'Remote hangup').decode()}
+    answer, calls, _ = result_route(monkeypatch, payload, row)
+    if expected == 'failed':
+        assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.verdict_sentence(verdict))]
+    else:
+        assert answer == {'status': 'uncertain'} and calls[0][0] == 'uncertain'
+
+
+def test_a_restart_never_happens_when_the_engines_records_cannot_be_read(monkeypatch):
+    """Fail closed: unreadable records count as a fax that may be about to dial, and Apply says why."""
+    from app import sip_http
+
+    class Broken:
+        engine = None
+    monkeypatch.setattr(sip_calls, '_current', Broken())
+    monkeypatch.setattr(hylafax_records, 'records_for', lambda engine: (_ for _ in ()).throw(RuntimeError('x')))
+    assert sip_http._engine_faxes_pending() is None
 
 
 # The engine's own secret and folders ----------------------------------------------------------------------

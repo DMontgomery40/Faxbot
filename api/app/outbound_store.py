@@ -29,8 +29,9 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
     'partly_sent', 'pages_unconfirmed', 'local_not_delivered'})
-# A fax in a shared call whose pages were only partly confirmed: failed, never resent automatically.
-NO_FALLBACK_CATEGORIES = frozenset({'partly_sent'})
+# A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
+# failed or waiting for a person, never resent automatically (no other route takes it).
+NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
