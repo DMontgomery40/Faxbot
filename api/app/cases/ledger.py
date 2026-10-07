@@ -224,20 +224,20 @@ class CaseLedger:
         """Keep the exact bytes once, named by their SHA-256; an existing copy must match."""
         path = self._path(item.digest)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        except FileExistsError:
-            if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != item.digest:
-                raise CaseConflict('A kept case document does not match its record; restore it from a backup.')
-            return
+        # Written whole under a private name, then linked in: a concurrent reader never sees half a file.
+        staged = path.with_name(f'.{item.digest}.{uuid4().hex}.part')
+        descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             with os.fdopen(descriptor, 'wb') as handle:
                 handle.write(item.data)
                 handle.flush()
                 os.fsync(handle.fileno())
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
+            os.link(staged, path)
+        except FileExistsError:
+            if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != item.digest:
+                raise CaseConflict('A kept case document does not match its record; restore it from a backup.') from None
+        finally:
+            staged.unlink(missing_ok=True)
 
     def _actor_on(self, connection, principal_id):
         if principal_id is None:
@@ -348,11 +348,14 @@ class CaseLedger:
         for row in connection.execute(sa.select(e).where(e.c.entry_id.in_(ids)).order_by(
                 e.c.occurred_at, e.c.created_at, e.c.id)).mappings():
             events.setdefault(row['entry_id'], []).append(dict(row))
-        settings = {}
+        r = t['case_recipients']
+        recipients = sorted({row['recipient'] for row in rows})
+        chosen = dict(connection.execute(sa.select(r.c.phone_number, r.c.reuse_days).where(
+            r.c.phone_number.in_(recipients))).all())
+        settings = {number: DEFAULT_REUSE_DAYS if chosen.get(number) is None else chosen[number]
+                    for number in recipients}
         views = []
         for row in rows:
-            if row['recipient'] not in settings:
-                settings[row['recipient']] = self.recipient_on(connection, row['recipient'])['reuse_days']
             carried = sends.get(row['id'], [])
             delivered = [send for send in carried if send['delivery'] == 'success']
             view = {**row, 'pages': row['page_count'], 'sends': len(carried),
@@ -431,11 +434,21 @@ class CaseLedger:
                  .select_from(c.outerjoin(last_send, last_send.c.entry_id == c.c.id))
                  .group_by(c.c.case_id, c.c.recipient)
                  .order_by(last.desc(), c.c.case_id, c.c.recipient).limit(limit))
+        # A few set-based queries under the shared write lock, however many cases are listed.
         with write_transaction(self.engine) as connection:
             groups = connection.execute(query).mappings().all()
+            pairs = {(group['case_id'], group['recipient']) for group in groups}
+            rows = [dict(row) for row in connection.execute(sa.select(c).where(
+                c.c.case_id.in_(sorted({pair[0] for pair in pairs})),
+                c.c.recipient.in_(sorted({pair[1] for pair in pairs})))).mappings()
+                if (row['case_id'], row['recipient']) in pairs] if pairs else []
+            self._settle_on(connection, [row['id'] for row in rows], now)
+            grouped = {}
+            for view in self._views_on(connection, rows, now):
+                grouped.setdefault((view['case_id'], view['recipient']), []).append(view)
             result = []
             for group in groups:
-                views = self.entries_on(connection, group['case_id'], group['recipient'], now)
+                views = grouped.get((group['case_id'], group['recipient']), [])
                 states = [view['state'] for view in views]
                 result.append({'case_id': group['case_id'], 'recipient': group['recipient'],
                                'documents': len(views), 'accepted': states.count('accepted'),

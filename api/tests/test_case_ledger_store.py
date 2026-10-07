@@ -120,6 +120,26 @@ def test_acknowledgements_not_fax_success_decide_what_a_packet_leaves_out(ledger
     assert [(row['case_id'], row['documents'], row['accepted'], row['sent'], row['accepts_references'])
             for row in recent] == [(CASE, 3, 3, 3, True)]
 
+    # Listing many cases takes a fixed handful of queries under the shared write lock, not some per case.
+    from api.app.cases.ledger import PacketPlan
+    for number in range(4):
+        other, recipient = f'claim-{number + 10}', f'+1202555019{number}'
+        referral = document(f'Referral {number}', pdf(f'Referral {number}'), 1)
+        identity = job(engine)
+        ledger.record(other, recipient, PacketPlan((referral,), (), False), identity)
+    statements = []
+
+    def count(connection, cursor, statement, *args):
+        statements.append(statement)
+    sa.event.listen(engine, 'before_cursor_execute', count)
+    try:
+        recent = ledger.recent()
+    finally:
+        sa.event.remove(engine, 'before_cursor_execute', count)
+    assert sorted((row['case_id'], row['documents'], row['accepted'], row['sent']) for row in recent) == sorted(
+        [(CASE, 3, 3, 3)] + [(f'claim-{number + 10}', 1, 0, 0) for number in range(4)])
+    assert len(statements) <= 16, len(statements)
+
 
 def test_expiry_invalidation_and_a_persons_confirmation(ledger):
     engine, now = ledger.engine, utcnow()

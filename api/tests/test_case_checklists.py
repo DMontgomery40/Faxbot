@@ -260,3 +260,15 @@ def test_checklist_permissions(client):
     bad_date = client.post('/cases/case-a/originals', headers=ADMIN, data={'dates': ['30/09/2026']},
                            files=[('documents', ('a.pdf', pdf('a'), 'application/pdf'))])
     assert bad_date.status_code == 400 and 'year-month-day' in bad_date.json()['detail']
+
+
+def test_suggestions_are_a_setting_administrators_may_change(client):
+    """Suggestions send nothing anywhere and nothing is sent unless a person adds it, so it is an ordinary setting."""
+    from app.access.configuration import owner_only_fields
+    assert 'case_suggestions_enabled' not in owner_only_fields()
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    assert 'case_suggestions_enabled' not in current['owner_only']
+    changed = client.put('/admin/settings', headers=ADMIN, json={
+        'case_suggestions_enabled': True, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    assert changed.status_code == 200, changed.text
+    assert client.get('/admin/settings', headers=ADMIN).json()['cases'] == {'suggestions': True}
