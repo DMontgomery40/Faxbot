@@ -7,12 +7,28 @@ approved on October 3, 2026." When a call to the approved number definitely
 failed and Faxbot called the number entered, Sent says that instead. Read
 only from what each attempt recorded before it was submitted.
 """
+from weakref import WeakKeyDictionary
+
 import sqlalchemy as sa
 
 from .alternates import describe, provenance
 from .database import read_connection, reflect
 from .dialing import display_number, is_toll_free
 from .policy import DIRECT
+
+
+_TABLES = WeakKeyDictionary()
+_NAMES = ('fax_jobs', 'outbound_attempts', 'outbound_deliveries', 'delivery_attempt_costs')
+
+
+def _tables(engine):
+    """The four tables, reflected once per engine (the Sent list asks for up to 100 faxes at a time)."""
+    found = _TABLES.get(engine)
+    if found is None:
+        found = reflect(engine, _NAMES)
+        if 'dialed_number' in found['outbound_attempts'].c:
+            _TABLES[engine] = found
+    return found
 
 
 def _day(moment):
@@ -26,7 +42,7 @@ def dialed_view(engine, job_id):
     involved, or before Faxbot recorded dialed numbers.
     """
     try:
-        t = reflect(engine, ('fax_jobs', 'outbound_attempts', 'outbound_deliveries', 'delivery_attempt_costs'))
+        t = _tables(engine)
     except Exception:
         return None
     jobs, attempts, deliveries, costs = (t['fax_jobs'], t['outbound_attempts'], t['outbound_deliveries'],

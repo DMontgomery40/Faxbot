@@ -217,7 +217,11 @@ def _recommendation(store, number, revision, bound, pages=1):
     if revision is None or bound is None:
         return []
     planner = RoutePlanner(store, direct_ready=lambda: True, local_ready=lambda: True)
-    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True)
+    # A fax accepted now dials the recipient's approved toll-free number where a route can, priced for that class.
+    from .alternates import current
+    approval = current(number, engine=store.engine)
+    dial = {'alternate': approval.alternate, 'refused': False} if approval is not None else None
+    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True, dial=dial)
     def plan_fee(card):
         if card is None or not card.flat_plan:
             return None
@@ -226,7 +230,7 @@ def _recommendation(store, number, revision, bound, pages=1):
     def money(card, micros):
         return None if card is None or micros is None else {'currency': card.currency, 'amount': format_amount(micros)}
     return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
-             'explanation': explain(choice, plan.destination),
+             'explanation': explain(choice, plan.destination, plan.number_for(choice.route.key)),
              'estimated_cost_one_page': money(choice.route.card, None if choice.route.card is None
                                                else estimate_cost(choice.route.card, 1)),
              # This fax: setup plus typical seconds a page, rounded the way the card bills.

@@ -610,3 +610,36 @@ def test_0027_is_head_and_adds_empty_columns_that_downgrade(toll):
     assert {'dialed_number', 'dialed_approval'} <= _columns(toll.engine, 'outbound_attempts')
     with toll.engine.connect() as connection:
         assert connection.scalar(sa.text('SELECT count(*) FROM outbound_attempts WHERE dialed_number IS NOT NULL')) == 0
+
+
+def test_a_shared_call_dials_the_approved_number_only_when_every_fax_kept_it():
+    states = {'job-b': {'alternate': TOLL_FREE, 'approval': 'approval-b', 'refused': False},
+              'job-c': {'alternate': None, 'approval': None, 'refused': False}}
+    store = SimpleNamespace(dial_state=lambda job_id: states[job_id])
+
+    def claim(*others):
+        lead = SimpleNamespace(job_id='job-a', members=())
+        members = (lead, *[SimpleNamespace(job_id=job) for job in others]) if others else ()
+        return SimpleNamespace(job_id='job-a', members=members)
+    mine = {'alternate': TOLL_FREE, 'approval': 'approval-a', 'refused': False}
+    assert alternates.claim_dial_state(store, claim(), mine) == {
+        'alternate': TOLL_FREE, 'refused': False, 'approvals': {'job-a': 'approval-a'}}
+    assert alternates.claim_dial_state(store, claim('job-b'), mine) == {
+        'alternate': TOLL_FREE, 'refused': False, 'approvals': {'job-a': 'approval-a', 'job-b': 'approval-b'}}
+    # One fax in the call kept no approval: every fax calls the number they share.
+    assert alternates.claim_dial_state(store, claim('job-b', 'job-c'), mine)['alternate'] is None
+    states['job-b']['refused'] = True
+    assert alternates.claim_dial_state(store, claim('job-b'), mine) == {'alternate': None, 'refused': True,
+                                                                        'approvals': {}}
+
+
+def test_recipients_details_estimate_the_next_fax_by_the_number_it_will_dial(toll):
+    from api.app.routing.http import _recommendation
+    toll.approvals.approve(RECIPIENT, TOLL_FREE)
+    routes = {item['route']: item for item in _recommendation(toll.routes, RECIPIENT, toll.snapshot.active, 'phaxio', 3)}
+    assert routes['phaxio']['estimated_cost'] == {'currency': 'USD', 'amount': '0.21'}
+    assert routes['phaxio']['explanation'].endswith(', calling the toll-free number the recipient approved.')
+    # SignalWire publishes no price for calling a toll-free number: unknown, never its local price.
+    assert routes['signalwire']['estimated_cost'] is None
+    other = {item['route']: item for item in _recommendation(toll.routes, OTHER, toll.snapshot.active, 'phaxio', 3)}
+    assert other['signalwire']['estimated_cost'] is not None and 'toll-free' not in other['signalwire']['explanation']
