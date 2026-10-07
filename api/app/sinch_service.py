@@ -33,10 +33,9 @@ NOT_CONVERTED = 'Sinch could not turn the document into fax pages.'
 PARTLY_SENT = 'Sinch sent only some of the pages, so Faxbot did not send the fax again.'
 NOT_CONFIRMED = ('The call ended before Sinch confirmed a page, so part of the fax may have arrived; '
                  'Faxbot did not send it again.')
-NOT_DELIVERED = 'Sinch could not deliver the fax.'
 # Every sentence above; delivery history shows a reason only from such a set.
 FAILURE_SENTENCES = frozenset({*REFUSED.values(), UNREACHABLE, *CALL_ERRORS.values(), NOT_CONVERTED,
-                               PARTLY_SENT, NOT_CONFIRMED, NOT_DELIVERED})
+                               PARTLY_SENT, NOT_CONFIRMED})
 
 
 class SinchRefused(RuntimeError):
@@ -52,9 +51,10 @@ def failure_outcome(fax: Dict[str, Any]) -> Tuple[str, Optional[str]]:
 
     A category of None means nothing reached the fax machine, so another route
     may send it: the document never became fax pages, or the call failed before
-    any fax data. With pages confirmed it is ``partly_sent``; any other ending
-    may have delivered an unconfirmed page (``pages_unconfirmed``). Neither is
-    ever sent again by itself.
+    any fax data. With pages confirmed it is ``partly_sent`` (failed, with this
+    sentence); any other ending may have delivered an unconfirmed page
+    (``pages_unconfirmed``: uncertain, waiting for a person, as for the fax
+    engine's own calls). Neither is ever sent again by itself.
     """
     pages = fax.get('pagesSentSuccessfully')
     kind = str(fax.get('errorType') or '').upper()

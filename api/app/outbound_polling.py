@@ -40,6 +40,11 @@ class OutboundPoller:
         failure = result.get('failure') if isinstance(result, dict) and receipt.status == 'failed' else None
         # The adapter's own judgment that pages may have reached the fax machine: never another route.
         category = result.get('failure_category') if isinstance(result, dict) and receipt.status == 'failed' else None
+        if category == 'pages_unconfirmed':
+            # No page was confirmed, yet part of one may have arrived: uncertain, waiting for a person,
+            # exactly as for the fax engine's own calls.
+            return await run_lifecycle_step(lambda: self.store.record_unconfirmed(job_id,
+                attempt_id=attempt_id, profile_id=profile.id, event_key=key))
         return await run_lifecycle_step(lambda: self.store.observe(job_id,
             attempt_id=attempt_id, profile_id=profile.id, provider_sid=receipt.provider_sid,
             status=receipt.status, event_key=key, error=failure if isinstance(failure, str) else None,

@@ -430,10 +430,10 @@ async def test_sinch_out_of_reach_is_a_refusal_but_a_lost_answer_is_never_resent
      'Sinch could not turn the document into fax pages.', None),
     ({'errorType': 'FAX_ERROR', 'errorCode': 8, 'pagesSentSuccessfully': 2}, 'failed',
      sinch_service.PARTLY_SENT, 'partly_sent'),
-    ({'errorType': 'FAX_ERROR', 'errorCode': 8, 'pagesSentSuccessfully': 0}, 'failed',
-     sinch_service.NOT_CONFIRMED, 'pages_unconfirmed'),
-    ({'errorType': 'CALL_ERROR', 'errorCode': 11}, 'failed', sinch_service.NOT_CONFIRMED, 'pages_unconfirmed'),
-    ({'errorType': 'GENERAL_ERROR'}, 'failed', sinch_service.NOT_CONFIRMED, 'pages_unconfirmed'),
+    ({'errorType': 'FAX_ERROR', 'errorCode': 8, 'pagesSentSuccessfully': 0}, 'reconciliation_required',
+     None, 'pages_unconfirmed'),
+    ({'errorType': 'CALL_ERROR', 'errorCode': 11}, 'reconciliation_required', None, 'pages_unconfirmed'),
+    ({'errorType': 'GENERAL_ERROR'}, 'reconciliation_required', None, 'pages_unconfirmed'),
 ])
 async def test_a_sinch_failure_takes_another_route_only_when_no_page_can_have_arrived(
         phaxio_then_sinch, monkeypatch, fax, state, sentence, category):
@@ -455,11 +455,43 @@ async def test_a_sinch_failure_takes_another_route_only_when_no_page_can_have_ar
         await worker.step()
         assert transport.used == ['sinch', 'phaxio']
     else:
-        # Part of the fax may have reached the machine: it is shown as failed with why, and never sent again.
+        # Part of the fax may have reached the machine: never sent again. With pages confirmed it failed and
+        # says why; with none confirmed it is uncertain and waits for a person, as the fax engine's calls do.
+        from api.app.routing.fallback import FallbackScheduler
         with configuration.engine.connect() as connection:
             job_row = connection.execute(sa.select(configuration.jobs.c.status, configuration.jobs.c.error).where(
                 configuration.jobs.c.id == job)).one()
             category_now = connection.execute(sa.select(delivery.attempts.c.error_category).where(
                 delivery.attempts.c.job_id == job)).scalar_one()
-        assert tuple(job_row) == ('failed', sentence) and category_now == category
+        assert category_now == category
+        if sentence is not None:
+            assert tuple(job_row) == ('failed', sentence)
+        assert FallbackScheduler(delivery, routes).step() is False
         assert await worker.step() is False and transport.used == ['sinch']
+
+
+@pytest.mark.asyncio
+async def test_a_fax_sent_by_the_sinch_route_has_its_charge_read_with_that_routes_account(phaxio_then_sinch,
+                                                                                          monkeypatch):
+    """On a live install Sinch is an extra route beside the fax's own provider, never its bound account."""
+    from api.app.outbound_polling import OutboundPoller
+    configuration, delivery, routes, snapshot, transport = phaxio_then_sinch
+    sinch_api(monkeypatch, lambda request: httpx.Response(200, json={
+        'id': SINCH_FAX, 'direction': 'OUTBOUND', 'status': 'IN_PROGRESS' if request.method == 'POST' else 'COMPLETED'}))
+    job = accept(configuration, snapshot)
+    await OutboundWorker(delivery, RoutedTransport(transport, direct=None)).step()
+    assert await OutboundPoller(delivery).refresh(job) is True
+    assert transport.used == ['sinch'] and delivery.get(job)['state'] == 'success'
+    CostRecorder(routes).step()
+    attempt = delivery.get(job)['attempt_id']
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get('authorization')))
+        return httpx.Response(200, json={'id': SINCH_FAX, 'direction': 'OUTBOUND', 'status': 'COMPLETED',
+                                         'price': {'amount': '0.1350', 'currencyCode': 'USD'}})
+    BillingReconciler(routes, {'sinch': SinchCharges(delivery, client_factory=mock_client(handler)),
+                               'phaxio': PhaxioCharges(delivery, client_factory=mock_client(handler))}).step()
+    row = routes.decision(attempt)
+    assert (row['route'], row['provider_id'], row['reported_cost_micros']) == ('sinch', 'sinch', 135_000)
+    assert seen == [(f'https://fax.api.sinch.com/v3/projects/project-1/faxes/{SINCH_FAX}', SINCH_AUTH)]
