@@ -228,6 +228,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The route that carried the fax and why Faxbot chose it, as Sent details show them.
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
+    # The number the fax dialed when it was the recipient's approved toll-free number, as Sent details show it.
+    if (cost.get('dialed') or {}).get('sentence'):
+        route.append(('Dialed', cost['dialed']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):

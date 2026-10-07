@@ -51,7 +51,7 @@ import type {
   FaxCost,
   IntakeCounts,
   IntakeItem,
-  PublishedPlans, RateCard,
+  PublishedPlans, RateCard, TollFreeTerms,
   ReconcileResult,
   RouteCostsResponse,
   CaseDocuments,
@@ -1082,7 +1082,7 @@ class AdminAPIClient {
     return this.json(`/routing/inbound-costs${query({ ids: inboundIds.join(',') })}`);
   }
 
-  async listRateCards(): Promise<{ cards: RateCard[] }> {
+  async listRateCards(): Promise<{ cards: RateCard[]; toll_free?: TollFreeTerms[] }> {
     return this.json('/routing/rate-cards');
   }
 

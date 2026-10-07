@@ -14,6 +14,9 @@ import logging
 
 from ..config_runtime import run_lifecycle_step
 from ..outbound_worker import CapacityWait, PreparationFailure
+from .alternates import attempt_number, claim_dial_state
+from .dialing import reaches
+from .policy import RouteCandidate
 from .plan import RoutePlanner
 from .routes import RouteUnavailable, ensure_route_artifact, route_configuration, route_ready
 from .store import RouteStore
@@ -78,11 +81,27 @@ class RoutedTransport:
         planner = RoutePlanner(routes, direct_ready=self.direct.ready if self.direct is not None else None,
                                local_ready=self.local.ready if self.local is not None else None)
         bound = profile.configuration.provider_id
-        exclude = planner.tried_routes(claim.job_id, claim.attempt_id)
+        # The number choice kept at acceptance; a route is left out only for the number it already called.
+        dial = claim_dial_state(self.store, claim, job.get('dial'))
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
-                            pages=job.get('pages'), alternates=True, exclude=exclude,
+                            pages=job.get('pages'), alternates=True, dial=dial,
+                            tried=planner.tried(claim.job_id, claim.attempt_id),
                             by_call=bool(job.get('send_by_call')))
         return plan, job, revision
+
+    def _record_dialed(self, claim, plan, route, dial, values):
+        """Record the number this attempt calls on ``route`` before its durable submission marker.
+
+        The same rule the plan priced the route by (``alternates.attempt_number``); a route with no call records none.
+        """
+        record = getattr(self.store, 'record_dialed', None)
+        if record is None or route.kind != 'provider':
+            return
+        alternate = (dial or {}).get('alternate')
+        number, _ = attempt_number(plan.destination, alternate=alternate, refused=bool((dial or {}).get('refused')),
+                                   route_reaches=bool(alternate) and reaches(route.provider_id, alternate, values))
+        approvals = (dial or {}).get('approvals') if number != plan.destination else None
+        record(claim, number, approvals or None)
 
     def _trunk_has_room(self, claim, revision):
         """Whether the trunk can take this call now (the claim gate covers faxes bound to it; this covers the rest)."""
@@ -133,6 +152,11 @@ class RoutedTransport:
         if bound is not None:
             self.routes().reroute_decision(claim.attempt_id, route=bound.route.key,
                                            provider_id=bound.route.provider_id, reason='alternative')
+        # The fax's own provider calls the number it may call, recorded again before submission.
+        _, _, job = self.store.load_dispatch(restored)
+        route = RouteCandidate(accepted.configuration.provider_id, 'provider', accepted.configuration.provider_id)
+        self._record_dialed(restored, plan, route, claim_dial_state(self.store, restored, job.get('dial')),
+                            revision.values)
         return restored
 
     def record_fallback(self, claim, plan):
@@ -147,10 +171,13 @@ class RoutedTransport:
         try:
             plan, job, revision = await run_lifecycle_step(lambda: self._plan(claim))
             choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision))
+            if choice is not None:
+                dial = claim_dial_state(self.store, claim, job.get('dial'))
+                await run_lifecycle_step(lambda: self._record_dialed(claim, plan, choice.route, dial, revision.values))
         except CapacityWait:
             raise
         except Exception:
-            # Route evidence is optional; the accepted provider still works.
+            # Route evidence is optional; the accepted provider still works (and chooses its own number).
             logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')
             plan = choice = None
         if choice is not None:

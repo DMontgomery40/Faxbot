@@ -118,11 +118,46 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
         details=json.dumps(details or {}, sort_keys=True, separators=(',', ':')), created_at=now))
 
 
-def record_acceptance(connection, tables, job_id, *, held, now):
-    """Part of the same transaction as FaxJob and its captured profile binding."""
+def _routes_reach(values):
+    """callable(number) -> whether any route of this revision may call ``number`` (``routing.dialing``)."""
+    if values is None:
+        return None
+    from .routing.dialing import reaches
+    routes = [values.effective_outbound, *values.outbound_route_providers]
+    return lambda number: any(reaches(route, number, values) for route in routes if route)
+
+
+def accepted_dial(connection, to_number, values):
+    """``(alternate or None, approval id or None)`` kept with a fax at acceptance (``routing.alternates``).
+
+    Reads the recipient's approval through the acceptance transaction; any
+    failure leaves the fax calling the number the sender entered.
+    """
+    from .routing import alternates
+    try:
+        approval = alternates.current(to_number, connection=connection)
+        number, approval_id = alternates.dialed_number_for(
+            {'to_number': to_number}, facts=alternates.DialFacts(approval, _routes_reach(values)))
+    except Exception:
+        return None, None
+    return (number, approval_id) if number != to_number else (None, None)
+
+
+def record_acceptance(connection, tables, job_id, *, held, now, to_number=None, values=None):
+    """Part of the same transaction as FaxJob and its captured profile binding.
+
+    With ``to_number``, the number the fax dials is decided here, once: an
+    approved alternate in force now stays with this fax (migration 0027).
+    """
     mode, state = ('held', 'held') if held else ('normal', 'ready')
-    connection.execute(tables['outbound_deliveries'].insert().values(id=job_id,
-        dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now))
+    deliveries = tables['outbound_deliveries']
+    dial = {}
+    if to_number and 'alternate_number' in deliveries.c:
+        alternate, approval_id = accepted_dial(connection, to_number, values)
+        if alternate is not None:
+            dial = {'alternate_number': alternate, 'alternate_approval': approval_id}
+    connection.execute(deliveries.insert().values(id=job_id,
+        dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now, **dial))
     _event(connection, tables['outbound_events'], job_id, 'accepted', now,
         details={'dispatch_mode': mode})
     if state == 'ready':
@@ -400,12 +435,71 @@ class OutboundStore:
         return revision, profile
 
     def load_dispatch(self, claim):
-        """Read private submission inputs only while the preparation lease is held."""
+        """Read private submission inputs only while the preparation lease is held.
+
+        The job also carries the number choice kept at acceptance (``dial``) and
+        the number this attempt already recorded (``dialed_number``), if any.
+        """
         with self.configuration._locked() as connection:
             revision, profile = self._preparing(connection, claim, datetime.utcnow())
             job = connection.execute(sa.select(self.configuration.jobs).where(
                 self.configuration.jobs.c.id == claim.job_id)).mappings().one()
-            return revision, profile, dict(job)
+            job = dict(job)
+            if 'dialed_number' in self.attempts.c:
+                job['dial'] = self._dial_state_on(connection, claim.job_id)
+                job['dialed_number'] = connection.scalar(sa.select(self.attempts.c.dialed_number).where(
+                    self.attempts.c.id == claim.attempt_id))
+            return revision, profile, job
+
+    def _dial_state_on(self, connection, job_id):
+        """The alternate kept at acceptance, and whether an earlier attempt to it definitely failed."""
+        row = connection.execute(sa.select(self.deliveries.c.alternate_number, self.deliveries.c.alternate_approval)
+                                 .where(self.deliveries.c.id == job_id)).first()
+        alternate, approval = (row.alternate_number, row.alternate_approval) if row is not None else (None, None)
+        refused = False
+        if alternate:
+            # A definite failure only: the provider said the call failed. Uncertain attempts are never sent again,
+            # and pages that may have arrived (partly sent, unconfirmed) carry a category and never count.
+            refused = connection.execute(sa.select(self.attempts.c.id).where(
+                self.attempts.c.job_id == job_id, self.attempts.c.dialed_number == alternate,
+                self.attempts.c.submitted_at.is_not(None), self.attempts.c.phase == 'failed',
+                self.attempts.c.error_category.is_(None)).limit(1)).first() is not None
+        return {'alternate': alternate, 'approval': approval, 'refused': refused}
+
+    def dial_state(self, job_id):
+        """``{'alternate', 'approval', 'refused'}`` for a fax; ``alternate`` is None when it calls its own number."""
+        if 'dialed_number' not in self.attempts.c:
+            return {'alternate': None, 'approval': None, 'refused': False}
+        with self.configuration.engine.connect() as connection:
+            return self._dial_state_on(connection, job_id)
+
+    def record_dialed(self, claim, number, approval_id=None, *, now=None):
+        """Record the number this attempt dials (every fax in a shared call), before its durable submission marker.
+
+        Allowed only while this worker holds the preparation lease; once the
+        attempt is submitted its number can never change. Returns False when
+        there is nothing to record against (an older database).
+        """
+        if 'dialed_number' not in self.attempts.c:
+            return False
+        if not isinstance(number, str) or not number or len(number) > 32:
+            raise ValueError('Invalid dialed number.')
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if (not self._owns(row, member) or row['state'] != 'preparing'
+                        or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
+                    raise DeliveryConflict('Delivery preparation lease is no longer current.')
+                # ``approval_id`` may map each fax of a shared call to the approval it kept at acceptance.
+                approval = approval_id.get(member.job_id) if isinstance(approval_id, dict) else approval_id
+                updated = connection.execute(self.attempts.update().where(
+                    self.attempts.c.id == member.attempt_id, self.attempts.c.job_id == member.job_id,
+                    self.attempts.c.phase == 'preparing', self.attempts.c.submitted_at.is_(None)).values(
+                        dialed_number=number, dialed_approval=approval))
+                if updated.rowcount != 1:
+                    raise DeliveryConflict('Delivery preparation lease is no longer current.')
+            return True
 
     def grant_pdf(self, claim, *, url, token, expires_at):
         """Persist the captured provider's media capability before submission."""

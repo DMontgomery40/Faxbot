@@ -39,6 +39,7 @@ config.attributes["schema_history"] = importlib.import_module(package + ".schema
 config.attributes["schema_negotiation"] = importlib.import_module(package + ".schema_negotiation")
 config.attributes["schema_shared_manifest"] = importlib.import_module(package + ".schema_shared_manifest")
 config.attributes["schema_tollfree"] = importlib.import_module(package + ".schema_tollfree")
+config.attributes["schema_dialed"] = importlib.import_module(package + ".schema_dialed")
 
 
 def migrate(connection):

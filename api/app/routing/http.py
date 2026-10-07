@@ -218,7 +218,11 @@ def _recommendation(store, number, revision, bound, pages=1):
     if revision is None or bound is None:
         return []
     planner = RoutePlanner(store, direct_ready=lambda: True, local_ready=lambda: True)
-    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True)
+    # A fax accepted now dials the recipient's approved toll-free number where a route can, priced for that class.
+    from .alternates import current
+    approval = current(number, engine=store.engine)
+    dial = {'alternate': approval.alternate, 'refused': False} if approval is not None else None
+    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True, dial=dial)
     def plan_fee(card):
         if card is None or not card.flat_plan:
             return None
@@ -227,7 +231,7 @@ def _recommendation(store, number, revision, bound, pages=1):
     def money(card, micros):
         return None if card is None or micros is None else {'currency': card.currency, 'amount': format_amount(micros)}
     return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
-             'explanation': explain(choice, plan.destination),
+             'explanation': explain(choice, plan.destination, plan.number_for(choice.route.key)),
              'estimated_cost_one_page': money(choice.route.card, None if choice.route.card is None
                                                else estimate_cost(choice.route.card, 1)),
              # This fax: setup plus typical seconds a page, rounded the way the card bills.
@@ -463,7 +467,9 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     runtime = request.app.state.access_runtime
     await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
     spending = _spending(request)
-    return _cost_view(await _call(lambda: spending.job(job_id)))
+    from .provenance import dialed_view
+    return _cost_view(await _call(lambda: {**spending.job(job_id),
+                                           'dialed': dialed_view(spending.routes.engine, job_id)}))
 
 
 @router.get('/inbound-costs')
@@ -492,6 +498,7 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                     identity=Depends(require_identity)):
     """Costs for up to 100 sent faxes at once, for the Sent list; faxes this person cannot read are left out."""
     from ..access.fax_resources import FaxAccessError
+    from .provenance import dialed_view
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
     spending = _spending(request)
@@ -503,7 +510,7 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                 private_operation(lambda: runtime.queries.job(identity.actor, job_id))()
             except FaxAccessError:
                 continue  # not visible to this person: left out, never explained
-            costs[job_id] = _cost_view(spending.job(job_id))
+            costs[job_id] = _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id)})
         return costs
     return {'costs': await _call(read)}
 
@@ -530,7 +537,9 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'case_packets': _saving_view(result['case_packets']),
             'sslfax': _saving_view(result['sslfax']),
             # Faxes to the installation's own numbers, delivered inside Faxbot with no call.
-            'own_numbers': _saving_view(result['own_numbers'])}
+            'own_numbers': _saving_view(result['own_numbers']),
+            # Faxes that called their recipient's approved toll-free number; the recipient pays those calls.
+            'toll_free': _saving_view(result['toll_free'])}
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])
@@ -750,7 +759,10 @@ class RateCardsIn(BaseModel):
 async def list_rate_cards(request: Request):
     store = _store(request)
     cards = await _call(store.current_cards)
-    return {'cards': [_card_view(card) for card in cards]}
+    # What each sending route publishes about calling toll-free numbers (an approved alternate), with its source.
+    from .dialing import terms_view
+    values = request.scope['faxbot.configuration'].active.values
+    return {'cards': [_card_view(card) for card in cards], 'toll_free': terms_view(values)}
 
 
 @router.get('/published-plans', dependencies=[Depends(require_permission('settings:read'))])

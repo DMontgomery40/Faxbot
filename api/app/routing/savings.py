@@ -1,4 +1,4 @@
-"""What sending together, direct delivery, case packets and own numbers saved: always estimates.
+"""What sending together, direct delivery, case packets, own numbers and approved toll-free numbers saved: always estimates.
 
 Every saving compares what Faxbot sent with calls or pages that never
 happened, so each figure stays an estimate even after a carrier reports its
@@ -241,12 +241,15 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     from ..hylafax_records import sslfax_savings
     sslfax = sslfax_savings(routes, engine, since=since, days=days)
     own = own_numbers(routes, engine, since=since, days=days)
+    # Faxes that called the toll-free number their recipient approved, kept apart: the recipient pays those calls.
+    from .alternates import savings as toll_free_savings
+    toll_free = toll_free_savings(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, index, direct, packets, sslfax, own):
+    for part in (together, index, direct, packets, sslfax, own, toll_free):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'separator_pages': index, 'direct_delivery': direct,
-            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total,
+            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'total': total,
             'total_sentence': total_sentence(total, days)}
 
 

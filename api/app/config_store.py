@@ -393,7 +393,8 @@ class ConfigurationStore:
         connection.execute(self.job_bindings.insert().values(id=data['id'], revision_id=active.id, profile_id=identity))
         from .outbound_store import record_acceptance
         record_acceptance(connection, self.delivery_tables, data['id'], held=active.values.fax_disabled,
-                          now=data.get('created_at') or datetime.utcnow())
+                          now=data.get('created_at') or datetime.utcnow(), to_number=data.get('to_number'),
+                          values=active.values)
         if request_identity is not None:
             deliveries = self.delivery_tables['outbound_deliveries']
             connection.execute(deliveries.update().where(deliveries.c.id == data['id']).values(

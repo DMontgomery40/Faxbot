@@ -35,8 +35,8 @@ def _downgrade(engine, revision):
 
 # -- migration 0026 ------------------------------------------------------------------------------------------
 
-def test_0026_is_head_after_the_shared_manifest_and_adds_one_empty_table(database):  # noqa: F811
-    assert schema.HEAD == schema_tollfree.REVISION == '0026_tollfree_approval'
+def test_0026_follows_the_shared_manifest_and_adds_one_empty_table(database):  # noqa: F811
+    assert schema.TOLLFREE == schema_tollfree.REVISION == '0026_tollfree_approval'
     assert schema.SHARED_MANIFEST == '0025_shared_manifest' and schema_tollfree.TABLES == frozenset({'toll_free_approvals'})
     at_revision(database, '0025_shared_manifest')
     before = snapshot(database)

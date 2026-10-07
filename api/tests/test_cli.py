@@ -273,6 +273,21 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert unconfirmed.exit_code == 1 and '--confirm-original-account' in unconfirmed.stderr
 
 
+def test_sent_show_says_which_approved_number_a_fax_dialed(cli, tmp_path, monkeypatch):
+    from app.routing import provenance
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue')
+    sentence = 'Dialed 1-800-555-0100, the toll-free number Example Clinic approved on October 3, 2026.'
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: {
+        'number': '+18005550100', 'display': '1-800-555-0100', 'toll_free': True, 'recipient_name': 'Example Clinic',
+        'approved_on': 'October 3, 2026', 'withdrawn_on': None, 'sentence': sentence} if job_id == sent['id'] else None)
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Dialed ' + sentence in shown
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: None)
+    assert 'Dialed' not in cli('sent', 'show', sent['id']).stdout
+
+
 def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
     note = tmp_path / 'note.txt'
     note.write_text('Synthetic\n')
@@ -786,6 +801,11 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     # Money as money, the provider by name and the date in words: no bare decimals, currency codes or ids.
     shown = cli('costs', 'rate-cards').stdout
     assert '$0.07' in shown and 'Sending' in shown and 'October' in shown
+    # What calling a recipient's approved toll-free number costs on each sending route, with its source date.
+    toll_free = cli.json('costs', 'rate-cards')['toll_free']
+    assert [(item['provider_id'], item['price_text']) for item in toll_free] == [
+        ('phaxio', 'The same as its sending price.')]
+    assert 'Calls to toll-free numbers' in shown and 'Caller ID it needs' in shown
     assert 'USD' not in shown and '0.07 ' not in shown.replace('$0.07', '') and '2026-10-01' not in shown
     # Each route says how it charges and what this fax would cost, for the pages asked.
     three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
