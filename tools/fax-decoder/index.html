@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faxbot Decoder</title>
+<meta name="description" content="Turn Faxbot encoded fax pages back into the original document, on this device. Nothing is uploaded.">
+<style>
+  :root { --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #5d5d58; --line: #d9d9d3; --accent: #1f5f8b; --ok: #1d6b3a; --bad: #9b2c2c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #20201e; --text: #ececea; --muted: #a8a8a2; --line: #3a3a37; --accent: #7fb6dc; --ok: #7ccf9a; --bad: #f19b9b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p { margin: 8px 0; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-top: 20px; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center; cursor: pointer; }
+  #drop.over { border-color: var(--accent); }
+  label { display: block; font-weight: 600; margin-top: 16px; }
+  input[type=password] { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  button, a.button { display: inline-block; margin-top: 16px; padding: 10px 16px; border: 0; border-radius: 6px; background: var(--accent); color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #result.ok { color: var(--ok); }
+  #result.bad { color: var(--bad); }
+  code { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Faxbot Decoder</h1>
+  <p class="muted">Experimental. Some faxes sent by Faxbot carry a whole document as encoded pages. Open the fax here to get the original document back.</p>
+  <p class="muted">Everything happens on this device: the fax is never uploaded.</p>
+
+  <section class="panel">
+    <div id="drop" tabindex="0" role="button" aria-label="Choose the fax file">
+      <strong>Drop the fax file here, or choose it</strong>
+      <p class="muted">A PDF or TIFF of the fax, or a PNG or JPEG of each page. You can choose several files.</p>
+      <input id="file" type="file" multiple accept=".pdf,.tif,.tiff,.png,.jpg,.jpeg,.gif,.bmp,.webp" hidden>
+    </div>
+    <p id="chosen" class="muted"></p>
+    <label for="key">Shared key, if the sender encrypted the document</label>
+    <input id="key" type="password" autocomplete="off" placeholder="Leave empty when there is none">
+    <button id="decode" disabled>Decode</button>
+    <p id="result" role="status" aria-live="polite"></p>
+    <p id="download"></p>
+  </section>
+</main>
+<script type="module">
+  import { decodeFiles } from './decoder.js';
+
+  const drop = document.getElementById('drop');
+  const input = document.getElementById('file');
+  const button = document.getElementById('decode');
+  const result = document.getElementById('result');
+  const download = document.getElementById('download');
+  const chosen = document.getElementById('chosen');
+  let files = [];
+
+  const choose = (list) => {
+    files = [...list];
+    chosen.textContent = files.length ? files.map((f) => f.name).join(', ') : '';
+    button.disabled = !files.length;
+    result.textContent = ''; download.textContent = '';
+  };
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') input.click(); });
+  input.addEventListener('change', () => choose(input.files));
+  drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (event) => { event.preventDefault(); drop.classList.remove('over'); choose(event.dataTransfer.files); });
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    result.className = ''; result.textContent = 'Decoding…'; download.textContent = '';
+    try {
+      const inputs = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
+      const decoded = await decodeFiles(inputs, { secrets: [document.getElementById('key').value] });
+      const name = decoded.name || (decoded.contentType === 'text/plain' ? 'decoded.txt' : 'decoded.pdf');
+      const url = URL.createObjectURL(new Blob([decoded.data], { type: decoded.contentType }));
+      result.className = 'ok';
+      result.textContent = `Decoded ${decoded.pagesRead} of ${decoded.pagesExpected} encoded pages. The document matches its fingerprint.`;
+      const link = Object.assign(document.createElement('a'), { href: url, download: name, className: 'button', textContent: `Save ${name}` });
+      download.append(link);
+      const fingerprint = document.createElement('p');
+      fingerprint.className = 'muted';
+      fingerprint.innerHTML = 'Fingerprint (SHA-256): <code></code>';
+      fingerprint.querySelector('code').textContent = decoded.sha256;
+      download.append(fingerprint);
+    } catch (error) {
+      result.className = 'bad';
+      result.textContent = error && error.message ? error.message : 'The fax could not be decoded.';
+    } finally {
+      button.disabled = !files.length;
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+"""The browser decoder (tools/fax-decoder) reads what the Python encoder writes."""
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
+
+from app.codec import container
+
+TOOL = Path(__file__).resolve().parents[2] / 'tools' / 'fax-decoder'
+
+
+def _make(folder):
+    spec = importlib.util.spec_from_file_location('make_fixtures', TOOL / 'test' / 'make_fixtures.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.make(folder)
+
+
+def test_the_committed_fixtures_are_what_the_encoder_makes_today(tmp_path):
+    made = _make(tmp_path)
+    committed = TOOL / 'test' / 'fixtures'
+    expected = json.loads((committed / 'expected.json').read_text())
+    for name in expected['files']:
+        if name == 'zstd.tiff' and not container.zstd_available():
+            continue
+        if name.endswith('.pdf'):
+            # A PDF carries its creation time; its fax images must be identical.
+            from app import codec
+            images = [image.convert('1').tobytes() for image in codec.read_images(made / name)]
+            assert images == [image.convert('1').tobytes() for image in codec.read_images(committed / name)], name
+        else:
+            assert (made / name).read_bytes() == (committed / name).read_bytes(), name
+
+
+@pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is not installed')
+def test_the_browser_decoder_decodes_every_fixture():
+    result = subprocess.run(['node', '--test', str(TOOL / 'test' / 'decoder.test.mjs')], capture_output=True,
+                            text=True, timeout=300)
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]

@@ -98,6 +98,7 @@ $ faxbot received [OPTIONS] COMMAND [ARGS]...
 * `list`: List received faxes you can see.
 * `show`: Show one received fax.
 * `pdf`: Download the document of a received fax.
+* `decoded`: Download the original document a received...
 * `fetch`: Ask Faxbot to fetch a received fax&#x27;s...
 * `recover`: Bring in received faxes that reached the...
 * `import`: Import a PDF from another system as if it...
@@ -160,6 +161,26 @@ $ faxbot received pdf [OPTIONS] {inbound_id}
 **Arguments**:
 
 * `inbound_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
+
+**Options**:
+
+* `-o, --output <str>`: File to write. Use &#x27;-&#x27; for standard output.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot received decoded`
+
+Download the original document a received fax carried as encoded pages (experimental).
+
+**Usage**:
+
+```console
+$ faxbot received decoded [OPTIONS] {inbound_id}
+```
+
+**Arguments**:
+
+* `inbound_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27;.  [required]
 
 **Options**:
 
@@ -920,6 +941,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
 * `together`: Send short faxes to the same number...
+* `encoded`: Encoded pages (experimental): send a...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
 * `toll-free`: A recipient&#x27;s toll-free fax number, used...
@@ -1092,6 +1114,85 @@ Turn off batching for a number; faxes waiting for it are sent straight away.
 
 ```console
 $ faxbot recipients together off [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients encoded`
+
+Encoded pages (experimental): send a document as a few dense pages that the recipient&#x27;s Faxbot decodes, where the recipient agreed and it costs less.
+
+**Usage**:
+
+```console
+$ faxbot recipients encoded [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show whether faxes to a number may go as...
+* `set`: Turn encoded pages on for a number, or...
+* `off`: Turn encoded pages off for a number; its...
+
+#### `faxbot recipients encoded show`
+
+Show whether faxes to a number may go as encoded pages, and who recorded the recipient&#x27;s agreement.
+
+**Usage**:
+
+```console
+$ faxbot recipients encoded show [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients encoded set`
+
+Turn encoded pages on for a number, or change their style, error correction or shared key.
+
+**Usage**:
+
+```console
+$ faxbot recipients encoded set [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--recipient-agreed`: Record that this recipient agreed to receive encoded pages that their Faxbot decodes. Needed to turn encoded pages on.
+* `--style dense|picture`: Dense pages (the default), or a picture of the first page with the document hidden in its dots. With a shared key the picture is a plain pattern instead.
+* `--error-correction low|medium|high`: How much damage on the line the pages survive (default medium). Higher carries less.
+* `--shared-key KEY`: Encrypt documents with a key you and the recipient agreed outside fax (8 to 200 characters). Only its fingerprint is shown afterwards.
+* `--clear-key`: Stop encrypting with the shared key.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients encoded off`
+
+Turn encoded pages off for a number; its faxes go as normal pages.
+
+**Usage**:
+
+```console
+$ faxbot recipients encoded off [OPTIONS] {number}
 ```
 
 **Arguments**:
@@ -3240,6 +3341,7 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 * `settings`: Every Faxbot setting: show, change, check...
 * `diagnostics`: Check the installation without sending a fax.
 * `logs`: The activity log: sign-ins, faxes, phone...
+* `codec`: Encode a document as payload pages, or...
 * `profiles`: Server addresses and keys saved on this...
 
 ### `faxbot system health`
@@ -3671,6 +3773,70 @@ $ faxbot system logs tail [OPTIONS]
 * `--search <str>`: Only lines containing this text.
 * `--event <str>`: Only log entries of this event type.
 * `--lines <int range>`: How many of the last lines to show.  [default: 200; 1&lt;=x&lt;=20000]
+* `--help`: Show this message and exit.
+
+### `faxbot system codec`
+
+Encode a document as payload pages, or decode payload pages from a received fax file, on this computer (experimental).
+
+**Usage**:
+
+```console
+$ faxbot system codec [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `decode`: Decode the encoded pages in a fax file on...
+* `encode`: Encode a document as payload pages on this...
+
+#### `faxbot system codec decode`
+
+Decode the encoded pages in a fax file on this computer, check the document&#x27;s fingerprint and save it.
+
+**Usage**:
+
+```console
+$ faxbot system codec decode [OPTIONS] {source}
+```
+
+**Arguments**:
+
+* `source`: A received fax file: PDF, TIFF, PNG or JPEG.  [required]
+
+**Options**:
+
+* `-o, --output <path>`: Where to write the original document.
+* `--shared-key KEY`: The shared key, when the document was encrypted.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+#### `faxbot system codec encode`
+
+Encode a document as payload pages on this computer and save them as a fax TIFF.
+
+**Usage**:
+
+```console
+$ faxbot system codec encode [OPTIONS] {source}
+```
+
+**Arguments**:
+
+* `source`: A PDF or plain-text file.  [required]
+
+**Options**:
+
+* `-o, --output <path>`: The fax TIFF to write.  [required]
+* `--resolution standard|fine|superfine|300|400`: The fax resolution the pages are made for.  [default: fine]
+* `--layout grid|runs|picture`: grid survives resolution changes; runs carries the most but needs the exact image; picture hides the document in a picture.  [default: grid]
+* `--error-correction low|medium|high`: How much damage the pages survive.  [default: medium]
+* `--shared-key KEY`: Encrypt with this shared key.
+* `--force`: Replace the file if it exists.
 * `--help`: Show this message and exit.
 
 ### `faxbot system profiles`

@@ -86,6 +86,8 @@ from .inbound.http import router as inbound_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
+from .codec.http import router as codec_router
+from .codec.send import combine as codec_combine, transmitted_pdf as codec_transmitted_pdf
 from .diagnostics_report import router as diagnostics_router
 from .batching.transport import BatchingTransport
 from .batching import acceptance as batching_acceptance, results as batching_results
@@ -197,6 +199,7 @@ app.include_router(imports_router)
 app.include_router(hylafax_router)
 app.include_router(pages_router)
 app.include_router(batching_router)
+app.include_router(codec_router)
 app.include_router(diagnostics_router)
 
 
@@ -1858,6 +1861,18 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     except Exception:
         # Sending together is optional: without a usable answer the fax goes straight away.
         logging.getLogger(__name__).warning('Sending together is unavailable; the fax goes straight away.')
+    codec_record = None
+    if hold is None:
+        # Experimental encoded pages, only for a number whose recipient agreed and only when they save.
+        try:
+            from .conversion import payload_pages
+            from .codec.store import KeySeal
+            _, codec_record = await run_lifecycle_step(lambda: payload_pages(
+                manager.store.engine, provider_id=ob, needs_tiff=requires_tiff, destination=destination,
+                pdf_path=pdf_path, tiff_path=prepared.tiff_path, pages=prepared.pages, job_id=job_id,
+                seal=KeySeal(manager.store)))
+        except Exception:
+            logging.getLogger(__name__).warning('Encoded pages are unavailable; the fax goes as normal pages.')
 
     # One transaction accepts the row and its immutable account/profile binding.
     try:
@@ -1875,8 +1890,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             **({'send_by_call': 1} if send_by_call else {}),
             # Goes before other faxes waiting for the same room (capacity.py).
             **({'urgent': 1} if urgent else {}),
-        }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
-            manager.store.engine, job_id, hold, identity.actor)))
+        }, request_identity=request_identity, also=codec_combine(None if hold is None else batching_acceptance.recorder(
+            manager.store.engine, job_id, hold, identity.actor), codec_record)))
     except IdempotentReplay as replay:
         prepared.cleanup()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
@@ -2166,6 +2181,8 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
 
         # Get the PDF path
         pdf_path = _outbound_document_path(job_id, '.pdf')
+        # The provider is given the encoded pages made for it (experimental), never another route's.
+        pdf_path = codec_transmitted_pdf(pdf_path, job_id, getattr(job, 'backend', None))
         if pdf_path.is_symlink() or not pdf_path.is_file():
             raise HTTPException(404, detail="PDF file not found")
 

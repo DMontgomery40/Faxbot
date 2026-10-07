@@ -1,0 +1,7 @@
+{
+  "name": "faxbot-fax-decoder",
+  "private": true,
+  "type": "module",
+  "description": "Decodes Faxbot payload pages in the browser; nothing is uploaded.",
+  "scripts": { "test": "node --test test/decoder.test.mjs" }
+}

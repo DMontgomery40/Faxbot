@@ -9,6 +9,7 @@ import type { IntakeItem } from '../../api/deliveryTypes';
 import { RECIPIENTS_NOT_RECORDED, earlierFailuresText } from '../delivery/InboxDelivery';
 import { deliveryErrorMessage } from '../delivery/shared';
 import { ReceivedCallNegotiation } from '../CallNegotiation';
+import { ReceivedEncodedPages } from '../delivery/EncodedPages';
 import { can, duplicateSentence, maskNumber, workStateSentence } from './text';
 
 function Field({ label, value }: { label: string; value: string | null | undefined }) {
@@ -74,6 +75,7 @@ export default function WorkDetail({ client, item, onClose, onDownload, fax = nu
             <Field label="Mailbox" value={shown.mailbox ?? 'Not in a mailbox'} />
             <Field label="Arrived" value={formatServerTime(shown.available_at)} />
             <ReceivedCallNegotiation client={client} faxId={shown.inbound_fax_id} />
+            <ReceivedEncodedPages client={client} faxId={shown.inbound_fax_id} canDownload={can(shown, 'document')} />
             <Field label="Target" value={shown.due_text} />
             <Field label="Due" value={shown.due_at ? formatServerTime(shown.due_at) : null} />
             <Field label="Owner" value={shown.owner?.name} />

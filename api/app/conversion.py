@@ -675,3 +675,13 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     pages, reason = candidates[chosen]
     return {"layout": chosen, "pages": pages, "reason": reason,
             "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions}
+
+
+def payload_pages(engine, **plan):
+    """Experimental fax payload codec (Builder AG): encoded pages for one fax when its recipient agreed and they save.
+
+    Returns (choice, acceptance step) from ``codec.send.plan_for_fax``; the
+    original PDF is never changed.
+    """
+    from .codec.send import plan_for_fax
+    return plan_for_fax(engine, **plan)

@@ -240,6 +240,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
 
     # What the phone call negotiated (speed, compression, error correction), measured only.
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
+    from .codec import sent_line
+    encoded = sent_line(api, fax_id)  # "Sent as 1 encoded page instead of 23 (experimental)."
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -250,6 +252,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                    + ([('How the call went', negotiation)] if negotiation else []))
         if line:
             out.line(line)
+        if encoded:
+            out.line(encoded)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
         if (job.get('fax_engine') or {}).get('sentence'):
             out.line(job['fax_engine']['sentence'])
@@ -512,8 +516,13 @@ def inbound_get(inbound_id: str = typer.Argument(..., help="A received fax's ID,
     if negotiation:
         item = {**item, 'negotiation': negotiation}
     sentence = (negotiation or {}).get('sentence')
-    state.out().result(item, lambda out: out.fields(_inbound_fields(item)
-                                                    + ([('How the call went', sentence)] if sentence else [])))
+    from .codec import received_line
+    encoded = received_line(api, item.get('id') or inbound_id)  # decoded, or why it is delivered as received
+
+    def human(out):
+        out.fields(_inbound_fields(item) + ([('How the call went', sentence)] if sentence else [])
+                   + ([('Encoded pages', encoded)] if encoded else []))
+    state.out().result(item, human)
 
 
 @inbound.command('pdf')
