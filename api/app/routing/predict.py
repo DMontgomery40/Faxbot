@@ -187,6 +187,7 @@ class RouteFacts:
     plan: PlanUse | None = None
     currency: str = 'USD'                # the currency of a no-call route's nothing
     missing: str | None = None           # why there is no price, as a clause, when ``terms`` is None
+    refused: bool = False                # the route does not take this kind of number; ``missing`` says so
 
 
 # Sentences --------------------------------------------------------------------------
@@ -335,6 +336,8 @@ def predict_from(facts, shape):
     seconds, how = line_seconds(shape, facts.link)
     terms = facts.terms
     if terms is None:
+        if facts.refused:
+            return Prediction(None, seconds, None, _sentence(facts.missing), False)
         missing = facts.missing or f'{facts.label} publishes no price for {_what(facts)} to {_where(facts.destination)}'
         return Prediction(None, seconds, None, _sentence(f'{missing}, so the cost is unknown', how), False)
     if terms.max_pages_per_fax and shape.pages > terms.max_pages_per_fax:

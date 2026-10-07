@@ -24,21 +24,25 @@ Prices by number class live in ``config/rate_cards.json`` beside the cards:
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import json
 from pathlib import Path
 import statistics
+import weakref
 
 import sqlalchemy as sa
 
 from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
-from .destinations import INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
+from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
 from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, PlanUse, RouteFacts
 from .seed import _date, _increment, default_path, load_cards
 
 
 WINDOW_DAYS = 90
+# Recorded calls read for one prediction: the number's newest, and the route's newest for its usual speed.
+CALLS_READ = 200
 NO_CALL_ROUTES = ('local', 'direct')
 
 
@@ -131,8 +135,8 @@ def _score(destination, prefixes, entry):
     return None
 
 
-def terms_for(identity, destination, card, data):
-    """(RateTerms or None, missing clause or None): the price of a call to ``destination`` on this route.
+def terms_for(identity, destination, card, data, *, label=None):
+    """(RateTerms or None, refusal sentence or None): the price of a call to ``destination`` on this route.
 
     Local numbers use the route's card. Toll-free and international numbers
     use the route's entry for that class: its own price, its card's price, or
@@ -151,7 +155,12 @@ def terms_for(identity, destination, card, data):
         if route != identity:
             continue
         score = _score(destination, prefixes, entry) if destination.kind == INTERNATIONAL else 0
-        if score is not None and (best is None or score > best[0]):
+        if score is None:
+            continue
+        if entry.get('reaches') == 'no':
+            return None, (f'{label or identity} does not call {CLASS_TEXT[destination.kind]}, so this fax cannot go '
+                          'this way')
+        if best is None or score > best[0]:
             best = (score, pricing, terms)
     if best is None:
         return None, None
@@ -183,13 +192,13 @@ def _engine():
         return None
 
 
-def _typical_rate(values, destination):
-    """The highest speed the trunk would offer this number now, or the predictor's default."""
+def _typical_rate(values, destination, recipient=None):
+    """The highest speed the trunk would offer this number now, with its own limit when one is set (Recipients)."""
     if values is None:
         return TYPICAL_RATE
     try:
         from ..hylafax_engine import call_settings
-        return int(call_settings(values, destination).max_rate) or TYPICAL_RATE
+        return int(call_settings(values, destination, recipient=recipient).max_rate) or TYPICAL_RATE
     except Exception:
         return AUDIO_RATE if getattr(values, 'sip_t38_enabled', True) is False else TYPICAL_RATE
 
@@ -250,31 +259,65 @@ def learn(rows, number, *, typical_rate=TYPICAL_RATE):
                 typical_rate=typical_rate, jbig=jbig)
 
 
-def recorded_calls(engine, *, since):
-    """Outbound trunk calls since ``since``, joined with their call records; [] when the tables are missing."""
-    from .database import reflect
+_TABLES = weakref.WeakKeyDictionary()
+_NAMES = ('provider_rate_cards', 'fax_engine_calls', 'sip_call_records', 'delivery_attempt_costs')
+
+
+def _tables(engine):
+    """The tables the predictor reads, reflected once per database (the schema only changes at startup)."""
+    found = _TABLES.get(engine)
+    if found is None:
+        from .database import reflect
+        found = reflect(engine, _NAMES)
+        _TABLES[engine] = found
+    return found
+
+
+def stored_card(engine, route_key, preset=''):
+    """The route's current sending card as saved in Faxbot, found as ``RouteStore.card_for`` finds it; None if none."""
+    from .store import RouteStore
+    cards = _tables(engine)['provider_rate_cards']
+    identities = ((f'sip-{preset}', 'sip') if preset else ('sip',)) if route_key == 'sip' else (route_key,)
+    with engine.connect() as connection:
+        rows = {row['provider_id']: row for row in connection.execute(sa.select(cards).where(
+            cards.c.superseded_at.is_(None), cards.c.direction == 'outbound',
+            cards.c.provider_id.in_(identities))).mappings()}
+    return next((RouteStore._card(rows[identity]) for identity in identities if identity in rows), None)
+
+
+def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
+    """Successful, engine-reported outbound trunk calls since ``since``, with their call records.
+
+    The newest ``limit`` calls to ``number`` and the newest ``limit`` to other
+    numbers (for the route's usual speed); [] when the tables are missing.
+    """
     try:
-        tables = reflect(engine, ('fax_engine_calls', 'sip_call_records'))
+        tables = _tables(engine)
     except Exception:
         return []
     calls, records = tables['fax_engine_calls'], tables['sip_call_records']
     if 'negotiation_by' not in calls.c:
         return []
+    base = sa.select(
+        calls.c.number, calls.c.engine, calls.c.engine_ref, calls.c.sslfax, calls.c.negotiation_by,
+        calls.c.rate_lowest, calls.c.rate_last_page, calls.c.compression, calls.c.ecm, calls.c.transfer_seconds,
+        calls.c.created_at, records.c.fax_status, records.c.pages, records.c.connected_seconds,
+    ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key)).where(
+        calls.c.direction == 'outbound', calls.c.created_at >= since, calls.c.negotiation_by.is_not(None),
+        records.c.fax_status == 'SUCCESS', records.c.pages > 0)
+    newest = (calls.c.created_at.desc(), calls.c.id.desc())
+    queries = [base.order_by(*newest).limit(limit)] if number is None else [
+        base.where(calls.c.number == number).order_by(*newest).limit(limit),
+        base.where(sa.or_(calls.c.number.is_(None), calls.c.number != number)).order_by(*newest).limit(limit)]
     with engine.connect() as connection:
-        return [dict(row) for row in connection.execute(sa.select(
-            calls.c.number, calls.c.engine, calls.c.engine_ref, calls.c.sslfax, calls.c.negotiation_by,
-            calls.c.rate_lowest, calls.c.rate_last_page, calls.c.compression, calls.c.ecm, calls.c.transfer_seconds,
-            calls.c.created_at, records.c.fax_status, records.c.pages, records.c.connected_seconds,
-        ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key))
-            .where(calls.c.direction == 'outbound', calls.c.created_at >= since)).mappings()]
+        return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
 def plan_use(engine, route_key, *, now):
     """Pages and faxes sent on a route since the first of this month (UTC); None when unreadable."""
-    from .database import reflect
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     try:
-        costs = reflect(engine, ('delivery_attempt_costs',))['delivery_attempt_costs']
+        costs = _tables(engine)['delivery_attempt_costs']
         with engine.connect() as connection:
             faxes, pages = connection.execute(sa.select(
                 sa.func.count(), sa.func.coalesce(sa.func.sum(costs.c.billed_pages), 0)).where(
@@ -298,29 +341,38 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     if route_key in NO_CALL_ROUTES:
         return RouteFacts(route_key, label, where, None)
     identity = (f'sip-{preset}' if preset else 'sip') if route_key == 'sip' else route_key
-    card = None
+    number = where.number or destination
+    card, saved = None, False
     if engine is not None:
         try:
-            from .store import RouteStore
-            card = RouteStore(engine, sip_preset=lambda: preset).card_for(route_key)
+            # The saved cards are authoritative: a card the administrator removed is not brought back here.
+            card, saved = stored_card(engine, route_key, preset), True
         except Exception:
             card = None
-    if card is None:
+    if card is None and not saved:
         card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)
-    terms, missing = terms_for(identity, where, card, data)
+    terms, refusal = terms_for(identity, where, card, data, label=label)
+    missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
     moment = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
-    link = Link(typical_rate=_typical_rate(values, where.number or destination))
-    plan = None
+    plan, recipient = None, None
+    if engine is not None and route_key == 'sip':
+        from ..hylafax_engine import recipient_limits
+        recipient = recipient_limits(engine, number)
+    link = Link(typical_rate=_typical_rate(values, number, recipient))
     if engine is not None:
         if route_key == 'sip':
             try:
-                rows = recorded_calls(engine, since=moment - timedelta(days=WINDOW_DAYS))
+                rows = recorded_calls(engine, since=moment - timedelta(days=WINDOW_DAYS), number=number)
             except Exception:
                 rows = []
-            link = learn(rows, where.number or destination, typical_rate=link.typical_rate)
+            link = learn(rows, number, typical_rate=link.typical_rate)
+            cap = (recipient or {}).get('max_rate')
+            if cap and link.rate and link.rate > cap:
+                # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
+                link = replace(link, rate=cap)
         if terms is not None and (terms.card.flat_plan or terms.included_pages):
             plan = plan_use(engine, route_key, now=moment)
     currency = card.currency if card is not None else 'USD'
-    return RouteFacts(route_key, label, where, terms, link, plan, currency, missing)
+    return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None)

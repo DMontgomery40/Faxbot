@@ -129,7 +129,11 @@ def test_learned_figures_come_only_from_successful_reported_calls(database):
     # A failed call whose row holds what Faxbot asked for, not what the call reached: never learned from.
     add_call(database, job='bad', status='FAILED', pages=0, seconds=30, number=NUMBER, compression='JBIG',
              when=NOW, signal_rate='14400 bit/s', data_format='JBIG')
-    rows = predict_facts.recorded_calls(database, since=NOW - timedelta(days=90))
+    rows = predict_facts.recorded_calls(database, since=NOW - timedelta(days=90), number=NUMBER)
+    assert len(rows) == 3 and all(row['negotiation_by'] and row['fax_status'] == 'SUCCESS' for row in rows)
+    unreported = {'number': NUMBER, 'negotiation_by': None, 'fax_status': 'SUCCESS', 'pages': 2,
+                  'rate_lowest': 14400, 'compression': 'JBIG', 'connected_seconds': 20, 'transfer_seconds': 9}
+    assert predict_facts.learn(rows + [unreported], NUMBER) == predict_facts.learn(rows, NUMBER)
     link = predict_facts.learn(rows, NUMBER)
     assert (link.rate, link.rate_scope, link.rate_calls, link.coding) == (9600, 'number', 3, 'MR')
     assert (link.seconds_per_page, link.page_calls, link.setup_seconds, link.setup_calls) == (15.0, 3, 11.0, 3)
@@ -139,8 +143,32 @@ def test_learned_figures_come_only_from_successful_reported_calls(database):
     assert seconds == pytest.approx(41.0)
     assert 'from the time a page took on 3 earlier faxes to this number' in how
     # Another number on the same route learns the route's usual speed.
-    other = predict_facts.learn(rows, '+12025550999')
+    other_rows = predict_facts.recorded_calls(database, since=NOW - timedelta(days=90), number='+12025550999')
+    other = predict_facts.learn(other_rows, '+12025550999')
     assert (other.rate, other.rate_scope, other.seconds_per_page) == (9600, 'route', None)
+    # Reads are bounded: the newest calls to the number, and the newest to any other number.
+    assert len(predict_facts.recorded_calls(database, since=NOW - timedelta(days=90), number=NUMBER, limit=2)) == 2
+
+
+def test_a_speed_limit_set_for_a_number_caps_what_earlier_calls_reached(database):
+    from app import hylafax_records
+    schema.upgrade_schema(database)
+    for index in range(3):
+        add_call(database, job=f'f{index}', pages=1, seconds=30, transfer_seconds=19, negotiation_by='hylafax',
+                 number=NUMBER, compression='MMR', ecm='on', rate_first=14400, rate_lowest=14400,
+                 when=datetime.utcnow() - timedelta(hours=index + 1))
+
+    class Values:
+        fax_default_country = 'US'
+        sip_trunk_preset = 'telnyx'
+
+    fast = predict_facts.facts_for('sip', NUMBER, values=Values(), engine=database)
+    assert (fast.link.rate, fast.link.rate_scope) == (14400, 'number')
+    hylafax_records.records_for(database).set_recipient_settings(NUMBER, max_rate=4800)
+    capped = predict_facts.facts_for('sip', NUMBER, values=Values(), engine=database)
+    assert capped.link.rate == 4800 and capped.link.typical_rate <= 4800
+    shape = Shape(1, (180_000,), 'fine', 'normal')
+    assert predict_from(capped, shape).seconds > predict_from(fast, shape).seconds
 
 
 def test_predictions_check_out_against_recorded_synthetic_calls(database, tmp_path):
@@ -294,7 +322,8 @@ def test_toll_free_numbers_use_each_routes_toll_free_price(tmp_path):
              'per_page': '0', 'per_call': '0', 'billing_increment_seconds': 60, 'minimum_seconds': 60,
              'advertised_on': '2026-10-07'},
             {'route': 'phaxio', 'reaches': 'yes', 'pricing': 'same_as_card'},
-            {'route': 'sinch', 'reaches': 'not_published', 'pricing': 'not_published'}]}))
+            {'route': 'sinch', 'reaches': 'not_published', 'pricing': 'not_published'},
+            {'route': 'humblefax', 'reaches': 'no', 'pricing': 'not_published'}]}))
     data = predict_facts.shipped(str(path))
 
     class Values:
@@ -313,6 +342,36 @@ def test_toll_free_numbers_use_each_routes_toll_free_price(tmp_path):
     assert found('phaxio').cost == Money(140_000, 'USD')
     sinch = found('sinch')
     assert sinch.cost is None and sinch.basis.startswith('Sinch publishes no price for faxes to toll-free numbers')
+    refused = found('humblefax')
+    assert refused.cost is None
+    assert refused.basis == 'HumbleFax does not call toll-free numbers, so this fax cannot go this way.'
+
+
+def test_the_shipped_prices_abroad_parse_and_match_their_sources():
+    """The real config/rate_cards.json: read 2026-10-07 from AnveoDirect's rate deck and Phaxio's price page."""
+    predict_facts.shipped.cache_clear()
+    data = predict_facts.shipped()
+
+    class Anveo:
+        fax_default_country = 'US'
+        sip_trunk_preset = 'anveo'
+
+    class Telnyx:
+        fax_default_country = 'US'
+        sip_trunk_preset = 'telnyx'
+
+    def facts_of(route, number, values=Anveo):
+        return predict_facts.facts_for(route, number, values=values(), engine=None, data=data)
+
+    london = facts_of('sip', '+442079460000')
+    assert london.terms.card.per_minute_micros == 2410 and london.terms.card.billing_increment_seconds == 1
+    assert london.terms.published and london.label == 'AnveoDirect'
+    assert facts_of('sip', '+18675550100').terms.card.per_minute_micros == 54_600  # +1867 beats Canada
+    assert facts_of('sip', '+14165550100').terms.card.per_minute_micros == 2050
+    assert facts_of('phaxio', '+14165550100').terms.card.per_page_micros == 70_000   # same as its US card
+    assert facts_of('phaxio', '+63288123456').terms.card.per_page_micros == 100_000
+    assert facts_of('sip', '+442079460000', Telnyx).terms is None
+    assert facts_of('sinch', '+442079460000').terms is None
 
 
 def test_unknown_stays_unknown():
