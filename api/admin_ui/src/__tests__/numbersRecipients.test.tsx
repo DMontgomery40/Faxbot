@@ -254,7 +254,7 @@ describe('Recent case packets', () => {
     const list = await screen.findByTestId('recent-cases');
     const row = within(list).getByText('case-7').closest('tr') as HTMLElement;
     expect(within(row).getByText('+15550100001')).toBeTruthy();
-    expect(within(row).getByText('3 sent, 2 received')).toBeTruthy();
+    expect(within(row).getByText('3 sent, 2 acknowledged')).toBeTruthy();
     expect(within(row).getByText('45')).toBeTruthy();
     fireEvent.click(within(row).getByRole('button', { name: 'Open case case-7 for +15550100001' }));
     expect(await screen.findByTestId('case-documents')).toBeTruthy();
