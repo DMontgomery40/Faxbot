@@ -6,10 +6,16 @@ records what the recipient acknowledged, separately from what was sent, and
 gives every document its context:
 
 - ``case_originals``: the case's original documents, kept unchanged (the file
-  is stored once under the installation's data folder, named by its SHA-256).
-  Each has a title, a document type, the date on the document, its source and
-  its version. The same bytes from another source or as another version are
-  another original. Rows are never updated.
+  is stored once under the installation's data folder, in ``cases/``, named by
+  its SHA-256). Each has a title, a document type, the date on the document,
+  its source and its version. The same bytes from another source or as another
+  version are another original. Rows are never updated. They follow the
+  artifact retention setting: once that many days pass after an original was
+  last added or sent, the cleanup deletes its row and, when no other original
+  uses the same bytes, its file.
+- ``case_original_removals``: append-only, one row per original the retention
+  cleanup removed: its case, SHA-256, source and version, and when. No title
+  or other content is kept, only enough to say that it was removed and when.
 - ``case_entries``: the ledger. One row per case, recipient, exact bytes,
   source, version and purpose: the same bytes sent for another purpose, or as
   a newer version, are another entry. ``original_id`` is NULL for documents
@@ -50,14 +56,16 @@ from .schema_negotiation import frozen_metadata as previous_metadata
 REVISION = '0037_case_ledger'
 # Creation order respects foreign keys.
 ORDER = ('case_originals', 'case_entries', 'case_entry_sends', 'case_entry_events', 'case_recipients',
-         'case_checklists', 'case_packets')
+         'case_checklists', 'case_packets', 'case_original_removals')
 TABLES = frozenset(ORDER)
 EVENT_KINDS = ('accepted', 'invalidated')
 ACCEPTED_SOURCES = ('partner_receipt', 'work_acknowledged', 'received_fax', 'person')
 INVALIDATED_SOURCES = ('cache_miss',)
 PACKET_KINDS = ('update', 'repair', 'checklist')
 # Rows a downgrade cannot rebuild: any of these refuses it.
-KEPT = ('case_originals', 'case_entry_events', 'case_recipients', 'case_checklists', 'case_packets')
+KEPT = ('case_originals', 'case_entry_events', 'case_recipients', 'case_checklists', 'case_packets',
+        'case_original_removals')
+REMOVAL_REASONS = ('retention',)
 INDEXES = (
     ('uq_case_originals_document', 'case_originals', ('case_id', 'digest', 'source', 'version'), True),
     ('ix_case_originals_case', 'case_originals', ('case_id', 'created_at'), False),
@@ -71,6 +79,7 @@ INDEXES = (
     ('uq_case_recipients_phone_number', 'case_recipients', ('phone_number',), True),
     ('uq_case_checklists_version', 'case_checklists', ('name', 'version'), True),
     ('ix_case_packets_case', 'case_packets', ('case_id', 'recipient'), False),
+    ('ix_case_original_removals_case', 'case_original_removals', ('case_id', 'digest'), False),
 )
 
 
@@ -202,6 +211,18 @@ def _definitions():
             sa.ForeignKeyConstraint(['id'], ['fax_jobs.id'], name='fk_case_packets_job', ondelete='CASCADE'),
             sa.ForeignKeyConstraint(['checklist_id'], ['case_checklists.id'],
                                     name='fk_case_packets_checklist', ondelete='SET NULL'),
+        ),
+        'case_original_removals': (
+            _id(),
+            sa.Column('case_id', sa.String(100), nullable=False),
+            sa.Column('digest', sa.String(64), nullable=False),
+            sa.Column('source', sa.String(120), nullable=False),
+            sa.Column('version', sa.String(64), nullable=False),
+            sa.Column('reason', sa.String(16), nullable=False),
+            sa.Column('removed_at', sa.DateTime(), nullable=False),
+            sa.Column('created_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_case_original_removals'),
+            sa.CheckConstraint(_choice('reason', REMOVAL_REASONS), name='ck_case_original_removals_reason'),
         ),
     }
 

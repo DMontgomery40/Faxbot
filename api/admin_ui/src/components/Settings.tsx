@@ -1429,7 +1429,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 />
 
                 {textField('Document links for fax services work for (minutes)', 'pdf_token_ttl_minutes', 'How long a fax service may fetch a document Faxbot sends through it.', 'number')}
-                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', '0 keeps them.', 'number')}
+                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', 'Also removes documents kept for case packets once they have not been added or sent for this long. 0 keeps them.', 'number')}
                 {textField('Clean up old files every (minutes)', 'cleanup_interval_minutes', '', 'number')}
                 <Alert 
                   severity="info" 

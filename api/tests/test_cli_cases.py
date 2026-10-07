@@ -60,6 +60,7 @@ def test_originals_checklists_and_a_built_packet(cli, tmp_path):
     assert added.exit_code == 0 and '2 documents are kept for case CASE-2.' in added.stdout
     originals = cli('recipients', 'cases', 'originals', 'CASE-2').stdout
     assert 'Discharge summary' in originals and '2026-10-01' in originals
+    assert 'Kept documents stay until you set how long sent fax files are kept.' in originals
     assert 'No checklists yet' in cli('recipients', 'cases', 'checklist', 'list').stdout
     example = cli('recipients', 'cases', 'checklist', 'add', 'Discharge follow-up', '--example', '--to', TO)
     assert example.exit_code == 0 and 'Discharge follow-up, version 1' in example.stdout

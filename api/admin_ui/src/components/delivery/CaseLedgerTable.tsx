@@ -10,7 +10,9 @@ import AdminAPIClient from '../../api/client';
 import type { CaseDocuments } from '../../api/deliveryTypes';
 import type { CaseRepair } from '../../api/caseTypes';
 import type { AdminDestination } from '../../navigation';
-import { STATE_COLOR, STATE_LABEL, documentState, pagesText, stateSentence, versionAndSource } from './caseText';
+import {
+  STATE_COLOR, STATE_LABEL, documentState, missingSentence, pagesText, stateSentence, versionAndSource,
+} from './caseText';
 
 const UNCONFIRMED = "Faxbot could not confirm whether the full packet was sent. Check Sent before sending it again.";
 
@@ -224,8 +226,8 @@ export default function CaseLedgerTable({ client, caseId, held, canSend, canWrit
               {repair.documents.map((document, index) => (
                 <Typography key={`${document.title}-${index}`} variant="body2">{document.title} · {pagesText(document.pages)}</Typography>
               ))}
-              {repair.missing.map((title) => (
-                <Typography key={title} variant="body2">Not included: {title} was sent before Faxbot kept original documents.</Typography>
+              {repair.missing.map((entry, index) => (
+                <Typography key={`${entry.title}-${index}`} variant="body2">{missingSentence(entry)}</Typography>
               ))}
               {repair.packets_in_flight > 0 && (
                 <Typography variant="body2">An earlier packet for this case has not finished sending.</Typography>

@@ -38,6 +38,22 @@ def state_text(item):
     return text
 
 
+def missing_sentence(entry):
+    """Why a full-packet repair cannot include a document."""
+    if entry.get('removed_at'):
+        return (f"Not included: '{entry['title']}' is no longer kept; your retention setting removed it on "
+                f"{local_time(entry['removed_at'])[:10]}. Add it to the case again to include it.")
+    return (f"Not included: '{entry['title']}' was sent before Faxbot kept original documents. Add it to the case "
+            'again to include it.')
+
+
+def retention_sentence(days):
+    """How long kept documents stay, from the installation's artifact retention setting."""
+    if not days:
+        return 'Kept documents stay until you set how long sent fax files are kept.'
+    return f'Faxbot removes a kept document {days} days after it was last added or sent, like sent fax files.'
+
+
 def detail(item):
     parts = [f"version {item['version']}" if item.get('version') else '',
              f"from {item['source']}" if item.get('source') else '']
@@ -124,9 +140,8 @@ def cases_repair(case_id: str = typer.Argument(..., help='Your case reference.')
     def human(out):
         out.table(['Document', 'Version and source', 'Pages'],
                   [[item['title'], detail(item), item['pages']] for item in result.get('documents', [])])
-        for title in result.get('missing') or []:
-            out.line(f"Not included: '{title}' was sent before Faxbot kept original documents. Add it with "
-                     "'faxbot recipients cases add'.")
+        for entry in result.get('missing') or []:
+            out.line(missing_sentence(entry) + " Use 'faxbot recipients cases add'.")
         if result.get('packets_in_flight'):
             out.line(f"{result['packets_in_flight']} earlier packet for this case has not finished sending.")
         out.line(f"{result['pages']} pages.")
@@ -169,11 +184,14 @@ def cases_reuse(to: str = typer.Argument(..., help='Recipient fax number.'),
 def cases_originals(case_id: str = typer.Argument(..., help='Your case reference.')):
     """List the case's original documents, kept unchanged, with their type, date, version and source."""
     result = state.api().get(f'/cases/{segment(case_id)}/originals')
-    state.out().result(result, lambda out: out.table(
-        ['Document', 'Type', 'Dated', 'Version and source', 'Pages', 'Reference'],
-        [[item['title'], item.get('document_type') or '-', (item.get('document_date') or '-')[:10], detail(item),
-          item['pages'], item['reference']] for item in result.get('originals', [])],
-        empty='No documents are kept for this case yet.'))
+
+    def human(out):
+        out.table(['Document', 'Type', 'Dated', 'Version and source', 'Pages', 'Reference'],
+                  [[item['title'], item.get('document_type') or '-', (item.get('document_date') or '-')[:10],
+                    detail(item), item['pages'], item['reference']] for item in result.get('originals', [])],
+                  empty='No documents are kept for this case yet.')
+        out.line(retention_sentence(result.get('retention_days')))
+    state.out().result(result, human)
 
 
 def _per_file(values, count, name):

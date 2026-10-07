@@ -166,7 +166,7 @@ def _state(view, sends, events, now, reuse_days):
 class CaseLedger:
     TABLES = ('case_documents', 'case_packet_sends', 'case_originals', 'case_entries', 'case_entry_sends',
               'case_entry_events', 'case_recipients', 'case_packets', 'delivery_destinations', 'outbound_deliveries',
-              'direct_deliveries', 'inbound_imports', 'work_items', 'access_principals')
+              'direct_deliveries', 'inbound_imports', 'work_items', 'access_principals', 'case_original_removals')
 
     def __init__(self, engine, data_dir=None):
         self.engine = engine
@@ -236,6 +236,8 @@ class CaseLedger:
         except FileExistsError:
             if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != item.digest:
                 raise CaseConflict('A kept case document does not match its record; restore it from a backup.') from None
+            # Kept again now: the retention cleanup leaves a recently written file alone.
+            os.utime(path)
         finally:
             staged.unlink(missing_ok=True)
 
@@ -503,14 +505,17 @@ class CaseLedger:
     def full_packet(self, case_id, recipient, *, now=None):
         """Every document of the case sent to this recipient, from kept originals, for a repair.
 
-        Returns (documents, titles without a kept original). Entries sharing bytes keep
-        their own purpose, so each one's carriage is recorded; the fax carries the bytes once.
+        Returns (documents, missing): each missing document's title, and when the retention
+        cleanup removed its original (None when Faxbot never kept one). Entries sharing bytes
+        keep their own purpose, so each one's carriage is recorded; the fax carries the bytes once.
         """
+        from .retention import removals
         o = self.t['case_originals']
         views = self.entries(case_id, recipient, now=now)
         with read_connection(self.engine) as connection:
             rows = {row['id']: dict(row) for row in connection.execute(sa.select(o).where(
                 o.c.case_id == case_id)).mappings()}
+            removed = removals(connection, self.t['case_original_removals'], case_id)
         by_digest = {}
         for row in sorted(rows.values(), key=lambda row: (row['created_at'], row['id'])):
             by_digest.setdefault(row['digest'], row)
@@ -518,7 +523,7 @@ class CaseLedger:
         for view in views:
             row = rows.get(view['original_id']) or by_digest.get(view['digest'])
             if row is None:
-                missing.append(view['title'])
+                missing.append({'title': view['title'], 'removed_at': removed.get(view['digest'])})
                 continue
             item = self.load(row, purpose=view['purpose'])
             documents.append(replace(item, title=view['title'], source=view['source'], version=view['version']))

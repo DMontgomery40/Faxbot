@@ -1239,7 +1239,7 @@ class AdminAPIClient {
       method: 'PATCH', body: JSON.stringify({ reuse_days: reuseDays, version }) });
   }
 
-  async listCaseOriginals(caseId: string): Promise<{ case_id: string; originals: CaseOriginal[] }> {
+  async listCaseOriginals(caseId: string): Promise<{ case_id: string; retention_days?: number; originals: CaseOriginal[] }> {
     return this.json(`/cases/${id(caseId)}/originals`);
   }
 

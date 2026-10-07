@@ -201,3 +201,66 @@ def test_a_full_packet_repair_uses_kept_originals_and_records_why(ledger, tmp_pa
     with engine.connect() as connection:
         assert connection.execute(sa.text(
             'SELECT COUNT(*) FROM case_documents WHERE accepted_at IS NOT NULL')).scalar_one() == 0
+
+
+def test_retention_removes_originals_unused_for_the_period_and_touches_nothing_outside_cases(ledger, tmp_path):
+    """Kept originals hold patient data: once added or sent longer ago than the retention period, they go."""
+    import os
+    from api.app.cases.ledger import PacketPlan
+    from api.app.cases.retention import remove_expired_originals
+    engine, now = ledger.engine, utcnow()
+    old = document('Old record', pdf('Old record', 2), 2)
+    recent = document('Recent labs', pdf('Recent labs'), 1)
+    shared = document('Shared referral', pdf('Shared referral'), 1)
+    ledger.keep(CASE, [old, recent, shared])
+    ledger.keep('claim-9', [shared])
+    # The old record and the referral were kept and sent 40 days ago; the labs were sent yesterday.
+    plan = PacketPlan((ledger.keep(CASE, [recent])[0],), (), False)
+    identity = job(engine)
+    ledger.record(CASE, TO, plan, identity)
+    with engine.begin() as connection:
+        connection.execute(sa.text('UPDATE case_originals SET created_at = :at'), {'at': now - timedelta(days=40)})
+        connection.execute(sa.text("UPDATE case_originals SET created_at = :at WHERE case_id = 'claim-9'"),
+                           {'at': now - timedelta(days=5)})
+        connection.execute(sa.text('UPDATE case_entry_sends SET created_at = :at'), {'at': now - timedelta(days=1)})
+    folder = tmp_path / 'cases'
+    for name in (f'{old.digest}.pdf', f'{shared.digest}.pdf'):
+        os.utime(folder / name, (0, (now - timedelta(days=40)).timestamp()))
+    stray = folder / f'.{old.digest}.{"a" * 32}.part'
+    stray.write_bytes(b'%PDF-half')
+    os.utime(stray, (0, (now - timedelta(days=40)).timestamp()))
+    outside = [tmp_path / f'{old.digest}.pdf', tmp_path / 'job.pdf', folder / 'notes.txt']
+    for path in outside:
+        path.write_bytes(b'not a kept original')
+        os.utime(path, (0, (now - timedelta(days=400)).timestamp()))
+
+    assert remove_expired_originals(engine, str(tmp_path), now - timedelta(days=30), now=now) == 2
+    kept = {(row['case_id'], row['title']) for row in ledger.originals(CASE) + ledger.originals('claim-9')}
+    assert kept == {(CASE, 'Recent labs'), ('claim-9', 'Shared referral')}
+    # The old record's file goes; the referral's bytes stay while another case keeps them; the labs stay.
+    assert not (folder / f'{old.digest}.pdf').exists() and not stray.exists()
+    assert (folder / f'{shared.digest}.pdf').exists() and (folder / f'{recent.digest}.pdf').exists()
+    assert all(path.exists() for path in outside)
+    with engine.connect() as connection:
+        rows = connection.execute(sa.text(
+            'SELECT case_id, digest, reason FROM case_original_removals ORDER BY digest')).all()
+    assert sorted(tuple(row) for row in rows) == sorted([(CASE, old.digest, 'retention'),
+                                                          (CASE, shared.digest, 'retention')])
+    # Nothing left to remove a second time.
+    assert remove_expired_originals(engine, str(tmp_path), now - timedelta(days=30), now=now) == 0
+
+
+def test_a_repair_says_which_documents_retention_removed(ledger):
+    from api.app.cases.retention import remove_expired_originals
+    engine, now = ledger.engine, utcnow()
+    record = document('Medical record', pdf('Record', 2), 2)
+    letter = document('Cover letter', pdf('Letter'), 1)
+    packet(ledger, [record, letter])  # both kept and sent; the record was added today
+    with engine.begin() as connection:
+        connection.execute(sa.text('UPDATE case_entry_sends SET created_at = :at'), {'at': now - timedelta(days=60)})
+        connection.execute(sa.text("UPDATE case_originals SET created_at = :at WHERE title = 'Cover letter'"),
+                           {'at': now - timedelta(days=60)})
+    assert remove_expired_originals(engine, ledger.data_dir, now - timedelta(days=30), now=now) == 1
+    documents, missing = ledger.full_packet(CASE, TO)
+    assert [item.title for item in documents] == ['Medical record']
+    assert missing == [{'title': 'Cover letter', 'removed_at': now}]

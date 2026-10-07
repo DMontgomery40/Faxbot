@@ -384,3 +384,24 @@ def test_recent_cases_list_each_recipient_and_delivered_packets_count_the_pages_
     reader = scoped_key(client, ['fax:read'])
     assert client.get('/cases', headers=reader).status_code == 403
     assert client.get('/cases', headers=ADMIN, params={'limit': 0}).status_code == 422
+
+
+def test_kept_originals_follow_retention_and_a_repair_says_what_retention_removed(client):
+    approve(client)
+    first = send(client, [('Medical record', pdf('Medical record', pages=3)), ('Cover letter', pdf('Cover letter'))])
+    finish(first.json()['fax_id'])
+    long_ago = utcnow() - timedelta(days=60)
+    with engine().begin() as connection:
+        connection.execute(sa.text('UPDATE case_entry_sends SET created_at = :at'), {'at': long_ago})
+        connection.execute(sa.text("UPDATE case_originals SET created_at = :at WHERE title = 'Cover letter'"),
+                           {'at': long_ago})
+    # The scheduled cleanup, as it runs with sent fax files kept for 30 days.
+    main._cleanup_case_originals(utcnow() - timedelta(days=30))
+    kept = client.get(f'/cases/{CASE}/originals', headers=ADMIN).json()
+    assert [row['title'] for row in kept['originals']] == ['Medical record']
+    assert kept['retention_days'] == 0  # this installation's setting; the cleanup ran with 30 days
+    preview = client.post(f'/cases/{CASE}/repair', headers=ADMIN, json={'to': TO, 'preview': True}).json()
+    assert preview['pages'] == 3 and [item['title'] for item in preview['documents']] == ['Medical record']
+    [missing] = preview['missing']
+    assert missing['title'] == 'Cover letter' and missing['removed_at'] is not None
+    assert by_title(client)['Cover letter']['kept'] is False

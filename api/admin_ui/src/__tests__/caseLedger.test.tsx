@@ -43,7 +43,8 @@ async function open(canWrite = true) {
       posts.push({ path: 'repair', body });
       return HttpResponse.json({ case_id: 'case-7', to: TO, pages: 46, documents: [
         { title: 'Medical record', pages: 40, status: 'included' }, { title: 'Cover letter', pages: 1, status: 'included' }],
-      missing: ['Fax from 2025'], packets_in_flight: 1, reason: 'x', fax_id: body.preview ? null : 'a'.repeat(32) }, { status: 202 });
+      missing: [{ title: 'Fax from 2025', removed_at: null }, { title: 'Old referral', removed_at: '2026-10-06T03:00:00' }],
+      packets_in_flight: 1, reason: 'x', fax_id: body.preview ? null : 'a'.repeat(32) }, { status: 202 });
     }),
     http.patch('/case-recipients/:number', async ({ request }) => {
       posts.push({ path: 'reuse', body: await request.json() });
@@ -101,7 +102,8 @@ describe('Case packet acknowledgements', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     const plan = await screen.findByTestId('case-repair-plan');
     expect(plan.textContent).toContain('46 pages will be sent.');
-    expect(plan.textContent).toContain('Not included: Fax from 2025 was sent before Faxbot kept original documents.');
+    expect(plan.textContent).toContain("Not included: 'Fax from 2025' was sent before Faxbot kept original documents. Add it to the case again to include it.");
+    expect(plan.textContent).toMatch(/Not included: 'Old referral' is no longer kept; your retention setting removed it on .*2026\. Add it to the case again to include it\./);
     expect(plan.textContent).toContain('An earlier packet for this case has not finished sending.');
     expect(send.disabled).toBe(true);  // still no reason
     fireEvent.change(screen.getByLabelText('Why the recipient needs every document again'), { target: { value: 'They lost the file.' } });
@@ -129,7 +131,7 @@ describe('Checklist builder', () => {
   it('previews picks with reasons and missing items, and sends only what is checked', async () => {
     const builds: unknown[] = [];
     server.use(
-      http.get('/cases/:caseId/originals', () => HttpResponse.json({ case_id: 'case-7', originals: [
+      http.get('/cases/:caseId/originals', () => HttpResponse.json({ case_id: 'case-7', retention_days: 30, originals: [
         { id: 'o1', title: 'Discharge summary', pages: 3, reference: 'aaaa', document_type: 'Discharge summary',
           document_date: '2026-09-20T00:00:00', source: '', version: 'final', added_at: '2026-10-01T00:00:00', added_by: null },
         { id: 'o2', title: 'Lab results Mesa', pages: 2, reference: 'bbbb', document_type: 'Scanned pages',
@@ -159,6 +161,8 @@ describe('Checklist builder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open the checklist builder' }));
     const builder = await screen.findByTestId('case-checklist');
     expect(await within(builder).findByText('Lab results Mesa')).toBeTruthy();
+    expect(within(builder).getByTestId('case-retention').textContent).toBe(
+      'Faxbot removes a kept document 30 days after it was last added or sent, like sent fax files (Storage & retention).');
     fireEvent.click(within(builder).getByRole('button', { name: 'Build the packet' }));
     const preview = await screen.findByTestId('checklist-preview');
     expect(within(preview).getByText(/version 'final', dated 20 September 2026/)).toBeTruthy();

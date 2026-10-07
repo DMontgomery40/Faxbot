@@ -46,7 +46,8 @@ export interface CaseRepair {
   to: string;
   pages: number;
   documents: Array<{ title: string; pages: number; status: 'included'; version?: string; source?: string }>;
-  missing: string[];
+  // Documents the repair cannot include: when the retention setting removed the kept copy, or null if never kept.
+  missing: Array<{ title: string; removed_at: string | null }>;
   packets_in_flight: number;
   reason: string;
   fax_id: string | null;

@@ -240,7 +240,8 @@ async def case_originals(case_id: str, request: Request):
     case_id = _checked(case_id)
     ledger = _ledger(request)
     rows = await call(lambda: ledger.originals(case_id))
-    return {'case_id': case_id, 'originals': [original_view(row) for row in rows]}
+    return {'case_id': case_id, 'retention_days': _values(request).artifact_ttl_days,
+            'originals': [original_view(row) for row in rows]}
 
 
 @cases_routes.post('/{case_id}/originals', status_code=201)
@@ -260,7 +261,8 @@ async def add_case_originals(case_id: str, request: Request, documents: list[Upl
         ledger.keep(case_id, _staged(request, uploads, fields, max_bytes), principal_id=principal_id)
         return ledger.originals(case_id)
     rows = await call(add)
-    return {'case_id': case_id, 'originals': [original_view(row) for row in rows]}
+    return {'case_id': case_id, 'retention_days': _values(request).artifact_ttl_days,
+            'originals': [original_view(row) for row in rows]}
 
 
 class Choice(BaseModel):
@@ -325,6 +327,7 @@ async def repair_packet(case_id: str, payload: Repair, request: Request,
         raise HTTPException(409, detail='Faxbot has no kept copy of any document sent for this case to this '
                                         'recipient. Add the documents to the case, then send the full packet.')
     packet = PacketPlan(tuple(documents), (), False, ('repair',) * len(documents))
+    # Each document the repair cannot include: when retention removed its original, or None if never kept.
     view = {**packet_view(case_id, recipient, packet), 'missing': missing, 'packets_in_flight': len(waiting),
             'reason': reason}
     if payload.preview:

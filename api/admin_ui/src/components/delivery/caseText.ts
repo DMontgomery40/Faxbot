@@ -1,7 +1,7 @@
 // The words the Case packets screen uses for a document's state, its acknowledgement and why it is sent.
 import type { CaseDocument } from '../../api/deliveryTypes';
 import type { CaseDocumentState, CaseWhy } from '../../api/caseTypes';
-import { formatServerTime } from '../../api/time';
+import { formatLocalDate, formatServerTime, localDay } from '../../api/time';
 
 // Older answers carry only `accepted`; read them as the newer states.
 export function documentState(document: CaseDocument): CaseDocumentState {
@@ -75,6 +75,20 @@ export const WHY_LABEL: Record<CaseWhy, string> = {
 export function versionAndSource(item: { version?: string | null; source?: string | null }): string {
   return [item.version ? `version ${item.version}` : '', item.source ? `from ${item.source}` : '']
     .filter(Boolean).join(' · ');
+}
+
+// Why a full-packet repair cannot include a document.
+export function missingSentence(entry: { title: string; removed_at: string | null }): string {
+  if (entry.removed_at) {
+    return `Not included: '${entry.title}' is no longer kept; your retention setting removed it on ${formatLocalDate(localDay(entry.removed_at))}. Add it to the case again to include it.`;
+  }
+  return `Not included: '${entry.title}' was sent before Faxbot kept original documents. Add it to the case again to include it.`;
+}
+
+// How long documents kept for case packets stay, from Storage & retention.
+export function retentionSentence(days: number | undefined): string {
+  if (!days) return 'Kept documents stay until you set how long sent fax files are kept, in Storage & retention.';
+  return `Faxbot removes a kept document ${days} days after it was last added or sent, like sent fax files (Storage & retention).`;
 }
 
 export function pagesText(count: number): string {

@@ -13,7 +13,7 @@ import type {
   CaseChecklists, CaseOriginal, CaseOriginalDraft, ChecklistBuild, ChecklistItem,
 } from '../../api/caseTypes';
 import { formatLocalDate, localDay } from '../../api/time';
-import { WHY_LABEL, pagesText, versionAndSource } from './caseText';
+import { WHY_LABEL, pagesText, retentionSentence, versionAndSource } from './caseText';
 
 const UNCONFIRMED = "Faxbot could not confirm whether the packet was sent. Check Sent before sending it again.";
 const BLANK_ITEM: ChecklistItem = { type: '', required: true, within_days: null, version: null };
@@ -34,6 +34,7 @@ export default function CaseChecklistBuilder({ client, caseId, to, canSend, canW
   onError: (error: unknown) => void;
 }) {
   const [originals, setOriginals] = useState<CaseOriginal[] | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number | undefined>(undefined);
   const [lists, setLists] = useState<CaseChecklists | null>(null);
   const [drafts, setDrafts] = useState<CaseOriginalDraft[]>([]);
   const [checklistId, setChecklistId] = useState('');
@@ -51,6 +52,7 @@ export default function CaseChecklistBuilder({ client, caseId, to, canSend, canW
     try {
       const [kept, available] = await Promise.all([client.listCaseOriginals(caseId), client.listCaseChecklists()]);
       setOriginals(kept.originals);
+      setRetentionDays(kept.retention_days);
       setLists(available);
       setChecklistId((current) => current || available.checklists[0]?.id || '');
     } catch (failure) {
@@ -147,6 +149,11 @@ export default function CaseChecklistBuilder({ client, caseId, to, canSend, canW
       {notice && <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setNotice(null)}>{notice}</Alert>}
 
       <Typography variant="subtitle1" component="h3" sx={{ mb: 1 }}>Documents kept in this case</Typography>
+      {originals && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} data-testid="case-retention">
+          {retentionSentence(retentionDays)}
+        </Typography>
+      )}
       {originals && originals.length === 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           No documents are kept for this case yet. Documents you send are kept, and you can add more here.
