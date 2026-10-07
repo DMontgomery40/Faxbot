@@ -36,7 +36,7 @@ import sqlalchemy as sa
 
 from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
 from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
-from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, PlanUse, RouteFacts
+from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, RouteFacts
 from .seed import _date, _increment, default_path, load_cards
 
 
@@ -313,18 +313,13 @@ def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
         return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
-def plan_use(engine, route_key, *, now):
-    """Pages and faxes sent on a route since the first of this month (UTC); None when unreadable."""
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+def plan_use(engine, route_key, *, now, values=None):
+    """Pages and faxes the plan carried this billing period, with its page budget (``plan_budget``); None if unreadable."""
     try:
-        costs = _tables(engine)['delivery_attempt_costs']
-        with engine.connect() as connection:
-            faxes, pages = connection.execute(sa.select(
-                sa.func.count(), sa.func.coalesce(sa.func.sum(costs.c.billed_pages), 0)).where(
-                    costs.c.route == route_key, costs.c.outcome == 'success', costs.c.created_at >= start)).one()
+        from .plan_budget import plan_use as budget_use
+        return budget_use(engine, route_key, now=now, values=values)
     except Exception:
         return None
-    return PlanUse(pages=int(pages), faxes=int(faxes))
 
 
 # Putting them together -------------------------------------------------------------------
@@ -373,6 +368,6 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
                 # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
                 link = replace(link, rate=cap)
         if terms is not None and (terms.card.flat_plan or terms.included_pages):
-            plan = plan_use(engine, route_key, now=moment)
+            plan = plan_use(engine, route_key, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None)

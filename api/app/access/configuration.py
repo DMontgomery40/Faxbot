@@ -17,7 +17,7 @@ from ..config_profiles import ConfigurationDocument
 # Everything not explicitly ordinary is Owner-protected, including future fields.
 # These sets classify canonical values, never submitted aliases or secret masks.
 _ORDINARY_FIELDS = frozenset({
-    'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours',
+    'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours', 'plan_budgets',
     'max_file_size_mb', 'fax_disabled', 'fax_header', 'fax_station_id', 'fax_default_country',
     'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days', 'time_zone',
 })
