@@ -132,3 +132,14 @@ def test_a_form_from_a_partner_keeps_its_title_and_version_and_takes_no_local_ve
     with pytest.raises(FormConflict, match="partner's form"):
         store.add_version(importer.from_template(SVG.replace(b'Born', b'DOB'), file_name='x.svg',
                                                  positions=positions_json()), form_id=kept.form['id'])
+
+
+def test_pages_from_a_partner_are_never_inflated_beyond_their_declared_size():
+    import base64
+    import zlib
+    imported = svg_form()
+    declared = sum((page['width'] + 7) // 8 * page['height'] for page in imported.content['pages'])
+    oversized = base64.b64encode(zlib.compress(b'\x00' * (declared * 50))).decode('ascii')
+    with pytest.raises(model.FormError, match='damaged'):
+        check_bundle({'faxbot_form_bundle': 1, 'address': imported.address, 'title': 'Referral', 'version': 1,
+                      'content': imported.content, 'backgrounds': oversized}, imported.address)

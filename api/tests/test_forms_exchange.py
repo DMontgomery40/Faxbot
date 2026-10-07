@@ -154,7 +154,7 @@ def test_a_mismatch_files_nothing_and_asks_for_the_full_pages(forms):
     a, client = forms['a'], forms['client']
     _, sent = a_sends(a, tamper=True)
     assert sent['state'] == 'mismatch'
-    assert 'Send the full pages as a fax' in sent['detail']
+    assert sent['detail'] is None
     assert client.get('/forms/received', headers=ADMIN).json()['received'] == []
     assert [entry for entry in client.get('/intake/items', headers=ADMIN).json()['items'] if entry['source'] == 'direct'] == []
     assert rows(b_engine(), "SELECT count(*) AS n FROM direct_deliveries WHERE state='accepted'") == [{'n': 0}]

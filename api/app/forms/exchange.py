@@ -327,9 +327,11 @@ class FormExchange:
                 return await self._move(row, 'delivered')
             if statement.get('type') == 'refusal' and 400 <= status < 500:
                 reason = statement.get('reason')
-                detail = statement.get('detail') if isinstance(statement.get('detail'), str) else None
-                return await self._move(row, 'mismatch' if reason == 'form_mismatch' else 'refused',
-                                        detail=(detail or '')[:300] or None)
+                if reason == 'form_mismatch':
+                    return await self._move(row, 'mismatch')
+                detail = statement.get('detail') if isinstance(statement.get('detail'), str) else ''
+                said = f"{peer['organization']} answered: {detail}" if detail else None
+                return await self._move(row, 'refused', detail=said[:300] if said else None)
         # The partner may have it; ask instead of sending again.
         return await self._move(row, 'uncertain')
 

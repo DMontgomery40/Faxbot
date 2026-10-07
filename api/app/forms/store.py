@@ -25,8 +25,12 @@ def pack_backgrounds(backgrounds):
 
 def unpack_backgrounds(document, encoded):
     """Page bitmaps from stored or received data, each checked against the content's page hash."""
+    expected = sum((page['width'] + 7) // 8 * page['height'] for page in document['pages'])
     try:
-        data = zlib.decompress(base64.b64decode(encoded, validate=True))
+        inflater = zlib.decompressobj()
+        data = inflater.decompress(base64.b64decode(encoded, validate=True), expected + 1)
+        if inflater.unconsumed_tail or not inflater.eof:
+            raise ValueError
     except (ValueError, zlib.error):
         raise model.FormError('The form pages are damaged.') from None
     pages, at = [], 0
@@ -181,6 +185,15 @@ class FormStore:
             row = connection.execute(sa.select(self.versions).where(self.versions.c.form_id == form_id)
                                      .order_by(self.versions.c.number.desc()).limit(1)).mappings().one_or_none()
             return self._version(connection, row) if row is not None else None
+
+    def contents(self, version_ids):
+        """{version id: parsed content} for some versions, reading only their content column."""
+        if not version_ids:
+            return {}
+        with read_connection(self.engine) as connection:
+            rows = connection.execute(sa.select(self.versions.c.id, self.versions.c.content).where(
+                self.versions.c.id.in_(sorted(version_ids)))).all()
+        return {identity: json.loads(content) for identity, content in rows}
 
     def template(self, version_id):
         with read_connection(self.engine) as connection:

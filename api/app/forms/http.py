@@ -177,18 +177,19 @@ async def received_forms(request: Request):
 
     def read():
         rows = exchange.store.received()
-        return rows, _titles(exchange.store)
-    rows, titles = await _call(read)
+        return rows, _titles(exchange.store), _labels(exchange, {row['form_version_id'] for row in rows})
+    rows, titles, labels = await _call(read)
     return {'received': [{**_delivery_view(row, values=True, titles=titles),
                           'message_id': row['message_id'], 'intake_item_id': row['intake_item_id'],
                           'inbound_fax_id': row['inbound_fax_id'],
-                          'fields': _labels(exchange, row['form_version_id'])} for row in rows]}
+                          'fields': labels.get(row['form_version_id'], [])} for row in rows]}
 
 
-def _labels(exchange, version_id):
-    version = exchange.store.version(version_id=version_id) if version_id else None
-    return [{'name': item['name'], 'label': item['label'], 'type': item['type']}
-            for item in version.content['fields']] if version else []
+def _labels(exchange, version_ids):
+    """Each version's field names, labels and types, read once per version (only its content column)."""
+    contents = exchange.store.contents([version_id for version_id in version_ids if version_id])
+    return {version_id: [{'name': item['name'], 'label': item['label'], 'type': item['type']}
+                         for item in content['fields']] for version_id, content in contents.items()}
 
 
 @router.get('/deliveries', dependencies=[Depends(require_permission('settings:read'))])
@@ -209,7 +210,7 @@ async def get_delivery(delivery_id: str, request: Request):
         raise HTTPException(404, detail='This form delivery does not exist.')
     titles = await _call(lambda: _titles(exchange.store))
     view = _delivery_view(row, values=row['direction'] == 'outbound', titles=titles)
-    view['fields'] = await _call(lambda: _labels(exchange, row['form_version_id']))
+    view['fields'] = (await _call(lambda: _labels(exchange, {row['form_version_id']}))).get(row['form_version_id'], [])
     return view
 
 
@@ -324,11 +325,12 @@ def _fax(request, identity, version, rendered, number):
     revision = request.scope['faxbot.configuration'].active
     if revision.profile_id('outbound') is None:
         raise HTTPException(409, detail='Outbound fax delivery is disabled in this configuration.')
-    document = renderer.to_pdf(rendered)
     access = access_runtime(request)
     name = f'{version.form["name"]} v{version.number}.pdf'
+    # Called in the worker thread: drawing the PDF is not done on the event loop.
     return lambda: accept_generated_fax(runtime, access, identity.actor, revision, to_number=number,
-                                        document=document, file_name=name[:200], pages=len(rendered.pages))
+                                        document=renderer.to_pdf(rendered), file_name=name[:200],
+                                        pages=len(rendered.pages))
 
 
 @router.post('/send')
