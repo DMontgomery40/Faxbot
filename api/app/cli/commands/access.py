@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import typer
 
+from . import rules
 from .. import resolve, state
 from ..client import segment
 from ..errors import CliError
@@ -675,30 +676,58 @@ def numbers_list(ids: bool = IDS):
         return ', '.join(item['name'] + ('' if item['in_use'] else ' (not in use now)')
                          for item in row['providers']) or '-'
 
+    def mailbox_text(row):
+        """The mailbox, and the rule in words when it has receiving options, as Numbers shows it."""
+        from .rules import RECEIVING_OPTION_KEYS, Names, receiving_sentence  # `rules` here is the list of number rules
+        rule = row['rule']
+        if not rule:
+            return NO_MAILBOX
+        off = rule.get('enabled') is False
+        options = [key for key in RECEIVING_OPTION_KEYS if key != 'enabled' and rule.get(key) not in (None, False, [])]
+        if not options and not off:
+            return row['mailbox']
+        names = {item['id']: item['name'] for item in connectors or []}
+        return ('Off: ' if off else '') + receiving_sentence(rule, Names(), names)
+
     state.out().result(found, lambda out: out.table(
         _columns(ids, ['Fax number', 'Provided by', 'Mailbox', 'Email delivery']),
-        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), row['mailbox'] or NO_MAILBOX,
+        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), mailbox_text(row),
                                                              row['email']]) for row in found],
         empty='No fax numbers yet.'))
 
 
 @numbers.command('add')
 def numbers_add(number: str = typer.Argument(..., help='Your fax number, as faxes arrive on it.'),
-                mailbox: str = typer.Option(..., '--mailbox', help='Mailbox that receives faxes sent to this number.')):
-    """Send faxes that arrive on a number to a mailbox."""
+                mailbox: str = typer.Option(..., '--mailbox', help='Mailbox that receives faxes sent to this number.'),
+                account: str = rules.NUMBER_ACCOUNT, sender: list[str] = rules.NUMBER_FROM, days: str = rules.NUMBER_DAYS,
+                between: str = rules.NUMBER_BETWEEN, email: str = rules.NUMBER_EMAIL, no_email: bool = rules.NUMBER_NO_EMAIL,
+                urgent: bool = rules.NUMBER_URGENT, keep_days: int = rules.NUMBER_KEEP,
+                position: int = rules.NUMBER_POSITION, any_number: bool = rules.NUMBER_ANY):
+    """Send faxes that arrive on a number to a mailbox, optionally only some of them and with their own email and urgency."""
     api = state.api()
     found = resolve.mailbox(api, mailbox)
-    result = api.post('/access/inbound-rules', json=api.with_policy({'to_number': number, 'mailbox_id': found['id']}))
+    options = rules.receiving_options(api, account=account, from_numbers=sender, days=days, between=between, email=email,
+                                      no_email=no_email, urgent=urgent, keep_days=keep_days, position=position,
+                                      any_number=any_number)
+    result = api.post('/access/inbound-rules',
+                      json=api.with_policy({'to_number': number, 'mailbox_id': found['id'], **options}))
     state.out().result(result, lambda out: out.line(f"Faxes to {number} now go to {found['label']}."))
 
 
 @numbers.command('update')
 def numbers_update(number: str = typer.Argument(..., help='Fax number of the rule to change.'),
                    new_number: str = typer.Option(None, '--number', help='New fax number.'),
-                   mailbox: str = typer.Option(None, '--mailbox', help='New mailbox.')):
-    """Change a fax number's mailbox, or the number itself."""
+                   mailbox: str = typer.Option(None, '--mailbox', help='New mailbox.'),
+                   account: str = rules.NUMBER_ACCOUNT, sender: list[str] = rules.NUMBER_FROM,
+                   days: str = rules.NUMBER_DAYS, between: str = rules.NUMBER_BETWEEN, email: str = rules.NUMBER_EMAIL,
+                   no_email: bool = rules.NUMBER_NO_EMAIL, urgent: bool = rules.NUMBER_URGENT,
+                   keep_days: int = rules.NUMBER_KEEP, position: int = rules.NUMBER_POSITION,
+                   any_number: bool = rules.NUMBER_ANY):
+    """Change a fax number's mailbox, the number itself, or which of its faxes the rule takes and how."""
     api = state.api()
-    body = {}
+    body = rules.receiving_options(api, account=account, from_numbers=sender, days=days, between=between, email=email,
+                                   no_email=no_email, urgent=urgent, keep_days=keep_days, position=position,
+                                   any_number=any_number)
     if new_number:
         body['to_number'] = new_number
     if mailbox:

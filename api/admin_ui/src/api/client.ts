@@ -75,6 +75,7 @@ import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
 import type { EfaxStatus, HumbleFaxStatus } from './types';
+import type { ReceivingOptions } from '../components/ProviderRulesApi';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -574,11 +575,11 @@ class AdminAPIClient {
     return this.json('/access/inbound-rules?limit=200');
   }
 
-  async createInboundRule(data: { to_number: string; mailbox_id: string }) {
+  async createInboundRule(data: { to_number: string; mailbox_id: string } & Partial<ReceivingOptions>) {
     return this.accessWrite<{ rule?: InboundRule }>('/access/inbound-rules', data);
   }
 
-  async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number }) {
+  async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number } & Partial<ReceivingOptions>) {
     return this.accessWrite<{ rule?: InboundRule }>(`/access/inbound-rules/${id(ruleId)}`, data, 'PATCH');
   }
 
@@ -870,7 +871,8 @@ class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean; urgent?: boolean } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
+    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[] } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -881,6 +883,10 @@ class AdminAPIClient {
     if (options.byCall) formData.append('send_by_call', 'true');
     // Goes before other faxes waiting for the same line, and does not wait to go together with others.
     if (options.urgent) formData.append('urgent', 'true');
+    // What sending rules can match: the mailbox it is sent from, its workflow and its labels.
+    if (options.mailbox) formData.append('mailbox', options.mailbox);
+    if (options.workflow) formData.append('workflow', options.workflow);
+    for (const label of options.labels ?? []) formData.append('labels', label);
 
     const res = await this.send('/fax', {
       method: 'POST',
@@ -997,6 +1003,16 @@ class AdminAPIClient {
       running = false;
       if (timer !== undefined) window.clearTimeout(timer);
     };
+  }
+
+  // One request from the provider-rules table (components/ProviderRulesApi.ts): rules, approvals and accounts.
+  // An empty answer (204 after discarding a draft) reads as undefined.
+  async call<T>(request: { method: string; path: string; body?: unknown }): Promise<T> {
+    const res = await this.fetch(request.path, {
+      method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
+    });
+    const text = res.status === 204 ? '' : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   // Delivery routes, intake and direct delivery

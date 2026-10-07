@@ -33,6 +33,7 @@ import type { BatchingCheck } from '../api/batchingTypes';
 import type { RecommendedRoute, RoutePrediction } from '../api/deliveryTypes';
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
+import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -41,6 +42,8 @@ interface SendFaxProps {
   configError: string | null;
   // Open this fax in Sent (the confirmation links to it).
   onOpenJob?: (jobId: string) => void;
+  // The mailboxes, workflows and labels rules can match (the console context's send block).
+  sendChoices?: Partial<SendChoices> | null;
 }
 
 interface SubmissionIntent {
@@ -93,7 +96,7 @@ function acceptanceMessage(response: FaxSendResult, to?: string): string {
   }
 }
 
-function SendFax({ client, config, configLoading, configError, onOpenJob }: SendFaxProps) {
+function SendFax({ client, config, configLoading, configError, onOpenJob, sendChoices }: SendFaxProps) {
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -113,6 +116,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
   const [byCall, setByCall] = useState(false);
   // Urgent: before other faxes waiting for the same line, and never held to go with others.
   const [urgent, setUrgent] = useState(false);
+  const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
   useEffect(() => {
     setTogether(null);
     setSendNow(false);
@@ -241,7 +245,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall, urgent });
+          byCall: route?.route === 'local' && byCall, urgent, ...sendBody(sendOptions) });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -371,6 +375,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                   control={<Checkbox checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
                     disabled={!configReady || loading} />}
                   label="Urgent: send before other faxes waiting for the same line" />
+
+                {sendChoices && (
+                  <ProviderRulesSendFields value={sendOptions} onChange={setSendOptions} disabled={!configReady || loading}
+                    choices={{ mailboxes: sendChoices.mailboxes ?? [], workflows: sendChoices.workflows ?? [],
+                      labels: sendChoices.labels ?? [] }} />
+                )}
 
                 {route?.route === 'local' && (
                   <FormControlLabel data-testid="send-by-call"

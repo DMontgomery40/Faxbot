@@ -405,14 +405,17 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   );
 
   // A switch; `confirmOff` asks before turning it off (one sentence), never before turning it on.
-  const switchField = (label: string, field: string, helperText: string,
+  // A label, or [label when on, label when off], so the words always match the switch beside them.
+  const switchField = (label: string | [string, string], field: string, helperText: string,
     options: { inverted?: boolean; disabled?: boolean; confirmOff?: { title: string; text: string; action: string } } = {}) => {
     const value = Boolean(form[field]);
+    const checked = options.inverted ? !value : value;
+    const shown = Array.isArray(label) ? label[checked ? 0 : 1] : label;
     const note = withOwnerNote(field, helperText);
     return (
       <Box sx={{ px: 2 }} data-testid={`switch-${field}`}>
         <FormControlLabel
-          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled || locked(field)}
+          control={<Switch checked={checked} disabled={options.disabled || locked(field)}
             onChange={(event) => {
               const next = options.inverted ? !event.target.checked : event.target.checked;
               if (!event.target.checked && options.confirmOff) {
@@ -421,7 +424,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               }
               handleForm(field, next);
             }} />}
-          label={label} />
+          label={shown} />
         {note && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{note}</Typography>}
       </Box>
     );
@@ -734,7 +737,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Typography>
             )}
 
-            {switchField('Sending is on', 'fax_disabled',
+            {switchField(['Sending is on', 'Sending is off'], 'fax_disabled',
               'Off: Faxbot stops sending. Faxes submitted while sending is off stay on hold after you turn it back on.',
               { inverted: true, confirmOff: { title: 'Turn off sending?', action: 'Turn off sending',
                 text: 'Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.' } })}
@@ -1081,7 +1084,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             title="Receiving"
             icon={<CheckCircleIcon />}
           >
-            {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
+            {switchField(['Receiving is on', 'Receiving is off'], 'inbound_enabled', receivingSentence,
               { disabled: !form.inbound_enabled && !receiverCanReceive })}
 
             <ResponsiveSettingItem

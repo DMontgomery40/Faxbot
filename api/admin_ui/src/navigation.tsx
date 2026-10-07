@@ -59,6 +59,12 @@ import SendFax from './components/SendFax';
 import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
 import ProvidersInUse from './components/ProvidersInUse';
+import ProviderRules, { type NumberRuleSummary } from './components/ProviderRules';
+import ProviderAccounts from './components/ProviderAccounts';
+import { MailboxSendingRulesPicker } from './components/MailboxSendingRules';
+import { rulesApiFor } from './components/ProviderRulesApi';
+import { currencyFor } from './components/ProviderRulesText';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
 import CasePackets from './components/delivery/CasePackets';
 import Savings from './components/delivery/Savings';
 import Recommendations from './components/delivery/Recommendations';
@@ -165,6 +171,30 @@ export interface NavArea {
 }
 
 const SETTINGS_READ = ['settings:read'] as const;
+
+// Loaders the rules screens keep between renders: one per console API client.
+const numberRuleLoaders = new WeakMap<AdminAPIClient, () => Promise<NumberRuleSummary[]>>();
+const mailboxLoaders = new WeakMap<AdminAPIClient, () => Promise<Array<{ id: string; label: string }>>>();
+
+function numberRules(client: AdminAPIClient): () => Promise<NumberRuleSummary[]> {
+  let load = numberRuleLoaders.get(client);
+  if (!load) {
+    load = () => client.listInboundRules().then((page) => page.items.map((rule) => ({ to_number: rule.to_number, mailbox_label: rule.mailbox_label })));
+    numberRuleLoaders.set(client, load);
+  }
+  return load;
+}
+
+function mailboxes(client: AdminAPIClient): () => Promise<Array<{ id: string; label: string }>> {
+  let load = mailboxLoaders.get(client);
+  if (!load) {
+    load = () => client.listMailboxes().then((page) => page.items.map((item) => ({ id: item.id, label: item.label })));
+    mailboxLoaders.set(client, load);
+  }
+  return load;
+}
+
+const currency = (ctx: PageContext) => currencyFor(ctx.context.send?.default_country);
 const OVERVIEW_GATE: Gate = { anyOf: ['diagnostics:read', 'settings:read'] };
 
 // Pages that show active settings wait for the console context they just asked for.
@@ -215,10 +245,11 @@ export const NAVIGATION: NavArea[] = [
           onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
           onSendFax={sendFax(ctx)} />) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
-        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)} /> },
+        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
+          canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
-          configError={ctx.contextError} onOpenJob={ctx.openJob} /> },
+          configError={ctx.contextError} onOpenJob={ctx.openJob} sendChoices={ctx.context.send} /> },
     ],
   },
   {
@@ -232,6 +263,12 @@ export const NAVIGATION: NavArea[] = [
           <>
             {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage'))
               && <ResourceAccess client={ctx.client} me={ctx.me} section="mailboxes" />}
+            {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage')) && (
+              <Box sx={{ mt: 4 }}>
+                <MailboxSendingRulesPicker api={rulesApiFor(ctx.client)} loadMailboxes={mailboxes(ctx.client)}
+                  canWrite={ctx.permissions.has('mailboxes:manage')} currency={currency(ctx)} />
+              </Box>
+            )}
             {ctx.permissions.has('settings:read') && (
               <Box sx={{ mt: 4 }}><WorkSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
             )}
@@ -268,9 +305,16 @@ export const NAVIGATION: NavArea[] = [
           <>
             <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
             <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
+            <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+              currency={currency(ctx)} onNavigate={ctx.navigate} />
             {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
             {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
           </>) },
+      // Which account sends each fax: the organization's rules, sites, lists and workflows.
+      { id: 'rules', label: 'Rules', icon: <AltRouteIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+          currency={currency(ctx)} onNavigate={ctx.navigate}
+          loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} /> },
       providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
       providerPage('efax', 'eFax', 'efax', 'efax'),
       providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),

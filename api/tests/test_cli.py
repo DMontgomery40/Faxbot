@@ -1037,6 +1037,32 @@ def test_case_packet_preview_send_and_documents(cli, tmp_path):
     assert 'CASE-1' in listed and '1 sent, ' in listed and 'Last sent' in listed
 
 
+def test_providers_rules_round_trip_against_the_rules_engine(cli):
+    """Draft, check, publish, try, history, diff and restore through the real rules routes, not a fake."""
+    added = cli('providers', 'rules', 'add', 'Big faxes need approval', '--when', 'pages-over=20', '--approval')
+    assert added.exit_code == 0, (added.stdout, added.stderr)
+    assert 'When the fax has more than 20 pages, hold the fax for approval.' in ' '.join(added.stdout.split())
+    listed = ' '.join(cli('providers', 'rules', 'list').stdout.split())
+    assert 'You have changes that are not published yet.' in listed and 'Big faxes need approval' in listed
+    checked = cli('providers', 'rules', 'check')
+    assert checked.exit_code == 0, (checked.stdout, checked.stderr)
+    published = cli('providers', 'rules', 'publish', '--note', 'Approval for big faxes')
+    assert published.exit_code == 0, (published.stdout, published.stderr)
+    assert 'Version 1 is in effect for new faxes.' in published.stdout
+    tried = cli.json('providers', 'rules', 'explain', '--to', '+15550100001', '--pages', '25')
+    assert tried['outcome'] == 'held' and tried['holds'], tried
+    assert cli('providers', 'rules', 'disable', 'Big faxes need approval').exit_code == 0
+    assert cli('providers', 'rules', 'publish', '--note', 'Pause it').exit_code == 0
+    history = ' '.join(cli('providers', 'rules', 'history').stdout.split())
+    assert 'Approval for big faxes' in history and 'Pause it' in history
+    diff = cli('providers', 'rules', 'diff', '1', '2')
+    assert diff.exit_code == 0 and 'Big faxes need approval' in diff.stdout
+    restored = cli('providers', 'rules', 'restore', '1')
+    assert restored.exit_code == 0 and 'Version 1 is now your draft.' in restored.stdout
+    assert cli.json('providers', 'rules', 'list')['draft']['document']['limits'][0]['on'] is True
+    assert cli('providers', 'rules', 'discard', '--yes').exit_code == 0
+
+
 def test_costs_savings_reads_as_estimates(cli):
     result = cli.json('costs', 'savings', '--days', '7')
     assert result['days'] == 7 and result['estimate'] is True

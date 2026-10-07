@@ -189,6 +189,13 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 ### Next
 
 - [ ] Live dense pages: a packed fax over Telnyx to a machine that takes unlimited length and to an A4-only one, a Faxbot-to-Faxbot packed fax split back on receipt, blank-bottom trimming to a machine without error correction, and one test fax per cloud provider (Sinch first) to see whether it sends a long page unchanged.
+- [ ] Several provider accounts at once, chosen for each fax by the organization's rules, in the console and the command line. The screens and commands are built and tested with synthetic data against the agreed API:
+  - **Providers → Rules** holds the sending rules of the organization and of each workflow, with sites, regions, recipient groups and labels. Each rule reads as a sentence. Changes go into a draft, and Check, Publish, History and Try a fax work on it.
+  - A mailbox's own sending rules are on **Numbers → Mailboxes**. **Providers → In use** lists every account, trunks included.
+  - **Sent** shows held faxes, with Approve, Refuse, Send anyway and Check again, and why each fax took its route. **Numbers** gains the receiving options and Try a received fax. **Send a fax** gains mailbox, workflow and labels.
+  - The matching commands are `faxbot providers rules`, `faxbot providers accounts`, `faxbot sent route|approve|refuse|check-again`, `faxbot sent list --held`, `faxbot numbers explain`, `faxbot send --mailbox --workflow --label` and `faxbot costs fax --to`.
+
+  They work once the rules engine, the accounts and the delivery changes land, and none of it has run against a real system yet.
 - [ ] Live confirmation of SIP Call-ID matching in both directions and of the hourly check for calls Faxbot has no record of; charges from other trunk carriers.
 - [ ] Live eFax sign-off with a real eFax Corporate API account.
 - [ ] Live HumbleFax receiving: a fax to +13034265097 arrives in the partner Faxbot's Received within a check, and the document download works against HumbleFax's real API (redirects and file format are not yet seen live).

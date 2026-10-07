@@ -70,7 +70,7 @@ const apply = () => fireEvent.click(screen.getByRole('button', { name: 'Apply se
 const section = async (title: string) => (await screen.findByText(title)).closest('.MuiPaper-root') as HTMLElement;
 // The Receiving section, found by its switch (other sections also say "Receiving").
 const receivingSection = async () => {
-  await screen.findByLabelText('Receiving is on');
+  await screen.findByLabelText(/^Receiving is (on|off)$/);
   return screen.getByTestId('switch-inbound_enabled').closest('.MuiPaper-root') as HTMLElement;
 };
 
@@ -413,7 +413,7 @@ describe('Settings authentication and receiving', () => {
     fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
     // Off, it can be turned on again: HumbleFax receives by Faxbot asking it for faxes.
     expect(within(inbound).getByText('Turn this on to receive faxes through HumbleFax.')).toBeTruthy();
-    expect((within(inbound).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
+    expect((within(inbound).getByLabelText('Receiving is off') as HTMLInputElement).disabled).toBe(false);
   });
 
   it('turns receiving off and on again with one switch, keeping the trunk as the receiving provider', async () => {
@@ -427,7 +427,7 @@ describe('Settings authentication and receiving', () => {
     expect(within(inbound).getByText('Turn this on to receive faxes through Carrier trunk.')).toBeTruthy();
     expect(screen.queryByText('Enable Inbound Fax Receiving')).toBeNull();
     expect(screen.queryByText('Feature Flags')).toBeNull();
-    fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
+    fireEvent.click(within(inbound).getByLabelText(/^Receiving is (on|off)$/));
     expect(within(inbound).getByText('Faxes arrive through Carrier trunk.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(writes).toHaveLength(1));
@@ -758,7 +758,7 @@ describe('Settings placed on their own pages', () => {
   it('asks before turning sending off, and not before turning it on', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
-    const sending = await screen.findByLabelText('Sending is on') as HTMLInputElement;
+    const sending = await screen.findByLabelText(/^Sending is (on|off)$/) as HTMLInputElement;
     fireEvent.click(sending);
     const dialog = await screen.findByRole('dialog', { name: 'Turn off sending?' });
     expect(within(dialog).getByText('Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.')).toBeTruthy();
@@ -774,6 +774,23 @@ describe('Settings placed on their own pages', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(sending.checked).toBe(true);
     expect(writes).toEqual([]);
+  });
+
+  it('says off beside a switch that is off, as with FAX_DISABLED (click-through, 2026-10-07)', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.disabled = true;
+      data.features.fax_disabled = true;
+    }));
+    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
+    const sending = await screen.findByLabelText('Sending is off') as HTMLInputElement;
+    expect(sending.checked).toBe(false);
+    const receiving = screen.getByLabelText('Receiving is off') as HTMLInputElement;
+    expect(receiving.checked).toBe(false);
+    expect(screen.queryByText('Sending is on')).toBeNull();
+    expect(screen.queryByText('Receiving is on')).toBeNull();
+    // Turning sending on changes the words with the switch.
+    fireEvent.click(sending);
+    expect((await screen.findByLabelText('Sending is on') as HTMLInputElement).checked).toBe(true);
   });
 
   it('sets the address phones use on the local network on Keys & phones', async () => {
@@ -806,7 +823,7 @@ describe('Settings placed on their own pages', () => {
     const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
     await receivingSection();
     expect(screen.queryByText('Use provider plugins')).toBeNull();
-    expect(screen.getByLabelText('Sending is on')).toBeTruthy();
+    expect(screen.getByLabelText(/^Sending is (on|off)$/)).toBeTruthy();
     unmount();
     render(<Settings client={client()} sections={['plugins']} title="Provider plugins" canWrite />);
     fireEvent.click(await screen.findByLabelText('Use provider plugins'));
@@ -936,7 +953,7 @@ describe('Owner-only settings everywhere', () => {
     expect(within(receiving).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
     expect(minutes).toBeTruthy();
     // Receiving itself is not owner-only and stays changeable.
-    expect((within(receiving).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
+    expect((within(receiving).getByLabelText(/^Receiving is (on|off)$/) as HTMLInputElement).disabled).toBe(false);
     unmount();
     render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
     await screen.findByText('Require HTTPS for document links');

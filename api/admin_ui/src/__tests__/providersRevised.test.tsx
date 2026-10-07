@@ -77,7 +77,7 @@ describe('Providers in the panel', () => {
     fireEvent.click(providers);
     const list = document.getElementById('nav-providers') as HTMLElement;
     const names = within(list).getAllByRole('link').map((link) => link.textContent);
-    expect(names).toEqual(['In use', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
+    expect(names).toEqual(['In use', 'Rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
     expect(within(list).getByRole('link', { name: 'Add or change a provider' }).getAttribute('href')).toBe('#/system/setup');
     // A provider not in use still opens at its address.
     window.location.hash = '#/providers/phaxio';
@@ -226,14 +226,21 @@ describe('Names follow a saved provider change', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText('Ada Admin');
     window.location.hash = '#/providers/sending';
-    fireEvent.click(await screen.findByRole('button', { name: 'Providers' }));
-    const list = document.getElementById('nav-providers') as HTMLElement;
-    await waitFor(() => expect(within(list).getByRole('link', { name: 'Telstra SIP Connect' })).toBeTruthy());
-    const receiving = await screen.findByLabelText('Receiving is on');
+    // The page's own area opens by itself. Clicking it too would close it again whenever the address was
+    // read first, which made this test fail now and then (2026-10-07).
+    const area = await screen.findByRole('button', { name: 'Providers' });
+    await waitFor(() => expect(area.getAttribute('aria-expanded')).toBe('true'));
+    // Read the panel afresh each time: it is drawn again when the console context changes.
+    const list = () => document.getElementById('nav-providers') as HTMLElement;
+    await waitFor(() => expect(within(list()).getByRole('link', { name: 'Telstra SIP Connect' })).toBeTruthy());
+    const receiving = await screen.findByLabelText(/^Receiving is (on|off)$/);
     fireEvent.click(receiving);
-    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
-    await waitFor(() => expect(within(list).getByRole('link', { name: 'Telnyx' })).toBeTruthy());
-    expect(within(list).queryByRole('link', { name: 'Telstra SIP Connect' })).toBeNull();
+    const apply = screen.getByRole('button', { name: 'Apply settings' }) as HTMLButtonElement;
+    await waitFor(() => expect(apply.disabled).toBe(false));
+    fireEvent.click(apply);
+    // Saving, then reading the console context again, are two round trips: wait for the result, not a fixed time.
+    await waitFor(() => expect(within(list()).getByRole('link', { name: 'Telnyx' })).toBeTruthy(), { timeout: 10_000 });
+    expect(within(list()).queryByRole('link', { name: 'Telstra SIP Connect' })).toBeNull();
     // The page the lead saw: the In use list names the new carrier too, without a reload.
     expect(within(screen.getByTestId('providers-in-use')).getByText(/Telnyx/)).toBeTruthy();
     expect(screen.queryByText(/Telstra SIP Connect/)).toBeNull();

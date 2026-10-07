@@ -11,6 +11,7 @@ import { ConfirmDialog, EmptyState, Field, FormDialog, useSmallScreens } from '.
 import { DeliveryError, formatMoney, formatRate } from './shared';
 import { providerLabel } from '../../providerLabels';
 import { formatLocalDate } from '../../api/time';
+import { OriginRates } from '../ProviderAccountsTrunks';
 
 const BILLING = [
   { value: 1, label: 'Per second' },
@@ -238,6 +239,9 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
           </Table>
         </TableContainer>
       )}
+      {cards.filter((card) => card.rows?.length).map((card) => (
+        <OriginRates key={`${card.provider_id}-${card.label}`} cardLabel={card.label} rows={card.rows ?? []} />
+      ))}
       {editing && <CardDialog card={editing} busy={busy} error={error} onClose={() => setEditing(null)} onSave={save} />}
       <ConfirmDialog open={removing !== null} title="Remove this rate card?" danger busy={busy} error={error}
         text="Faxbot stops estimating costs for this provider until you add a new card."

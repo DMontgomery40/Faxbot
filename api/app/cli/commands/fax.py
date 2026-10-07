@@ -145,7 +145,11 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                           'together with other faxes.'),
          by_call: bool = typer.Option(False, '--by-call',
                                       help='Place a real call through your carrier even when the number is one of '
-                                           'your own, for example to test your fax line.')):
+                                           'your own, for example to test your fax line.'),
+         mailbox: str = typer.Option(None, '--mailbox', help='Send from this mailbox, so its sending rules apply.'),
+         workflow: str = typer.Option(None, '--workflow', metavar='KEY',
+                                      help='The workflow this fax is part of, such as referrals.'),
+         label: list[str] = typer.Option(None, '--label', help='A label for this fax, such as legal (repeat it).')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
@@ -157,6 +161,12 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['send_by_call'] = 'true'
     if urgent:
         data['urgent'] = 'true'
+    if mailbox:
+        data['mailbox'] = _send_mailbox(api, mailbox)
+    if workflow:
+        data['workflow'] = workflow
+    if label:
+        data['labels'] = list(label)
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
@@ -202,13 +212,29 @@ def status(fax_id: str = typer.Argument(..., help='Fax ID shown when the fax was
 
 
 @jobs.command('list')
+def _send_mailbox(api, name):
+    """A mailbox this person may send from, by its name or id."""
+    mailboxes = ((api.get('/auth/context') or {}).get('send') or {}).get('mailboxes') or []
+    found = [item for item in mailboxes if item['id'] == name or item['label'].strip().casefold() == name.strip().casefold()]
+    if len(found) == 1:
+        return found[0]['id']
+    names = ', '.join(item['label'] for item in mailboxes)
+    raise CliError(f"You cannot send from a mailbox called '{name}'. "
+                   + (f'You may send from: {names}.' if names else 'You may not send from any mailbox.'))
+
+
 def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only faxes with this status, such as queued, '
                                                                        'SUCCESS or FAILED.'),
               provider: str = typer.Option(None, '--provider', help='Only faxes sent through this provider.'),
               limit: int = typer.Option(50, '--limit', min=1, max=100, help='How many faxes to show.'),
               offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
-              ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh.")):
+              ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh."),
+              held: bool = typer.Option(False, '--held', help='Only faxes your rules are holding: waiting for approval, '
+                                                              'for a time window or for a route the rules allow.')):
     """List sent faxes, newest first, with what each cost. Fax numbers are partly hidden."""
+    if held:
+        from .rules import held_list
+        return held_list()
     api = state.api()
     page = api.get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
                                               'limit': limit, 'offset': offset})

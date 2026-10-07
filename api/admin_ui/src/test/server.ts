@@ -61,7 +61,12 @@ interface Group { id: string; name: string; description: string; enabled: boolea
 interface Membership { id: string; group_id: string; principal_id: string; version: number }
 interface Role { id: string; name: string; description: string; builtin: boolean; enabled: boolean; permissions: string[]; version: number }
 interface Mailbox { id: string; label: string; enabled: boolean; resource_id: string; version: number }
-interface Rule { id: string; to_number: string; mailbox_id: string; version: number }
+interface Rule { id: string; to_number: string; mailbox_id: string; version: number; [option: string]: unknown }
+
+// A number rule's receiving options (design §4.9), each optional on create and change.
+const RECEIVING_OPTIONS = ['position', 'enabled', 'any_number', 'account_key', 'from_numbers', 'days', 'start_minute',
+  'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days'];
+const optionsIn = (body: Json) => Object.fromEntries(RECEIVING_OPTIONS.filter((key) => key in body).map((key) => [key, body[key]]));
 interface Assignment { id: string; subject: { kind: 'principal' | 'group'; id: string }; role_id: string; resource_id: string; version: number }
 
 interface Captured { method: string; path: string; body: Json | null; headers: Record<string, string> }
@@ -612,23 +617,25 @@ const accessHandlers = [
   guarded('get', '/access/inbound-rules', () => page([...s().rules.values()].map((r) => ({
     ...r, mailbox_label: s().mailboxes.get(r.mailbox_id)?.label ?? '' })))),
   guarded('post', '/access/inbound-rules', ({ body }) => {
-    const invalid = strict(body, ['to_number', 'mailbox_id', 'expected_policy_version']) ?? stale(body);
+    const invalid = strict(body, ['to_number', 'mailbox_id', 'expected_policy_version'], RECEIVING_OPTIONS) ?? stale(body);
     if (invalid) return invalid;
     const toNumber = s().resolveNumber(body.to_number);
     if (toNumber === null) return fail(400, NUMBER_DETAIL);
-    const rule: Rule = { id: nextId('rule'), to_number: toNumber, mailbox_id: body.mailbox_id, version: 1 };
+    const rule: Rule = { id: nextId('rule'), to_number: toNumber, mailbox_id: body.mailbox_id, version: 1, ...optionsIn(body) };
     s().rules.set(rule.id, rule);
     return committed({ rule });
   }),
   guarded('patch', '/access/inbound-rules/:id', ({ body, params }) => {
     const r = s().rules.get(params.id);
     if (!r) return fail(404, 'Access target not found.');
-    const invalid = strict(body, ['version', 'expected_policy_version'], ['to_number', 'mailbox_id']) ?? stale(body, [body.version, r.version]);
+    const invalid = strict(body, ['version', 'expected_policy_version'], ['to_number', 'mailbox_id', ...RECEIVING_OPTIONS])
+      ?? stale(body, [body.version, r.version]);
     if (invalid) return invalid;
     const toNumber = 'to_number' in body ? s().resolveNumber(body.to_number) : r.to_number;
     if (toNumber === null) return fail(400, NUMBER_DETAIL);
     if ('to_number' in body) r.to_number = toNumber;
     if ('mailbox_id' in body) r.mailbox_id = body.mailbox_id;
+    Object.assign(r, optionsIn(body));
     r.version += 1;
     return committed({ rule: r });
   }),
@@ -653,6 +660,14 @@ const consoleHandlers = [
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
   // One fax's cost: nothing to say for a fax that placed no call.
   http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
+  // Provider rules (tests of their screens use providerRulesFake.ts): nothing held, and a server without
+  // the accounts and per-fax route answers, so other screens show what they always did.
+  http.get('/routing/holds', () => json({ holds: [] })),
+  http.get('/routing/rules', () => json({ scope: { kind: 'organization', name: 'Organization' }, active: null, draft: null,
+    organization: null, matches_30_days: {}, can_write: true, time_zone: 'America/Denver',
+    choices: { accounts: [], people: [], keys: [], groups: [], mailboxes: [] } })),
+  http.get('/routing/faxes/:jobId/route', () => json({ detail: 'Not Found' }, 404)),
+  http.get('/admin/providers/accounts', () => json({ detail: 'Not Found' }, 404)),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.

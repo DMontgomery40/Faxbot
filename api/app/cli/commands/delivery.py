@@ -373,10 +373,21 @@ def routing_reconcile():
 
 
 @routing.command('fax-cost')
-def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot sent list --ids' or, with --received, "
-                                                           "from 'faxbot received list --ids'."),
-                     received: bool = typer.Option(False, '--received', help='The fax is a received fax.')):
-    """Show what one fax cost: the carrier's charge, or why it is not known yet."""
+def routing_fax_cost(fax_id: str = typer.Argument(None, help="Fax ID from 'faxbot sent list --ids' or, with --received, "
+                                                            "from 'faxbot received list --ids'."),
+                     received: bool = typer.Option(False, '--received', help='The fax is a received fax.'),
+                     to: str = typer.Option(None, '--to', metavar='NUMBER',
+                                            help='Instead of a sent fax: what a fax to this number would cost by each '
+                                                 'account your rules allow.'),
+                     pages: int = typer.Option(1, '--pages', min=1, max=1000, help='With --to: pages in the fax.'),
+                     from_site: str = typer.Option(None, '--from-site', metavar='SITE',
+                                                   help="With --to: price calls from this site's accounts first.")):
+    """Show what one fax cost (the carrier's charge, or why it is not known yet), or with --to what one would cost."""
+    if to:
+        from .accounts import quote_command
+        return quote_command(to=to, pages=pages, from_site=from_site)
+    if not fax_id:
+        raise CliError("Give a fax ID, or --to NUMBER for what a fax would cost.")
     path = ('/routing/inbound/' if received else '/routing/faxes/') + segment(fax_id) + '/cost'
     result = state.api().get(path)
     state.out().result(result, lambda out: out.line(result.get('summary') or 'No call was placed for this fax.'))

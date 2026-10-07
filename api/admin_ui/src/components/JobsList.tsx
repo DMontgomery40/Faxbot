@@ -34,12 +34,15 @@ import {
 import { Refresh as RefreshIcon, Send as SendIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
+import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import { FaxEncodedItem } from './delivery/EncodedPages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
+import type { AdminDestination } from '../navigation';
 
 
 interface JobsListProps {
@@ -49,6 +52,9 @@ interface JobsListProps {
   onOpened?: () => void;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
+  // Holds the "Approve faxes" permission: may approve, refuse or send anyway the faxes rules held.
+  canApprove?: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
 }
 
 const statusOptions = [
@@ -187,7 +193,7 @@ export function routeText(backend: string, cost?: FaxCost | null): string {
   return earlier.length ? `${last} (after ${earlier.join(', ')})` : last;
 }
 
-function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
+function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -459,6 +465,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
             Faxes sent from this installation, newest first. Select one to see its delivery attempts.
           </Typography>
         </Box>
+      <HeldFaxes api={rulesApiFor(client)} canApprove={canApprove} onNavigate={onNavigate} />
         <Box display="flex" gap={1}>
           {onSendFax && (
             <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}>
@@ -738,6 +745,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                 </ListItem>
               )}
               <FaxCostItem client={client} jobId={detailJob.id} />
+              <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <FaxEncodedItem client={client} jobId={detailJob.id} />
               <Divider />

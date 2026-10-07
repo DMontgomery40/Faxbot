@@ -1,4 +1,5 @@
 import type { FaxTogetherSummary } from './batchingTypes';
+import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { CallNegotiation } from './sipTypes';
 // TypeScript types for the admin API
 
@@ -513,7 +514,14 @@ export interface ConsoleContext {
   policy_version: number;
   permissions: string[];
   navigation: { jobs: boolean; inbox: boolean; send: boolean; work?: boolean };
-  send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
+  send: {
+    fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string;
+    // What rules can match on Send a fax: mailboxes this person may send from, and the organization's
+    // workflows and labels. Each is offered only when there is one.
+    mailboxes?: Array<{ id: string; label: string }>;
+    workflows?: Array<{ key: string; name: string }>;
+    labels?: string[];
+  } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
   provider_view: {
@@ -673,7 +681,8 @@ export interface AccessMailbox {
   version: number;
 }
 
-export interface InboundRule {
+// A number rule; the receiving options (account, sender, times, email, urgency, keep days) are optional.
+export interface InboundRule extends Partial<ReceivingOptions> {
   id: string;
   to_number: string;
   mailbox_id: string;

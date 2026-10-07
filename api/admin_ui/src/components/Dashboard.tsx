@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { WaitingForYouCard } from './ProviderRulesHeld';
+import { rulesApiFor } from './ProviderRulesApi';
 import {
   Box,
   Card,
@@ -315,6 +317,8 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
           {error}
         </Alert>
       )}
+
+      <WaitingForYouCard api={rulesApiFor(client)} onOpen={() => onNavigate?.('faxes/sent')} />
 
       {health && (
         <Grid container spacing={{ xs: 2, md: 3 }}>

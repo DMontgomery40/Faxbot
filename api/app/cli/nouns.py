@@ -6,7 +6,8 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, codec, delivery, fax, operations, pages, settings, setup, sslfax, trunk, work
+from .commands import (access, accounts, admin, codec, delivery, fax, operations, pages, rules, settings, setup,
+                       sslfax, trunk, work)
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -59,6 +60,10 @@ sent.command('refresh')(fax.jobs_refresh)
 sent.command('evidence')(fax.jobs_history)
 sent.command('confirm-receipt')(fax.jobs_reconcile)
 sent.command('send-now')(fax.jobs_send_now)
+sent.command('route')(rules.route_command)
+sent.command('approve')(rules.approve_command)
+sent.command('refuse')(rules.refuse_command)
+sent.command('check-again')(rules.check_again_command)
 
 # -- numbers -------------------------------------------------------------------------
 
@@ -67,6 +72,7 @@ numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the
 numbers.command('list')(access.numbers_list)
 numbers.command('add')(access.numbers_add)
 numbers.command('update')(access.numbers_update)
+numbers.command('explain')(rules.numbers_explain)
 mailboxes = _group('Mailboxes that hold received faxes, and how soon someone should acknowledge them.')
 mailboxes.command('list')(access.mailboxes_list)
 mailboxes.command('add')(access.mailboxes_add)
@@ -121,6 +127,8 @@ humblefax.command('status')(settings.humblefax_status)
 humblefax.command('check')(settings.humblefax_check)
 providers.add_typer(humblefax, name='humblefax')
 providers.add_typer(trunk.trunk, name='trunk')
+providers.add_typer(accounts.accounts, name='accounts')
+providers.add_typer(rules.rules, name='rules')
 
 # -- costs ---------------------------------------------------------------------------
 

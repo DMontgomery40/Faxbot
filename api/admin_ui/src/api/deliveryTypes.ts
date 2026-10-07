@@ -1,3 +1,5 @@
+import type { RuleSuggestion } from '../components/ProviderRulesSuggest';
+import type { OriginRateRow } from '../components/ProviderAccountsTrunks';
 // Delivery routes, intake and direct delivery responses.
 
 export interface Money {
@@ -68,6 +70,8 @@ export interface Destination {
 // `plan` is a flat plan that already includes faxes (you chose a metered route),
 // `cheaper_route` another metered route that cost less per delivered fax.
 export interface SendingRecommendation {
+  // A routing rule that would do the same for every number like this one; Add as rule puts it in the draft.
+  rule_suggestion?: RuleSuggestion | null;
   number: string;
   display_name: string | null;
   version: number;
@@ -298,6 +302,8 @@ export interface PublishedPlans {
 }
 
 export interface RateCard {
+  // Prices by where calls start (several trunks and sites), when the card has them.
+  rows?: OriginRateRow[];
   id?: string | null;
   provider_id: string;
   label: string;
