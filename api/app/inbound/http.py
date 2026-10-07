@@ -338,6 +338,17 @@ def _replayed(request, body):
     return StarletteRequest(request.scope, receive)
 
 
+def sinch_webhook_notes(values):
+    """Where the Incoming webhook URL goes in Sinch and, with basic auth, how the password goes in it."""
+    where = ('In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste '
+             'this address into Incoming webhook URL.')
+    login = values.sinch_incoming_webhook_login_url
+    if login is None:
+        return where + ' Faxbot checks each fax with Sinch before it keeps it.'
+    return (where + f' Because you set a user name and password for received faxes, paste it as {login} '
+            'with your password in place of PASSWORD; Sinch then shows the password as ***.')
+
+
 def _sinch_basic_configured():
     """Basic auth is in force only with both a user name and a password: the one rule, in ConfigurationValues."""
     return settings.sinch_inbound_basic_configured
