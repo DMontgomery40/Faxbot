@@ -14,6 +14,7 @@ import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
 import { EncodedPagesPanel } from './EncodedPages';
 import RecipientFaxLimitsPanel from './RecipientFaxLimits';
+import RecipientSchedulePanel from './RecipientSchedule';
 import TollFreeApprovalPanel from './TollFreeApproval';
 import { RecipientPagesPanel } from './PagesSettings';
 import FaxMachinePanel from './FaxMachinePanel';
@@ -190,6 +191,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
           <SendingTogetherPanel client={client} number={detail.number} canWrite={canWrite} />
           <EncodedPagesPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />
+          <RecipientSchedulePanel client={client} number={detail.number} canWrite={canWrite} />
           <TollFreeApprovalPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientPagesPanel client={client} number={detail.number} canWrite={canWrite} />
           <FaxMachinePanel client={client} number={detail.number} canWrite={canWrite} />

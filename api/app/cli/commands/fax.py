@@ -149,7 +149,11 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
          mailbox: str = typer.Option(None, '--mailbox', help='Send from this mailbox, so its sending rules apply.'),
          workflow: str = typer.Option(None, '--workflow', metavar='KEY',
                                       help='The workflow this fax is part of, such as referrals.'),
-         label: list[str] = typer.Option(None, '--label', help='A label for this fax, such as legal (repeat it).')):
+         label: list[str] = typer.Option(None, '--label', help='A label for this fax, such as legal (repeat it).'),
+         by: str = typer.Option(None, '--by', metavar='TIME',
+                                help="The time the fax must be sent by, such as 17:00 or '2026-10-08 17:00', in "
+                                     "your installation's time zone. Faxbot never holds the fax past it for the "
+                                     "recipient's hours or a busy hour.")):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
@@ -167,6 +171,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['workflow'] = workflow
     if label:
         data['labels'] = list(label)
+    if by:
+        data['send_by'] = by
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
@@ -279,6 +285,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):
         route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
+    # The send-by time, and whether the fax may miss it.
+    if (job.get('send_by') or {}).get('sentence'):
+        route.append(('Send by', job['send_by']['sentence']))
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 

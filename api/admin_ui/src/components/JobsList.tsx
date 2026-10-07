@@ -695,6 +695,14 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {detailJob.waiting_reason}
                       </Typography>
                     )}
+                    {/* The send-by time, and whether the fax may miss it. */}
+                    {detailJob.send_by && (
+                      <Typography component="span" variant="body2" display="block"
+                        color={detailJob.send_by.at_risk ? 'warning.main' : 'text.secondary'}
+                        data-testid="job-send-by">
+                        {detailJob.send_by.sentence}
+                      </Typography>
+                    )}
                     {detailJob.urgent && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-urgent">

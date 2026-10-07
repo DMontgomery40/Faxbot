@@ -63,6 +63,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--mailbox <str>`: Send from this mailbox, so its sending rules apply.
 * `--workflow KEY`: The workflow this fax is part of, such as referrals.
 * `--label <str>`: A label for this fax, such as legal (repeat it).
+* `--by TIME`: The time the fax must be sent by, such as 17:00 or &#x27;2026-10-08 17:00&#x27;, in your installation&#x27;s time zone. Faxbot never holds the fax past it for the recipient&#x27;s hours or a busy hour.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -1485,6 +1486,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
+* `schedule`: Show or set when Faxbot sends to one...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `encoded`: Encoded pages (experimental): send a...
@@ -1589,6 +1591,30 @@ $ faxbot recipients fax-machine [OPTIONS] {number}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot recipients schedule`
+
+Show or set when Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+
+**Usage**:
+
+```console
+$ faxbot recipients schedule [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--days DAYS`: Days the recipient takes faxes, such as mon,tue,wed,thu,fri.
+* `--from HH:MM`: Time the recipient starts taking faxes, such as 08:00.
+* `--until HH:MM`: Time the recipient stops taking faxes, such as 18:00.
+* `--any-time`: The recipient takes faxes at any time (clears the days and hours).
+* `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
+* `--learn / --no-learn`: Whether Faxbot learns the hours this number is usually busy and holds ordinary faxes out of them.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients iaf`

@@ -229,8 +229,11 @@ def due_group_on(connection, t, now, values=None):
     make every page's header show the sender and the sending number
     (``policy.header_identifies_sender``); otherwise the call uses separators.
     Each row returned carries the call's ``layout``. A number whose setting
-    was turned off releases its waiting faxes one at a time.
+    was turned off releases its waiting faxes one at a time. A group with a
+    fax its recipient's schedule holds (``capacity.Capacity.held``) is passed
+    over for now, so it never keeps another number's group waiting.
     """
+    held = _held_by_schedule(connection, now)
     members, deliveries, bindings = t['outbound_batch_members'], t['outbound_deliveries'], t['fax_job_bindings']
     rows = connection.execute(
         sa.select(members, deliveries.c.created_at.label('accepted_at'), bindings.c.profile_id,
@@ -248,10 +251,14 @@ def due_group_on(connection, t, now, values=None):
     for row in rows:
         setting = settings.get(row['phone_number'])
         if setting is None or not setting['enabled']:
+            if row['id'] in held:
+                continue
             return [dict(row)]
         sender = '*' if setting['mixed_senders'] else row['sender_scope']
         groups.setdefault((row['phone_number'], row['profile_id'], row['revision_id'], sender), []).append(row)
     for key, group in groups.items():
+        if any(row['id'] in held for row in group):
+            continue
         setting = settings[key[0]]
         cap, layout = setting['max_pages'], layout_of(setting)
         if layout == policy.LAYOUT_PAGE_HEADERS and not policy.header_identifies_sender(values):
@@ -269,6 +276,15 @@ def due_group_on(connection, t, now, values=None):
         if due:
             return [{**row, 'layout': layout} for row in chosen]
     return None
+
+
+def _held_by_schedule(connection, now):
+    """Faxes the claim found held by their recipient's schedule (routing/schedule.py), read through ``connection``."""
+    try:
+        from ..capacity import for_engine
+        return set(for_engine(connection.engine, connection)._held(now))
+    except Exception:
+        return set()
 
 
 def reference_on(connection, t, job_id):

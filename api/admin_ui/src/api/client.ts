@@ -86,6 +86,7 @@ import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, Repl
 import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
+import type { RecipientSchedule, RecipientScheduleSave } from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -882,7 +883,7 @@ class AdminAPIClient {
   }
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
-    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[] } = {}): Promise<FaxSendResult> {
+    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -897,6 +898,8 @@ class AdminAPIClient {
     if (options.mailbox) formData.append('mailbox', options.mailbox);
     if (options.workflow) formData.append('workflow', options.workflow);
     for (const label of options.labels ?? []) formData.append('labels', label);
+    // The time it must be sent by, as an exact moment (ISO 8601 with its offset).
+    if (options.sendBy) formData.append('send_by', options.sendBy);
 
     const res = await this.send('/fax', {
       method: 'POST',
@@ -1092,6 +1095,15 @@ class AdminAPIClient {
 
   async saveRoutePages(route: string, body: { long_pages?: boolean | null; trim_blank?: boolean | null }): Promise<RoutePages> {
     return this.json(`/routing/page-routes/${id(route)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // When Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+  async getSchedule(number: string): Promise<RecipientSchedule> {
+    return this.json(`/routing/destinations/${id(number)}/schedule`);
+  }
+
+  async saveSchedule(number: string, body: RecipientScheduleSave): Promise<RecipientSchedule> {
+    return this.json(`/routing/destinations/${id(number)}/schedule`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   // Sending short faxes to the same number together in one call.

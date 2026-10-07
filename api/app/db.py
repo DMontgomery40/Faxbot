@@ -34,6 +34,8 @@ class FaxJob(Base):  # type: ignore
     send_by_call = Column(Integer, nullable=True)
     # 1 when the sender marked the fax urgent: it goes before other faxes waiting for the same line.
     urgent = Column(Integer, nullable=True)
+    # The time (UTC) the sender needs the fax sent by; NULL: no deadline (routing/schedule.py).
+    send_by = Column(DateTime, nullable=True)
     provider_sid = Column(String(100), nullable=True)  # Cloud provider fax ID
     pdf_url = Column(String(512), nullable=True)  # Public URL for PDF (for cloud backend)
     pdf_token = Column(String(128), nullable=True)  # Secure token for PDF fetch

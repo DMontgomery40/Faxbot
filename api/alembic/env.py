@@ -49,6 +49,7 @@ config.attributes["schema_screening"] = importlib.import_module(package + ".sche
 config.attributes["schema_engine_frames"] = importlib.import_module(package + ".schema_engine_frames")
 config.attributes["schema_case_ledger"] = importlib.import_module(package + ".schema_case_ledger")
 config.attributes["schema_forms"] = importlib.import_module(package + ".schema_forms")
+config.attributes["schema_destination_schedule"] = importlib.import_module(package + ".schema_destination_schedule")
 
 
 def migrate(connection):

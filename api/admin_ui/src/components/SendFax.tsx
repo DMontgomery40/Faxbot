@@ -10,6 +10,7 @@ import {
   Checkbox,
   FormControlLabel,
   Grow,
+  TextField,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -117,6 +118,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   // Urgent: before other faxes waiting for the same line, and never held to go with others.
   const [urgent, setUrgent] = useState(false);
   const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
+  // Optional: the time it must be sent by, in this browser's local time (a datetime-local value).
+  const [sendBy, setSendBy] = useState('');
   useEffect(() => {
     setTogether(null);
     setSendNow(false);
@@ -245,7 +248,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall, urgent, ...sendBody(sendOptions) });
+          byCall: route?.route === 'local' && byCall, urgent, ...sendBody(sendOptions),
+          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -381,6 +385,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                     choices={{ mailboxes: sendChoices.mailboxes ?? [], workflows: sendChoices.workflows ?? [],
                       labels: sendChoices.labels ?? [] }} />
                 )}
+                <TextField type="datetime-local" size="small" label="Send by (optional)" value={sendBy}
+                  onChange={(e) => setSendBy(e.target.value)} disabled={!configReady || loading}
+                  InputLabelProps={{ shrink: true }} inputProps={{ 'data-testid': 'send-by' }}
+                  helperText="Faxbot sends it in time, even outside the recipient's usual hours."
+                  sx={{ mt: 1, maxWidth: 320 }} />
 
                 {route?.route === 'local' && (
                   <FormControlLabel data-testid="send-by-call"
