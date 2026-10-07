@@ -334,8 +334,11 @@ except (urllib.error.URLError, OSError) as error:
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
              carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False,
-             carrier_empty_preambles=False, peer_ecm=True):
-    """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
+             carrier_empty_preambles=False, peer_ecm=True, api_extra=None):
+    """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once.
+
+    ``api_extra`` adds settings to Faxbot's own (case o: a second trunk number for the reply number).
+    """
     docker = Docker(label)
     made.append(docker)
     images = {
@@ -373,6 +376,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'ASTERISK_AMI_HOST': 'asterisk', 'ASTERISK_INBOUND_SECRET': inbound_secret, 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES': '0',
         'INBOUND_ENABLED': 'true',
         **ami_env,
+        **(api_extra or {}),
     }
     api_container = docker.create('api', images['api'], env=api_env, alias='api',
                                   volumes=[(faxdata, '/faxdata'), (settings_volume, '/faxdata/hylafax'),
@@ -1374,3 +1378,31 @@ def test_n_asterisk_as_its_own_user_sends_and_receives_with_its_built_in_engine(
     assert fax['from_number'] == PEER_NUMBER and fax['to_number'] == FAXBOT_NUMBER and fax['pages'] == 2, proof
     assert received.endswith('asterisk:asterisk') and proof['handover_failures'] == [], proof
 
+
+
+REPLY_NUMBER = '+15555550177'
+
+
+def test_o_the_ssl_fax_engine_sends_the_reply_number_as_its_station_id(tmp_path, loopback):
+    """Numbers -> Sender identity: a reply number (a second number on the trunk, routed to a mailbox) is the
+    station ID the SSL Fax engine sends (JPARM TSI with UseJobTSI), not the line's own number."""
+    context = loopback('o', faxbot_t38=False, carrier_gateway=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',
+                       api_extra={'SIP_TRUNK_DIDS': f'{FAXBOT_NUMBER},{REPLY_NUMBER}'})
+    docker, key = context['docker'], context['key']
+    version = api(docker, 'GET', '/auth/me', key=key)['json']['policy_version']
+    box = api(docker, 'POST', '/access/mailboxes', key=key,
+              body={'label': 'Replies', 'enabled': True, 'expected_policy_version': version})
+    assert box['status'] == 200, box
+    version = api(docker, 'GET', '/auth/me', key=key)['json']['policy_version']
+    rule = api(docker, 'POST', '/access/inbound-rules', key=key,
+               body={'to_number': REPLY_NUMBER, 'mailbox_id': box['json']['mailbox']['id'],
+                     'expected_policy_version': version})
+    assert rule['status'] == 200, rule
+    saved = api(docker, 'PUT', '/numbers/reply', key=key, body={'number': REPLY_NUMBER})
+    assert saved['status'] == 200 and saved['json']['number'] == REPLY_NUMBER, saved
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    print('\nSSLFAX_PROOF_O ' + json.dumps({'received_info': proof['received_info']}, indent=2))
+    assert_delivered(outcome, proof)
+    assert proof['received_info'].get('Sender') == REPLY_NUMBER, proof['received_info']
