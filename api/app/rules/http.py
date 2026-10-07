@@ -183,6 +183,8 @@ def _choices(request, accounts):
     keys = sa.table('api_keys', sa.column('id'), sa.column('name'))
     groups = sa.table('access_groups', sa.column('id'), sa.column('name'), sa.column('enabled'))
     mailboxes = sa.table('mailboxes', sa.column('id'), sa.column('label'))
+    destinations = sa.table('delivery_destinations', sa.column('id'), sa.column('display_name'),
+                            sa.column('phone_number'))
     with read_connection(engine) as connection:
         people = connection.execute(sa.select(principals.c.id, principals.c.display_name, principals.c.kind).where(
             principals.c.kind.in_(('user', 'integration')), principals.c.enabled == 1)
@@ -193,6 +195,11 @@ def _choices(request, accounts):
                                         .order_by(groups.c.name)).all()
         mailbox_rows = connection.execute(sa.select(mailboxes.c.id, mailboxes.c.label).order_by(mailboxes.c.label)
                                           ).all()
+        recipient_rows = connection.execute(sa.select(destinations.c.id, destinations.c.display_name,
+                                                      destinations.c.phone_number)).all()
+    # Saved recipients as Recipients lists them: the display name, else the number.
+    recipients = sorted(({'id': row[0], 'name': (row[1] or '').strip() or row[2]} for row in recipient_rows),
+                        key=lambda item: (item['name'].casefold(), item['id']))
     return {
         'accounts': [{'key': a.key, 'label': a.label or text.account_label(a.key), 'provider': a.provider,
                       'sends': a.sends, 'enabled': a.enabled, 'site': a.site} for a in accounts],
@@ -200,6 +207,7 @@ def _choices(request, accounts):
         'keys': [{'id': row[0], 'name': row[1]} for row in key_rows],
         'groups': [{'id': row[0], 'name': row[1]} for row in group_rows],
         'mailboxes': [{'id': row[0], 'name': row[1]} for row in mailbox_rows],
+        'recipients': recipients,
     }
 
 

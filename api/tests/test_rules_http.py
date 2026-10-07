@@ -65,7 +65,24 @@ def test_a_scope_with_no_rules_offers_the_names_its_editor_needs(client):
     assert body['active'] is None and body['draft'] is None and body['organization'] is None
     assert body['can_write'] is True and body['matches_30_days'] == {} and body['time_zone']
     assert [account['key'] for account in body['choices']['accounts']] == ['phaxio', 'sip', 'signalwire']
-    assert set(body['choices']) == {'accounts', 'people', 'keys', 'groups', 'mailboxes'}
+    assert set(body['choices']) == {'accounts', 'people', 'keys', 'groups', 'mailboxes', 'recipients'}
+    assert body['choices']['recipients'] == []
+
+
+def test_saved_recipients_are_offered_by_name_or_number_and_a_rule_can_use_them(client):
+    for number, changes in ((US, {'display_name': 'Example Clinic'}), ('+12025550123', {'notes': 'No name yet'}),
+                            ('+13125550188', {'display_name': 'acme Labs'})):
+        saved = client.patch(f'/routing/destinations/{number}', headers=ADMIN, json=changes)
+        assert saved.status_code == 200, saved.text
+    recipients = client.get('/routing/rules', headers=ADMIN).json()['choices']['recipients']
+    assert [item['name'] for item in recipients] == ['+12025550123', 'acme Labs', 'Example Clinic']
+    clinic = next(item['id'] for item in recipients if item['name'] == 'Example Clinic')
+    _publish(client, {'format': 1, 'limits': [], 'routes': [
+        rule('r-clinic', {'use': 'signalwire'}, {'destination': {'recipients': [clinic]}})]})
+    body = client.post('/routing/explain', headers=ADMIN, json={'to': US}).json()
+    assert [route['account'] for route in body['routes'] if route['usable']] == ['signalwire']
+    other = client.post('/routing/explain', headers=ADMIN, json={'to': '+12025550123'}).json()
+    assert other['trace'][0]['failed'] == 'the saved recipient'
 
 
 def test_drafts_save_with_their_check_and_refuse_a_stale_version(client):
