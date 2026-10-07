@@ -543,6 +543,9 @@ def test_other_carriers_price_your_faxes_at_their_published_prices(plans):
     # Sinch and SignalWire publish no monthly number price: unknown, so never the cheapest.
     assert views['sinch']['complete'] is False and views['sinch']['numbers_not_priced'] == 1
     assert views['sinch']['difference'] == []
+    # Sinch, worked out here: 7 pages at 4.5 cents, the number's monthly price unknown and left out.
+    assert views['sinch']['sentence'] == ('About $0.36 for your 2 sent faxes and 1 received fax (1 number it '
+                                          'publishes no monthly price for left out) (estimate).')
     complete = [view for view in result['carriers'] if view['complete'] and not view['over_budget']]
     cheapest = min(complete, key=lambda view: parse_amount(view['total'][0]['amount'], whole_digits=6))
     assert result['cheapest'] == cheapest['id'] == 'sip-anveo' and views['sip-anveo']['cheapest'] is True
@@ -558,6 +561,65 @@ def _short(micros):
     return short_money_text(micros, 'USD')
 
 
+def test_sending_only_counts_one_number_for_you_as_for_every_carrier(plans):
+    multi, routes = plans
+    settings = values(effective_outbound='sip', outbound_route_providers=())
+    for _ in range(2):
+        record(multi, routes, 'sip', LAB, OCTOBER, pages=3, seconds=50)
+    result = compare(routes.engine, settings, now=datetime(2026, 10, 21))
+    views = {view['id']: view for view in result['carriers']}
+    # Sending needs a number too, at your carrier as at every other: Telnyx's $1.00 a month on both sides.
+    telnyx = 2 * attempt_cost(shipped_card('sip-telnyx'), seconds=50, pages=3, delivered=True) + 1_000_000
+    anveo = 2 * attempt_cost(shipped_card('sip-anveo'), seconds=50, pages=3, delivered=True) + 150_000
+    assert result['current']['total'] == money(telnyx) == views['sip-telnyx']['total']
+    assert views['sip-telnyx']['difference'] == money(0)
+    assert views['sip-anveo']['difference'] == money(telnyx - anveo) and result['cheapest'] == 'sip-anveo'
+    assert result['sentence'] == (f'At published prices, AnveoDirect trunk would have cost least for your last 30 '
+                                  f'days of faxing: about {_short(anveo)}, {_short(telnyx - anveo)} less than your '
+                                  f"current services' {_short(telnyx)} (estimate).")
+
+
+def test_the_comparison_summary_for_every_case():
+    from api.app.routing.carrier_compare import Bill, Carrier, _summary
+    carrier = Carrier('sip-anveo', 'AnveoDirect trunk', 'trunk', shipped_card('sip-anveo'), None, 150_000)
+    cheap = Bill(sent=100_000)
+    assert _summary(None, {'micros': 0, 'complete': True}, 30, 'USD') == (
+        'No carrier with published prices covers all of your last 30 days of faxing, so Faxbot cannot name the '
+        'cheapest; each figure below leaves out what that carrier does not price.')
+    assert _summary((carrier, cheap), {'micros': 100_000, 'complete': True}, 30, 'USD') == (
+        'At published prices, no carrier Faxbot knows would have cost less than your current services for your last '
+        '30 days of faxing: about $0.10 (estimate).')
+    assert _summary((carrier, cheap), {'micros': 90_000, 'complete': True}, 30, 'USD').startswith(
+        'At published prices, no carrier Faxbot knows would have cost less')
+
+
+def test_the_remaining_explanation_sentences(plans):
+    from api.app.routing.plan_check import ContractView
+    multi, routes = plans
+    # An allowance plan whose extra-page price is not published.
+    allowance = budget(route='efax', label='eFax', pages=None, faxes=None, included_pages=150)
+    assert plan_budget._default_sentence('efax', 'eFax', allowance, {}) == (
+        "eFax's published plan includes 150 pages a month.")
+    assert ContractView._bill_sentence(budget(route='efax', label='eFax', monthly_fee_micros=16_950_000), None, 0,
+                                       Usage()) == ('Committed this period with eFax: the $16.95 plan fee, plus extra '
+                                                    'pages at a price Faxbot does not know.')
+    # An allowance plan with your own normal-use budget too: the fax fits the allowance but passes the budget.
+    both = budget(route='efax', label='eFax', pages=100, faxes=None, included_pages=200, page_overage_micros=100_000)
+    fits = marginal(left_for(both, sent_faxes=10, sent_pages=99), 3)
+    assert (fits.cost, fits.over_budget) == (Money(0, 'USD'), True)
+    assert fits.sentence == ('Included in the 200 pages your eFax plan includes; 98 will be left until 1 November. It '
+                             'would also go past your normal-use budget for eFax until 1 November.')
+    # A fax from the plan to one of your own numbers that receives into this Faxbot.
+    record(multi, routes, 'humblefax', '+13035550199', OCTOBER, pages=1)
+    view = ContractView(routes, values(), now=OCTOBER, accounts={})
+    view.here = {'+13035550199'}
+    left = budget_left('humblefax', OCTOBER, engine=routes.engine, values=values())
+    (row,) = view.own_accounts('humblefax', left.budget, left.period.start, datetime(2026, 10, 21))
+    assert (row['other'], row['receiving_bill']) == ('this Faxbot', None)
+    assert row['sentence'] == ('1 fax from HumbleFax went to your own number that receives into this Faxbot: sending '
+                               'it used your plan with HumbleFax, and nothing was charged for receiving.')
+
+
 def test_unknown_prices_stay_unknown_and_are_never_the_cheapest(plans):
     multi, routes = plans
     settings = values(effective_outbound='sip', outbound_route_providers=())
@@ -571,7 +633,8 @@ def test_unknown_prices_stay_unknown_and_are_never_the_cheapest(plans):
     assert views['sip-telnyx']['sentence'] == ('About $1.01 for your 2 sent faxes (1 number included at its published '
                                                'monthly price, 1 fax it publishes no price for left out) (estimate).')
     assert views['humblefax']['not_priced'] == 1 and views['humblefax']['cheapest'] is False
-    assert result['current'] == {'total': money(5_000), 'complete': False, 'not_priced': 1, 'routes': ['Telnyx trunk']}
+    assert result['current'] == {'total': money(1_005_000), 'complete': False, 'not_priced': 1,
+                                 'routes': ['Telnyx trunk']}
     # AnveoDirect publishes a UK price, so it covers both faxes, plus one number at $0.15 a month.
     uk = next(entry for entry in json.loads(_rate_cards())['international'] if entry.get('prefixes') == ['+44'])
     from api.app.routing.costs import RateTerms

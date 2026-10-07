@@ -58,6 +58,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 import json
 import math
+import weakref
 import re
 
 
@@ -444,9 +445,18 @@ class Usage:
         return self.sent_pages + self.received_pages
 
 
+_REFLECTED = weakref.WeakKeyDictionary()
+_TABLE_NAMES = ('delivery_attempt_costs', 'fax_jobs', 'inbound_faxes', 'sip_call_records', 'provider_rate_cards')
+
+
 def _tables(engine):
-    from .database import reflect
-    return reflect(engine, ('delivery_attempt_costs', 'fax_jobs', 'inbound_faxes', 'sip_call_records'))
+    """The tables read here, reflected once per database (the schema only changes at startup), as the predictor does."""
+    found = _REFLECTED.get(engine)
+    if found is None:
+        from .database import reflect
+        found = reflect(engine, _TABLE_NAMES)
+        _REFLECTED[engine] = found
+    return found
 
 
 def records(engine, route, start, end):
@@ -657,9 +667,21 @@ def _values():
 def _cards(engine, route, values):
     """(sending card, receiving card) for the route: the saved cards, else the shipped ones without a database."""
     if engine is not None:
+        # Found as ``RouteStore.card_for`` finds it (the trunk by its carrier's card, then a plain "sip" card),
+        # from the cached reflection rather than a new store on every prediction.
+        import sqlalchemy as sa
+        from .database import read_connection
         from .store import RouteStore
-        store = RouteStore(engine, sip_preset=lambda: getattr(values, 'sip_trunk_preset', '') or '')
-        return store.card_for(route), store.card_for(route, 'inbound')
+        preset = getattr(values, 'sip_trunk_preset', '') or ''
+        identities = ((f'sip-{preset}', 'sip') if preset else ('sip',)) if route == 'sip' else (route,)
+        cards = _tables(engine)['provider_rate_cards']
+        with read_connection(engine) as connection:
+            rows = connection.execute(sa.select(cards).where(
+                cards.c.superseded_at.is_(None), cards.c.provider_id.in_(identities))).mappings().all()
+        found = {(row['provider_id'], row['direction']): RouteStore._card(row) for row in rows}
+        pick = lambda direction: next((found[(identity, direction)] for identity in identities  # noqa: E731
+                                       if (identity, direction) in found), None)
+        return pick('outbound'), pick('inbound')
     from .seed import load_cards
     cards = load_cards()
     identity = f"sip-{getattr(values, 'sip_trunk_preset', '') or ''}" if route == 'sip' else route

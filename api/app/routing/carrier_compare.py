@@ -332,20 +332,29 @@ def _yours(faxes, preset):
 
 
 def _current(found, faxes, preset, country, days, data, currency):
-    """The same faxes with the services you use now, priced the same way: each fax at the route it took."""
+    """The same faxes with the services you use now, priced the same way: each fax at the route it took.
+
+    The numbers are counted as for every other carrier: each route keeps the
+    numbers that received on it, and with nothing received the one number
+    needed to send is kept on the route that sent the most.
+    """
     by_id = {carrier.id: carrier for carrier in found}
     total, unpriced, routes = 0, 0, []
     groups = {}
     for fax in faxes:
         groups.setdefault(_identity(fax.route, preset), []).append(fax)
+    numbers = {identity: len({fax.number for fax in items if fax.direction == 'received'})
+               for identity, items in groups.items()}
+    if groups and not any(numbers.values()):
+        busiest = max(sorted(groups), key=lambda identity: sum(1 for fax in groups[identity] if fax.direction == 'sent'))
+        numbers[busiest] = 1
     for identity, items in sorted(groups.items()):
         carrier = by_id.get(identity)
         routes.append(carrier.name if carrier is not None else _name(identity))
         if carrier is None or carrier.sending.currency != currency:
             unpriced += len(items)
             continue
-        numbers = len({fax.number for fax in items if fax.direction == 'received'})
-        bill = price(carrier, items, country=country, days=days, numbers=numbers, data=data)
+        bill = price(carrier, items, country=country, days=days, numbers=numbers[identity], data=data)
         total += bill.total
         unpriced += bill.not_priced + bill.numbers_unpriced
     return {'micros': total, 'complete': not unpriced, 'not_priced': unpriced, 'routes': routes}
