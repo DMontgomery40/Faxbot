@@ -579,3 +579,36 @@ def test_0028_adds_its_tables_keeps_every_row_and_downgrades(database):
         assert schema.validate_schema(connection, require_version=True) == '0023_negotiation'
     schema.upgrade_schema(database)
     assert set(schema_dense_pages.ORDER) <= set(sa.inspect(database).get_table_names())
+
+
+# Over HTTP and the command line ---------------------------------------------------------------------------------
+
+def test_the_console_and_command_line_read_and_change_page_settings(monkeypatch, tmp_path):
+    from api.tests.test_cli import BOOTSTRAP, Cli, _serve
+    for client in _serve(monkeypatch, tmp_path):
+        admin = {'X-API-Key': BOOTSTRAP}
+        url = '/routing/destinations/' + PEER + '/pages'
+        view = client.get(url, headers=admin).json()
+        assert (view['page_limit'], view['learned'], view['packing'], view['trim_blank']) == ('a4', False, 'allow',
+                                                                                              None)
+        assert view['capability_sentence'].startswith('Faxbot does not know yet how long a page')
+        changed = client.put(url, headers=admin, json={'packing': 'never'}).json()
+        assert changed['packing'] == 'never' and changed['trim_blank'] is None
+        assert client.put(url, headers=admin, json={'packing': 'sometimes'}).status_code == 422
+        assert client.get('/routing/destinations/not-a-number/pages', headers=admin).status_code == 400
+        routes = {item['route']: item for item in client.get('/routing/page-routes', headers=admin).json()['routes']}
+        assert routes['sip']['long_pages'] and routes['sip']['trim_blank'] is True
+        assert not routes['sinch']['long_pages'] and not routes['phaxio']['long_pages_possible']
+        assert client.put('/routing/page-routes/phaxio', headers=admin, json={'long_pages': True}).status_code == 400
+        assert client.put('/routing/page-routes/unknown', headers=admin, json={'long_pages': True}).status_code == 404
+        cli = Cli(client)
+        result = cli('recipients', 'set', PEER, '--pages-per-sheet', 'machine', '--blank-space', 'off')
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        shown = ' '.join(cli('recipients', 'show', PEER).stdout.split())
+        assert 'Pages per sheet as the receiving machine allows' in shown
+        assert 'Blank space at the bottom of pages off' in shown
+        result = cli('providers', 'long-pages', 'sinch', '--long-pages', 'on')
+        assert result.exit_code == 0 and 'Sinch gets several pages on one long page' in result.stdout
+        listed = ' '.join(cli('providers', 'long-pages').stdout.split())
+        assert 'sinch' in listed and 'fetches the document from Faxbot itself' in listed
+        assert cli('providers', 'long-pages', 'sinch', '--long-pages', 'maybe').exit_code != 0

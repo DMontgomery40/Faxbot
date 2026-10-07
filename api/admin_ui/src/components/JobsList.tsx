@@ -716,6 +716,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   <ListItemText primary="How the pages went" secondary={detailJob.fax_engine.sentence} />
                 </ListItem>
               )}
+              {detailJob.page_layout?.sentences?.length ? (
+                <ListItem data-testid="job-pages">
+                  <ListItemText primary="How the pages were sent" secondary={detailJob.page_layout.sentences.join(' ')} />
+                </ListItem>
+              ) : null}
               {detailJob.fax_engine?.negotiation?.sentence && (
                 <ListItem data-testid="job-call-negotiation">
                   <ListItemText primary="How the call went" secondary={detailJob.fax_engine.negotiation.sentence} />

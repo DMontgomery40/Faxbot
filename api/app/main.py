@@ -1626,7 +1626,7 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
         return safely(sent_view, _configuration_manager().store.engine, job_id, root)
     page_view = await run_lifecycle_step(pages_view)
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
-            'together': together.get(job_id), 'fax_engine': fax_engine, 'pages': page_view,
+            'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.

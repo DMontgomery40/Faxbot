@@ -430,6 +430,11 @@ export interface Savings {
   own_numbers?: SavingPart & {
     faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
   };
+  // Pages saved by packing them onto long pages, and blank page bottoms left out; optional for older servers.
+  packing?: SavingPart & {
+    faxes: number; pages_saved: number; trimmed_pages: number; seconds_saved: number; priced: number;
+    in_plan: number; plan_pages: number; unpriced: number;
+  };
 }
 
 // GET /routing/recommendations/plans: whether each monthly plan is worth its fee. Every figure is an estimate;

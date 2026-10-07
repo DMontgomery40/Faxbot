@@ -246,6 +246,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
         if (job.get('fax_engine') or {}).get('sentence'):
             out.line(job['fax_engine']['sentence'])
+        # Pages packed onto long pages, blank space left out, or standard resolution kept.
+        for sentence in (job.get('page_layout') or {}).get('sentences') or []:
+            out.line(sentence)
     state.out().result(job, human)
 
 

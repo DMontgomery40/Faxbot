@@ -116,10 +116,15 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
     api = state.api()
     view = api.get('/routing/destinations/' + segment(number), params={'pages': pages})
     from .sslfax import limits_fields
+    from .pages import page_fields
     try:
         limits = api.get('/routing/destinations/' + segment(number) + '/fax-limits')
     except CliError:
         limits = None
+    try:
+        page_view = api.get('/routing/destinations/' + segment(number) + '/pages')
+    except CliError:
+        page_view = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -129,7 +134,7 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
-                    *(limits_fields(limits) if limits else [])])
+                    *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):
@@ -157,9 +162,17 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         "'default' for one at a time."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
                                    help='Whether this recipient accepts case packets that reference documents '
-                                        'they already received instead of resending them.')):
-    """Change a number's name, notes, preferred route, calls at once, or whether it accepts case packets."""
+                                        'they already received instead of resending them.'),
+                               pages_per_sheet: str = typer.Option(None, '--pages-per-sheet', metavar='MACHINE|NEVER',
+                                   help='Several pages on one long page: machine (as the receiving machine allows) '
+                                        'or never.'),
+                               blank_space: str = typer.Option(None, '--blank-space', metavar='ON|OFF|DEFAULT',
+                                   help='Leave out the blank bottom of pages when this machine has no error '
+                                        'correction: on, off, or default for the setting all faxes use.')):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet or blank space."""
     api = state.api()
+    from .pages import recipient_page_body
+    page_body = recipient_page_body(pages_per_sheet, blank_space)
     body = {}
     if name is not None:
         body['display_name'] = name
@@ -176,8 +189,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body:
+    if not body and not page_body:
         raise CliError('Nothing to change. Add at least one option; see --help.')
+    if page_body:
+        pages = api.put('/routing/destinations/' + segment(number) + '/pages', json=page_body)
+        if not body:
+            state.out().result(pages, lambda out: out.line(f"Destination {pages['number']} updated."))
+            return
     current = api.get('/routing/destinations/' + segment(number))
     view = api.patch('/routing/destinations/' + segment(number), json={**body, 'version': current.get('version', 0)})
     state.out().result(view, lambda out: out.line(f"Destination {view['number']} updated."))
@@ -352,7 +370,8 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 
 
 SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
-                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'))
+                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
+                ('packing', 'Pages saved by packing'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):

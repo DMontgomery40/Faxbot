@@ -79,12 +79,24 @@ export interface FaxJob extends DeliveryMetadata {
     engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null;
     negotiation?: CallNegotiation | null;
   } | null;
+  // Pages Faxbot packed onto long pages, blank space it left out, or standard resolution it kept; one sentence each.
+  page_layout?: SentPages | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.
   urgent?: boolean;
   // Why it has not started yet, or why its number stays reserved; null otherwise.
   waiting_reason?: string | null;
+}
+
+export interface SentPages {
+  original_pages: number | null;
+  sent_pages: number | null;
+  pages_saved: number | null;
+  trimmed_pages: number | null;
+  seconds_saved: number | null;
+  resolution: 'standard' | 'fine' | null;
+  sentences: string[];
 }
 
 export interface DeliveryHistoryEvent {

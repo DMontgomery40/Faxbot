@@ -6,7 +6,7 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
+from .commands import access, admin, delivery, fax, operations, pages, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -108,6 +108,7 @@ providers.command('callbacks')(settings.providers_callbacks)
 providers.command('validate')(settings.providers_validate)
 providers.command('install')(settings.providers_install)
 providers.command('import')(settings.providers_import)
+providers.command('long-pages')(pages.providers_long_pages)
 efax = _group('eFax receiving: whether Faxbot is collecting your faxes from eFax.')
 efax.command('status')(settings.efax_status)
 providers.add_typer(efax, name='efax')

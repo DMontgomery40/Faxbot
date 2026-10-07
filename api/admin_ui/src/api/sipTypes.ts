@@ -34,6 +34,33 @@ export interface SipPreset {
   admin_steps?: string[];
 }
 
+// Recipients, Details: how long a page this fax machine takes (learned from calls) and this number's page
+// settings. packing: 'allow' (as the receiving machine allows) or 'never'. trim_blank: null follows the
+// installation's setting (trim_blank_default).
+export interface RecipientPages {
+  number: string;
+  page_limit: 'a4' | 'b4' | 'unlimited';
+  learned: boolean;
+  learned_at: string | null;
+  ecm: boolean | null;
+  packing: 'allow' | 'never';
+  trim_blank: boolean | null;
+  trim_blank_default: boolean;
+  capability_sentence: string;
+  ecm_sentence: string | null;
+}
+
+// Providers: long pages for one route. trim_blank is the installation's setting, on the phone line's row only.
+export interface RoutePages {
+  route: string;
+  label: string;
+  long_pages: boolean;
+  long_pages_chosen: boolean;
+  long_pages_possible: boolean;
+  trim_blank: boolean | null;
+  sentence: string;
+}
+
 // Recipients, Details: one fax machine's own limits and whether it takes SSL Fax (learned from calls).
 export interface RecipientFaxLimits {
   number: string;
