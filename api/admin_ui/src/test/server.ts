@@ -643,6 +643,10 @@ const consoleHandlers = [
   http.get('/admin/fax-jobs', () => json({ total: 0, jobs: [] })),
   http.get('/inbound', () => json([])),
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),
+  // Receiving through HumbleFax: off until a test says otherwise.
+  http.get('/admin/inbound/humblefax', () => json({ account: 'humblefax', receiving: false, turned_on: false,
+    reason: 'Receive faxes from HumbleFax is off.', receiving_provider: false, poll_seconds: 60, checked_at: null,
+    found: null, problem: null })),
   // Delivery routes, intake and direct delivery: empty until a test says otherwise.
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
   // One fax's cost: nothing to say for a fax that placed no call.

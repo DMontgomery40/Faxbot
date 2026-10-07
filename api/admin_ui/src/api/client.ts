@@ -71,7 +71,7 @@ import type {
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
-import type { EfaxStatus } from './types';
+import type { EfaxStatus, HumbleFaxStatus } from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -844,6 +844,16 @@ class AdminAPIClient {
   // Whether Faxbot is checking eFax for received faxes, and faxes still stored at eFax.
   async getEfaxStatus(): Promise<EfaxStatus> {
     return this.json('/admin/inbound/efax');
+  }
+
+  // Whether Faxbot is checking HumbleFax for received faxes, when it last checked and what it found.
+  async getHumbleFaxStatus(): Promise<HumbleFaxStatus> {
+    return this.json('/admin/inbound/humblefax');
+  }
+
+  // Check HumbleFax for received faxes now.
+  async checkHumbleFaxNow(): Promise<HumbleFaxStatus> {
+    return this.json('/admin/inbound/humblefax/check', { method: 'POST', body: '{}' });
   }
 
   async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {

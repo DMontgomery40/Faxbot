@@ -2,7 +2,8 @@
 
 Each step recovers expired fetch leases, leases the import due longest and
 acquires it: a Phaxio or Sinch fax is looked up and downloaded from the
-provider's API with the configured account (an eFax fax through ``efax.acquire``),
+provider's API with the configured account (an eFax fax through ``efax.acquire``, a
+HumbleFax fax through ``humblefax.acquire``),
 a SIP fax is converted from its
 retained TIFF. Any failure becomes one plain sentence and a scheduled retry;
 the source stays for the next attempt.
@@ -90,6 +91,10 @@ class Acquirer:
         source_time = None
         if source == 'efax':
             from .efax import acquire
+            await acquire(self.store, claim, settings)
+            return
+        if source == 'humblefax':
+            from .humblefax import acquire
             await acquire(self.store, claim, settings)
             return
         if source == 'sip':

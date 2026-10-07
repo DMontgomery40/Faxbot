@@ -355,6 +355,51 @@ def efax_status():
     state.out().result(result, human)
 
 
+def _every(seconds):
+    if seconds == 60:
+        return 'every minute'
+    if seconds == 3600:
+        return 'every hour'
+    return f'every {seconds // 60} minutes' if seconds % 60 == 0 else f'every {seconds} seconds'
+
+
+def _humblefax_lines(result):
+    """The sentences 'faxbot providers humblefax status' and 'check' print."""
+    if not result.get('receiving'):
+        return [result.get('reason') or 'Faxbot is not checking HumbleFax for received faxes.']
+    lines = ['HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.'
+             if result.get('receiving_provider') else 'Faxbot collects the faxes your HumbleFax numbers receive.']
+    checked = local_time(result.get('checked_at'), empty=None)
+    found = result.get('found') or 0
+    if result.get('problem'):
+        lines.append(result['problem'])
+    elif checked:
+        news = 'no new faxes' if not found else '1 new fax' if found == 1 else f'{found} new faxes'
+        lines.append(f'Faxbot last checked HumbleFax at {checked} and found {news}.')
+    else:
+        lines.append('Faxbot has not checked HumbleFax yet.')
+    if result.get('poll_seconds'):
+        lines.append(f"Faxbot checks HumbleFax {_every(int(result['poll_seconds']))}.")
+    return lines
+
+
+def _show_humblefax(result):
+    def human(out):
+        for line in _humblefax_lines(result):
+            out.line(line)
+    state.out().result(result, human)
+
+
+def humblefax_status():
+    """Show whether Faxbot is collecting your received faxes from HumbleFax, when it last checked and what it found."""
+    _show_humblefax(state.api().get('/admin/inbound/humblefax'))
+
+
+def humblefax_check():
+    """Check HumbleFax for received faxes now, instead of waiting for the next check."""
+    _show_humblefax(state.api().post('/admin/inbound/humblefax/check', json={}))
+
+
 def providers_import(source: str = typer.Argument(..., metavar='FILE',
                                                   help="A JSON file of provider descriptions, or a Markdown file with "
                                                        "them in code blocks; '-' reads standard input.")):

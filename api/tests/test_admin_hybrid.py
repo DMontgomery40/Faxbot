@@ -169,7 +169,9 @@ def test_humblefax_is_reported_configured_and_listed_like_other_cloud_providers(
         assert plugins.status_code == 200
         items = {item["id"]: item for item in plugins.json()["items"]}
         assert items["humblefax"]["categories"] == items["documo"]["categories"] == ["outbound"]
-        assert items["humblefax"]["capabilities"] == items["documo"]["capabilities"] == ["send", "get_status"]
+        assert items["documo"]["capabilities"] == ["send", "get_status"]
+        # HumbleFax also receives, by Faxbot asking it for received faxes (like eFax).
+        assert items["humblefax"]["capabilities"] == items["efax"]["capabilities"] == ["send", "get_status", "receive"]
         assert items["humblefax"]["enabled"] is True
         assert items["documo"]["enabled"] is False
 
