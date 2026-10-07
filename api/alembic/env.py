@@ -47,6 +47,7 @@ config.attributes["schema_fax_codec"] = importlib.import_module(package + ".sche
 config.attributes["schema_peer_fax"] = importlib.import_module(package + ".schema_peer_fax")
 config.attributes["schema_screening"] = importlib.import_module(package + ".schema_screening")
 config.attributes["schema_engine_frames"] = importlib.import_module(package + ".schema_engine_frames")
+config.attributes["schema_case_ledger"] = importlib.import_module(package + ".schema_case_ledger")
 
 
 def migrate(connection):

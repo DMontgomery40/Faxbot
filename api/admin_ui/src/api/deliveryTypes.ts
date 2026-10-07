@@ -1,5 +1,6 @@
 import type { RuleSuggestion } from '../components/ProviderRulesSuggest';
 import type { OriginRateRow } from '../components/ProviderAccountsTrunks';
+import type { CaseAcknowledgement, CaseDocumentState, CaseWhy } from './caseTypes';
 // Delivery routes, intake and direct delivery responses.
 
 export interface Money {
@@ -432,13 +433,29 @@ export interface DirectDeliveryRecord {
   accepted_at: string | null;
 }
 
-// GET /cases/{case}/documents?to=: documents of a case already sent to one recipient.
+// GET /cases/{case}/documents?to=: documents of a case sent to one recipient, and what it acknowledged.
 export interface CaseDocument {
+  // Used to record what the recipient said about it; never shown.
+  id?: string;
   title: string;
   pages: number;
   reference: string;
+  source?: string;
+  version?: string;
+  purpose?: string;
+  state?: CaseDocumentState;
+  // True only when the recipient acknowledged it and that is still trusted.
   accepted: boolean;
   accepted_at: string | null;
+  accepted_how?: CaseAcknowledgement | null;
+  accepted_by?: string | null;
+  accepted_note?: string | null;
+  expires_at?: string | null;
+  invalidated_at?: string | null;
+  invalidated_note?: string | null;
+  sent_at?: string | null;
+  // Whether Faxbot kept the original, so a full-packet repair can include it.
+  kept?: boolean;
   fax_id: string | null;
 }
 
@@ -446,6 +463,11 @@ export interface CaseDocuments {
   case_id: string;
   to: string;
   accepts_references: boolean;
+  reuse_days?: number;
+  reuse_days_default?: number;
+  reuse_days_set?: boolean;
+  recipient_version?: number;
+  packets_in_flight?: number;
   documents: CaseDocument[];
 }
 
@@ -453,10 +475,11 @@ export interface CaseDocuments {
 export interface CasePacket {
   case_id: string;
   to: string;
+  purpose?: string;
   accepts_references: boolean;
   pages: number;
   pages_saved: number;
-  documents: Array<{ title: string; pages: number; status: 'included' | 'referenced' }>;
+  documents: Array<{ title: string; pages: number; status: 'included' | 'referenced'; why?: CaseWhy }>;
   fax_id: string | null;
 }
 
@@ -465,8 +488,10 @@ export interface CaseSummary {
   case_id: string;
   to: string;
   documents: number;
-  // Documents the recipient has (the fax that carried them finished).
+  // Documents delivered by fax, and documents the recipient acknowledged.
+  sent?: number;
   accepted: number;
+  needs_attention?: number;
   pages: number;
   last_sent_at: string | null;
   accepts_references: boolean;

@@ -8,6 +8,7 @@ import typer
 
 from .commands import (access, accounts, admin, blocked, codec, delivery, fax, fax_machines, operations, pages, reply,
                        rules, settings, setup, sslfax, trunk, work)
+from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -109,7 +110,8 @@ partners.command('revoke')(delivery.peers_revoke)
 partners.command('fax-images')(delivery.peers_fax_images)
 partners.command('deliveries')(delivery.direct_deliveries)
 recipients.add_typer(partners, name='partners')
-recipients.add_typer(delivery.cases, name='cases')
+# The case group, with the commands case_commands adds (accept, repair, checklists ...).
+recipients.add_typer(case_commands.cases, name='cases')
 recipients.add_typer(delivery.toll_free, name='toll-free')
 
 # -- providers -----------------------------------------------------------------------

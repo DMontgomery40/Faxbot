@@ -1772,12 +1772,21 @@ $ faxbot recipients cases [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `list`: List the newest cases you sent packets...
-* `documents`: List the documents of a case already sent...
-* `send`: Send a case packet, leaving out documents...
+* `documents`: List the documents of a case sent to a...
+* `send`: Send a case packet, listing documents the...
+* `accept`: Record that the recipient confirmed it has...
+* `invalidate`: The recipient could not find these...
+* `repair`: Send every document of the case to this...
+* `reuse`: Show or set how long this recipient&#x27;s...
+* `originals`: List the case&#x27;s original documents, kept...
+* `add`: Keep documents in a case without sending...
+* `suggestions`: Turn on or off suggestions of documents...
+* `build`: Build a packet from a checklist with the...
+* `checklist`: A recipient&#x27;s checklist of documents:...
 
 #### `faxbot recipients cases list`
 
-List the newest cases you sent packets for: who received them, documents sent and received, and when.
+List the newest cases you sent packets for: who received them, what was delivered and acknowledged, and when.
 
 **Usage**:
 
@@ -1792,7 +1801,7 @@ $ faxbot recipients cases list [OPTIONS]
 
 #### `faxbot recipients cases documents`
 
-List the documents of a case already sent to a recipient, and which they accepted.
+List the documents of a case sent to a recipient: delivered, acknowledged, too old, or not found by them.
 
 **Usage**:
 
@@ -1807,12 +1816,12 @@ $ faxbot recipients cases documents [OPTIONS] {case_id}
 **Options**:
 
 * `--to <str>`: Recipient fax number.  [required]
-* `--ids`: Also show the fax ID each document was sent in.
+* `--ids`: Also show the fax ID each document was last sent in.
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients cases send`
 
-Send a case packet, leaving out documents the recipient already has.
+Send a case packet, listing documents the recipient acknowledged instead of sending them again.
 
 **Usage**:
 
@@ -1829,7 +1838,258 @@ $ faxbot recipients cases send [OPTIONS] {case_id} {to} {files}...
 **Options**:
 
 * `--title <str>`: Title for each document, in the same order. Default: the file name.
+* `--purpose <str>`: What the packet is for. The same document sent for another purpose is sent in full.
+* `--source <str>`: Where each document came from, in order.
+* `--version <str>`: Version of each document, in order.
+* `--type <str>`: Document type of each document, in order.
+* `--date <str>`: The date on each document, in order, as year-month-day.
 * `--preview`: Show what would be sent without sending.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases accept`
+
+Record that the recipient confirmed it has these documents, so later packets can list them instead of resending.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases accept [OPTIONS] {case_id}
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+
+**Options**:
+
+* `--to <str>`: Recipient fax number.  [required]
+* `--document <str>`: A document, by title or reference. Repeat for more. Default: every delivered document.
+* `--purpose <str>`: Only documents sent for this purpose.
+* `--note <str>`: Who confirmed it and how, for example &quot;Their intake desk confirmed by phone&quot;.
+* `--received-fax <str>`: The ID of the fax in which the recipient acknowledged them, from Received.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases invalidate`
+
+The recipient could not find these documents: stop listing them, and send them in full in the next packet.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases invalidate [OPTIONS] {case_id}
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+
+**Options**:
+
+* `--to <str>`: Recipient fax number.  [required]
+* `--document <str>`: A document the recipient could not find, by title or reference. Repeat for more.  [required]
+* `--purpose <str>`: Only documents sent for this purpose.
+* `--note <str>`: What the recipient said.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases repair`
+
+Send every document of the case to this recipient again, as a new fax. Faxbot never does this by itself.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases repair [OPTIONS] {case_id}
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+
+**Options**:
+
+* `--to <str>`: Recipient fax number.  [required]
+* `--reason <str>`: Why the recipient needs every document again. Required to send.
+* `--preview`: Show what would be sent without sending.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases reuse`
+
+Show or set how long this recipient&#x27;s acknowledgements are trusted before documents are sent in full again.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases reuse [OPTIONS] {to}
+```
+
+**Arguments**:
+
+* `to`: Recipient fax number.  [required]
+
+**Options**:
+
+* `--days <int range>`: Trust its acknowledgements for this many days, then send those documents in full again.  [1&lt;=x&lt;=3650]
+* `--no-limit`: Trust its acknowledgements with no time limit.
+* `--default`: Use Faxbot&#x27;s default period.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases originals`
+
+List the case&#x27;s original documents, kept unchanged, with their type, date, version and source.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases originals [OPTIONS] {case_id}
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases add`
+
+Keep documents in a case without sending them, for checklist packets and repairs.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases add [OPTIONS] {case_id} {files}...
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+* `files...`: PDF documents to keep in the case.  [required]
+
+**Options**:
+
+* `--title <str>`: Title for each file, in order. Default: the file name.
+* `--type <str>`: Document type for each file, in order, as checklists name them, for example &quot;Discharge summary&quot;.
+* `--date <str>`: The date on each document, in order, as year-month-day.
+* `--version <str>`: Version of each file, in order, for example &quot;final&quot;.
+* `--source <str>`: Where each file came from, in order.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases suggestions`
+
+Turn on or off suggestions of documents that may match a missing checklist item. Off unless you turn it on.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases suggestions [OPTIONS] {setting}
+```
+
+**Arguments**:
+
+* `setting`: on or off.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases build`
+
+Build a packet from a checklist with the case&#x27;s kept documents: picks with reasons, then missing items.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases build [OPTIONS] {case_id}
+```
+
+**Arguments**:
+
+* `case_id`: Your case reference.  [required]
+
+**Options**:
+
+* `--to <str>`: Recipient fax number.  [required]
+* `--checklist <str>`: The checklist to follow.  [required]
+* `--version <int range>`: The checklist version; default: newest.  [x&gt;=1]
+* `--as-of <str>`: Count date limits back from this day, as year-month-day. Default: today.
+* `--purpose <str>`: What the packet is for.
+* `--preview`: Show Faxbot&#x27;s picks without sending.
+* `--allow-missing`: Send even though required items are missing, when the recipient agreed.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients cases checklist`
+
+A recipient&#x27;s checklist of documents: types, dates, versions, and which are required.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases checklist [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List checklists, newest version of each.
+* `show`: Show a checklist&#x27;s items, and its versions.
+* `add`: Save a checklist.
+
+##### `faxbot recipients cases checklist list`
+
+List checklists, newest version of each.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases checklist list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients cases checklist show`
+
+Show a checklist&#x27;s items, and its versions.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases checklist show [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The checklist name.  [required]
+
+**Options**:
+
+* `--version <int range>`: A version; default: the newest.  [x&gt;=1]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients cases checklist add`
+
+Save a checklist. Using a name again saves a new version; earlier versions never change.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases checklist add [OPTIONS] {name} [items]
+```
+
+**Arguments**:
+
+* `name`: The checklist name, for example the recipient and request.  [required]
+* `items`: A JSON file: a list of items, each with &quot;type&quot;, and optionally &quot;required&quot;, &quot;within_days&quot; and &quot;version&quot;.
+
+**Options**:
+
+* `--example`: Start from the synthetic example checklist.
+* `--to <str>`: The recipient fax number it is for.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients toll-free`

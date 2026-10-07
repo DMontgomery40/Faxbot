@@ -2115,9 +2115,22 @@ def _cleanup_outbound_documents(cutoff):
         audit_event('outbound_retention_requires_attention')
 
 
+def _cleanup_case_originals(cutoff):
+    """Documents kept for case packets follow the same retention as sent fax files."""
+    from .cases.retention import remove_expired_originals
+    try:
+        removed = remove_expired_originals(_deliveries().configuration.engine, settings.fax_data_dir, cutoff)
+    except Exception:
+        audit_event('case_retention_requires_attention')
+        return
+    if removed:
+        audit_event('case_originals_removed', count=removed)
+
+
 async def _cleanup_once():
     cutoff = datetime.utcnow() - timedelta(days=max(1, settings.artifact_ttl_days))
     await run_lifecycle_step(lambda: _cleanup_outbound_documents(cutoff))
+    await run_lifecycle_step(lambda: _cleanup_case_originals(cutoff))
     with SessionLocal() as db:
         # Inbound retention cleanup
         try:

@@ -5,6 +5,10 @@ import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './net
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecFax, CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type {
+  CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
+  ChecklistBuildRequest, ChecklistItem,
+} from './caseTypes';
+import type {
   HealthStatus,
   FaxJob,
   FaxSendResult,
@@ -1336,13 +1340,17 @@ class AdminAPIClient {
     return this.json(`/cases/${id(caseId)}/documents${query({ to: normalizeFaxDestination(to) })}`);
   }
 
-  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string }>, preview: boolean): Promise<CasePacket> {
+  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string; version?: string; source?: string }>,
+    preview: boolean, purpose = ''): Promise<CasePacket> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('preview', preview ? 'true' : 'false');
+    formData.append('purpose', purpose);
     for (const document of documents) {
       formData.append('documents', document.file);
       formData.append('titles', document.title);
+      formData.append('versions', document.version ?? '');
+      formData.append('sources', document.source ?? '');
     }
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
   }
@@ -1392,6 +1400,56 @@ class AdminAPIClient {
 
   async removeIaf(serverId: string): Promise<{ ok: true; server: IafServer }> {
     return this.json(`/fax-machines/iaf/${id(serverId)}`, { method: 'DELETE' });
+  }
+
+  // The recipient confirmed it has these documents (a note, or the fax in which it said so).
+  async acceptCaseDocuments(caseId: string, body: { to: string; documents: string[]; note?: string; received_fax_id?: string }): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/accept`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // The recipient could not find these documents: the next packet sends them in full.
+  async invalidateCaseDocuments(caseId: string, body: { to: string; documents: string[]; note?: string }): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/invalidate`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // Every document of the case again, as a new fax, for a person's reason (preview first).
+  async repairCasePacket(caseId: string, body: { to: string; reason: string; preview: boolean }): Promise<CaseRepair> {
+    return this.json(`/cases/${id(caseId)}/repair`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  async setCaseReuseDays(to: string, reuseDays: number | null, version: number): Promise<CaseRecipient> {
+    return this.json(`/case-recipients/${id(normalizeFaxDestination(to))}`, {
+      method: 'PATCH', body: JSON.stringify({ reuse_days: reuseDays, version }) });
+  }
+
+  async listCaseOriginals(caseId: string): Promise<{ case_id: string; retention_days?: number; originals: CaseOriginal[] }> {
+    return this.json(`/cases/${id(caseId)}/originals`);
+  }
+
+  async addCaseOriginals(caseId: string, documents: CaseOriginalDraft[]): Promise<{ case_id: string; originals: CaseOriginal[] }> {
+    const formData = new FormData();
+    for (const document of documents) {
+      formData.append('documents', document.file);
+      formData.append('titles', document.title);
+      formData.append('types', document.type ?? '');
+      formData.append('dates', document.date ?? '');
+      formData.append('versions', document.version ?? '');
+      formData.append('sources', document.source ?? '');
+    }
+    return this.json(`/cases/${id(caseId)}/originals`, { method: 'POST', body: formData });
+  }
+
+  async listCaseChecklists(): Promise<CaseChecklists> {
+    return this.json('/case-checklists');
+  }
+
+  async addCaseChecklist(body: { name: string; items: ChecklistItem[]; to?: string }): Promise<CaseChecklist> {
+    return this.json('/case-checklists', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async buildChecklistPacket(caseId: string, body: ChecklistBuildRequest): Promise<ChecklistBuild> {
+    return this.json(`/cases/${id(caseId)}/checklist-packets`, {
+      method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {
