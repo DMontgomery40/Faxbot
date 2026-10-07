@@ -970,7 +970,7 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
     listed = ' '.join(cli('recipients', 'partners', 'list').stdout.split())
     assert 'Fax images' in listed and 'arrive as the exact fax image' in listed
     assert cli.json('recipients', 'partners', 'fax-images', 'Valley Hospital', 'off')['receive_fax_images'] is False
-    assert Partner.told == [True, False]
+    assert Partner.told[-2:] == [True, False]  # Faxbot may also have told the new partner (on by default) by itself
     assert cli('recipients', 'partners', 'fax-images', 'Valley Hospital', 'maybe').exit_code != 0
     revoked = cli.json('recipients', 'partners', 'revoke', 'Valley Hospital')
     assert revoked['state'] == 'revoked'

@@ -70,8 +70,21 @@ def test_only_a_newer_signed_statement_changes_what_a_partner_accepts(store):
     assert store.note_capabilities('peer-1', fax_images=False, peer_calls=True, said_at=late) is True
     peer = store.get_peer('peer-1')
     assert (peer['partner_receives_fax_images'], peer['partner_peer_calls']) == (None, 1)
+
+
+def test_fax_images_are_on_by_default_and_every_partner_is_told_until_it_has_the_current_choice(store):
+    from api.app.direct.store import accepts_fax_images
+    peer = store.get_peer('peer-1')
+    # A partner enrolled before 0034 reads NULL: on, with no row rewritten, and not told yet.
+    assert peer['receive_fax_images'] is None and accepts_fax_images(peer) is True
+    assert [item['id'] for item in store.untold()] == ['peer-1']
+    assert store.mark_told('peer-1', fax_images=True, peer_calls=False) is True and store.untold() == []
+    off = store.set_receive_fax_images('peer-1', False)
+    assert off['receive_fax_images'] == 0 and accepts_fax_images(off) is False
+    assert [item['id'] for item in store.untold()] == ['peer-1']
+    # A statement of the earlier choice does not count as telling the current one.
+    assert store.mark_told('peer-1', fax_images=True, peer_calls=False) is False and len(store.untold()) == 1
     assert store.set_receive_fax_images('peer-1', True)['receive_fax_images'] == 1
-    assert store.set_receive_fax_images('peer-1', False)['receive_fax_images'] is None
 
 
 def test_codes_lock_after_five_wrong_tries(store):

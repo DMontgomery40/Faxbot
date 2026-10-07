@@ -21,7 +21,7 @@ from ..routing.submit import accept_generated_fax
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
 from .service import DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
-from .store import DirectConflict
+from .store import DirectConflict, accepts_fax_images
 
 
 def service_for(app):
@@ -55,7 +55,11 @@ def _background(app):
             # A document accepted just before a restart is filed in Received here.
             ('faxbot-direct-filing', repeat_async(file_arrivals, interval=60.0, initial_delay=15.0,
                                                   warning='Documents partners delivered directly are waiting to be '
-                                                          'filed in Received.'))]
+                                                          'filed in Received.')),
+            # Partners learn what we accept from them after an upgrade, an enrollment or a change (signed).
+            ('faxbot-direct-tell', repeat_async(service.tell_partners, interval=600.0, initial_delay=30.0,
+                                                warning='Partners could not be told about fax images yet; Faxbot '
+                                                        'tries again.'))]
 
 
 router = APIRouter(prefix='/direct', tags=['Direct delivery'], lifespan=lifespan_tasks(_background))
@@ -89,7 +93,7 @@ def fax_images_text(peer):
     """One sentence on fax images with this partner, or None when there is nothing to say."""
     if peer['state'] == 'revoked':
         return None
-    receive, send = _flag(peer.get('receive_fax_images')), _flag(peer.get('partner_receives_fax_images'))
+    receive, send = accepts_fax_images(peer), _flag(peer.get('partner_receives_fax_images'))
     if send and peer['state'] == 'verified':
         if receive:
             return 'Faxes go both ways as the exact fax image, with no telephone call.'
@@ -109,7 +113,7 @@ def _peer_view(peer, now=None):
             'endpoint': peer['endpoint_url'], 'state': peer['state'], 'status': status,
             'code_sent': open_code, 'code_expires_at': peer['challenge_expires_at'] if open_code else None,
             'verified_at': peer['verified_at'], 'expires_at': peer['expires_at'], 'version': peer['version'],
-            'receive_fax_images': _flag(peer.get('receive_fax_images')),
+            'receive_fax_images': accepts_fax_images(peer),
             'partner_receives_fax_images': _flag(peer.get('partner_receives_fax_images')),
             'fax_images_text': fax_images_text(peer)}
 
@@ -207,8 +211,8 @@ async def set_fax_images(peer_id: str, payload: FaxImagesIn, request: Request):
     elif told == 'unsupported':
         detail = f"Saved. {name}'s Faxbot cannot send fax images yet, so their documents keep arriving as originals."
     else:
-        detail = (f'Saved. Faxbot could not reach {name} just now; it tells them when it answers their next '
-                  'delivery to you.')
+        detail = (f'Saved. Faxbot could not reach {name} just now; it tells them as soon as it can, and with its '
+                  'answer to their next delivery.')
     return {**_peer_view(peer), 'detail': detail, 'partner_told': told == 'told'}
 
 

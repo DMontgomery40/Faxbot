@@ -25,6 +25,12 @@ class DirectConflict(RuntimeError):
     """Plain-sentence refusal of a partner change."""
 
 
+def accepts_fax_images(peer):
+    """Whether this installation accepts fax images from ``peer``: on by default (NULL), off only when turned off."""
+    value = peer.get('receive_fax_images')
+    return value is None or int(value) != 0
+
+
 def code_hash(peer_id, code):
     return hashlib.sha256(f'{peer_id}:{code}'.encode('ascii')).hexdigest()
 
@@ -89,7 +95,7 @@ class DirectStore:
                     **values, state='pending', challenge_hash=None, challenge_job_id=None,
                     challenge_expires_at=None, challenge_failures=0, verified_at=None, expires_at=None,
                     receive_fax_images=None, receive_peer_calls=None, partner_receives_fax_images=None,
-                    partner_peer_calls=None, partner_said_at=None, peer_call_address=None,
+                    partner_peer_calls=None, partner_said_at=None, peer_call_address=None, told_partner_at=None,
                     version=existing['version'] + 1, updated_at=now))
                 return self.get_peer(existing['id'], connection)
             identity = uuid4().hex
@@ -145,15 +151,33 @@ class DirectStore:
                 direct_peer_id=peer['id'], version=row['version'] + 1, updated_at=now))
 
     def set_receive_fax_images(self, peer_id, accept):
-        """This installation's choice to accept fax images from a partner (opt-in, per partner)."""
+        """This installation's choice to accept fax images from a partner (on by default); the partner is told again."""
         now = utcnow()
         with write_transaction(self.engine) as connection:
             peer = self.get_peer(peer_id, connection)
             if peer is None or peer['state'] == 'revoked':
                 raise DirectConflict('This partner is not enrolled.')
             connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
-                receive_fax_images=1 if accept else None, version=peer['version'] + 1, updated_at=now))
+                receive_fax_images=1 if accept else 0, told_partner_at=None, version=peer['version'] + 1,
+                updated_at=now))
             return self.get_peer(peer_id, connection)
+
+    def untold(self, *, limit=50):
+        """Enrolled partners that still have to be told, signed, what we accept from them."""
+        with read_connection(self.engine) as connection:
+            return [dict(row) for row in connection.execute(sa.select(self.peers).where(
+                self.peers.c.state != 'revoked', self.peers.c.told_partner_at.is_(None))
+                .order_by(self.peers.c.created_at, self.peers.c.id).limit(limit)).mappings()]
+
+    def mark_told(self, peer_id, *, fax_images, peer_calls):
+        """The partner has our statement; kept only if our choices are still the ones it was told."""
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if (peer is None or accepts_fax_images(peer) != fax_images
+                    or (peer['receive_peer_calls'] is not None and int(peer['receive_peer_calls']) == 1) != peer_calls):
+                return False
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(told_partner_at=utcnow()))
+            return True
 
     def note_capabilities(self, peer_id, *, fax_images, peer_calls, said_at):
         """Keep what a partner said it accepts from us, unless a newer signed statement is already kept.

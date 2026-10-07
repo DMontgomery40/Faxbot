@@ -1225,7 +1225,7 @@ $ faxbot recipients partners revoke [OPTIONS] {partner}
 
 #### `faxbot recipients partners fax-images`
 
-Accept faxes from a partner as the exact fax image (on) or only as original documents (off, the default).
+Accept faxes from a partner as the exact fax image (on, the default) or only as original documents (off).
 
 **Usage**:
 
@@ -1236,7 +1236,7 @@ $ faxbot recipients partners fax-images [OPTIONS] {partner} {on|off}
 **Arguments**:
 
 * `partner`: Partner organization, fax number or id.  [required]
-* `on|off`: on accepts the partner&#x27;s faxes as the exact fax image, filed like any received fax; off accepts only original documents.  [required]
+* `on|off`: on (the default) accepts the partner&#x27;s faxes as the exact fax image, filed like any received fax; off accepts only original documents.  [required]
 
 **Options**:
 

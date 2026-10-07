@@ -29,7 +29,7 @@ from .crypto import (FAX_IMAGE, DirectProtocolError, capabilities, card, canonic
 from . import faximage
 from .filing import DirectFiling
 from .identity import IdentityUnavailable, identity_path, load_identity
-from .store import DirectConflict, DirectStore
+from .store import DirectConflict, DirectStore, accepts_fax_images
 
 
 FRESHNESS = timedelta(hours=24)
@@ -157,8 +157,7 @@ class DirectService:
     @staticmethod
     def offered(peer):
         """What this installation accepts from ``peer``, as its signed answers tell the partner."""
-        return capabilities(fax_images=_flag(peer.get('receive_fax_images')),
-                            peer_calls=_flag(peer.get('receive_peer_calls')))
+        return capabilities(fax_images=accepts_fax_images(peer), peer_calls=_flag(peer.get('receive_peer_calls')))
 
     def _refusal(self, identity, message_id, reason, text, peer=None):
         statement = {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text}
@@ -214,8 +213,8 @@ class DirectService:
         if len(ciphertext) > MAX_DOCUMENT_BYTES:
             return 413, self._refusal(identity, message_id, 'too_large', 'This document is too large.', peer)
         kind = kind_of(manifest)
-        if kind == FAX_IMAGE and not _flag(peer.get('receive_fax_images')):
-            # Opt-in per partner; this signed refusal proves nothing was accepted, so the sender may fax it.
+        if kind == FAX_IMAGE and not accepts_fax_images(peer):
+            # Turned off for this partner; this signed refusal proves nothing was accepted, so the sender may fax it.
             return 409, self._refusal(identity, message_id, 'fax_images_off',
                                       'This installation does not accept fax images from you; send the original '
                                       'document instead.', peer)
@@ -324,15 +323,31 @@ class DirectService:
         answers 404 for the statement), so it keeps sending original documents.
         """
         identity = await run_lifecycle_step(lambda: self.identity(create=True))
-        envelope = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'],
-                                     'capabilities': self.offered(peer)})
+        offered = self.offered(peer)
+        envelope = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'], 'capabilities': offered})
         try:
             status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/capabilities', json=envelope)
         except (PartnerUnreachable, httpx.HTTPError):
             return 'unreachable'
         if status == 200 and isinstance(body, dict) and body.get('recorded') is True:
-            return 'told'
-        return 'unsupported' if status in (404, 405) else 'unreachable'
+            outcome = 'told'
+        elif status in (404, 405):
+            outcome = 'unsupported'
+        else:
+            return 'unreachable'
+        # Told (or a Faxbot without fax images, which learns it from our answers once it has them): not asked again.
+        await run_lifecycle_step(lambda: self.store.mark_told(peer['id'], fax_images=offered['fax_images'],
+                                                              peer_calls=offered['peer_calls']))
+        return outcome
+
+    async def tell_partners(self):
+        """Tell every enrolled partner not told yet what we accept from it: after an upgrade, an enrollment or a
+        change, and again later for a partner that could not be reached."""
+        if not getattr(await run_lifecycle_step(self.values), 'direct_delivery_enabled', False) or not self.ready():
+            return False
+        for peer in await run_lifecycle_step(self.store.untold):
+            await self.tell_partner(peer)
+        return False
 
     async def set_fax_images(self, peer_id, accept):
         """Accept fax images from a partner, or stop; returns (partner, ``told``, ``unreachable`` or ``unsupported``)."""

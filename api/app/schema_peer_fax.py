@@ -5,14 +5,19 @@ engine would send, over the encrypted direct channel. This revision adds
 nullable columns only, and touches no received-fax (inbound) table:
 
 - ``direct_peers``, named by direction. What this installation decides for a
-  partner: ``receive_fax_images`` (1 when it accepts fax images from the
-  partner) and ``receive_peer_calls`` (1 when it accepts a peer fax call from the
-  partner; for later). What the partner said in a statement it signed:
-  ``partner_receives_fax_images``, ``partner_peer_calls`` (it can take a peer
-  fax call with IAF over a tunnel; for later) and ``partner_said_at`` (the
-  signed time of its latest statement, so an older statement never overrides a
-  newer one). ``peer_call_address`` is the partner's address inside the tunnel a
-  peer fax call must use. NULL means no.
+  partner: ``receive_fax_images`` (whether it accepts fax images from the
+  partner: on by default, so NULL means on, 1 on and 0 turned off; every
+  partner enrolled before this revision reads NULL and so is on, with no row
+  rewritten) and ``receive_peer_calls`` (1 when it accepts a peer fax call from
+  the partner; for later; NULL means no). ``told_partner_at``: when the partner
+  last recorded our signed statement of those choices, or answered as a Faxbot
+  without fax images; NULL means it still has to be told, which is every
+  partner after this upgrade. What the partner said in a statement it signed
+  (NULL means no): ``partner_receives_fax_images``, ``partner_peer_calls`` (it
+  can take a peer fax call with IAF over a tunnel; for later) and
+  ``partner_said_at`` (the signed time of its latest statement, so an older
+  statement never overrides a newer one). ``peer_call_address`` is the
+  partner's address inside the tunnel a peer fax call must use.
 - ``direct_deliveries.kind``: NULL for an original document (every row before
   this revision), ``fax_image`` for a fax image.
 
@@ -39,6 +44,7 @@ PEER_COLUMNS = (
     ('partner_peer_calls', sa.Integer),
     ('partner_said_at', sa.DateTime),
     ('peer_call_address', lambda: sa.String(255)),
+    ('told_partner_at', sa.DateTime),
 )
 DELIVERY_COLUMNS = (('kind', lambda: sa.String(16)),)
 

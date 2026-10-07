@@ -341,8 +341,8 @@ export interface DirectPartner {
   verified_at: string | null;
   expires_at: string | null;
   version: number;
-  // Fax images (peer fax): whether this installation accepts them from the partner, and whether the partner
-  // said, signed, that it accepts them from us; optional for older servers.
+  // Fax images (peer fax): whether this installation accepts them from the partner (on by default), and whether
+  // the partner said, signed, that it accepts them from us; optional for older servers.
   receive_fax_images?: boolean;
   partner_receives_fax_images?: boolean;
   fax_images_text?: string | null;

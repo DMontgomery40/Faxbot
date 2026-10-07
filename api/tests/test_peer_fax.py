@@ -259,8 +259,29 @@ async def test_a_fax_image_arrives_byte_for_byte_as_a_received_fax_with_work_ema
 
 
 @pytest.mark.asyncio
-async def test_a_partner_that_has_not_opted_in_gets_the_original_directly_and_it_still_gets_an_owner(peer_pair):
+async def test_partners_learn_fax_images_are_on_by_default_without_anyone_doing_anything(peer_pair):
     pair, client = peer_pair, peer_pair['b_client']
+    (peer,) = client.get('/direct/peers', headers=ADMIN).json()['peers']
+    assert peer['receive_fax_images'] is True
+    assert peer['fax_images_text'] == 'Their faxes to you arrive as the exact fax image and are filed like any received fax.'
+    # Until B says so, signed, A sends originals; B's tell step (after an upgrade or an enrollment) says so.
+    assert pair['a'].store.get_peer(pair['b_on_a']['id'])['partner_receives_fax_images'] is None
+    service = direct_http.service_for(main.app)
+    await service.tell_partners()
+    assert pair['a'].store.get_peer(pair['b_on_a']['id'])['partner_receives_fax_images'] == 1
+    assert service.store.untold() == []
+    job = accept(pair)
+    row, conventional = await send(pair, job)
+    assert pair['a'].store.find('outbound', row['attempt_id'])['kind'] == 'fax_image'
+    assert [fax['status_text'] for fax in received(pair)] == [IMAGE_LABEL]
+
+
+@pytest.mark.asyncio
+async def test_a_partner_that_turned_fax_images_off_gets_the_original_directly_and_it_still_gets_an_owner(peer_pair):
+    pair, client = peer_pair, peer_pair['b_client']
+    stopped = opt_in(pair, accept=False)
+    assert stopped['receive_fax_images'] is False and stopped['partner_told'] is True
+    assert stopped['detail'] == 'Valley Hospital now sends you the original documents.'
     job = accept(pair)
     row, conventional = await send(pair, job)
     assert row['state'] == 'success' and conventional.submissions == 0
@@ -411,12 +432,11 @@ def test_fax_image_settings_need_settings_permission(peer_pair):
     client = peer_pair['b_client']
     sender = scoped_key(client, ['fax:send'])
     path = f"/direct/peers/{peer_pair['a_on_b']['id']}/fax-images"
-    assert client.post(path, headers=sender, json={'accept': True}).status_code == 403
-    peers = client.get('/direct/peers', headers=ADMIN).json()['peers']
-    assert peers[0]['receive_fax_images'] is False and peers[0]['fax_images_text'] is None
+    assert client.post(path, headers=sender, json={'accept': False}).status_code == 403
+    assert client.get('/direct/peers', headers=ADMIN).json()['peers'][0]['receive_fax_images'] is True
     assert client.post('/direct/capabilities', json={'statement': '{}', 'signature': 'x'}).json()['recorded'] is False
-    on = opt_in(peer_pair)
-    assert on['fax_images_text'] == 'Their faxes to you arrive as the exact fax image and are filed like any received fax.'
+    off = opt_in(peer_pair, accept=False)
+    assert off['receive_fax_images'] is False and off['fax_images_text'] is None
     # A partner on a Faxbot without fax images answers 404; it is told honestly that originals keep arriving.
     peer_pair['to_a'].older = True
     older = opt_in(peer_pair, accept=False)

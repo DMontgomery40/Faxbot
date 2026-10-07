@@ -830,9 +830,10 @@ def peers_list():
 @peers.command('fax-images')
 def peers_fax_images(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
                      choice: str = typer.Argument(..., metavar='on|off',
-                                                  help="on accepts the partner's faxes as the exact fax image, filed "
-                                                       'like any received fax; off accepts only original documents.')):
-    """Accept faxes from a partner as the exact fax image (on) or only as original documents (off, the default)."""
+                                                  help="on (the default) accepts the partner's faxes as the exact fax "
+                                                       'image, filed like any received fax; off accepts only original '
+                                                       'documents.')):
+    """Accept faxes from a partner as the exact fax image (on, the default) or only as original documents (off)."""
     if choice not in ('on', 'off'):
         raise typer.BadParameter('Use on or off.', param_hint='on|off')
     api = state.api()
