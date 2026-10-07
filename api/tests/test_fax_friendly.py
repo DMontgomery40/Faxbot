@@ -5,6 +5,7 @@ The transform is deterministic; every pixel darker than the light level stays ex
 the setting for your documents is on; pages Faxbot draws itself from text are unchanged; the setting is off by
 default; every sentence. SQLite and PostgreSQL. All synthetic."""
 from datetime import datetime, timedelta
+import io
 import shutil
 from types import SimpleNamespace
 
@@ -274,15 +275,18 @@ def test_every_sent_sentence(run, sentence):
 def test_the_estimate_uses_the_calls_own_speed_when_its_engine_reported_one(installation, monkeypatch):
     friendly.record_send(installation, job_id=JOB, attempt_id=ATTEMPT, request=done(), now=NOW)
     from app import hylafax_records
-    negotiation = {'rate_first': 14400, 'rate_lowest': 9600, 'rate_last_page': None}
+    negotiation = {'rate_first': 9600, 'rate_lowest': 7200, 'rate_last_page': 7200}
     monkeypatch.setattr(hylafax_records, 'records_for', lambda engine: SimpleNamespace(
         sent_detail=lambda job_id: {'negotiation': negotiation}))
     view = views.sent_view(installation, JOB)
     assert view['sentences'] == ["Shaded areas on 2 of the 3 pages were lightened and specks removed before sending: "
                                  "an estimated 75 seconds less on the line at this call's speed of 9,600 bit/s."]
     assert view['lightened']['seconds_saved'] == 720_000 // 9600
+    # The built-in engine reports only its last page's speed.
+    negotiation.update(rate_first=None, rate_last_page=14400)
+    assert friendly.call_rate(installation, JOB) == 14400
     # Anything that is not a fax speed is ignored, and the estimate falls back to full fax speed.
-    negotiation.update(rate_lowest=True, rate_first=100)
+    negotiation.update(rate_first=True, rate_last_page=100)
     assert friendly.call_rate(installation, JOB) is None
     assert views.sent_view(installation, JOB)['sentences'][0].endswith('at full fax speed.')
 
@@ -358,6 +362,20 @@ def test_the_recommendation_stays_quiet_when_nothing_would_change_or_the_provide
     assert later['faxes_checked'] == 0
 
 
+@pytest.mark.parametrize('shaded, sentence', [
+    (True, 'Your last fax would have taken an estimated 48 seconds less on the line with shaded areas lightened and '
+           'specks removed; it has shaded areas or specks.'),
+    (False, 'Your last fax has no shaded areas or specks that slow it down.'),
+])
+def test_one_recent_fax_reads_as_one(installation, tmp_path, shaded, sentence):
+    _jobs(installation, tmp_path, 1)
+    friendly._MEASURED.clear()
+    result = friendly.Result(1, 1, 800_000, 100_000) if shaded else friendly.Result(1, 0, 0, 0)
+    view = friendly.recommendation(installation, tmp_path, enabled=False, how_sent='image', now=NOW,
+                                   measure=lambda path: result)
+    assert view['sentence'] == sentence and view['recommend'] is shaded
+
+
 def test_a_fax_too_long_for_one_look_is_left_out_rather_than_half_measured(installation, tmp_path):
     _jobs(installation, tmp_path, 1, pages=friendly.PAGE_BUDGET + 1)
     friendly._MEASURED.clear()
@@ -405,6 +423,77 @@ def test_a_cloud_route_gets_the_lightened_pages_only_with_the_setting_on(install
     assert sending.prepare(installation, SimpleNamespace(fax_friendly_documents=True),
                            SimpleNamespace(provider_id='phaxio', manifest=None, traits={}), claim,
                            {'to_number': PEER}, tmp_path / f'{JOB}.pdf', None, now=NOW) is None
+
+
+# Every other way a fax image is made from your documents follows the same setting ---------------------------------
+
+@needs_gs
+def test_a_route_that_needs_a_fax_image_later_gets_the_lightened_one_and_it_is_recorded(installation, tmp_path):
+    from app.routing.routes import ensure_route_artifact
+    trunk = SimpleNamespace(manifest=None, provider_id='sip', traits={})
+    for identity, on in ((JOB, False), ('c' * 32, True)):
+        shaded_pdf(tmp_path / f'{identity}.pdf')
+        revision = SimpleNamespace(values=SimpleNamespace(fax_data_dir=str(tmp_path), fax_friendly_documents=on))
+        tiff = ensure_route_artifact(revision, trunk, identity, engine=installation)
+        assert tiff == tmp_path / f'{identity}.tiff'
+    plain, lightened = (conversion.read_fax_frames(str(tmp_path / f'{identity}.tiff'))[0] for identity in (JOB, 'c' * 32))
+    assert sum(conversion.frame_bits([lightened])) < sum(conversion.frame_bits([plain])) / 2
+    assert friendly.run_for(installation, JOB) is None
+    run = friendly.run_for(installation, 'c' * 32)
+    assert run['attempt_id'] is None and run['pages_changed'] == 1 and run['scope'] == 'documents'
+    # Without an engine to record in, the image is still lightened and the route still works.
+    shaded_pdf(tmp_path / f'{"d" * 32}.pdf')
+    revision = SimpleNamespace(values=SimpleNamespace(fax_data_dir=str(tmp_path), fax_friendly_documents=True))
+    assert ensure_route_artifact(revision, trunk, 'd' * 32).is_file()
+
+
+@needs_gs
+@pytest.mark.parametrize('on', [False, True])
+def test_a_case_packet_or_other_generated_fax_follows_the_setting_for_your_documents(installation, tmp_path, on):
+    from datetime import datetime as moment
+    from pypdf import PdfReader, PdfWriter
+    from app.cases.ledger import index_page
+    from app.routing.submit import accept_generated_fax
+    # A case packet: Faxbot's own index page, then your document with a shaded table.
+    shaded_pdf(tmp_path / 'document.pdf')
+    plan = SimpleNamespace(
+        referenced=({'title': 'Lab results', 'page_count': 2, 'digest': 'f' * 64, 'accepted_at': moment(2026, 9, 1)},),
+        included=(SimpleNamespace(title='Referral', pages=1),))
+    writer = PdfWriter()
+    for page in PdfReader(io.BytesIO(index_page('CASE-1', PEER, plan, 'County Clinic'))).pages:
+        writer.add_page(page)
+    for page in PdfReader(str(tmp_path / 'document.pdf')).pages:
+        writer.add_page(page)
+    with open(tmp_path / 'packet.pdf', 'wb') as handle:
+        writer.write(handle)
+    conversion.pdf_to_tiff(str(tmp_path / 'packet.pdf'), str(tmp_path / 'today.tiff'))
+    accepted = []
+
+    def accept(actor, revision, job, *, also=None):
+        accepted.append(job)
+        if also is not None:
+            with installation.begin() as connection:
+                also(connection, NOW)
+    trunk = SimpleNamespace(manifest=None, provider_id='sip', traits={})
+    runtime = SimpleNamespace(manager=SimpleNamespace(store=SimpleNamespace(
+        read_profile=lambda profile_id: SimpleNamespace(configuration=trunk))))
+    revision = SimpleNamespace(profile_id=lambda kind: 'p' * 32,
+                               values=SimpleNamespace(fax_data_dir=str(tmp_path), fax_friendly_documents=on))
+    job_id = accept_generated_fax(runtime, SimpleNamespace(outbound=SimpleNamespace(accept=accept)), 'actor', revision,
+                                  to_number=PEER, document=(tmp_path / 'packet.pdf').read_bytes(),
+                                  file_name='packet.pdf', pages=2)
+    assert accepted[0]['tiff_path'].endswith(f'{job_id}.tiff')
+    today, sent = (conversion.read_fax_frames(path) for path in (str(tmp_path / 'today.tiff'), accepted[0]['tiff_path']))
+    # Faxbot's own index page goes exactly as before either way; only your document's page is lightened.
+    assert pixels(sent[0]) == pixels(today[0])
+    assert (pixels(sent[1]) == pixels(today[1])) is not on
+    run = friendly.run_for(installation, job_id)
+    if on:
+        assert (run['pages'], run['pages_changed'], run['created_at']) == (2, 1, NOW)
+        assert views.sent_view(installation, job_id)['sentences'][0].startswith(
+            'Shaded areas on 1 of the 2 pages were lightened and specks removed before sending')
+    else:
+        assert run is None
 
 
 # Over HTTP and the command line, with the trunk (Faxbot makes the fax image) --------------------------------------

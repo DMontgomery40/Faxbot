@@ -388,14 +388,14 @@ RATES = range(2400, 33601)
 
 
 def call_rate(engine, job_id):
-    """The speed the fax's newest trunk call went at, in bit/s, when its engine reported one (the lowest speed
-    of the call, else its last page's, else its first); None for cloud providers and unreported calls."""
+    """The speed the fax's newest trunk call negotiated, in bit/s, when its engine reported one (the call's first
+    speed; the built-in engine reports only its last page's); None for cloud providers and unreported calls."""
     try:
         from ..hylafax_records import records_for
         negotiation = (records_for(engine).sent_detail(job_id) or {}).get('negotiation') or {}
     except Exception:
         return None
-    for name in ('rate_lowest', 'rate_last_page', 'rate_first'):
+    for name in ('rate_first', 'rate_last_page'):
         value = negotiation.get(name)
         if isinstance(value, int) and not isinstance(value, bool) and value in RATES:
             return value
@@ -520,15 +520,16 @@ def recommendation(engine, data_dir, *, enabled, how_sent, now=None, measure=Non
     view.update(faxes_checked=checked, faxes_changed=changed, seconds_saved=seconds)
     if not checked:
         return view
+    faxes = 'Your last fax' if checked == 1 else f'Your last {checked} faxes'
     if seconds < MIN_SECONDS:
-        view['sentence'] = (f'Your last {checked} {"fax has" if checked == 1 else "faxes have"} no shaded areas or '
-                            'specks that slow them down.')
+        view['sentence'] = (f'{faxes} {"has" if checked == 1 else "have"} no shaded areas or specks that slow '
+                            f'{"it" if checked == 1 else "them"} down.')
         return view
     view['recommend'] = True
-    view['sentence'] = (
-        f'Your last {checked} {"fax" if checked == 1 else "faxes"} would have taken an estimated {duration(seconds)} '
-        f'less on the line with shaded areas lightened and specks removed; {changed} of them '
-        f'{"has" if changed == 1 else "have"} shaded areas or specks.')
+    which = ('it has shaded areas or specks' if checked == 1 else
+             f'{changed} of them {"has" if changed == 1 else "have"} shaded areas or specks')
+    view['sentence'] = (f'{faxes} would have taken an estimated {duration(seconds)} less on the line with shaded areas '
+                        f'lightened and specks removed; {which}.')
     view['action'] = (f'Turn on "{SETTING_LABEL}" {WHERE}. Shaded areas then print white and photographs lose '
                       'their lightest parts.')
     return view
@@ -537,3 +538,18 @@ def recommendation(engine, data_dir, *, enabled, how_sent, now=None, measure=Non
 def documents_on(values):
     """Whether the setting for your documents is on (off unless a person turned it on)."""
     return bool(getattr(values, 'fax_friendly_documents', False))
+
+
+def for_documents(values):
+    """A Request for a fax image made from your documents when the setting is on, else None."""
+    return Request('documents') if documents_on(values) else None
+
+
+def record_image(engine, job_id, request, *, now=None):
+    """Record a lightened fax image made after acceptance (a route that needs one), for every attempt that sends
+    it; returns the row's ID or None. Never raises: the fax goes either way."""
+    try:
+        return record_send(engine, job_id=job_id, attempt_id=None, request=request, now=now)
+    except Exception:
+        logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
+        return None
