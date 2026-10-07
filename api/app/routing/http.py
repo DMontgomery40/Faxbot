@@ -543,6 +543,155 @@ async def receiving_recommendations(request: Request, days: int = Query(default=
     return await _call(lambda: receiving_report(store.engine, store, values, days=days))
 
 
+@router.get('/recommendations/fax-marker', dependencies=[Depends(require_permission('settings:read'))])
+async def fax_marker_recommendations(request: Request, days: int = Query(default=90, ge=7, le=366)):
+    """Calls marked as fax against calls not marked, from history; never changes the setting."""
+    from .preference import fax_marker_report
+    store = _store(request)
+    values = request.scope['faxbot.configuration'].active.values
+    return await _call(lambda: fax_marker_report(store.engine, values, days=days))
+
+
+@router.get('/recommendations/billing-steps', dependencies=[Depends(require_permission('settings:read'))])
+async def billing_step_recommendations(request: Request):
+    """Per number: how its calls end against the carrier's billing step over the last 30 days (estimates)."""
+    from .boundaries import billing_boundaries
+    store = _store(request)
+    values = request.scope['faxbot.configuration'].active.values
+    return await _call(lambda: billing_boundaries(store.engine, store, values))
+
+
+@router.get('/recommendations/partners', dependencies=[Depends(require_permission('settings:read'))])
+async def partner_recommendations(request: Request):
+    """The numbers whose faxes cost the most again and again: candidates for direct partners (advice only)."""
+    from .partners import partner_candidates
+    store = _store(request)
+    return await _call(lambda: partner_candidates(store))
+
+
+@router.get('/recommendations/toll-free', dependencies=[Depends(require_permission('settings:read'))])
+async def toll_free_recommendations(request: Request):
+    """Recipients with a toll-free fax number on file, approved or not; the recipient pays for those calls."""
+    from .tollfree import toll_free_recommendations as recommend
+    store = _store(request)
+    return await _call(lambda: recommend(store))
+
+
+def _toll_free_view(store, number):
+    from .tollfree import TollFreeApprovals, state_sentence
+    approvals = TollFreeApprovals(store.engine)
+    history = approvals.history(number)
+    current = history[0] if history else None
+    row = store.get_destination(number) or {}
+    return {'number': number, 'current': current, 'history': history,
+            'approved_alternate': approvals.approved_alternate(number),
+            'sentence': state_sentence(current, row.get('display_name'))}
+
+
+@router.get('/destinations/{number}/toll-free', dependencies=[Depends(require_permission('settings:read'))])
+async def get_toll_free(number: str, request: Request):
+    """A recipient's toll-free fax number and every approval recorded for it, newest first."""
+    number = _number(number, request)
+    store = _store(request)
+    return await _call(lambda: _toll_free_view(store, number))
+
+
+NPPES_SENTENCES = {
+    'found': 'NPPES lists a toll-free fax number for this provider. Check that it reaches the same intake, then '
+             'record who at the recipient agreed before Faxbot uses it.',
+    'none': 'NPPES lists no toll-free fax number for this provider.',
+}
+
+
+@router.get('/destinations/{number}/toll-free/suggestions', dependencies=[Depends(require_permission('settings:read'))])
+async def toll_free_suggestions(number: str, request: Request, npi: str | None = Query(default=None, max_length=10),
+                                name: str | None = Query(default=None, max_length=200),
+                                city: str | None = Query(default=None, max_length=100),
+                                state: str | None = Query(default=None, max_length=2)):
+    """Toll-free fax numbers the public NPI registry (NPPES) lists for a provider; a suggestion, never an approval.
+
+    One read of the public registry per request. Nothing is recorded: the person still records who agreed.
+    """
+    _number(number, request)
+    try:
+        from .nppes import suggested_tollfree  # Builder AE's registry lookup
+    except ImportError:
+        raise HTTPException(503, detail='Looking up the NPI registry is not available in this version of Faxbot.') from None
+
+    def look_up():
+        return suggested_tollfree(npi or None, name=name or None, city=city or None, state=state or None)
+    try:
+        items = await run_lifecycle_step(look_up)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(502, detail='Faxbot could not reach the NPI registry; try again.') from None
+    from .tollfree import shown
+    items = [{**item, 'fax_display': shown(item['fax_number'])} for item in items]
+    return {'number': number, 'items': items, 'sentence': NPPES_SENTENCES['found' if items else 'none']}
+
+
+class TollFreeIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    action: str = Field(max_length=16)
+    alternate_number: str | None = Field(default=None, max_length=32)
+    approved_by: str | None = Field(default=None, max_length=200)
+    approved_on: datetime | None = None
+    evidence: str | None = Field(default=None, max_length=2000)
+
+
+TOLL_FREE_OPERATION = 'routing.toll_free_approval'
+
+
+def _audit_toll_free(request, identity, number, row):
+    """One audit row per recorded change: the numbers, the action and who agreed; never the evidence text."""
+    import json
+    from uuid import uuid4
+    access = getattr(request.app.state, 'access_runtime', None)
+    if access is None:
+        return
+    actor = identity.actor
+    credential = getattr(actor, 'credential', None)
+    details = {'number': number, 'alternate_number': row['alternate_number'], 'action': row['action'],
+               'approved_by': row['approved_by'], 'approved_on': row['approved_on']}
+    with access.store.transaction() as connection:
+        version = access.store.require_lock_on(connection)
+        connection.execute(access.store.tables['access_audit'].insert().values(
+            id=uuid4().hex, actor_principal_id=getattr(actor, 'principal_id', None),
+            actor_key_binding_id=getattr(credential, 'binding_id', None),
+            actor_session_id=getattr(credential, 'session_id', None), operation=TOLL_FREE_OPERATION,
+            target_kind='installation', target_id='toll_free_approvals', policy_version_before=version,
+            policy_version_after=version, outcome='allowed',
+            details=json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True),
+            created_at=utcnow()))
+
+
+@router.post('/destinations/{number}/toll-free')
+async def record_toll_free(number: str, payload: TollFreeIn, request: Request,
+                          identity=Depends(require_permission('settings:write'))):
+    """Put a recipient's toll-free number on file, record who at the recipient approved it, or withdraw it.
+
+    Each change is a new row (never an edit) and one audit row. Faxbot uses the toll-free number only while an
+    approval is the newest row (``tollfree.approved_alternate``).
+    """
+    from .tollfree import TollFreeApprovals
+    number = _number(number, request)
+    store = _store(request)
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    approved_on = payload.approved_on
+    if approved_on is not None and approved_on.tzinfo is not None:
+        approved_on = approved_on.replace(tzinfo=None)
+
+    def write():
+        row = TollFreeApprovals(store.engine).record(
+            number, action=payload.action, alternate_number=payload.alternate_number,
+            approved_by=payload.approved_by, approved_on=approved_on, evidence=payload.evidence, country=country,
+            principal_id=getattr(identity.actor, 'principal_id', None))
+        _audit_toll_free(request, identity, number, row)
+        return _toll_free_view(store, number)
+    return await _call(write)
+
+
 @router.get('/inbound/{inbound_id}/cost')
 async def inbound_cost(inbound_id: str, request: Request, identity=Depends(require_identity)):
     """What the call that brought in one received fax cost, for anyone who may read that fax."""
