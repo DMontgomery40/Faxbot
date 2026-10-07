@@ -26,6 +26,8 @@ STATUS_EVENT_FIELDS = {
     "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
     # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.
     "peerentry": ("ObjectName", "Status"),
+    # Faxbot's own families in Asterisk's database: blocked callers and the calls turned away (inbound/screening.py).
+    "dbgettreeresponse": ("Key", "Val"),
 }
 # One plain sentence for each state of Faxbot's connection to its fax engine
 # (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
@@ -418,6 +420,8 @@ class AMIClient:
             self._emit("FaxEngineCall", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginemissed":
             self._emit("FaxEngineMissed", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxscreened":
+            self._emit("FaxScreened", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -595,6 +599,10 @@ class AMIClient:
     def on_engine_missed(self, cb: Callable[[Dict[str, str]], None]):
         """A received call none of the SSL Fax engine's free lines answered (the built-in engine took it)."""
         self._listen("FaxEngineMissed", cb)
+
+    def on_screened(self, cb: Callable[[Dict[str, str]], None]):
+        """A call from a blocked sender, turned away before it was answered (the dialplan's FaxScreened event)."""
+        self._listen("FaxScreened", cb)
 
     def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
         """A received call that left no fax image (the dialplan's FaxInboundCall event)."""

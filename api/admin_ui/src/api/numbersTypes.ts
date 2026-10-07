@@ -47,6 +47,8 @@ export interface BlockedSender {
   removed_by: string | null;
   active: boolean;
   rejected_calls: number;
+  // The received fax it was marked from, when it came from one.
+  inbound_id: string | null;
 }
 
 export interface RejectedCall {
@@ -54,7 +56,7 @@ export interface RejectedCall {
   number: string;
   called: string | null;
   rejected_at: string;
-  reason: string | null;
+  entry_id: string | null;
 }
 
 export interface BlockedSendersView {

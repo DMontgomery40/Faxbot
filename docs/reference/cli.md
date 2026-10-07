@@ -109,6 +109,7 @@ $ faxbot received [OPTIONS] COMMAND [ARGS]...
 * `done`: Mark a received fax done, with a short note.
 * `reopen`: Reopen a received fax marked done.
 * `export`: Download a received fax&#x27;s record as a zip...
+* `block`: Mark a received fax&#x27;s sender as junk:...
 * `deliveries`: Delivery of received faxes to email and...
 
 ### `faxbot received list`
@@ -370,6 +371,26 @@ $ faxbot received export [OPTIONS] {item_id}
 * `--force`: Replace the file if it exists.
 * `--help`: Show this message and exit.
 
+### `faxbot received block`
+
+Mark a received fax&#x27;s sender as junk: their calls are turned away before Faxbot answers.
+
+**Usage**:
+
+```console
+$ faxbot received block [OPTIONS] {inbound_id}
+```
+
+**Arguments**:
+
+* `inbound_id`: The received fax, by its ID.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why this sender is junk, in a few words.  [required]
+* `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
+* `--help`: Show this message and exit.
+
 ### `faxbot received deliveries`
 
 Delivery of received faxes to email and other places, and any that failed.
@@ -601,6 +622,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
 * `reply`: The number printed on the faxes you send,...
+* `blocked`: Junk senders whose calls are turned away...
 
 ### `faxbot numbers list`
 
@@ -981,6 +1003,79 @@ $ faxbot numbers reply clear [OPTIONS]
 **Options**:
 
 * `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+### `faxbot numbers blocked`
+
+Junk senders whose calls are turned away before Faxbot answers, and the calls turned away.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List blocked senders and the calls turned...
+* `add`: Block a sender: their calls are turned...
+* `remove`: Unblock a sender.
+
+#### `faxbot numbers blocked list`
+
+List blocked senders and the calls turned away.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked list [OPTIONS]
+```
+
+**Options**:
+
+* `--all`: Also list senders no longer blocked.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers blocked add`
+
+Block a sender: their calls are turned away before Faxbot answers.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The sender&#x27;s fax number.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why this sender is junk, in a few words.  [required]
+* `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers blocked remove`
+
+Unblock a sender. The entry stays in the history, marked as removed by you.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked remove [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The blocked number (or its entry ID, from --json).  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot recipients`

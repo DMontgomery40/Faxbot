@@ -65,7 +65,7 @@ import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
 import type { EfaxStatus } from './types';
-import type { ReplyNumberView } from './numbersTypes';
+import type { BlockedSender, BlockedSendersView, ReplyNumberView } from './numbersTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1227,6 +1227,19 @@ class AdminAPIClient {
 
   async clearMailboxReplyNumber(mailboxId: string): Promise<{ ok: true }> {
     return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
+  }
+
+  // Numbers → Blocked senders: callers turned away before the call is answered.
+  async getBlockedSenders(): Promise<BlockedSendersView> {
+    return this.json('/screening');
+  }
+
+  async blockSender(body: { number?: string; inbound_id?: string; reason: string; days?: number }): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json('/screening/senders', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async unblockSender(entryId: string): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json(`/screening/senders/${id(entryId)}`, { method: 'DELETE' });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

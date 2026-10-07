@@ -834,3 +834,111 @@ def test_a_shared_call_cut_part_way_delivers_only_the_confirmed_faxes(tmp_path):
     if report.get('faxpages') is not None:
         # The receiver may hold one page more than the sender saw confirmed, never fewer.
         assert confirmed <= int(report['faxpages']) <= confirmed + 1
+
+
+# Junk senders (inbound/screening.py): the receiver's dialplan turns a blocked caller away before answering.
+
+ORIGINATE_SESSION = r'''
+exec 3<>/dev/tcp/127.0.0.1/5038
+cat >&3
+deadline=$((SECONDS + 90))
+seen=''
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if IFS= read -r -t 5 line <&3; then
+    printf '%s\n' "$line"
+    case $line in
+      *'Event: OriginateResponse'*) seen=1 ;;
+    esac
+    if [ -n "$seen" ] && [ -z "${line%$'\r'}" ]; then exit 0; fi
+  fi
+done
+exit 3
+'''
+
+
+def screened_call(tmp_path, entries):
+    """Two Asterisk containers; the receiver's database holds ``entries`` ({key: expiry epoch}) in faxbot-screen.
+
+    The sender places one call with CALLER as its caller ID; the result says how the receiver took it.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    try:
+        docker.network = docker.prefix
+        docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', docker.network)
+        capture = docker.start('api', 'python:3.11-slim', 'python', '-c', CAPTURE)
+        receiver = docker.start('receiver', image, 'infinity', entrypoint='sleep')
+        sender = docker.start('sender', image, 'infinity', entrypoint='sleep')
+        addresses = {name: docker.address(container)
+                     for name, container in (('api', capture), ('receiver', receiver), ('sender', sender))}
+        for container, peer in ((receiver, addresses['sender']), (sender, addresses['receiver'])):
+            rendered = tmp_path / f'{container}.conf'
+            rendered.write_text(sip_trunk.render_pjsip(trunk_values(peer)))
+            docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+            docker.run('cp', str(rendered), f'{container}:/faxdata/asterisk/pjsip.conf')
+        logger = tmp_path / 'logger.conf'
+        logger.write_text('[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n')
+        docker.run('cp', str(logger), f'{receiver}:/etc/asterisk/logger.conf')
+        environment = ['--env', f'ASTERISK_AMI_USERNAME={AMI_USER}', '--env', f'ASTERISK_AMI_PASSWORD={AMI_PASSWORD}']
+        docker.run('exec', '--detach', *environment, '--env', f'ASTERISK_INBOUND_SECRET={SECRET}',
+                   '--env', f'FAXBOT_API_URL=http://{addresses["api"]}:8080', receiver,
+                   'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        docker.run('exec', '--detach', *environment, sender, 'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        wait_booted(docker, receiver)
+        wait_booted(docker, sender)
+        docker.asterisk(receiver, 'pjsip set logger on')
+        docker.run('exec', '--detach', *environment, receiver, 'bash', '-c', AMI_LISTENER)
+        deadline = time.monotonic() + 20
+        while 'Authentication accepted' not in docker.read(receiver, '/tmp/ami-events.log'):
+            assert time.monotonic() < deadline, 'The receiver manager listener did not log in'
+            time.sleep(0.5)
+        for key, value in entries.items():
+            docker.asterisk(receiver, f'database put faxbot-screen {key} {value}')
+        pages = proof_pages()
+        sent = tmp_path / 'proof.tiff'
+        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
+        values = trunk_values(addresses['receiver'], FAX_LOCAL_STATION_ID=CALLER, FAX_HEADER='Faxbot proof')
+        fields = ami.originate_fields_for(values, uuid.uuid4().hex, DID, '/faxdata/outbound/proof.tiff',
+                                          attempt_id=uuid.uuid4().hex)
+        actions = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
+                   f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
+                   + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
+        session = docker.run('exec', '--interactive', sender, 'bash', '-c', ORIGINATE_SESSION,
+                             input_text=actions, check=False, timeout=120)
+        originate = next((event for event in parse_ami(session.stdout)
+                          if event.get('Event') == 'OriginateResponse'), {})
+        # The receiver's event and queue entry come with its reply; wait for them, then end any call.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and 'FaxScreened' not in docker.read(receiver, '/tmp/ami-events.log') \
+                and originate.get('Response') != 'Success':
+            time.sleep(0.5)
+        docker.asterisk(sender, 'channel request hangup all')
+        return {'originate': originate, 'receiver_log': docker.read(receiver, '/tmp/asterisk.log'),
+                'events': parse_ami(docker.read(receiver, '/tmp/ami-events.log')),
+                'queue': docker.asterisk(receiver, 'database show faxbot-screened')}
+    finally:
+        docker.close()
+
+
+def test_a_blocked_caller_is_declined_before_answer_and_an_expired_entry_lets_the_call_through(tmp_path):
+    key = CALLER.lstrip('+')
+    blocked = screened_call(tmp_path / 'blocked', {key: int(time.time()) + 3600})
+    log = blocked['receiver_log']
+    assert blocked['originate'].get('Response') == 'Failure', blocked['originate']
+    assert 'SIP/2.0 603 Decline' in log
+    # The INVITE was never answered: no 200 OK in reply to it, and no fax session started.
+    assert not re.search(r'SIP/2\.0 200 OK[^\n]*\n(?:[^\n]+\n)*?CSeq: \d+ INVITE', log)
+    assert 'ReceiveFAX' not in log
+    screened = [event for event in blocked['events'] if event.get('UserEvent') == 'FaxScreened']
+    assert len(screened) == 1 and screened[0]['Caller'] == CALLER and screened[0]['DID'] == DID
+    assert f'{CALLER}:{DID}:' in blocked['queue']
+    print(json.dumps({'blocked': {'originate': blocked['originate'], 'event': screened[0],
+                                  'queue': blocked['queue'].strip().splitlines()[:2]}}, indent=2))
+    expired = screened_call(tmp_path / 'expired', {key: int(time.time()) - 60})
+    assert expired['originate'].get('Response') == 'Success', expired['originate']
+    assert not any(event.get('UserEvent') == 'FaxScreened' for event in expired['events'])
+    print(json.dumps({'expired': {'originate': expired['originate']}}, indent=2))

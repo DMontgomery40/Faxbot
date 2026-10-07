@@ -6,7 +6,7 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, reply, settings, setup, sslfax, trunk, work
+from .commands import access, admin, blocked, delivery, fax, operations, reply, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -43,6 +43,7 @@ received.command('acknowledge')(work.work_acknowledge)
 received.command('done')(work.work_done)
 received.command('reopen')(work.work_reopen)
 received.command('export')(work.work_export)
+received.command('block')(blocked.received_block)
 deliveries = _group('Delivery of received faxes to email and other places, and any that failed.')
 deliveries.command('list')(delivery.intake_items)
 deliveries.command('retry')(delivery.intake_retry)
@@ -76,6 +77,7 @@ email = _group('Email delivery of received faxes.')
 email.add_typer(delivery.connectors, name='connectors')
 numbers.add_typer(email, name='email')
 numbers.add_typer(reply.reply, name='reply')
+numbers.add_typer(blocked.blocked, name='blocked')
 
 # -- recipients ----------------------------------------------------------------------
 
