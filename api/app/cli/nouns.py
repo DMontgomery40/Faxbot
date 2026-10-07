@@ -96,6 +96,7 @@ partners.command('revoke')(delivery.peers_revoke)
 partners.command('deliveries')(delivery.direct_deliveries)
 recipients.add_typer(partners, name='partners')
 recipients.add_typer(delivery.cases, name='cases')
+recipients.add_typer(delivery.toll_free, name='toll-free')
 
 # -- providers -----------------------------------------------------------------------
 
@@ -122,7 +123,7 @@ costs.command('reconcile')(delivery.routing_reconcile)
 costs.command('fax')(delivery.routing_fax_cost)
 costs.command('received')(delivery.routing_received_costs)
 costs.command('savings')(delivery.routing_savings)
-costs.command('recommendations')(delivery.routing_recommendations)
+costs.add_typer(delivery.recommendations, name='recommendations')
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('plans')(delivery.routing_plans)
 

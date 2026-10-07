@@ -61,3 +61,16 @@ export interface TelnyxT38Report {
   outcome?: 'on' | 'not_on' | 'refused' | 'not_found' | 'unavailable';
   message?: string;
 }
+
+// GET /admin/sip/telnyx/names: whether Telnyx looks up callers' names on each trunk number, and its price.
+export interface TelnyxNamesReport {
+  applies: boolean;
+  checked_at?: string | null;
+  numbers: Array<{ number: string; display: string; lookup: boolean | null; text: string; can_turn_off: boolean }>;
+  text: string | null;
+  price: { text: string; monthly: { currency: string; amount: string }; source_url: string; read_on: string };
+  monthly_total?: { currency: string; amount: string } | null;
+  // After turning it off for a number: what Telnyx shows now, in one sentence.
+  outcome?: 'off' | 'still_on' | 'refused' | 'not_found' | 'unavailable';
+  message?: string;
+}

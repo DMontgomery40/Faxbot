@@ -19,8 +19,9 @@ trunk page already uses for call charges (``telnyx_api_key``):
   ``/fqdn_connections/{id}``) reads ``user_name`` and
   ``outbound.t38_reinvite_source``.
 
-It reads nothing else from the account and never changes it by itself. The only
-change, made when a person selects the fix, is ``PATCH
+The voice read also gives ``caller_id_name_enabled``, which ``telnyx_numbers``
+reports as caller-name lookup. It reads nothing else from the account and never
+changes it by itself. The only change here, made when a person selects the fix, is ``PATCH
 /v2/phone_numbers/{id}/voice`` with the number's full ``media_features`` and
 only ``t38_fax_gateway_enabled`` set to true, followed by a fresh read. Fields
 left out of a PATCH stay as they are (Telnyx API reference, "Update a phone
@@ -206,8 +207,12 @@ def check(values, *, now=time.time):
                     entry['state'] = NOT_FOUND
                 else:
                     entry['number_id'], entry['connection_id'] = found
-                    features = telnyx.voice(found[0])['media_features']
+                    voice = telnyx.voice(found[0])
+                    features = voice['media_features']
                     entry['state'] = ON if features.get('t38_fax_gateway_enabled') is True else OFF
+                    # The same read says whether Telnyx looks up callers' names on this number (telnyx_numbers).
+                    lookup = voice.get('caller_id_name_enabled')
+                    entry['name_lookup'] = lookup if isinstance(lookup, bool) else None
             except Refused:
                 entry['state'] = stopped = UNREADABLE
             except Missing:

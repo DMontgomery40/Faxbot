@@ -816,20 +816,20 @@ TELNYX_RESULTS = {'on': 'turned_on', 'not_on': 'still_off', 'refused': 'refused'
                   'unavailable': 'unreachable'}
 
 
-def _telnyx_audit_row(service, actor, number, result, *, denied=False):
+def _telnyx_audit_row(service, actor, number, result, *, denied=False, operation=TELNYX_T38_OPERATION,
+                      request='POST /admin/sip/telnyx/numbers/{number}/t38'):
     """Write the request's one audit row, in the same table and shape as the other change audits."""
     import json
     import uuid
     from .access.http import utcnow
     credential = getattr(actor, 'credential', None)
-    details = {'request': 'POST /admin/sip/telnyx/numbers/{number}/t38', 'number': number,
-               'shown': telnyx_t38.shown(number), 'result': result}
+    details = {'request': request, 'number': number, 'shown': telnyx_t38.shown(number), 'result': result}
     with service.store.transaction() as connection:
         version = service.store.require_lock_on(connection)
         connection.execute(service.store.tables['access_audit'].insert().values(
             id=uuid.uuid4().hex, actor_principal_id=getattr(actor, 'principal_id', None),
             actor_key_binding_id=getattr(credential, 'binding_id', None),
-            actor_session_id=getattr(credential, 'session_id', None), operation=TELNYX_T38_OPERATION,
+            actor_session_id=getattr(credential, 'session_id', None), operation=operation,
             target_kind='installation', target_id='installation', policy_version_before=version,
             policy_version_after=version, outcome='denied' if denied else 'allowed',
             details=json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True), created_at=utcnow()))
@@ -873,6 +873,63 @@ async def telnyx_turn_on_t38(request: Request, number: str, identity=Depends(_te
     await run_lifecycle_step(lambda: _telnyx_audit_row(service, identity.actor, number, TELNYX_RESULTS[outcome]))
     body = await run_lifecycle_step(lambda: telnyx_t38.report(values))
     return {**body, 'outcome': outcome, 'message': telnyx_t38.outcome_sentence(outcome, number)}
+
+
+@router.get('/telnyx/names')
+async def telnyx_names(identity=Depends(require_permission('providers:read'))):
+    """Whether Telnyx looks up callers' names on each trunk number, what that costs, from the last check."""
+    from . import telnyx_numbers
+    values = configuration_values()
+    return await run_lifecycle_step(lambda: telnyx_numbers.report(values))
+
+
+# The Audit log's operation for turning off caller-name lookup at Telnyx; details hold the number and the result.
+TELNYX_NAMES_OPERATION = 'telnyx.caller_name_lookup'
+_NAMES_REQUEST = 'POST /admin/sip/telnyx/numbers/{number}/name-lookup-off'
+
+
+async def _telnyx_names_permission(request: Request, identity=Depends(require_identity)):
+    """providers:write, with a refusal audited under the caller-name operation (as for the T.38 change)."""
+    from .access.http import runtime as access_runtime
+    from .access.route_policy import authorize
+    from .access.types import AccessError
+    service = access_runtime(request)
+    number = str(request.path_params.get('number', ''))[:32]
+    try:
+        await run_lifecycle_step(lambda: authorize(service, identity.actor, 'providers:write'))
+    except AccessError as error:
+        await run_lifecycle_step(lambda: _telnyx_audit_row(
+            service, identity.actor, number, getattr(error, 'code', 'forbidden'), denied=True,
+            operation=TELNYX_NAMES_OPERATION, request=_NAMES_REQUEST))
+        raise
+    return identity
+
+
+_telnyx_names_permission.route_permission = RoutePermission('providers:write', 'installation', True, False)
+
+
+@router.post('/telnyx/numbers/{number}/name-lookup-off')
+async def telnyx_turn_off_name_lookup(request: Request, number: str,
+                                      identity=Depends(_telnyx_names_permission)):
+    """Turn off Telnyx's caller-name lookup for one trunk number, then read it back; changes nothing else.
+
+    A number that is not one of the trunk's is refused before anything else. Every other request leaves one
+    audit row naming the number and the result (turned_off, still_on, refused, not_found or unreachable).
+    """
+    from . import telnyx_numbers
+    values = configuration_values()
+    if not telnyx_t38.applies(values):
+        raise HTTPException(400, detail='Add a Telnyx API key to the Telnyx trunk before changing Telnyx settings.')
+    if number not in values.sip_trunk_did_list:
+        raise HTTPException(404, detail='That number is not one of this trunk\'s fax numbers.')
+    outcome, _ = await run_lifecycle_step(lambda: telnyx_numbers.turn_off(values, number))
+    from .access.http import runtime as access_runtime
+    service = access_runtime(request)
+    await run_lifecycle_step(lambda: _telnyx_audit_row(service, identity.actor, number,
+                                                       telnyx_numbers.OUTCOMES[outcome],
+                                                       operation=TELNYX_NAMES_OPERATION, request=_NAMES_REQUEST))
+    body = await run_lifecycle_step(lambda: telnyx_numbers.report(values))
+    return {**body, 'outcome': outcome, 'message': telnyx_numbers.outcome_sentence(outcome, number)}
 
 
 # With the check turned off, look again this often for the setting to change.
