@@ -16,6 +16,7 @@ import { EncodedPagesPanel } from './EncodedPages';
 import RecipientFaxLimitsPanel from './RecipientFaxLimits';
 import TollFreeApprovalPanel from './TollFreeApproval';
 import { RecipientPagesPanel } from './PagesSettings';
+import FaxMachinePanel from './FaxMachinePanel';
 
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
@@ -191,6 +192,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />
           <TollFreeApprovalPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientPagesPanel client={client} number={detail.number} canWrite={canWrite} />
+          <FaxMachinePanel client={client} number={detail.number} canWrite={canWrite} />
         </>
       )}
     </FormDialog>

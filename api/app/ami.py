@@ -26,6 +26,8 @@ STATUS_EVENT_FIELDS = {
     "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
     # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.
     "peerentry": ("ObjectName", "Status"),
+    # Faxbot's own families in Asterisk's database: blocked callers and the calls turned away (inbound/screening.py).
+    "dbgettreeresponse": ("Key", "Val"),
 }
 # One plain sentence for each state of Faxbot's connection to its fax engine
 # (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
@@ -75,6 +77,8 @@ def prepare_originate_fields(
     fax_preference: bool = False,
     max_rate: Optional[int] = None,
     ecm: Optional[bool] = None,
+    t38_now: bool = False,
+    iaf: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -128,6 +132,14 @@ def prepare_originate_fields(
         variables["FAXBOT_MAXRATE"] = str(max_rate)
     if ecm is not None:
         variables["FAXBOT_ECM"] = "yes" if ecm else "no"
+    # Patch 0004: ask for T.38 at once (a number that never asks itself), and Internet Aware Fax (an approved
+    # fax server or enrolled partner only). Both are learned or approved per number (engine_frames.py).
+    if t38_now:
+        variables["FAXBOT_T38_NOW"] = "yes"
+    if iaf is not None:
+        if iaf not in ("peer", "endpoint"):
+            raise ValueError("Unsupported AMI fax mode")
+        variables["FAXBOT_IAF"] = iaf
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -148,25 +160,85 @@ def prepare_originate_fields(
     return fields
 
 
-def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None):
+def _database():
+    """The installation's database engine, or None before it is ready (reply numbers fall back then)."""
+    try:
+        from . import db
+        return db.engine
+    except Exception:
+        return None
+
+
+def reply_choice(values, *, mailbox_id=None):
+    """The reply number this fax shows in its header line and station ID (routing/reply_number.py).
+
+    Never raises: when nothing can be read the fax shows the line's own number, as before.
+    """
+    from .routing import reply_number
+    try:
+        store = None
+        engine = _database()
+        if engine is not None:
+            try:
+                from .routing.store import RouteStore
+                store = RouteStore(engine)
+            except Exception:
+                store = None
+        return reply_number.choose(values, engine=engine, store=store, mailbox_id=mailbox_id)
+    except Exception:
+        return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
+
+
+def frame_options(values, dest, max_rate=None):
+    """What Faxbot learned or was told about ``dest`` (engine_frames.py), as Originate keyword arguments.
+
+    T.38 at once and a learned starting speed come from Faxbot's own calls to the number; a learned speed
+    only ever lowers this call's speed. Internet Aware Fax only for a number you approved or an enrolled
+    partner marked IAF capable. Never raises: nothing known changes nothing.
+    """
+    from . import engine_frames
+    try:
+        options = engine_frames.call_options(values, dest, engine=_database())
+    except Exception:
+        return {}
+    found = {}
+    if options.t38_now:
+        found["t38_now"] = True
+    if options.iaf:
+        found["iaf"] = options.iaf
+    if options.max_rate and (max_rate is None or options.max_rate < max_rate):
+        found["max_rate"] = options.max_rate
+    return found
+
+
+def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
+                         choice=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
     (ValueError naming fields only) when the trunk cannot place calls. Without
     one, the call carries the station ID as before; an empty station ID sends none.
-    An empty station ID on a trunk call means the trunk's caller ID.
     ``call`` (hylafax_engine.CallSettings) adds this call's speed and error correction.
+
+    The station ID (TSI) and the number in each page's header line are the
+    reply number (``reply_choice``: the mailbox's, the organization's, the
+    station ID setting, or the cheapest number that reaches a mailbox); with
+    none, a trunk call shows the trunk's caller ID. The caller ID becomes the
+    reply number only when it is one of the same trunk's numbers.
     """
     from . import sip_trunk
+    from .routing.reply_number import caller_id_for
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
+    choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
+    limits.update(frame_options(values, dest, limits.get("max_rate")))
     if not sip_trunk.configured(values):
-        return prepare_originate_fields(job_id, dest, tiff_path, caller_id=values.fax_station_id,
+        return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=values.fax_header, attempt_id=attempt_id, **limits)
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
-        job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
-        attempt_id=attempt_id, station_id=values.fax_station_id or None,
+        job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
+        header=values.fax_header, attempt_id=attempt_id, station_id=choice.number or None,
         dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
 
 
@@ -381,6 +453,10 @@ class AMIClient:
             self._emit("FaxEngineCall", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginemissed":
             self._emit("FaxEngineMissed", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxscreened":
+            self._emit("FaxScreened", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxframes":
+            self._emit("FaxFrames", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -558,6 +634,14 @@ class AMIClient:
     def on_engine_missed(self, cb: Callable[[Dict[str, str]], None]):
         """A received call none of the SSL Fax engine's free lines answered (the built-in engine took it)."""
         self._listen("FaxEngineMissed", cb)
+
+    def on_frames(self, cb: Callable[[Dict[str, str]], None]):
+        """What the far end's fax machine said on a built-in engine call (patch 0004's FaxFrames event)."""
+        self._listen("FaxFrames", cb)
+
+    def on_screened(self, cb: Callable[[Dict[str, str]], None]):
+        """A call from a blocked sender, turned away before it was answered (the dialplan's FaxScreened event)."""
+        self._listen("FaxScreened", cb)
 
     def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
         """A received call that left no fax image (the dialplan's FaxInboundCall event)."""

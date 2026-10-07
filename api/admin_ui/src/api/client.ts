@@ -76,6 +76,7 @@ import type {
 } from './types';
 import type { EfaxStatus, HumbleFaxStatus } from './types';
 import type { ReceivingOptions } from '../components/ProviderRulesApi';
+import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1344,6 +1345,53 @@ class AdminAPIClient {
       formData.append('titles', document.title);
     }
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
+  }
+
+  // Numbers → Sender identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
+  async getReplyNumber(): Promise<ReplyNumberView> {
+    return this.json('/numbers/reply');
+  }
+
+  async setReplyNumber(number: string): Promise<{ ok: true; number: string | null }> {
+    return this.json('/numbers/reply', { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async setMailboxReplyNumber(mailboxId: string, number: string): Promise<{ ok: true; number: string }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async clearMailboxReplyNumber(mailboxId: string): Promise<{ ok: true }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
+  }
+
+  // Numbers → Blocked senders: callers turned away before the call is answered.
+  async getBlockedSenders(): Promise<BlockedSendersView> {
+    return this.json('/screening');
+  }
+
+  async blockSender(body: { number?: string; inbound_id?: string; reason: string; days?: number }): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json('/screening/senders', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async unblockSender(entryId: string): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json(`/screening/senders/${id(entryId)}`, { method: 'DELETE' });
+  }
+
+  // Recipients → Details, "Their fax machine": what it said on recent calls, what Faxbot learned, and IAF.
+  async getFaxMachine(number: string): Promise<FaxMachineView> {
+    return this.json(`/fax-machines/numbers/${id(number)}`);
+  }
+
+  async listIafServers(): Promise<{ servers: IafServer[]; partners: string[] }> {
+    return this.json('/fax-machines/iaf');
+  }
+
+  async approveIaf(body: { number: string; kind: 'peer' | 'endpoint'; label: string }): Promise<{ ok: true; server: IafServer }> {
+    return this.json('/fax-machines/iaf', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async removeIaf(serverId: string): Promise<{ ok: true; server: IafServer }> {
+    return this.json(`/fax-machines/iaf/${id(serverId)}`, { method: 'DELETE' });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

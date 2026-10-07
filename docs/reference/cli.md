@@ -113,6 +113,7 @@ $ faxbot received [OPTIONS] COMMAND [ARGS]...
 * `done`: Mark a received fax done, with a short note.
 * `reopen`: Reopen a received fax marked done.
 * `export`: Download a received fax&#x27;s record as a zip...
+* `block`: Mark a received fax&#x27;s sender as junk:...
 * `deliveries`: Delivery of received faxes to email and...
 
 ### `faxbot received list`
@@ -392,6 +393,26 @@ $ faxbot received export [OPTIONS] {item_id}
 
 * `-o, --output <str>`: Zip file to write. Use &#x27;-&#x27; for standard output.
 * `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot received block`
+
+Mark a received fax&#x27;s sender as junk: their calls are turned away before Faxbot answers.
+
+**Usage**:
+
+```console
+$ faxbot received block [OPTIONS] {inbound_id}
+```
+
+**Arguments**:
+
+* `inbound_id`: The received fax, by its ID.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why this sender is junk, in a few words.  [required]
+* `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
 * `--help`: Show this message and exit.
 
 ### `faxbot received deliveries`
@@ -704,6 +725,8 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `explain`: Which mailbox, email and urgency a...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
+* `reply`: The number printed on the faxes you send,...
+* `blocked`: Junk senders whose calls are turned away...
 
 ### `faxbot numbers list`
 
@@ -1041,6 +1064,162 @@ $ faxbot numbers email connectors remove [OPTIONS] {name}
 
 * `--help`: Show this message and exit.
 
+### `faxbot numbers reply`
+
+The number printed on the faxes you send, so replies reach you on your cheapest number.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show the number your faxes show, why, what...
+* `numbers`: List your numbers with the mailbox each...
+* `set`: Print this number on every fax (or on...
+* `clear`: Let Faxbot choose the number again (or...
+
+#### `faxbot numbers reply show`
+
+Show the number your faxes show, why, what caller ID each provider shows, and which number is cheapest.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply numbers`
+
+List your numbers with the mailbox each reaches and what receiving on it costs.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply numbers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply set`
+
+Print this number on every fax (or on faxes from one mailbox) and send it as the station ID.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply set [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Your fax number that replies should reach.  [required]
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply clear`
+
+Let Faxbot choose the number again (or give a mailbox&#x27;s faxes the organization&#x27;s number).
+
+**Usage**:
+
+```console
+$ faxbot numbers reply clear [OPTIONS]
+```
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+### `faxbot numbers blocked`
+
+Junk senders whose calls are turned away before Faxbot answers, and the calls turned away.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List blocked senders and the calls turned...
+* `add`: Block a sender: their calls are turned...
+* `remove`: Unblock a sender.
+
+#### `faxbot numbers blocked list`
+
+List blocked senders and the calls turned away.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked list [OPTIONS]
+```
+
+**Options**:
+
+* `--all`: Also list senders no longer blocked.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers blocked add`
+
+Block a sender: their calls are turned away before Faxbot answers.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The sender&#x27;s fax number.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why this sender is junk, in a few words.  [required]
+* `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers blocked remove`
+
+Unblock a sender. The entry stays in the history, marked as removed by you.
+
+**Usage**:
+
+```console
+$ faxbot numbers blocked remove [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The blocked number (or its entry ID, from --json).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `faxbot recipients`
 
 Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and case packets.
@@ -1061,6 +1240,8 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one number you fax: its settings, how...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
+* `fax-machine`: What a number&#x27;s fax machine said on recent...
+* `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `encoded`: Encoded pages (experimental): send a...
 * `partners`: Partners: other offices running Faxbot,...
@@ -1146,6 +1327,96 @@ $ faxbot recipients limits [OPTIONS] {number}
 
 * `--speed RATE`: Highest speed for this number: 14400, 9600, 7200, 4800, or default for the setting all faxes use.
 * `--error-correction ON|OFF`: Error correction for this number: on, off, or default.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients fax-machine`
+
+What a number&#x27;s fax machine said on recent calls, and what Faxbot learned from them.
+
+**Usage**:
+
+```console
+$ faxbot recipients fax-machine [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: A fax number you send to or receive from.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients iaf`
+
+Internet Aware Fax to fax servers that receive over the internet, such as another Faxbot or a Brooktrout SR140.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the fax servers you approved for...
+* `add`: Send faxes to and from a fax server as...
+* `remove`: Stop Internet Aware Fax for a fax server:...
+
+#### `faxbot recipients iaf list`
+
+List the fax servers you approved for Internet Aware Fax, and partner offices marked for it.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients iaf add`
+
+Send faxes to and from a fax server as Internet Aware Fax. Never for a fax machine on a phone line.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The fax server&#x27;s number.  [required]
+
+**Options**:
+
+* `--kind <str>`: faxbot (another Faxbot) or server (a fax server that takes Internet Aware Fax, such as an SR140).  [required]
+* `--name <str>`: A name you will recognise, such as &quot;Head office SR140&quot;.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients iaf remove`
+
+Stop Internet Aware Fax for a fax server: its faxes go at fax line speed again.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf remove [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The approved number (or its ID, from --json).  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients together`

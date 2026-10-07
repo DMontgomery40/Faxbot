@@ -267,7 +267,7 @@ async def test_a_trunk_fax_goes_to_the_ssl_fax_engine_and_is_submitted_after_the
     job = sip_job(installation, tmp_path, engine_running=True)
     ami, events = EngineAmi(), []
 
-    def create_job(values, *, tag, job_id, attempt_id, tiff_path, header='', settings=None):
+    def create_job(values, *, tag, job_id, attempt_id, tiff_path, header='', settings=None, station=None):
         # Before the durable marker: the plan is stored and nothing is dialed.
         assert store.get(job_id)['state'] != 'submitting' and tag in ami.plans
         events.append('create')

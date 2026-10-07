@@ -59,6 +59,7 @@ import ImportDocument from './ImportDocument';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 import { providerLabel } from '../providerLabels';
+import MarkJunk from './MarkJunk';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -153,6 +154,7 @@ export default function Received({
   // that cannot read it see the list without it.
   const canReadDelivery = !!permissions?.has('mailboxes:read');
   const canRetryDelivery = !!permissions?.has('settings:write');
+  const canBlockSender = !!permissions?.has('settings:write');
   const canOpenEmailSettings = !!permissions?.has('settings:read') && !!onNavigate;
   const receiving = inboundEnabled !== false;
 
@@ -500,6 +502,9 @@ export default function Received({
         )}
         {item && can(item, 'export') && (
           <Button size="small" onClick={() => void exportEvidence(item)}>Export</Button>
+        )}
+        {fax && canBlockSender && fax.fr && (
+          <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
         )}
       </Stack>
     );

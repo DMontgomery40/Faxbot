@@ -6,8 +6,8 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import (access, accounts, admin, codec, delivery, fax, operations, pages, rules, settings, setup,
-                       sslfax, trunk, work)
+from .commands import (access, accounts, admin, blocked, codec, delivery, fax, fax_machines, operations, pages, reply,
+                       rules, settings, setup, sslfax, trunk, work)
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -45,6 +45,7 @@ received.command('acknowledge')(work.work_acknowledge)
 received.command('done')(work.work_done)
 received.command('reopen')(work.work_reopen)
 received.command('export')(work.work_export)
+received.command('block')(blocked.received_block)
 deliveries = _group('Delivery of received faxes to email and other places, and any that failed.')
 deliveries.command('list')(delivery.intake_items)
 deliveries.command('retry')(delivery.intake_retry)
@@ -82,6 +83,8 @@ numbers.add_typer(mailboxes, name='mailboxes')
 email = _group('Email delivery of received faxes.')
 email.add_typer(delivery.connectors, name='connectors')
 numbers.add_typer(email, name='email')
+numbers.add_typer(reply.reply, name='reply')
+numbers.add_typer(blocked.blocked, name='blocked')
 
 # -- recipients ----------------------------------------------------------------------
 
@@ -91,6 +94,8 @@ recipients.command('list')(delivery.routing_destinations)
 recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
 recipients.command('limits')(sslfax.recipient_limits)
+recipients.command('fax-machine')(fax_machines.fax_machine)
+recipients.add_typer(fax_machines.iaf, name='iaf')
 recipients.add_typer(delivery.batching, name='together')
 recipients.add_typer(codec.numbers, name='encoded')
 partners = _group('Partners: other offices running Faxbot, which get your faxes over the internet instead of a phone '
