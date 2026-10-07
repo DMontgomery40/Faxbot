@@ -104,14 +104,15 @@ def sending_together(routes, engine, *, now, days, separator_pages=None):
     return result
 
 
-def direct_delivery(routes, engine, *, since, days):
-    """Fax calls avoided by documents a partner accepted directly; each priced on the fax's own provider."""
+def _accepted_directly(routes, engine, *, since, fax_images):
+    """Faxes a partner accepted directly, originals or fax images (0034 ``kind``), each priced on its own provider."""
     t = reflect(engine, ('direct_deliveries', 'fax_jobs', 'delivery_attempt_costs'))
     d, jobs, costs = t['direct_deliveries'], t['fax_jobs'], t['delivery_attempt_costs']
     faxed = sa.exists().where(costs.c.job_id == d.c.job_id, costs.c.route != DIRECT, costs.c.outcome == 'success')
+    kind = d.c.kind == 'fax_image' if fax_images else d.c.kind.is_(None)
     with read_connection(engine) as connection:
         rows = connection.execute(sa.select(jobs.c.backend, jobs.c.pages).join(jobs, jobs.c.id == d.c.job_id).where(
-            d.c.direction == 'outbound', d.c.state == 'accepted',
+            d.c.direction == 'outbound', d.c.state == 'accepted', kind,
             sa.func.coalesce(d.c.accepted_at, d.c.updated_at) >= since, ~faxed)).all()
     result = {'faxes': 0, 'calls_avoided': 0, 'pages': 0, 'priced': 0, 'in_plan': 0, 'unpriced': 0, 'saved': {}}
     cards = {}
@@ -122,6 +123,26 @@ def direct_delivery(routes, engine, *, since, days):
         if backend not in cards:
             cards[backend] = routes.card_for(backend) if backend else None
         _avoided(cards[backend], pages, None, result)
+    return result
+
+
+def direct_fax_images(routes, engine, *, since, days):
+    """Telephone calls avoided by fax images a partner accepted directly (M1a); never counted as faxed."""
+    result = _accepted_directly(routes, engine, since=since, fax_images=True)
+    if not result['faxes']:
+        result['sentence'] = f'No fax went to a partner as a fax image in the last {days} days.'
+        return result
+    sentence = f"{_plural(result['calls_avoided'], 'telephone call')} avoided by direct fax images"
+    sentence += f", saving about {_money_text(result['saved'])}." if result['saved'] else '.'
+    if result['in_plan']:
+        sentence += f" {result['in_plan']} of them would have gone through your monthly plan, so they saved no money."
+    result['sentence'] = sentence
+    return result
+
+
+def direct_delivery(routes, engine, *, since, days):
+    """Fax calls avoided by original documents a partner accepted directly; fax images are counted on their own."""
+    result = _accepted_directly(routes, engine, since=since, fax_images=False)
     if not result['faxes']:
         result['sentence'] = f'No documents went straight to a partner in the last {days} days.'
         return result
@@ -236,6 +257,7 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     together = sending_together(routes, engine, now=now, days=days, separator_pages=index)
     index['sentence'] = money.separator_pages_sentence(index, days=days)
     direct = direct_delivery(routes, engine, since=since, days=days)
+    fax_images = direct_fax_images(routes, engine, since=since, days=days)
     packets = case_packets(routes, engine, since=since, days=days)
     # Faxes whose pages went over SSL Fax (the fast fax service), priced with the trunk carrier's billing.
     from ..hylafax_records import sslfax_savings
@@ -248,10 +270,11 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     from ..pages.views import savings as page_savings
     packing = page_savings(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, index, direct, packets, sslfax, own, toll_free, packing):
+    for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'separator_pages': index, 'direct_delivery': direct,
+            'direct_fax_images': fax_images,
             'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'packing': packing,
             'total': total,
             'total_sentence': total_sentence(total, days)}

@@ -44,6 +44,7 @@ config.attributes["schema_routing_rules"] = importlib.import_module(package + ".
 config.attributes["schema_receiving_rules"] = importlib.import_module(package + ".schema_receiving_rules")
 config.attributes["schema_dense_pages"] = importlib.import_module(package + ".schema_dense_pages")
 config.attributes["schema_fax_codec"] = importlib.import_module(package + ".schema_fax_codec")
+config.attributes["schema_peer_fax"] = importlib.import_module(package + ".schema_peer_fax")
 
 
 def migrate(connection):

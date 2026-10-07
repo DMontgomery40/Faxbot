@@ -107,7 +107,25 @@ def _assigned_route(api, job):
         return None
     if not (cost or {}).get('routes'):
         return None
-    return ('Provider', _route_text(job, cost))
+    text = _route_text(job, cost)
+    if cost['routes'][-1] == 'direct':
+        # As Sent shows it: a fax image went directly, with no telephone call, and is never called "faxed".
+        text = _direct_text(api, job) or text
+    return ('Provider', text)
+
+
+def _direct_text(api, job):
+    """"Delivered directly as a fax image to ..." for a fax image the partner accepted; None otherwise or unknown."""
+    try:
+        attempt = ((api.get('/admin/fax-jobs/' + segment(job['id']) + '/delivery') or {}).get('attempt') or {}).get('id')
+        records = api.get('/direct/deliveries').get('deliveries') or []
+    except (CliError, KeyError, AttributeError):
+        return None
+    record = next((item for item in records if item.get('direction') == 'outbound' and attempt
+                   and item.get('message_id') == attempt), None)
+    if record is None or record.get('state') != 'accepted' or record.get('kind') != 'fax_image':
+        return None
+    return record.get('status')
 
 
 def send(to: str = typer.Argument(..., help='Fax number to send to, for example +15551234567.'),
@@ -433,10 +451,12 @@ def _inbound_fields(item):
 
 
 def came_through(item):
-    """Where a received fax came from, as Received shows it: a provider, "Imported" or "This Faxbot"."""
+    """Where a received fax came from, as Received shows it: a provider, "Imported", "This Faxbot" or "Direct delivery"."""
     backend = item.get('backend')
     if backend == 'local':
         return 'This Faxbot'
+    if backend == 'direct':
+        return 'Direct delivery'
     return 'Imported' if backend == 'import' else (_provider(backend) or '-')
 
 

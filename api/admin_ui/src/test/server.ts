@@ -187,6 +187,8 @@ export function emptySavings() {
       numbers: 0, calls: 0, faxes: 0, calls_saved: 0, priced_calls: 0 },
     direct_delivery: { ...part('No documents went straight to a partner in the last 30 days.'),
       faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    direct_fax_images: { ...part('No fax went to a partner as a fax image in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
     case_packets: { ...part('No case packet in the last 30 days left out a document the recipient already had.'),
       counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0, documents_left_out: 0,
       pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },

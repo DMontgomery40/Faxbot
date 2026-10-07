@@ -309,6 +309,49 @@ class IntakeStore:
             next_attempt_at=when, last_error=note, version=1, created_at=now, updated_at=now))
         return identity
 
+    def add_fax_image(self, imports, *, account, message_id, image_path, from_number, to_number, pages,
+                      received_at, report, country=DEFAULT_COUNTRY, original=False):
+        """File a document a partner delivered directly as a received fax; returns the received fax's id.
+
+        ``imports`` is the received-fax ``ImportStore``. A fax image is kept byte
+        for byte as the received fax's image and turned into the PDF people read,
+        as a fax received over the SIP trunk is. ``original=True`` files an
+        original document (a PDF) the same way, unchanged, so every direct
+        arrival has mailbox rules, Work and evidence. Repeating it returns the
+        same received fax. Its email item names it a direct delivery and is keyed
+        on the received fax, so the inbound feed never adds a second one.
+        """
+        from ..inbound.acquisition import convert_tiff, discard, store_document
+        # Faxbot itself delivered it, with no provider: the ``local`` source, under the partner's account.
+        begun = imports.begin(source='local', account=account, operation_id=message_id, backend='direct',
+                              inbound_backend='direct', to_number=to_number, from_number=from_number,
+                              reported_pages=pages, report=report, source_received_at=received_at,
+                              tiff_path=None if original else image_path, schedule=False, country=country)
+        inbound_fax_id = begun.inbound_fax_id
+        if begun.state == 'pending':
+            if original:
+                with open(image_path, 'rb') as handle:
+                    artifact = store_document(handle.read(), inbound_fax_id, provider='The partner')
+            else:
+                artifact = convert_tiff(image_path, inbound_fax_id)
+            completion = imports.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
+                                          size=artifact.size, pages=artifact.pages, media_type=artifact.media_type,
+                                          source_received_at=received_at)
+            discard(artifact, completion)
+        now = utcnow()
+        try:
+            with write_transaction(self.engine) as connection:
+                if connection.execute(sa.select(self.items.c.id).where(
+                        self.items.c.inbound_fax_id == inbound_fax_id)).first() is None:
+                    when, note = self._schedule(connection, to_number, received_at, now)
+                    connection.execute(self.items.insert().values(
+                        id=uuid4().hex, source='direct', inbound_fax_id=inbound_fax_id, received_at=received_at,
+                        pages=pages, from_number=from_number, to_number=to_number, state='received', attempts=0,
+                        next_attempt_at=when, last_error=note, version=1, created_at=now, updated_at=now))
+        except DeliveryStoreError:
+            pass  # The inbound feed created it first; the unique index keeps one.
+        return inbound_fax_id
+
     def get_item(self, identity, connection=None):
         def read(conn):
             row = conn.execute(sa.select(self.items).where(self.items.c.id == identity)).mappings().one_or_none()

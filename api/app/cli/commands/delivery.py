@@ -408,7 +408,7 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 
 
 SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'Separator pages left out'),
-                ('direct_delivery', 'Direct delivery'),
+                ('direct_delivery', 'Direct delivery'), ('direct_fax_images', 'Direct fax images'),
                 ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
                 ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'))
 
@@ -1170,9 +1170,24 @@ def _peer(api, reference):
 def peers_list():
     """List your partners."""
     items = state.api().get('/direct/peers')['peers']
-    state.out().result(items, lambda out: out.table(['Partner', 'Fax number', 'State', 'Status', 'Verified'],
-        [[item['organization'], item['fax_number'], item['state'], item['status'],
+    state.out().result(items, lambda out: out.table(['Partner', 'Fax number', 'State', 'Status', 'Fax images', 'Verified'],
+        [[item['organization'], item['fax_number'], item['state'], item['status'], item.get('fax_images_text') or '-',
           local_time(item.get('verified_at'), empty='-')] for item in items], empty='No partners.'))
+
+
+@peers.command('fax-images')
+def peers_fax_images(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
+                     choice: str = typer.Argument(..., metavar='on|off',
+                                                  help="on (the default) accepts the partner's faxes as the exact fax "
+                                                       'image, filed like any received fax; off accepts only original '
+                                                       'documents.')):
+    """Accept faxes from a partner as the exact fax image (on, the default) or only as original documents (off)."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/fax-images", json={'accept': choice == 'on'})
+    state.out().result(result, lambda out: out.line(result['detail']))
 
 
 @peers.command('add')

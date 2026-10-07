@@ -1225,6 +1225,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `challenge`: Fax the partner a one-page code to enter...
 * `confirm`: Enter the code from a partner&#x27;s check fax...
 * `revoke`: Remove a partner.
+* `fax-images`: Accept faxes from a partner as the exact...
 * `deliveries`: List recent faxes sent to and received...
 
 #### `faxbot recipients partners card`
@@ -1324,6 +1325,25 @@ $ faxbot recipients partners revoke [OPTIONS] {partner}
 **Arguments**:
 
 * `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners fax-images`
+
+Accept faxes from a partner as the exact fax image (on, the default) or only as original documents (off).
+
+**Usage**:
+
+```console
+$ faxbot recipients partners fax-images [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+* `on|off`: on (the default) accepts the partner&#x27;s faxes as the exact fax image, filed like any received fax; off accepts only original documents.  [required]
 
 **Options**:
 

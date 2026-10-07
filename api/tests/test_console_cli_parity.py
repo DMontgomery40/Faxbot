@@ -47,6 +47,7 @@ NOT_OPERATOR = {
     ('POST', '/direct/deliveries'): 'partner protocol: a signed delivery from a partner installation',
     ('GET', '/direct/deliveries/{message_id}'): 'partner protocol: a signed status request',
     ('POST', '/direct/verifications'): 'partner protocol: a signed code confirmation',
+    ('POST', '/direct/capabilities'): 'partner protocol: a signed statement of what the partner accepts',
     ('POST', '/mobile/pair'): 'device: the phone exchanges its pairing code',
     ('POST', '/fax'): 'public fax API for SDKs and integrations',
     ('GET', '/fax/{job_id}'): 'public fax API for SDKs and integrations',

@@ -137,7 +137,11 @@ function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliver
   const forCurrent = sent.find((record) => record.message_id === current);
   const partner = (record: DirectDeliveryRecord) => record.partner || 'the partner';
   if (forCurrent?.state === 'accepted') {
-    return { text: `Delivered directly to ${partner(forCurrent)}.`, severity: 'success', hideFaxId: true };
+    // A fax image went directly, with no telephone call; it is never called "faxed".
+    const text = forCurrent.kind === 'fax_image'
+      ? `Delivered directly as a fax image to ${partner(forCurrent)}; no telephone call.`
+      : `Delivered directly to ${partner(forCurrent)}.`;
+    return { text, severity: 'success', hideFaxId: true };
   }
   if (forCurrent && (forCurrent.state === 'sending' || forCurrent.state === 'uncertain')) {
     return { text: "Waiting for the partner's answer.", severity: 'info', hideFaxId: true };

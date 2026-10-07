@@ -3,7 +3,9 @@
 Operator routes use settings:read and settings:write (plus fax:send to send a
 challenge fax). Partner routes carry no API key; each request is authenticated
 by an Ed25519 signature from an enrolled partner and they answer 404 while
-direct delivery is switched off.
+direct delivery is switched off. A partner's fax images are accepted only after
+the operator turns them on for that partner; the partner is told with a signed
+statement (``POST /direct/capabilities``) and in every signed answer after.
 """
 from datetime import datetime
 
@@ -19,7 +21,7 @@ from ..routing.submit import accept_generated_fax
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
 from .service import DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
-from .store import DirectConflict
+from .store import DirectConflict, accepts_fax_images
 
 
 def service_for(app):
@@ -27,9 +29,13 @@ def service_for(app):
     if engine is None:
         raise HTTPException(503, detail='Installation configuration is not ready.')
     http = getattr(app.state, 'direct_http', None)  # Replaced only by tests.
+
+    def resources():
+        access = getattr(app.state, 'access_runtime', None)
+        return access.inbound if access is not None else None
     try:
         return DirectService(engine, values=lambda: runtime.manager.store.read().active.values,
-                             environment=runtime.environment, http=http)
+                             environment=runtime.environment, http=http, resources=resources)
     except DeliveryStoreError:
         raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
 
@@ -41,8 +47,19 @@ def _background(app):
     from ..outbound_store import OutboundStore
     service = service_for(app)
     reconciler = DirectReconciler(service, OutboundStore(runtime.manager.store))
+
+    async def file_arrivals():
+        return await run_lifecycle_step(service.filing.step)
     return [('faxbot-direct-reconcile', repeat_async(reconciler.step, interval=60.0, initial_delay=20.0,
-                                                     warning='Direct delivery confirmations are temporarily unavailable.'))]
+                                                     warning='Direct delivery confirmations are temporarily unavailable.')),
+            # A document accepted just before a restart is filed in Received here.
+            ('faxbot-direct-filing', repeat_async(file_arrivals, interval=60.0, initial_delay=15.0,
+                                                  warning='Documents partners delivered directly are waiting to be '
+                                                          'filed in Received.')),
+            # Partners learn what we accept from them after an upgrade, an enrollment or a change (signed).
+            ('faxbot-direct-tell', repeat_async(service.tell_partners, interval=600.0, initial_delay=30.0,
+                                                warning='Partners could not be told about fax images yet; Faxbot '
+                                                        'tries again.'))]
 
 
 router = APIRouter(prefix='/direct', tags=['Direct delivery'], lifespan=lifespan_tasks(_background))
@@ -68,6 +85,24 @@ STATE_TEXT = {
 }
 
 
+def _flag(value):
+    return value is not None and int(value) == 1
+
+
+def fax_images_text(peer):
+    """One sentence on fax images with this partner, or None when there is nothing to say."""
+    if peer['state'] == 'revoked':
+        return None
+    receive, send = accepts_fax_images(peer), _flag(peer.get('partner_receives_fax_images'))
+    if send and peer['state'] == 'verified':
+        if receive:
+            return 'Faxes go both ways as the exact fax image, with no telephone call.'
+        return 'Your faxes to them go as the exact fax image, with no telephone call.'
+    if receive:
+        return 'Their faxes to you arrive as the exact fax image and are filed like any received fax.'
+    return None
+
+
 def _peer_view(peer, now=None):
     now = now or datetime.utcnow()
     open_code = peer['challenge_expires_at'] is not None and peer['challenge_expires_at'] > now
@@ -77,7 +112,10 @@ def _peer_view(peer, now=None):
     return {'id': peer['id'], 'organization': peer['organization'], 'fax_number': peer['phone_number'],
             'endpoint': peer['endpoint_url'], 'state': peer['state'], 'status': status,
             'code_sent': open_code, 'code_expires_at': peer['challenge_expires_at'] if open_code else None,
-            'verified_at': peer['verified_at'], 'expires_at': peer['expires_at'], 'version': peer['version']}
+            'verified_at': peer['verified_at'], 'expires_at': peer['expires_at'], 'version': peer['version'],
+            'receive_fax_images': accepts_fax_images(peer),
+            'partner_receives_fax_images': _flag(peer.get('partner_receives_fax_images')),
+            'fax_images_text': fax_images_text(peer)}
 
 
 # Operator routes ----------------------------------------------------------------
@@ -149,6 +187,35 @@ async def confirm_partner_code(peer_id: str, payload: ConfirmIn, request: Reques
     return {'confirmed': True, 'detail': detail}
 
 
+class FaxImagesIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    accept: bool
+
+
+@router.post('/peers/{peer_id}/fax-images', dependencies=[Depends(require_permission('settings:write'))])
+async def set_fax_images(peer_id: str, payload: FaxImagesIn, request: Request):
+    """Accept fax images from this partner, or stop; the partner is told with a signed statement."""
+    service = service_for(request.app)
+    try:
+        peer, told = await service.set_fax_images(peer_id, payload.accept)
+    except DirectConflict as error:
+        raise HTTPException(409, detail=str(error)) from None
+    except IdentityUnavailable:
+        raise HTTPException(503, detail='Direct delivery keys are unavailable on this installation.') from None
+    except DeliveryStoreError:
+        raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
+    name = peer['organization']
+    if told == 'told':
+        detail = (f'{name} now sends you faxes as the exact fax image.' if payload.accept
+                  else f'{name} now sends you the original documents.')
+    elif told == 'unsupported':
+        detail = f"Saved. {name}'s Faxbot cannot send fax images yet, so their documents keep arriving as originals."
+    else:
+        detail = (f'Saved. Faxbot could not reach {name} just now; it tells them as soon as it can, and with its '
+                  'answer to their next delivery.')
+    return {**_peer_view(peer), 'detail': detail, 'partner_told': told == 'told'}
+
+
 @router.post('/peers/{peer_id}/revoke', dependencies=[Depends(require_permission('settings:write'))])
 async def revoke_peer(peer_id: str, request: Request):
     service = service_for(request.app)
@@ -159,12 +226,27 @@ async def revoke_peer(peer_id: str, request: Request):
 async def list_deliveries(request: Request):
     service = service_for(request.app)
     rows = await _call(service.store.recent)
-    text = {'sending': 'Sending.', 'accepted': 'Accepted by the recipient.', 'refused': 'Not delivered directly.',
-            'uncertain': 'Waiting for the partner to confirm.'}
     return {'deliveries': [{'message_id': row['message_id'], 'direction': row['direction'],
                             'partner': row['organization'], 'fax_number': row['recipient_number'],
-                            'state': row['state'], 'status': text[row['state']], 'size_bytes': row['size_bytes'],
+                            'kind': row.get('kind') or 'original',
+                            'state': row['state'], 'status': delivery_text(row), 'size_bytes': row['size_bytes'],
                             'created_at': row['created_at'], 'accepted_at': row['accepted_at']} for row in rows]}
+
+
+DELIVERY_TEXT = {'sending': 'Sending.', 'accepted': 'Accepted by the recipient.', 'refused': 'Not delivered directly.',
+                 'uncertain': 'Waiting for the partner to confirm.'}
+
+
+def delivery_text(row):
+    """One sentence for a direct delivery record. A fax image is never called "faxed": no telephone call was made."""
+    if row.get('kind') != 'fax_image' or row['state'] != 'accepted':
+        return DELIVERY_TEXT[row['state']]
+    name = row.get('organization')
+    if not name:
+        return 'Delivered directly as a fax image; no telephone call.'
+    if row['direction'] == 'outbound':
+        return f'Delivered directly as a fax image to {name}; no telephone call.'
+    return f'Delivered directly as a fax image by {name}; no telephone call.'
 
 
 # Partner protocol (signature-authenticated) ------------------------------------
@@ -230,3 +312,10 @@ class VerificationIn(BaseModel):
 async def receive_verification(payload: VerificationIn, request: Request):
     service = service_for(request.app)
     return await _partner_call(lambda: service.confirm(payload.statement, payload.signature))
+
+
+@router.post('/capabilities')
+async def receive_capabilities(payload: VerificationIn, request: Request):
+    """A partner's signed statement of what it accepts from this installation now (fax images)."""
+    service = service_for(request.app)
+    return await _partner_call(lambda: service.note(payload.statement, payload.signature))

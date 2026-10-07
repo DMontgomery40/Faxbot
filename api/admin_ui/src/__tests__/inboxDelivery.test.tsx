@@ -87,6 +87,26 @@ describe('Inbox email delivery', () => {
     expect(screen.getByText('Delivered to billing@clinic.example')).toBeTruthy();
   });
 
+  it('lists a fax image a partner delivered directly with the received faxes, once, never as faxed', async () => {
+    const label = 'Delivered directly as a fax image by Valley Hospital; no telephone call.';
+    server.use(
+      http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-direct', '+15550106666'), backend: 'direct', status_text: label }])),
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [
+        item({ id: 'i9', source: 'direct', inbound_fax_id: 'fax-direct', state: 'delivered', status: 'Delivered.',
+          next_attempt_at: null, delivered_at: '2026-10-03T13:00:00', delivered_to: ['referrals@clinic.example'] }),
+      ], counts: { received: 0, sending: 0, delivered: 1, failed: 0 } })),
+    );
+    render(<Received client={client()} inboundEnabled permissions={operator} onNavigate={() => undefined} />);
+    const row = await rowFor('+15550106666');
+    expect(within(row).getByText(label)).toBeTruthy();
+    expect(within(row).getByText('Direct delivery')).toBeTruthy();
+    expect(within(row).getByText('Delivered to referrals@clinic.example')).toBeTruthy();
+    // Filed with the received faxes, so the older section for direct deliveries does not list it again.
+    expect(screen.queryByText('Received by direct delivery')).toBeNull();
+    expect(screen.queryByText(/faxed/i)).toBeNull();
+  });
+
   it('retries a delivery that did not go through', async () => {
     const retries = inbox();
     render(<Received client={client()} inboundEnabled permissions={operator} />);

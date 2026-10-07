@@ -69,6 +69,9 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
             <Part title="Separator pages left out" sentence={data.separator_pages.sentence} testId="savings-separator-pages" />
           )}
           <Part title="Direct delivery" sentence={data.direct_delivery.sentence} testId="savings-direct" />
+          {data.direct_fax_images && (
+            <Part title="Direct fax images" sentence={data.direct_fax_images.sentence} testId="savings-fax-images" />
+          )}
           <Part title="Case packets" sentence={data.case_packets.sentence} note={countedFromSentence(data.case_packets)}
             testId="savings-packets" />
           {data.sslfax && <Part title="Faster pages" sentence={data.sslfax.sentence} testId="savings-sslfax" />}

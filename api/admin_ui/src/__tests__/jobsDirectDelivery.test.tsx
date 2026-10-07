@@ -71,6 +71,15 @@ describe('Job Details for direct delivery', () => {
     expect(within(dialog).queryByRole('button', { name: ATTACH })).toBeNull();
   });
 
+  it('says a fax image went directly with no telephone call, never that it was faxed', async () => {
+    jobServer('success', delivery('success', 'att-1', false, [event('e1', 'att-1', 'provider_observed', { status: 'success' })]),
+      () => HttpResponse.json({ deliveries: [{ ...record('att-1', 'accepted'), kind: 'fax_image' }] }));
+    const dialog = await openJob();
+    expect(await within(dialog).findByText('Delivered directly as a fax image to Valley Hospital; no telephone call.')).toBeTruthy();
+    expect(within(dialog).queryByText(/faxed/i)).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: ATTACH })).toBeNull();
+  });
+
   it('says a refused direct delivery went by fax, and still allows a provider fax ID for the fax', async () => {
     jobServer('reconciliation_required', delivery('reconciliation_required', 'att-2', true, [
       event('e1', 'att-1', 'submission_authorized'),

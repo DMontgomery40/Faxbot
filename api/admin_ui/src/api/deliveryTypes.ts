@@ -318,7 +318,8 @@ export interface RateCard {
 export interface IntakeItem {
   id: string;
   source: 'fax' | 'direct';
-  // The received fax this item delivers (the Inbox's fax id); null for a direct delivery.
+  // The received fax this item delivers (the Inbox's fax id). A direct delivery has one when it was filed as a
+  // received fax (every one since peer fax); an earlier direct delivery has none.
   inbound_fax_id?: string | null;
   received_at: string;
   pages: number | null;
@@ -399,7 +400,15 @@ export interface DirectPartner {
   verified_at: string | null;
   expires_at: string | null;
   version: number;
+  // Fax images (peer fax): whether this installation accepts them from the partner (on by default), and whether
+  // the partner said, signed, that it accepts them from us; optional for older servers.
+  receive_fax_images?: boolean;
+  partner_receives_fax_images?: boolean;
+  fax_images_text?: string | null;
 }
+
+// POST /direct/peers/{id}/fax-images: the partner as it now stands, the sentence to show and whether it was told now.
+export type DirectFaxImagesResult = DirectPartner & { detail: string; partner_told: boolean };
 
 // GET /direct/deliveries: recent direct deliveries. For a sent document the
 // message id is the fax's delivery attempt id.
@@ -409,6 +418,8 @@ export interface DirectDeliveryRecord {
   partner: string | null;
   fax_number: string;
   state: 'sending' | 'accepted' | 'refused' | 'uncertain';
+  // 'fax_image' when the exact fax image went directly (never "faxed"); optional for older servers.
+  kind?: 'original' | 'fax_image';
   status: string;
   size_bytes: number;
   created_at: string;
@@ -486,6 +497,10 @@ export interface Savings {
   // Faxes whose pages went over SSL Fax (the fast fax service); optional for older servers.
   sslfax?: SavingPart & {
     faxes: number; seconds_saved: number; priced: number; in_plan: number; unpriced: number; same_cost: number;
+  };
+  // Telephone calls avoided by fax images partners accepted directly; optional for older servers.
+  direct_fax_images?: SavingPart & {
+    faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
   };
   // Faxes to this installation's own numbers, delivered inside Faxbot with no call; optional for older servers.
   own_numbers?: SavingPart & {

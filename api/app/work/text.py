@@ -68,6 +68,9 @@ def event_text(kind, details):
     actor = details.get('actor_name') or 'Faxbot'
     if kind == 'received':
         where = details.get('mailbox')
+        arrived = details.get('arrived')  # a partner's direct delivery says so, with no telephone call
+        if arrived:
+            return f'{arrived} It arrived in {where}.' if where else arrived
         return f'The document arrived in {where}.' if where else 'The document arrived.'
     if kind == 'assigned':
         return f"{actor} assigned it to {details.get('to_name') or 'someone'}."

@@ -985,7 +985,12 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
     from app.direct.crypto import Identity, card
 
     class Partner:
+        told = []
+
         async def request(self, method, url, **kwargs):
+            if url == 'https://valley.example/direct/capabilities':
+                self.told.append(json.loads(kwargs['json']['statement'])['capabilities']['fax_images'])
+                return 200, {'recorded': True}
             assert url == 'https://valley.example/direct/verifications'
             return 200, {'verified': True}
 
@@ -1003,6 +1008,14 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
     confirmed = cli.json('recipients', 'partners', 'confirm', '+1 555 000 7777', '1234 5678')
     assert confirmed == {'confirmed': True, 'detail': 'The partner confirmed the code.'}
     assert cli.json('recipients', 'partners', 'deliveries') == []
+    # Fax images are opt-in per partner; the partner is told with a signed statement.
+    shown = cli('recipients', 'partners', 'fax-images', 'Valley Hospital', 'on')
+    assert shown.exit_code == 0 and 'Valley Hospital now sends you faxes as the exact fax image.' in shown.stdout
+    listed = ' '.join(cli('recipients', 'partners', 'list').stdout.split())
+    assert 'Fax images' in listed and 'arrive as the exact fax image' in listed
+    assert cli.json('recipients', 'partners', 'fax-images', 'Valley Hospital', 'off')['receive_fax_images'] is False
+    assert Partner.told[-2:] == [True, False]  # Faxbot may also have told the new partner (on by default) by itself
+    assert cli('recipients', 'partners', 'fax-images', 'Valley Hospital', 'maybe').exit_code != 0
     revoked = cli.json('recipients', 'partners', 'revoke', 'Valley Hospital')
     assert revoked['state'] == 'revoked'
 
@@ -1545,4 +1558,29 @@ def test_status_names_the_route_faxbot_assigned_and_nothing_before_it():
     assert fax._planned_route(Api(CliError('Not allowed.')), job) is None
     fields = dict(fax._fax_fields(job))
     assert 'Provider' not in fields and 'Planned route' not in fields
+
+
+def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():
+    from app.cli.commands import fax
+    from app.cli.errors import CliError
+    sentence = 'Delivered directly as a fax image to County Clinic; no telephone call.'
+
+    class Api:
+        def __init__(self, kind, refuse=False):
+            self.kind, self.refuse = kind, refuse
+
+        def get(self, path, params=None):
+            if path.endswith('/cost'):
+                return {'routes': ['direct']}
+            if self.refuse:
+                raise CliError('Not allowed.')
+            if path.endswith('/delivery'):
+                return {'attempt': {'id': 'att-1'}}
+            return {'deliveries': [{'direction': 'outbound', 'message_id': 'att-1', 'state': 'accepted',
+                                    'kind': self.kind, 'status': sentence}]}
+    job = {'id': 'f' * 32, 'backend': 'phaxio'}
+    assert fax._assigned_route(Api('fax_image'), job) == ('Provider', sentence)
+    assert fax._assigned_route(Api('original'), job) == ('Provider', 'Direct delivery')
+    assert fax._assigned_route(Api('fax_image', refuse=True), job) == ('Provider', 'Direct delivery')
+    assert fax.came_through({'backend': 'direct'}) == 'Direct delivery'
 
