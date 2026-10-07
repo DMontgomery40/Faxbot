@@ -1099,7 +1099,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
-* `iaf`: Fast fax (Internet Aware Fax) to fax...
+* `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
@@ -1200,7 +1200,7 @@ $ faxbot recipients fax-machine [OPTIONS] {number}
 
 ### `faxbot recipients iaf`
 
-Fast fax (Internet Aware Fax) to fax servers that receive over the internet, such as another Faxbot or a Brooktrout SR140.
+Internet Aware Fax to fax servers that receive over the internet, such as another Faxbot or a Brooktrout SR140.
 
 **Usage**:
 
@@ -1214,13 +1214,13 @@ $ faxbot recipients iaf [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `list`: List the fax servers you approved for fast...
+* `list`: List the fax servers you approved for...
 * `add`: Send faxes to and from a fax server as...
-* `remove`: Stop fast fax for a fax server: its faxes...
+* `remove`: Stop Internet Aware Fax for a fax server:...
 
 #### `faxbot recipients iaf list`
 
-List the fax servers you approved for fast fax, and partner offices marked for it.
+List the fax servers you approved for Internet Aware Fax, and partner offices marked for it.
 
 **Usage**:
 
@@ -1234,7 +1234,7 @@ $ faxbot recipients iaf list [OPTIONS]
 
 #### `faxbot recipients iaf add`
 
-Send faxes to and from a fax server as fast fax. Never for a fax machine on a phone line.
+Send faxes to and from a fax server as Internet Aware Fax. Never for a fax machine on a phone line.
 
 **Usage**:
 
@@ -1248,13 +1248,13 @@ $ faxbot recipients iaf add [OPTIONS] {number}
 
 **Options**:
 
-* `--kind <str>`: faxbot (another Faxbot) or server (a fax server that takes fast fax, such as an SR140).  [required]
+* `--kind <str>`: faxbot (another Faxbot) or server (a fax server that takes Internet Aware Fax, such as an SR140).  [required]
 * `--name <str>`: A name you will recognise, such as &quot;Head office SR140&quot;.  [required]
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients iaf remove`
 
-Stop fast fax for a fax server: its faxes go at fax line speed again.
+Stop Internet Aware Fax for a fax server: its faxes go at fax line speed again.
 
 **Usage**:
 

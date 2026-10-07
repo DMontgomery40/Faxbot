@@ -17,8 +17,8 @@ function message(error: unknown, fallback: string) {
 }
 
 // Recipients → Details, "Their fax machine": what this number's fax machine said on recent calls, what Faxbot
-// learned from them (asking for fax over IP at once, the speed to start at), and fast fax between fax servers
-// (Internet Aware Fax), which you approve per number.
+// learned from them (asking for fax over IP at once, the speed to start at), and Internet Aware Fax between fax
+// servers, which you approve per number.
 export default function FaxMachinePanel({ client, number, canWrite }: FaxMachinePanelProps) {
   const [view, setView] = useState<FaxMachineView | null>(null);
   const [server, setServer] = useState<IafServer | null>(null);
@@ -72,13 +72,13 @@ export default function FaxMachinePanel({ client, number, canWrite }: FaxMachine
       {view.learned.sentences.map((text) => <Alert key={text} severity="info" sx={{ mt: 1 }}>{text}</Alert>)}
       {notice && <Alert severity={notice.severity} sx={{ mt: 1 }}>{notice.text}</Alert>}
 
-      <Typography variant="subtitle2" sx={{ mt: 2 }}>Fast fax between fax servers</Typography>
+      <Typography variant="subtitle2" sx={{ mt: 2 }}>Internet Aware Fax (fax between fax servers, faster than a phone line)</Typography>
       {view.iaf ? (
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
           <Typography variant="body2">
             {server
-              ? `Faxes to and from this number go as fast fax (Internet Aware Fax): ${server.label}.`
-              : 'Faxes to and from this number go as fast fax (Internet Aware Fax): it is a partner office marked for it.'}
+              ? `Faxes to and from this number go as Internet Aware Fax: ${server.label}.`
+              : 'Faxes to and from this number go as Internet Aware Fax: it is a partner office marked for it.'}
           </Typography>
           {server && canWrite && (
             <Button size="small" disabled={busy} onClick={() => { void run(() => client.removeIaf(server.id), 'Faxes to this number go at fax line speed again.'); }}>
@@ -98,13 +98,13 @@ export default function FaxMachinePanel({ client, number, canWrite }: FaxMachine
               <TextField select size="small" label="This number is" value={kind} sx={{ minWidth: 200 }}
                 onChange={(event) => setKind(event.target.value as 'peer' | 'endpoint')}>
                 <MenuItem value="peer">Another Faxbot</MenuItem>
-                <MenuItem value="endpoint">A fax server that takes fast fax</MenuItem>
+                <MenuItem value="endpoint">A fax server that takes Internet Aware Fax</MenuItem>
               </TextField>
               <TextField size="small" label="Name" value={label} onChange={(event) => setLabel(event.target.value)}
                 placeholder="Head office SR140" />
               <Button variant="outlined" disabled={busy || !label.trim()}
-                onClick={() => { void run(() => client.approveIaf({ number: view.number, kind, label: label.trim() }), 'Faxes to and from this number now go as fast fax.'); }}>
-                Use fast fax
+                onClick={() => { void run(() => client.approveIaf({ number: view.number, kind, label: label.trim() }), 'Faxes to and from this number now go as Internet Aware Fax.'); }}>
+                Use Internet Aware Fax
               </Button>
             </Stack>
           )}

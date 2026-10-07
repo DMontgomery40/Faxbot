@@ -24,7 +24,7 @@ function client() {
 }
 
 describe('Recipients → Details, their fax machine', () => {
-  it('says what the fax machine said and what Faxbot learned, and approves fast fax with a name', async () => {
+  it('says what the fax machine said and what Faxbot learned, and approves Internet Aware Fax with a name', async () => {
     const approved: unknown[] = [];
     server.use(
       http.get('/fax-machines/numbers/:number', () => HttpResponse.json(approved.length
@@ -43,8 +43,8 @@ describe('Recipients → Details, their fax machine', () => {
     expect(within(panel).getByText(VIEW.calls[0].sentences[0])).toBeTruthy();
     expect(within(panel).getByText(VIEW.learned.sentences[0])).toBeTruthy();
     fireEvent.change(within(panel).getByLabelText('Name'), { target: { value: 'Head office SR140' } });
-    fireEvent.click(within(panel).getByRole('button', { name: 'Use fast fax' }));
-    expect(await within(panel).findByText('Faxes to and from this number now go as fast fax.')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Use Internet Aware Fax' }));
+    expect(await within(panel).findByText('Faxes to and from this number now go as Internet Aware Fax.')).toBeTruthy();
     expect(approved).toEqual([{ number: '+13035550150', kind: 'endpoint', label: 'Head office SR140' }]);
     expect(await within(panel).findByText(/Head office SR140\./)).toBeTruthy();
   });
@@ -56,6 +56,6 @@ describe('Recipients → Details, their fax machine', () => {
     );
     render(<FaxMachinePanel client={client()} number="+13035550150" canWrite={false} />);
     const panel = await screen.findByTestId('fax-machine');
-    expect(within(panel).queryByRole('button', { name: 'Use fast fax' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Use Internet Aware Fax' })).toBeNull();
   });
 });

@@ -244,9 +244,9 @@ def test_the_command_line_shows_a_fax_machine_and_approves_and_stops_fast_fax(mo
         refused = cli('recipients', 'iaf', 'add', NUMBER, '--kind', 'carrier', '--name', 'Telnyx')
         assert refused.exit_code != 0 and 'Choose --kind faxbot or --kind server.' in refused.stderr
         added = cli('recipients', 'iaf', 'add', NUMBER, '--kind', 'server', '--name', 'Head office SR140')
-        assert added.exit_code == 0 and 'now go as fast fax' in added.stdout, (added.stdout, added.stderr)
+        assert added.exit_code == 0 and 'now go as Internet Aware Fax' in added.stdout, (added.stdout, added.stderr)
         assert 'Head office SR140' in cli('recipients', 'iaf', 'list').stdout
-        assert 'go as fast fax' in cli('recipients', 'fax-machine', NUMBER).stdout
+        assert 'go as Internet Aware Fax' in cli('recipients', 'fax-machine', NUMBER).stdout
         removed = cli('recipients', 'iaf', 'remove', '303-555-0150')
         assert removed.exit_code == 0 and 'fax line speed again' in removed.stdout
         assert cli.json('recipients', 'iaf', 'list')['servers'] == []
