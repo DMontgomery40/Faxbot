@@ -312,6 +312,43 @@ def telnyx_t38_on(number: str = typer.Argument(..., metavar='NUMBER',
     state.out().result(result, lambda out: _telnyx_lines(out, result))
 
 
+def _names_lines(out, result):
+    if not result.get('applies'):
+        out.line('This needs the Telnyx trunk with a Telnyx API key (the key Faxbot also uses for call charges).')
+        return
+    if result.get('message'):
+        out.line(result['message'])
+    out.line(result.get('text') or '')
+    rows = [[entry['display'], {True: 'On', False: 'Off'}.get(entry.get('lookup'), 'Not known'), entry['text']]
+            for entry in result.get('numbers') or []]
+    if rows:
+        out.table(['Number', 'Caller-name lookup', 'What Telnyx shows'], rows, empty='')
+    price = result.get('price') or {}
+    if price.get('text'):
+        out.line(f"Telnyx's price: {price['text']}, read {local_date(price.get('read_on'))} from "
+                 f"{price.get('source_url')}.")
+    if any(entry.get('can_turn_off') for entry in result.get('numbers') or []):
+        out.line('To turn it off, run faxbot providers trunk telnyx name-lookup-off followed by the number.')
+    if result.get('checked_at'):
+        out.fields([('Checked', local_time(result.get('checked_at')))])
+
+
+@telnyx.command('names')
+def telnyx_names():
+    """Show whether Telnyx looks up callers' names on each trunk number, and what that costs, from the last check."""
+    result = state.api().get('/admin/sip/telnyx/names')
+    state.out().result(result, lambda out: _names_lines(out, result))
+
+
+@telnyx.command('name-lookup-off')
+def telnyx_name_lookup_off(number: str = typer.Argument(..., metavar='NUMBER',
+                                                        help='The trunk number, for example +17208565062.')):
+    """Turn off caller-name lookup at Telnyx for one trunk number. Faxbot never shows callers' names; only that setting changes."""
+    from urllib.parse import quote
+    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/name-lookup-off')
+    state.out().result(result, lambda out: _names_lines(out, result))
+
+
 @trunk.command('presets')
 def trunk_presets(preset: str = typer.Argument(None, metavar='[PRESET]',
                                                help='Show one preset in full, for example avaya-ipoffice.')):

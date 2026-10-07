@@ -295,7 +295,8 @@ export const NAVIGATION: NavArea[] = [
       { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Savings client={ctx.client} /> },
       { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          onNavigate={ctx.navigate} /> },
     ],
   },
   {

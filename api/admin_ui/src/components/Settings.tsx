@@ -1014,7 +1014,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                           label="Telnyx API key"
                           value={settings.sip.telnyx_api_key_set ? 'Saved' : ''}
                           editValue={form.telnyx_api_key ?? ''}
-                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) on your numbers; it changes a number only when you select Turn on T.38."
+                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) and caller-name lookup on your numbers; it changes a number only when you select Turn on T.38 or Turn off name lookup."
                           placeholder="Telnyx API key"
                           onChange={(value) => handleForm('telnyx_api_key', value)}
                           type="password"

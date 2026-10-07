@@ -533,9 +533,177 @@ export interface ReceivingRecommendations {
   quiet_numbers: {
     state: 'quiet' | 'none_quiet' | 'too_little_history' | 'no_trunk';
     sentence: string;
-    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[] }>;
+    // question: "Is … still printed …?", asked before giving any number up.
+    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[]; question?: string | null }>;
     monthly_total: Money[];
   };
   connections: { sentence: string; items: Array<{ name: string; kind: 'trunk' | 'provider'; monthly_fee: Money[] }> };
   prices: Array<{ label: string; text: string; source_url: string | null; read_on: string | null }>;
+  // HumbleFax's and eFax's own numbers, with their faxes in the window and their plan fee (never number rental).
+  provider_numbers?: ProviderNumbers;
+}
+
+export interface ProviderNumber {
+  provider: string;
+  name: string;
+  number: string;
+  received: number;
+  sent: number;
+  enough_history: boolean;
+  quiet: boolean;
+  plan_fee: Money[];
+  question: string | null;
+  sentence: string;
+}
+
+export interface ProviderNumbers {
+  state: 'none' | 'quiet' | 'none_quiet' | 'too_little_history';
+  sentence: string;
+  numbers: ProviderNumber[];
+  most_faxes: number;
+}
+
+// GET /routing/recommendations/fax-marker: calls marked as fax against calls not marked, from history.
+export interface FaxMarkerSide {
+  calls: number;
+  delivered: number;
+  failed: number;
+  result_unknown: number;
+  delivered_percent: number | null;
+  t38: number;
+  audio: number;
+  mode_unknown: number;
+  t38_percent: number | null;
+  average_seconds: number | null;
+  seconds_per_page: number | null;
+  cost_per_delivered: Money | null;
+  cost_text: string;
+  settled: number;
+  reported: number;
+  estimated: number;
+  unpriced: number;
+}
+
+export interface FaxMarkerAdvice {
+  days: number;
+  min_calls: number;
+  state: 'no_calls' | 'one_side' | 'too_few' | 'compared';
+  enough: boolean;
+  sentence: string;
+  setting_on: boolean;
+  setting_sentence: string;
+  difference: string | null;
+  caveat: string | null;
+  left_out: number;
+  left_out_sentence: string | null;
+  marked: FaxMarkerSide;
+  not_marked: FaxMarkerSide;
+}
+
+// GET /routing/recommendations/billing-steps: calls that end just past a billed step, per number.
+export interface BillingStepNumber {
+  number: string;
+  display_name: string | null;
+  calls: number;
+  calls_near: number;
+  seconds_past: { least: number; most: number };
+  saving: Money;
+  sentence: string;
+}
+
+export interface BillingSteps {
+  days: number;
+  estimate: true;
+  carrier: string | null;
+  state: 'no_trunk' | 'no_price' | 'not_by_time' | 'fine_steps' | 'too_few' | 'none_near' | 'near';
+  sentence: string;
+  min_calls: number;
+  step: { seconds: number; minimum_seconds: number; near_seconds: number; price: Money; price_text: string;
+    source_url: string | null; read_on: string } | null;
+  numbers: BillingStepNumber[];
+  numbers_total: number;
+  calls_near: number;
+  saving: Money | null;
+}
+
+// GET /routing/recommendations/partners: numbers whose faxes cost the most again and again.
+export interface PartnerCandidate {
+  number: string;
+  display_name: string | null;
+  faxes: number;
+  delivered: number;
+  average_pages: number | null;
+  monthly_cost: Money | null;
+  cost_text: string;
+  estimate: true;
+  unpriced_faxes: number;
+  sentence: string;
+  link: string;
+  link_label: string;
+}
+
+export interface PartnerCandidates {
+  days: number;
+  min_faxes: number;
+  estimate: true;
+  state: 'candidates' | 'too_few' | 'none';
+  sentence: string;
+  items: PartnerCandidate[];
+  items_total: number;
+  link: string;
+}
+
+// A recipient's toll-free fax number: append-only rows, the newest first.
+export interface TollFreeRow {
+  id: string;
+  number: string;
+  alternate_number: string;
+  alternate_display: string;
+  action: 'noted' | 'approved' | 'withdrawn';
+  approved_by: string | null;
+  approved_on: string | null;
+  evidence: string | null;
+  recorded_by_name: string | null;
+  recorded_at: string;
+}
+
+export interface TollFreeState {
+  number: string;
+  current: TollFreeRow | null;
+  history: TollFreeRow[];
+  approved_alternate: string | null;
+  sentence: string | null;
+}
+
+export interface TollFreeChange {
+  action: 'noted' | 'approved' | 'withdrawn';
+  alternate_number?: string;
+  approved_by?: string;
+  approved_on?: string;
+  evidence?: string;
+}
+
+export interface TollFreeSuggestion {
+  source: string;
+  npi: string;
+  name: string | null;
+  address_purpose: string;
+  address: string | null;
+  fax_number: string;
+  fax_display: string;
+  evidence: string;
+  source_url?: string;
+}
+
+export interface TollFreeSuggestions {
+  number: string;
+  items: TollFreeSuggestion[];
+  sentence: string;
+}
+
+export interface TollFreeRecommendations {
+  state: 'none' | 'on_file';
+  sentence: string;
+  days: number;
+  items: Array<TollFreeRow & { display_name: string | null; approved: boolean; spend: Money | null; sentence: string }>;
 }

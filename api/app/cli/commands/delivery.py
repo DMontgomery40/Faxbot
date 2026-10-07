@@ -497,16 +497,135 @@ def show_plans(out, result):
                   title=f"{plan['name']}, {money(plan.get('monthly_fee'))} a month")
 
 
+def _read_fax_marker(api):
+    return api.get('/routing/recommendations/fax-marker')
+
+
+def show_fax_marker(out, result):
+    """Calls marked as fax against calls not marked, from history; the setting never changes."""
+    out.line(result.get('sentence') or '')
+    if result.get('state') == 'compared':
+        rows = [('Calls', 'calls'), ('Delivered', 'delivered_percent'), ('Used fax over IP (T.38)', 't38_percent'),
+                ('Seconds a page', 'seconds_per_page'), ('Cost per delivered fax', 'cost_text')]
+
+        def cell(side, key):
+            value = (result.get(side) or {}).get(key)
+            if value is None:
+                return '-'
+            return f'{value}%' if key.endswith('percent') else value
+        out.table(['', 'Marked as fax', 'Not marked'], [[label, cell('marked', key), cell('not_marked', key)]
+                                                         for label, key in rows],
+                  title=f"Fax marker, last {result.get('days', 90)} days")
+    for key in ('caveat', 'left_out_sentence', 'setting_sentence'):
+        if result.get(key):
+            out.line(result[key])
+
+
+def _read_billing_steps(api):
+    return api.get('/routing/recommendations/billing-steps')
+
+
+def show_billing_steps(out, result):
+    """Numbers whose calls end just past a billed minute, and what a shorter call would have saved."""
+    out.line(result.get('sentence') or '')
+    numbers = result.get('numbers') or []
+    if numbers:
+        out.table(['Fax number', 'Name', 'Calls', 'Just past a step', 'Seconds past', 'Would have saved (estimate)'],
+                  [[item['number'], item.get('display_name'), item['calls'], item['calls_near'],
+                    f"{item['seconds_past']['least']}–{item['seconds_past']['most']} s"
+                    if item['seconds_past']['least'] != item['seconds_past']['most']
+                    else f"{item['seconds_past']['least']} s", money([item['saving']])] for item in numbers])
+    step = result.get('step') or {}
+    if step.get('seconds'):
+        from .trunk import local_date
+        out.line(f"{result.get('carrier') or 'Your carrier'} bills in {step['seconds']}-second steps of "
+                 f"{step['price_text']}, from your rate card dated {local_date(step.get('read_on'))}.")
+
+
+def _read_partners(api):
+    return api.get('/routing/recommendations/partners')
+
+
+def show_partners(out, result):
+    """Numbers whose faxes cost the most again and again, and how to enroll one as a direct partner."""
+    out.line(result.get('sentence') or '')
+    items = result.get('items') or []
+    if items:
+        out.table(['Fax number', 'Name', 'Faxes', 'Average pages', 'A month (estimate)'],
+                  [[item['number'], item.get('display_name'), item['faxes'], item.get('average_pages') or '-',
+                    money([item['monthly_cost']]) if item.get('monthly_cost') else item['cost_text']]
+                   for item in items])
+        for item in items:
+            out.line(item['sentence'])
+        out.line('To enroll a recipient as a direct partner, run faxbot recipients partners add.')
+
+
+def _read_service_numbers(api):
+    return api.get('/routing/recommendations/receiving')
+
+
+def show_service_numbers(out, result):
+    """Quiet numbers at every fax service: the carrier line's numbers and the HumbleFax and eFax numbers."""
+    days = result.get('days', 30)
+    quiet = result.get('quiet_numbers') or {}
+    out.line(quiet.get('sentence') or '')
+    if quiet.get('numbers'):
+        out.table(['Number', 'Received', 'Sent', 'Rental a month (estimate)'],
+                  [[row['number'], row['received'], row['sent'], money(row.get('monthly_rental'))]
+                   for row in quiet['numbers']], title=f'Carrier numbers with few calls in the last {days} days')
+        for row in quiet['numbers']:
+            if row.get('question'):
+                out.line(row['question'])
+    services = result.get('provider_numbers') or {}
+    out.line('')
+    out.line(services.get('sentence') or '')
+    if services.get('numbers'):
+        out.table(['Fax service', 'Number', 'Received', 'Sent', 'Plan a month'],
+                  [[row['name'], row['number'], row['received'], row['sent'], money(row.get('plan_fee'), empty='No price yet')]
+                   for row in services['numbers']], title=f'Fax service numbers, last {days} days')
+        for row in services['numbers']:
+            out.line(row['sentence'])
+            if row.get('question'):
+                out.line(row['question'])
+
+
+def _read_toll_free(api):
+    return api.get('/routing/recommendations/toll-free')
+
+
+def show_toll_free(out, result):
+    """Recipients with a toll-free fax number on file, approved or not; the recipient pays for those calls."""
+    out.line(result.get('sentence') or '')
+    items = result.get('items') or []
+    if items:
+        out.table(['Fax number', 'Name', 'Toll-free number', 'Approved'],
+                  [[item['number'], item.get('display_name'), item['alternate_display'],
+                    'Yes' if item['approved'] else 'Not yet'] for item in items])
+        for item in items:
+            out.line(item['sentence'])
+        out.line('To record an approval, run faxbot recipients toll-free approve.')
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
     ('plans', 'Plans', _read_plans, show_plans),
+    ('fax_marker', 'Fax marker', _read_fax_marker, show_fax_marker),
+    ('billing_steps', 'Billing steps', _read_billing_steps, show_billing_steps),
+    ('partners', 'Partner candidates', _read_partners, show_partners),
+    ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
 ]
 
+recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
+                                   'every section.', invoke_without_command=True)
 
-def routing_recommendations():
-    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee."""
+
+@recommendations.callback()
+def routing_recommendations(context: typer.Context):
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates and toll-free numbers. Every figure is an estimate."""
+    if context.invoked_subcommand is not None:
+        return
     api = state.api()
     result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
 
@@ -516,6 +635,119 @@ def routing_recommendations():
                 out.line()
             out.line(heading)
             show(out, result[key])
+    state.out().result(result, human)
+
+
+def _section(read, show):
+    def command():
+        result = read(state.api())
+        state.out().result(result, lambda out: show(out, result))
+    return command
+
+
+for _name, _read, _show, _help in (
+        ('sending', _read_sending, _show_sending,
+         'Show numbers where another route cost less per delivered fax in the last 30 days.'),
+        ('receiving', _read_receiving, print_receiving,
+         'Show which numbers could share incoming lines, numbers with few calls, and your fax services\' monthly fees.'),
+        ('plans', _read_plans, show_plans, 'Show whether each monthly plan is worth its fee at your traffic.'),
+        ('fax-marker', _read_fax_marker, show_fax_marker,
+         'Compare calls marked as fax with calls not marked: delivery, fax over IP (T.38), time and cost. Changes no '
+         'setting.'),
+        ('billing-steps', _read_billing_steps, show_billing_steps,
+         'Show numbers whose calls end just past a billed minute, where one page less or a faster mode would have '
+         'cost less.'),
+        ('partners', _read_partners, show_partners,
+         'Show the numbers whose faxes cost the most again and again: candidates to enroll as direct partners.'),
+        ('service-numbers', _read_service_numbers, show_service_numbers,
+         'Show quiet numbers at your carrier and at HumbleFax and eFax, with what each costs to keep.'),
+        ('toll-free', _read_toll_free, show_toll_free,
+         'Show recipients with a toll-free fax number on file and whether their approval is recorded.')):
+    recommendations.command(_name, help=_help)(_section(_read, _show))
+
+
+# -- recipients toll-free -------------------------------------------------------------------------------
+
+toll_free = typer.Typer(help="A recipient's toll-free fax number, used only after you record who at the recipient "
+                             'agreed. The recipient pays for those calls.', no_args_is_help=True)
+
+
+def _toll_free_human(view):
+    def human(out):
+        current = view.get('current') or {}
+        out.line(view.get('sentence') or 'No toll-free number is on file for this recipient.')
+        if view.get('history'):
+            from .trunk import local_date
+            out.table(['Recorded', 'Toll-free number', 'What', 'Who agreed', 'Day agreed', 'Evidence', 'Recorded by'],
+                      [[local_time(row['recorded_at']), row['alternate_display'],
+                        {'noted': 'On file', 'approved': 'Approved', 'withdrawn': 'Withdrawn'}[row['action']],
+                        row.get('approved_by') or '-', local_date(row.get('approved_on')) if row.get('approved_on') else '-',
+                        row.get('evidence') or '-', row.get('recorded_by_name') or '-'] for row in view['history']],
+                      title='History')
+        if current.get('action') == 'noted':
+            out.line(f"To record the approval, run faxbot recipients toll-free approve {view['number']} "
+                     f"{current['alternate_number']} --by NAME --on DATE --evidence TEXT.")
+    return human
+
+
+def _toll_free_post(number, body):
+    view = state.api().post('/routing/destinations/' + segment(number) + '/toll-free', json=body)
+    state.out().result(view, _toll_free_human(view))
+
+
+@toll_free.command('show')
+def toll_free_show(number: str = typer.Argument(..., help="The recipient's own fax number.")):
+    """Show a recipient's toll-free fax number and every approval recorded for it."""
+    view = state.api().get('/routing/destinations/' + segment(number) + '/toll-free')
+    state.out().result(view, _toll_free_human(view))
+
+
+@toll_free.command('note')
+def toll_free_note(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                   toll_free_number: str = typer.Argument(..., metavar='TOLL_FREE',
+                                                          help='The toll-free fax number the recipient publishes.')):
+    """Put a recipient's toll-free fax number on file without approving it; Faxbot does not use it yet."""
+    _toll_free_post(number, {'action': 'noted', 'alternate_number': toll_free_number})
+
+
+@toll_free.command('approve')
+def toll_free_approve(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                      toll_free_number: str = typer.Argument(..., metavar='TOLL_FREE',
+                                                             help='The toll-free fax number the recipient approved.'),
+                      by: str = typer.Option(..., '--by', help='Who at the recipient agreed, for example "Dana, intake lead".'),
+                      on: str = typer.Option(..., '--on', metavar='DATE', help='The day they agreed, as 2026-10-03.'),
+                      evidence: str = typer.Option(..., '--evidence',
+                                                   help='Where the agreement is recorded, such as an email and its date.')):
+    """Record that the recipient agreed to faxes on its toll-free number: who, when and the evidence. The recipient pays for those calls."""
+    _toll_free_post(number, {'action': 'approved', 'alternate_number': toll_free_number, 'approved_by': by,
+                             'approved_on': on, 'evidence': evidence})
+
+
+@toll_free.command('withdraw')
+def toll_free_withdraw(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                       evidence: str = typer.Option(None, '--evidence', help='Why, or where the withdrawal is recorded.')):
+    """Withdraw a recipient's toll-free number; Faxbot sends to its own number again. The history is kept."""
+    _toll_free_post(number, {'action': 'withdrawn', 'evidence': evidence})
+
+
+@toll_free.command('lookup')
+def toll_free_lookup(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                     npi: str = typer.Option(None, '--npi', help="The provider's ten-digit NPI."),
+                     name: str = typer.Option(None, '--name', help='Or the organization name, with --city or --state.'),
+                     city: str = typer.Option(None, '--city', help='City, with --name.'),
+                     us_state: str = typer.Option(None, '--state', help='Two-letter state, with --name.')):
+    """Look up toll-free fax numbers the NPI registry (NPPES) lists for a provider. It suggests only; nothing is approved."""
+    params = {key: value for key, value in (('npi', npi), ('name', name), ('city', city), ('state', us_state)) if value}
+    result = state.api().get('/routing/destinations/' + segment(number) + '/toll-free/suggestions', params=params)
+
+    def human(out):
+        out.line(result.get('sentence') or '')
+        out.table(['Toll-free fax number', 'Where', 'Address', 'Evidence'],
+                  [[item['fax_display'], item.get('address_purpose') or '-', item.get('address') or '-',
+                    item.get('evidence') or '-'] for item in result.get('items') or []], empty='')
+        if result.get('items'):
+            out.line(f"To record an approval, run faxbot recipients toll-free approve {result['number']} "
+                     f"{result['items'][0]['fax_number']} --by NAME --on DATE --evidence TEXT.")
     state.out().result(result, human)
 
 

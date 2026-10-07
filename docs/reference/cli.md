@@ -922,6 +922,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `together`: Send short faxes to the same number...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
+* `toll-free`: A recipient&#x27;s toll-free fax number, used...
 
 ### `faxbot recipients list`
 
@@ -1311,6 +1312,128 @@ $ faxbot recipients cases send [OPTIONS] {case_id} {to} {files}...
 
 * `--title <str>`: Title for each document, in the same order. Default: the file name.
 * `--preview`: Show what would be sent without sending.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients toll-free`
+
+A recipient&#x27;s toll-free fax number, used only after you record who at the recipient agreed. The recipient pays for those calls.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show a recipient&#x27;s toll-free fax number...
+* `note`: Put a recipient&#x27;s toll-free fax number on...
+* `approve`: Record that the recipient agreed to faxes...
+* `withdraw`: Withdraw a recipient&#x27;s toll-free number;...
+* `lookup`: Look up toll-free fax numbers the NPI...
+
+#### `faxbot recipients toll-free show`
+
+Show a recipient&#x27;s toll-free fax number and every approval recorded for it.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free show [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The recipient&#x27;s own fax number.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients toll-free note`
+
+Put a recipient&#x27;s toll-free fax number on file without approving it; Faxbot does not use it yet.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free note [OPTIONS] {number} {TOLL_FREE}
+```
+
+**Arguments**:
+
+* `number`: The recipient&#x27;s own fax number.  [required]
+* `TOLL_FREE`: The toll-free fax number the recipient publishes.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients toll-free approve`
+
+Record that the recipient agreed to faxes on its toll-free number: who, when and the evidence. The recipient pays for those calls.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free approve [OPTIONS] {number} {TOLL_FREE}
+```
+
+**Arguments**:
+
+* `number`: The recipient&#x27;s own fax number.  [required]
+* `TOLL_FREE`: The toll-free fax number the recipient approved.  [required]
+
+**Options**:
+
+* `--by <str>`: Who at the recipient agreed, for example &quot;Dana, intake lead&quot;.  [required]
+* `--on DATE`: The day they agreed, as 2026-10-03.  [required]
+* `--evidence <str>`: Where the agreement is recorded, such as an email and its date.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients toll-free withdraw`
+
+Withdraw a recipient&#x27;s toll-free number; Faxbot sends to its own number again. The history is kept.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free withdraw [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The recipient&#x27;s own fax number.  [required]
+
+**Options**:
+
+* `--evidence <str>`: Why, or where the withdrawal is recorded.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients toll-free lookup`
+
+Look up toll-free fax numbers the NPI registry (NPPES) lists for a provider. It suggests only; nothing is approved.
+
+**Usage**:
+
+```console
+$ faxbot recipients toll-free lookup [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The recipient&#x27;s own fax number.  [required]
+
+**Options**:
+
+* `--npi <str>`: The provider&#x27;s ten-digit NPI.
+* `--name <str>`: Or the organization name, with --city or --state.
+* `--city <str>`: City, with --name.
+* `--state <str>`: Two-letter state, with --name.
 * `--help`: Show this message and exit.
 
 ## `faxbot providers`
@@ -1777,6 +1900,8 @@ $ faxbot providers trunk telnyx [OPTIONS] COMMAND [ARGS]...
 
 * `status`: Show whether Telnyx has fax over IP (T.38)...
 * `t38-on`: Turn on fax over IP (T.38) at Telnyx for...
+* `names`: Show whether Telnyx looks up callers&#x27;...
+* `name-lookup-off`: Turn off caller-name lookup at Telnyx for...
 
 ##### `faxbot providers trunk telnyx status`
 
@@ -1810,6 +1935,38 @@ $ faxbot providers trunk telnyx t38-on [OPTIONS] {NUMBER}
 
 * `--help`: Show this message and exit.
 
+##### `faxbot providers trunk telnyx names`
+
+Show whether Telnyx looks up callers&#x27; names on each trunk number, and what that costs, from the last check.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk telnyx names [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk telnyx name-lookup-off`
+
+Turn off caller-name lookup at Telnyx for one trunk number. Faxbot never shows callers&#x27; names; only that setting changes.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk telnyx name-lookup-off [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The trunk number, for example +17208565062.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `faxbot costs`
 
 What faxing costs you: spending by route, charges from your carrier, and the prices and plans Faxbot uses.
@@ -1831,9 +1988,9 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `fax`: Show what one fax cost: the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
-* `recommendations`: Show ways to pay less: numbers where...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
+* `recommendations`: Ways to pay less, from what your faxes and...
 
 ### `faxbot costs spending`
 
@@ -1917,20 +2074,6 @@ $ faxbot costs savings [OPTIONS]
 * `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
 * `--help`: Show this message and exit.
 
-### `faxbot costs recommendations`
-
-Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee.
-
-**Usage**:
-
-```console
-$ faxbot costs recommendations [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
 ### `faxbot costs rate-cards`
 
 Show the prices Faxbot uses to estimate costs, or replace them from a file.
@@ -1963,6 +2106,143 @@ $ faxbot costs plans [OPTIONS] [provider]
 **Options**:
 
 * `--in-use`: Plans for every sending provider that has no rate card yet.
+* `--help`: Show this message and exit.
+
+### `faxbot costs recommendations`
+
+Ways to pay less, from what your faxes and calls actually cost. Run it alone for every section.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `sending`: Show numbers where another route cost less...
+* `receiving`: Show which numbers could share incoming...
+* `plans`: Show whether each monthly plan is worth...
+* `fax-marker`: Compare calls marked as fax with calls not...
+* `billing-steps`: Show numbers whose calls end just past a...
+* `partners`: Show the numbers whose faxes cost the most...
+* `service-numbers`: Show quiet numbers at your carrier and at...
+* `toll-free`: Show recipients with a toll-free fax...
+
+#### `faxbot costs recommendations sending`
+
+Show numbers where another route cost less per delivered fax in the last 30 days.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations sending [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations receiving`
+
+Show which numbers could share incoming lines, numbers with few calls, and your fax services&#x27; monthly fees.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations receiving [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations plans`
+
+Show whether each monthly plan is worth its fee at your traffic.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations plans [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations fax-marker`
+
+Compare calls marked as fax with calls not marked: delivery, fax over IP (T.38), time and cost. Changes no setting.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations fax-marker [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations billing-steps`
+
+Show numbers whose calls end just past a billed minute, where one page less or a faster mode would have cost less.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations billing-steps [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations partners`
+
+Show the numbers whose faxes cost the most again and again: candidates to enroll as direct partners.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations partners [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations service-numbers`
+
+Show quiet numbers at your carrier and at HumbleFax and eFax, with what each costs to keep.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations service-numbers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations toll-free`
+
+Show recipients with a toll-free fax number on file and whether their approval is recorded.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations toll-free [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot access`

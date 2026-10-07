@@ -94,24 +94,11 @@ CLI_ONLY = {
         'providers in use (GET /routing/published-plans/in-use)'),
 }
 
-# Builder AD's advice routes (ent/advice milestone 1): the console and command line follow in milestone 2.
-_ADVICE = {
-    ('GET', '/admin/sip/telnyx/names'): 'Builder AD milestone 2: caller-name lookup on the trunk page',
-    ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): 'Builder AD milestone 2: Turn off name lookup',
-    ('GET', '/routing/destinations/{number}/toll-free'): 'Builder AD milestone 2: Recipients → Details toll-free',
-    ('POST', '/routing/destinations/{number}/toll-free'): 'Builder AD milestone 2: record a toll-free approval',
-    ('GET', '/routing/destinations/{number}/toll-free/suggestions'): 'Builder AD milestone 2: look up the NPI registry',
-    ('GET', '/routing/recommendations/billing-steps'): 'Builder AD milestone 2: Recommendations → Billing steps',
-    ('GET', '/routing/recommendations/fax-marker'): 'Builder AD milestone 2: Recommendations → Fax marker',
-    ('GET', '/routing/recommendations/partners'): 'Builder AD milestone 2: Recommendations → Partner candidates',
-    ('GET', '/routing/recommendations/toll-free'): 'Builder AD milestone 2: Recommendations → Toll-free numbers',
-}
-
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
-AWAITING_CONSOLE: dict = dict(_ADVICE)
+AWAITING_CONSOLE: dict = {}
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
-AWAITING_CLI: dict = dict(_ADVICE)
+AWAITING_CLI: dict = {}
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,
          'AWAITING_CONSOLE': AWAITING_CONSOLE, 'AWAITING_CLI': AWAITING_CLI}
