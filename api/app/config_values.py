@@ -295,6 +295,9 @@ class ConfigurationValues(BaseModel):
     # Work queue: the team's operational target for acknowledging a received
     # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
     work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)
+    # Case checklists: suggest documents that may match a missing item. Off unless turned on;
+    # a suggestion is never sent unless a person adds it to the packet.
+    case_suggestions_enabled: bool = Field(False, validation_alias='CASE_SUGGESTIONS')
     # The address paired phones use on the installation's own network; empty offers none.
     mobile_local_base: str = Field('', validation_alias='MOBILE_LOCAL_BASE')
     # Where the console's help links point.

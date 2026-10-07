@@ -317,6 +317,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'work': {
             'acknowledge_hours': values.work_acknowledge_hours,
         },
+        # Case checklists: whether Faxbot suggests possible matches for missing items (off by default).
+        'cases': {'suggestions': values.case_suggestions_enabled},
         # What every sent fax carries: the header text and the station ID (your fax number).
         'sender': {'header': values.fax_header, 'station_id': values.fax_station_id},
         'direct': {

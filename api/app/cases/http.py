@@ -19,6 +19,7 @@ from ..routing.background import installation_engine
 from ..routing.database import DeliveryStoreError
 from ..routing.numbers import InvalidNumber, normalize_number
 from ..routing.submit import accept_generated_fax
+from .checklist import EXAMPLE_ITEMS, EXAMPLE_NAME, CaseChecklists, build, local_today, parse_day
 from .ledger import (
     LIMITS, MAX_NOTE, CaseConflict, CaseInputError, CaseLedger, PacketPlan, check_case_id, clean, compose, document,
 )
@@ -26,6 +27,7 @@ from .ledger import (
 
 cases_routes = APIRouter(prefix='/cases', tags=['Case ledger'])
 recipients_router = APIRouter(prefix='/case-recipients', tags=['Case ledger'])
+checklists_router = APIRouter(prefix='/case-checklists', tags=['Case ledger'])
 MAX_DOCUMENTS = 50
 UNAVAILABLE = 'Case records are unavailable.'
 
@@ -353,7 +355,153 @@ async def update_case_recipient(number: str, payload: RecipientPatch, request: R
     return await call(lambda: ledger.set_reuse_days(recipient, payload.reuse_days, expected_version=payload.version))
 
 
+# Checklists ---------------------------------------------------------------------------------------------------
+
+def _checklists(request):
+    engine, _ = installation_engine(request.app)
+    if engine is None:
+        raise HTTPException(503, detail='Installation configuration is not ready.')
+    try:
+        return CaseChecklists(engine)
+    except DeliveryStoreError:
+        raise HTTPException(503, detail=UNAVAILABLE) from None
+
+
+def _suggestions_on(request):
+    return bool(getattr(_values(request), 'case_suggestions_enabled', False))
+
+
+@checklists_router.get('', dependencies=[Depends(require_permission('settings:read'))])
+async def list_checklists(request: Request):
+    """The newest version of each checklist, the synthetic example, and whether suggestions are on."""
+    checklists = _checklists(request)
+    return {'checklists': await call(checklists.latest), 'suggestions': _suggestions_on(request),
+            'example': {'name': EXAMPLE_NAME, 'items': [dict(item) for item in EXAMPLE_ITEMS]}}
+
+
+@checklists_router.get('/{name}', dependencies=[Depends(require_permission('settings:read'))])
+async def show_checklist(name: str, request: Request, version: int | None = Query(default=None, ge=1)):
+    """One checklist version (the newest unless one is named), with every version and how often each was used."""
+    checklists = _checklists(request)
+    found = await call(lambda: checklists.find(name, version=version))
+    if found is None:
+        raise HTTPException(404, detail='No checklist has that name and version.')
+    versions = await call(lambda: checklists.versions(name))
+    return {**found, 'versions': [{'id': item['id'], 'version': item['version'], 'created_at': item['created_at'],
+                                   'used': item['used']} for item in versions]}
+
+
+class ChecklistItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    type: str = Field(min_length=1, max_length=100)
+    required: bool = True
+    within_days: int | None = Field(default=None, ge=1, le=3650)
+    version: str | None = Field(default=None, max_length=64)
+
+
+class NewChecklist(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(min_length=1, max_length=100)
+    items: list[ChecklistItem] = Field(min_length=1, max_length=50)
+    to: str | None = Field(default=None, max_length=40)
+
+
+@checklists_router.post('', status_code=201)
+async def add_checklist(payload: NewChecklist, request: Request,
+                        identity=Depends(require_permission('settings:write'))):
+    """Save a checklist; a name already in use gets a new version, and earlier versions never change."""
+    recipient = _number(payload.to, request) if payload.to else None
+    checklists = _checklists(request)
+    return await call(lambda: checklists.add(
+        payload.name, [item.model_dump() for item in payload.items], recipient=recipient,
+        principal_id=getattr(identity.actor, 'principal_id', None)))
+
+
+class Picked(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    original_id: str = Field(min_length=1, max_length=40)
+    # The checklist item (from 0) this document answers; None for an extra document.
+    item: int | None = Field(default=None, ge=0, le=49)
+
+
+class ChecklistPacket(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    to: str = Field(min_length=1, max_length=40)
+    checklist_id: str = Field(min_length=1, max_length=40)
+    as_of: str | None = Field(default=None, max_length=10)
+    purpose: str = Field(default='', max_length=200)
+    preview: bool = False
+    # The selection a person confirmed; required to send. A preview without it shows Faxbot's picks.
+    selection: list[Picked] | None = Field(default=None, max_length=MAX_DOCUMENTS)
+    allow_missing: bool = False
+
+
+def _pick_view(item, row, reason):
+    return {'item': item, 'original_id': row['id'], 'title': row['title'], 'pages': row['page_count'],
+            'document_type': row['document_type'], 'document_date': row['document_date'],
+            'version': row['version'], 'source': row['source'], 'reason': reason}
+
+
+@cases_routes.post('/{case_id}/checklist-packets', status_code=202)
+async def checklist_packet(case_id: str, payload: ChecklistPacket, request: Request,
+                           identity=Depends(require_permission('fax:send', resource='personal'))):
+    """Build a packet from a checklist: Faxbot's picks with reasons, missing items, then the confirmed send."""
+    case_id, recipient = _inputs(case_id, payload.to, request)
+    purpose = clean(payload.purpose, LIMITS['purpose'])
+    ledger, checklists = _ledger(request), _checklists(request)
+    checklist = await call(lambda: checklists.find(identity=payload.checklist_id))
+    if checklist is None:
+        raise HTTPException(404, detail='That checklist version was not found.')
+    try:
+        as_of = parse_day(payload.as_of, None) or local_today()
+    except CaseInputError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    items = checklist['items']
+    originals = await call(lambda: ledger.originals(case_id))
+    picks, missing, suggestions = build(items, originals, as_of, suggestions=_suggestions_on(request))
+    by_id = {row['id']: row for row in originals}
+    if payload.selection is None:
+        if not payload.preview:
+            raise HTTPException(400, detail='Send the selection you confirmed in the preview.')
+        selection = [(pick.item, pick.original) for pick in picks]
+    else:
+        selection = []
+        for chosen in payload.selection:
+            if chosen.original_id not in by_id:
+                raise HTTPException(400, detail='A chosen document is not kept in this case.')
+            if chosen.item is not None and chosen.item >= len(items):
+                raise HTTPException(400, detail='A chosen document names a checklist item that does not exist.')
+            selection.append((chosen.item, by_id[chosen.original_id]))
+    covered = {item for item, _ in selection if item is not None}
+    uncovered = [{'item': index, 'type': item['type']} for index, item in enumerate(items)
+                 if item['required'] and index not in covered]
+    reasons = {(pick.item, pick.original['id']): pick.reason for pick in picks}
+    chosen_view = [_pick_view(item, row, reasons.get((item, row['id']), 'Added by a person.'))
+                   for item, row in selection]
+    unique = list({row['id']: row for _, row in selection}.values())
+    documents = await call(lambda: [ledger.load(row, purpose=purpose) for row in unique])
+    packet = await call(lambda: ledger.plan(case_id, recipient, documents)) if documents else None
+    view = {'case_id': case_id, 'to': recipient, 'as_of': as_of.isoformat(), 'purpose': purpose,
+            'checklist': {'id': checklist['id'], 'name': checklist['name'], 'version': checklist['version']},
+            'items': items, 'selected': chosen_view, 'missing': missing, 'required_not_selected': uncovered,
+            'suggestions': suggestions, 'suggestions_enabled': _suggestions_on(request),
+            'packet': packet_view(case_id, recipient, packet, purpose=purpose) if packet else None}
+    if payload.preview:
+        return {**view, 'fax_id': None}
+    if uncovered and not payload.allow_missing:
+        names = ', '.join(f"'{entry['type']}'" for entry in uncovered)
+        raise HTTPException(409, detail=f'Required items are not in the selection: {names}. Add them, or send '
+                                        'without them if the recipient agreed.')
+    if packet is None or not packet.included:
+        raise HTTPException(409, detail='The recipient already acknowledged every chosen document; '
+                                        'there is nothing new to send.')
+    job_id = await send_packet(request, identity, ledger, case_id, recipient, packet, kind='checklist',
+                               purpose=purpose, checklist_id=checklist['id'])
+    return {**view, 'fax_id': job_id}
+
+
 # One router for main.py: the case routes, recipient reuse periods and checklists.
 router = APIRouter()
 router.include_router(cases_routes)
 router.include_router(recipients_router)
+router.include_router(checklists_router)
