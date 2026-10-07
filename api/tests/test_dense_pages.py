@@ -501,7 +501,7 @@ def test_only_pages_drawn_from_text_or_shapes_may_be_trimmed(tmp_path):
 
 # The send-time hook ---------------------------------------------------------------------------------------------
 
-def _send(database, tmp_path, *, route='sip', pages=None, number=PEER, values=None):
+def _send(database, tmp_path, *, route='sip', pages=None, number=PEER, values=None, recipient=None):
     pages = pages or [page(seed) for seed in range(5)]
     pdf, tiff = tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff'
     conversion.write_fax_tiff(pages, str(tiff))
@@ -509,8 +509,9 @@ def _send(database, tmp_path, *, route='sip', pages=None, number=PEER, values=No
     configuration = SimpleNamespace(provider_id=route, manifest=None,
                                     traits={'requires_tiff': route in ('sip', 'freeswitch')})
     claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
+    job = {'to_number': number, **({'recipient_number': recipient} if recipient else {})}
     return sending.prepare(database, values or SimpleNamespace(sip_fax_fine=True), configuration, claim,
-                           {'to_number': number}, pdf, tiff if route in ('sip', 'freeswitch') else None, now=NOW)
+                           job, pdf, tiff if route in ('sip', 'freeswitch') else None, now=NOW)
 
 
 def _learn(records, **values):
@@ -562,6 +563,110 @@ def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, data
     assert sending.prepare(database, SimpleNamespace(), SimpleNamespace(provider_id='sip', manifest=None, traits={}),
                            SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=('x',)), {'to_number': PEER},
                            tmp_path / 'x.pdf', None) is None
+    assert not list(tmp_path.glob('packed-*'))
+
+
+def _encoded_send(database, route):
+    """The fax's experimental encoded pages, made at acceptance for ``route`` (codec/send.py)."""
+    from app.codec.store import record_send
+    jobs = sa.Table('fax_jobs', sa.MetaData(), autoload_with=database)
+    with database.begin() as connection:
+        connection.execute(jobs.insert().values(**_filled(jobs, {
+            'id': JOB, 'to_number': PEER, 'status': 'queued', 'created_at': NOW, 'updated_at': NOW, 'pages': 5,
+            'backend': route})))
+        record_send(connection, database, JOB, {
+            'phone_number': PEER, 'provider_id': route, 'layout': 'grid', 'resolution': 'fine', 'fec': 'medium',
+            'pages_original': 5, 'pages_encoded': 2, 'document_sha256': '0' * 64, 'encrypted': 0,
+            'format_version': 1}, NOW)
+
+
+def test_encoded_pages_are_never_packed_trimmed_or_given_a_page_line(installation, database, tmp_path):
+    from app.codec import send as codec_send
+    from app.codec.store import send_for
+    _learn(installation)
+    _encoded_send(database, 'sip')
+    # Over the trunk the encoded pages are the fax image itself; any image route sends them as they are.
+    assert _send(database, tmp_path) is None
+    assert _send(database, tmp_path, route='freeswitch') is None
+    assert not list(tmp_path.glob('packed-*'))
+    # The Sent detail says only how the encoded pages went (AG), never a page layout line (AF).
+    assert views.sent_view(database, JOB, str(tmp_path)) is None
+    assert codec_send.sentence(send_for(database, JOB)) == 'Sent as 2 encoded pages instead of 5 (experimental).'
+
+
+def test_a_payload_pdf_made_for_a_cloud_route_goes_as_made(installation, database, tmp_path):
+    from app.codec.send import payload_pdf_path
+    _learn(installation)
+    installation.set_route_settings('sinch', long_pages=True)
+    _encoded_send(database, 'sinch')
+    payload_pdf_path(tmp_path, JOB, 'sinch').write_bytes(b'%PDF-1.4 encoded pages')
+    assert _send(database, tmp_path, route='sinch') is None
+    assert not list(tmp_path.glob('packed-*'))
+
+
+def test_another_route_than_the_encoded_pages_were_made_for_still_packs(installation, database, tmp_path):
+    from app.codec.send import payload_pdf_path
+    _learn(installation)
+    _encoded_send(database, 'sinch')
+    payload_pdf_path(tmp_path, JOB, 'sinch').write_bytes(b'%PDF-1.4 encoded pages')
+    # The trunk sends the fax's own image, which the payload PDF for Sinch never touched.
+    changed = _send(database, tmp_path)
+    assert (changed.original_pages, changed.sent_pages) == (5, 2)
+
+
+def test_page_settings_of_the_chosen_recipient_follow_an_approved_toll_free_dial(installation, database, tmp_path):
+    toll_free = '+18005550199'
+    _learn(installation)
+    installation.record_observation(toll_free, source='e' * 32, engine='hylafax',
+                                    values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1}, now=NOW)
+    # The machine at the toll-free number takes unlimited length, but the person chose never for the recipient.
+    installation.set_recipient_settings(PEER, packing='never')
+    assert _send(database, tmp_path, number=toll_free, recipient=PEER) is None
+    assert not list(tmp_path.glob('packed-*'))
+    # Never on the toll-free number itself counts too; with neither set, the call is packed.
+    installation.set_recipient_settings(PEER, packing='allow')
+    installation.set_recipient_settings(toll_free, packing='never')
+    assert _send(database, tmp_path, number=toll_free, recipient=PEER) is None
+    installation.set_recipient_settings(toll_free, packing='allow')
+    changed = _send(database, tmp_path, number=toll_free, recipient=PEER)
+    assert (changed.original_pages, changed.sent_pages) == (5, 2)
+
+
+def test_blank_space_off_for_the_chosen_recipient_keeps_page_bottoms_on_a_toll_free_dial(installation, database,
+                                                                                          tmp_path):
+    toll_free = '+18005550199'
+    installation.record_observation(toll_free, source='e' * 32, engine='hylafax',
+                                    values={'max_length': 'a4', 'ecm': 0, 'fine': 1, 'scan_ms': 10}, now=NOW)
+    installation.set_recipient_settings(PEER, trim_blank=False)
+    (tmp_path / 'note.txt').write_text('\n'.join(f'line {number}' for number in range(20)) + '\n')
+    conversion.txt_to_pdf(str(tmp_path / 'note.txt'), str(tmp_path / f'{JOB}.pdf'))
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript renders the text page')
+    conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
+    configuration = SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True})
+    claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
+
+    def send():
+        return sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration, claim,
+                               {'to_number': toll_free, 'recipient_number': PEER}, tmp_path / f'{JOB}.pdf',
+                               tmp_path / f'{JOB}.tiff', now=NOW)
+    assert send() is None
+    installation.set_recipient_settings(PEER, trim_blank=None)
+    assert send().trimmed_pages == 1
+
+
+def test_encoded_pages_rendered_from_a_document_keep_their_blank_bottom(installation, database, tmp_path):
+    _learn(installation, max_length='a4', ecm=0, scan_ms=10)
+    _encoded_send(database, 'sip')
+    (tmp_path / 'note.txt').write_text('\n'.join(f'line {number}' for number in range(20)) + '\n')
+    conversion.txt_to_pdf(str(tmp_path / 'note.txt'), str(tmp_path / f'{JOB}.pdf'))
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript renders the text page')
+    conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
+    configuration = SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True})
+    claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
+    assert sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration, claim, {'to_number': PEER},
+                           tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff', now=NOW) is None
     assert not list(tmp_path.glob('packed-*'))
 
 

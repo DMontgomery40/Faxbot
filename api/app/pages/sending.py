@@ -50,6 +50,20 @@ def paths(root, job_id, attempt_id):
     return stem.with_suffix('.tiff'), stem.with_suffix('.pdf')
 
 
+def _encoded(engine, job_id, route, mode, root):
+    """Whether this attempt sends the experimental encoded pages made for the fax at acceptance (codec/send.py):
+    a payload PDF made for this route, or encoded pages written over the fax image every image route sends."""
+    from ..codec.send import payload_pdf_path
+    from ..codec.store import send_for
+    if payload_pdf_path(root, job_id, route).is_file():
+        return True
+    made = send_for(engine, job_id)
+    if made is None:
+        return False
+    return made['provider_id'] == route or (
+        mode == 'image' and not payload_pdf_path(root, job_id, made['provider_id']).is_file())
+
+
 def _call_resolution(values):
     """Whether the trunk sends fine pages (the SSL Fax engine re-images a page at any other resolution)."""
     try:
@@ -106,15 +120,23 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     route, number, mode = configuration.provider_id, job.get('to_number'), how_sent(configuration)
     if mode == 'pdf_url':
         return None
+    root = Path(str(pdf)).parent
+    if _encoded(engine, job_id, route, mode, root):
+        return None  # the experimental encoded pages go exactly as made (codec/send.py); never packed or trimmed
     records = capabilities.records_for(engine)
+    # The machine that answers is the dialed number's; the person's page settings are also read for the recipient
+    # they chose (an approved toll-free number is dialed instead, routing/alternates.py): the stricter one wins.
+    chosen = job.get('recipient_number') or number
     cap = records.capability(number)
     packing_ok, _ = capabilities.long_pages_allowed(engine, route, number, rule=rule)
-    trim_ok = mode == 'image' and cap.ecm is False and records.trim_allowed(number)
+    if chosen != number and records.recipient_packing(chosen) == 'never':
+        packing_ok = False
+    trim_ok = (mode == 'image' and cap.ecm is False and records.trim_allowed(number)
+               and records.trim_allowed(chosen))
     # A document that is really standard resolution goes at standard (lossless; Faxbot's own engines only).
     match_ok = mode == 'image'
     if not packing_ok and not trim_ok and not match_ok:
         return None
-    root = Path(str(pdf)).parent
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
     source = Path(str(tiff)) if mode == 'image' and tiff else None
     raster = None
