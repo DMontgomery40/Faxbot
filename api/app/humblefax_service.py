@@ -3,9 +3,22 @@
 Official API reference, verified 2026-10-03: https://api.humblefax.com/
 QuickSendFax is ``POST /quickSendFax`` (multipart ``jsonData`` plus a file);
 GetSentFax is ``GET /sentFax/{sentFaxId}``; GetUser is ``GET /user`` (the API
-user's own settings: ``assignedFaxNumber`` and ``allFaxNumbersCanAccess``, the
-numbers it can send from; read 2026-10-04). Authentication is HTTP Basic with
-the account's API access key and secret key.
+user's own settings: ``id``, ``inboundAccess``, ``assignedFaxNumber`` and
+``allFaxNumbersCanAccess``, the numbers it can send from; read 2026-10-04 and
+2026-10-07). Authentication is HTTP Basic with the account's API access key and
+secret key.
+
+Receiving (read 2026-10-07 from the same reference) uses three read calls and
+nothing else: GetIncomingFaxes ``GET /incomingFaxes?timeFrom&timeTo`` (Unix
+seconds; the last 30 days by default; no paging; ``data.incomingFaxIds`` and
+``data.incomingFaxes`` with ``id``, ``status`` ("success" or "partial fax
+received"), ``time``, ``toNumber``, ``fromNumber``, ``numPages``),
+GetIncomingFax ``GET /incomingFax/{id}`` (``data.incomingFax``) and
+DownloadIncomingFax ``GET /incomingFax/{id}/download?fileFormat=pdf`` (the
+document bytes). HumbleFax has no "mark as read" call; DeleteIncomingFax exists
+and Faxbot never calls it, so every received fax stays in the HumbleFax account.
+HumbleFax blocks an address for 60 seconds after more than 5 requests in a
+second, so the receiving calls are spaced ``RECEIVE_GAP`` apart.
 """
 from __future__ import annotations
 
@@ -43,6 +56,95 @@ class HumbleFaxCredentialsError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__('HumbleFax rejected the account access key or secret key.')
+
+
+class HumbleFaxError(RuntimeError):
+    """A receiving request failed; the message is one plain sentence without keys or addresses."""
+
+
+class HumbleFaxBusy(HumbleFaxError):
+    """HumbleFax asked Faxbot to slow down (HTTP 429); it blocks an address for 60 seconds."""
+
+    def __init__(self, retry_after: int | None = None) -> None:
+        super().__init__('HumbleFax asked Faxbot to slow down; Faxbot will check again shortly.')
+        self.retry_after = max(60, retry_after or 0)
+
+
+class HumbleFaxNotFound(HumbleFaxError):
+    """HumbleFax has no received fax with this ID for these keys."""
+
+
+# At most two receiving requests a second, well under HumbleFax's five, so sending keeps its share.
+RECEIVE_GAP = 0.5
+_RECEIVE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_DOWNLOAD_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_MAX_LISTING_BYTES = 8 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+_REDIRECTS = 3
+# Tests give a fake transport here for the receiving calls.
+RECEIVE_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
+class Pace:
+    """Spaces requests at least ``gap`` seconds apart across every thread and event loop."""
+
+    def __init__(self, gap: float, *, clock=time.monotonic, sleep=asyncio.sleep) -> None:
+        self.gap, self.clock, self.sleep = gap, clock, sleep
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    async def wait(self) -> None:
+        with self._lock:
+            now = self.clock()
+            slot = max(now, self._next)
+            self._next = slot + self.gap
+        if slot > now:
+            await self.sleep(slot - now)
+
+
+RECEIVE_PACE = Pace(RECEIVE_GAP)
+
+
+def _retry_after(response: httpx.Response) -> int | None:
+    value = (response.headers.get('retry-after') or '').strip()
+    return int(value) if value.isdigit() else None
+
+
+def _incoming(fax: object) -> dict | None:
+    """One listed or fetched incoming fax with a usable ID, numbers in international form."""
+    if not isinstance(fax, dict):
+        return None
+    try:
+        fax_id = _identity(fax.get('id'))
+    except ValueError:
+        return None
+    pages = fax.get('numPages')
+    if isinstance(pages, str) and pages.strip().isdigit():
+        pages = int(pages.strip())
+    status = fax.get('status')
+    return {'id': fax_id, 'status': status.strip().lower()[:45] if isinstance(status, str) else None,
+            'time': fax.get('time') if isinstance(fax.get('time'), (int, str)) and not isinstance(
+                fax.get('time'), bool) else None,
+            'to_number': _account_number(fax.get('toNumber')), 'from_number': _account_number(fax.get('fromNumber')),
+            'pages': pages if isinstance(pages, int) and not isinstance(pages, bool) and 0 <= pages <= 100000 else None,
+            'transmission_seconds': fax.get('transmissionTime') if isinstance(fax.get('transmissionTime'), int)
+            and not isinstance(fax.get('transmissionTime'), bool) else None,
+            'bit_rate': str(fax.get('bitRate'))[:10] if isinstance(fax.get('bitRate'), (int, str))
+            and not isinstance(fax.get('bitRate'), bool) else None,
+            'sender_station': fax.get('fromNameIdentity')[:245] if isinstance(fax.get('fromNameIdentity'), str)
+            else None}
+
+
+def _same_origin(location: str) -> str | None:
+    """A redirect HumbleFax's API gives to itself (https://api.humblefax.com/...); anything else is None."""
+    try:
+        target = httpx.URL(_ORIGIN + '/').join(location)
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return None
+    if target.scheme != 'https' or target.host != 'api.humblefax.com' or target.port not in (None, 443) \
+            or target.userinfo:
+        return None
+    return str(target)
 
 
 def humblefax_number(value: object) -> int:
@@ -345,3 +447,116 @@ class HumbleFaxFaxService:
             raise
         except (httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError):
             raise RuntimeError('HumbleFax user request failed.') from None
+
+    # Receiving: read, list and download only ------------------------------------
+    async def _receive(self, path: str, *, params: dict | None = None, limit: int,
+                       timeout: httpx.Timeout = _RECEIVE_TIMEOUT, what: str) -> tuple[int, bytes]:
+        """One paced GET to HumbleFax's API host, following only redirects to that same host."""
+        if not self.is_configured():
+            raise HumbleFaxError('Add the HumbleFax access key and secret key in settings.')
+        url, query = _ORIGIN + path, params
+        try:
+            async with httpx.AsyncClient(timeout=timeout, transport=self.transport or RECEIVE_TRANSPORT,
+                    follow_redirects=False, trust_env=False) as client:
+                for _ in range(_REDIRECTS + 1):
+                    await RECEIVE_PACE.wait()
+                    async with client.stream('GET', url, params=query, headers=self._headers()) as response:
+                        if response.status_code in (301, 302, 303, 307, 308):
+                            url, query = _same_origin(response.headers.get('location') or ''), None
+                            if url is None:
+                                raise HumbleFaxError(f'HumbleFax sent {what} from another address, which '
+                                                     'Faxbot does not follow.')
+                            continue
+                        if response.status_code == 401:
+                            raise HumbleFaxCredentialsError()
+                        if response.status_code == 429:
+                            raise HumbleFaxBusy(_retry_after(response))
+                        declared = response.headers.get('content-length') or ''
+                        if declared.isdigit() and int(declared) > limit:
+                            raise HumbleFaxError(f'{what.capitalize()} from HumbleFax is larger than Faxbot accepts.')
+                        body = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            body.extend(chunk)
+                            if len(body) > limit:
+                                raise HumbleFaxError(f'{what.capitalize()} from HumbleFax is larger than Faxbot accepts.')
+                        return response.status_code, bytes(body)
+        except (HumbleFaxCredentialsError, HumbleFaxError):
+            raise
+        except (httpx.HTTPError, httpx.InvalidURL, OSError):
+            raise HumbleFaxError('Faxbot could not reach HumbleFax.') from None
+        raise HumbleFaxError(f'HumbleFax redirected {what} too many times.')
+
+    @staticmethod
+    def _data(status: int, body: bytes) -> dict | None:
+        if not 200 <= status < 300:
+            return None
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return None
+        data = payload.get('data') if isinstance(payload, dict) else None
+        return data if isinstance(data, dict) else None
+
+    async def user(self) -> dict:
+        """This API user's ID and whether it may see received faxes (GetUser). Read-only."""
+        status, body = await self._receive('/user', limit=_MAX_LISTING_BYTES // 8, what='the answer')
+        user = (self._data(status, body) or {}).get('user')
+        if not isinstance(user, dict):
+            user = {}
+        try:
+            identity = _identity(user.get('id'))
+        except ValueError:
+            raise HumbleFaxError('HumbleFax did not say which user these keys belong to.') from None
+        access = user.get('inboundAccess')
+        return {'id': identity, 'inbound_access': access if isinstance(access, bool) else None}
+
+    async def list_received(self, *, time_from: int | None = None, time_to: int | None = None) -> list[dict]:
+        """The received faxes HumbleFax lists for the window (GetIncomingFaxes), each with a usable ID.
+
+        An ID listed without its details comes back as ``{'id': ...}`` alone; GetIncomingFax reads it.
+        """
+        params = {name: str(value) for name, value in (('timeFrom', time_from), ('timeTo', time_to))
+                  if value is not None}
+        status, body = await self._receive('/incomingFaxes', params=params or None, limit=_MAX_LISTING_BYTES,
+                                           what='the list of received faxes')
+        data = self._data(status, body)
+        if data is None:
+            raise HumbleFaxError('HumbleFax did not list received faxes.')
+        found: dict[str, dict] = {}
+        details = data.get('incomingFaxes') if isinstance(data.get('incomingFaxes'), list) else []
+        for fax in details:
+            item = _incoming(fax)
+            if item is not None and item['id'] not in found:
+                found[item['id']] = item
+        identities = data.get('incomingFaxIds') if isinstance(data.get('incomingFaxIds'), list) else []
+        for value in identities:
+            try:
+                fax_id = _identity(value)
+            except ValueError:
+                continue
+            found.setdefault(fax_id, {'id': fax_id})
+        return list(found.values())
+
+    async def get_received(self, fax_id: str) -> dict:
+        """One received fax's details (GetIncomingFax); HumbleFaxNotFound when these keys cannot see it."""
+        sid = _identity(fax_id)
+        status, body = await self._receive('/incomingFax/' + sid, limit=_MAX_LISTING_BYTES // 8, what='the answer')
+        if status in (403, 404):
+            raise HumbleFaxNotFound('HumbleFax has no received fax with this ID for the keys in settings.')
+        item = _incoming((self._data(status, body) or {}).get('incomingFax'))
+        if item is None or item['id'] != sid:
+            raise HumbleFaxError('HumbleFax did not describe this received fax.')
+        return item
+
+    async def download_received(self, fax_id: str) -> bytes:
+        """The received document as PDF (DownloadIncomingFax), bounded to 50 MB."""
+        sid = _identity(fax_id)
+        status, body = await self._receive('/incomingFax/' + sid + '/download', params={'fileFormat': 'pdf'},
+                                           limit=MAX_DOCUMENT_BYTES, timeout=_DOWNLOAD_TIMEOUT, what='the document')
+        if status in (403, 404):
+            raise HumbleFaxNotFound('HumbleFax has no received fax with this ID for the keys in settings.')
+        if status != 200:
+            raise HumbleFaxError(f'HumbleFax did not send the document (HTTP {status}).')
+        if not body:
+            raise HumbleFaxError('HumbleFax sent an empty document.')
+        return body
