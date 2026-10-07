@@ -589,6 +589,24 @@ def test_numbers_list_reads_a_rule_with_options_and_says_when_it_is_off(fake, mo
     assert '+17208565062 - Leeds intake' in shown
 
 
+def test_live_answers_read_as_sentences(capsys, monkeypatch):
+    """What the rules engine answered on a live local server (2026-10-07), printed as people read it."""
+    monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    monkeypatch.setenv('COLUMNS', '220')
+    out = output.Output()
+    sentence = 'Waits for approval: the rule ‘UK faxes need approval’ matched.'
+    rules_module.show_explain(out, {'outcome': 'held', 'sentence': sentence, 'routes': [], 'holds': [sentence],
+                                    'dial': None, 'page_layout': None, 'trace': [
+                                        {'kind': 'limit', 'result': 'not_matched', 'scope': 'organization',
+                                         'name': 'UK faxes need approval', 'failed': 'the recipient group'}]})
+    rules_module.show_check(out, {'errors': [], 'warnings': [], 'replay': {'checked': 0, 'changed': 0,
+                                                                          'approximate': 0, 'items': []}})
+    printed = capsys.readouterr().out
+    assert printed.count(sentence) == 1
+    assert 'Its condition on the recipient group did not match.' in ' '.join(printed.split())
+    assert 'There are no recent faxes to try these rules on yet.' in printed and 'of your last 0' not in printed
+
+
 def test_why_this_route(fake):
     result = fake('sent', 'route', 'a' * 32)
     assert result.exit_code == 0

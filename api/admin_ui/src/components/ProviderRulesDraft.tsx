@@ -158,9 +158,9 @@ export function CheckPanel({ check }: { check: CheckResult | null }) {
       {replay && (
         <Box>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            {replay.changed === 0
-              ? `All of your last ${replay.checked} faxes would go the same way.`
-              : `${replay.changed} of your last ${replay.checked} faxes would go differently.`}
+            {replay.checked === 0 ? 'There are no recent faxes to try these rules on yet.'
+              : replay.changed === 0 ? `All of your last ${replay.checked} faxes would go the same way.`
+                : `${replay.changed} of your last ${replay.checked} faxes would go differently.`}
             {replay.approximate > 0 && ` ${replay.approximate} of them were sent before rules existed, so Faxbot used `
               + "today's groups and preferences for them."}
           </Typography>

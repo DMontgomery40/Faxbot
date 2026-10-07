@@ -1041,7 +1041,12 @@ def show_check(out, check):
         out.line('Worth a look: ' + issue['message'])
     replay = check.get('replay')
     if replay:
-        line = (f"{replay['changed']} of your last {replay['checked']} faxes would go differently.")
+        if not replay['checked']:
+            line = 'There are no recent faxes to try these rules on yet.'
+        elif not replay['changed']:
+            line = f"All of your last {replay['checked']} faxes would go the same way."
+        else:
+            line = f"{replay['changed']} of your last {replay['checked']} faxes would go differently."
         if replay.get('approximate'):
             line += (f" {replay['approximate']} of them were sent before rules existed, so Faxbot used today's groups "
                      'and preferences for them.')
@@ -1168,7 +1173,8 @@ def show_explain(out, result):
                   [[item['label'], money_amount(item['quote']) if item.get('quote') else 'Not priced yet',
                     item.get('origin'), 'yes' if item.get('usable') else 'no', item.get('sentence')] for item in routes])
     for hold in result.get('holds') or []:
-        out.line(hold)
+        if hold != result.get('sentence'):
+            out.line(hold)
     if result.get('dial'):
         out.line(result['dial']['sentence'])
     if result.get('page_layout'):
@@ -1199,7 +1205,8 @@ def step_why(step):
     """The first condition that did not match (as its --when field), or why a match did not choose."""
     parts = []
     if step.get('failed'):
-        parts.append(step['failed'])
+        failed = step['failed']
+        parts.append(failed if failed.endswith(('.', '!', '?')) else f'Its condition on {failed} did not match.')
     elif step.get('field'):
         block, _, key = step['field'].rpartition('.')
         names = [name for name, (part, field, _) in CONDITION_FIELDS.items()

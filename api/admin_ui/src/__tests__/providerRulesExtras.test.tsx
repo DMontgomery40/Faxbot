@@ -6,6 +6,8 @@ import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendOptions } 
 import { AddAsRuleButton } from '../components/ProviderRulesSuggest';
 import { WaitingForYouCard } from '../components/ProviderRulesHeld';
 import { OriginRates, TrunkPicker } from '../components/ProviderAccountsTrunks';
+import { ExplainAnswer } from '../components/ProviderRulesTry';
+import { CheckPanel } from '../components/ProviderRulesDraft';
 import { NO_RECEIVING_OPTIONS, type ReceivingOptions } from '../components/ProviderRulesApi';
 import { FakeRules } from './providerRulesFake';
 
@@ -126,6 +128,20 @@ describe('several trunks and prices by where calls start', () => {
     expect(within(table).getByText('1-second steps')).toBeTruthy();
     expect(within(table).getByText(/read on .*2026/)).toBeTruthy();
     expect(within(table).getByText('Entered here')).toBeTruthy();
+  });
+});
+
+describe('answers from the live rules engine read as sentences', () => {
+  it('names the condition that did not match, says a held fax once, and has no "0 of 0"', () => {
+    const sentence = 'Waits for approval: the rule ‘UK faxes need approval’ matched.';
+    render(<ExplainAnswer result={{ outcome: 'held', sentence, routes: [], holds: [sentence], dial: null, page_layout: null,
+      trace: [{ kind: 'limit', result: 'not_matched', scope: 'organization', name: 'UK faxes need approval',
+        failed: 'the recipient group' }] }} />);
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
+    fireEvent.click(screen.getByText('Every rule Faxbot read for this fax'));
+    expect(screen.getByText('Its condition on the recipient group did not match.')).toBeTruthy();
+    render(<CheckPanel check={{ errors: [], warnings: [], replay: { checked: 0, changed: 0, approximate: 0, items: [] } }} />);
+    expect(screen.getByText('There are no recent faxes to try these rules on yet.')).toBeTruthy();
   });
 });
 

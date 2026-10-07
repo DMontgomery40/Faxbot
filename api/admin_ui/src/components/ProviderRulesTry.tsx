@@ -30,7 +30,8 @@ const SCOPE_NAME = { organization: 'Organization', mailbox: 'Mailbox', workflow:
 export function stepWhy(step: TraceStep): string {
   const parts: string[] = [];
   if (step.failed) {
-    parts.push(step.failed);
+    // The engine names the condition ("the recipient group"); a full sentence passes through as it is.
+    parts.push(/[.!?]$/.test(step.failed) ? step.failed : `Its condition on ${step.failed} did not match.`);
   } else if (step.field) {
     const [block, key] = step.field.includes('.') ? step.field.split('.') : [null, step.field];
     const field = CONDITION_FIELDS.find((item) => item.block === block && item.key === key);
@@ -103,7 +104,9 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
           </Table>
         </Paper>
       )}
-      {result.holds.map((hold) => <Typography key={hold} variant="body2" sx={{ mb: 1 }}>{hold}</Typography>)}
+      {result.holds.filter((hold) => hold !== result.sentence).map((hold) => (
+        <Typography key={hold} variant="body2" sx={{ mb: 1 }}>{hold}</Typography>
+      ))}
       {result.dial && <Typography variant="body2" sx={{ mb: 1 }}>{result.dial.sentence}</Typography>}
       {result.page_layout && (
         <Typography variant="body2" sx={{ mb: 1 }}>Pages per sheet: {layoutWords(result.page_layout)}.</Typography>
