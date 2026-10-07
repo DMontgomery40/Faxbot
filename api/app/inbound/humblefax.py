@@ -9,8 +9,9 @@ yet" list, so Faxbot keeps track of which faxes it already has:
    (HumbleFax's own default window). It never asks for more than 30 days.
 2. A listed fax whose ID Faxbot has not recorded begins one durable import
    (source ``humblefax``, account ``humblefax:<HumbleFax user ID>``, HumbleFax's
-   fax ID) and nothing else. A fax Faxbot already recorded, in any state, is
-   left alone: listing it again never resumes, reschedules or duplicates it.
+   fax ID) and nothing else. A fax Faxbot already recorded, in any state and
+   under any HumbleFax user, is left alone: listing it again never resumes,
+   reschedules or duplicates it.
 3. The received-fax worker leases the import and calls ``acquire``: it checks
    that the keys in settings still belong to the HumbleFax user the fax arrived
    for, downloads the document as a PDF from HumbleFax's API host by fax ID,
@@ -150,15 +151,21 @@ async def account_for(account, service):
     return identity
 
 
-def _known(store, identity, fax_ids):
-    """The fax IDs among ``fax_ids`` Faxbot already recorded for this HumbleFax user, in any state."""
+def _known(store, fax_ids):
+    """The fax IDs among ``fax_ids`` Faxbot already recorded from HumbleFax, in any state, under any user.
+
+    HumbleFax users of one account can see each other's faxes (GetUser's
+    ``accessOtherUsersFaxes``), and HumbleFax's fax IDs read as one service-wide
+    number sequence (assumed; its reference does not say), so a fax ID already
+    recorded under another HumbleFax user is the same fax and is never recorded again.
+    """
     imports = store.imports
     found = set()
     with store.engine.connect() as connection:
         for start in range(0, len(fax_ids), _LOOKUP_BATCH):
             chunk = fax_ids[start:start + _LOOKUP_BATCH]
             found.update(connection.execute(sa.select(imports.c.operation_id).where(
-                imports.c.source == SOURCE, imports.c.account == identity, imports.c.revision == '',
+                imports.c.source == SOURCE, imports.c.revision == '',
                 imports.c.operation_id.in_(chunk))).scalars())
     return found
 
@@ -202,7 +209,7 @@ async def check_once(store, values, account=None, *, service=None, kick=None):
     items = await service.list_received(time_from=int((start - _EPOCH).total_seconds()))
     result = CheckResult(listed=len(items))
     fax_ids = [item['id'] for item in items]
-    known = await run_lifecycle_step(lambda: _known(store, identity, fax_ids))
+    known = await run_lifecycle_step(lambda: _known(store, fax_ids))
     for item in items:
         if item['id'] in known:
             continue

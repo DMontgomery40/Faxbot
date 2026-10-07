@@ -59,7 +59,7 @@ class FakeHumbleFax:
 
     def receive(self, fax_id, document=None, *, when=None, owner=USER_ID, **changes):
         moment = when or utcnow() - timedelta(minutes=5)
-        self.owners[str(fax_id)] = owner
+        self.owners[str(fax_id)] = set(owner) if isinstance(owner, (tuple, set)) else {owner}
         self.faxes[str(fax_id)] = {'id': int(fax_id), 'status': 'success', 'time': str(epoch(moment)),
                                    'toNumber': NUMBER, 'fromNameAddressBook': 'Synthetic Address Book Name',
                                    'fromNameIdentity': 'Synthetic Clinic', 'fromNumber': '18005551212',
@@ -92,14 +92,14 @@ class FakeHumbleFax:
             start = int(request.url.params.get('timeFrom', epoch(utcnow() - timedelta(days=30))))
             end = int(request.url.params.get('timeTo', epoch(utcnow())))
             listed = [fax for key, fax in self.faxes.items()
-                      if start <= int(fax['time']) <= end and self.owners[key] == user['id']]
+                      if start <= int(fax['time']) <= end and user['id'] in self.owners[key]]
             data = {'numResults': len(listed), 'incomingFaxIds': [str(fax['id']) for fax in listed]}
             if self.details:
                 data['incomingFaxes'] = listed
             return httpx.Response(200, json={'data': data})
         parts = path.strip('/').split('/')
         fax = self.faxes.get(parts[1]) if len(parts) > 1 and parts[0] == 'incomingFax' else None
-        if fax is None or self.owners[parts[1]] != user['id']:
+        if fax is None or user['id'] not in self.owners[parts[1]]:
             return httpx.Response(404, json={'result': 'failure'})
         if parts[2:] == []:
             return httpx.Response(200, json={'data': {'incomingFax': fax}})
@@ -488,6 +488,23 @@ def test_new_keys_for_another_user_never_fetch_an_earlier_fax(isolated_installat
             'The HumbleFax keys in settings belong to a different HumbleFax user than the one this fax arrived '
             'for, so Faxbot cannot fetch it.')
     assert ('GET', '/incomingFax/700100/download') not in humblefax.calls()
+
+
+def test_keys_for_another_user_who_sees_the_same_faxes_record_nothing_twice(isolated_installation, monkeypatch,
+                                                                            humblefax):
+    environment(monkeypatch)
+    humblefax.receive(700102, owner=(USER_ID, OTHER_USER_ID))  # HumbleFax lets users see each other's faxes
+    with client():
+        assert check().added == 1
+        assert step() is True
+    monkeypatch.setenv('HUMBLEFAX_ACCESS_KEY', OTHER_ACCESS)
+    monkeypatch.setenv('HUMBLEFAX_SECRET_KEY', OTHER_SECRET)
+    humblefax.receive(700103, owner=OTHER_USER_ID)
+    with client():
+        result = check()
+        assert (result.listed, result.added) == (2, 1)
+    assert sorted(row['operation_id'] for row in rows(isolated_installation, 'inbound_imports')) == ['700102', '700103']
+    assert len(rows(isolated_installation, 'inbound_faxes')) == 2
 
 
 def test_new_keys_for_the_same_user_keep_the_same_account(isolated_installation, monkeypatch, humblefax):
