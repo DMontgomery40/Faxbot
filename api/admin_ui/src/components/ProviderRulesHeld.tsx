@@ -12,6 +12,7 @@ import type { AdminDestination } from '../navigation';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
 import type { AlternateDial, FaxRoute, Hold, HoldDecision, RulesApi } from './ProviderRulesApi';
 import { TraceTable } from './ProviderRulesTry';
+import { layoutWords } from './ProviderRulesText';
 
 const KIND_TITLE: Record<Hold['kind'], string> = {
   approval: 'Waiting for approval', window: 'Waiting for its time window', no_route: 'No route your rules allow',
@@ -231,7 +232,7 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
               <span>{attempt.sentence}</span>
               {attempt.dialed_number && !attempt.alternate && <span>Number dialed: {attempt.dialed_number}</span>}
               {attempt.dialed_number && attempt.alternate && <span>{alternateSentence(attempt.dialed_number, attempt.alternate)}</span>}
-              {attempt.page_layout && <span>Pages per sheet: {attempt.page_layout}</span>}
+              {attempt.page_layout && <span>Pages per sheet: {layoutWords(attempt.page_layout)}</span>}
               {attempt.estimate && <span>About {formatMoney(attempt.estimate)} (estimate)</span>}
             </Stack>
           )} />

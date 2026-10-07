@@ -73,8 +73,10 @@ const SECTIONS: Array<{ kind: RuleKind; title: string; help: string; add: string
 ];
 
 // The rules of one document, read-only or editable.
-export function RulesList({ document, names, matches, editable, onSave, choices, scopeKind, currency, saving }: {
+export function RulesList({ document, definitions, names, matches, editable, onSave, choices, scopeKind, currency, saving }: {
   document: RulesDocument;
+  // The organization's rules, whose lists, regions, sites, workflows and labels a mailbox or workflow rule names.
+  definitions?: RulesDocument;
   names: Names;
   matches?: Record<string, number>;
   editable: boolean;
@@ -132,7 +134,8 @@ export function RulesList({ document, names, matches, editable, onSave, choices,
         );
       })}
       {editable && choices && editing && (
-        <ProviderRulesEditor open kind={editing.kind} rule={editing.rule} document={document} choices={choices}
+        <ProviderRulesEditor open kind={editing.kind} rule={editing.rule} document={document} definitions={definitions}
+          choices={choices}
           names={names} scopeKind={scopeKind} currency={currency ?? 'USD'} saving={saving}
           onClose={() => setEditing(null)}
           onSave={(rule) => {

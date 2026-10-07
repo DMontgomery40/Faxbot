@@ -11,6 +11,7 @@ import type {
   ExplainRequest, ExplainResult, Revision, RulesApi, RulesDocument, RulesState, Scope, StepResult, TraceStep,
 } from './ProviderRulesApi';
 import { CONDITION_FIELDS } from './ProviderRulesEditor';
+import { layoutWords } from './ProviderRulesText';
 import { documentLabels, scopeParam } from './ProviderRulesApi';
 
 const SEVERITY = { route: 'success', held: 'warning', blocked: 'error' } as const;
@@ -28,7 +29,9 @@ const SCOPE_NAME = { organization: 'Organization', mailbox: 'Mailbox', workflow:
 // The trace's "why" in words: the first condition that did not match, or why a match did not choose.
 export function stepWhy(step: TraceStep): string {
   const parts: string[] = [];
-  if (step.field) {
+  if (step.failed) {
+    parts.push(step.failed);
+  } else if (step.field) {
     const [block, key] = step.field.includes('.') ? step.field.split('.') : [null, step.field];
     const field = CONDITION_FIELDS.find((item) => item.block === block && item.key === key);
     parts.push(`${field?.label ?? 'A condition'} did not match.`);
@@ -38,8 +41,14 @@ export function stepWhy(step: TraceStep): string {
 }
 
 export function stepRule(step: TraceStep): string {
-  if (step.kind === 'preferred') return "The recipient's preferred route";
-  return step.rule_name ?? '-';
+  if (step.rule_name) return step.rule_name;
+  if (step.name) return step.name;
+  return step.kind === 'preferred' ? "The recipient's preferred route" : '-';
+}
+
+function stepScope(step: TraceStep): string {
+  const kind = step.scope.split(':')[0] as keyof typeof SCOPE_NAME;
+  return step.scope_name ?? SCOPE_NAME[kind] ?? step.scope;
 }
 
 // "Every rule Faxbot read for this fax", folded away until opened.
@@ -57,7 +66,7 @@ export function TraceTable({ steps }: { steps: TraceStep[] }) {
           <TableBody>
             {steps.map((step, index) => (
               <TableRow key={`${step.scope}-${step.rule_id ?? step.kind}-${index}`}>
-                <TableCell>{step.scope_name ?? SCOPE_NAME[step.scope]}{step.revision ? `, version ${step.revision}` : ''}</TableCell>
+                <TableCell>{stepScope(step)}{step.revision ? `, version ${step.revision}` : ''}</TableCell>
                 <TableCell>{stepRule(step)}</TableCell>
                 <TableCell>{RESULT[step.result]}</TableCell>
                 <TableCell>{stepWhy(step)}</TableCell>
@@ -96,7 +105,9 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
       )}
       {result.holds.map((hold) => <Typography key={hold} variant="body2" sx={{ mb: 1 }}>{hold}</Typography>)}
       {result.dial && <Typography variant="body2" sx={{ mb: 1 }}>{result.dial.sentence}</Typography>}
-      {result.page_layout && <Typography variant="body2" sx={{ mb: 1 }}>{result.page_layout}</Typography>}
+      {result.page_layout && (
+        <Typography variant="body2" sx={{ mb: 1 }}>Pages per sheet: {layoutWords(result.page_layout)}.</Typography>
+      )}
       <TraceTable steps={result.trace} />
     </Box>
   );

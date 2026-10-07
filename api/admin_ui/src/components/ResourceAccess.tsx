@@ -565,7 +565,7 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
                         : <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 260 }}>{NO_MAILBOX}</Typography>}
                       {row.rule && hasOptions(row.rule) && (
                         <Typography variant="caption" color="text.secondary" display="block" sx={{ maxWidth: 360 }}>
-                          {receivingSentence({ ...row.rule }, {
+                          {row.rule.enabled === false ? 'Off: ' : ''}{receivingSentence({ ...row.rule }, {
                             account: (key) => receivingAccounts.find((account) => account.key === key)?.label ?? key,
                             connector: (id) => connectors?.find((connector) => connector.id === id)?.name ?? 'another email connector',
                           })}

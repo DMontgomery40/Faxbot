@@ -54,6 +54,8 @@ describe('Providers → Rules: sending', () => {
     expect(saved.document.limits[1]).toEqual({ id: 'l-big-faxes-need-approval', name: 'Big faxes need approval', on: true,
       when: { document: { pages_over: 20 } }, then: { hold_for_approval: { separate_approver: true } } });
     expect(screen.getByText('“Big faxes need approval” added to your draft.')).toBeTruthy();
+    // Saving checks the rules but replays no faxes, so it does not claim that all is well.
+    expect(screen.queryByText('No problems found.')).toBeNull();
   });
 
   it('adds a routing rule with accounts in order, a layout and an alternate-number setting', async () => {
@@ -159,6 +161,11 @@ describe('Providers → Rules: the other tabs', () => {
     expect(screen.getByText('Number is in recipient group did not match.')).toBeTruthy();
     expect(screen.getByText("The recipient's preferred route")).toBeTruthy();
     expect(screen.getByText('A mandatory rule chose instead.')).toBeTruthy();
+    expect(screen.getByText('Pages per sheet: as the receiving machine allows.')).toBeTruthy();
+    fireEvent.click(screen.getByText('Every rule Faxbot read for this fax'));
+    expect(within(await screen.findByRole('table', { name: 'Every rule Faxbot read' })).getByText('Leeds intake')).toBeTruthy();
+    expect(screen.getByText('The fax is not sent from the mailbox Leeds intake.')).toBeTruthy();
+    expect(screen.queryByText(/as_receiver_allows/)).toBeNull();
     expect(screen.getByLabelText('Time at this installation (America/Denver)')).toBeTruthy();
     expect(fake.sent('POST', '/routing/explain')).toEqual([{ to: '+442071234567', pages: 3, size_bytes: null, as: 'me',
       mailbox: 'm-leeds', workflow: null, urgent: false, real_call: false, labels: ['legal'], at: null, scope: 'organization',
@@ -233,10 +240,18 @@ describe("a mailbox's own sending rules", () => {
     const dialog = await screen.findByRole('dialog', { name: 'Add a routing rule' });
     expect(within(dialog).queryByLabelText(/Mandatory/)).toBeNull();
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Leeds uses HumbleFax' } });
+    // A mailbox's rule names the organization's recipient groups.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add a condition' }));
+    choose(dialog, 'Condition', 'Number is in recipient group');
+    choose(dialog, 'Number is in recipient group', 'UK clinics');
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' });
     choose(dialog, 'Account', 'HumbleFax');
+    expect(within(dialog).getByTestId('rule-preview').textContent).toBe('When the number is in UK clinics, use HumbleFax.');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save to draft' }));
     await waitFor(() => expect(fake.requests.some((request) => request.method === 'PUT'
       && request.path === '/routing/rules/draft?scope=mailbox%3Am-leeds')).toBe(true));
+    const saved = fake.sent('PUT', '/routing/rules/draft').slice(-1)[0] as { document: { routes: Array<{ when: unknown }> } };
+    expect(saved.document.routes[0].when).toEqual({ destination: { lists: ['uk-clinics'] } });
     fireEvent.click(screen.getByRole('button', { name: 'Earlier versions' }));
     expect(await screen.findByText('No version is published yet.')).toBeTruthy();
     expect(fake.requests.some((request) => request.path === '/routing/rules/revisions?scope=mailbox%3Am-leeds')).toBe(true);

@@ -179,11 +179,13 @@ export class FakeRules {
           origin: 'Leeds office', usable: true },
         { account: 'humblefax', label: 'HumbleFax', sentence: 'Skipped: the limit ‘Never send UK faxes by HumbleFax’ applies.',
           quote: null, origin: null, usable: false }],
-        holds: [], dial: null, page_layout: 'Pages per sheet: as the receiving machine allows.',
+        holds: [], dial: null, page_layout: 'as_receiver_allows',
         trace: [{ kind: 'route', result: 'not_matched', scope: 'organization', revision: 1, rule_id: 'r-x',
           rule_name: 'Clinics use the trunk', field: 'destination.lists', note: null },
         { kind: 'route', result: 'matched', scope: 'organization', revision: 1, rule_id: 'r-uk', rule_name: 'UK numbers go through Sinch' },
-        { kind: 'preferred', result: 'not_applied', scope: 'organization', note: 'mandatory' }] };
+        { kind: 'preferred', result: 'not_applied', scope: 'organization', note: 'mandatory' },
+        { kind: 'route', result: 'not_matched', scope: 'mailbox:m-leeds', scope_name: 'Leeds intake', rule_id: 'r-m',
+          name: 'Leeds uses HumbleFax', failed: 'The fax is not sent from the mailbox Leeds intake.', note: null }] };
     }
     if (path === '/access/inbound-rules/explain') {
       return { sentence: 'It would go to Front desk, marked urgent, with no email, because of the rule for +17208565062.',
@@ -202,7 +204,7 @@ export class FakeRules {
     }
     if (path.startsWith('/routing/faxes/')) {
       return { job_id: path.split('/')[3], sentence: 'Sent by Sinch (UK) because the rule ‘UK numbers go through Sinch’ matched. Organization rules version 1.',
-        attempts: [{ number: 1, account_label: 'Sinch (UK)', dialed_number: '+448005550100', page_layout: 'As the receiving machine allows',
+        attempts: [{ number: 1, account_label: 'Sinch (UK)', dialed_number: '+448005550100', page_layout: 'as_receiver_allows',
           alternate: { original_number: '+442071234567', approved_by: 'Jane Smith', approved_on: '2026-10-07',
             note: 'same intake, confirmed by phone', recipient_pays: true },
           sentence: 'Delivered.', estimate: { currency: 'USD', amount: '0.031' } }], hold: null,

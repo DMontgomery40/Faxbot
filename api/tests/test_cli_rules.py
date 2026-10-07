@@ -99,8 +99,10 @@ class FakeServer:
 
     def rules_state(self, scope):
         active = scope['revisions'][-1] if scope['revisions'] else None
+        organization = self.scopes['organization']
+        above = organization['revisions'][-1] if scope is not organization and organization['revisions'] else None
         return {'scope': {'kind': 'organization', 'name': scope['name']}, 'active': active, 'draft': scope['draft'],
-                'organization': None, 'matches_30_days': {'r-uk': 12}, 'can_write': True, 'choices': CHOICES}
+                'organization': above, 'matches_30_days': {'r-uk': 12}, 'can_write': True, 'choices': CHOICES}
 
     def handle(self, request):
         body = json.loads(request.content) if request.content else None
@@ -110,7 +112,10 @@ class FakeServer:
             return 200, {'policy_version': 4}
         if path == '/access/inbound-rules' and method == 'GET':
             return 200, {'items': [{'id': 'rule-1', 'to_number': '+17208565062', 'mailbox_id': 'm-leeds',
-                                    'mailbox_label': 'Leeds intake', 'version': 2}], 'next_cursor': None}
+                                    'mailbox_label': 'Leeds intake', 'version': 2},
+                                   {'id': 'rule-2', 'to_number': '+17208565063', 'mailbox_id': 'm-leeds',
+                                    'mailbox_label': 'Leeds intake', 'version': 1, 'enabled': False, 'urgent': True,
+                                    'email_off': True, 'from_numbers': ['+1303*']}], 'next_cursor': None}
         if path.startswith('/access/inbound-rules') and method in ('POST', 'PATCH') and not path.endswith('/explain'):
             return 200, {'rule': {'id': 'rule-1', 'to_number': body.get('to_number', '+17208565062')}, 'policy_version': 5}
         if path == '/access/mailboxes':
@@ -188,13 +193,16 @@ class FakeServer:
                          'routes': [{'account': 'sinch-uk', 'label': 'Sinch (UK)', 'sentence': 'First in the rule.',
                                      'quote': {'currency': 'USD', 'amount': '0.031'}, 'origin': 'Leeds office',
                                      'usable': True}],
-                         'holds': [], 'dial': None, 'page_layout': 'Pages per sheet: as the receiving machine allows.',
+                         'holds': [], 'dial': None, 'page_layout': 'as_receiver_allows',
                          'trace': [{'kind': 'route', 'result': 'not_matched', 'scope': 'organization', 'revision': 1,
                                     'rule_id': 'r-x', 'rule_name': 'Clinics use the trunk', 'field': 'destination.lists'},
                                    {'kind': 'route', 'result': 'matched', 'scope': 'organization', 'revision': 1,
                                     'rule_id': 'r-uk', 'rule_name': 'UK numbers go through Sinch'},
                                    {'kind': 'preferred', 'result': 'not_applied', 'scope': 'organization',
-                                    'note': 'mandatory'}]}
+                                    'note': 'mandatory'},
+                                   {'kind': 'route', 'result': 'not_matched', 'scope': 'mailbox:m-leeds',
+                                    'scope_name': 'Leeds intake', 'rule_id': 'r-m', 'name': 'Leeds uses HumbleFax',
+                                    'failed': 'The fax is not sent from the mailbox Leeds intake.'}]}
         if path == '/routing/rules/apply-to-waiting':
             return 200, {'checked': 4, 'changed': 1, 'sentence': '1 of 4 waiting faxes will go differently.'}
         if path == '/routing/holds':
@@ -213,7 +221,7 @@ class FakeServer:
                                        'alternate': {'original_number': '+442071234567', 'approved_by': 'Jane Smith',
                                                      'approved_on': '2026-10-07', 'note': 'same intake, confirmed by phone',
                                                      'recipient_pays': True},
-                                       'page_layout': 'As the receiving machine allows', 'sentence': 'Delivered.',
+                                       'page_layout': 'as_receiver_allows', 'sentence': 'Delivered.',
                                        'estimate': {'currency': 'USD', 'amount': '0.031'}}], 'hold': None}
         if path == '/admin/providers/accounts' and method == 'GET':
             return 200, self.accounts
@@ -430,6 +438,9 @@ def test_explain_sends_the_fax_facts_and_reads_the_answer(fake):
     assert '$0.031' in shown and 'Leeds office' in shown and 'Pages per sheet: as the receiving machine allows.' in shown
     assert 'Organization, version 1 Clinics use the trunk Did not match to-list did not match.' in shown
     assert "The recipient's preferred route Matched, but did not choose A mandatory rule chose instead." in shown
+    assert ('Leeds intake Leeds uses HumbleFax Did not match The fax is not sent from the mailbox Leeds intake.'
+            in shown)
+    assert 'as_receiver_allows' not in shown
     both = fake('providers', 'rules', 'explain', '--to', '+15550100', '--draft', '--revision', '1')
     assert both.exit_code == 1 and 'Choose --draft or --revision, not both.' in both.stderr
     when = fake('providers', 'rules', 'explain', '--to', '+15550100', '--at', 'tonight')
@@ -437,8 +448,12 @@ def test_explain_sends_the_fax_facts_and_reads_the_answer(fake):
 
 
 def test_mailbox_scope_by_name_and_apply_to_waiting(fake):
-    result = fake('providers', 'rules', 'add', 'Leeds uses Sinch', '--scope', 'mailbox:Leeds intake', '--use', 'sinch-uk')
+    result = fake('providers', 'rules', 'add', 'Leeds uses Sinch', '--scope', 'mailbox:Leeds intake', '--use', 'sinch-uk',
+                  '--when', 'from-site=Leeds office')
     assert result.exit_code == 0, result.stderr
+    # A mailbox's rule names the organization's sites, lists and workflows.
+    assert fake.sent('PUT', '/routing/rules/draft')[-1]['document']['routes'][-1]['when'] == {'sender': {'sites': ['leeds']}}
+    assert 'the fax is sent from Leeds office' in flat(result)
     saved = [params for verb, path, params, _ in fake.requests if verb == 'PUT']
     assert saved == [{'scope': 'mailbox:m-leeds'}]
     bad = fake('providers', 'rules', 'list', '--scope', 'team:x')
@@ -556,6 +571,22 @@ def test_number_rule_options_and_try_a_received_fax(fake):
     assert explained.exit_code == 0 and 'It would go to Front desk, marked urgent' in flat(explained)
     assert fake.sent('POST', '/access/inbound-rules/explain') == [
         {'to_number': '+17208565062', 'from_number': '+13035550100', 'account_key': 'sip', 'at': '2026-10-07T18:30'}]
+
+
+def test_numbers_list_reads_a_rule_with_options_and_says_when_it_is_off(fake, monkeypatch):
+    original = fake.handle
+
+    def handle(request):
+        if request.url.path in ('/admin/settings',):
+            return 403, {'detail': 'This operation is not permitted.'}
+        return original(request)
+    monkeypatch.setattr(fake, 'handle', handle)
+    listed = fake('numbers', 'list')
+    assert listed.exit_code == 0, listed.stderr
+    shown = flat(listed)
+    assert ('Off: Faxes to +17208565063 from numbers starting with +1303 go to Leeds intake, marked urgent, with no email.'
+            in shown)
+    assert '+17208565062 - Leeds intake' in shown
 
 
 def test_why_this_route(fake):

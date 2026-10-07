@@ -404,6 +404,9 @@ export interface RuleEditorProps {
   open: boolean;
   kind: RuleKind;
   rule: Rule | null;
+  // Where the lists, regions, sites, workflows and labels come from: the organization's rules, for a
+  // mailbox's or a workflow's own rules. The document being edited when absent.
+  definitions?: RulesDocument;
   document: RulesDocument;
   choices: Choices;
   names: Names;
@@ -416,8 +419,9 @@ export interface RuleEditorProps {
 }
 
 export default function ProviderRulesEditor(props: RuleEditorProps) {
-  const { open, kind, rule, document, choices, names, scopeKind, currency, saving, onClose, onSave } = props;
-  const context = useMemo(() => ({ document, choices }), [document, choices]);
+  const { open, kind, rule, document, definitions, choices, names, scopeKind, currency, saving, onClose, onSave } = props;
+  const named = definitions ?? document;
+  const context = useMemo(() => ({ document: named, choices }), [named, choices]);
   const [name, setName] = useState('');
   const [when, setWhen] = useState<Row[]>([]);
   const [unless, setUnless] = useState<Row[]>([]);
@@ -442,7 +446,7 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
     { value: 'direct', label: 'Direct delivery' },
   ];
   const siteOptions: Option[] = [{ value: 'sender', label: "The sender's own site" },
-    ...(document.sites ?? []).map((site) => ({ value: site.key, label: site.name }))];
+    ...(named.sites ?? []).map((site) => ({ value: site.key, label: site.name }))];
 
   const built: Rule = {
     id: rule?.id ?? newRuleId(document, kind, name),

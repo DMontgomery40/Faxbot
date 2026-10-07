@@ -22,9 +22,7 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
   const writable = canWrite && Boolean(state?.can_write);
   const organization = state?.organization ?? null;
   // The mailbox's rules can name the organization's lists, regions, sites and workflows.
-  const names = namesFor({ ...(organization?.document ?? { format: 1 }), ...draft.document,
-    lists: organization?.document.lists, regions: organization?.document.regions, sites: organization?.document.sites,
-    workflows: organization?.document.workflows }, state?.choices ?? null);
+  const names = namesFor(organization?.document ?? null, state?.choices ?? null);
 
   return (
     <Box aria-label={`Sending rules for ${mailbox.label}`} role="region">
@@ -47,8 +45,9 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
             </Typography>
           )}
           <DraftBar draft={draft} canWrite={writable} />
-          <RulesList document={draft.document} names={names} matches={state.matches_30_days} editable={writable}
-            onSave={draft.save} choices={state.choices} scopeKind="mailbox" currency={currency} saving={draft.saving} />
+          <RulesList document={draft.document} definitions={organization?.document} names={names}
+            matches={state.matches_30_days} editable={writable} onSave={draft.save} choices={state.choices}
+            scopeKind="mailbox" currency={currency} saving={draft.saving} />
           <Button size="small" onClick={() => setHistory(!history)} sx={{ mt: 1 }}>
             {history ? 'Hide earlier versions' : 'Earlier versions'}
           </Button>

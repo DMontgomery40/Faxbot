@@ -676,9 +676,22 @@ def numbers_list(ids: bool = IDS):
         return ', '.join(item['name'] + ('' if item['in_use'] else ' (not in use now)')
                          for item in row['providers']) or '-'
 
+    def mailbox_text(row):
+        """The mailbox, and the rule in words when it has receiving options, as Numbers shows it."""
+        from .rules import RECEIVING_OPTION_KEYS, Names, receiving_sentence  # `rules` here is the list of number rules
+        rule = row['rule']
+        if not rule:
+            return NO_MAILBOX
+        off = rule.get('enabled') is False
+        options = [key for key in RECEIVING_OPTION_KEYS if key != 'enabled' and rule.get(key) not in (None, False, [])]
+        if not options and not off:
+            return row['mailbox']
+        names = {item['id']: item['name'] for item in connectors or []}
+        return ('Off: ' if off else '') + receiving_sentence(rule, Names(), names)
+
     state.out().result(found, lambda out: out.table(
         _columns(ids, ['Fax number', 'Provided by', 'Mailbox', 'Email delivery']),
-        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), row['mailbox'] or NO_MAILBOX,
+        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), mailbox_text(row),
                                                              row['email']]) for row in found],
         empty='No fax numbers yet.'))
 

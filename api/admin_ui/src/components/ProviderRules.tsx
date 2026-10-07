@@ -72,9 +72,9 @@ export default function ProviderRules({ api, canWrite, currency = 'USD', loadNum
     ? [['sending', 'Sending'], ['sites', 'Sites & regions'], ['lists', 'Lists'], ['workflows', 'Workflows'], ['try', 'Try a fax'], ['history', 'History']]
     : [['sending', 'Sending'], ['try', 'Try a fax'], ['history', 'History']];
   const shownTab = tabs.some(([id]) => id === tab) ? tab : 'sending';
-  const names = namesFor(isOrganization ? draft.document : { ...organizationDraft.document, ...draft.document,
-    sites: organizationDraft.document.sites, regions: organizationDraft.document.regions,
-    lists: organizationDraft.document.lists, workflows: organizationDraft.document.workflows }, state?.choices ?? null);
+  // A workflow's rules name the organization's published lists, regions, sites, workflows and labels.
+  const definitions = isOrganization ? undefined : state?.organization?.document;
+  const names = namesFor(definitions ?? draft.document, state?.choices ?? null);
 
   return (
     <Box>
@@ -113,7 +113,8 @@ export default function ProviderRules({ api, canWrite, currency = 'USD', loadNum
                     editable={false} scopeKind="organization" />
                 </Box>
               )}
-              <RulesList document={draft.document} names={names} matches={state.matches_30_days} editable={writable}
+              <RulesList document={draft.document} definitions={definitions} names={names} matches={state.matches_30_days}
+                editable={writable}
                 onSave={draft.save} choices={state.choices} scopeKind={scope.kind} currency={currency} saving={draft.saving} />
               {isOrganization && <ReceivingSummary load={loadNumberRules} onNavigate={onNavigate} />}
             </>

@@ -136,6 +136,8 @@ export function versionSentence(state: RulesState | null): string {
 export function CheckPanel({ check }: { check: CheckResult | null }) {
   if (!check) return null;
   const replay = check.replay;
+  // Saving checks the rules themselves; only Check also tries recent faxes, so only Check says all is well.
+  if (!replay && check.errors.length === 0 && check.warnings.length === 0) return null;
   return (
     <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: 2 }} data-testid="rules-check">
       {check.errors.length === 0 && check.warnings.length === 0 && (

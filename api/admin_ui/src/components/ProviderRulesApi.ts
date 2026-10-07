@@ -254,7 +254,12 @@ export type StepResult = 'matched' | 'not_matched' | 'unless' | 'not_reached' | 
 export interface TraceStep {
   kind: 'limit' | 'route' | 'preferred';
   result: StepResult;
-  scope: ScopeKind;
+  // 'organization', 'mailbox:ID' or 'workflow:KEY'.
+  scope: string;
+  // The rule's name, or for the preferred route "Your preferred route for this number: …".
+  name?: string | null;
+  // The first condition that did not match, as a sentence.
+  failed?: string | null;
   // The mailbox's or workflow's name, for those scopes.
   scope_name?: string | null;
   revision?: number | null;

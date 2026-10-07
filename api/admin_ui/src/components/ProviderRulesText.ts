@@ -296,6 +296,13 @@ export function currencyFor(country: string | null | undefined): string {
   return COUNTRY_CURRENCY[country || 'US'] ?? 'USD';
 }
 
+// A page layout as the engine names it, in words: "as the receiving machine allows" or "one".
+export function layoutWords(layout: string): string {
+  if (layout === 'as_receiver_allows') return 'as the receiving machine allows';
+  if (layout === 'one_per_sheet') return 'one';
+  return layout;
+}
+
 // The fixed last row of the routing list.
 export const AUTOMATIC_ROW = 'Everything else: the cheapest reliable route, as before.';
 

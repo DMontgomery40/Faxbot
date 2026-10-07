@@ -396,6 +396,9 @@ def receiving_sentence(rule, names, connectors=None):
     return sentence + '.'
 
 
+RECEIVING_OPTION_KEYS = ('enabled', 'any_number', 'account_key', 'from_numbers', 'days', 'start_minute', 'end_minute',
+                         'email_connector_id', 'email_off', 'urgent', 'keep_days')
+
 KEEP_DAYS_NOTE = ('This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to '
                   'keep the fax that long.')
 
@@ -438,6 +441,13 @@ def scope_param(api, scope):
 
 def load(api, scope):
     return api.get('/routing/rules', params={'scope': scope})
+
+
+def definitions(current, document):
+    """The document whose lists, regions, sites, workflows and labels a rule may name: the organization's
+    rules for a mailbox's or a workflow's own rules."""
+    organization = current.get('organization')
+    return organization['document'] if organization else document
 
 
 def working_document(current):
@@ -888,14 +898,14 @@ def rules_add(name: str = typer.Argument(..., help='What the rule is for, in you
     current = load(api, scope_value)
     document = working_document(current)
     choices = current.get('choices')
-    conditions = conditions_from(when, document, choices)
-    exceptions = conditions_from(unless, document, choices) if unless else None
+    conditions = conditions_from(when, definitions(current, document), choices)
+    exceptions = conditions_from(unless, definitions(current, document), choices) if unless else None
     then, routing = actions_from(
         use=use, try_order=try_order, cheapest=cheapest, site_accounts=site_accounts, in_order=in_order,
         automatic=automatic, never=never, require_direct=require_direct, require_encryption=require_encryption, cap=cap,
         approval=approval, separate_approver=separate_approver, send_days=send_days, send_between=send_between,
         real_call_always=real_call, when_busy=when_busy, pages_per_sheet=pages_per_sheet, alternate=alternate,
-        choices=choices, document=document)
+        choices=choices, document=definitions(current, document))
     if not then:
         raise CliError('Say what the rule does, for example --use ACCOUNT, --try ACCOUNT, --never ACCOUNT or '
                        '--approval.')
@@ -909,7 +919,7 @@ def rules_add(name: str = typer.Argument(..., help='What the rule is for, in you
     _insert(document[section], rule, before)
     kind = 'Routing rule' if routing else 'Limit'
     save(api, scope_value, current, document,
-         f"{kind} '{name}' added: {rule_sentence(rule, names_for(document, choices))}")
+         f"{kind} '{name}' added: {rule_sentence(rule, names_for(definitions(current, document), choices))}")
 
 
 @rules.command('update')
@@ -937,14 +947,14 @@ def rules_update(rule: str = typer.Argument(..., metavar='RULE', help="The rule'
         automatic=automatic, never=never, require_direct=require_direct, require_encryption=require_encryption, cap=cap,
         approval=approval, separate_approver=separate_approver, send_days=send_days, send_between=send_between,
         real_call_always=real_call, when_busy=when_busy, pages_per_sheet=pages_per_sheet, alternate=alternate,
-        choices=choices, document=document)
+        choices=choices, document=definitions(current, document))
     changed = False
     if name:
         found['name'], changed = name, True
     if when:
-        found['when'], changed = conditions_from(when, document, choices), True
+        found['when'], changed = conditions_from(when, definitions(current, document), choices), True
     if unless:
-        found['unless'], changed = conditions_from(unless, document, choices), True
+        found['unless'], changed = conditions_from(unless, definitions(current, document), choices), True
     if no_unless and found.pop('unless', None) is not None:
         changed = True
     if then:
@@ -957,7 +967,7 @@ def rules_update(rule: str = typer.Argument(..., metavar='RULE', help="The rule'
     if not changed:
         raise CliError('Nothing to change. Give at least one option.')
     save(api, scope_value, current, document,
-         f"Rule '{found['name']}' changed: {rule_sentence(found, names_for(document, choices))}")
+         f"Rule '{found['name']}' changed: {rule_sentence(found, names_for(definitions(current, document), choices))}")
 
 
 @rules.command('move')
@@ -1162,14 +1172,20 @@ def show_explain(out, result):
     if result.get('dial'):
         out.line(result['dial']['sentence'])
     if result.get('page_layout'):
-        out.line(result['page_layout'])
+        out.line(f"Pages per sheet: {layout_words(result['page_layout'])}.")
     trace = result.get('trace') or []
     if trace:
         out.table(['Rules', 'Rule', 'Result', 'Why'],
-                  [[(item.get('scope_name') or SCOPE_NAMES.get(item.get('scope'), item.get('scope')))
+                  [[(item.get('scope_name') or SCOPE_NAMES.get(str(item.get('scope')).split(':')[0], item.get('scope')))
                     + (f", version {item['revision']}" if item.get('revision') else ''),
-                    "The recipient's preferred route" if item.get('kind') == 'preferred' else item.get('rule_name') or '-',
+                    item.get('rule_name') or item.get('name')
+                    or ("The recipient's preferred route" if item.get('kind') == 'preferred' else '-'),
                     STEP_RESULTS.get(item.get('result'), item.get('result')), step_why(item)] for item in trace])
+
+
+def layout_words(layout):
+    """A page layout as the engine names it, in words."""
+    return {'as_receiver_allows': 'as the receiving machine allows', 'one_per_sheet': 'one'}.get(layout, layout)
 
 
 SCOPE_NAMES = {'organization': 'Organization', 'mailbox': 'Mailbox', 'workflow': 'Workflow'}
@@ -1182,7 +1198,9 @@ STEP_NOTES = {'mandatory': 'A mandatory rule chose instead.', 'overridden': 'A m
 def step_why(step):
     """The first condition that did not match (as its --when field), or why a match did not choose."""
     parts = []
-    if step.get('field'):
+    if step.get('failed'):
+        parts.append(step['failed'])
+    elif step.get('field'):
         block, _, key = step['field'].rpartition('.')
         names = [name for name, (part, field, _) in CONDITION_FIELDS.items()
                  if field == key and (part or '') == block] or (['days'] if step['field'] == 'time' else [])
@@ -1541,7 +1559,7 @@ def route_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The 
         if attempts:
             out.table(['Attempt', 'Account', 'Number dialed', 'Pages per sheet', 'Estimate', 'What happened'],
                       [[item['number'], item['account_label'], item.get('dialed_number') or '-',
-                        item.get('page_layout') or '-',
+                        layout_words(item['page_layout']) if item.get('page_layout') else '-',
                         f"{money_amount(item['estimate'])} estimate" if item.get('estimate') else '-', item['sentence']]
                        for item in attempts])
         for item in attempts:
