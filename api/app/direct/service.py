@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -23,8 +24,10 @@ from ..outbound_worker import SubmissionReceipt
 from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
-from .crypto import (DirectProtocolError, card, canonical, check_card, check_signed, open_document, parse_manifest,
-                     parse_timestamp, seal, signed, timestamp, verify)
+from .crypto import (FAX_IMAGE, DirectProtocolError, capabilities, card, canonical, check_card, check_signed, kind_of,
+                     open_document, parse_capabilities, parse_manifest, parse_timestamp, seal, signed, timestamp, verify)
+from . import faximage
+from .filing import DirectFiling
 from .identity import IdentityUnavailable, identity_path, load_identity
 from .store import DirectConflict, DirectStore
 
@@ -78,14 +81,20 @@ class HttpClient:
         return response.status_code, body
 
 
+def _flag(value):
+    return value is not None and int(value) == 1
+
+
 class DirectService:
-    def __init__(self, engine, *, values, environment=None, http=None, resolver=resolve):
-        """``values`` returns the active configuration values."""
+    def __init__(self, engine, *, values, environment=None, http=None, resolver=resolve, resources=None):
+        """``values`` returns the active configuration values; ``resources()`` the access runtime's inbound
+        resources, which filing an arrival as a received fax needs (None until it is ready)."""
         self.store = DirectStore(engine)
         self.values = values
         self.environment = environment or {}
         self.resolver = resolver
         self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver)
+        self.filing = DirectFiling(self.store, resources or (lambda: None), values=values)
 
     def _allow_private(self):
         return bool(getattr(self.values(), 'direct_allow_private_peers', False))
@@ -145,12 +154,29 @@ class DirectService:
         except IdentityUnavailable:
             raise DirectUnavailable() from None
 
-    def _refusal(self, identity, message_id, reason, text):
-        return signed(identity, {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text})
+    @staticmethod
+    def offered(peer):
+        """What this installation accepts from ``peer``, as its signed answers tell the partner."""
+        return capabilities(fax_images=_flag(peer.get('receive_fax_images')),
+                            peer_calls=_flag(peer.get('receive_peer_calls')))
 
-    def _withdrawn(self, identity, message_id):
+    def _refusal(self, identity, message_id, reason, text, peer=None):
+        statement = {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text}
+        if peer is not None:
+            statement['capabilities'] = self.offered(peer)
+        return signed(identity, statement)
+
+    def _withdrawn(self, identity, message_id, peer=None):
         return self._refusal(identity, message_id, 'withdrawn',
-                             'The sender asked about this document before it arrived, so it was not accepted.')
+                             'The sender asked about this document before it arrived, so it was not accepted.', peer)
+
+    def heard(self, peer, statement):
+        """Keep what a partner says it accepts from us, from any statement it signed."""
+        found = parse_capabilities(statement.get('capabilities')) if isinstance(statement, dict) else None
+        if found is None:
+            return False
+        fax_images, peer_calls, said_at = found
+        return self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at)
 
     def receive(self, manifest_bytes, signature, ciphertext, *, now=None):
         """Verify, decrypt, store unchanged and queue one document; returns (status, body)."""
@@ -174,28 +200,43 @@ class DirectService:
         except InvalidNumber:
             own_number = None
         if manifest['recipient']['signing_key'] != identity.signing_key or manifest['recipient']['fax_number'] != own_number:
-            return 403, self._refusal(identity, message_id, 'wrong_recipient', 'This document is addressed to another recipient.')
+            return 403, self._refusal(identity, message_id, 'wrong_recipient', 'This document is addressed to another recipient.', peer)
         existing = self.store.find('inbound', message_id)
         if existing is not None and existing['state'] == 'refused':
-            return 409, self._withdrawn(identity, message_id)
+            return 409, self._withdrawn(identity, message_id, peer)
         if existing is not None:
             if existing['manifest'].encode('ascii') != manifest_bytes:
-                return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.')
+                return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.', peer)
             return 200, json.loads(existing['receipt'])
         created = parse_timestamp(manifest['created_at'])
         if abs(created - now) > FRESHNESS:
-            return 403, self._refusal(identity, message_id, 'stale', 'This document was signed too long ago; send it again.')
+            return 403, self._refusal(identity, message_id, 'stale', 'This document was signed too long ago; send it again.', peer)
         if len(ciphertext) > MAX_DOCUMENT_BYTES:
-            return 413, self._refusal(identity, message_id, 'too_large', 'This document is too large.')
+            return 413, self._refusal(identity, message_id, 'too_large', 'This document is too large.', peer)
+        kind = kind_of(manifest)
+        if kind == FAX_IMAGE and not _flag(peer.get('receive_fax_images')):
+            # Opt-in per partner; this signed refusal proves nothing was accepted, so the sender may fax it.
+            return 409, self._refusal(identity, message_id, 'fax_images_off',
+                                      'This installation does not accept fax images from you; send the original '
+                                      'document instead.', peer)
         try:
             document = open_document(identity, manifest, ciphertext)
         except DirectProtocolError as error:
-            return 400, self._refusal(identity, message_id, error.reason, str(error))
-        if not document.startswith(b'%PDF'):
-            return 400, self._refusal(identity, message_id, 'not_pdf', 'Only PDF documents can be delivered directly.')
+            return 400, self._refusal(identity, message_id, error.reason, str(error), peer)
         folder = Path(values.fax_data_dir) / 'direct'
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = folder / f'{message_id}-{secrets.token_hex(8)}.pdf'
+        if kind == FAX_IMAGE:
+            # Every check that can refuse comes before acceptance: the image must match its signed facts
+            # and turn into the PDF people read.
+            try:
+                faximage.check(document, manifest['fax'], manifest['document']['pages'])
+                faximage.readable_copy(document, folder)
+            except faximage.FaxImageInvalid as error:
+                return 400, self._refusal(identity, message_id, 'not_fax_image', str(error), peer)
+        elif not document.startswith(b'%PDF'):
+            return 400, self._refusal(identity, message_id, 'not_pdf', 'Only PDF documents can be delivered directly.', peer)
+        suffix = '.tiff' if kind == FAX_IMAGE else '.pdf'
+        path = folder / f'{message_id}-{secrets.token_hex(8)}{suffix}'
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'wb') as handle:
             handle.write(document)
@@ -203,9 +244,12 @@ class DirectService:
             os.fsync(handle.fileno())
 
         def receipt_for(local_id):
-            return signed(identity, {'type': 'receipt', 'message_id': message_id, 'status': 'accepted',
-                                     'document_sha256': manifest['document']['sha256'],
-                                     'recipient': manifest['recipient'], 'accepted_at': timestamp()})
+            receipt = {'type': 'receipt', 'message_id': message_id, 'status': 'accepted',
+                       'document_sha256': manifest['document']['sha256'], 'recipient': manifest['recipient'],
+                       'accepted_at': timestamp(), 'capabilities': self.offered(peer)}
+            if kind == FAX_IMAGE:
+                receipt['kind'] = FAX_IMAGE
+            return signed(identity, receipt)
         try:
             row, created_now = self.store.accept_inbound(message_id=message_id, peer=peer, manifest=manifest_bytes,
                                                          receipt_for=receipt_for, document_path=str(path), now=now)
@@ -215,9 +259,16 @@ class DirectService:
         if not created_now:
             path.unlink(missing_ok=True)
             if row['state'] == 'refused':
-                return 409, self._withdrawn(identity, message_id)
+                return 409, self._withdrawn(identity, message_id, peer)
             if row['manifest'].encode('ascii') != manifest_bytes:
-                return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.')
+                return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.', peer)
+        else:
+            try:
+                self.filing.file(row)
+            except Exception:
+                # Accepted and stored; the filing step files it in Received shortly.
+                logging.getLogger(__name__).warning('A document a partner delivered directly was accepted; Faxbot '
+                                                    'files it in Received shortly.')
         return 200, json.loads(row['receipt'])
 
     def status(self, message_id, *, signer, request_time, signature, now=None):
@@ -236,9 +287,53 @@ class DirectService:
         row = self.store.answer_or_fence(message_id, peer, now=now)
         if row is None or row['peer_id'] != peer['id'] or row['state'] != 'accepted':
             return 200, signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'not_received',
-                                          'answered_at': timestamp()})
+                                          'answered_at': timestamp(), 'capabilities': self.offered(peer)})
         return 200, {**signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'accepted',
-                                         'answered_at': timestamp()}), 'receipt': json.loads(row['receipt'])}
+                                         'answered_at': timestamp(), 'capabilities': self.offered(peer)}),
+                     'receipt': json.loads(row['receipt'])}
+
+    def note(self, statement, signature, *, now=None):
+        """A partner tells us, signed, what it accepts from us now (fax images, peer fax calls)."""
+        now = now or utcnow()
+        _, identity = self._enabled_identity()
+        refused = (400, {'recorded': False, 'detail': 'This statement could not be checked.'})
+        try:
+            encoded = statement.encode('ascii')
+            body = json.loads(encoded)
+            if (not isinstance(body, dict) or set(body) != {'type', 'signer', 'recipient', 'capabilities'}
+                    or body['type'] != 'capabilities' or body['recipient'] != identity.signing_key):
+                return refused
+            peer = self.store.peer_by_key(body['signer']) if isinstance(body['signer'], str) else None
+            if peer is None or peer['state'] == 'revoked':
+                return refused
+            verify(peer['signing_key'], encoded, signature)
+        except (ValueError, TypeError, UnicodeEncodeError, DirectProtocolError):
+            return refused
+        found = parse_capabilities(body['capabilities'])
+        if found is None or abs(found[2] - now) > FRESHNESS:
+            return refused
+        self.heard(peer, body)
+        return 200, {'recorded': True}
+
+    async def tell_partner(self, peer):
+        """Tell a partner, signed, what we accept from it now; False when it could not be reached.
+
+        A partner that misses this learns it from the next receipt, refusal or
+        status answer we sign for it, which carry the same statement.
+        """
+        identity = await run_lifecycle_step(lambda: self.identity(create=True))
+        envelope = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'],
+                                     'capabilities': self.offered(peer)})
+        try:
+            status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/capabilities', json=envelope)
+        except (PartnerUnreachable, httpx.HTTPError):
+            return False
+        return status == 200 and isinstance(body, dict) and body.get('recorded') is True
+
+    async def set_fax_images(self, peer_id, accept):
+        """Accept fax images from a partner, or stop; returns (partner, whether the partner was told now)."""
+        peer = await run_lifecycle_step(lambda: self.store.set_receive_fax_images(peer_id, accept))
+        return peer, await self.tell_partner(peer)
 
     def confirm(self, statement, signature, *, now=None):
         """A partner submits the code from our challenge fax, signed with its key."""
@@ -317,8 +412,10 @@ class DirectService:
 class DirectRoute:
     """The delivery worker's direct route, used when a verified partner owns the number."""
 
-    def __init__(self, service):
+    def __init__(self, service, *, preference=faximage.PEER_FIRST):
+        """``preference``: ``peer_first`` or ``never_peer`` (``faximage.peer_route``); a rule sets it per fax later."""
         self.service = service
+        self.preference = preference
 
     def ready(self):
         return self.service.ready()
@@ -330,9 +427,19 @@ class DirectRoute:
         pdf = Path(values.fax_data_dir) / (claim.job_id + '.pdf')
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None or pdf.is_symlink() or not pdf.is_file():
             raise DirectRefused('The fax document is unavailable for direct delivery.')
-        document = await run_lifecycle_step(pdf.read_bytes)
         identity = await run_lifecycle_step(service.identity)
-        peer = plan.peer
+        # The partner's current record: what it last said it accepts decides the fax image.
+        peer = await run_lifecycle_step(lambda: service.store.get_peer(plan.peer['id'])) or plan.peer
+        route = faximage.peer_route(peer, preference=self.preference)
+        if route is None and self.preference == faximage.NEVER_PEER:
+            raise DirectRefused('A routing rule keeps this fax off direct delivery.')
+        image = None
+        if route is not None and route.kind == FAX_IMAGE:
+            try:
+                image = await run_lifecycle_step(lambda: faximage.build(values, claim.job_id))
+            except faximage.FaxImageUnavailable:
+                image = None  # Nothing was sent; the original still goes directly, with no telephone call.
+        document = image.data if image is not None else await run_lifecycle_step(pdf.read_bytes)
         from ..routing.numbers import normalize_number
         sender_number = None
         try:
@@ -344,13 +451,24 @@ class DirectRoute:
             identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
             fax_number=sender_number, recipient_number=peer['phone_number'],
             recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
-            document=document, pages=job.get('pages'))
+            document=document, pages=image.pages if image is not None else job.get('pages'),
+            fax=image.facts if image is not None else None)
         await run_lifecycle_step(lambda: service.store.record_outbound(
             message_id=message_id, peer_id=peer['id'], job_id=claim.job_id, attempt_id=claim.attempt_id,
             recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),
-            manifest=manifest.decode('ascii')))
+            manifest=manifest.decode('ascii'), kind=FAX_IMAGE if image is not None else None))
         yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext,
                                 hashlib.sha256(document).hexdigest())
+
+
+async def _hear(service, peer, statement):
+    """Keep what the partner's signed answer says it accepts from us; never changes the delivery's outcome."""
+    if statement is None:
+        return
+    try:
+        await run_lifecycle_step(lambda: service.heard(peer, statement))
+    except Exception:
+        logging.getLogger(__name__).warning("A partner's answer about fax images could not be kept.")
 
 
 class _DirectSubmission:
@@ -377,6 +495,7 @@ class _DirectSubmission:
             statement = check_signed(body, peer['signing_key'])
         except DirectProtocolError:
             statement = None
+        await _hear(service, peer, statement)
         if statement is not None and statement.get('message_id') == self.message_id:
             if (status == 200 and statement.get('type') == 'receipt' and statement.get('status') == 'accepted'
                     and statement.get('document_sha256') == self.digest):
@@ -417,6 +536,7 @@ class DirectReconciler:
             statement = check_signed(body, peer['signing_key'])
         except (PartnerUnreachable, httpx.HTTPError, DirectProtocolError):
             return None  # Ask again later; the fax stays waiting for confirmation.
+        await _hear(service, peer, statement)
         if status != 200 or statement.get('type') != 'status' or statement.get('message_id') != row['message_id']:
             return None
         if statement.get('status') == 'accepted':

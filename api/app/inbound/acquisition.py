@@ -19,6 +19,9 @@ under, so the same provider fax ID under two accounts stays two records:
 - Test fax: ``test:`` and the principal's ID.
 - Delivered inside Faxbot: ``local:installation``, keyed on the sent fax's ID
   (a fax to one of the installation's own numbers; ``routing/local.py``).
+- Delivered directly by a partner Faxbot: source ``local`` too (no provider is
+  involved), account ``direct:`` and the partner's enrollment ID, keyed on the
+  message ID (``direct/filing.py``).
 
 Other sources (generic import, test fax) use two calls::
 
@@ -213,6 +216,7 @@ def describe(row, record, *, now=None, failures=(), provider_copy=None):
     retry_at = None
     if state == 'received':
         text = ('A test fax created in Faxbot.' if source == 'test'
+                else _direct_text(record) if source == 'local' and _is_direct(record)
                 else 'Delivered straight into Received from a fax sent to this number; no phone call was made.'
                 if source == 'local' else 'Received.')
     elif state == 'conflict':
@@ -233,6 +237,15 @@ def describe(row, record, *, now=None, failures=(), provider_copy=None):
             'recovered': _recovered(record), 'provider_note': _provider_note(record, provider_copy),
             'earlier_failures': [_failure_view(item) for item in failures],
             'earlier_failures_text': failures_text(source, failures)}
+
+
+def _is_direct(record):
+    return str(record.get('account') or '').startswith('direct:')
+
+
+def _direct_text(record):
+    from ..direct.filing import received_text
+    return received_text(record)
 
 
 def _failure_view(item):

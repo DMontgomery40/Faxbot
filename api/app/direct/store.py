@@ -8,9 +8,14 @@ from uuid import uuid4
 import sqlalchemy as sa
 
 from ..intake.store import IntakeStore
+from .crypto import FAX_IMAGE
 from ..routing.database import read_connection, reflect, utcnow, write_transaction
 
 
+# A document a partner delivered directly is a received fax Faxbot itself delivered (import source ``local``),
+# under an account of ``direct:`` and the partner's enrollment id (inbound/acquisition.py, filing.py).
+FILING_SOURCE = 'local'
+FILING_ACCOUNT = 'direct:'
 CHALLENGE_LIFETIME = timedelta(days=7)
 MAX_CODE_FAILURES = 5
 VERIFIED_LIFETIME = timedelta(days=365)
@@ -31,7 +36,7 @@ def normalize_code(code):
 
 class DirectStore:
     TABLES = ('direct_peers', 'direct_deliveries', 'delivery_destinations', 'outbound_deliveries',
-              'outbound_attempts')
+              'outbound_attempts', 'intake_items', 'inbound_imports')
 
     def __init__(self, engine):
         self.engine = engine
@@ -41,6 +46,7 @@ class DirectStore:
         self.destinations = tables['delivery_destinations']
         self.outbound = tables['outbound_deliveries']
         self.attempts = tables['outbound_attempts']
+        self.items, self.imports = tables['intake_items'], tables['inbound_imports']
         self.intake = IntakeStore(engine, None)
 
     # Partners -------------------------------------------------------------
@@ -82,6 +88,8 @@ class DirectStore:
                 connection.execute(self.peers.update().where(self.peers.c.id == existing['id']).values(
                     **values, state='pending', challenge_hash=None, challenge_job_id=None,
                     challenge_expires_at=None, challenge_failures=0, verified_at=None, expires_at=None,
+                    receive_fax_images=None, receive_peer_calls=None, partner_receives_fax_images=None,
+                    partner_peer_calls=None, partner_said_at=None, peer_call_address=None,
                     version=existing['version'] + 1, updated_at=now))
                 return self.get_peer(existing['id'], connection)
             identity = uuid4().hex
@@ -136,6 +144,32 @@ class DirectStore:
             connection.execute(self.destinations.update().where(self.destinations.c.id == row['id']).values(
                 direct_peer_id=peer['id'], version=row['version'] + 1, updated_at=now))
 
+    def set_receive_fax_images(self, peer_id, accept):
+        """This installation's choice to accept fax images from a partner (opt-in, per partner)."""
+        now = utcnow()
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if peer is None or peer['state'] == 'revoked':
+                raise DirectConflict('This partner is not enrolled.')
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                receive_fax_images=1 if accept else None, version=peer['version'] + 1, updated_at=now))
+            return self.get_peer(peer_id, connection)
+
+    def note_capabilities(self, peer_id, *, fax_images, peer_calls, said_at):
+        """Keep what a partner said it accepts from us, unless a newer signed statement is already kept.
+
+        Signed times have one-second resolution; of two statements signed in
+        the same second, the one that arrives later is kept.
+        """
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if peer is None or (peer['partner_said_at'] is not None and peer['partner_said_at'] > said_at):
+                return False
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                partner_receives_fax_images=1 if fax_images else None, partner_peer_calls=1 if peer_calls else None,
+                partner_said_at=said_at, version=peer['version'] + 1, updated_at=utcnow()))
+            return True
+
     def revoke(self, peer_id):
         now = utcnow()
         with write_transaction(self.engine) as connection:
@@ -159,7 +193,8 @@ class DirectStore:
         with read_connection(self.engine) as conn:
             return read(conn)
 
-    def record_outbound(self, *, message_id, peer_id, job_id, attempt_id, recipient_number, digest, size, manifest):
+    def record_outbound(self, *, message_id, peer_id, job_id, attempt_id, recipient_number, digest, size, manifest,
+                        kind=None):
         now = utcnow()
         with write_transaction(self.engine) as connection:
             existing = self.find('outbound', message_id, connection)
@@ -168,7 +203,7 @@ class DirectStore:
             connection.execute(self.deliveries.insert().values(
                 id=uuid4().hex, direction='outbound', message_id=message_id, peer_id=peer_id, job_id=job_id,
                 attempt_id=attempt_id, recipient_number=recipient_number, digest=digest, size_bytes=size,
-                manifest=manifest, state='sending', created_at=now, updated_at=now))
+                manifest=manifest, state='sending', kind=kind, created_at=now, updated_at=now))
             return self.find('outbound', message_id, connection)
 
     def mark_outbound(self, message_id, state, *, receipt=None):
@@ -181,7 +216,13 @@ class DirectStore:
                 self.deliveries.c.direction == 'outbound', self.deliveries.c.message_id == message_id).values(**values))
 
     def accept_inbound(self, *, message_id, peer, manifest, receipt_for, document_path, now=None):
-        """Record a verified document and its intake item together; idempotent on message id."""
+        """Record a verified document; idempotent on message id.
+
+        Every arrival accepted since 0034 is then filed as a received fax
+        (``filing.py``), which gives it email delivery, mailbox rules and a Work
+        item. Arrivals accepted before kept their intake item and are never filed
+        again, so nothing is emailed twice.
+        """
         now = now or utcnow()
         parsed = json.loads(manifest)
         with write_transaction(self.engine) as connection:
@@ -195,11 +236,23 @@ class DirectStore:
                 recipient_number=parsed['recipient']['fax_number'], digest=parsed['document']['sha256'],
                 size_bytes=parsed['document']['size'], manifest=manifest.decode('ascii'), state='accepted',
                 receipt=json.dumps(receipt, sort_keys=True), document_path=document_path, accepted_at=now,
-                created_at=now, updated_at=now))
-            self.intake.add_direct(connection, direct_delivery_id=identity, received_at=now,
-                                   pages=parsed['document']['pages'], from_number=parsed['sender']['fax_number'],
-                                   to_number=parsed['recipient']['fax_number'], now=now)
+                kind=FAX_IMAGE if parsed.get('kind') == FAX_IMAGE else None, created_at=now, updated_at=now))
             return self.find('inbound', message_id, connection), True
+
+    def unfiled(self, *, limit=20):
+        """Accepted arrivals not yet filed as received faxes; fences, earlier arrivals and stopped filings excluded."""
+        d, items, imports = self.deliveries, self.items, self.imports
+        legacy = sa.exists(sa.select(1).where(items.c.direct_delivery_id == d.c.id))
+        settled = sa.exists(sa.select(1).where(imports.c.source == FILING_SOURCE,
+                                               imports.c.account == sa.func.coalesce(FILING_ACCOUNT + d.c.peer_id,
+                                                                                     FILING_ACCOUNT + 'unknown'),
+                                               imports.c.operation_id == d.c.message_id,
+                                               imports.c.state.in_(('received', 'conflict', 'failed'))))
+        query = (sa.select(d).where(d.c.direction == 'inbound', d.c.state == 'accepted', d.c.manifest != '',
+                                    d.c.document_path.is_not(None), ~legacy, ~settled)
+                 .order_by(d.c.accepted_at, d.c.id).limit(limit))
+        with read_connection(self.engine) as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
 
     def answer_or_fence(self, message_id, peer, *, now=None):
         """The received record for a sender's question, or a fence so it can never be accepted later.

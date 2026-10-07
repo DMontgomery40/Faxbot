@@ -18,6 +18,9 @@ Rules this module keeps:
 - Every change is a compare-and-set on ``version`` together with its event.
 - Assignment never confers access: an owner or backup must already hold
   ``work:read`` and ``inbound:read`` on the document.
+- Every document a partner delivers directly is filed as a received fax
+  (``direct/filing.py``), so it gets an item like any fax; its ``received``
+  event says it came directly, with no telephone call.
 """
 from datetime import timedelta
 import json
@@ -146,6 +149,16 @@ class WorkStore:
         return dict(connection.execute(sa.select(self.principals.c.id, self.principals.c.display_name)
                                        .where(self.principals.c.id.in_(ids))).all())
 
+    def arrived_on(self, connection, inbound_id):
+        """How a document a partner delivered directly arrived, in one sentence; None for any other document."""
+        record = connection.execute(sa.select(self.imports.c.report).where(
+            self.imports.c.inbound_fax_id == inbound_id, self.imports.c.source == 'local',
+            self.imports.c.account.like('direct:%'))).mappings().first()
+        if record is None:
+            return None
+        from ..direct.filing import received_text
+        return received_text(dict(record))
+
     @staticmethod
     def target(setting, installation_hours):
         """(hours, source) for a new item: the mailbox target, else the installation target."""
@@ -198,7 +211,8 @@ class WorkStore:
                         version=1, created_at=now, updated_at=now))
                     self.event_on(connection, identity, 'received', actor_id=None, now=now,
                                   occurred_at=row.available_at,
-                                  details={'mailbox': place.label, 'due_hours': hours, 'due_source': source})
+                                  details={'mailbox': place.label, 'due_hours': hours, 'due_source': source,
+                                           'arrived': self.arrived_on(connection, row.id)})
                     created += 1
             except DeliveryStoreError:
                 continue  # A concurrent feeder created it; the unique index decides.

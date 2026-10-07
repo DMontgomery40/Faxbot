@@ -524,6 +524,8 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'total_saved': _money(result['total']), 'total_sentence': result['total_sentence'],
             'sending_together': _saving_view(result['sending_together']),
             'direct_delivery': _saving_view(result['direct_delivery']),
+            # Telephone calls avoided by fax images partners accepted directly (never counted as faxed).
+            'direct_fax_images': _saving_view(result['direct_fax_images']),
             'case_packets': _saving_view(result['case_packets']),
             'sslfax': _saving_view(result['sslfax']),
             # Faxes to the installation's own numbers, delivered inside Faxbot with no call.

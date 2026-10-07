@@ -37,6 +37,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/direct/deliveries"): "signed partner manifest",
     ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
     ("POST", "/direct/verifications"): "signed partner code confirmation",
+    ("POST", "/direct/capabilities"): "signed partner statement of what it accepts",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",
