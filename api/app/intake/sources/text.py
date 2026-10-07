@@ -21,6 +21,8 @@ NO_TRUSTED_SERVER = ('Not sent: this connector does not name the mail server tha
                      'can be confirmed. No reply was sent.')
 NOT_LISTED = 'Not sent: {address} is not one of the people this connector may send faxes for.'
 NO_SEND_PERMISSION = 'Not sent: {person} is not allowed to send faxes.'
+NO_SEND_PASSWORD = ('Not sent: {person} has not replaced their temporary password yet, and until they do their '
+                    'account cannot send faxes.')
 NO_SENDER = 'Not sent: the message does not name exactly one sender. No reply was sent.'
 NO_NUMBER = ('Not sent: the message gives no fax number. Put the number in the subject, such as +13035550100, '
              'or send to {example}.')
@@ -84,6 +86,7 @@ REPLY_UNCERTAIN = ('Faxbot cannot tell whether your fax to {number} arrived. Ask
 # Plain reasons in a reply, rewritten for the sender (the administrator reads the item's own reason).
 REPLY_NOT_LISTED = 'Your address is not allowed to send faxes through {address}.'
 REPLY_NO_PERMISSION = 'Your Faxbot account is not allowed to send faxes.'
+REPLY_NO_PASSWORD = 'Your Faxbot account can send faxes once you sign in to Faxbot and choose your own password.'
 
 
 def times(count):

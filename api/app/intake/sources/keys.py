@@ -86,14 +86,22 @@ def connector_actor(access, token):
 
 
 def may_send_on(control, connection, principal_id):
-    """Whether this enabled user holds fax:send on their own personal resource now (no credential needed)."""
+    """Why this person may not send faxes now: None when they may, else 'password' or 'permission'.
+
+    The access policy gives a user who has not replaced their temporary password no authority, so such a
+    person is refused with that reason, not a missing permission. No credential is needed for the check.
+    """
     from ...work.store import _target
     if not principal_id:
-        return False
-    resources = control.tables['access_resources']
+        return 'permission'
+    resources, users = control.tables['access_resources'], control.tables['access_users']
     personal = connection.execute(sa.select(resources.c.id).where(
         resources.c.kind == 'personal', resources.c.principal_id == principal_id)).scalar_one_or_none()
     if personal is None:
-        return False
+        return 'permission'
     context, source = _target(control, principal_id)
-    return connection.execute(control._allowed_query(context, source, SCOPE, resource_id=personal)).first() is not None
+    if connection.execute(control._allowed_query(context, source, SCOPE, resource_id=personal)).first() is not None:
+        return None
+    reset = connection.execute(sa.select(users.c.password_change_required).where(
+        users.c.id == principal_id)).scalar_one_or_none()
+    return 'password' if reset == 1 else 'permission'

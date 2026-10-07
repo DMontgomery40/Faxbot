@@ -272,10 +272,11 @@ class Poller:
         handled = 0
         for name, path, kind in found[:PER_CHECK]:
             stable, _, since = self.watch.settled(source.id, path, settle)
-            if not stable:
-                continue
             sidecar = folders.sidecar_for(root, name)
+            # The sidecar is watched from the moment it appears, so both settle together.
             if sidecar is not None and not self.watch.settled(source.id, sidecar, settle)[0]:
+                continue
+            if not stable:
                 continue
             try:
                 data = folders.read(path, limit)

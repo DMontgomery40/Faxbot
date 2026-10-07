@@ -27,7 +27,9 @@ class Retry(RuntimeError):
 
 
 class PersonRefused(RuntimeError):
-    pass
+    def __init__(self, why):
+        super().__init__(why)
+        self.why = why
 
 
 @dataclass
@@ -118,9 +120,10 @@ def submit(access, runtime, store, source, submission, token):
     reply = bool(submission.reply_to)
 
     def also(connection, now):
-        if submission.person_id is not None and not keys.may_send_on(access.control, connection,
-                                                                     submission.person_id):
-            raise PersonRefused()
+        if submission.person_id is not None:
+            why = keys.may_send_on(access.control, connection, submission.person_id)
+            if why is not None:
+                raise PersonRefused(why)
         store.link_on(connection, source.id, submission.operation_id, submission.part, **_item_fields(
             submission, state='sent', fax_job_id=job_id, document_digest=source_digest,
             submitted_digest=_file_digest(pdf), reply_to=submission.reply_to,
@@ -147,10 +150,13 @@ def submit(access, runtime, store, source, submission, token):
     except IdempotencyConflict:
         documents.discard(pdf, tiff)
         return _refuse(store, source, submission, text.CONFLICT_SEND, state='conflict')
-    except PersonRefused:
+    except PersonRefused as refused:
         documents.discard(pdf, tiff)
-        return _refuse(store, source, submission,
-                       text.NO_SEND_PERMISSION.format(person=submission.person_name or submission.sender),
+        person = submission.person_name or submission.sender
+        if refused.why == 'password':
+            return _refuse(store, source, submission, text.NO_SEND_PASSWORD.format(person=person), state='refused',
+                           reply_reason=text.REPLY_NO_PASSWORD)
+        return _refuse(store, source, submission, text.NO_SEND_PERMISSION.format(person=person),
                        state='refused', reply_reason=text.REPLY_NO_PERMISSION)
     except FaxAccessError:
         documents.discard(pdf, tiff)
