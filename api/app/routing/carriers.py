@@ -70,7 +70,7 @@ UNRECORDED_EVERY = timedelta(hours=1)
 UNRECORDED_GRACE = timedelta(minutes=15)
 NEAR_A_CALL = timedelta(minutes=5)
 OPEN_STATES = ('waiting', 'ambiguous', 'matched')
-CARRIER_LABELS = {'telnyx': 'Telnyx', 'signalwire': 'SignalWire'}
+CARRIER_LABELS = {'telnyx': 'Telnyx', 'signalwire': 'SignalWire', 'sinch': 'Sinch', 'phaxio': 'Phaxio'}
 
 
 def carrier_label(provider_id):

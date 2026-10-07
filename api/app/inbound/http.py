@@ -376,6 +376,14 @@ async def _sinch_payload(request, raw):
                 data['fax'] = json.loads(data['fax'])
             except ValueError:
                 data['fax'] = None
+        # Sinch's reference declares the multipart event part as JSON, so it may arrive quoted ("INCOMING_FAX").
+        event = data.get('event')
+        if isinstance(event, str) and event.strip().startswith('"'):
+            try:
+                decoded = json.loads(event)
+            except ValueError:
+                decoded = None
+            data['event'] = decoded if isinstance(decoded, str) else event
         return data, next((content for name, content in files if name == 'file'), None)
     try:
         data = json.loads(raw) if raw else {}

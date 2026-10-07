@@ -32,7 +32,7 @@ from .plan import route_label
 
 # Trunk presets whose carrier charges Faxbot reads, and the providers it asks itself.
 CARRIER_PRESETS = ('telnyx',)
-REPORTING_PROVIDERS = ('signalwire',)
+REPORTING_PROVIDERS = ('signalwire', 'sinch', 'phaxio')
 
 
 def _add(bucket, currency, micros):

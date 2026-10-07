@@ -11,7 +11,7 @@ from .background import installation_engine, lifespan_tasks, repeat
 from .billing import BillingReconciler
 from .capture import CostRecorder
 from .carriers import CarrierChargeStore, CarrierReconciler, carrier_label
-from .charges import SignalWireCharges
+from .charges import PhaxioCharges, SignalWireCharges, SinchCharges
 from .spending import CARRIER_PRESETS, Spending
 from .telnyx import TelnyxDetailRecords
 from .fallback import FallbackPolicy, FallbackScheduler
@@ -42,7 +42,8 @@ def _background(app):
     except Exception:
         import logging
         logging.getLogger(__name__).warning('Starting rate cards could not be loaded.')
-    billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
+    billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery), 'sinch': SinchCharges(delivery),
+                                         'phaxio': PhaxioCharges(delivery)})
     carriers = CarrierReconciler(CarrierChargeStore(engine), routes, carrier_source(_telnyx_key),
                                  numbers=lambda: _trunk_numbers(_managed_values()))
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
