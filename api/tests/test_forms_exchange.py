@@ -311,7 +311,7 @@ def test_console_routes_read_import_preview_and_render(forms):
     bad = client.post(f"/forms/versions/{version['id']}/render?format=json", headers=ADMIN,
                       json={'values': {'clinic': 'East'}})
     assert bad.status_code == 422
-    assert bad.json()['detail']['problems'] == ['Patient name is required.', 'Clinic must be one of: North, South.']
+    assert bad.json()['detail'] == 'Patient name is required. Clinic must be one of: North, South.'
     template = client.get(f"/forms/versions/{version['id']}/template", headers=ADMIN)
     assert template.content == SVG
     assert client.get('/forms', headers={'X-API-Key': 'wrong'}).status_code in (401, 403)

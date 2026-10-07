@@ -2,11 +2,12 @@
 
 `faxbot send` and `faxbot status`, then received, sent, numbers, recipients,
 providers, costs, access and system, each holding what its console area holds.
+`faxbot forms` is the Faxes area's Forms page, beside send, received and sent.
 Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
+from .commands import access, admin, delivery, fax, forms, operations, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -175,3 +176,6 @@ def register(app):
     app.command('status')(fax.status)
     for name, home in HOMES.items():
         app.add_typer(home, name=name)
+        if name == 'sent':
+            # The Faxes area's third page.
+            app.add_typer(forms.forms, name='forms')

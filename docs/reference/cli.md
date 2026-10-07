@@ -30,6 +30,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `status`: Show where a sent fax is now.
 * `received`: Received faxes: list and open them, give...
 * `sent`: Sent faxes: list them, open one, download...
+* `forms`: Registered forms: import a fillable PDF or...
 * `numbers`: Your fax numbers: which mailbox each...
 * `recipients`: Fax numbers you send to: routing, batching...
 * `providers`: The fax services Faxbot sends and receives...
@@ -574,6 +575,199 @@ $ faxbot sent send-now [OPTIONS] {fax_id}
 **Arguments**:
 
 * `fax_id`: Fax ID of a fax waiting to go with others.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `faxbot forms`
+
+Registered forms: import a fillable PDF or a template, fill it in, preview it and send it. A partner running Faxbot gets only the filled-in values and draws identical pages itself.
+
+**Usage**:
+
+```console
+$ faxbot forms [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List your registered forms and their...
+* `import`: Import a form from a fillable PDF, or from...
+* `show`: Show a form version&#x27;s fields: their names,...
+* `render`: Fill in a form and save the pages exactly...
+* `send`: Fill in a form and send it: to a partner...
+* `sent`: List forms you sent, with what happened to...
+* `fax`: Send the pages of a form that did not...
+* `received`: List forms partners sent whose pages...
+* `partner`: Ask a partner which forms it holds.
+
+### `faxbot forms list`
+
+List your registered forms and their versions.
+
+**Usage**:
+
+```console
+$ faxbot forms list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot forms import`
+
+Import a form from a fillable PDF, or from a template and a field-position file.
+
+**Usage**:
+
+```console
+$ faxbot forms import [OPTIONS] {file}
+```
+
+**Arguments**:
+
+* `file`: A fillable PDF, or a PDF or SVG template.  [required]
+
+**Options**:
+
+* `--name <str>`: The name for a new form.
+* `--form <str>`: Add this as the next version of an existing form (name). Earlier versions never change.
+* `--positions <file>`: A field-position file (JSON) placing each field on a template that has no fillable fields.
+* `--help`: Show this message and exit.
+
+### `faxbot forms show`
+
+Show a form version&#x27;s fields: their names, types and choices.
+
+**Usage**:
+
+```console
+$ faxbot forms show [OPTIONS] {form}
+```
+
+**Arguments**:
+
+* `form`: Form name.  [required]
+
+**Options**:
+
+* `--version <int range>`: The version to use. Default: the newest.  [x&gt;=1]
+* `--help`: Show this message and exit.
+
+### `faxbot forms render`
+
+Fill in a form and save the pages exactly as they would be faxed, without sending anything.
+
+**Usage**:
+
+```console
+$ faxbot forms render [OPTIONS] {form}
+```
+
+**Arguments**:
+
+* `form`: Form name.  [required]
+
+**Options**:
+
+* `--version <int range>`: The version to use. Default: the newest.  [x&gt;=1]
+* `-v, --value NAME=VALUE`: A field value, for example --value patient=&quot;Ann Example&quot;. Dates are year-month-day, checkboxes yes or no. Repeat for each field.
+* `--values <file>`: A JSON file of field names and values.
+* `--signature NAME=PICTURE`: A signature field and its picture (PNG, JPEG or GIF), for example --signature signed=signature.png.
+* `-o, --output <str>`: File to write. Use &#x27;-&#x27; for standard output.
+* `--png`: Save the first page as a PNG picture instead of a PDF.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot forms send`
+
+Fill in a form and send it: to a partner as the filled-in values, to anyone else as a fax.
+
+**Usage**:
+
+```console
+$ faxbot forms send [OPTIONS] {form} {to}
+```
+
+**Arguments**:
+
+* `form`: Form name.  [required]
+* `to`: Fax number.  [required]
+
+**Options**:
+
+* `--version <int range>`: The version to use. Default: the newest.  [x&gt;=1]
+* `-v, --value NAME=VALUE`: A field value, for example --value patient=&quot;Ann Example&quot;. Dates are year-month-day, checkboxes yes or no. Repeat for each field.
+* `--values <file>`: A JSON file of field names and values.
+* `--signature NAME=PICTURE`: A signature field and its picture (PNG, JPEG or GIF), for example --signature signed=signature.png.
+* `--as-fax`: Send the pages as a fax even when the number belongs to a partner.
+* `--help`: Show this message and exit.
+
+### `faxbot forms sent`
+
+List forms you sent, with what happened to each.
+
+**Usage**:
+
+```console
+$ faxbot forms sent [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot forms fax`
+
+Send the pages of a form that did not reach the partner as an ordinary fax. Faxbot never does this by itself.
+
+**Usage**:
+
+```console
+$ faxbot forms fax [OPTIONS] {delivery}
+```
+
+**Arguments**:
+
+* `delivery`: The ID from &#x27;faxbot forms sent&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot forms received`
+
+List forms partners sent whose pages matched, with the values filled in.
+
+**Usage**:
+
+```console
+$ faxbot forms received [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot forms partner`
+
+Ask a partner which forms it holds. A form it lacks is fetched from you the first time you send it.
+
+**Usage**:
+
+```console
+$ faxbot forms partner [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
 
 **Options**:
 

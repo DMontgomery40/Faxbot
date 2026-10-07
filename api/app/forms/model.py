@@ -178,6 +178,44 @@ def signature_value(width, height, packed):
     return {'width': width, 'height': height, 'bits': base64.b64encode(packed).decode('ascii')}
 
 
+def signature_from_picture(picture, name):
+    """A PNG, JPEG or GIF picture (base64, or a data: address) as a signature value: trimmed, at most
+    1200 by 400 dots, black where the picture is darker than mid-grey."""
+    from io import BytesIO
+    from PIL import Image, UnidentifiedImageError
+    if not isinstance(picture, str):
+        raise FormError(f'The signature for {name} must be a picture.')
+    if picture.startswith('data:'):
+        picture = picture.split(',', 1)[-1]
+    try:
+        data = base64.b64decode(picture, validate=True)
+        if len(data) > 5 * 1024 * 1024:
+            raise ValueError
+        with Image.open(BytesIO(data)) as image:
+            if image.format not in ('PNG', 'JPEG', 'GIF') or image.width * image.height > 25_000_000:
+                raise ValueError
+            gray = image.convert('RGBA')
+            paper = Image.new('RGBA', gray.size, (255, 255, 255, 255))
+            gray = Image.alpha_composite(paper, gray).convert('L')
+    except (ValueError, UnidentifiedImageError, OSError):
+        raise FormError(f'The signature for {name} must be a PNG, JPEG or GIF picture.') from None
+    box = gray.point(lambda value: 255 if value < 128 else 0).getbbox()
+    if box is None:
+        raise FormError(f'The signature picture for {name} is blank.')
+    gray = gray.crop(box)
+    scale = min(1, MAX_SIGNATURE[0] / gray.width, MAX_SIGNATURE[1] / gray.height)
+    if scale < 1:
+        gray = gray.resize((max(1, int(gray.width * scale)), max(1, int(gray.height * scale))), Image.LANCZOS)
+    width, height = gray.size
+    raw = gray.tobytes()
+    rows = bytearray()
+    for y in range(height):
+        bits = ''.join('1' if value < 128 else '0' for value in raw[y * width:(y + 1) * width])
+        bits += '0' * ((-width) % 8)
+        rows += int(bits, 2).to_bytes(len(bits) // 8, 'big')
+    return signature_value(width, height, bytes(rows))
+
+
 def check_signature(value, name):
     if not isinstance(value, dict) or set(value) != {'width', 'height', 'bits'}:
         raise FormError(f'The signature for {name} must be a picture.')
@@ -207,6 +245,9 @@ def value_for(item, raw, *, drawable):
             return False
         raise FormError(f'{name} must be checked or not (yes or no).')
     if kind == 'signature':
+        if isinstance(raw, dict) and set(raw) == {'picture'}:
+            # A picture is turned into black and white dots once, by the sender; the dots are what is sent.
+            raw = signature_from_picture(raw['picture'], name)
         return check_signature(raw, name)
     if not isinstance(raw, (str, int)) or isinstance(raw, bool):
         raise FormError(f'{name} must be text.')

@@ -61,11 +61,23 @@ def _background(app):
 router = APIRouter(prefix='/forms', tags=['Registered forms'], lifespan=lifespan_tasks(_background))
 
 
+def _problems(problems):
+    """Every field problem in one short paragraph (at most 300 characters)."""
+    shown = []
+    for index, problem in enumerate(problems):
+        rest = len(problems) - index
+        tail = f' {rest} more field{"s need" if rest != 1 else " needs"} attention.'
+        if len(' '.join(shown + [problem])) + (len(tail) if rest > 1 else 0) > 300:
+            return ' '.join(shown) + tail
+        shown.append(problem)
+    return ' '.join(shown)
+
+
 async def _call(operation):
     try:
         return await run_lifecycle_step(operation)
     except model.FormValueError as error:
-        raise HTTPException(422, detail={'message': str(error), 'problems': error.problems}) from None
+        raise HTTPException(422, detail=_problems(error.problems)) from None
     except (model.FormError, FormConflict) as error:
         raise HTTPException(409, detail=str(error)) from None
     except renderer.RendererUnavailable as error:
