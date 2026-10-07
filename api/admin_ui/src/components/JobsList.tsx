@@ -39,6 +39,7 @@ import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/type
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
+import { FaxRequestedByItem } from './delivery/Connectors';
 
 
 interface JobsListProps {
@@ -728,6 +729,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                 </ListItem>
               )}
               <FaxCostItem client={client} jobId={detailJob.id} />
+              <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <Divider />
               <ListItem>

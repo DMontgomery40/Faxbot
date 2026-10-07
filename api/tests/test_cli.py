@@ -963,6 +963,41 @@ def test_intake_connectors_items_and_test_email(cli):
     assert cli.json('numbers', 'email', 'connectors', 'list') == []
 
 
+def test_connectors_add_test_pause_resume_items_and_remove(cli, tmp_path):
+    scans, outbox = tmp_path / 'scans', tmp_path / 'outbox'
+    scans.mkdir()
+    outbox.mkdir()
+    added = cli.json('numbers', 'connectors', 'add', 'Scanner share', '--kind', 'folder', '--path', str(scans))
+    assert added['what'] == 'Brings in documents from a folder' and added['status'] == 'Not checked yet.'
+    tested = cli.json('numbers', 'connectors', 'test', 'Scanner share')
+    assert tested == {'ok': True, 'detail': f'Faxbot can read and write {scans}; it holds 0 files waiting.'}
+    sending = cli.json('numbers', 'connectors', 'add', 'Outbox', '--kind', 'folder', '--direction', 'send',
+                       '--path', str(outbox))
+    assert sending['has_sending_key'] is True
+    listed_keys = cli.json('access', 'keys', 'list')
+    keys = {key['id']: key for key in (listed_keys['items'] if isinstance(listed_keys, dict) else listed_keys)}
+    assert keys[sending['sending_key_id']]['name'] == 'Outbox'
+    paused = cli.json('numbers', 'connectors', 'pause', 'Outbox')
+    assert paused['paused'] is True and paused['has_sending_key'] is False
+    assert cli('numbers', 'connectors', 'pause', 'Outbox').stdout.strip().startswith('Outbox: Paused by ')
+    resumed = cli.json('numbers', 'connectors', 'resume', 'Outbox')
+    assert resumed['has_sending_key'] is True and resumed['sending_key_id'] != sending['sending_key_id']
+    listed = ' '.join(cli('numbers', 'connectors', 'list').stdout.split())
+    assert 'Faxes files put in a folder' in listed and '0 items, 0 seen again, 0 refused' in listed
+    assert cli.json('numbers', 'connectors', 'items') == {'items': []}
+    assert '0 seen again and never handled twice; 0 refused.' in cli('numbers', 'connectors', 'items').stdout
+    missing = cli('numbers', 'connectors', 'add', 'Nowhere', '--kind', 'folder', '--path', str(tmp_path / 'absent'))
+    assert missing.exit_code != 0 and 'it does not exist inside the Faxbot container' in missing.stderr
+    no_secret = cli('numbers', 'connectors', 'add', 'Mailbox', '--kind', 'email', '--address', 'scans@example.com',
+                    '--mail-server', 'mail.example.com', '--no-ask-secret')
+    assert no_secret.exit_code != 0 and 'Enter the mailbox password or app password.' in no_secret.stderr
+    assert [box['label'] for box in cli.json('numbers', 'connectors', 'choices')['mailboxes']] == []
+    assert cli('numbers', 'connectors', 'fax', 'missing-fax').exit_code != 0
+    cli.json('numbers', 'connectors', 'remove', 'Outbox')
+    cli.json('numbers', 'connectors', 'remove', 'Scanner share')
+    assert cli.json('numbers', 'connectors', 'list') == []
+
+
 def test_only_owners_allow_direct_partners_on_private_networks(cli, tmp_path):
     from app.direct.crypto import Identity, card
     saved = cli.json('system', 'settings', 'set', 'direct_allow_private_peers=false')

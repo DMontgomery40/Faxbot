@@ -6,7 +6,7 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
+from .commands import access, admin, connectors, delivery, fax, operations, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -61,8 +61,8 @@ sent.command('send-now')(fax.jobs_send_now)
 
 # -- numbers -------------------------------------------------------------------------
 
-numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the mailboxes themselves, and email "
-                 'delivery.')
+numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the mailboxes themselves, email "
+                 'delivery, and the mailboxes and folders that bring documents in or send faxes.')
 numbers.command('list')(access.numbers_list)
 numbers.command('add')(access.numbers_add)
 numbers.command('update')(access.numbers_update)
@@ -75,6 +75,7 @@ numbers.add_typer(mailboxes, name='mailboxes')
 email = _group('Email delivery of received faxes.')
 email.add_typer(delivery.connectors, name='connectors')
 numbers.add_typer(email, name='email')
+numbers.add_typer(connectors.connectors, name='connectors')
 
 # -- recipients ----------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ import SendIcon from '@mui/icons-material/Send';
 import DialpadIcon from '@mui/icons-material/Dialpad';
 import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
 import EmailIcon from '@mui/icons-material/Email';
+import AllInboxIcon from '@mui/icons-material/AllInbox';
 import ContactPhoneIcon from '@mui/icons-material/ContactPhone';
 import ContactsIcon from '@mui/icons-material/Contacts';
 import HandshakeIcon from '@mui/icons-material/Handshake';
@@ -58,6 +59,7 @@ import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
+import Connectors from './components/delivery/Connectors';
 import ProvidersInUse from './components/ProvidersInUse';
 import CasePackets from './components/delivery/CasePackets';
 import Savings from './components/delivery/Savings';
@@ -239,6 +241,9 @@ export const NAVIGATION: NavArea[] = [
         ) },
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
+      // Mailboxes and folders that bring documents in or send faxes (intake connectors).
+      { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'identity', label: 'Sender identity', icon: <BadgeIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['identity'], 'Sender identity') },
     ],

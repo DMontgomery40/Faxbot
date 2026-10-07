@@ -3,6 +3,7 @@ import type {
 } from './sipTypes';
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
+import type { Connector, ConnectorChoices, ConnectorInput, ConnectorItem, ConnectorUpdate, FaxRequester } from './connectorTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -1126,6 +1127,47 @@ class AdminAPIClient {
 
   async testEmailConnector(connectorId: string): Promise<{ ok: boolean; detail: string }> {
     return this.json(`/intake/connectors/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
+  }
+
+  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Numbers, Email and folders).
+  async listConnectors(): Promise<{ connectors: Connector[] }> {
+    return this.json('/intake/sources');
+  }
+
+  async connectorChoices(): Promise<ConnectorChoices> {
+    return this.json('/intake/sources/choices');
+  }
+
+  async listConnectorItems(params: { connector?: string; limit?: number } = {}): Promise<{ items: ConnectorItem[] }> {
+    return this.json(`/intake/sources/items${query(params)}`);
+  }
+
+  async createConnector(input: ConnectorInput): Promise<Connector> {
+    return this.json('/intake/sources', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateConnector(connectorId: string, input: ConnectorUpdate): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async testConnector(connectorId: string): Promise<{ ok: boolean; detail: string }> {
+    return this.json(`/intake/sources/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
+  }
+
+  async pauseConnector(connectorId: string): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}/pause`, { method: 'POST', body: '{}' });
+  }
+
+  async resumeConnector(connectorId: string): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}/resume`, { method: 'POST', body: '{}' });
+  }
+
+  async removeConnector(connectorId: string): Promise<{ removed: boolean }> {
+    return this.json(`/intake/sources/${id(connectorId)}`, { method: 'DELETE' });
+  }
+
+  async faxRequester(jobId: string): Promise<FaxRequester> {
+    return this.json(`/intake/sources/faxes/${id(jobId)}`);
   }
 
   async getDirectCard(): Promise<{ card: DirectCard }> {

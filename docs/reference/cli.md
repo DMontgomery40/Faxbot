@@ -581,7 +581,7 @@ $ faxbot sent send-now [OPTIONS] {fax_id}
 
 ## `faxbot numbers`
 
-Your fax numbers: which mailbox each number&#x27;s faxes go to, the mailboxes themselves, and email delivery.
+Your fax numbers: which mailbox each number&#x27;s faxes go to, the mailboxes themselves, email delivery, and the mailboxes and folders that bring documents in or send faxes.
 
 **Usage**:
 
@@ -600,6 +600,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `update`: Change a fax number&#x27;s mailbox, or the...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
+* `connectors`: Email mailboxes and folders that bring...
 
 ### `faxbot numbers list`
 
@@ -894,6 +895,237 @@ $ faxbot numbers email connectors remove [OPTIONS] {name}
 **Arguments**:
 
 * `name`: A name for this delivery, for example &quot;Front desk email&quot;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot numbers connectors`
+
+Email mailboxes and folders that bring documents into Faxbot or send faxes, each document only once.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List connectors with what each does, its...
+* `add`: Add a connector.
+* `update`: Change a connector.
+* `test`: Sign in to the mailbox or open the folder...
+* `pause`: Stop checking a connector.
+* `resume`: Check a connector again.
+* `remove`: Remove a connector.
+* `items`: List what connectors brought in or sent,...
+* `fax`: Show who asked for a fax that came in by...
+* `choices`: Show the mailboxes, people and mail...
+
+#### `faxbot numbers connectors list`
+
+List connectors with what each does, its status and its counts.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors add`
+
+Add a connector. Secrets are asked for without showing them, never taken from the command line.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors add [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: A name for the connector, such as &quot;Scanner share&quot; or &quot;Email to fax&quot;.  [required]
+
+**Options**:
+
+* `--kind <str>`: email (a mailbox) or folder (a folder inside the Faxbot container).  [required]
+* `--direction <str>`: receive brings documents in; send faxes them.  [default: receive]
+* `--mailbox <str>`: Mailbox that receives documents with no sidecar file.
+* `--path <str>`: Folder inside the Faxbot container, such as /scans.
+* `--settle-seconds <int>`: Seconds a file must stay unchanged before Faxbot reads it.
+* `--sidecar-minutes <int>`: Minutes to wait for the file with the fax number before giving up.
+* `--service <str>`: microsoft365, google or other.  [default: other]
+* `--address <str>`: The mailbox address, such as fax@example.com.
+* `--username <str>`: Sign-in name, if not the mailbox address.
+* `--mail-server <str>`: Incoming mail server, unless the service sets it.
+* `--mail-port <int>`: Incoming mail server port (993 unless you change it).
+* `--folder <str>`: Mail folder Faxbot checks (INBOX unless you change it).
+* `--processed-folder <str>`: Mail folder Faxbot moves handled messages to.
+* `--sign-in <str>`: password, microsoft_app, google_service_account or oauth_refresh.
+* `--tenant-id <str>`: Microsoft 365 directory (tenant) ID.
+* `--client-id <str>`: Application (client) ID.
+* `--token-url <str>`: Token address, for oauth_refresh.
+* `--service-account-file <str>`: Google service account key file (JSON).
+* `--outgoing-server <str>`: Outgoing mail server for replies, unless the service sets it.
+* `--outgoing-port <int>`: Outgoing mail server port.
+* `--outgoing-security <str>`: tls or starttls.
+* `--checked-by <str>`: Name your mail server writes when it checks senders, such as mx.google.com.
+* `--sender <str>`: Who may send faxes by email: address=login. Repeat for more.
+* `--check-seconds <int>`: How often to check, in seconds.
+* `--ask-secret / --no-ask-secret`: Ask for the password or client secret without showing it.  [default: ask-secret]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors update`
+
+Change a connector. Settings you leave out stay as they are.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors update [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The connector name.  [required]
+
+**Options**:
+
+* `--name <str>`: New name.
+* `--check-seconds <int>`: How often to check, in seconds.
+* `--mailbox <str>`: Mailbox for documents with no sidecar.
+* `--sender <str>`: Replace who may send faxes by email: address=login. Repeat for more.
+* `--new-secret`: Ask for a new password or client secret without showing it.
+* `--service-account-file <str>`: A new Google service account key file.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors test`
+
+Sign in to the mailbox or open the folder and look, without changing anything.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors test [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The connector name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors pause`
+
+Stop checking a connector. A connector that sends faxes loses its sending key until you resume it.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors pause [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The connector name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors resume`
+
+Check a connector again. A connector that sends faxes gets a new sending key.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors resume [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The connector name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors remove`
+
+Remove a connector. What it brought in or sent stays listed.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors remove [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: The connector name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors items`
+
+List what connectors brought in or sent, newest first, with anything seen again or refused.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors items [OPTIONS] [name]
+```
+
+**Arguments**:
+
+* `name`: Only this connector.
+
+**Options**:
+
+* `--limit <int range>`: How many to show.  [default: 100; 1&lt;=x&lt;=500]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors fax`
+
+Show who asked for a fax that came in by email or from a folder.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors fax [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID from &#x27;faxbot sent list&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers connectors choices`
+
+Show the mailboxes, people and mail services you can use when adding a connector.
+
+**Usage**:
+
+```console
+$ faxbot numbers connectors choices [OPTIONS]
+```
 
 **Options**:
 
