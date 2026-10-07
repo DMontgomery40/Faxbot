@@ -1461,6 +1461,7 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `install`: Install a custom HTTP fax provider from...
 * `import`: Add several fax services at once from a...
 * `efax`: eFax receiving: whether Faxbot is...
+* `humblefax`: HumbleFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
 
 ### `faxbot providers list`
@@ -1630,6 +1631,53 @@ Show whether Faxbot is collecting your received faxes from eFax, when it last ch
 
 ```console
 $ faxbot providers efax status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers humblefax`
+
+HumbleFax receiving: whether Faxbot is collecting your faxes from HumbleFax, and checking now.
+
+**Usage**:
+
+```console
+$ faxbot providers humblefax [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show whether Faxbot is collecting your...
+* `check`: Check HumbleFax for received faxes now,...
+
+#### `faxbot providers humblefax status`
+
+Show whether Faxbot is collecting your received faxes from HumbleFax, when it last checked and what it found.
+
+**Usage**:
+
+```console
+$ faxbot providers humblefax status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers humblefax check`
+
+Check HumbleFax for received faxes now, instead of waiting for the next check.
+
+**Usage**:
+
+```console
+$ faxbot providers humblefax check [OPTIONS]
 ```
 
 **Options**:

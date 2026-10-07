@@ -36,7 +36,7 @@ describe('Every provider choice, by name and grouped', () => {
     expect(titles(providerChoices(TRUNK, 'AU', false))[1][1][0]).toBe('Telstra SIP Connect — Australia');
     // Receiving offers only what can receive.
     expect(titles(providerChoices(TRUNK, 'US', true))).toEqual([
-      ['Fax services', ['eFax', 'Phaxio', 'Sinch Fax']],
+      ['Fax services', ['HumbleFax', 'eFax', 'Phaxio', 'Sinch Fax']],
       ['Your own fax line through a carrier', ['Telnyx', 'Gamma — UK', 'BT One Voice — UK', 'Telstra SIP Connect — Australia', 'Another carrier']],
       ['Your phone system', ['Avaya IP Office', 'Avaya Aura']],
     ]);

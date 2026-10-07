@@ -399,21 +399,21 @@ describe('Settings authentication and receiving', () => {
     expect(screen.queryByText(/Yes \(Required\)/)).toBeNull();
   });
 
-  it('warns that HumbleFax cannot receive when it would handle receiving', async () => {
+  it('receives through HumbleFax when it handles receiving', async () => {
     settingsHandlers(settingsFixture((data) => {
       data.backend.type = 'humblefax';
       data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'humblefax', outbound_override: '', inbound_override: '' };
       data.inbound.enabled = true;
     }));
     render(<Settings client={client()} />);
-    const warning = /HumbleFax cannot receive faxes, so Faxbot will not save receiving with it/;
-    expect(await screen.findByText(warning)).toBeTruthy();
+    expect(await screen.findByText('HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.')).toBeTruthy();
+    expect(screen.queryByText(/HumbleFax cannot receive faxes/)).toBeNull();
     const inbound = await receivingSection();
-    fireEvent.click(within(inbound).getByLabelText(/^Receiving is (on|off)$/));
-    await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
-    // Off, it cannot be turned on again with a provider that only sends.
-    expect(within(inbound).getByText('HumbleFax cannot receive faxes. To receive, choose Add or change a provider.')).toBeTruthy();
-    expect((within(inbound).getByLabelText(/^Receiving is (on|off)$/) as HTMLInputElement).disabled).toBe(true);
+    expect(within(inbound).getByText('Faxes arrive through HumbleFax.')).toBeTruthy();
+    fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
+    // Off, it can be turned on again: HumbleFax receives by Faxbot asking it for faxes.
+    expect(within(inbound).getByText('Turn this on to receive faxes through HumbleFax.')).toBeTruthy();
+    expect((within(inbound).getByLabelText('Receiving is off') as HTMLInputElement).disabled).toBe(false);
   });
 
   it('turns receiving off and on again with one switch, keeping the trunk as the receiving provider', async () => {

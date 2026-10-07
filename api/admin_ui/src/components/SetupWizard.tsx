@@ -649,7 +649,10 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
             </AccordionDetails>
           </Accordion>
         </>}
-        {roles.receives && id !== 'sip' && id !== 'efax' && callbackDetails()}
+        {roles.receives && id === 'humblefax' && <Typography variant="body2" sx={{ mt: 2 }} data-testid="humblefax-polls">
+          Faxbot asks HumbleFax for new faxes, so nothing needs to reach Faxbot from the internet.
+        </Typography>}
+        {roles.receives && id !== 'sip' && id !== 'efax' && id !== 'humblefax' && callbackDetails()}
       </>}
     </Paper>;
   };

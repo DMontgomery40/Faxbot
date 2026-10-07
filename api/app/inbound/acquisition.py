@@ -14,6 +14,9 @@ under, so the same provider fax ID under two accounts stays two records:
 - Sinch: ``sinch:`` and the project ID.
 - eFax: ``efax:`` and the first 12 hex digits of SHA-256 of the app ID and user ID
   (``efax_service.account_key``); Faxbot finds eFax faxes by asking eFax's API.
+- HumbleFax: ``humblefax:`` and the HumbleFax user ID the keys belong to (GetUser),
+  so new keys for the same user keep the same account; Faxbot finds HumbleFax
+  faxes by asking HumbleFax's API (``inbound/humblefax.py``).
 - SIP trunk: ``sip:`` and the trunk user name, or ``sip:asterisk``.
 - Generic import: ``import:`` and the importing principal's ID.
 - Test fax: ``test:`` and the principal's ID.
@@ -48,10 +51,10 @@ import sqlalchemy as sa
 from ..routing.numbers import DEFAULT_COUNTRY
 
 
-SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax', 'local')
-FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax')
+SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax', 'local', 'humblefax')
+FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax', 'humblefax')
 SOURCE_NAMES = {'phaxio': 'Phaxio', 'sinch': 'Sinch', 'sip': 'the SIP trunk', 'import': 'the import',
-                'test': 'Faxbot', 'efax': 'eFax', 'local': 'Faxbot'}
+                'test': 'Faxbot', 'efax': 'eFax', 'local': 'Faxbot', 'humblefax': 'HumbleFax'}
 # Minutes to wait after each failed attempt: 1, 2, 4, 8, 16, 32, then hourly for 24 hours.
 RETRY_MINUTES = (1, 2, 4, 8, 16, 32) + (60,) * 24
 LEASE = timedelta(minutes=2)
@@ -126,7 +129,7 @@ def account_identity(source, value=None):
         return source + ':' + hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
     if source == 'sip':
         return ('sip:' + (value.strip() or 'asterisk'))[:100]
-    if source in ('sinch', 'import', 'test'):
+    if source in ('sinch', 'import', 'test', 'humblefax'):
         return (source + ':' + value.strip())[:100]
     raise ValueError('Unknown inbound source.')
 
@@ -259,7 +262,14 @@ def failures_text(source, failures):
 
 
 def _provider_note(record, provider_copy):
-    """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying."""
+    """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying,
+    or a HumbleFax fax that HumbleFax says arrived only in part."""
+    if record.get('source') == 'humblefax' and record.get('state') in ('received', 'conflict'):
+        from .humblefax import partial_note
+        try:
+            return partial_note(json.loads(record.get('report') or '{}'))
+        except (TypeError, ValueError):
+            return None
     if record.get('source') != 'efax' or record.get('state') != 'received' or provider_copy is None:
         return None
     from .efax import deletion_note

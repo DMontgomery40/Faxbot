@@ -203,6 +203,10 @@ class ConfigurationValues(BaseModel):
     humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),
                                       repr=False, json_schema_extra={'secret': True})
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
+    # Receiving through HumbleFax: Faxbot asks HumbleFax for received faxes every humblefax_poll_seconds.
+    # Off until turned on; HumbleFax as the receiving provider also turns it on (inbound/humblefax.py).
+    humblefax_receive_enabled: bool = Field(False, validation_alias='HUMBLEFAX_RECEIVE_ENABLED')
+    humblefax_poll_seconds: int = Field(60, validation_alias='HUMBLEFAX_POLL_SECONDS', ge=30, le=3600)
     # eFax Enterprise API (eFax Corporate): the app ID, API key and user ID from eFax's welcome email.
     efax_app_id: str = Field('', validation_alias='EFAX_APP_ID', repr=False, json_schema_extra={'secret': True},
                              pattern=r'^[!-9;-~]{0,256}$')

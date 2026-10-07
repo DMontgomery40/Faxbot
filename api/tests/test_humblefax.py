@@ -175,12 +175,13 @@ def test_settings_use_documented_aliases_and_redact_both_keys():
         ConfigurationRevision('active', values), None))
     # account_numbers are read from HumbleFax outside the snapshot; never under the test harness.
     assert view['humblefax'] == {'access_key': '***', 'secret_key': '***',
-                                 'from_number': '13035550199', 'account_numbers': [], 'configured': True}
+                                 'from_number': '13035550199', 'account_numbers': [], 'configured': True,
+                                 'receive': False, 'poll_seconds': 60}
     assert ACCESS not in json.dumps(view) and SECRET not in json.dumps(view)
     empty = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', ConfigurationValues.from_environment({})), None))
     assert empty['humblefax'] == {'access_key': '', 'secret_key': '', 'from_number': '', 'account_numbers': [],
-                                  'configured': False}
+                                  'configured': False, 'receive': False, 'poll_seconds': 60}
 
 
 @pytest.mark.parametrize('number', ['+2025550123', '303-555-0199', '22025550123', '0025550123', '+442071234567', ' 3035550199'])
@@ -214,7 +215,8 @@ def test_selected_provider_compiles_a_captured_profile_and_readiness_needs_both_
     catalog = ProviderCatalog.load(provider_traits_path(), tmp_path / 'providers')
     profile = compile_profiles(values, catalog, default_plugin_state(values))['outbound']
     assert profile.provider_id == 'humblefax' and profile.manifest is None
-    assert profile.traits['supports_inbound'] is False and profile.traits['requires_tiff'] is False
+    # HumbleFax receives by polling (inbound/humblefax.py), so it can be the receiving provider too.
+    assert profile.traits['supports_inbound'] is True and profile.traits['requires_tiff'] is False
     monkeypatch.setenv('HUMBLEFAX_ACCESS_KEY', 'unrelated-current-key')
     monkeypatch.setenv('HUMBLEFAX_SECRET_KEY', 'unrelated-current-secret')
     adapter = service_from_profile(ProviderProfile('profile', 'account', profile))
@@ -225,15 +227,19 @@ def test_selected_provider_compiles_a_captured_profile_and_readiness_needs_both_
     assert adapter.from_number == environment.get('HUMBLEFAX_FROM_NUMBER', '')
 
 
-def test_inbound_selection_is_refused_because_the_adapter_is_outbound_only(tmp_path):
-    from api.app.config_activation import ConfigurationActivationError, compile_profiles
+def test_an_install_with_only_humblefax_can_receive_through_it(tmp_path):
+    from api.app.config_activation import compile_profiles
     from api.app.config_bootstrap import default_plugin_state
     from api.app.config_paths import provider_traits_path
+    from api.app.inbound.humblefax import receiving_active
     from api.app.provider_catalog import ProviderCatalog
-    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'humblefax', 'INBOUND_ENABLED': 'true'})
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'humblefax', 'INBOUND_ENABLED': 'true',
+                                                   'HUMBLEFAX_ACCESS_KEY': ACCESS, 'HUMBLEFAX_SECRET_KEY': SECRET})
     catalog = ProviderCatalog.load(provider_traits_path(), tmp_path / 'providers')
-    with pytest.raises(ConfigurationActivationError, match='does not support inbound'):
-        compile_profiles(values, catalog, default_plugin_state(values))
+    profiles = compile_profiles(values, catalog, default_plugin_state(values))
+    assert profiles['inbound'].provider_id == 'humblefax' and profiles['inbound'].traits['supports_inbound'] is True
+    # Chosen as the receiving provider, HumbleFax receives without the separate switch.
+    assert values.humblefax_receive_enabled is False and receiving_active(values) is True
 
 
 # Adapter wire contract

@@ -19,6 +19,8 @@ provider; an authenticated notification is kept as evidence, cut to 8 KB by
 - eFax: the documented ``X-HMAC-Signature`` (hex HMAC-SHA256 of the raw body
   with ``EFAX_WEBHOOK_SECRET``). A verified notification only starts the next
   check of eFax now; nothing in it is stored or followed.
+- HumbleFax: no notification at all. Faxbot asks HumbleFax's API for received
+  faxes (``humblefax.HumbleFaxReceiver``); "Check now" starts one check at once.
 
 A document attached to a notification is used only when the notification was
 authenticated by signature or basic auth. Faxbot never requests an address a
@@ -70,6 +72,7 @@ class InboundAcquisition:
         self.loop = None
         self.wake = None
         self.efax = None
+        self.humblefax = None
 
     def recover(self):
         """Bring in received SIP images that were never handed over (see sip_handover)."""
@@ -105,6 +108,8 @@ async def _lifespan(app):
         service = InboundAcquisition(store, acquirer, runtime)
         from .efax import EfaxReceiver
         service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick)
+        from .humblefax import HumbleFaxReceiver
+        service.humblefax = HumbleFaxReceiver(store, _frame(runtime), kick=service.kick)
         app.state.inbound_acquisition = service
         if AUTOMATIC:
             service.loop, service.wake = asyncio.get_running_loop(), asyncio.Event()
@@ -112,6 +117,8 @@ async def _lifespan(app):
             tasks.append(asyncio.create_task(_recover_forever(service), name='faxbot-inbound-recovery'))
             # Received eFax faxes are found by asking eFax; it does nothing unless eFax receives.
             tasks.append(asyncio.create_task(service.efax.run(), name='faxbot-inbound-efax'))
+            # Received HumbleFax faxes are found the same way; it does nothing unless HumbleFax receives.
+            tasks.append(asyncio.create_task(service.humblefax.run(), name='faxbot-inbound-humblefax'))
     except Exception:
         logging.getLogger(__name__).warning('Received-fax fetching could not start; the API is still available.')
     try:
@@ -628,6 +635,37 @@ async def efax_inbound_status(request: Request, identity=Depends(require_permiss
             'problem': receiver.last_problem if receiver is not None else None,
             'pending_deletions': pending, 'stopped_deletions': stopped,
             'notes': deletion_sentences(pending, stopped)}
+
+
+@router.get('/admin/inbound/humblefax')
+async def humblefax_inbound_status(request: Request, identity=Depends(require_permission('providers:read'))):
+    """Whether Faxbot is checking HumbleFax for received faxes, when it last checked and what it found."""
+    receiver = _acquisition(request).humblefax
+    if receiver is None:
+        raise HTTPException(503, detail='Receiving faxes is not ready yet; try again shortly.')
+    return receiver.status(request.scope['faxbot.configuration'].active.values)
+
+
+@router.post('/admin/inbound/humblefax/check')
+async def humblefax_inbound_check(request: Request,
+                                  identity=Depends(require_permission('providers:write', audit=True))):
+    """Check HumbleFax for received faxes now, as the next scheduled check would."""
+    receiver = _acquisition(request).humblefax
+    if receiver is None:
+        raise HTTPException(503, detail='Receiving faxes is not ready yet; try again shortly.')
+    values = request.scope['faxbot.configuration'].active.values
+    reason = receiver.inactive_reason(values)
+    if reason is not None:
+        raise HTTPException(409, detail=reason)
+    if receiver.held() > 0:
+        # HumbleFax blocks an address for a minute after too many requests; asking now would extend it.
+        raise HTTPException(429, detail='HumbleFax asked Faxbot to slow down; select Check now again in a minute.')
+    try:
+        await receiver.check(values)
+    except Exception:
+        logging.getLogger(__name__).warning('Checking HumbleFax now failed.')
+        raise HTTPException(503, detail='Faxbot could not check HumbleFax just now; try again shortly.') from None
+    return receiver.status(values)
 
 
 @router.post('/inbound/{inbound_id}/fetch')

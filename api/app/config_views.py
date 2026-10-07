@@ -144,6 +144,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'access_key': mask_secret(values.humblefax_access_key),
             'secret_key': mask_secret(values.humblefax_secret_key),
             'from_number': values.humblefax_from_number,
+            # Receiving: the switch, and how often Faxbot asks HumbleFax for received faxes.
+            'receive': values.humblefax_receive_enabled,
+            'poll_seconds': values.humblefax_poll_seconds,
             # The account's own numbers as HumbleFax reports them (cached read; empty until known).
             'account_numbers': list(_humblefax_numbers(values)),
             'configured': bool(values.humblefax_access_key and values.humblefax_secret_key),
