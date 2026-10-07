@@ -57,8 +57,12 @@ def _avoided(card, with_pages, without_pages, result):
         _add(result['saved'], card.currency, cost.micros)
 
 
-def sending_together(routes, engine, *, now, days):
-    """Calls saved by faxes that shared a call, over every number that sends together."""
+def sending_together(routes, engine, *, now, days, index_page=None):
+    """Calls saved by faxes that shared a call, over every number that sends together.
+
+    ``index_page``, when given, is a dict that also sums the separator pages one index page left out
+    (``batching.money.savings``); those are counted apart from, and never inside, the calls saved.
+    """
     members = batching_tables(engine)['outbound_batch_members']
     since = now - timedelta(days=days)
     with read_connection(engine) as connection:
@@ -75,6 +79,11 @@ def sending_together(routes, engine, *, now, days):
             result[key] += part[key]
         for currency, micros in part['saved'].items():
             _add(result['saved'], currency, micros)
+        if index_page is not None:
+            for key in ('calls', 'pages_saved', 'priced_calls'):
+                index_page[key] += part['index_page'][key]
+            for currency, micros in part['index_page']['saved'].items():
+                _add(index_page['saved'], currency, micros)
     if not result['calls']:
         result['sentence'] = f'No faxes were sent together in the last {days} days.'
         return result
@@ -222,7 +231,10 @@ def case_packets(routes, engine, *, since, days):
 def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     now = now or utcnow()
     since = now - timedelta(days=days)
-    together = sending_together(routes, engine, now=now, days=days)
+    # Separator pages one index page left out in shared calls: counted apart from the calls saved.
+    index = {'calls': 0, 'pages_saved': 0, 'priced_calls': 0, 'saved': {}}
+    together = sending_together(routes, engine, now=now, days=days, index_page=index)
+    index['sentence'] = money.index_page_sentence(index, days=days)
     direct = direct_delivery(routes, engine, since=since, days=days)
     packets = case_packets(routes, engine, since=since, days=days)
     # Faxes whose pages went over SSL Fax (the fast fax service), priced with the trunk carrier's billing.
@@ -230,10 +242,10 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     sslfax = sslfax_savings(routes, engine, since=since, days=days)
     own = own_numbers(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, direct, packets, sslfax, own):
+    for part in (together, index, direct, packets, sslfax, own):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
-    return {'days': days, 'since': since, 'sending_together': together, 'direct_delivery': direct,
+    return {'days': days, 'since': since, 'sending_together': together, 'index_page': index, 'direct_delivery': direct,
             'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total,
             'total_sentence': total_sentence(total, days)}
 

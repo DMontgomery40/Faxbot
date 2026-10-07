@@ -523,6 +523,8 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             # Signed: a negative amount is money that cost more than it saved, said so in total_sentence.
             'total_saved': _money(result['total']), 'total_sentence': result['total_sentence'],
             'sending_together': _saving_view(result['sending_together']),
+            # Separator pages one index page left out of shared calls, counted apart from the calls saved.
+            'index_page': _saving_view(result['index_page']),
             'direct_delivery': _saving_view(result['direct_delivery']),
             'case_packets': _saving_view(result['case_packets']),
             'sslfax': _saving_view(result['sslfax']),

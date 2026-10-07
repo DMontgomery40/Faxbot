@@ -1,9 +1,13 @@
-"""Separator pages and the one fax image a shared call sends.
+"""Separator pages, the index page, and the one fax image a shared call sends.
 
 Each fax's own pages are copied into the call image byte for byte from the fax
 image Faxbot already made and checked when it accepted the fax; only the
-separator pages are new. A separator names the document's place in the call,
-its reference, its page count and its sender, nothing more.
+separator pages, or the one index page, are new. A separator names the
+document's place in the call, its reference, its page count and its sender,
+nothing more. The index page (page 1, where the recipient agreed to it) lists
+the same for every document plus its page range in the call, and nothing
+else. Covers or barcode pages inside a document are its own pages, so they
+are always sent as they are.
 """
 from pathlib import Path
 import os
@@ -44,6 +48,97 @@ def separator_line(document_number, documents, reference, pages, sender_name=Non
     if sender:
         parts.append(f'from {sender}')
     return ' · '.join(parts)
+
+
+def _count(pages, word='page'):
+    return f'1 {word}' if pages == 1 else f'{pages} {word}s'
+
+
+def index_heading(documents, call_pages):
+    """The index page's title and its one summary sentence."""
+    return ('Index of documents in this fax',
+            f'This fax has {_count(documents, "document")} on {_count(call_pages)}, counting this index page.')
+
+
+def index_entry(document_number, first_page, last_page, reference, pages, sender_name=None):
+    """One document on the index page: ("Document 2: pages 4–7 (4 pages)", "Faxbot 7f3a9c21 · from Front Desk")."""
+    where = f'page {first_page}' if first_page == last_page else f'pages {first_page}–{last_page}'
+    details = [_printable(reference, 100)]
+    sender = _printable(sender_name, 80)
+    if sender:
+        details.append(f'from {sender}')
+    return f'Document {document_number}: {where} ({_count(pages)})', ' · '.join(part for part in details if part)
+
+
+# The index page's fixed layout, in points on a US Letter page: every document takes at most three
+# lines, so ``policy.INDEX_PAGE_DOCUMENTS`` documents always fit (a test renders that worst case).
+INDEX_MARGIN = 36
+INDEX_TITLE, INDEX_SUMMARY, INDEX_HEADING, INDEX_DETAILS = 18, 12, 12, 10
+INDEX_HEADING_STEP, INDEX_DETAILS_STEP, INDEX_GAP = 14, 12, 5
+INDEX_DETAIL_LINES = 2
+
+
+def _wrap(text, measure, width, lines):
+    """At most ``lines`` lines no wider than ``width``; a cut-off end is marked with an ellipsis."""
+    words, result, current = text.split(' '), [], ''
+    for word in words:
+        candidate = f'{current} {word}' if current else word
+        if measure(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            result.append(current)
+        current = word
+        while measure(current) > width:  # one word wider than a line: break it by characters
+            cut = len(current)
+            while cut > 1 and measure(current[:cut]) > width:
+                cut -= 1
+            result.append(current[:cut])
+            current = current[cut:]
+    if current:
+        result.append(current)
+    if len(result) > lines:
+        last = result[lines - 1]
+        while last and measure(last + '…') > width:
+            last = last[:-1]
+        result = result[:lines - 1] + [last.rstrip() + '…']
+    return result
+
+
+def index_pdf(heading, summary, entries, path):
+    """Write the one index page; ``ValueError`` when it cannot hold every entry (never cut silently)."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    width, height = letter
+    usable = width - 2 * INDEX_MARGIN
+    # invariant: no creation time or random ID in the file, so one call's index page is always the same.
+    document = canvas.Canvas(str(path), pagesize=letter, invariant=1)
+    document.setTitle('Index page')
+    y = height - INDEX_MARGIN - INDEX_TITLE
+    document.setFont('Helvetica-Bold', INDEX_TITLE)
+    document.drawString(INDEX_MARGIN, y, heading)
+    y -= INDEX_TITLE + 2
+    document.setFont('Helvetica', INDEX_SUMMARY)
+    document.drawString(INDEX_MARGIN, y, summary)
+    y -= 10
+    document.setLineWidth(1)
+    document.line(INDEX_MARGIN, y, width - INDEX_MARGIN, y)
+    y -= 20
+    for title, details in entries:
+        lines = _wrap(details, lambda text: document.stringWidth(text, 'Helvetica', INDEX_DETAILS), usable - 18,
+                      INDEX_DETAIL_LINES) if details else []
+        if y - INDEX_HEADING_STEP - INDEX_DETAILS_STEP * max(0, len(lines) - 1) < INDEX_MARGIN:
+            raise ValueError('The index page cannot list every document.')
+        document.setFont('Helvetica-Bold', INDEX_HEADING)
+        document.drawString(INDEX_MARGIN, y, title)
+        y -= INDEX_HEADING_STEP
+        document.setFont('Helvetica', INDEX_DETAILS)
+        for line in lines:
+            document.drawString(INDEX_MARGIN + 18, y, line)
+            y -= INDEX_DETAILS_STEP
+        y -= INDEX_GAP
+    document.showPage()
+    document.save()
 
 
 def _separator_pdf(lines, path):
@@ -183,13 +278,27 @@ def page_count(path):
         return getattr(image, 'n_frames', 1)
 
 
-def build_call_image(root, call_id, members):
+def index_tiff(folder, heading, summary, entries):
+    """The index page as one fax page ``(tiff bytes, 0)``, at the fax image's fine resolution."""
+    from ..conversion import pdf_to_tiff
+    pdf, tiff = Path(folder) / 'index.pdf', Path(folder) / 'index.tiff'
+    index_pdf(heading, summary, entries, pdf)
+    pdf_to_tiff(str(pdf), str(tiff))
+    data = tiff.read_bytes()
+    if len(_read_ifds(data)) != 1:
+        raise ValueError('The index page is not one page.')
+    return data, 0
+
+
+def build_call_image(root, call_id, members, *, index=None):
     """Write ``batch-<call_id>.tiff`` in ``root`` and return its path.
 
     ``members`` lists, in call order, ``(job_id, pages, separator line)``.
     Each fax's ``<job_id>.tiff`` must hold exactly its pages; otherwise
-    ``MemberUnusable`` names it. The image's page count is checked against
-    one separator plus each fax's pages before it is used.
+    ``MemberUnusable`` names it. With ``index`` (the index page's heading,
+    summary and entries, as ``index_heading``/``index_entry`` make them) the
+    call starts with that one page and has no separator pages. The image's
+    page count is checked against the layout before it is used.
     """
     from ..conversion import DocumentConversionError, pdf_to_tiff
     root = Path(root)
@@ -207,6 +316,8 @@ def build_call_image(root, call_id, members):
         except (OSError, ValueError, struct.error):
             raise MemberUnusable(job_id) from None
         images.append(data)
+    if index is not None:
+        return _index_call(root, call_id, members, images, index)
     separators = []
     with tempfile.TemporaryDirectory(prefix='faxbot-separators-', dir=str(root)) as folder:
         lines = [line for _, _, line in members]
@@ -225,10 +336,29 @@ def build_call_image(root, call_id, members):
     for separator, data, (_, count, _) in zip(separators, images, members):
         pages.append(separator)
         pages += [(data, index) for index in range(count)]
+    return _write_call(root, call_id, pages, sum(1 + count for _, count, _ in members))
+
+
+def _index_call(root, call_id, members, images, index):
+    from ..conversion import DocumentConversionError
+    heading, summary, entries = index
+    if len(entries) != len(members):
+        raise CallImageError('The index page could not be made.')
+    with tempfile.TemporaryDirectory(prefix='faxbot-index-', dir=str(root)) as folder:
+        try:
+            pages = [index_tiff(folder, heading, summary, entries)]
+        except (DocumentConversionError, OSError, ValueError, struct.error):
+            raise CallImageError('The index page could not be made.') from None
+    for data, (_, count, _) in zip(images, members):
+        pages += [(data, number) for number in range(count)]
+    return _write_call(root, call_id, pages, 1 + sum(count for _, count, _ in members))
+
+
+def _write_call(root, call_id, pages, expected):
     out = root / f'batch-{call_id}.tiff'
     try:
         concatenate(pages, out)
-        if page_count(out) != sum(1 + count for _, count, _ in members):
+        if page_count(out) != expected:
             raise CallImageError('The shared call image has the wrong number of pages.')
     except (OSError, ValueError, struct.error):
         raise CallImageError('The shared call image could not be written.') from None

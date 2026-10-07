@@ -18,6 +18,15 @@ MIN_PAGES, MAX_PAGES = 2, 200
 # A minimum (or billing step) at least this long makes a short call pay for unused time.
 SAVING_MINIMUM_SECONDS = 30
 AGREEMENT = 'This recipient has agreed to receive several documents in one call.'
+# One index page instead of a separator page before each document (migration 0025).
+INDEX_PAGE_AGREEMENT = ("This recipient has agreed to one index page listing each document's pages, "
+                        'instead of a separator page before each document.')
+# What the index page replaces, and what it never touches (R07 §3.3: a recipient's own routing pages).
+INDEX_PAGE_KEEPS = ("Only Faxbot's separator pages are left out; cover sheets and barcode pages inside "
+                    'your documents are always sent.')
+# The most documents one index page lists, each on at most three lines (``image.index_pdf``).
+INDEX_PAGE_DOCUMENTS = 15
+LAYOUT_SEPARATORS, LAYOUT_INDEX_PAGE = 'separators', 'index_page'
 
 
 @dataclass(frozen=True)
