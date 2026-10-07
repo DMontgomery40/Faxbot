@@ -5,6 +5,7 @@ together, and a fax's own waiting or shared-call details, are for anyone who
 may send faxes or read that fax.
 """
 from datetime import timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -83,7 +84,7 @@ def summary(row):
         layout = row['layout'] or policy.LAYOUT_SEPARATORS
         view.update(documents=row['documents'], document_number=row['document_number'],
                     others=row['documents'] - 1, layout=layout,
-                    call_first_page=row['first_page'] + (0 if layout == policy.LAYOUT_INDEX_PAGE else 1),
+                    call_first_page=row['first_page'] + (1 if layout == policy.LAYOUT_SEPARATORS else 0),
                     call_last_page=row['last_page'])
     return view
 
@@ -112,13 +113,15 @@ def _pages_text(first, last):
 
 
 def layout_sentence(view):
-    """How the shared call this fax went in marked it: its separator page, or its line on the index page."""
+    """How the shared call this fax went in marked it: its separator page, its line on the index page, or page marks."""
     if view is None or view['state'] != 'together':
         return None
     place = f"document {view['document_number']} of {view['documents']}"
+    pages = _pages_text(view['call_first_page'], view['call_last_page'])
     if view['layout'] == policy.LAYOUT_INDEX_PAGE:
-        return (f'The index page at the start of the call lists this fax as {place}, '
-                f"{_pages_text(view['call_first_page'], view['call_last_page'])}, under {view['reference']}.")
+        return f"The index page at the start of the call lists this fax as {place}, {pages}, under {view['reference']}."
+    if view['layout'] == policy.LAYOUT_PAGE_HEADERS:
+        return f"A line at the top of each of its pages marks it as {place} ({pages} of the call), under {view['reference']}."
     return f"Its separator page says {view['reference']} ({place})."
 
 
@@ -126,16 +129,23 @@ def _change_view(row):
     return {'action': row['action'], 'by': row['actor_name'] or 'Someone with settings access',
             'at': _utc(row['created_at']), 'recipient_agreed': bool(row['recipient_agreed']),
             'max_wait_minutes': row['max_wait_seconds'] // 60, 'max_pages': row['max_pages'],
-            'mixed_senders': bool(row['mixed_senders']), 'index_page': row['index_page'] == 1,
-            'index_page_agreed': row['index_page_agreed'] == 1}
+            'mixed_senders': bool(row['mixed_senders']),
+            'boundaries': row['boundaries'] if row['boundaries'] in policy.LAYOUTS else policy.LAYOUT_SEPARATORS,
+            'boundaries_agreed': row['boundaries_agreed'] == 1}
 
 
-def _index_page_sentence(setting):
+def _boundaries_sentence(setting, values):
+    """One sentence on how documents sent together to this number are marked, or None while it is off."""
     if not setting['enabled']:
         return None
-    if setting['index_page']:
+    if setting['boundaries'] == policy.LAYOUT_INDEX_PAGE:
         return ("Faxes sent together to this number start with one index page listing each document's pages, "
                 'instead of a separator page before each document.')
+    if setting['boundaries'] == policy.LAYOUT_PAGE_HEADERS:
+        if not policy.header_identifies_sender(values):
+            return policy.HEADER_NEEDS
+        return ('Each page sent together to this number has a line at the top naming its document and page, '
+                'with no separator or index page.')
     return 'Each document sent together to this number follows its own separator page.'
 
 
@@ -146,9 +156,10 @@ def _number_view(engine, request, number):
     verdict = _verdict(engine, request, number)
     history = settings.history(number)
     agreement = next((row for row in history if row['action'] == 'on'), None) if setting['enabled'] else None
-    index_agreement = settings.index_page_agreement(number) if setting['index_page'] else None
+    marks_agreement = settings.boundaries_agreement(number, setting['boundaries']) if setting['enabled'] else None
+    values = request.scope['faxbot.configuration'].active.values
     found = money.savings(RouteStore(engine), engine, number)
-    index = found['index_page']
+    left_out = found['separator_pages']
     if not setting['enabled']:
         state = 'Off: faxes to this number go straight away.'
     elif verdict.saves:
@@ -166,15 +177,19 @@ def _number_view(engine, request, number):
                         'estimated_saving': [{'currency': currency, 'amount': format_amount(micros)}
                                              for currency, micros in sorted(found['saved'].items())],
                         'is_estimate': True, 'sentence': money.savings_sentence(found),
-                        # Counted apart from the calls saved: separator pages one index page left out.
-                        'index_page': {'calls': index['calls'], 'pages_saved': index['pages_saved'],
-                                       'estimated_saving': [{'currency': currency, 'amount': format_amount(micros)}
-                                                            for currency, micros in sorted(index['saved'].items())],
-                                       'is_estimate': True, 'sentence': money.index_page_sentence(index)}},
+                        # Counted apart from the calls saved: separator pages an index page or page marks left out.
+                        'separator_pages': {
+                            'calls': left_out['calls'], 'pages_saved': left_out['pages_saved'],
+                            'estimated_saving': [{'currency': currency, 'amount': format_amount(micros)}
+                                                 for currency, micros in sorted(left_out['saved'].items())],
+                            'is_estimate': True, 'sentence': money.separator_pages_sentence(left_out)}},
             'agreement_text': policy.AGREEMENT,
-            'index_page': setting['index_page'], 'index_page_sentence': _index_page_sentence(setting),
-            'index_page_agreement': None if index_agreement is None else _change_view(index_agreement),
-            'index_page_text': policy.INDEX_PAGE_AGREEMENT, 'index_page_keeps': policy.INDEX_PAGE_KEEPS}
+            # How a shared call marks where each document starts, and the recipient's agreement to it.
+            'boundaries': setting['boundaries'], 'boundaries_sentence': _boundaries_sentence(setting, values),
+            'boundaries_agreement': None if marks_agreement is None else _change_view(marks_agreement),
+            'boundaries_choices': [{'value': value, 'label': policy.LAYOUT_LABELS[value],
+                                    'agreement_text': policy.AGREEMENTS.get(value)} for value in policy.LAYOUTS],
+            'boundaries_keeps': policy.INDEX_PAGE_KEEPS}
 
 
 @router.get('/numbers/{number}', dependencies=[Depends(require_permission('settings:read'))])
@@ -191,9 +206,10 @@ class NumberSetting(BaseModel):
     max_wait_minutes: int | None = Field(default=None, ge=1, le=60)
     max_pages: int | None = Field(default=None, ge=policy.MIN_PAGES, le=policy.MAX_PAGES)
     mixed_senders: bool | None = None
-    # One index page instead of a separator before each document; None keeps the current choice.
-    index_page: bool | None = None
-    index_page_agreed: bool = False
+    # How a shared call marks each document; None keeps the current choice. Anything but separators
+    # needs boundaries_agreed: the recipient agreed to that convention.
+    boundaries: Literal['separators', 'index_page', 'page_headers'] | None = None
+    boundaries_agreed: bool = False
     version: int | None = Field(default=None, ge=0)
 
 
@@ -219,12 +235,12 @@ async def _save(request, identity, number, payload):
             number, enabled=payload.enabled, recipient_agreed=payload.recipient_agreed, actor=actor.replay_scope,
             actor_name=name, expected_version=payload.version,
             max_wait_seconds=None if payload.max_wait_minutes is None else payload.max_wait_minutes * 60,
-            max_pages=payload.max_pages, mixed_senders=payload.mixed_senders, index_page=payload.index_page,
-            index_page_agreed=payload.index_page_agreed)
+            max_pages=payload.max_pages, mixed_senders=payload.mixed_senders, boundaries=payload.boundaries,
+            boundaries_agreed=payload.boundaries_agreed)
         if action is not None:
             audit_event('batching_' + action, to_number=number, recipient_agreed=payload.enabled,
                         max_wait_seconds=setting['max_wait_seconds'], max_pages=setting['max_pages'],
-                        mixed_senders=setting['mixed_senders'], index_page=setting['index_page'])
+                        mixed_senders=setting['mixed_senders'], boundaries=setting['boundaries'])
         return _number_view(engine, request, number)
     return await _call(save)
 

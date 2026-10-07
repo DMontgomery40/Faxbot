@@ -1,4 +1,4 @@
-"""Separator pages, the index page, and the one fax image a shared call sends.
+"""Separator pages, the index page, page marks, and the one fax image a shared call sends.
 
 Each fax's own pages are copied into the call image byte for byte from the fax
 image Faxbot already made and checked when it accepted the fax; only the
@@ -6,8 +6,11 @@ separator pages, or the one index page, are new. A separator names the
 document's place in the call, its reference, its page count and its sender,
 nothing more. The index page (page 1, where the recipient agreed to it) lists
 the same for every document plus its page range in the call, and nothing
-else. Covers or barcode pages inside a document are its own pages, so they
-are always sent as they are.
+else. With marks at the top of every page (where the recipient agreed to
+that), no page is added: each page gets one line above it with the same facts
+and its page number in its document; its own pixels are unchanged, re-encoded
+because the page grows. Covers or barcode pages inside a document are its own
+pages, so they are always sent as they are.
 """
 from pathlib import Path
 import os
@@ -139,6 +142,80 @@ def index_pdf(heading, summary, entries, path):
         y -= INDEX_GAP
     document.showPage()
     document.save()
+
+
+def page_mark(document_number, documents, page, pages, reference, sender_name=None):
+    """"Document 2 of 5 · page 1 of 4 · Faxbot 7f3a9c21 · from Front Desk": the line above one page."""
+    parts = [f'Document {document_number} of {documents}', f'page {page} of {pages}', _printable(reference, 100)]
+    sender = _printable(sender_name, 80)
+    if sender:
+        parts.append(f'from {sender}')
+    return ' · '.join(part for part in parts if part)
+
+
+# The band Faxbot adds above each page when the recipient agreed to marks at the top of every page.
+# It goes above the page, never over it, and the fax engine still prints its own header line (date,
+# time, header text, sending number and page number) above everything (47 CFR 68.318(d)).
+MARK_ROWS = 44                  # about 0.22 inch at the fax image's 196 rows an inch
+MARK_FONT, MARK_MIN_FONT = 26, 20  # pixels: about 9.5 and 7.5 point at fine resolution
+MARK_MARGIN = 48
+
+
+def mark_band(width, text):
+    """``text`` in black on white across a page ``width`` pixels wide, with a rule under it (mode '1')."""
+    from PIL import Image, ImageDraw, ImageFont
+    import reportlab
+    font_path = str(Path(reportlab.__file__).parent / 'fonts' / 'VeraBd.ttf')  # shipped with reportlab
+    band = Image.new('1', (width, MARK_ROWS), 1)
+    draw = ImageDraw.Draw(band)
+    usable = width - 2 * MARK_MARGIN
+    size = MARK_FONT
+    font = ImageFont.truetype(font_path, size)
+    while size > MARK_MIN_FONT and draw.textlength(text, font=font) > usable:
+        size -= 2
+        font = ImageFont.truetype(font_path, size)
+    if draw.textlength(text, font=font) > usable:
+        text = _wrap(text, lambda part: draw.textlength(part, font=font), usable, 1)[0]
+    draw.text((MARK_MARGIN, (MARK_ROWS - 4 - size) // 2), text, font=font, fill=0)
+    draw.line([(MARK_MARGIN, MARK_ROWS - 4), (width - MARK_MARGIN, MARK_ROWS - 4)], fill=0, width=2)
+    return band
+
+
+def marked_page(data, index, text):
+    """Page ``index`` of the fax image ``data`` with ``mark_band(text)`` added above it, as one G4 TIFF page.
+
+    The page's own pixels are unchanged; they are re-encoded only because the page grows by the band.
+    """
+    import io
+    from PIL import Image, ImageChops
+    with Image.open(io.BytesIO(data)) as source:
+        source.seek(index)
+        page = source.convert('1')
+        dpi = source.info.get('dpi') or (204, 196)
+    band = mark_band(page.width, text)
+    combined = Image.new('1', (page.width, band.height + page.height), 1)
+    combined.paste(band, (0, 0))
+    combined.paste(page, (0, band.height))
+    buffer = io.BytesIO()
+    # Every fax image Faxbot makes (Ghostscript's tiffg4) says white is zero. Pillow writes a bilevel
+    # image as black is zero, so it encodes the inverted pixels and the label is then set to match.
+    ImageChops.invert(combined.convert('L')).convert('1').save(buffer, format='TIFF', compression='group4', dpi=dpi)
+    return _white_is_zero(buffer.getvalue()), 0
+
+
+def _white_is_zero(data):
+    """Set a one-page TIFF's PhotometricInterpretation (262) to WhiteIsZero; the pixels were inverted to match."""
+    data = bytearray(data)
+    if data[:4] != b'II*\x00':
+        raise ValueError('Unsupported fax image.')
+    offset = struct.unpack_from('<I', data, 4)[0]
+    for entry in range(struct.unpack_from('<H', data, offset)[0]):
+        at = offset + 2 + 12 * entry
+        tag, kind, number = struct.unpack_from('<HHI', data, at)
+        if tag == 262 and kind == 3 and number == 1:
+            struct.pack_into('<H', data, at + 8, 0)
+            return bytes(data)
+    raise ValueError('Unsupported fax image.')
 
 
 def _separator_pdf(lines, path):
@@ -290,14 +367,16 @@ def index_tiff(folder, heading, summary, entries):
     return data, 0
 
 
-def build_call_image(root, call_id, members, *, index=None):
+def build_call_image(root, call_id, members, *, index=None, marks=None):
     """Write ``batch-<call_id>.tiff`` in ``root`` and return its path.
 
     ``members`` lists, in call order, ``(job_id, pages, separator line)``.
     Each fax's ``<job_id>.tiff`` must hold exactly its pages; otherwise
     ``MemberUnusable`` names it. With ``index`` (the index page's heading,
     summary and entries, as ``index_heading``/``index_entry`` make them) the
-    call starts with that one page and has no separator pages. The image's
+    call starts with that one page and has no separator pages. With
+    ``marks`` (for each fax, the ``page_mark`` line of each of its pages)
+    every page gets its line above it and no page is added. The image's
     page count is checked against the layout before it is used.
     """
     from ..conversion import DocumentConversionError, pdf_to_tiff
@@ -318,6 +397,8 @@ def build_call_image(root, call_id, members, *, index=None):
         images.append(data)
     if index is not None:
         return _index_call(root, call_id, members, images, index)
+    if marks is not None:
+        return _marked_call(root, call_id, members, images, marks)
     separators = []
     with tempfile.TemporaryDirectory(prefix='faxbot-separators-', dir=str(root)) as folder:
         lines = [line for _, _, line in members]
@@ -352,6 +433,18 @@ def _index_call(root, call_id, members, images, index):
     for data, (_, count, _) in zip(images, members):
         pages += [(data, number) for number in range(count)]
     return _write_call(root, call_id, pages, 1 + sum(count for _, count, _ in members))
+
+
+def _marked_call(root, call_id, members, images, marks):
+    if len(marks) != len(members) or any(len(lines) != count for lines, (_, count, _) in zip(marks, members)):
+        raise CallImageError('The page marks could not be made.')
+    pages = []
+    try:
+        for data, lines in zip(images, marks):
+            pages += [marked_page(data, number, line) for number, line in enumerate(lines)]
+    except (OSError, ValueError, struct.error):
+        raise CallImageError('The page marks could not be made.') from None
+    return _write_call(root, call_id, pages, sum(count for _, count, _ in members))
 
 
 def _write_call(root, call_id, pages, expected):

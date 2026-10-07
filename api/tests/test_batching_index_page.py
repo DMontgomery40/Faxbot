@@ -22,11 +22,20 @@ from api.app.batching import store as batching
 from api.app.batching.outcomes import map_call
 
 
-def index_on(sip, *, index_page=True, **changes):
+def index_on(sip, *, boundaries='index_page', **changes):
     configuration = sip[0]
     return batching.BatchingSettings(configuration.engine).save(
-        NUMBER, enabled=True, index_page=index_page, index_page_agreed=True, actor='principal:p1',
+        NUMBER, enabled=True, boundaries=boundaries, boundaries_agreed=True, actor='principal:p1',
         actor_name='Owner', **changes)
+
+
+def headers_on(sip, *, header='Synthetic Clinic', station='+15555550100', **changes):
+    """Marks at the top of every page; returns the fixture with the settings that name the sender on every page."""
+    configuration, delivery, snapshot, routes, data = sip
+    current = configuration.apply(snapshot, snapshot.active.values.with_patch(
+        {'fax_header': header, 'fax_station_id': station}), restart_required=False, actor='test')
+    index_on(sip, boundaries='page_headers', **changes)
+    return configuration, delivery, current, routes, data
 
 
 def ranges(sip, jobs):
@@ -35,32 +44,47 @@ def ranges(sip, jobs):
 
 # The agreement ---------------------------------------------------------------------------------
 
-def test_the_index_page_is_off_until_the_recipients_agreement_is_recorded_with_who_and_when(sip):
+def test_separators_stay_until_the_recipients_agreement_to_another_convention_is_recorded_with_who_and_when(sip):
     configuration, *_ = sip
     settings = batching.BatchingSettings(configuration.engine)
-    assert settings.get(NUMBER)['index_page'] is False
+    assert settings.get(NUMBER)['boundaries'] == 'separators'
     with pytest.raises(batching.BatchingInputError) as refused:
-        settings.save(NUMBER, enabled=True, index_page=True, actor='principal:p1')
+        settings.save(NUMBER, enabled=True, boundaries='index_page', actor='principal:p1')
     assert str(refused.value) == 'Record that the recipient agreed to one index page before using it.'
+    with pytest.raises(batching.BatchingInputError) as refused:
+        settings.save(NUMBER, enabled=True, boundaries='page_headers', actor='principal:p1')
+    assert str(refused.value) == 'Record that the recipient agreed to marks at the top of every page before using them.'
     with pytest.raises(batching.BatchingInputError):
-        settings.save(NUMBER, enabled=False, index_page=True, index_page_agreed=True, actor='principal:p1')
+        settings.save(NUMBER, enabled=False, boundaries='index_page', boundaries_agreed=True, actor='principal:p1')
     before = datetime.utcnow()
-    setting, action = settings.save(NUMBER, enabled=True, index_page=True, index_page_agreed=True,
+    setting, action = settings.save(NUMBER, enabled=True, boundaries='index_page', boundaries_agreed=True,
                                     actor='principal:p1', actor_name='Owner')
-    assert action == 'changed' and setting['index_page'] is True
-    agreement = settings.index_page_agreement(NUMBER)
+    assert action == 'changed' and setting['boundaries'] == 'index_page'
+    agreement = settings.boundaries_agreement(NUMBER, 'index_page')
     assert (agreement['actor'], agreement['actor_name']) == ('principal:p1', 'Owner')
     assert before <= agreement['created_at'] <= datetime.utcnow()
     # A later change keeps the index page and does not record the agreement again.
-    assert settings.save(NUMBER, enabled=True, actor='principal:p2', max_pages=20)[0]['index_page'] is True
-    assert [(c['index_page'], c['index_page_agreed']) for c in settings.history(NUMBER)] == [(1, 0), (1, 1), (0, 0)]
-    assert settings.save(NUMBER, enabled=True, index_page=True, actor='principal:p2')[1] is None  # unchanged
-    # Turning sending together off ends the index page; turning it on again needs a new agreement.
-    assert settings.save(NUMBER, enabled=False, actor='principal:p1')[0]['index_page'] is False
-    assert settings.save(NUMBER, enabled=True, recipient_agreed=True, actor='principal:p1')[0]['index_page'] is False
+    assert settings.save(NUMBER, enabled=True, actor='principal:p2', max_pages=20)[0]['boundaries'] == 'index_page'
+    assert [(c['boundaries'], c['boundaries_agreed']) for c in settings.history(NUMBER)] == [
+        ('index_page', 0), ('index_page', 1), ('separators', 0)]
+    assert settings.save(NUMBER, enabled=True, boundaries='index_page', actor='principal:p2')[1] is None
+    # Another convention is another agreement; going back to separators needs none.
     with pytest.raises(batching.BatchingInputError):
-        settings.save(NUMBER, enabled=True, index_page=True, actor='principal:p1')
-    for bad in ({'index_page': 'yes'}, {'index_page_agreed': 1}):
+        settings.save(NUMBER, enabled=True, boundaries='page_headers', actor='principal:p2')
+    assert settings.save(NUMBER, enabled=True, boundaries='page_headers', boundaries_agreed=True,
+                         actor='principal:p2')[0]['boundaries'] == 'page_headers'
+    assert settings.boundaries_agreement(NUMBER, 'page_headers')['actor'] == 'principal:p2'
+    assert settings.save(NUMBER, enabled=True, boundaries='separators', actor='principal:p1')[0]['boundaries'] == (
+        'separators')
+    assert settings.boundaries_agreement(NUMBER, 'separators') is None
+    # Turning sending together off goes back to separators; turning it on again needs a new agreement.
+    settings.save(NUMBER, enabled=True, boundaries='index_page', boundaries_agreed=True, actor='principal:p1')
+    assert settings.save(NUMBER, enabled=False, actor='principal:p1')[0]['boundaries'] == 'separators'
+    assert settings.save(NUMBER, enabled=True, recipient_agreed=True, actor='principal:p1')[0]['boundaries'] == (
+        'separators')
+    with pytest.raises(batching.BatchingInputError):
+        settings.save(NUMBER, enabled=True, boundaries='index_page', actor='principal:p1')
+    for bad in ({'boundaries': 'stapled'}, {'boundaries_agreed': 1}):
         with pytest.raises(batching.BatchingInputError):
             settings.save(NUMBER, enabled=True, actor='principal:p1', **bad)
 
@@ -77,7 +101,7 @@ def test_a_call_formed_with_the_index_page_records_its_layout_and_each_faxs_own_
     assert ranges(sip, jobs) == [('index_page', 2, 3), ('index_page', 4, 4), ('index_page', 5, 7)]
     # With separators (the setting off) the same faxes take 9 pages and each starts with its separator.
     delivery.split_batch(claim, separate=set(), now=T0 + timedelta(minutes=10))
-    index_on(sip, index_page=False)
+    index_on(sip, boundaries='separators')
     for job in jobs:
         assert row(sip, job)['layout'] is None
     again = delivery.claim('worker', now=T0 + timedelta(minutes=11))
@@ -90,7 +114,7 @@ def test_the_layout_is_fixed_when_the_call_forms_and_a_change_afterwards_does_no
     index_on(sip)
     jobs = [accept(sip, at=T0 + timedelta(seconds=n)) for n in range(2)]
     claim = delivery.claim('worker', now=T0 + timedelta(minutes=10))
-    index_on(sip, index_page=False)
+    index_on(sip, boundaries='separators')
     assert ranges(sip, jobs) == [('index_page', 2, 2), ('index_page', 3, 3)]
     assert [member['layout'] for member in batching.call_members(sip[0].engine, claim.attempt_id)] == [
         'index_page', 'index_page']
@@ -387,6 +411,150 @@ async def test_the_worker_sends_one_index_page_then_each_faxs_pages(sip):
     assert [state(sip, job) for job in jobs] == ['success', 'success'] and not Path(tiff).exists()
 
 
+# Marks at the top of every page (research M20) ---------------------------------------------------
+
+def _marks_layout(*pages):
+    rows, first = [], 1
+    for number, count in enumerate(pages, start=1):
+        rows.append({'id': f'job-{number}', 'attempt_id': f'attempt-{number}', 'first_page': first,
+                     'last_page': first + count - 1, 'layout': 'page_headers', 'pages': count})
+        first += count
+    return rows
+
+
+@pytest.mark.parametrize('pages', [(3,), (1, 4), (2, 1, 3, 1, 2)])
+def test_each_page_gets_its_documents_line_above_it_and_its_own_pixels_unchanged(tmp_path, pages):
+    from PIL import Image, ImageChops
+    references = ['Case 2026-117', 'Faxbot 22222222', 'Faxbot 33333333', 'Faxbot 44444444', 'Faxbot 55555555']
+    senders = ['Front Desk', None, 'Billing', None, None]
+    jobs = [str(n) * 32 for n in range(1, len(pages) + 1)]
+    for job, count in zip(jobs, pages):
+        write_fax(tmp_path, job, count)
+    marks = [[image.page_mark(n, len(pages), page, count, references[n - 1], senders[n - 1])
+              for page in range(1, count + 1)] for n, count in enumerate(pages, start=1)]
+    assert marks[0][0] == f'Document 1 of {len(pages)} · page 1 of {pages[0]} · Case 2026-117 · from Front Desk'
+    if len(pages) == 5:
+        assert marks[2] == [f'Document 3 of 5 · page {n} of 3 · Faxbot 33333333 · from Billing'
+                            for n in (1, 2, 3)]
+        assert marks[3] == ['Document 4 of 5 · page 1 of 1 · Faxbot 44444444']
+    members = [(job, count, 'unused separator line') for job, count in zip(jobs, pages)]
+    out = image.build_call_image(tmp_path, 'c' * 32, members, marks=marks)
+    # No page is added: the call is exactly the documents' own pages, each in its stored range.
+    assert image.page_count(out) == sum(pages) == _marks_layout(*pages)[-1]['last_page']
+    with Image.open(out) as combined:
+        call_page = 0
+        for job, lines in zip(jobs, marks):
+            with Image.open(tmp_path / (job + '.tiff')) as original:
+                for offset, line in enumerate(lines):
+                    combined.seek(call_page)
+                    original.seek(offset)
+                    assert combined.tag_v2[262] == 0 and combined.tag_v2[259] == 4  # white is zero, Group 4
+                    assert tuple(round(value) for value in combined.info['dpi']) == (204, 196)
+                    page = combined.convert('L')
+                    assert page.size == (original.width, original.height + image.MARK_ROWS)
+                    # Above the page: exactly the line for this page. Below it: the page's own pixels.
+                    band = page.crop((0, 0, page.width, image.MARK_ROWS))
+                    expected = image.mark_band(page.width, line).convert('L')
+                    assert ImageChops.difference(band, expected).getbbox() is None
+                    body = page.crop((0, image.MARK_ROWS, page.width, page.height))
+                    assert ImageChops.difference(body, original.convert('L')).getbbox() is None
+                    call_page += 1
+
+
+def test_a_page_mark_is_drawn_black_on_white_and_differs_for_each_page(tmp_path):
+    from PIL import ImageChops
+    one = image.mark_band(1728, image.page_mark(2, 5, 1, 4, 'Faxbot 7f3a9c21', 'Front Desk'))
+    two = image.mark_band(1728, image.page_mark(2, 5, 2, 4, 'Faxbot 7f3a9c21', 'Front Desk'))
+    assert one.size == (1728, image.MARK_ROWS) and one.mode == '1'
+    black = one.histogram()[0]
+    assert 0 < black < one.width * one.height // 4  # some ink, mostly white
+    assert ImageChops.difference(one, two).getbbox() is not None
+    assert ImageChops.difference(one, image.mark_band(1728, image.page_mark(2, 5, 1, 4, 'Faxbot 7f3a9c21',
+                                                                           'Front Desk'))).getbbox() is None
+    # The longest line a page can carry still fits: it is cut with an ellipsis, never drawn off the page.
+    longest = image.mark_band(1728, image.page_mark(199, 199, 200, 200, 'W' * 100, 'M' * 80))
+    assert longest.crop((1728 - image.MARK_MARGIN + 1, 0, 1728, image.MARK_ROWS - 6)).histogram()[0] == 0
+
+
+def test_marks_at_the_top_of_every_page_add_no_page_and_count_only_the_faxs_own_pages(sip):
+    sip = headers_on(sip, max_pages=7)
+    _, delivery, *_ = sip
+    jobs = [accept(sip, pages=pages, at=T0 + timedelta(seconds=n)) for n, pages in enumerate((2, 1, 3, 2))]
+    # 2 + 1 + 3 = 6 pages fit 7 and the next 2 do not; separators would have needed 9 for the same three faxes.
+    claim = delivery.claim('worker', now=T0 + timedelta(seconds=5))
+    assert [member.job_id for member in claim.members] == jobs[:3]
+    assert ranges(sip, jobs[:3]) == [('page_headers', 1, 2), ('page_headers', 3, 3), ('page_headers', 4, 6)]
+
+
+def test_without_a_header_naming_the_sender_on_every_page_the_call_uses_separators_and_says_why(sip):
+    from api.app.batching import http
+    # 47 CFR 68.318(d): no sending number in the header, so no call may rely on page marks alone.
+    sip = headers_on(sip, station='')
+    _, delivery, snapshot, *_ = sip
+    assert not policy.header_identifies_sender(snapshot.active.values)
+    jobs = [accept(sip, at=T0 + timedelta(seconds=n)) for n in range(2)]
+    delivery.claim('worker', now=T0 + timedelta(minutes=10))
+    assert [layout for layout, *_ in ranges(sip, jobs)] == ['separators', 'separators']
+    setting = batching.BatchingSettings(sip[0].engine).get(NUMBER)
+    assert setting['boundaries'] == 'page_headers'  # the choice stays; only these calls use separators
+    assert http._boundaries_sentence(setting, snapshot.active.values) == policy.HEADER_NEEDS
+    assert not policy.header_identifies_sender(snapshot.active.values.with_patch(
+        {'fax_header': ' ', 'fax_station_id': '+15555550100'}))
+    assert not policy.header_identifies_sender(snapshot.active.values.with_patch(
+        {'fax_station_id': '+10000000000'}))  # the placeholder is not a sending number
+    assert policy.header_identifies_sender(snapshot.active.values.with_patch({'fax_station_id': '+15555550100'}))
+
+
+@pytest.mark.asyncio
+async def test_a_shared_call_with_page_marks_never_goes_with_a_header_that_does_not_name_the_sender(sip):
+    from api.app.routing.store import RouteStore
+    configuration, delivery, *_ = sip
+    RouteStore(configuration.engine).update_destination(NUMBER, max_calls=0)  # calls at once to one number
+    earlier = datetime.utcnow() - timedelta(minutes=12)
+    # Accepted while the settings printed no sending number: these faxes' calls print the header they were sent with.
+    unnamed = [accept(sip, pages=1, files=True, at=earlier + timedelta(seconds=n)) for n in range(2)]
+    good = headers_on(sip)
+    jobs = [accept(good, pages=pages, files=True, at=earlier + timedelta(minutes=1, seconds=n))
+            for n, pages in enumerate((2, 1))]
+    ami = Ami()
+    worker = OutboundWorker(delivery, transport(good, ami))
+    # The first call would mark pages under a header that names no sending number: it is split, nothing sent.
+    await worker.step()
+    assert ami.calls == [] and [row(sip, job)['state'] for job in unnamed] == ['separate', 'separate']
+    # The faxes accepted with the sender named go together, marked at the top of every page, with no page added.
+    while not ami.calls:
+        assert await worker.step() is True
+    [(job_id, _, tiff, attempt)] = ami.calls
+    assert job_id == jobs[0] and image.page_count(tiff) == 3
+    assert [layout for layout, *_ in ranges(good, jobs)] == ['page_headers'] * 2
+
+
+def test_with_page_marks_a_call_that_breaks_maps_each_faxs_own_pages():
+    # Pages: 1-2 doc one, 3 doc two, 4-6 doc three; nothing between documents.
+    found = map_call(_marks_layout(2, 1, 3), succeeded=False, confirmed_pages=4)
+    assert outcome(found) == [('success', None), ('success', None), ('failed', 'partly_sent')]
+    assert found[2].sentence == 'The call failed after 1 of its 3 pages; check before sending again.'
+    boundary = map_call(_marks_layout(2, 1, 3), succeeded=False, confirmed_pages=2)
+    assert outcome(boundary) == [('success', None), ('failed', 'partly_sent'), ('failed', None)]
+    # Nothing confirmed: no fax was sent, exactly as a single fax whose call failed (and a call that never connected).
+    nothing = map_call(_marks_layout(2, 1), succeeded=False, confirmed_pages=0, failure_sentence='The number was busy.')
+    assert outcome(nothing) == [('failed', None)] * 2 and {item.sentence for item in nothing} == {'The number was busy.'}
+    assert outcome(map_call(_marks_layout(2, 1, 3), succeeded=True, confirmed_pages=5)) == [
+        ('success', None), ('success', None), ('unconfirmed', 'pages_unconfirmed')]
+
+
+def test_the_faxs_details_say_its_pages_carry_its_mark(sip):
+    from api.app.batching import http
+    sip = headers_on(sip)
+    _, delivery, *_ = sip
+    jobs = [accept(sip, pages=pages, at=T0 + timedelta(seconds=n)) for n, pages in enumerate((2, 3))]
+    delivery.claim('worker', now=T0 + timedelta(minutes=10))
+    view = http.summary(row(sip, jobs[1]))
+    assert (view['layout'], view['call_first_page'], view['call_last_page']) == ('page_headers', 3, 5)
+    assert http.layout_sentence(view) == ('A line at the top of each of its pages marks it as document 2 of 2 '
+                                          f'(pages 3–5 of the call), under Faxbot {jobs[1][:8]}.')
+
+
 # Charge shares and pages saved -----------------------------------------------------------------
 
 def _priced_call(sip, *pages, status='SUCCESS', confirmed=None):
@@ -396,7 +564,7 @@ def _priced_call(sip, *pages, status='SUCCESS', confirmed=None):
     for job in jobs:
         routes.record_decision(attempt_id=delivery.get(job)['attempt_id'], job_id=job, destination=NUMBER,
                                route='sip', reason='configured', provider_id='sip')
-    total = 1 + sum(pages) if row(sip, jobs[0])['layout'] == 'index_page' else sum(pages) + len(pages)
+    total = row(sip, jobs[-1])['last_page']  # every page of the call, whatever its layout
     results.apply_fax_result(delivery, {'JobID': claim.job_id, 'AttemptID': claim.attempt_id, 'Status': status,
                                         'Pages': str(total if confirmed is None else confirmed)})
     CostRecorder(routes, observed_seconds=lambda target: 100).step()
@@ -414,25 +582,30 @@ def test_each_fax_pays_for_its_own_pages_and_the_index_page_is_shared_by_them(si
     assert shares == [2500, 5000, 2500] and sum(shares) == 10_000
 
 
-def test_pages_saved_are_counted_apart_from_calls_saved_and_the_total_does_not_change(sip):
+@pytest.mark.parametrize('boundaries, left_out', [('index_page', 2), ('page_headers', 3)])
+def test_separator_pages_left_out_are_counted_apart_from_calls_saved_and_the_total_does_not_change(
+        sip, boundaries, left_out):
     from api.app.routing.savings import savings
     configuration, _, _, routes, _ = sip
-    index_on(sip)
+    sip = headers_on(sip) if boundaries == 'page_headers' else sip
+    index_on(sip, boundaries=boundaries)
     _priced_call(sip, 1, 2, 1)
     found = money.savings(routes, configuration.engine, NUMBER)
-    # Separate calls: 1 + 2 + 1 minutes at $0.005 = $0.02; the shared call was billed $0.01.
-    # Separators would have made it 7 pages (4 minutes by estimate) instead of 5 (3 minutes): $0.005.
-    assert found['index_page'] == {'calls': 1, 'pages_saved': 2, 'priced_calls': 1, 'saved': {'USD': 5_000}}
+    # Separate calls: 1 + 2 + 1 minutes at $0.005 = $0.02; the shared call was billed $0.01. Separators
+    # would have made it 7 pages (4 minutes by estimate) instead of 5 with an index page or 4 with page
+    # marks (3 minutes either way): $0.005.
+    assert found['separator_pages'] == {'calls': 1, 'pages_saved': left_out, 'priced_calls': 1,
+                                        'saved': {'USD': 5_000}}
     assert found['calls_saved'] == 2 and found['saved'] == {'USD': 5_000}
-    assert found['saved']['USD'] + found['index_page']['saved']['USD'] == 20_000 - 10_000
-    assert money.index_page_sentence(found['index_page']) == (
-        'One index page instead of a separator before each document left out 2 separator pages in 1 call, '
+    assert found['saved']['USD'] + found['separator_pages']['saved']['USD'] == 20_000 - 10_000
+    assert money.separator_pages_sentence(found['separator_pages']) == (
+        f'An index page or marks at the top of every page left out {left_out} separator pages in 1 shared call, '
         'about $0.005 saved (estimate).')
     report = savings(routes, configuration.engine)
-    assert report['index_page']['pages_saved'] == 2 and report['index_page']['saved'] == {'USD': 5_000}
-    assert report['sending_together']['saved'] == {'USD': 5_000}
+    assert report['separator_pages']['pages_saved'] == left_out
+    assert report['separator_pages']['saved'] == report['sending_together']['saved'] == {'USD': 5_000}
     assert report['total'] == {'USD': 10_000}
-    assert report['index_page']['sentence'] == money.index_page_sentence(found['index_page'])
+    assert report['separator_pages']['sentence'] == money.separator_pages_sentence(found['separator_pages'])
 
 
 def test_pages_saved_count_only_calls_that_delivered_every_fax_and_unknown_prices_stay_unknown(sip):
@@ -440,13 +613,13 @@ def test_pages_saved_count_only_calls_that_delivered_every_fax_and_unknown_price
     index_on(sip)
     _priced_call(sip, 1, 2, status='FAILED', confirmed=2)  # document two never arrived whole
     found = money.savings(routes, configuration.engine, NUMBER)
-    assert found['calls'] == 1 and found['index_page']['calls'] == 0
-    assert money.index_page_sentence(found['index_page']) == (
-        'No call in the last 30 days started with one index page instead of separator pages.')
+    assert found['calls'] == 1 and found['separator_pages']['calls'] == 0
+    assert money.separator_pages_sentence(found['separator_pages']) == (
+        'No shared call in the last 30 days left out its separator pages.')
     _priced_call(sip, 1, 1)
     routes.replace_cards([])  # no rate card: the pages are counted, their price is not
     found = money.savings(routes, configuration.engine, NUMBER)
-    assert found['index_page'] == {'calls': 1, 'pages_saved': 1, 'priced_calls': 0, 'saved': {}}
-    assert money.index_page_sentence(found['index_page']) == (
-        'One index page instead of a separator before each document left out 1 separator page in 1 call. '
+    assert found['separator_pages'] == {'calls': 1, 'pages_saved': 1, 'priced_calls': 0, 'saved': {}}
+    assert money.separator_pages_sentence(found['separator_pages']) == (
+        'An index page or marks at the top of every page left out 1 separator page in 1 shared call. '
         "Some of those pages have no price, because your carrier's prices are not entered in Costs.")

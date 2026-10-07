@@ -542,7 +542,7 @@ class OutboundStore:
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
-        group = batching.due_group_on(connection, t, now)
+        group = batching.due_group_on(connection, t, now, values=values)
         if group is None:
             return None
         if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):

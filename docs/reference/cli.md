@@ -958,7 +958,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, or whether it accepts case packets.
+Change a number&#x27;s name, notes, preferred route, calls at once, whether it accepts case packets, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -977,6 +977,9 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; for the cheapest reliable route.
 * `--calls-at-once N|default`: Calls at once to this number: a number from 1 to 20, 0 for no limit, or &#x27;default&#x27; for one at a time.
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
+* `--index-page`: Faxes sent together to this number start with one index page listing each document&#x27;s pages, instead of a separator page before each document. Records that the recipient agreed to it. Sending together must be on (&#x27;faxbot recipients together set&#x27;).
+* `--page-headers`: Faxes sent together to this number have a line at the top of every page naming its document and page, with no separator or index page. Records that the recipient agreed to it. Needs your header text and sending number (faxbot system settings set fax_header=... fax_station_id=...).
+* `--separator-pages`: Go back to a separator page before each document sent together to this number.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`

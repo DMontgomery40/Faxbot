@@ -27,8 +27,8 @@ def call_charge(routes, batch_id):
     return None
 
 
-def is_index_page(member):
-    return member.get('layout') == policy.LAYOUT_INDEX_PAGE
+def has_separators(member):
+    return member.get('layout') in (None, policy.LAYOUT_SEPARATORS)
 
 
 def weight(member):
@@ -36,7 +36,7 @@ def weight(member):
 
     With one index page, the index page is shared in proportion to each fax's own pages.
     """
-    return member['pages'] if is_index_page(member) else member['pages'] + 1
+    return member['pages'] + 1 if has_separators(member) else member['pages']
 
 
 def share(routes, engine, member):
@@ -63,17 +63,18 @@ def share(routes, engine, member):
                         f'of {money_text(micros, currency)}{estimate}.'}
 
 
-def index_page_saving(card, members):
-    """The pages one index page saved a call compared with a separator before each fax, and their price.
+def separator_pages_saving(card, members):
+    """The separator pages a call left out (one index page, or marks at the top of every page), and their price.
 
     ``(pages, micros)``, priced with ``card`` the way Faxbot estimates any call; micros is None when
     the card cannot price it (no card, or a flat plan): unknown stays unknown, never 0.
     """
-    pages = len(members) - 1
+    added = 1 if members[0].get('layout') == policy.LAYOUT_INDEX_PAGE else 0
+    pages = len(members) - added
     if card is None or card.flat_plan:
         return pages, None
     own = sum(member['pages'] for member in members)
-    return pages, estimate_cost(card, own + len(members)) - estimate_cost(card, own + 1)
+    return pages, estimate_cost(card, own + len(members)) - estimate_cost(card, own + added)
 
 
 def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
@@ -85,17 +86,17 @@ def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
     A shared call that cost more than the separate calls is a negative saving:
     summed as it is, never turned into 0.
 
-    A call that started with one index page also left out its separator
-    pages. Those are counted apart, in ``index_page``, for calls whose every
-    fax was delivered, and priced with the rate card. The call saving then
-    leaves that part out, so the two together are still the separate calls'
-    price less what the shared call cost.
+    A call that marked its documents with one index page, or a line at the
+    top of every page, also left out separator pages. Those are counted apart,
+    in ``separator_pages``, for calls whose every fax was delivered, and priced
+    with the rate card. The call saving then leaves that part out, so the two
+    together are still the separate calls' price less what the shared call cost.
     """
     calls = calls_to(engine, number, (now or utcnow()) - timedelta(days=days))
     card = routes.card_for('sip')
     result = {'calls': 0, 'faxes': 0, 'calls_saved': 0, 'saved': {}, 'priced_calls': 0,
-              'index_page': {'calls': 0, 'pages_saved': 0, 'priced_calls': 0, 'saved': {}}}
-    index = result['index_page']
+              'separator_pages': {'calls': 0, 'pages_saved': 0, 'priced_calls': 0, 'saved': {}}}
+    index = result['separator_pages']
     for batch_id, members in calls.items():
         charge = call_charge(routes, batch_id)
         if charge is None:
@@ -106,8 +107,8 @@ def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
         micros, currency, _ = charge
         priced = card is not None and card.currency == currency
         pages_saving = None
-        if is_index_page(members[0]) and all(member.get('delivery_state') == 'success' for member in members):
-            pages, pages_saving = index_page_saving(card if priced else None, members)
+        if not has_separators(members[0]) and all(member.get('delivery_state') == 'success' for member in members):
+            pages, pages_saving = separator_pages_saving(card if priced else None, members)
             index['calls'] += 1
             index['pages_saved'] += pages
             if pages_saving is not None:
@@ -143,13 +144,13 @@ def savings_sentence(result):
     return f'Last 30 days: {faxes}, {calls} saved.'
 
 
-def index_page_sentence(part, *, days=WINDOW_DAYS):
-    """One sentence for the separator pages one index page left out (a ``savings(...)['index_page']`` part)."""
+def separator_pages_sentence(part, *, days=WINDOW_DAYS):
+    """One sentence for the separator pages shared calls left out (a ``savings(...)['separator_pages']`` part)."""
     if not part['calls']:
-        return f'No call in the last {days} days started with one index page instead of separator pages.'
+        return f'No shared call in the last {days} days left out its separator pages.'
     pages = '1 separator page' if part['pages_saved'] == 1 else f"{part['pages_saved']} separator pages"
-    calls = '1 call' if part['calls'] == 1 else f"{part['calls']} calls"
-    sentence = f'One index page instead of a separator before each document left out {pages} in {calls}'
+    calls = '1 shared call' if part['calls'] == 1 else f"{part['calls']} shared calls"
+    sentence = f'An index page or marks at the top of every page left out {pages} in {calls}'
     amounts = ' + '.join(money_text(micros, currency) for currency, micros in sorted(part['saved'].items())
                          if micros > 0)
     if amounts:

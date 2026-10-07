@@ -99,29 +99,40 @@ def test_a_fax_the_caller_cannot_read_is_hidden(client):
     assert client.post(f'/batching/faxes/{job}/send-now', headers=sender).status_code in {403, 404}
 
 
-def test_one_index_page_needs_its_own_agreement_and_shows_who_recorded_it(client):
+def test_an_index_page_or_page_marks_need_their_own_agreement_and_show_who_recorded_it(client):
     client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN, json={'enabled': True, 'recipient_agreed': True})
     view = client.get(f'/batching/numbers/{NUMBER}', headers=ADMIN).json()
-    assert view['index_page'] is False and view['index_page_agreement'] is None
-    assert view['index_page_sentence'] == 'Each document sent together to this number follows its own separator page.'
-    assert view['index_page_text'] == ("This recipient has agreed to one index page listing each document's pages, "
-                                       'instead of a separator page before each document.')
-    assert view['index_page_keeps'] == ("Only Faxbot's separator pages are left out; cover sheets and barcode "
+    assert view['boundaries'] == 'separators' and view['boundaries_agreement'] is None
+    assert view['boundaries_sentence'] == 'Each document sent together to this number follows its own separator page.'
+    assert [(choice['value'], choice['agreement_text'] is None) for choice in view['boundaries_choices']] == [
+        ('separators', True), ('index_page', False), ('page_headers', False)]
+    assert view['boundaries_choices'][1]['agreement_text'] == (
+        "This recipient has agreed to one index page listing each document's pages, "
+        'instead of a separator page before each document.')
+    assert view['boundaries_keeps'] == ("Only Faxbot's separator pages are left out; cover sheets and barcode "
                                         'pages inside your documents are always sent.')
-    assert view['savings']['index_page']['pages_saved'] == 0
-    refused = client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN, json={'enabled': True, 'index_page': True})
+    assert view['savings']['separator_pages']['pages_saved'] == 0
+    refused = client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN, json={'enabled': True, 'boundaries': 'index_page'})
     assert refused.status_code == 400 and refused.json()['detail'] == (
         'Record that the recipient agreed to one index page before using it.')
+    assert client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN,
+                      json={'enabled': True, 'boundaries': 'stapled'}).status_code == 422
     on = client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN,
-                    json={'enabled': True, 'index_page': True, 'index_page_agreed': True})
+                    json={'enabled': True, 'boundaries': 'index_page', 'boundaries_agreed': True})
     assert on.status_code == 200, on.text
-    assert on.json()['index_page'] is True and on.json()['index_page_agreement']['index_page_agreed'] is True
-    assert on.json()['index_page_agreement']['by'] == 'Installation bootstrap'
-    assert on.json()['index_page_sentence'].startswith('Faxes sent together to this number start with one index page')
-    assert [change['index_page'] for change in on.json()['history']] == [True, False]
+    assert on.json()['boundaries'] == 'index_page' and on.json()['boundaries_agreement']['boundaries_agreed'] is True
+    assert on.json()['boundaries_agreement']['by'] == 'Installation bootstrap'
+    assert on.json()['boundaries_sentence'].startswith('Faxes sent together to this number start with one index page')
+    assert [change['boundaries'] for change in on.json()['history']] == ['index_page', 'separators']
+    marks = client.put(f'/batching/numbers/{NUMBER}', headers=ADMIN,
+                       json={'enabled': True, 'boundaries': 'page_headers', 'boundaries_agreed': True}).json()
+    # This installation's header prints no sending number, so its calls use separators and the card says so.
+    assert marks['boundaries'] == 'page_headers' and marks['boundaries_sentence'] == (
+        'Faxes to this number use separator pages for now, because marks at the top of every page need your '
+        'header text and sending number set in Numbers > Sender identity.')
     off = client.delete(f'/batching/numbers/{NUMBER}', headers=ADMIN).json()
-    assert off['index_page'] is False and off['index_page_sentence'] is None and off['index_page_agreement'] is None
+    assert off['boundaries'] == 'separators' and off['boundaries_sentence'] is None
+    assert off['boundaries_agreement'] is None
     savings = client.get('/routing/savings', headers=ADMIN).json()
-    assert savings['index_page']['estimate'] is True and savings['index_page']['pages_saved'] == 0
-    assert savings['index_page']['sentence'] == (
-        'No call in the last 30 days started with one index page instead of separator pages.')
+    assert savings['separator_pages']['estimate'] is True and savings['separator_pages']['pages_saved'] == 0
+    assert savings['separator_pages']['sentence'] == 'No shared call in the last 30 days left out its separator pages.'

@@ -827,6 +827,30 @@ def test_routing_batching_show_set_off_and_send_now(cli, tmp_path):
     assert waiting.exit_code != 0 and 'not waiting' in waiting.stderr
 
 
+def test_recipients_set_index_page_or_page_headers_records_the_agreement_and_needs_sending_together(cli):
+    refused = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert refused.exit_code != 0
+    assert 'Turn on sending together before choosing how documents are marked.' in refused.stderr
+    assert cli('recipients', 'set', '+15551230002', '--separator-pages').exit_code == 0  # already separators
+    both_flags = cli('recipients', 'set', '+15551230002', '--index-page', '--page-headers')
+    assert both_flags.exit_code != 0 and 'Choose one of' in both_flags.stderr
+    cli.json('recipients', 'together', 'set', '+15551230002', '--recipient-agreed')
+    on = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert on.exit_code == 0, on.stdout + on.stderr
+    assert 'start with one index page' in ' '.join(on.stdout.split())
+    shown = cli.json('recipients', 'together', 'show', '+15551230002')
+    assert shown['boundaries'] == 'index_page' and shown['boundaries_agreement']['boundaries_agreed'] is True
+    human = cli('recipients', 'together', 'show', '+15551230002')
+    assert 'Agreement to that recorded by' in human.stdout and "One index page listing each document's pages" in (
+        ' '.join(human.stdout.split()))
+    marks = cli.json('recipients', 'set', '+15551230002', '--page-headers')
+    assert marks['boundaries'] == 'page_headers'
+    both = cli.json('recipients', 'set', '+15551230002', '--name', 'Records desk', '--separator-pages')
+    assert both['display_name'] == 'Records desk' and both['sending_together']['boundaries'] == 'separators'
+    savings = cli('costs', 'savings')
+    assert savings.exit_code == 0 and 'Separator pages left out' in savings.stdout
+
+
 @pytest.fixture
 def telnyx_cli(monkeypatch, tmp_path):
     for client in _serve(monkeypatch, tmp_path, TELNYX_API_KEY='KEYsynthetic-cli', SIP_TRUNK_PRESET='telnyx'):

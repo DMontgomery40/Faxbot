@@ -5,10 +5,11 @@ transaction (acceptance, claims, recovery), so a fax is never both waiting and
 claimed. The per-number setting is ordinary settings with a version; every
 change also appends a ``batching_changes`` row that is never updated.
 
-A shared call's layout (a separator page before each document, or one index
-page listing every document's pages) is fixed when the call is formed, from
-the number's setting then, and stored on each fax's row; everything after
-(the call image, outcomes, charge shares) reads that stored layout.
+A shared call's layout (a separator page before each document, one index
+page listing every document's pages, or a line at the top of every page) is
+fixed when the call is formed, from the number's setting then, and stored on
+each fax's row; everything after (the call image, outcomes, charge shares)
+reads that stored layout.
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -73,16 +74,17 @@ class HoldPlan:
 def _setting_view(row, number):
     if row is None:
         return {'phone_number': number, 'enabled': False, 'max_wait_seconds': policy.DEFAULT_WAIT_SECONDS,
-                'max_pages': policy.DEFAULT_MAX_PAGES, 'mixed_senders': False, 'index_page': False, 'version': 0}
+                'max_pages': policy.DEFAULT_MAX_PAGES, 'mixed_senders': False,
+                'boundaries': policy.LAYOUT_SEPARATORS, 'version': 0}
     return {'phone_number': row['phone_number'], 'enabled': bool(row['enabled']),
             'max_wait_seconds': row['max_wait_seconds'], 'max_pages': row['max_pages'],
-            'mixed_senders': bool(row['mixed_senders']), 'index_page': row['index_page'] == 1,
-            'version': row['version']}
+            'mixed_senders': bool(row['mixed_senders']), 'boundaries': layout_of(row), 'version': row['version']}
 
 
 def layout_of(setting):
-    """The layout of a call formed now under ``setting`` (a ``batching_numbers`` row or its view)."""
-    return policy.LAYOUT_INDEX_PAGE if setting['index_page'] in (1, True) else policy.LAYOUT_SEPARATORS
+    """How a call formed now under ``setting`` (a ``batching_numbers`` row or its view) marks documents."""
+    value = setting['boundaries']
+    return value if value in policy.LAYOUTS else policy.LAYOUT_SEPARATORS
 
 
 def setting_on(connection, t, number):
@@ -107,33 +109,37 @@ class BatchingSettings:
                 changes.c.phone_number == number).order_by(changes.c.created_at.desc(), changes.c.id.desc())
                 .limit(limit)).mappings()]
 
-    def index_page_agreement(self, number):
-        """The change that recorded the recipient's agreement to one index page, or None.
+    def boundaries_agreement(self, number, boundaries):
+        """The change that recorded the recipient's agreement to ``boundaries``, or None for separators.
 
-        Turning the index page off ends that agreement and using it again needs a new one, so while
-        the index page is on, the latest recorded agreement is the one in force.
+        Changing how documents are marked ends that agreement, and choosing it again needs a new one, so
+        while ``boundaries`` is in use, the latest agreement recorded for it is the one in force.
         """
+        if boundaries not in policy.AGREEMENTS:
+            return None
         changes = self.t['batching_changes']
         with read_connection(self.engine) as connection:
             row = connection.execute(sa.select(changes).where(
-                changes.c.phone_number == number, changes.c.index_page_agreed == 1).order_by(
+                changes.c.phone_number == number, changes.c.boundaries_agreed == 1,
+                changes.c.boundaries == boundaries).order_by(
                 changes.c.created_at.desc(), changes.c.id.desc()).limit(1)).mappings().one_or_none()
             return dict(row) if row is not None else None
 
     def save(self, number, *, enabled, actor, actor_name=None, recipient_agreed=False, max_wait_seconds=None,
-             max_pages=None, mixed_senders=None, index_page=None, index_page_agreed=False, expected_version=None,
+             max_pages=None, mixed_senders=None, boundaries=None, boundaries_agreed=False, expected_version=None,
              now=None):
         """Turn sending together on, change it, or turn it off; returns the setting and the action.
 
-        ``index_page`` (None keeps it) chooses one index page instead of a separator before each
-        document; turning it on needs ``index_page_agreed``. Turning sending together off turns it off too.
+        ``boundaries`` (None keeps it) chooses how a shared call marks each document: 'separators',
+        'index_page' or 'page_headers'. Choosing anything but separators needs ``boundaries_agreed``
+        (the recipient agreed to that convention). Turning sending together off goes back to separators.
         """
         if type(enabled) is not bool or type(recipient_agreed) is not bool:
             raise BatchingInputError('Choose whether faxes to this number are sent together.')
-        if (index_page is not None and type(index_page) is not bool) or type(index_page_agreed) is not bool:
-            raise BatchingInputError('Choose whether faxes sent together to this number start with one index page.')
-        if index_page and not enabled:
-            raise BatchingInputError('Turn on sending together before choosing one index page.')
+        if (boundaries is not None and boundaries not in policy.LAYOUTS) or type(boundaries_agreed) is not bool:
+            raise BatchingInputError('Choose a separator page, one index page or marks at the top of every page.')
+        if boundaries in policy.AGREEMENTS and not enabled:
+            raise BatchingInputError('Turn on sending together before choosing how documents are marked.')
         if not isinstance(actor, str) or not actor or len(actor) > 100:
             raise BatchingInputError('Faxbot could not tell who made this change.')
         now = now or utcnow()
@@ -153,14 +159,15 @@ class BatchingSettings:
                 raise BatchingInputError('Choose whether faxes from different senders may share a call.')
             if enabled and not current['enabled'] and not recipient_agreed:
                 raise BatchingInputError('Record that the recipient agreed before turning this on.')
-            index = bool(enabled and (current['index_page'] if index_page is None else index_page))
-            if index and not current['index_page'] and not index_page_agreed:
-                raise BatchingInputError('Record that the recipient agreed to one index page before using it.')
+            marks = (current['boundaries'] if boundaries is None else boundaries) if enabled else policy.LAYOUT_SEPARATORS
+            agreed_now = marks in policy.AGREEMENTS and marks != current['boundaries']
+            if agreed_now and not boundaries_agreed:
+                raise BatchingInputError(policy.REFUSALS[marks])
             values = {'enabled': int(enabled), 'max_wait_seconds': wait, 'max_pages': pages,
-                      'mixed_senders': int(mixed), 'index_page': int(index)}
+                      'mixed_senders': int(mixed), 'boundaries': marks}
             unchanged = (current['version'] and current['enabled'] == enabled and current['max_wait_seconds'] == wait
                          and current['max_pages'] == pages and current['mixed_senders'] == mixed
-                         and current['index_page'] == index)
+                         and current['boundaries'] == marks)
             if unchanged:
                 return current, None
             action = 'off' if not enabled else ('on' if not current['enabled'] else 'changed')
@@ -177,9 +184,9 @@ class BatchingSettings:
                 id=uuid4().hex, phone_number=number, action=action, actor=actor,
                 # Only a save that itself records the recipient's agreement says so; a later change does not.
                 actor_name=(actor_name or '')[:200] or None, recipient_agreed=int(bool(enabled and recipient_agreed)),
-                max_wait_seconds=wait, max_pages=pages, mixed_senders=int(mixed), index_page=int(index),
-                # Only the save that turns the index page on records the recipient's agreement to it.
-                index_page_agreed=int(index and not current['index_page']), created_at=now))
+                max_wait_seconds=wait, max_pages=pages, mixed_senders=int(mixed), boundaries=marks,
+                # Only the save that chooses an index page or page marks records the recipient's agreement to it.
+                boundaries_agreed=int(agreed_now), created_at=now))
             return setting_on(connection, self.t, number), action
 
 
@@ -207,7 +214,7 @@ def waiting_ids(t):
     return sa.select(members.c.id).where(members.c.state == 'waiting')
 
 
-def due_group_on(connection, t, now):
+def due_group_on(connection, t, now, values=None):
     """The first group of waiting faxes that should go now, in call order, or None.
 
     A group shares a number, an accepted account and configuration, and a
@@ -216,9 +223,13 @@ def due_group_on(connection, t, now):
     oldest fax's wait has ended, any fax in it is marked "Send now", or the
     next waiting fax would not fit. With separators each fax counts its pages
     plus its separator page; with one index page the call counts that page
-    once and lists at most ``policy.INDEX_PAGE_DOCUMENTS`` faxes. Each row
-    returned carries the call's ``layout``. A number whose setting was turned
-    off releases its waiting faxes one at a time.
+    once and lists at most ``policy.INDEX_PAGE_DOCUMENTS`` faxes; with marks
+    at the top of every page each fax counts only its own pages. Marks at the
+    top of every page are used only while the active settings (``values``)
+    make every page's header show the sender and the sending number
+    (``policy.header_identifies_sender``); otherwise the call uses separators.
+    Each row returned carries the call's ``layout``. A number whose setting
+    was turned off releases its waiting faxes one at a time.
     """
     members, deliveries, bindings = t['outbound_batch_members'], t['outbound_deliveries'], t['fax_job_bindings']
     rows = connection.execute(
@@ -243,10 +254,12 @@ def due_group_on(connection, t, now):
     for key, group in groups.items():
         setting = settings[key[0]]
         cap, layout = setting['max_pages'], layout_of(setting)
+        if layout == policy.LAYOUT_PAGE_HEADERS and not policy.header_identifies_sender(values):
+            layout = policy.LAYOUT_SEPARATORS  # 47 CFR 68.318(d): each page's header must name the sender
         index = layout == policy.LAYOUT_INDEX_PAGE
         chosen, used = [], 1 if index else 0
         for row in group:
-            need = row['pages'] if index else row['pages'] + 1
+            need = row['pages'] + (1 if layout == policy.LAYOUT_SEPARATORS else 0)
             if chosen and (used + need > cap or (index and len(chosen) >= policy.INDEX_PAGE_DOCUMENTS)):
                 break
             chosen.append(row)
@@ -276,15 +289,15 @@ def join_on(connection, t, claims, rows, now):
     """Record each fax's place, pages and the call's layout in the one call ``claims[0]`` places.
 
     With separators a fax's ``first_page`` is its separator page; with one index page (page 1 of
-    the call) ``first_page`` is the fax's own first page.
+    the call) or marks at the top of every page, ``first_page`` is the fax's own first page.
     """
     members = t['outbound_batch_members']
     layout = rows[0].get('layout') or policy.LAYOUT_SEPARATORS
-    index = layout == policy.LAYOUT_INDEX_PAGE
-    batch, first = claims[0].attempt_id, 2 if index else 1
+    separators = layout == policy.LAYOUT_SEPARATORS
+    batch, first = claims[0].attempt_id, 2 if layout == policy.LAYOUT_INDEX_PAGE else 1
     for number, (claim, row) in enumerate(zip(claims, rows), start=1):
-        # Separators: the separator page, then the fax's own pages. Index page: the fax's own pages.
-        last = first + row['pages'] - 1 if index else first + row['pages']
+        # Separators: the separator page, then the fax's own pages. Otherwise: the fax's own pages only.
+        last = first + row['pages'] if separators else first + row['pages'] - 1
         connection.execute(members.update().where(members.c.id == claim.job_id).values(
             state='together', batch_id=batch, attempt_id=claim.attempt_id, document_number=number,
             documents=len(claims), first_page=first, last_page=last, layout=layout,

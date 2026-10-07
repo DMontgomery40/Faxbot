@@ -2,9 +2,10 @@
 
 A fax machine confirms each page before the next one is sent, so the pages
 confirmed so far are always the first ones. Each fax occupies a fixed page
-range in the call, recorded when the call was formed, under one of two
-layouts: a separator page before each fax, or one index page (page 1) that
-lists every fax's pages, with no page between one fax and the next.
+range in the call, recorded when the call was formed, under one of three
+layouts: a separator page before each fax; one index page (page 1) that
+lists every fax's pages; or a line at the top of every page and no added
+page. With the last two there is no page between one fax and the next.
 
 A fax is delivered when all its own pages were confirmed (and, with
 separators, its separator page). When the call failed:
@@ -16,9 +17,11 @@ separators, its separator page). When the call failed:
   any fax whose page just before its own first page was not confirmed;
 - otherwise the fax may have partly arrived (the page after the last
   confirmed one may have been on its way), so it failed without being resent
-  automatically (``partly_sent``) and a person decides. With an index page
-  there is no separator between faxes, so a call that ends exactly where one
-  fax ends leaves the next one in this state;
+  automatically (``partly_sent``) and a person decides. Without separators
+  nothing lies between faxes, so a call that ends exactly where one fax ends
+  leaves the next one in this state;
+- a call with no page confirmed at all sent no fax, whatever its layout,
+  exactly as a single fax whose call failed before its first page;
 - with no confirmed page count at all, every fax may have arrived and waits
   for a person (``pages_unconfirmed``).
 
@@ -30,7 +33,7 @@ by its page range, so a missing page is never taken as delivered.
 from dataclasses import dataclass
 
 
-INDEX_PAGE = 'index_page'
+SEPARATORS = 'separators'
 
 
 @dataclass(frozen=True)
@@ -48,14 +51,14 @@ def _pages(count):
 
 def own_start(member):
     """The call page where this fax's own pages start (after its separator page, if it has one)."""
-    return member['first_page'] if member.get('layout') == INDEX_PAGE else member['first_page'] + 1
+    return member['first_page'] + 1 if member.get('layout') in (None, SEPARATORS) else member['first_page']
 
 
 def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None):
     """``members``: rows with ``id``, ``attempt_id``, ``first_page``, ``last_page`` and ``layout``, in call order.
 
-    ``layout`` is 'separators' or 'index_page'; missing or None means separators (calls formed before
-    the index page existed). ``succeeded``: the fax engine reported the whole call sent.
+    ``layout`` is 'separators', 'index_page' or 'page_headers'; missing or None means separators (calls
+    formed before migration 0025). ``succeeded``: the fax engine reported the whole call sent.
     ``confirmed_pages``: the call's confirmed page count, or None when it is unknown.
     """
     outcomes = []
@@ -70,7 +73,7 @@ def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None):
             outcomes.append(Outcome(member['id'], member['attempt_id'], 'unconfirmed', 'pages_unconfirmed', None))
         elif last <= confirmed_pages:
             outcomes.append(Outcome(member['id'], member['attempt_id'], 'success', None, None))
-        elif confirmed_pages + 1 < start:
+        elif confirmed_pages == 0 or confirmed_pages + 1 < start:
             # The page before its first page was not confirmed, so none of its own pages had been sent.
             sentence = (failure_sentence if confirmed_pages == 0 and failure_sentence
                         else 'The call failed before this fax was sent.')

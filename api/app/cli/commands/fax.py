@@ -161,8 +161,9 @@ def _together_line(view):
         until = local_time(view.get('waiting_until'))
         return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot sent send-now ID'
     if view['state'] == 'together':
-        share = (view.get('share') or {}).get('sentence')
-        return view['sentence'] + (' ' + share if share else '')
+        # How the call marked this fax (its separator page, or its line on the index page), then its share.
+        parts = [view['sentence'], view.get('layout_sentence'), (view.get('share') or {}).get('sentence')]
+        return ' '.join(part for part in parts if part)
     return None
 
 
@@ -238,7 +239,10 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
 
     def human(out):
-        out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
+        place = {'index_page': 'Reference on the index page',
+                 'page_headers': 'Reference at the top of its pages'}.get(together.get('layout'),
+                                                                          'Reference on its separator page')
+        out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
                    + ([('How the call went', negotiation)] if negotiation else []))
         if line:
