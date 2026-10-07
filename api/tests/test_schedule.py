@@ -400,3 +400,95 @@ def test_the_newest_schedule_row_counts_and_no_row_is_ever_changed(scheduled):
         scheduler.save(NUMBER, time_zone='Mars/Olympus', days=None, start=None, end=None, learn_busy=True)
     with pytest.raises(ValueError):
         scheduler.save(NUMBER, time_zone='', days=None, start=480, end=None, learn_busy=True)
+
+
+# -- send-by times as people give them ---------------------------------------------------------
+
+def test_send_by_times_are_read_in_the_installations_zone_and_refused_when_past_or_far():
+    now = datetime(2026, 10, 7, 15, 0)                       # 9:00 AM in Denver
+    assert schedule.parse_send_by(None, now) is None and schedule.parse_send_by('  ', now) is None
+    assert schedule.parse_send_by('2026-10-07T17:00-04:00', now) == datetime(2026, 10, 7, 21, 0)
+    assert schedule.parse_send_by('2026-10-07T21:00Z', now) == datetime(2026, 10, 7, 21, 0)
+    assert schedule.parse_send_by('2026-10-07 17:00', now, 'America/Denver') == datetime(2026, 10, 7, 23, 0)
+    assert schedule.parse_send_by('17:00', now, 'America/Denver') == datetime(2026, 10, 7, 23, 0)
+    assert schedule.parse_send_by('08:00', now, 'America/Denver') == datetime(2026, 10, 8, 14, 0)  # tomorrow
+    for value, message in (('2026-10-07 08:00', 'The send-by time has already passed.'),
+                           ('2026-12-01 08:00', 'Choose a send-by time within the next 31 days.'),
+                           ('tomorrow', 'Give the send-by time as a date and time')):
+        with pytest.raises(ValueError, match=message):
+            schedule.parse_send_by(value, now, 'America/Denver')
+
+
+def test_a_close_send_by_time_does_not_wait_to_go_with_other_faxes():
+    now = datetime(2026, 10, 7, 15, 0)
+    assert schedule.too_soon_to_wait(now + timedelta(minutes=40), 1, now)
+    assert not schedule.too_soon_to_wait(now + timedelta(hours=3), 1, now)
+
+
+def test_the_send_by_time_is_bound_into_the_request_only_when_given():
+    from api.app.request_identity import intent_fingerprint
+    plain = intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='0' * 64)
+    assert intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='0' * 64,
+                              send_by=None) == plain
+    assert intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='0' * 64,
+                              send_by=datetime(2026, 10, 7, 21, 0)) != plain
+
+
+# -- the API and `faxbot` ------------------------------------------------------------------------
+
+@pytest.fixture
+def schedule_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for client in _serve(monkeypatch, tmp_path, TZ='America/Denver'):
+        yield Cli(client)
+
+
+def test_cli_and_api_show_and_set_a_recipients_hours_and_a_send_by_time(schedule_cli, tmp_path):
+    from api.tests.test_cli import BOOTSTRAP
+    cli, admin = schedule_cli, {'X-API-Key': BOOTSTRAP}
+    route = '/routing/destinations/%2B12025550123/schedule'
+    shown = cli.client.get(route, headers=admin).json()
+    assert shown['hours_sentence'] == 'Faxbot sends to this recipient at any time.' and shown['learn_busy'] is True
+    assert shown['busy_hours'] == [] and shown['busy_sentence'] == (
+        'Faxbot has not seen a busy hour for this number in the last 30 days.')
+    assert shown['failed_try']['sentence'] == 'Phaxio credits back the price of a fax that fails, busy lines included.'
+    assert shown['failed_try']['read_on'] == '2026-10-07' and shown['failed_try']['sources']
+
+    saved = cli.json('recipients', 'schedule', NUMBER, '--days', 'mon,tue,wed,thu,fri', '--from', '09:00',
+                     '--until', '17:00', '--time-zone', NEW_YORK)
+    assert (saved['days'], saved['start'], saved['end'], saved['time_zone']) == (
+        ['mon', 'tue', 'wed', 'thu', 'fri'], '09:00', '17:00', NEW_YORK)
+    assert saved['hours_sentence'] == ('This recipient takes faxes only Monday to Friday, 9:00 AM to 5:00 PM in '
+                                       'their time zone (America/New_York).')
+    printed = ' '.join(cli('recipients', 'schedule', NUMBER).stdout.split())
+    assert 'Hours This recipient takes faxes only Monday to Friday, 9:00 AM to 5:00 PM' in printed
+    assert cli.json('recipients', 'schedule', NUMBER, '--no-learn')['learn_busy'] is False
+    cleared = cli.json('recipients', 'schedule', NUMBER, '--any-time', '--time-zone', 'default', '--learn')
+    assert cleared['days'] is None and cleared['start'] is None and cleared['time_zone'] == ''
+    assert cli('recipients', 'schedule', NUMBER, '--days', 'someday').exit_code != 0
+    bad = cli.client.put(route, headers=admin, json={'start': '09:00', 'end': None, 'learn_busy': True})
+    assert bad.status_code == 400
+    assert cli.client.put(route, headers=admin, json={'time_zone': 'Mars/Olympus'}).status_code == 400
+    sender = cli.client.post('/admin/api-keys', headers=admin, json={'name': 'synthetic', 'scopes': ['fax:send']})
+    key = {'X-API-Key': sender.json()['token']}
+    assert cli.client.get(route, headers=key).status_code == 403
+    assert cli.client.put(route, headers=key, json={'learn_busy': False}).status_code == 403
+
+    # A send-by time: refused when past, stored, shown and bound into the request.
+    def post(send_by, idempotency):
+        return cli.client.post('/fax', headers={**admin, 'Idempotency-Key': idempotency},
+                               data={'to': NUMBER, 'queue_only': 'true', **({'send_by': send_by} if send_by else {})},
+                               files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    assert post('2020-01-01 09:00', 'schedule-past').status_code == 400
+    later = (datetime.utcnow() + timedelta(days=2)).replace(microsecond=0)
+    sent = post(later.isoformat() + 'Z', 'schedule-key-1')
+    assert sent.status_code == 202, sent.text
+    job = sent.json()['id']
+    detail = cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()
+    assert detail['send_by']['at'] == later.isoformat() + 'Z' and detail['send_by']['sentence'].startswith('Send by ')
+    assert post(None, 'schedule-key-1').status_code == 409
+    assert 'Send by Send by ' in ' '.join(cli('sent', 'show', job).stdout.split())
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic page\n')
+    accepted = cli('send', NUMBER, note, '--queue', '--by', '17:00')
+    assert accepted.exit_code == 0, accepted.stdout

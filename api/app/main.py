@@ -77,6 +77,7 @@ from .access.configuration_access import configuration_write_receipt
 from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
+from .routing.schedule_http import router as routing_schedule_router
 from .rules.http import router as rules_router
 from .intake.http import router as intake_router
 from .direct.http import router as direct_router
@@ -186,6 +187,7 @@ app.include_router(authentication_router)
 app.include_router(management_router)
 app.include_router(routing_router)
 app.include_router(routing_predict_router)
+app.include_router(routing_schedule_router)
 app.include_router(rules_router)
 app.include_router(intake_router)
 app.include_router(direct_router)
@@ -1622,9 +1624,17 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             'together': together.get(job_id), 'fax_engine': fax_engine,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
+            # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
+            'send_by': _send_by_view(row),
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
             'waiting_reason': await run_lifecycle_step(
                 lambda: _waiting_reason(_configuration_manager().store, job_id, datetime.utcnow()))}
+
+
+def _send_by_view(row):
+    from .routing.schedule import send_by_view
+    return send_by_view(row.get('send_by'), row.get('delivery_state'), pages=row.get('pages') or 1,
+                        finished_at=row.get('updated_at'), now=datetime.utcnow())
 
 
 def _admin_fax_view(row):
@@ -1756,6 +1766,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                              "numbers, instead of delivering it inside Faxbot. Test faxes use this."),
                    urgent: bool = Form(False, description='Send before other faxes waiting for the same number or '
                                        'line, and without waiting to go together with other faxes.'),
+                   send_by: Optional[str] = Form(None, description="The time this fax must be sent by: a date and "
+                                                 "time with an offset (2026-10-08T17:00-04:00), a date and time in "
+                                                 "the installation's time zone (2026-10-08 17:00), or a time "
+                                                 "(17:00, its next occurrence). Faxbot never holds the fax past it "
+                                                 "for the recipient's hours or a busy hour."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1774,6 +1789,12 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     # One canonical destination, resolved before fingerprinting, provider
     # selection and acceptance; the job stores it so settings cannot redirect it.
     destination, destination_error = resolve(revision.values.fax_default_country)
+    # The send-by time, as UTC (routing/schedule.py); refused when it has passed or is over a month away.
+    from .routing import schedule as fax_schedule
+    try:
+        send_by_at = fax_schedule.parse_send_by(send_by, datetime.utcnow(), revision.values.time_zone)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
     request_identity = None
     keys = request.headers.getlist('idempotency-key')
     if keys:
@@ -1789,12 +1810,14 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             # under the country its original was accepted with.
             original = destination if accepted is None else resolve(accepted.fax_default_country)[0]
             fingerprint, legacy = request_fingerprints(entered=to, destination=original,
-                queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent)
+                queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent,
+                send_by=send_by_at)
             replay_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
             existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, replay_identity))
             if destination is not None:
                 fingerprint, legacy = request_fingerprints(entered=to, destination=destination,
-                    queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent)
+                    queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent,
+                    send_by=send_by_at)
                 request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
         except UploadPreparationError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
@@ -1842,7 +1865,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     try:
         hold = await run_lifecycle_step(lambda: batching_acceptance.hold_plan(
             manager.store.engine, revision, profile, destination=destination, pages=prepared.pages,
-            actor=identity.actor, send_now=send_now or urgent))
+            actor=identity.actor, send_now=send_now or urgent or (
+                send_by_at is not None and fax_schedule.too_soon_to_wait(send_by_at, prepared.pages,
+                                                                         datetime.utcnow()))))
     except Exception:
         # Sending together is optional: without a usable answer the fax goes straight away.
         logging.getLogger(__name__).warning('Sending together is unavailable; the fax goes straight away.')
@@ -1863,6 +1888,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             **({'send_by_call': 1} if send_by_call else {}),
             # Goes before other faxes waiting for the same room (capacity.py).
             **({'urgent': 1} if urgent else {}),
+            # The time the sender needs it sent by (routing/schedule.py).
+            **({'send_by': send_by_at} if send_by_at is not None else {}),
         }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
             manager.store.engine, job_id, hold, identity.actor)))
     except IdempotentReplay as replay:

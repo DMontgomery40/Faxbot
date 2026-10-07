@@ -127,7 +127,11 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                           'together with other faxes.'),
          by_call: bool = typer.Option(False, '--by-call',
                                       help='Place a real call through your carrier even when the number is one of '
-                                           'your own, for example to test your fax line.')):
+                                           'your own, for example to test your fax line.'),
+         by: str = typer.Option(None, '--by', metavar='TIME',
+                                help="The time the fax must be sent by, such as 17:00 or '2026-10-08 17:00', in "
+                                     "your installation's time zone. Faxbot never holds the fax past it for the "
+                                     "recipient's hours or a busy hour.")):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
@@ -139,6 +143,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['send_by_call'] = 'true'
     if urgent:
         data['urgent'] = 'true'
+    if by:
+        data['send_by'] = by
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
@@ -235,6 +241,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):
         route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
+    # The send-by time, and whether the fax may miss it.
+    if (job.get('send_by') or {}).get('sentence'):
+        route.append(('Send by', job['send_by']['sentence']))
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 

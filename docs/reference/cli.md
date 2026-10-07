@@ -59,6 +59,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
 * `--urgent`: Send before other faxes waiting for the same line, without waiting to go together with other faxes.
 * `--by-call`: Place a real call through your carrier even when the number is one of your own, for example to test your fax line.
+* `--by TIME`: The time the fax must be sent by, such as 17:00 or &#x27;2026-10-08 17:00&#x27;, in your installation&#x27;s time zone. Faxbot never holds the fax past it for the recipient&#x27;s hours or a busy hour.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -919,6 +920,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one number you fax: its settings, how...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
+* `schedule`: Show or set when Faxbot sends to one...
 * `together`: Send short faxes to the same number...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
@@ -1001,6 +1003,30 @@ $ faxbot recipients limits [OPTIONS] {number}
 
 * `--speed RATE`: Highest speed for this number: 14400, 9600, 7200, 4800, or default for the setting all faxes use.
 * `--error-correction ON|OFF`: Error correction for this number: on, off, or default.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients schedule`
+
+Show or set when Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+
+**Usage**:
+
+```console
+$ faxbot recipients schedule [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--days DAYS`: Days the recipient takes faxes, such as mon,tue,wed,thu,fri.
+* `--from HH:MM`: Time the recipient starts taking faxes, such as 08:00.
+* `--until HH:MM`: Time the recipient stops taking faxes, such as 18:00.
+* `--any-time`: The recipient takes faxes at any time (clears the days and hours).
+* `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
+* `--learn / --no-learn`: Whether Faxbot learns the hours this number is usually busy and holds ordinary faxes out of them.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients together`
