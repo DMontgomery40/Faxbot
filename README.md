@@ -213,7 +213,7 @@ Enterprise software acceptance uses synthetic/local tests. Live customer end-to-
 - [ ] Assemble a packet from a recipient's own checklist, and send once to an organization that distributes internally, only where the recipient agrees.
 - [ ] Reuse templates and unchanged pages between enrolled partners by content fingerprint, sending only what the other side does not already hold.
 - [ ] Prove T.38 Internet Aware Fax interoperability on compatible endpoints before offering it as a transport.
-- [ ] Evaluate SIP routing preferences against real account costs and delivery reliability. **Costs → Recommendations → Fax marker** compares calls marked as fax with calls not marked, from history. On this installation the marker has been on for every call, so there is nothing to compare it with yet.
+- [ ] Evaluate SIP routing preferences against real account costs and delivery reliability. **Costs → Recommendations → Fax marker** compares calls marked as fax with calls not marked, from history, and says so until each side has 10 calls.
 - [ ] Explore automatic partner discovery only with a verified number, organization, and inbox binding.
 - [ ] After this release ships, remove what it deprecates: MCP over SSE, the FreeSWITCH code, provider plugins (`FEATURE_V3_PLUGINS` and `/plugins`), the settings recovery copy and the SDKs' `client.plugins` (see the [release notes](docs/release-notes.md#deprecated-removed-in-the-next-release)).
 - [ ] FreeSWITCH as a second fax engine, rebuilt from scratch. The FreeSWITCH support in this release could not run in the shipped Docker image, so Setup and the console no longer offer it; its code stays for one release.

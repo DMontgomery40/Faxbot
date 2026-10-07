@@ -87,6 +87,17 @@ def test_the_t38_check_reads_name_lookup_with_no_extra_telnyx_call(client, telny
     assert client.get('/admin/sip/telnyx', headers=ADMIN).json()['numbers'][0]['state'] == 'off'
 
 
+def test_a_check_from_before_this_version_says_it_has_not_checked_yet(client, telnyx):
+    record = telnyx_t38.check(_values(client))
+    for entry in record['numbers']:
+        entry.pop('name_lookup')
+    telnyx_t38._write(_values(client), record)
+    first = client.get('/admin/sip/telnyx/names', headers=ADMIN).json()['numbers'][0]
+    assert (first['lookup'], first['can_turn_off']) == (None, False)
+    assert first['text'] == ('Faxbot has not checked caller-name lookup for +1 555-555-0100 yet; select Check again '
+                             'under Network for fax over IP, or Apply and connect.')
+
+
 def test_turning_it_off_changes_only_that_field_reads_it_back_and_is_audited(client, telnyx):
     telnyx_t38.check(_values(client))
     telnyx.requests.clear()

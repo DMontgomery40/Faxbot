@@ -85,13 +85,20 @@ def test_an_approval_needs_who_when_and_evidence_and_a_real_toll_free_number(app
                          evidence='Email')
     with pytest.raises(RoutingInputError, match='cannot be in the future'):
         approvals.record(CLINIC, action='approved', alternate_number=TOLL_FREE, approved_by='Front desk',
-                         approved_on=datetime.utcnow() + timedelta(days=2), evidence='Email')
+                         approved_on=datetime(2026, 10, 9), evidence='Email', now=datetime(2026, 10, 7, 23))
     with pytest.raises(RoutingInputError, match='where the agreement is recorded'):
         approvals.record(CLINIC, action='approved', alternate_number=TOLL_FREE, approved_by='Front desk',
                          approved_on=AGREED)
     with pytest.raises(RoutingInputError, match='nothing|no toll-free number on file'):
         approvals.record(CLINIC, action='withdrawn')
     assert approvals.history(CLINIC) == []
+
+
+def test_today_in_a_time_zone_ahead_of_utc_is_not_the_future(approvals):
+    # 20:00 UTC on 7 October is already 8 October in Sydney, where the administrator picked "today".
+    approved = approvals.record(CLINIC, action='approved', alternate_number=TOLL_FREE, approved_by='Front desk',
+                                approved_on=datetime(2026, 10, 8), evidence='Email', now=datetime(2026, 10, 7, 20))
+    assert approved['approved_on'] == '2026-10-08'
 
 
 def test_only_the_newest_row_counts_and_no_row_is_ever_changed(approvals, database):  # noqa: F811
@@ -192,7 +199,8 @@ def test_the_npi_registry_suggests_a_number_and_never_approves_it(client, monkey
     import sys
     import types
     route = '/routing/destinations/%2B12025550123/toll-free/suggestions'
-    monkeypatch.delitem(sys.modules, 'app.routing.nppes', raising=False)
+    # A None entry makes the import fail whether or not the registry module is installed: no network here.
+    monkeypatch.setitem(sys.modules, 'app.routing.nppes', None)
     missing = client.get(route, headers=ADMIN, params={'npi': '1234567893'})
     assert missing.status_code == 503 and 'not available in this version' in missing.json()['detail']
     asked = []

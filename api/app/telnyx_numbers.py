@@ -92,6 +92,10 @@ def number_sentence(entry):
                 + PORTAL_CHECK.format(number=number))
     if state == telnyx_t38.NOT_FOUND:
         return f'{number} is not a number on this Telnyx account, so Faxbot cannot check its caller-name lookup.'
+    if state in (telnyx_t38.ON, telnyx_t38.OFF) and 'name_lookup' not in entry:
+        # A check from before Faxbot read caller-name lookup: it was never asked.
+        return (f'Faxbot has not checked caller-name lookup for {number} yet; select Check again under Network for '
+                'fax over IP, or Apply and connect.')
     if state in (telnyx_t38.ON, telnyx_t38.OFF):
         return f'Telnyx did not say whether caller-name lookup is on for {number}.'
     return f'Faxbot could not reach Telnyx to check caller-name lookup for {number}.'

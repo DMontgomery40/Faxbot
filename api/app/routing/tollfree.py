@@ -14,7 +14,7 @@ The newest row for a number is its state; no row is changed or removed.
 ``approved_alternate`` is the one read the send path uses: it returns the
 toll-free number only while an approval is the newest row.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import phonenumbers
@@ -126,7 +126,8 @@ class TollFreeApprovals:
                 raise RoutingInputError('Enter who at the recipient agreed, in up to 200 characters.')
             if not isinstance(approved_on, datetime):
                 raise RoutingInputError('Enter the day the recipient agreed.')
-            if approved_on.date() > now.date():
+            # The day is the administrator's local day, up to 14 hours ahead of UTC: one day of slack.
+            if approved_on.date() > (now + timedelta(days=1)).date():
                 raise RoutingInputError('The day the recipient agreed cannot be in the future.')
             if evidence is None:
                 raise RoutingInputError('Say where the agreement is recorded, such as an email and its date.')
