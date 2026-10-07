@@ -180,8 +180,8 @@ def test_every_toll_free_code_in_service_is_toll_free(number):
                                     '+1800555010'])
 def test_reserved_codes_local_numbers_and_other_countries_are_standard(number):
     # Pinned for the swap to one shared classifier (routing.destinations.classify): 822 and 880 to 887 are not in
-    # service, and an exchange never starts with 0 or 1.
-    assert dialing.number_class(number) == 'standard'
+    # service, and an exchange never starts with 0 or 1. Only "not toll-free" is pinned; the other class names may change.
+    assert dialing.is_toll_free(number) is False
 
 
 def test_the_shipped_terms_carry_each_routes_published_toll_free_price_with_its_source():
@@ -305,6 +305,43 @@ def test_the_telnyx_trunk_wins_an_approved_toll_free_number_because_those_calls_
     plan = RoutePlanner(routes).plan(to_number=RECIPIENT, bound='phaxio', values=quiet, pages=3, alternates=True,
                                      dial={'alternate': TOLL_FREE, 'refused': False})
     assert plan.number_for('sip') == RECIPIENT and plan.number_for('phaxio') == TOLL_FREE
+
+
+def test_free_toll_free_calls_on_the_trunk_go_before_a_flat_plan_that_does_not_say_it_reaches_them(database):
+    schema.upgrade_schema(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    plan_card = RateCard(None, 'humblefax', 'outbound', 'HumbleFax unlimited plan', 'USD', 0, 0, 0, 60, 0, None,
+                         datetime(2026, 10, 3), parse_amount('10.00', whole_digits=4))
+    routes.replace_cards([plan_card, card('sip-telnyx', minute='0.005')])
+    values = ConfigurationValues.from_environment({
+        'FAX_BACKEND': 'humblefax', 'FAX_OUTBOUND_ROUTES': 'sip', 'SIP_TRUNK_PRESET': 'telnyx',
+        'SIP_TRUNK_CALLER_ID': '+13035550100', 'SIP_TRUNK_DIDS': '+13035550100', 'FAX_DISABLED': 'false'})
+    planner = RoutePlanner(routes)
+    toll_free = planner.plan(to_number=RECIPIENT, bound='humblefax', values=values, pages=3, alternates=True,
+                             dial={'alternate': TOLL_FREE, 'refused': False})
+    # Both cost nothing per fax; Telnyx publishes that it calls toll-free numbers, HumbleFax does not say.
+    assert [choice.route.key for choice in toll_free.choices] == ['sip', 'humblefax']
+    assert toll_free.number_for('sip') == TOLL_FREE and toll_free.number_for('humblefax') == TOLL_FREE
+    # Without an approval nothing changes: the plan that is already paid for goes first.
+    local = planner.plan(to_number=RECIPIENT, bound='humblefax', values=values, pages=3, alternates=True)
+    assert local.first.route.key == 'humblefax' and local.first.reason == 'included'
+
+
+def test_a_trunk_without_a_carrier_preset_is_checked_with_the_fax_station_id():
+    bare = SimpleNamespace(sip_trunk_preset='', sip_trunk_caller_id='', fax_station_id='+13035550100',
+                           sip_trunk_did_list=())
+    assert dialing.reaches('sip', TOLL_FREE, bare) is True
+    # The shipped placeholder is not a real number.
+    assert dialing.reaches('sip', TOLL_FREE, SimpleNamespace(**{**vars(bare), 'fax_station_id': '+10000000000'})) is False
+
+
+def test_an_approval_read_that_fails_in_the_database_still_accepts_the_fax(toll):
+    def broken(number, *, engine=None, connection=None):
+        connection.execute(sa.text('SELECT missing FROM no_such_approvals_table'))
+    toll.approvals.current_approval = broken
+    job = accept(toll)
+    assert toll.delivery.dial_state(job)['alternate'] is None and to_number(toll, job) == RECIPIENT
+    assert toll.delivery.get(job)['state'] == 'ready'
 
 
 # Sending -----------------------------------------------------------------------------------------------------
@@ -543,12 +580,13 @@ def test_prices_and_plans_list_each_sending_routes_toll_free_terms():
     assert set(items) == {'sip', 'phaxio', 'signalwire'}
     trunk = items['sip']
     assert (trunk['route'], trunk['price_text'], trunk['reaches']) == ('sip-telnyx', 'Free.', 'no')
-    assert trunk['reach_text'].startswith('Set a caller ID under Providers → Carrier trunk')
+    assert trunk['reach_text'].startswith('Toll-free numbers often refuse calls without a caller ID')
+    assert 'faxbot system settings set sip_trunk_caller_id=' in trunk['reach_text']
     assert trunk['caller_id_text'] == 'A number on your account, or one the carrier verified.'
     assert items['phaxio']['price_text'] == 'The same as its sending price.'
     assert items['signalwire']['price_text'] == 'Not published.'
     anveo = dialing.price_text(dialing.load_terms()['sip-anveo'])
-    assert anveo == '$0.00182 a minute, at least 1 seconds.'
+    assert anveo == '$0.00182 a minute, at least 1 second.'
 
 
 NPPES = {'result_count': 1, 'results': [{

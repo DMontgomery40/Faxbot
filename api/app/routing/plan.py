@@ -15,6 +15,7 @@ from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from . import dialing, local as local_delivery
+from .alternates import attempt_number
 from .store import destination_key
 from ..provider_labels import PROVIDER_LABELS, trunk_name
 
@@ -171,14 +172,19 @@ class RoutePlanner:
         dialed = {}
 
         def provider(identity, is_bound=False):
-            number = destination
-            if alternate and dialing.reaches(identity, alternate, values, sip_preset=preset):
-                number = alternate
+            # The same rule the attempt records its number by (``alternates.attempt_number``).
+            number, _ = attempt_number(destination, alternate=alternate, route_reaches=bool(alternate) and
+                                       dialing.reaches(identity, alternate, values, sip_preset=preset))
             dialed[identity] = number
             card = card_for(identity)
+            doubt = 0
             if number != destination:
                 card = dialing.class_card(card, identity, number, sip_preset=preset)
-            return RouteCandidate(identity, 'provider', identity, card, bound=is_bound)
+                terms = dialing.terms_for(identity, preset)
+                # A route that publishes that it calls toll-free numbers goes before one that does not say, at
+                # equal cost (Telnyx's free toll-free calls before a flat plan that is $0 a fax).
+                doubt = int(dialing.is_toll_free(number) and (terms is None or terms.reaches != 'yes'))
+            return RouteCandidate(identity, 'provider', identity, card, bound=is_bound, doubt=doubt)
         candidates = [provider(bound, True)]
         if alternates:
             candidates += [provider(identity) for identity in extra_routes(values, bound)]

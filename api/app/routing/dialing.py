@@ -27,6 +27,7 @@ from pathlib import Path
 import re
 
 from .costs import InvalidRateCard, RateCard, parse_amount
+from .numbers import is_canonical
 from .seed import _date, _increment, default_path
 
 
@@ -128,6 +129,10 @@ def terms_for(provider_id, sip_preset='', terms=None):
 def _caller_id(values, provider_id):
     """The caller ID a toll-free call on this route would carry, when Faxbot sets it; None when the route does."""
     if provider_id == 'sip':
+        # The same number the call carries (``ami.originate_fields_for``): the trunk's caller ID when a carrier
+        # trunk is set up, otherwise the fax station ID.
+        if not getattr(values, 'sip_trunk_preset', ''):
+            return getattr(values, 'fax_station_id', '') or ''
         return getattr(values, 'sip_trunk_caller_id', '') or ''
     if provider_id == 'freeswitch':
         return getattr(values, 'fs_caller_id_number', '') or ''
@@ -144,7 +149,7 @@ def caller_id_problem(values, provider_id, terms=None):
     caller = _caller_id(values, provider_id)
     if caller is None:
         return None  # a cloud fax service sends its own number
-    if re.fullmatch(r'\+[1-9][0-9]{6,14}', caller) is None:
+    if not is_canonical(caller):  # unset, or a placeholder such as +10000000000
         return 'no_caller_id'
     rule = getattr(terms, 'caller_id', None)
     if rule == 'local_number' and (is_toll_free(caller) or not caller.startswith('+1')):
@@ -180,13 +185,16 @@ CALLER_ID_TEXT = {
     'set': 'Any real number of yours.',
 }
 PROBLEM_TEXT = {
-    'no_caller_id': ('Set a caller ID under Providers → Carrier trunk: toll-free numbers often refuse calls '
-                     'without one, so until then faxes go to the number entered.'),
-    'caller_id_not_local': ("This carrier needs a local caller ID, and your trunk's caller ID is not one, so "
-                            'faxes go to the number entered. Change it under Providers → Carrier trunk.'),
-    'caller_id_not_on_account': ("This carrier needs a caller ID on your account, and your trunk's caller ID is "
-                                 "not one of the trunk's numbers, so faxes go to the number entered. Change it "
-                                 'under Providers → Carrier trunk.'),
+    'no_caller_id': ('Toll-free numbers often refuse calls without a caller ID, so faxes go to the number '
+                     'entered until you set one under Providers → Carrier trunk, or with faxbot system settings '
+                     'set sip_trunk_caller_id=<number>.'),
+    'caller_id_not_local': ("This carrier needs a local caller ID, and your trunk's caller ID is not one, so faxes "
+                            'go to the number entered. Change it under Providers → Carrier trunk, or with faxbot '
+                            'system settings set sip_trunk_caller_id=<number>.'),
+    'caller_id_not_on_account': ("This carrier needs a caller ID on your account, and your trunk's caller ID is not "
+                                 "one of the trunk's numbers, so faxes go to the number entered. Change it under "
+                                 'Providers → Carrier trunk, or with faxbot system settings set '
+                                 'sip_trunk_caller_id=<number>.'),
 }
 
 

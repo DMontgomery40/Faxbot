@@ -242,7 +242,7 @@ def rate_text(card):
         parts.append(f'{money_text(card.per_call_micros, card.currency)} a call')
     if card.per_minute_micros:
         least = billed_seconds(card, 1)
-        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} seconds'
+        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} second' + ('' if least == 1 else 's')
         parts.append(f'{money_text(card.per_minute_micros, card.currency)} a minute, at least {floor}')
     if card.per_page_micros:
         parts.append(f'{money_text(card.per_page_micros, card.currency)} a page')
