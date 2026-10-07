@@ -93,6 +93,9 @@ CLI_ONLY = {
     ('GET', '/routing/published-plans'): (
         "any provider's published plans for faxbot costs plans <provider>; the console shows the plans of the "
         'providers in use (GET /routing/published-plans/in-use)'),
+    ('GET', '/case-checklists/{name}'): (
+        'one checklist, or one of its earlier versions, for faxbot recipients cases checklist show and build; the '
+        'console reads every checklist with its items in one request (GET /case-checklists)'),
 }
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
