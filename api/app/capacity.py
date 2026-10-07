@@ -23,8 +23,17 @@ whoever dials it, and a busy line costs a retry everywhere. Only the trunk and
 its new-calls-a-second limit are about Faxbot's own lines.
 
 A fax that cannot start waits; it never fails because of capacity. Urgent faxes
-go first; otherwise the sender served least recently goes next, oldest fax
-first, so one sender's batch cannot hold up everyone else.
+go first, then faxes whose send-by time is within the hour (earliest first);
+otherwise the sender served least recently goes next, oldest fax first, so one
+sender's batch cannot hold up everyone else.
+
+A fax that has room may still be held by its recipient's schedule
+(``routing/schedule.py``: the hours the recipient takes faxes, and hours its
+line is usually busy when a failed try may be charged). A held fax stays
+``ready``, is never claimed until its time comes, and never fails for waiting;
+the claim looks at it again within ``schedule.RECHECK``. A fax in a busy hour
+whose failed tries are free is not held: it goes after the faxes that could
+use the same room.
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -139,6 +148,39 @@ class Capacity:
         metadata.reflect(connection if connection is not None else engine, only=list(self.TABLES))
         self.engine = engine
         self.t = {name: metadata.tables[name] for name in self.TABLES}
+        # Faxes the recipient's schedule holds, and until when the claim leaves each alone (naive UTC).
+        self.held = {}
+
+    # The recipient's schedule (routing/schedule.py) --------------------------------------------
+    def _scheduler(self, connection=None):
+        """The schedule reader, or None when it cannot be read: the claim then ignores schedules."""
+        try:
+            from .routing.schedule import for_engine
+            return for_engine(self.engine, connection)
+        except Exception:
+            return None
+
+    def decision(self, connection, values, job_ids, now):
+        """(``schedule.Decision``, ``schedule.Settings``) for faxes going in one call, or (None, None)."""
+        scheduler = self._scheduler(connection)
+        if scheduler is None:
+            return None, None
+        try:
+            fax = scheduler.fax_on(connection, job_ids, values)
+            if fax is None:
+                return None, None
+            return scheduler.decide_on(connection, fax, values, now)
+        except Exception:
+            # A schedule that cannot be read never stops a fax.
+            return None, None
+
+    def forget_holds(self):
+        """Look at every held fax again at the next claim (after a recipient's schedule changed)."""
+        self.held.clear()
+
+    def _held(self, now):
+        self.held = {job: until for job, until in self.held.items() if until > now}
+        return list(self.held)
 
     # Holds ------------------------------------------------------------------
     def holds(self, now, *, exclude=()):
@@ -191,10 +233,15 @@ class Capacity:
 
     # Admission --------------------------------------------------------------
     def next_ready(self, connection, values, now, *, waiting=None, exclude=()):
-        """The delivery to claim next, or None: urgent first, then the sender served least recently, oldest first.
+        """The delivery to claim next, or None.
 
+        Order: urgent first; then faxes whose send-by time is within the hour,
+        earliest first; then the sender served least recently, oldest first.
         Only faxes whose number has room are offered, and while the trunk is full
-        (or has started its calls for this second) no fax going over it is.
+        (or has started its calls for this second) no fax going over it is. Of
+        those, a fax its recipient's schedule holds is skipped (and left alone
+        until ``schedule.RECHECK`` has passed), and a fax in a busy hour whose
+        failed tries are free goes only when no other offered fax may.
         """
         d, j, dest = self.t['outbound_deliveries'], self.t['fax_jobs'], self.t['delivery_destinations']
         busy = self._busy(now)
@@ -211,7 +258,7 @@ class Capacity:
                                .outerjoin(sender_of2, sender_of2.c.fax_job_id == attempts.c.job_id))
                   .where(attempts.c.created_at >= now - SERVED_WINDOW)
                   .group_by(sa.func.coalesce(sender_of2.c.parent_id, '')).subquery())
-        query = (sa.select(d)
+        query = (sa.select(d.c.id)
                  .select_from(d.join(j, j.c.id == d.c.id)
                               .outerjoin(dest, dest.c.phone_number == j.c.to_number)
                               .outerjoin(busy, busy.c.number == j.c.to_number)
@@ -225,9 +272,40 @@ class Capacity:
             query = query.where(d.c.id.not_in(list(exclude)))
         if room.trunk_full or room.rate_full:
             query = query.where(sa.not_(self._over_trunk(j, values)))
-        query = query.order_by(sa.func.coalesce(j.c.urgent, 0).desc(), served.c.last.is_not(None), served.c.last,
-                               d.c.created_at, d.c.id).limit(1)
-        return connection.execute(query).mappings().one_or_none()
+        order = [sa.func.coalesce(j.c.urgent, 0).desc()]
+        if 'send_by' in j.c:
+            from .routing.schedule import DEADLINE_FIRST
+            soon = sa.and_(j.c.send_by.is_not(None), j.c.send_by <= now + DEADLINE_FIRST)
+            order += [sa.case((soon, 0), else_=1), sa.case((soon, j.c.send_by), else_=None)]
+        query = query.order_by(*order, served.c.last.is_not(None), served.c.last, d.c.created_at, d.c.id)
+        return self._first_due(connection, values, now, query, d)
+
+    # At most this many offered faxes are looked at per page, and this many pages per claim.
+    CANDIDATES, PAGES = 25, 4
+
+    def _first_due(self, connection, values, now, query, deliveries):
+        """The first offered delivery its recipient's schedule lets start now (see ``next_ready``)."""
+        from .routing.schedule import RECHECK
+        skip, later = self._held(now), None
+        for _ in range(self.PAGES):
+            page = query.where(deliveries.c.id.not_in(skip)) if skip else query
+            ids = connection.execute(page.limit(self.CANDIDATES)).scalars().all()
+            for job_id in ids:
+                decision, _ = self.decision(connection, values, [job_id], now)
+                if decision is not None and decision.hold_until is not None:
+                    self.held[job_id] = min(decision.hold_until, now + RECHECK)
+                elif decision is not None and decision.later:
+                    later = later or job_id
+                else:
+                    return self._delivery(connection, deliveries, job_id)
+                skip.append(job_id)
+            if len(ids) < self.CANDIDATES:
+                break
+        return self._delivery(connection, deliveries, later) if later else None
+
+    @staticmethod
+    def _delivery(connection, deliveries, job_id):
+        return connection.execute(sa.select(deliveries).where(deliveries.c.id == job_id)).mappings().one_or_none()
 
     def number_has_room(self, connection, number, now):
         busy, dest = self._busy(now), self.t['delivery_destinations']
@@ -247,7 +325,18 @@ class Capacity:
             j.c.id == rows[0]['id'], self._over_trunk(j, values)))
         if over:
             room = self.room(connection, values, now)
-            return not (room.trunk_full or room.rate_full)
+            if room.trunk_full or room.rate_full:
+                return False
+        # The recipient's schedule holds the whole call, which waits still together.
+        ids = [row['id'] for row in rows]
+        if set(ids) & set(self._held(now)):
+            return False
+        decision, _ = self.decision(connection, values, ids, now)
+        if decision is not None and decision.hold_until is not None:
+            from .routing.schedule import RECHECK
+            until = min(decision.hold_until, now + RECHECK)
+            self.held.update({job_id: until for job_id in ids})
+            return False
         return True
 
     # What people see ----------------------------------------------------------
@@ -273,6 +362,9 @@ class Capacity:
                         f'is known or until {clock(row["submitted_at"] + HOLD)}.')
             if row['state'] != 'ready' or row['dispatch_mode'] != 'normal':
                 return None
+            held = self.schedule_sentence(connection, values, job_id, row, now)
+            if held:
+                return held
             if not self.number_has_room(connection, row['to_number'], now):
                 holds = self.holds(now).subquery()
                 blocking = connection.execute(sa.select(holds.c.state, holds.c.submitted_at).where(
@@ -294,6 +386,20 @@ class Capacity:
                     return (f'Waiting a moment: Faxbot starts at most {room.rate_limit} new '
                             f"{'call' if room.rate_limit == 1 else 'calls'} each second on your phone line.")
         return None
+
+    def schedule_sentence(self, connection, values, job_id, row, now):
+        """Why the recipient's schedule holds this fax, in one sentence with what a failed try may cost; or None."""
+        decision, settings = self.decision(connection, values, [job_id], now)
+        if decision is None or decision.hold_until is None:
+            return None
+        from .provider_labels import provider_label
+        from .routing.schedule import attempt_price, reason
+        route = row['backend'] or ''
+        price = None
+        if decision.why == 'busy':
+            pages = connection.scalar(sa.select(self.t['fax_jobs'].c.pages).where(self.t['fax_jobs'].c.id == job_id))
+            price = attempt_price(route, row['to_number'], pages, now=now)
+        return reason(decision, settings, route_label=provider_label(route), price_text=price)
 
     def waiting_for_line(self, values, now, *, waiting=None):
         """How many faxes are ready to go but wait for room (Overview)."""

@@ -42,6 +42,7 @@ config.attributes["schema_tollfree"] = importlib.import_module(package + ".schem
 config.attributes["schema_dialed"] = importlib.import_module(package + ".schema_dialed")
 config.attributes["schema_routing_rules"] = importlib.import_module(package + ".schema_routing_rules")
 config.attributes["schema_receiving_rules"] = importlib.import_module(package + ".schema_receiving_rules")
+config.attributes["schema_destination_schedule"] = importlib.import_module(package + ".schema_destination_schedule")
 
 
 def migrate(connection):
