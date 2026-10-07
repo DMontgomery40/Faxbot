@@ -285,6 +285,17 @@ export function receivingSentence(rule: { to_number: string; mailbox_label: stri
 export const KEEP_DAYS_NOTE = 'This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not '
   + 'promise to keep the fax that long.';
 
+// The installation's currency, from its country, as the faxbot command works it out (cli/output.py).
+const COUNTRY_CURRENCY: Record<string, string> = {
+  US: 'USD', PR: 'USD', CA: 'CAD', GB: 'GBP', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD', JP: 'JPY', IN: 'INR', CH: 'CHF',
+  IE: 'EUR', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR', BE: 'EUR', AT: 'EUR', PT: 'EUR', FI: 'EUR', GR: 'EUR',
+  LU: 'EUR',
+};
+
+export function currencyFor(country: string | null | undefined): string {
+  return COUNTRY_CURRENCY[country || 'US'] ?? 'USD';
+}
+
 // The fixed last row of the routing list.
 export const AUTOMATIC_ROW = 'Everything else: the cheapest reliable route, as before.';
 

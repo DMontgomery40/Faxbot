@@ -205,7 +205,10 @@ export class FakeRules {
         attempts: [{ number: 1, account_label: 'Sinch (UK)', dialed_number: '+448005550100', page_layout: 'As the receiving machine allows',
           alternate: { original_number: '+442071234567', approved_by: 'Jane Smith', approved_on: '2026-10-07',
             note: 'same intake, confirmed by phone', recipient_pays: true },
-          sentence: 'Delivered.', estimate: { currency: 'USD', amount: '0.031' } }], hold: null };
+          sentence: 'Delivered.', estimate: { currency: 'USD', amount: '0.031' } }], hold: null,
+        trace: [{ kind: 'limit', result: 'not_matched', scope: 'organization', revision: 1, rule_id: 'l-hf-uk',
+          rule_name: 'Never send UK faxes by HumbleFax', field: 'destination.countries' },
+        { kind: 'route', result: 'matched', scope: 'organization', revision: 1, rule_id: 'r-uk', rule_name: 'UK numbers go through Sinch' }] };
     }
     if (path === '/admin/providers/accounts' && request.method === 'GET') return this.accounts;
     if (path === '/admin/providers/accounts' && request.method === 'POST') {

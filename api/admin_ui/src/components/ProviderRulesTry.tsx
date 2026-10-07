@@ -42,6 +42,34 @@ export function stepRule(step: TraceStep): string {
   return step.rule_name ?? '-';
 }
 
+// "Every rule Faxbot read for this fax", folded away until opened.
+export function TraceTable({ steps }: { steps: TraceStep[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <Accordion disableGutters variant="outlined" sx={{ borderRadius: 2 }}>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography variant="body2">Every rule Faxbot read for this fax</Typography>
+      </AccordionSummary>
+      <AccordionDetails sx={{ overflowX: 'auto' }}>
+        <Table size="small" aria-label="Every rule Faxbot read">
+          <TableHead><TableRow><TableCell>Rules</TableCell><TableCell>Rule</TableCell><TableCell>Result</TableCell>
+            <TableCell>Why</TableCell></TableRow></TableHead>
+          <TableBody>
+            {steps.map((step, index) => (
+              <TableRow key={`${step.scope}-${step.rule_id ?? step.kind}-${index}`}>
+                <TableCell>{step.scope_name ?? SCOPE_NAME[step.scope]}{step.revision ? `, version ${step.revision}` : ''}</TableCell>
+                <TableCell>{stepRule(step)}</TableCell>
+                <TableCell>{RESULT[step.result]}</TableCell>
+                <TableCell>{stepWhy(step)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
 export function ExplainAnswer({ result }: { result: ExplainResult }) {
   return (
     <Box data-testid="explain-answer">
@@ -69,29 +97,7 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
       {result.holds.map((hold) => <Typography key={hold} variant="body2" sx={{ mb: 1 }}>{hold}</Typography>)}
       {result.dial && <Typography variant="body2" sx={{ mb: 1 }}>{result.dial.sentence}</Typography>}
       {result.page_layout && <Typography variant="body2" sx={{ mb: 1 }}>{result.page_layout}</Typography>}
-      {result.trace.length > 0 && (
-        <Accordion disableGutters variant="outlined" sx={{ borderRadius: 2 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="body2">Every rule Faxbot read for this fax</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Table size="small" aria-label="Every rule Faxbot read">
-              <TableHead><TableRow><TableCell>Rules</TableCell><TableCell>Rule</TableCell><TableCell>Result</TableCell>
-                <TableCell>Why</TableCell></TableRow></TableHead>
-              <TableBody>
-                {result.trace.map((step, index) => (
-                  <TableRow key={`${step.scope}-${step.rule_id ?? step.kind}-${index}`}>
-                    <TableCell>{step.scope_name ?? SCOPE_NAME[step.scope]}{step.revision ? `, version ${step.revision}` : ''}</TableCell>
-                    <TableCell>{stepRule(step)}</TableCell>
-                    <TableCell>{RESULT[step.result]}</TableCell>
-                    <TableCell>{stepWhy(step)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </AccordionDetails>
-        </Accordion>
-      )}
+      <TraceTable steps={result.trace} />
     </Box>
   );
 }

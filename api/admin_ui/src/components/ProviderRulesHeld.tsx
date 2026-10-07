@@ -7,9 +7,11 @@ import {
   Paper, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import { formatLocalDate, formatServerTime } from '../api/time';
+import { isForbidden, isNotAvailable } from '../api/client';
 import type { AdminDestination } from '../navigation';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
 import type { AlternateDial, FaxRoute, Hold, HoldDecision, RulesApi } from './ProviderRulesApi';
+import { TraceTable } from './ProviderRulesTry';
 
 const KIND_TITLE: Record<Hold['kind'], string> = {
   approval: 'Waiting for approval', window: 'Waiting for its time window', no_route: 'No route your rules allow',
@@ -88,7 +90,11 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api.holds().then((value) => setHolds(value.holds)).catch(setError);
+    api.holds().then((value) => setHolds(value.holds)).catch((failure) => {
+      // Someone who may not see held faxes, or a server without them, simply has none to show.
+      if (isForbidden(failure) || isNotAvailable(failure)) setHolds([]);
+      else setError(failure);
+    });
   }, [api]);
   useEffect(() => { load(); }, [load]);
 
@@ -232,6 +238,7 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
         </ListItem>
       ))}
       {route.hold && <ListItem><ListItemText primary={KIND_TITLE[route.hold.kind]} secondary={route.hold.reason} /></ListItem>}
+      {route.trace && route.trace.length > 0 && <ListItem sx={{ display: 'block' }}><TraceTable steps={route.trace} /></ListItem>}
     </>
   );
 }
@@ -252,7 +259,7 @@ export function WaitingForYouCard({ api, onOpen }: { api: RulesApi; onOpen: () =
     count('window') > 0 && `${count('window')} waiting for a time window`,
   ].filter(Boolean);
   return (
-    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} aria-label="Faxes waiting for you" role="region">
+    <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }} aria-label="Faxes waiting for you" role="region">
       <Typography variant="subtitle1">
         {holds.length === 1 ? '1 fax is waiting for you' : `${holds.length} faxes are waiting for you`}
       </Typography>

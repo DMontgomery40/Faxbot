@@ -37,7 +37,7 @@ describe('the navigation table', () => {
     expect(areas.map((area) => area.label)).toEqual(
       ['Overview', 'Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs', 'Access', 'System']);
     expect(pagesOf(areas, 'providers')).toEqual(
-      ['sending', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
+      ['sending', 'rules', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
     const system = areas.find((area) => area.id === 'system')!;
     expect(system.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
       .toEqual(['API & SDKs', 'AI assistants', 'Terminal', 'Scripts & checks', 'Provider plugins']);
@@ -203,7 +203,7 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(40);
+    expect(opened).toHaveLength(41);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);

@@ -39,7 +39,7 @@ export default function Recommendations({ client, canWrite = false, onNavigate }
             <Typography variant="body1" color="text.secondary" data-testid="recommendations-empty">{NO_RECOMMENDATIONS}</Typography>
           </Paper>
         )}
-        <SendingRecommendations client={client} canWrite={canWrite} onCount={callbacks.sending} />
+        <SendingRecommendations client={client} canWrite={canWrite} onCount={callbacks.sending} onNavigate={onNavigate} />
         <ReceivingRecommendations client={client} onCount={callbacks.receiving} />
         <PlanRecommendations client={client} onCount={callbacks.plans} />
         <BillingStepsSection client={client} onCount={callbacks.steps} />

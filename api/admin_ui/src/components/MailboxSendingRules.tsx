@@ -1,7 +1,7 @@
 // A mailbox's own sending rules, on that mailbox's page. They apply to faxes sent from the mailbox and
 // can only narrow the organization's rules, which are shown above them, read-only.
-import { useMemo, useState } from 'react';
-import { Alert, Box, Button, Typography } from '@mui/material';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Box, Button, FormControl, InputLabel, MenuItem, Select, Typography } from '@mui/material';
 import type { RulesApi, Scope } from './ProviderRulesApi';
 import { DraftBar, useRulesDraft } from './ProviderRulesDraft';
 import { RulesList } from './ProviderRulesSending';
@@ -62,6 +62,40 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
         </>
       )}
       {!state && !draft.loading && <DraftBar draft={draft} canWrite={false} />}
+    </Box>
+  );
+}
+
+// Numbers → Mailboxes: choose a mailbox to see and change its own sending rules.
+export function MailboxSendingRulesPicker({ api, loadMailboxes, canWrite, currency }: {
+  api: RulesApi;
+  loadMailboxes: () => Promise<Array<{ id: string; label: string }>>;
+  canWrite: boolean;
+  currency?: string;
+}) {
+  const [mailboxes, setMailboxes] = useState<Array<{ id: string; label: string }> | null>(null);
+  const [chosen, setChosen] = useState('');
+  useEffect(() => {
+    let live = true;
+    loadMailboxes().then((items) => { if (live) setMailboxes(items); }).catch(() => { if (live) setMailboxes([]); });
+    return () => { live = false; };
+  }, [loadMailboxes]);
+  if (!mailboxes || mailboxes.length === 0) return null;
+  const mailbox = mailboxes.find((item) => item.id === chosen);
+  return (
+    <Box>
+      <Typography variant="h5" component="h2" sx={{ mb: 1 }}>Sending rules for a mailbox</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        A mailbox can narrow your organization's sending rules for the faxes sent from it.
+      </Typography>
+      <FormControl size="small" sx={{ minWidth: 260, mb: 2 }}>
+        <InputLabel id="mailbox-rules-picker">Mailbox</InputLabel>
+        <Select labelId="mailbox-rules-picker" label="Mailbox" value={chosen} inputProps={{ 'aria-label': 'Mailbox' }}
+          onChange={(event) => setChosen(event.target.value)}>
+          {mailboxes.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+        </Select>
+      </FormControl>
+      {mailbox && <MailboxSendingRules key={mailbox.id} api={api} mailbox={mailbox} canWrite={canWrite} currency={currency} />}
     </Box>
   );
 }

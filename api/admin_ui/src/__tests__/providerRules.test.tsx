@@ -298,6 +298,9 @@ describe('held faxes and why a fax took its route', () => {
     expect(screen.getByText('Attempt 1: Sinch (UK)')).toBeTruthy();
     expect(screen.getByText(/^Dialed the recipient's approved alternate number \+448005550100 instead of \+442071234567, approved by Jane Smith on .*2026 \(‘same intake, confirmed by phone’\)\. The recipient pays for calls to this number\.$/)).toBeTruthy();
     expect(screen.getByText('About $0.031 (estimate)')).toBeTruthy();
+    // The whole trace, replayed from the fax's stored facts, not only the steps kept with the decision.
+    fireEvent.click(screen.getByText('Every rule Faxbot read for this fax'));
+    expect(screen.getByText('Destination country is did not match.')).toBeTruthy();
   });
 });
 

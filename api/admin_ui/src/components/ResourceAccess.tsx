@@ -55,6 +55,30 @@ import type { EmailConnector } from '../api/deliveryTypes';
 import type { Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import { providerLabel } from '../providerLabels';
+import { NO_RECEIVING_OPTIONS, rulesApiFor, type ReceivingOptions } from './ProviderRulesApi';
+import { ReceivedTry, ReceivingOptionsFields, type Named } from './ProviderRulesReceiving';
+import { receivingSentence } from './ProviderRulesText';
+
+const OPTION_KEYS = Object.keys(NO_RECEIVING_OPTIONS) as Array<keyof ReceivingOptions>;
+
+// A number rule's receiving options, with today's behaviour for any the server does not send.
+function optionsOf(rule: InboundRule): ReceivingOptions {
+  const options = { ...NO_RECEIVING_OPTIONS } as Record<string, unknown>;
+  for (const key of OPTION_KEYS) if (rule[key] !== undefined && rule[key] !== null) options[key] = rule[key];
+  return options as unknown as ReceivingOptions;
+}
+
+function hasOptions(rule: InboundRule): boolean {
+  return Object.keys(changedOptions(NO_RECEIVING_OPTIONS, optionsOf(rule))).filter((key) => key !== 'position').length > 0;
+}
+
+function changedOptions(before: ReceivingOptions, after: ReceivingOptions): Partial<ReceivingOptions> {
+  const changed: Record<string, unknown> = {};
+  for (const key of OPTION_KEYS) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changed[key] = after[key];
+  }
+  return changed as Partial<ReceivingOptions>;
+}
 
 // Who has access is under Access; mailboxes and fax numbers are under Numbers.
 export type ResourceAccessSection = 'assignments' | 'mailboxes' | 'numbers';
@@ -394,7 +418,11 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
   const { data, state, load, reload } = useSection<{ rules: InboundRule[]; mailboxes: AccessMailbox[] }>(client, fetcher);
   const [carried, setCarried] = useState<CarriedNumber[]>([]);
   const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
-  const [draft, setDraft] = useState<{ ruleId: string | null; toNumber: string; mailboxId: string } | null>(null);
+  const [draft, setDraft] = useState<{ ruleId: string | null; toNumber: string; mailboxId: string; options: ReceivingOptions } | null>(null);
+  const [showOptions, setShowOptions] = useState(false);
+  // Accounts that receive faxes and the installation's time zone, for the receiving options.
+  const [receivingAccounts, setReceivingAccounts] = useState<Named[]>([]);
+  const [timeZone, setTimeZone] = useState("Faxbot's time zone");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -407,6 +435,14 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
     ]);
     setCarried(settings.status === 'fulfilled' && settings.value ? carriedNumbers(settings.value) : []);
     setConnectors(email.status === 'fulfilled' ? email.value.connectors : null);
+    const zone = settings.status === 'fulfilled' ? settings.value?.installation?.time_zone : undefined;
+    if (zone) setTimeZone(zone);
+    if (canReadSettings) {
+      rulesApiFor(client).accounts()
+        .then((accounts) => setReceivingAccounts(accounts.accounts.filter((account) => account.receives)
+          .map((account) => ({ key: account.key, label: account.label }))))
+        .catch(() => setReceivingAccounts([]));
+    }
   }, [client, canReadSettings]);
   useEffect(() => { void loadExtras(); }, [loadExtras]);
 
@@ -439,14 +475,17 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
     setSaved(null);
     try {
       const rule = draft.ruleId ? data.rules.find((r) => r.id === draft.ruleId) : undefined;
+      // Only the receiving options that changed are sent, so a number rule without options stays as it was.
+      const changes = changedOptions(rule ? optionsOf(rule) : NO_RECEIVING_OPTIONS, draft.options);
       // The number is sent as typed; the server saves it in international form.
       const result = rule
         ? await client.updateInboundRule(rule.id, {
           ...(draft.toNumber.trim() !== rule.to_number ? { to_number: draft.toNumber.trim() } : {}),
           ...(draft.mailboxId !== rule.mailbox_id ? { mailbox_id: draft.mailboxId } : {}),
+          ...changes,
           version: rule.version,
         })
-        : await client.createInboundRule({ to_number: draft.toNumber.trim(), mailbox_id: draft.mailboxId });
+        : await client.createInboundRule({ to_number: draft.toNumber.trim(), mailbox_id: draft.mailboxId, ...changes });
       const mailbox = data.mailboxes.find((m) => m.id === draft.mailboxId)?.label;
       const number = result?.rule?.to_number;
       setDraft(null);
@@ -464,8 +503,9 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
   const choose = (row: NumberRow) => {
     setError(null);
     setSaved(null);
-    setDraft(row.rule ? { ruleId: row.rule.id, toNumber: row.rule.to_number, mailboxId: row.rule.mailbox_id }
-      : { ruleId: null, toNumber: row.number, mailboxId: '' });
+    setShowOptions(Boolean(row.rule && hasOptions(row.rule)));
+    setDraft(row.rule ? { ruleId: row.rule.id, toNumber: row.rule.to_number, mailboxId: row.rule.mailbox_id, options: optionsOf(row.rule) }
+      : { ruleId: null, toNumber: row.number, mailboxId: '', options: NO_RECEIVING_OPTIONS });
   };
 
   return (
@@ -475,7 +515,8 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
         onRefresh={() => void reloadAll()} busy={state === 'loading'}>
         {canManage && (
           <Button variant="contained" startIcon={<AddIcon />} disabled={state !== 'ready' || !data?.mailboxes.length}
-            onClick={() => { setError(null); setSaved(null); setDraft({ ruleId: null, toNumber: '', mailboxId: '' }); }}>
+            onClick={() => { setError(null); setSaved(null); setShowOptions(false);
+              setDraft({ ruleId: null, toNumber: '', mailboxId: '', options: NO_RECEIVING_OPTIONS }); }}>
             Add number
           </Button>
         )}
@@ -522,6 +563,14 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
                     <TableCell>
                       {row.rule ? row.rule.mailbox_label
                         : <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 260 }}>{NO_MAILBOX}</Typography>}
+                      {row.rule && hasOptions(row.rule) && (
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ maxWidth: 360 }}>
+                          {receivingSentence({ ...row.rule }, {
+                            account: (key) => receivingAccounts.find((account) => account.key === key)?.label ?? key,
+                            connector: (id) => connectors?.find((connector) => connector.id === id)?.name ?? 'another email connector',
+                          })}
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>{emailText(row.number)}</TableCell>
                     <TableCell>
@@ -549,6 +598,11 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
             </Table>
           </TableContainer>
         )}
+      {state === 'ready' && rows.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <ReceivedTry api={rulesApiFor(client)} accounts={receivingAccounts} timeZone={timeZone} />
+        </Box>
+      )}
       {!canReadSettings && state === 'ready' && (
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
           Numbers without a mailbox are shown only to people who can see settings.
@@ -564,6 +618,16 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
               type="tel" placeholder={numberPlaceholder(numberFormat)} helperText={numberHint(numberFormat, 'The number faxes are sent to')} />
             <SelectField label="Mailbox" value={draft.mailboxId} onChange={(mailboxId) => setDraft({ ...draft, mailboxId })}
               options={data.mailboxes.map((m) => ({ value: m.id, label: m.label }))} />
+            <Button size="small" sx={{ alignSelf: 'flex-start', mt: 1 }} onClick={() => setShowOptions(!showOptions)}>
+              {showOptions ? 'Fewer choices' : 'More choices: account, sender, times, email, urgency'}
+            </Button>
+            {showOptions && (
+              <Box sx={{ mt: 1 }}>
+                <ReceivingOptionsFields value={draft.options} onChange={(options) => setDraft({ ...draft, options })}
+                  accounts={receivingAccounts} timeZone={timeZone}
+                  connectors={(connectors ?? []).map((connector) => ({ key: connector.id, label: connector.name }))} />
+              </Box>
+            )}
           </>
         )}
       </FormDialog>

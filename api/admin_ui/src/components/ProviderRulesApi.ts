@@ -338,6 +338,8 @@ export interface FaxRoute {
   sentence: string;
   attempts: RouteAttempt[];
   hold: Hold | null;
+  // Every rule, from replaying the fax's stored facts under the rules it was accepted with.
+  trace?: TraceStep[];
 }
 
 // -- provider accounts -----------------------------------------------------------------------------

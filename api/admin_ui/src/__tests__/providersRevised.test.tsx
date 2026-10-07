@@ -77,7 +77,7 @@ describe('Providers in the panel', () => {
     fireEvent.click(providers);
     const list = document.getElementById('nav-providers') as HTMLElement;
     const names = within(list).getAllByRole('link').map((link) => link.textContent);
-    expect(names).toEqual(['In use', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
+    expect(names).toEqual(['In use', 'Rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
     expect(within(list).getByRole('link', { name: 'Add or change a provider' }).getAttribute('href')).toBe('#/system/setup');
     // A provider not in use still opens at its address.
     window.location.hash = '#/providers/phaxio';
