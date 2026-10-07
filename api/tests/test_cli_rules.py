@@ -253,6 +253,8 @@ def test_rules_read_as_the_same_sentences_as_the_console(monkeypatch):
     names = rules_module.Names(fixture['names'])
     for case in fixture['cases']:
         assert rules_module.rule_sentence(case['rule'], names) == case['sentence']
+    # The console's rule editor offers a condition for each of these (providerRules.test.tsx).
+    assert list(rules_module.CONDITION_FIELDS) == fixture['cli_condition_fields']
     # Without a name from the fixture, countries are named as the console's browser names them.
     assert rules_module.Names().country('GB') in {'United Kingdom', 'GB'}
 

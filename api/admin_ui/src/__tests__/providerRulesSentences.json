@@ -1,5 +1,6 @@
 {
   "about": "Provider rules in words. The console (ProviderRulesText.ts) and the faxbot command (cli/commands/rules.py) must both produce each sentence exactly. Every condition, action and setting appears at least once.",
+  "cli_condition_fields": ["to-number", "to-list", "to-prefix", "to-country", "to-region", "partner", "own-number", "approved-alternate", "in-site-country", "from-person", "from-key", "from-group", "from-mailbox", "from-site", "workflow", "pages-over", "pages-under", "larger-than-mb", "case-packet", "urgent", "real-call", "label", "days", "between", "site-time"],
   "names": {
     "accounts": {"sip": "Telnyx", "sinch-uk": "Sinch (UK)", "humblefax": "HumbleFax", "sip-leeds": "Leeds trunk (Gamma)"},
     "lists": {"uk-clinics": "UK clinics", "hospitals": "Hospitals"},
