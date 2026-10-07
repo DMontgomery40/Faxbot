@@ -229,12 +229,15 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     from ..hylafax_records import sslfax_savings
     sslfax = sslfax_savings(routes, engine, since=since, days=days)
     own = own_numbers(routes, engine, since=since, days=days)
+    # Pages saved by packing several pages onto long pages, and blank space left out (pages/).
+    from ..pages.views import savings as page_savings
+    packing = page_savings(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, direct, packets, sslfax, own):
+    for part in (together, direct, packets, sslfax, own, packing):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'direct_delivery': direct,
-            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total,
+            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'packing': packing, 'total': total,
             'total_sentence': total_sentence(total, days)}
 
 

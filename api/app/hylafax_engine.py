@@ -763,6 +763,8 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported fax engine job')
     password = engine_secrets(values)['submit_password']
+    from .conversion import fax_image_resolution
+    standard = fax_image_resolution(tiff_path) == 'standard'
     session = ftplib.FTP()
     prepared = PreparedJob(session, tag=tag)
     try:
@@ -788,7 +790,8 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             'JPARM MAXTRIES 1',
             f'JPARM LASTTIME {LAST_TIME}',
             f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
-            f'JPARM VRES {196 if settings is None or settings.fine else 98}',
+            # A document that is really standard resolution goes at standard (pages/resolution.py).
+            f'JPARM VRES {98 if standard or (settings is not None and not settings.fine) else 196}',
             f'JPARM USESSLFAX {"NO" if not getattr(values, "sip_sslfax_enabled", True) else "YES"}',
             f'JPARM DOCUMENT {document}',
         ]

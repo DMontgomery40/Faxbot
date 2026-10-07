@@ -361,25 +361,35 @@ def store_document(data, inbound_fax_id, *, provider='The provider'):
     return StoredArtifact(stored, digest, len(data), pages)
 
 
-def convert_tiff(tiff_path, inbound_fax_id):
-    """Convert a retained SIP TIFF to a stored PDF; the TIFF stays for a later retry."""
+def convert_tiff(tiff_path, inbound_fax_id, *, engine=None):
+    """Convert a retained SIP TIFF to a stored PDF; the TIFF stays for a later retry. With ``engine``, a fax
+    whose long pages were split back into the original pages is recorded (pages/receiving.py)."""
     from ..conversion import DocumentConversionError, tiff_to_pdf
     directory = _settings().fax_data_dir
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix='.inbound-', suffix='.pdf')
     os.close(descriptor)
+    # Long pages another Faxbot packed come back as the original pages (pages/unpack.py); the received image
+    # itself stays exactly as it arrived.
+    from ..pages.receiving import split_for_delivery
+    split = split_for_delivery(tiff_path, directory)
     try:
         try:
-            tiff_to_pdf(tiff_path, temporary)
+            tiff_to_pdf(split.path if split else tiff_path, temporary)
         except DocumentConversionError:
             raise InvalidDocument('The received fax image could not be turned into a PDF.') from None
         with open(temporary, 'rb') as handle:
             data = handle.read()
     finally:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-    return store_document(data, inbound_fax_id, provider='The SIP trunk')
+        for path in (temporary, split.path if split else None):
+            try:
+                if path:
+                    os.unlink(path)
+            except OSError:
+                pass
+    artifact = store_document(data, inbound_fax_id, provider='The SIP trunk')
+    if split and engine is not None:
+        split.record(engine, inbound_fax_id)
+    return artifact
 
 
 def discard(artifact, completion):

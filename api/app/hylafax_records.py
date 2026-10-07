@@ -183,6 +183,18 @@ class FaxEngineRecords:
             return row['id']
         return self._write(apply)
 
+    def record_page_capability(self, *, call_key, values, job_id=None, number=None, engine='hylafax', now=None):
+        """What the other machine said it accepts on one sent call (fax_negotiation.page_capability): its
+        longest and widest page, fine resolution, error correction, scan line time, and the call's measured
+        time between pages. One row per call in page_capability_observations (migration 0028), never
+        rewritten; evidence only, used by dense pages (``pages``)."""
+        from .pages.capability import PageRecordError, records_for
+        try:
+            return records_for(self.engine).record_observation(number, source=call_key, engine=engine,
+                                                               values=values, job_id=job_id, now=now)
+        except PageRecordError:
+            raise EngineRecordError('Fax engine record could not be saved.') from None
+
     def for_call(self, direction, call_key):
         """The engine record for one call, or None."""
         table = self._table('fax_engine_calls')
