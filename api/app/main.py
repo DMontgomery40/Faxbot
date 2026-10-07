@@ -30,6 +30,7 @@ from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .hylafax_http import router as hylafax_router
 from .pages.http import router as pages_router
+from .pages import friendly as fax_friendly
 from .freeswitch_service import originate_txfax, fs_cli_available
 import hmac
 import hashlib
@@ -1840,6 +1841,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             file, job_id=job_id, data_dir=settings.fax_data_dir,
             max_bytes=settings.max_file_size_mb * 1024 * 1024,
             requires_tiff=requires_tiff,
+            # Lighten shaded areas and remove specks on documents you send (pages/friendly.py), when on.
+            friendly=fax_friendly.Request('documents') if fax_friendly.documents_on(revision.values) else None,
         )
     except UploadPreparationError as error:
         raise HTTPException(error.status_code, detail=str(error)) from None
@@ -1870,8 +1873,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             **({'send_by_call': 1} if send_by_call else {}),
             # Goes before other faxes waiting for the same room (capacity.py).
             **({'urgent': 1} if urgent else {}),
-        }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
-            manager.store.engine, job_id, hold, identity.actor)))
+        }, request_identity=request_identity, also=fax_friendly.acceptance_step(
+            job_id, prepared.friendly, None if hold is None else batching_acceptance.recorder(
+                manager.store.engine, job_id, hold, identity.actor))))
     except IdempotentReplay as replay:
         prepared.cleanup()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))

@@ -420,13 +420,17 @@ def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
 FAX_IMAGE_MODE = 0o640
 
 
-def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False) -> Tuple[int, str]:
+def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False,
+                friendly=None) -> Tuple[int, str]:
     """Rasterize a validated PDF to real Group 4 fax TIFF at 204 by 196 DPI (mode FAX_IMAGE_MODE).
 
     ``match_resolution``: a document that is really standard resolution comes out at 204 by 98
     (pages/resolution.py). Off by default: an accepted fax's own image stays fine, because faxes sent
     together share one call and the built-in engine is not reliable with mixed resolutions in a call;
-    each single send matches its resolution at send time (pages/sending.py)."""
+    each single send matches its resolution at send time (pages/sending.py).
+
+    ``friendly``: a ``pages.friendly.Request`` for fax-friendly pages (light shading left out, specks
+    removed; ``fax_friendly_pages``); its ``result`` says what changed. Off (None) by default."""
     pages = _inspect_pdf(pdf_path, raster=True)
     executable = shutil.which("gs")
     if executable is None:
@@ -450,6 +454,8 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
                     actual_pages = sum(1 for _ in _tiff_frames(image))
             if actual_pages != pages:
                 raise ValueError("Incomplete raster output")
+            if friendly is not None:
+                fax_friendly_pages(pdf_path, temporary, friendly, executable)
             if match_resolution:
                 from .pages.resolution import standard_frames
                 standard = standard_frames(read_fax_frames(temporary) or [])
@@ -459,6 +465,14 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None
     return pages, tiff_path
+
+
+def fax_friendly_pages(pdf_path: str, tiff_path: str, request, executable: str) -> None:
+    """The fax-friendly hook (pages/friendly.py): Ghostscript draws ``pdf_path`` again in gray, and the fax image
+    it just wrote at ``tiff_path`` loses its light shading and specks, in place. It never fails the conversion:
+    when anything goes wrong the image stays as Ghostscript drew it and ``request.result`` stays None."""
+    from .pages import friendly
+    friendly.apply(pdf_path, tiff_path, request, gs=executable)
 
 
 def fax_image_resolution(tiff_path: str) -> Optional[str]:

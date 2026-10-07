@@ -38,6 +38,7 @@ config.attributes["schema_capacity"] = importlib.import_module(package + ".schem
 config.attributes["schema_history"] = importlib.import_module(package + ".schema_history")
 config.attributes["schema_negotiation"] = importlib.import_module(package + ".schema_negotiation")
 config.attributes["schema_dense_pages"] = importlib.import_module(package + ".schema_dense_pages")
+config.attributes["schema_friendly_pages"] = importlib.import_module(package + ".schema_friendly_pages")
 
 
 def migrate(connection):

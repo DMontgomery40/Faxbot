@@ -36,6 +36,13 @@ const routeLabel = (id: string) => providerLabel(id);
 
 // One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
 export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
+// Fax-friendly pages (pages/friendly.py): off by default because it changes what the reader sees; the measured saving
+// comes from Faxbot's benchmark (scripts/fax_friendly_benchmark.py).
+export const FRIENDLY_LABEL = 'Lighten shaded areas and remove specks on documents you send';
+export const FRIENDLY_HELP = 'Shaded table rows, tinted form fields and gray scan backgrounds take most of a page\'s time '
+  + 'on the line: in Faxbot\'s tests a page with a shaded table went from 61 to 12 seconds, and a gray scanned page '
+  + 'from over 3 minutes to 37 seconds. Shaded areas then print white and photographs lose their lightest parts; '
+  + 'black text and anything darker stay exactly as they were.';
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
@@ -54,6 +61,7 @@ export function deliveryEditorValues(data: Settings): Values {
     values.outbound_routes = parseRoutes(data.routing.outbound_routes).join(',');
     values.route_min_success_percent = data.routing.min_success_percent;
     values.local_delivery_enabled = data.routing.local_delivery ?? true;
+    values.fax_friendly_documents = data.routing.fax_friendly_documents ?? false;
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -236,6 +244,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
             onChange={(checked) => onChange('local_delivery_enabled', checked)}
             helper={LOCAL_DELIVERY_HELP} />
+          <SwitchField label={FRIENDLY_LABEL} checked={Boolean(form.fax_friendly_documents)}
+            onChange={(checked) => onChange('fax_friendly_documents', checked)}
+            helper={FRIENDLY_HELP} />
           <RoutePagesPanel client={client} canWrite={canWrite}
             routes={[outbound, ...parseRoutes(form.outbound_routes)]} />
         </ResponsiveFormSection>

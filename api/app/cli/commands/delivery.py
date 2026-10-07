@@ -516,16 +516,28 @@ def show_plans(out, result):
                   title=f"{plan['name']}, {money(plan.get('monthly_fee'))} a month")
 
 
+def _read_friendly(api):
+    return api.get('/routing/recommendations/fax-friendly')
+
+
+def show_friendly(out, result):
+    """Lightening shaded areas and removing specks: what it would save on your recent faxes, or what it saved."""
+    out.line(result.get('sentence') or 'Faxbot has no recent faxes to check yet.')
+    if result.get('action'):
+        out.line(result['action'] + " Or run: faxbot system settings set fax_friendly_documents=on")
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
     ('plans', 'Plans', _read_plans, show_plans),
+    ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
 ]
 
 
 def routing_recommendations():
-    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee."""
+    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, whether each monthly plan is worth its fee, and how much time lightening shaded areas would save on your recent faxes."""
     api = state.api()
     result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
 

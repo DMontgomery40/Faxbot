@@ -112,7 +112,11 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     trim_ok = mode == 'image' and cap.ecm is False and records.trim_allowed(number)
     # A document that is really standard resolution goes at standard (lossless; Faxbot's own engines only).
     match_ok = mode == 'image'
-    if not packing_ok and not trim_ok and not match_ok:
+    # Lighten shaded areas and remove specks (pages/friendly.py), when that setting is on: a cloud provider that
+    # takes a PDF gets the lightened pages; Faxbot's own engines send the fax image lightened at acceptance.
+    from . import friendly as fax_friendly
+    friendly = fax_friendly.Request('documents') if mode != 'image' and fax_friendly.documents_on(values) else None
+    if not packing_ok and not trim_ok and not match_ok and friendly is None:
         return None
     root = Path(str(pdf)).parent
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
@@ -122,7 +126,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         if source is None:
             # A cloud provider takes a PDF: rasterize the fax's PDF to pack its pages, then send them as a PDF.
             raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
-            conversion.pdf_to_tiff(str(pdf), str(raster))
+            conversion.pdf_to_tiff(str(pdf), str(raster), friendly=friendly)
             source = raster
         frames = conversion.read_fax_frames(str(source))
         if not frames:
@@ -154,7 +158,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                                           dense_allowed=packing_ok, codec=codec, card=route_card,
                                           boundary_seconds=cap.boundary_seconds, describe_dense=describe_dense)
         layout = None if choice['layout'] == 'normal' else choice['layout']
-        if layout is None and not trimmed_pages and matched is None:
+        lightened = friendly is not None and friendly.result is not None and friendly.result.pages_changed > 0
+        if layout is None and not trimmed_pages and matched is None and not lightened:
             return None
         pages = choice['pages']
         conversion.write_fax_tiff(pages, str(out_tiff))
@@ -172,12 +177,15 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             before, after = conversion.fax_page_bits(str(source)), conversion.fax_page_bits(str(out_tiff))
             if before and after:
                 seconds = (seconds or 0) + max(0, (sum(before) - sum(after)) // LINE_BITS_PER_SECOND)
-        records.record_change(
-            job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=len(frames),
-            sent_pages=len(pages), capability=cap, billing=_billing(route_card) if layout is not None else None,
-            trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None,
-            resolution='standard' if matched is not None else None, seconds_saved=seconds, layout=layout,
-            reason=choice['reason'], now=now)
+        if layout is not None or trimmed_pages or matched is not None:
+            records.record_change(
+                job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=len(frames),
+                sent_pages=len(pages), capability=cap, billing=_billing(route_card) if layout is not None else None,
+                trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None,
+                resolution='standard' if matched is not None else None, seconds_saved=seconds, layout=layout,
+                reason=choice['reason'], now=now)
+        if lightened:
+            fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=friendly, now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
                              len(frames), len(pages), trimmed_pages)
     except BaseException:

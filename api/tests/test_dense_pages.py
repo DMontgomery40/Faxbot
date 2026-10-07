@@ -655,7 +655,7 @@ def _downgrade(engine, revision):
 
 
 def test_dense_pages_is_head_after_negotiation():
-    assert schema.HEAD == schema_dense_pages.REVISION == '0028_dense_pages'
+    assert schema.DENSE_PAGES == schema_dense_pages.REVISION == '0028_dense_pages'
     assert schema.NEGOTIATION == '0023_negotiation'
 
 

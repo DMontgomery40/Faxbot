@@ -60,6 +60,7 @@ import type {
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
+  FaxFriendlyRecommendation,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -1206,6 +1207,11 @@ class AdminAPIClient {
   // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
   async getPlanRecommendations(): Promise<PlanRecommendations> {
     return this.json('/routing/recommendations/plans');
+  }
+
+  // Whether lightening shaded areas and removing specks would have saved time on recent faxes, or what it saved.
+  async getFaxFriendlyRecommendation(): Promise<FaxFriendlyRecommendation> {
+    return this.json('/routing/recommendations/fax-friendly');
   }
 
   // The newest cases this installation sent packets for, with recipient and counts.

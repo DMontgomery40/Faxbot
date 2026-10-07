@@ -112,6 +112,20 @@ describe('Settings delivery routes', () => {
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
   });
+
+  it('keeps lightening shaded areas off by default, shows its measured saving and saves turning it on', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const toggle = within(routes).getByRole('checkbox', {
+      name: 'Lighten shaded areas and remove specks on documents you send' }) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(routes.textContent).toContain('a page with a shaded table went from 61 to 12 seconds');
+    fireEvent.click(toggle);
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: true });
+  });
 });
 
 describe('Settings direct delivery', () => {

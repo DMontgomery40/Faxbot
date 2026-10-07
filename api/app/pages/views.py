@@ -51,8 +51,13 @@ def sent_view(engine, job_id, root=None):
         return None
     change = records_for(engine).change_for_job(job_id)
     resolution = (change or {}).get('resolution')
+    # Shaded areas lightened and specks removed (pages/friendly.py, migration 0042).
+    from .friendly import call_rate, run_for, seconds_at, sent_sentence
+    lightened = run_for(engine, job_id)
+    rate = call_rate(engine, job_id) if lightened else None
     sentences = [text for text in (packed_sentence(change), trimmed_sentence(change),
-                                   RESOLUTION_SENTENCE if resolution == 'standard' else None) if text]
+                                   RESOLUTION_SENTENCE if resolution == 'standard' else None,
+                                   sent_sentence(lightened, rate)) if text]
     if not sentences:
         return None
     change = change or {}
@@ -60,7 +65,11 @@ def sent_view(engine, job_id, root=None):
             'sent_pages': change.get('sent_pages'),
             'page_limit': change.get('page_limit'), 'limit_learned_at': iso(change.get('limit_learned_at')),
             'pages_saved': change.get('pages_saved'), 'trimmed_pages': change.get('trimmed_pages'),
-            'seconds_saved': change.get('seconds_saved'), 'resolution': resolution, 'sentences': sentences}
+            'seconds_saved': change.get('seconds_saved'), 'resolution': resolution,
+            'lightened': None if lightened is None else {
+                'pages_changed': lightened['pages_changed'], 'seconds_saved': seconds_at(lightened, rate),
+                'at': iso(lightened['created_at'])},
+            'sentences': sentences}
 
 
 def capability_sentence(cap):

@@ -470,6 +470,21 @@ export interface PlanAdvice {
   windows: PlanWindow[];
 }
 
+// Costs → Recommendations: lightening shaded areas and removing specks on documents you send
+// (/routing/recommendations/fax-friendly). Seconds are estimates at full fax speed.
+export interface FaxFriendlyRecommendation {
+  enabled: boolean;
+  label: string;
+  measured_sentence: string;
+  days: number;
+  recommend: boolean;
+  faxes_checked: number;
+  faxes_changed: number;
+  seconds_saved: number;
+  sentence: string | null;
+  action: string | null;
+}
+
 export interface PlanRecommendations {
   days: number;
   estimate: true;

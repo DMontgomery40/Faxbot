@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, StrictBool
+import sqlalchemy as sa
 
 from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
@@ -118,3 +119,32 @@ async def put_route_pages(route: str, payload: RoutePages, request: Request,
     from ..audit import audit_event
     audit_event('route_page_settings', route=route, **{name: changes[name] for name in sorted(changes)})
     return result
+
+
+@router.get('/routing/recommendations/fax-friendly', dependencies=[Depends(require_permission('settings:read'))])
+async def fax_friendly_recommendation(request: Request):
+    """Costs, Recommendations: whether lightening shaded areas and removing specks would have saved time on your
+    recent faxes (pages/friendly.py), or what it saved when it is on."""
+    from . import friendly
+    from .sending import how_sent
+    configuration = request.scope['faxbot.configuration'].active
+
+    def build():
+        from ..routing.background import installation_engine
+        engine, runtime = installation_engine(request.app)
+        if engine is None:
+            raise HTTPException(503, detail='Installation configuration is not ready.')
+        values = configuration.values
+        mode = None
+        try:
+            profile_id = configuration.profile_id('outbound')
+            if profile_id is not None:
+                mode = how_sent(runtime.manager.store.read_profile(profile_id).configuration)
+        except Exception:
+            mode = None
+        return friendly.recommendation(engine, values.fax_data_dir, enabled=friendly.documents_on(values),
+                                       how_sent=mode)
+    try:
+        return await run_lifecycle_step(build)
+    except sa.exc.SQLAlchemyError:
+        raise HTTPException(503, detail='Recommendations are unavailable. Try again.') from None

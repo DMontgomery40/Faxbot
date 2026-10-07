@@ -648,6 +648,10 @@ const consoleHandlers = [
   // Plans: no fax service with a monthly fee.
   http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
     empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
+  // Shaded areas and specks: no recent fax to check yet.
+  http.get('/routing/recommendations/fax-friendly', () => json({ enabled: false,
+    label: 'Lighten shaded areas and remove specks on documents you send', measured_sentence: '', days: 30,
+    recommend: false, faxes_checked: 0, faxes_changed: 0, seconds_saved: 0, sentence: null, action: null })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.

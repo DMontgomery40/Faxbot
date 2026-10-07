@@ -44,6 +44,8 @@ class PreparedDocument:
     pdf_path: str
     tiff_path: str | None
     pages: int
+    # The fax-friendly pages request (pages/friendly.py) when the setting was on; its result says what changed.
+    friendly: object = None
 
     def cleanup(self) -> None:
         """Remove this preparation's artifacts when acceptance is ruled out."""
@@ -56,7 +58,7 @@ def _display_name(filename: str | None) -> str:
     return name[:200].strip().strip(".") or "document"
 
 
-def _convert(source: Path, pdf: Path, tiff: Path | None, is_pdf: bool) -> int:
+def _convert(source: Path, pdf: Path, tiff: Path | None, is_pdf: bool, friendly=None) -> int:
     if is_pdf:
         pages = validate_pdf(str(source))
         source.replace(pdf)
@@ -64,19 +66,20 @@ def _convert(source: Path, pdf: Path, tiff: Path | None, is_pdf: bool) -> int:
         txt_to_pdf(str(source), str(pdf))
         pages = validate_pdf(str(pdf))
     if tiff is not None:
-        pdf_to_tiff(str(pdf), str(tiff))
+        pdf_to_tiff(str(pdf), str(tiff), friendly=friendly)
     return pages
 
 
 async def prepare_upload(
     upload: UploadFile, *, job_id: str, data_dir: str, max_bytes: int,
-    requires_tiff: bool,
+    requires_tiff: bool, friendly=None,
 ) -> PreparedDocument:
     """Stream, validate and prepare a PDF/TXT upload independently of its name.
 
     Errors contain no source filename, filesystem path or external tool output.
     Invalid input is 400/415, oversized input 413, operational failures 503.
     The request owns the UploadFile; this function owns its staging artifacts.
+    ``friendly``: a pages.friendly.Request for the fax image (only made when ``requires_tiff``).
     """
     if not re.fullmatch(r"[a-f0-9]{32}", job_id) or max_bytes <= 0:
         raise UploadPreparationError("Document preparation is unavailable.", status_code=503)
@@ -106,7 +109,7 @@ async def prepare_upload(
             is_pdf = header == b"%PDF"
 
             # CPU work and bounded external processes must not block the ASGI loop.
-            pages = await run_in_threadpool(_convert, source, pdf, tiff, is_pdf)
+            pages = await run_in_threadpool(_convert, source, pdf, tiff, is_pdf, friendly)
             final_pdf = root / f"{job_id}.pdf"
             final_tiff = root / f"{job_id}.tiff" if tiff is not None else None
             for staged, final in ((pdf, final_pdf), (tiff, final_tiff)):
@@ -119,6 +122,7 @@ async def prepare_upload(
             prepared = PreparedDocument(
                 original_name=_display_name(upload.filename), pdf_path=str(final_pdf),
                 tiff_path=str(final_tiff) if final_tiff else None, pages=pages,
+                friendly=friendly if tiff is not None else None,
             )
         complete = True
         return prepared
