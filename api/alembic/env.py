@@ -40,6 +40,8 @@ config.attributes["schema_negotiation"] = importlib.import_module(package + ".sc
 config.attributes["schema_shared_manifest"] = importlib.import_module(package + ".schema_shared_manifest")
 config.attributes["schema_tollfree"] = importlib.import_module(package + ".schema_tollfree")
 config.attributes["schema_dialed"] = importlib.import_module(package + ".schema_dialed")
+config.attributes["schema_routing_rules"] = importlib.import_module(package + ".schema_routing_rules")
+config.attributes["schema_receiving_rules"] = importlib.import_module(package + ".schema_receiving_rules")
 
 
 def migrate(connection):

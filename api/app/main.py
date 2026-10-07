@@ -77,6 +77,7 @@ from .access.configuration_access import configuration_write_receipt
 from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
+from .rules.http import router as rules_router
 from .intake.http import router as intake_router
 from .direct.http import router as direct_router
 from .cases.http import router as cases_router
@@ -185,6 +186,7 @@ app.include_router(authentication_router)
 app.include_router(management_router)
 app.include_router(routing_router)
 app.include_router(routing_predict_router)
+app.include_router(rules_router)
 app.include_router(intake_router)
 app.include_router(direct_router)
 app.include_router(cases_router)

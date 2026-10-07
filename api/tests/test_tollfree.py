@@ -44,8 +44,10 @@ def test_0026_follows_the_shared_manifest_and_adds_one_empty_table(database):  #
     after = snapshot(database)
     assert after['alembic_version'] == [{'version_num': schema.HEAD}]
     assert after['toll_free_approvals'] == []
-    assert {name: rows for name, rows in after.items() if name not in ('alembic_version', 'toll_free_approvals')} == {
-        name: rows for name, rows in before.items() if name != 'alembic_version'}
+    for name, rows in before.items():
+        if name != 'alembic_version':
+            # Later migrations add tables and nullable columns; compare what existed before, on its own columns.
+            assert ([{k: row[k] for k in rows[0]} for row in after[name]] == rows) if rows else after[name] == [], name
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
     _downgrade(database, '0025_shared_manifest')

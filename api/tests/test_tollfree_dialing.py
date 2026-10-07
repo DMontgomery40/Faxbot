@@ -631,8 +631,8 @@ def _columns(engine, table):
         return {column['name'] for column in sa.inspect(connection).get_columns(table)}
 
 
-def test_0027_is_head_and_adds_empty_columns_that_downgrade(toll):
-    assert schema.HEAD == schema_dialed.REVISION == '0027_dialed_number' and schema_dialed.TABLES == frozenset()
+def test_0027_adds_empty_columns_that_downgrade(toll):
+    assert schema.DIALED == schema_dialed.REVISION == '0027_dialed_number' and schema_dialed.TABLES == frozenset()
     job = accept(toll)
     assert toll.delivery.dial_state(job)['alternate'] is None
     with toll.engine.connect() as connection:

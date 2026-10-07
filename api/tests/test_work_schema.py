@@ -25,7 +25,7 @@ def without_work_catalogue(name, rows):
 
 
 def without_later_access_changes(name, rows):
-    """Rows without what 0018, 0019 and 0020 change, so both sides of an upgrade compare.
+    """Rows without what 0018 to 0021 and 0030 change, so both sides of an upgrade compare.
 
     0018 removes the Host Operator's terminal row; 0019 removes three permissions, every role row and
     key limit naming them, and records that in one audit row.
@@ -46,6 +46,9 @@ def without_later_access_changes(name, rows):
     if name == 'delivery_destinations':
         # 0021 adds a nullable column to every recipient; existing rows hold NULL.
         return [{key: value for key, value in row.items() if key != 'max_calls'} for row in rows]
+    if name in ('inbound_imports', 'sip_call_records'):
+        # 0030 adds the receiving account and the call's trunk; existing rows hold NULL.
+        return [{key: value for key, value in row.items() if key not in ('account_key', 'trunk_key')} for row in rows]
     return rows
 
 

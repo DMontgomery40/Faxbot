@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 import sqlalchemy as sa
 
-from api.app import schema, schema_inbound
+from api.app import schema, schema_inbound, schema_receiving_rules
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
 from api.tests.test_work_schema import without_later_access_changes, without_work_catalogue
@@ -50,11 +50,15 @@ def test_0010_upgrade_preserves_0009_state_and_validates_frozen_shape(database):
             c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
         assert {f['name'] for f in inspector.get_foreign_keys('inbound_imports')} == {
             'fk_inbound_imports_inbound_fax'}
+        # 0030 adds an index on the receiving account.
         assert {(i['name'], tuple(i['column_names']), bool(i['unique']))
                 for i in inspector.get_indexes('inbound_imports')} == {
-            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES}
+            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES} | {
+            (name, columns, unique) for name, table, columns, unique in schema_receiving_rules.ADDED_INDEXES
+            if table == 'inbound_imports'}
         columns = {c['name']: c for c in inspector.get_columns('inbound_imports')}
-        assert set(columns) == {column.name for column in table.columns}
+        # 0030 adds the receiving account.
+        assert set(columns) == {column.name for column in table.columns} | {'account_key'}
         assert not columns['imported_at']['nullable'] and columns['source_received_at']['nullable']
         assert not columns['inbound_fax_id']['nullable'] and not columns['revision']['nullable']
     schema.upgrade_schema(database)
