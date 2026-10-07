@@ -20,12 +20,14 @@ export const CHOICES: Choices = {
   keys: [{ id: 'k-scan', name: 'Scanner key' }],
   groups: [{ id: 'g-legal', name: 'Legal' }],
   mailboxes: [{ id: 'm-leeds', name: 'Leeds intake' }],
+  recipients: [{ id: 'd-county', name: 'County clinic' }],
 };
 
 export function organizationDocument(): RulesDocument {
   return {
     format: 1,
-    lists: { 'uk-clinics': { name: 'UK clinics', numbers: ['+441782684953'], prefixes: ['+4420'] }, labels: ['legal'] },
+    lists: { 'uk-clinics': { name: 'UK clinics', numbers: ['+441782684953'], prefixes: ['+4420'] } },
+    labels: ['legal'],
     regions: { north: { name: 'Northern England', prefixes: ['+44113'] } },
     sites: [{ key: 'leeds', name: 'Leeds office', country: 'GB', time_zone: 'Europe/London', mailboxes: ['m-leeds'], groups: [] }],
     workflows: [{ key: 'referrals', name: 'Referrals', mailboxes: [], labels: ['legal'] }],
@@ -178,9 +180,10 @@ export class FakeRules {
         { account: 'humblefax', label: 'HumbleFax', sentence: 'Skipped: the limit ‘Never send UK faxes by HumbleFax’ applies.',
           quote: null, origin: null, usable: false }],
         holds: [], dial: null, page_layout: 'Pages per sheet: as the receiving machine allows.',
-        trace: [{ scope: 'Organization', rule_id: 'r-uk', name: 'UK numbers go through Sinch', kind: 'route', matched: true, failed: null },
-          { scope: 'Organization', rule_id: 'r-x', name: 'Clinics use the trunk', kind: 'route', matched: false,
-            failed: 'The number is not in UK clinics.' }] };
+        trace: [{ kind: 'route', result: 'not_matched', scope: 'organization', revision: 1, rule_id: 'r-x',
+          rule_name: 'Clinics use the trunk', field: 'destination.lists', note: null },
+        { kind: 'route', result: 'matched', scope: 'organization', revision: 1, rule_id: 'r-uk', rule_name: 'UK numbers go through Sinch' },
+        { kind: 'preferred', result: 'not_applied', scope: 'organization', note: 'mandatory' }] };
     }
     if (path === '/access/inbound-rules/explain') {
       return { sentence: 'It would go to Front desk, marked urgent, with no email, because of the rule for +17208565062.',

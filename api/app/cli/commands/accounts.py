@@ -337,3 +337,41 @@ def accounts_health(key: str = typer.Argument(None, metavar='KEY', help="One acc
         for detail in result.get('details') or []:
             out.line(detail)
     state.out().result(result, human)
+
+
+# -- prices by where calls start (faxbot costs fax --to and costs rate-cards) ----------------------------
+
+def quote_command(to: str = typer.Option(..., '--to', metavar='NUMBER', help='The fax number to price.'),
+                  pages: int = typer.Option(1, '--pages', min=1, max=1000, help='Pages in the fax.'),
+                  from_site: str = typer.Option(None, '--from-site', metavar='SITE',
+                                                help="Price calls from this site's accounts first, such as leeds.")):
+    """What one fax would cost by each account your rules allow, from where its calls start. Nothing is sent."""
+    result = state.api().get('/routing/quote', params={'to': to, 'pages': pages, 'site': from_site})
+    state.out().result(result, lambda out: out.table(
+        ['Account', 'Calls from', 'Estimate', 'How it is priced'],
+        [[item['label'], item.get('origin_label') or '-',
+          f"About {money_amount(item['estimate'])}" if item.get('estimate') else 'Not priced yet', item.get('sentence') or '-']
+         for item in result.get('quotes') or []], empty='No account your rules allow can send to this number.'))
+
+
+def billing_text(row):
+    increment = 'whole minutes' if row['billing_increment_seconds'] == 60 else f"{row['billing_increment_seconds']}-second steps"
+    return f"{increment}, at least {row['minimum_seconds']} seconds" if row.get('minimum_seconds') else increment
+
+
+def origin_rows(out, card):
+    """A rate card's prices by where calls start, as the console's Prices & plans lists them."""
+    rows = card.get('rows') or []
+    if not rows:
+        return
+    out.line(f"{card['label']}: prices by where calls start")
+
+    def price(row):
+        parts = [f"{money_amount({'currency': row['currency'], 'amount': row[key]})} a {unit}"
+                 for key, unit in (('per_minute', 'minute'), ('per_page', 'page'), ('per_call', 'call'))
+                 if float(row.get(key) or 0) > 0]
+        return ', '.join(parts) or 'No charge'
+    out.table(['Calls from', 'To numbers starting with', 'Price', 'Billed in', 'Source'],
+              [[row['origin_label'], row['destination_prefix'], price(row), billing_text(row),
+                (row.get('source_url') or 'Entered here') + (f", read on {row['captured_on']}" if row.get('captured_on') else '')]
+               for row in rows])

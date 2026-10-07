@@ -80,6 +80,14 @@ function EditDialog({ title, open, onClose, onSave, valid, children }: {
 
 const nameOf = (items: Array<{ id: string; name: string }>, id: string) => items.find((item) => item.id === id)?.name ?? 'an unknown name';
 
+// A site's accounts: those it lists, then those whose own site names it.
+export function siteAccounts(site: Site, choices: Choices): string[] {
+  const label = (key: string) => choices.accounts.find((account) => account.key === key)?.label ?? key;
+  const listed = site.accounts ?? [];
+  const own = choices.accounts.filter((account) => account.site === site.key && !listed.includes(account.key)).map((account) => account.key);
+  return [...listed, ...own].map(label);
+}
+
 // -- sites and regions -----------------------------------------------------------------------------
 
 export function SitesAndRegions({ document, choices, editable, onSave }: {
@@ -125,7 +133,7 @@ export function SitesAndRegions({ document, choices, editable, onSave }: {
                     <TableCell>{item.time_zone || "Faxbot's time zone"}</TableCell>
                     <TableCell>{(item.mailboxes ?? []).map((id) => nameOf(choices.mailboxes, id)).join(', ') || '-'}</TableCell>
                     <TableCell>{(item.groups ?? []).map((id) => nameOf(choices.groups, id)).join(', ') || '-'}</TableCell>
-                    <TableCell>{choices.accounts.filter((account) => account.site === item.key).map((account) => account.label).join(', ') || '-'}</TableCell>
+                    <TableCell>{siteAccounts(item, choices).join(', ') || '-'}</TableCell>
                     <RowActions name={item.name} editable={editable} onEdit={() => setSite({ original: item, value: { ...item } })}
                       onRemove={() => void onSave({ ...document, sites: sites.filter((other) => other.key !== item.key) },
                         `Site “${item.name}” removed from your draft.`)} />
@@ -179,6 +187,9 @@ export function SitesAndRegions({ document, choices, editable, onSave }: {
             onChange={(mailboxes) => setSite({ ...site, value: { ...site.value, mailboxes } })} />
           <NamesPicker label="Groups that send from this site" options={choices.groups} value={site.value.groups ?? []}
             onChange={(groups) => setSite({ ...site, value: { ...site.value, groups } })} />
+          <NamesPicker label="Accounts its calls start from"
+            options={choices.accounts.map((account) => ({ id: account.key, name: account.label }))} value={site.value.accounts ?? []}
+            onChange={(accounts) => setSite({ ...site, value: { ...site.value, accounts } })} />
         </EditDialog>
       )}
       {region && (

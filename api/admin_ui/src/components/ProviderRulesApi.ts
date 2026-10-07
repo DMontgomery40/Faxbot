@@ -24,6 +24,8 @@ export interface DestinationCondition {
   prefixes?: string[];
   countries?: string[];
   regions?: string[];
+  // Saved recipients (Recipients), by id.
+  recipients?: string[];
   partner?: boolean;
   own_number?: boolean;
   approved_alternate?: boolean;
@@ -96,13 +98,17 @@ export interface RecipientList { name: string; numbers?: string[]; prefixes?: st
 export interface Region { name: string; countries?: string[]; prefixes?: string[] }
 export interface Site {
   key: string; name: string; country?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
+  // Accounts the site lists; accounts whose own site names it belong to it too.
+  accounts?: string[];
 }
 export interface Workflow { key: string; name: string; mailboxes?: string[]; labels?: string[] }
 
 export interface RulesDocument {
   format: 1;
-  // Named recipient groups, plus `labels`: the labels senders may attach to a fax.
-  lists?: { labels?: string[] } & Record<string, RecipientList | string[] | undefined>;
+  // Named recipient groups.
+  lists?: Record<string, RecipientList>;
+  // The labels senders may attach to a fax.
+  labels?: string[];
   regions?: Record<string, Region>;
   sites?: Site[];
   workflows?: Workflow[];
@@ -116,22 +122,17 @@ export function emptyDocument(): RulesDocument {
   return { format: 1, limits: [], routes: [] };
 }
 
-// The named recipient groups of a document, without its labels.
 export function recipientLists(document: RulesDocument): Record<string, RecipientList> {
-  const lists: Record<string, RecipientList> = {};
-  for (const [key, value] of Object.entries(document.lists ?? {})) {
-    if (key !== 'labels' && value && !Array.isArray(value)) lists[key] = value;
-  }
-  return lists;
+  return document.lists ?? {};
 }
 
 export function documentLabels(document: RulesDocument): string[] {
-  return document.lists?.labels ?? [];
+  return document.labels ?? [];
 }
 
 // A copy of the document with its recipient groups and labels replaced.
 export function withLists(document: RulesDocument, lists: Record<string, RecipientList>, labels: string[]): RulesDocument {
-  return { ...document, lists: { ...lists, ...(labels.length > 0 ? { labels } : {}) } };
+  return { ...document, lists, labels };
 }
 
 // -- scopes ---------------------------------------------------------------------------------------
@@ -198,6 +199,8 @@ export interface Choices {
   keys: Array<{ id: string; name: string }>;
   groups: Array<{ id: string; name: string }>;
   mailboxes: Array<{ id: string; name: string }>;
+  // Saved recipients (Recipients), for the "saved recipient" condition.
+  recipients?: Array<{ id: string; name: string }>;
 }
 
 export interface RulesState {
@@ -245,14 +248,22 @@ export interface ExplainRequest {
   scope?: string;
 }
 
+export type StepResult = 'matched' | 'not_matched' | 'unless' | 'not_reached' | 'not_applied';
+
+// One line of the trace (the engine's Step): a rule, what happened to it, and the first field that decided it.
 export interface TraceStep {
-  scope: string;
-  rule_id: string;
-  name: string;
-  kind: 'limit' | 'route';
-  matched: boolean;
-  // The first condition that did not match, in words.
-  failed: string | null;
+  kind: 'limit' | 'route' | 'preferred';
+  result: StepResult;
+  scope: ScopeKind;
+  // The mailbox's or workflow's name, for those scopes.
+  scope_name?: string | null;
+  revision?: number | null;
+  rule_id?: string | null;
+  rule_name?: string | null;
+  // The first condition that did not match, such as 'destination.countries'.
+  field?: string | null;
+  // Why a matching rule did not decide: 'mandatory', 'excluded', 'overridden'.
+  note?: string | null;
 }
 
 export interface ExplainRoute {

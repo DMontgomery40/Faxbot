@@ -5,6 +5,7 @@ import { ReceivedTry, ReceivingOptionsFields } from '../components/ProviderRules
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendOptions } from '../components/ProviderRulesSendFields';
 import { AddAsRuleButton } from '../components/ProviderRulesSuggest';
 import { WaitingForYouCard } from '../components/ProviderRulesHeld';
+import { OriginRates, TrunkPicker } from '../components/ProviderAccountsTrunks';
 import { NO_RECEIVING_OPTIONS, type ReceivingOptions } from '../components/ProviderRulesApi';
 import { FakeRules } from './providerRulesFake';
 
@@ -94,6 +95,37 @@ describe('Costs → Recommendations: Add as rule', () => {
     expect(saved.document.routes.map((rule) => rule.id)).toEqual(['r-faxes-to-44-numbers-go-through-sinch-uk', 'r-uk']);
     expect(fake.sent('POST', '/routing/rules/publish')).toEqual([]);
     expect(notice).toBe('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.');
+  });
+});
+
+describe('several trunks and prices by where calls start', () => {
+  it('shows a trunk picker only when there is more than one trunk', async () => {
+    const fake = new FakeRules();
+    const { unmount } = render(<TrunkPicker api={fake.api()} value={null} onChange={() => undefined} />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('combobox', { name: 'Trunk' })).toBeNull();
+    unmount();
+    fake.accounts.accounts.push({ ...fake.accounts.accounts[0], key: 'sip-leeds', label: 'Leeds trunk (Gamma)', primary: false });
+    let chosen = '';
+    render(<TrunkPicker api={fake.api()} value={null} onChange={(key) => { chosen = key; }} />);
+    expect((await screen.findByRole('combobox', { name: 'Trunk' })).textContent).toBe('Telnyx');
+    choose('Trunk', 'Leeds trunk (Gamma)');
+    expect(chosen).toBe('sip-leeds');
+  });
+
+  it('lists origin-rated prices with their source and the day they were read', () => {
+    render(<OriginRates cardLabel="Gamma SIP trunk" rows={[
+      { origin_label: 'Leeds office', destination_prefix: '+44113', currency: 'GBP', per_minute: '0.004', per_page: '0',
+        per_call: '0', billing_increment_seconds: 60, minimum_seconds: 60, source_url: 'https://example.com/gamma-rates',
+        captured_on: '2026-10-07' },
+      { origin_label: 'Anywhere', destination_prefix: '+44', currency: 'GBP', per_minute: '0.01', per_page: '0', per_call: '0.02',
+        billing_increment_seconds: 1, minimum_seconds: 0, source_url: null, captured_on: null },
+    ]} />);
+    const table = screen.getByRole('table', { name: 'Gamma SIP trunk prices by where calls start' });
+    expect(within(table).getByText('whole minutes, at least 60 seconds')).toBeTruthy();
+    expect(within(table).getByText('1-second steps')).toBeTruthy();
+    expect(within(table).getByText(/read on .*2026/)).toBeTruthy();
+    expect(within(table).getByText('Entered here')).toBeTruthy();
   });
 });
 

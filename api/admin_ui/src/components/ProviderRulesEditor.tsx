@@ -48,6 +48,8 @@ export const CONDITION_FIELDS: FieldSpec[] = [
     help: 'Two-letter country codes, such as GB, IE.' },
   { id: 'to-region', label: 'Number is in region', kind: 'choice-list', block: 'destination', key: 'regions',
     options: ({ document }) => Object.entries(document.regions ?? {}).map(([key, region]) => ({ value: key, label: region.name })) },
+  { id: 'to-recipient', label: 'Saved recipient is', kind: 'choice-list', block: 'destination', key: 'recipients',
+    options: ({ choices }) => (choices.recipients ?? []).map((recipient) => ({ value: recipient.id, label: recipient.name })) },
   { id: 'partner', label: 'Number has a verified partner', kind: 'flag', block: 'destination', key: 'partner' },
   { id: 'own-number', label: 'Number is one of your own', kind: 'flag', block: 'destination', key: 'own_number' },
   { id: 'approved-alternate', label: 'Recipient has an approved alternate number', kind: 'flag', block: 'destination',
@@ -446,7 +448,7 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
     id: rule?.id ?? newRuleId(document, kind, name),
     name: name.trim(),
     on: rule?.on ?? true,
-    ...(kind === 'routes' && scopeKind === 'organization' && mandatory ? { mandatory: true } : {}),
+    ...(scopeKind === 'organization' && mandatory ? { mandatory: true } : {}),
     when: conditionsFrom(when),
     ...(unless.length > 0 && Object.keys(conditionsFrom(unless)).length > 0 ? { unless: conditionsFrom(unless) } : {}),
     then: kind === 'routes' ? routeActions(method, then) : limitActions(then, capText),
@@ -580,6 +582,10 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
               <Checkbox checked={then.alternate_number === 'never'}
                 onChange={(event) => set({ alternate_number: event.target.checked ? 'never' : undefined })} />
             )} />
+            {scopeKind === 'organization' && (
+              <FormControlLabel control={<Checkbox checked={mandatory} onChange={(event) => setMandatory(event.target.checked)} />}
+                label="Mandatory: no one can send a fax anyway around this limit, and mailbox and workflow rules can't loosen it" />
+            )}
           </Stack>
         )}
         <Paper variant="outlined" sx={{ p: 2, mt: 3, borderRadius: 2 }}>

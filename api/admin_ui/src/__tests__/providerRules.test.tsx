@@ -156,7 +156,9 @@ describe('Providers → Rules: the other tabs', () => {
     expect(await screen.findByText('Sinch (UK) first, because the rule ‘UK numbers go through Sinch’ matched.')).toBeTruthy();
     expect(screen.getByText('About $0.031')).toBeTruthy();
     expect(screen.getByText('Not priced yet')).toBeTruthy();
-    expect(screen.getByText('The number is not in UK clinics.')).toBeTruthy();
+    expect(screen.getByText('Number is in recipient group did not match.')).toBeTruthy();
+    expect(screen.getByText("The recipient's preferred route")).toBeTruthy();
+    expect(screen.getByText('A mandatory rule chose instead.')).toBeTruthy();
     expect(screen.getByLabelText('Time at this installation (America/Denver)')).toBeTruthy();
     expect(fake.sent('POST', '/routing/explain')).toEqual([{ to: '+442071234567', pages: 3, size_bytes: null, as: 'me',
       mailbox: 'm-leeds', workflow: null, urgent: false, real_call: false, labels: ['legal'], at: null, scope: 'organization',
@@ -173,11 +175,12 @@ describe('Providers → Rules: the other tabs', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save to draft' }));
     await screen.findByText('Recipient group “Hospitals” saved in your draft.');
     expect(lastDraft(fake).document.lists).toEqual({ 'uk-clinics': { name: 'UK clinics', numbers: ['+441782684953'], prefixes: ['+4420'] },
-      hospitals: { name: 'Hospitals', numbers: ['+15550100001', '+15550100002'], prefixes: [] }, labels: ['legal'] });
+      hospitals: { name: 'Hospitals', numbers: ['+15550100001', '+15550100002'], prefixes: [] } });
+    expect(lastDraft(fake).document.labels).toEqual(['legal']);
     fireEvent.change(screen.getByLabelText('New label'), { target: { value: 'clinical' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add label' }));
     await screen.findByText('Label “clinical” added to your draft.');
-    expect(lastDraft(fake).document.lists.labels).toEqual(['legal', 'clinical']);
+    expect(lastDraft(fake).document.labels).toEqual(['legal', 'clinical']);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Sites & regions' }));
     expect(await screen.findByText('Sinch (UK)')).toBeTruthy();

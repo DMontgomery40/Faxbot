@@ -7,10 +7,40 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { DeliveryError, formatMoney, NOT_PRICED } from './delivery/shared';
-import type { ExplainRequest, ExplainResult, Revision, RulesApi, RulesDocument, RulesState, Scope } from './ProviderRulesApi';
+import type {
+  ExplainRequest, ExplainResult, Revision, RulesApi, RulesDocument, RulesState, Scope, StepResult, TraceStep,
+} from './ProviderRulesApi';
+import { CONDITION_FIELDS } from './ProviderRulesEditor';
 import { documentLabels, scopeParam } from './ProviderRulesApi';
 
 const SEVERITY = { route: 'success', held: 'warning', blocked: 'error' } as const;
+
+const RESULT: Record<StepResult, string> = {
+  matched: 'Matched', not_matched: 'Did not match', unless: 'Matched, but an exception applies',
+  not_reached: 'Not read: an earlier rule chose', not_applied: 'Matched, but did not choose',
+};
+const NOTE: Record<string, string> = {
+  mandatory: 'A mandatory rule chose instead.', overridden: 'A more specific rule chose instead.',
+  excluded: 'Every account it names was left out by a limit.',
+};
+const SCOPE_NAME = { organization: 'Organization', mailbox: 'Mailbox', workflow: 'Workflow' } as const;
+
+// The trace's "why" in words: the first condition that did not match, or why a match did not choose.
+export function stepWhy(step: TraceStep): string {
+  const parts: string[] = [];
+  if (step.field) {
+    const [block, key] = step.field.includes('.') ? step.field.split('.') : [null, step.field];
+    const field = CONDITION_FIELDS.find((item) => item.block === block && item.key === key);
+    parts.push(`${field?.label ?? 'A condition'} did not match.`);
+  }
+  if (step.note) parts.push(NOTE[step.note] ?? '');
+  return parts.filter(Boolean).join(' ') || '-';
+}
+
+export function stepRule(step: TraceStep): string {
+  if (step.kind === 'preferred') return "The recipient's preferred route";
+  return step.rule_name ?? '-';
+}
 
 export function ExplainAnswer({ result }: { result: ExplainResult }) {
   return (
@@ -46,15 +76,15 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
           </AccordionSummary>
           <AccordionDetails>
             <Table size="small" aria-label="Every rule Faxbot read">
-              <TableHead><TableRow><TableCell>Rules</TableCell><TableCell>Rule</TableCell><TableCell>Matched</TableCell>
-                <TableCell>Why not</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>Rules</TableCell><TableCell>Rule</TableCell><TableCell>Result</TableCell>
+                <TableCell>Why</TableCell></TableRow></TableHead>
               <TableBody>
-                {result.trace.map((step) => (
-                  <TableRow key={`${step.scope}-${step.rule_id}`}>
-                    <TableCell>{step.scope}</TableCell>
-                    <TableCell>{step.name}</TableCell>
-                    <TableCell>{step.matched ? 'Yes' : 'No'}</TableCell>
-                    <TableCell>{step.failed ?? '-'}</TableCell>
+                {result.trace.map((step, index) => (
+                  <TableRow key={`${step.scope}-${step.rule_id ?? step.kind}-${index}`}>
+                    <TableCell>{step.scope_name ?? SCOPE_NAME[step.scope]}{step.revision ? `, version ${step.revision}` : ''}</TableCell>
+                    <TableCell>{stepRule(step)}</TableCell>
+                    <TableCell>{RESULT[step.result]}</TableCell>
+                    <TableCell>{stepWhy(step)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

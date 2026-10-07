@@ -17,6 +17,7 @@ export interface Names {
   site: (key: string) => string;
   workflow: (key: string) => string;
   person: (id: string) => string;
+  recipient: (id: string) => string;
   key: (id: string) => string;
   group: (id: string) => string;
   mailbox: (id: string) => string;
@@ -32,6 +33,7 @@ export interface NameMaps {
   sites?: Record<string, string>;
   workflows?: Record<string, string>;
   people?: Record<string, string>;
+  recipients?: Record<string, string>;
   keys?: Record<string, string>;
   groups?: Record<string, string>;
   mailboxes?: Record<string, string>;
@@ -50,6 +52,7 @@ export function namesFrom(maps: NameMaps): Names {
     site: pick(maps.sites, (key) => key),
     workflow: pick(maps.workflows, (key) => key),
     person: pick(maps.people, () => 'an unknown person'),
+    recipient: pick(maps.recipients, () => 'an unknown recipient'),
     key: pick(maps.keys, () => 'an unknown key'),
     group: pick(maps.groups, () => 'an unknown group'),
     mailbox: pick(maps.mailboxes, () => 'an unknown mailbox'),
@@ -70,6 +73,7 @@ export function namesFor(document: RulesDocument | null, choices: Choices | null
     sites: Object.fromEntries((document?.sites ?? []).map((site) => [site.key, site.name])),
     workflows: Object.fromEntries((document?.workflows ?? []).map((workflow) => [workflow.key, workflow.name])),
     people: Object.fromEntries((choices?.people ?? []).map((person) => [person.id, person.name])),
+    recipients: Object.fromEntries((choices?.recipients ?? []).map((recipient) => [recipient.id, recipient.name])),
     keys: Object.fromEntries((choices?.keys ?? []).map((key) => [key.id, key.name])),
     groups: Object.fromEntries((choices?.groups ?? []).map((group) => [group.id, group.name])),
     mailboxes: Object.fromEntries((choices?.mailboxes ?? []).map((mailbox) => [mailbox.id, mailbox.name])),
@@ -141,6 +145,7 @@ export function conditionClauses(conditions: Conditions | undefined, names: Name
     clauses.push(`the destination country is ${joinOr(destination.countries.map(names.country))}`);
   }
   if (destination.regions?.length) clauses.push(`the number is in ${joinOr(destination.regions.map(names.region))}`);
+  if (destination.recipients?.length) clauses.push(`the recipient is ${joinOr(destination.recipients.map(names.recipient))}`);
   clauses.push(...flag(destination.partner, 'the number has a verified partner', 'the number has no verified partner'));
   clauses.push(...flag(destination.own_number, 'the number is one of your own numbers',
     'the number is not one of your own numbers'));

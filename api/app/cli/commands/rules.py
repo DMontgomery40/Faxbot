@@ -94,7 +94,8 @@ class Names:
     def __init__(self, maps=None, *, money=None):
         maps = maps or {}
         self._maps = {name: dict(maps.get(name) or {}) for name in (
-            'accounts', 'lists', 'regions', 'sites', 'workflows', 'people', 'keys', 'groups', 'mailboxes', 'countries')}
+            'accounts', 'lists', 'regions', 'sites', 'workflows', 'people', 'recipients', 'keys', 'groups', 'mailboxes',
+            'countries')}
         self._money = money or money_amount
 
     def _pick(self, kind, value, fallback):
@@ -118,6 +119,9 @@ class Names:
     def person(self, value):
         return self._pick('people', value, 'an unknown person')
 
+    def recipient(self, value):
+        return self._pick('recipients', value, 'an unknown recipient')
+
     def key(self, value):
         return self._pick('keys', value, 'an unknown key')
 
@@ -135,12 +139,11 @@ class Names:
 
 
 def recipient_lists(document):
-    return {key: value for key, value in ((document or {}).get('lists') or {}).items()
-            if key != 'labels' and isinstance(value, dict)}
+    return {key: value for key, value in ((document or {}).get('lists') or {}).items() if isinstance(value, dict)}
 
 
 def document_labels(document):
-    return list(((document or {}).get('lists') or {}).get('labels') or [])
+    return list((document or {}).get('labels') or [])
 
 
 def names_for(document, choices):
@@ -154,6 +157,7 @@ def names_for(document, choices):
         'sites': {item['key']: item.get('name') or item['key'] for item in document.get('sites') or []},
         'workflows': {item['key']: item.get('name') or item['key'] for item in document.get('workflows') or []},
         'people': {item['id']: item['name'] for item in choices.get('people') or []},
+        'recipients': {item['id']: item['name'] for item in choices.get('recipients') or []},
         'keys': {item['id']: item['name'] for item in choices.get('keys') or []},
         'groups': {item['id']: item['name'] for item in choices.get('groups') or []},
         'mailboxes': {item['id']: item['name'] for item in choices.get('mailboxes') or []},
@@ -243,6 +247,8 @@ def condition_clauses(conditions, names):
         clauses.append(f"the destination country is {join_or(names.country(code) for code in destination['countries'])}")
     if destination.get('regions'):
         clauses.append(f"the number is in {join_or(names.region(key) for key in destination['regions'])}")
+    if destination.get('recipients'):
+        clauses.append(f"the recipient is {join_or(names.recipient(value) for value in destination['recipients'])}")
     clauses += _flag(destination.get('partner'), 'the number has a verified partner', 'the number has no verified partner')
     clauses += _flag(destination.get('own_number'), 'the number is one of your own numbers',
                      'the number is not one of your own numbers')
@@ -503,6 +509,7 @@ CONDITION_FIELDS = {
     'to-prefix': ('destination', 'prefixes', 'list'),
     'to-country': ('destination', 'countries', 'list'),
     'to-region': ('destination', 'regions', 'list'),
+    'to-recipient': ('destination', 'recipients', 'list'),
     'partner': ('destination', 'partner', 'flag'),
     'own-number': ('destination', 'own_number', 'flag'),
     'approved-alternate': ('destination', 'approved_alternate', 'flag'),
@@ -614,6 +621,8 @@ def conditions_from(pairs, document, choices):
             for item in values:
                 if field == 'to-country':
                     item = item.upper()
+                elif field == 'to-recipient':
+                    item = _resolve_named(choices, 'recipients', item, 'saved recipient', "See 'faxbot recipients list'.")
                 elif field == 'from-person':
                     item = _resolve_named(choices, 'people', item, 'person or integration', "See 'faxbot access users list'.")
                 elif field == 'from-key':
@@ -761,7 +770,8 @@ ALTERNATE = typer.Option(None, '--alternate', metavar='use|never|only',
                          help="Dial the recipient's approved alternate number: when there is one, never, or only "
                               '(hold the fax when there is none).')
 MANDATORY = typer.Option(None, '--mandatory/--not-mandatory',
-                         help='Organization rules only: mailbox and workflow rules cannot replace a mandatory rule.')
+                         help='Organization rules only: mailbox and workflow rules cannot replace a mandatory routing '
+                              'rule, and no one can send a fax anyway around a mandatory limit.')
 
 
 def _human_lines(result_lines):
@@ -1155,9 +1165,31 @@ def show_explain(out, result):
         out.line(result['page_layout'])
     trace = result.get('trace') or []
     if trace:
-        out.table(['Rules', 'Rule', 'Matched', 'Why not'],
-                  [[item.get('scope'), item.get('name'), 'yes' if item.get('matched') else 'no', item.get('failed') or '-']
-                   for item in trace])
+        out.table(['Rules', 'Rule', 'Result', 'Why'],
+                  [[(item.get('scope_name') or SCOPE_NAMES.get(item.get('scope'), item.get('scope')))
+                    + (f", version {item['revision']}" if item.get('revision') else ''),
+                    "The recipient's preferred route" if item.get('kind') == 'preferred' else item.get('rule_name') or '-',
+                    STEP_RESULTS.get(item.get('result'), item.get('result')), step_why(item)] for item in trace])
+
+
+SCOPE_NAMES = {'organization': 'Organization', 'mailbox': 'Mailbox', 'workflow': 'Workflow'}
+STEP_RESULTS = {'matched': 'Matched', 'not_matched': 'Did not match', 'unless': 'Matched, but an exception applies',
+                'not_reached': 'Not read: an earlier rule chose', 'not_applied': 'Matched, but did not choose'}
+STEP_NOTES = {'mandatory': 'A mandatory rule chose instead.', 'overridden': 'A more specific rule chose instead.',
+              'excluded': 'Every account it names was left out by a limit.'}
+
+
+def step_why(step):
+    """The first condition that did not match (as its --when field), or why a match did not choose."""
+    parts = []
+    if step.get('field'):
+        block, _, key = step['field'].rpartition('.')
+        names = [name for name, (part, field, _) in CONDITION_FIELDS.items()
+                 if field == key and (part or '') == block] or (['days'] if step['field'] == 'time' else [])
+        parts.append(f"{names[0] if names else step['field']} did not match.")
+    if step.get('note'):
+        parts.append(STEP_NOTES.get(step['note'], ''))
+    return ' '.join(part for part in parts if part) or '-'
 
 
 def _local_moment(value):
@@ -1291,10 +1323,8 @@ def lists_set(key: str = _key_option('recipient group'),
               scope: str = SCOPE):
     """Add a recipient group, or replace one."""
     def change(document, _):
-        labels = document_labels(document)
-        lists = recipient_lists(document)
-        lists[key] = {'name': name, 'numbers': list(number or []), 'prefixes': list(prefix or [])}
-        document['lists'] = {**lists, **({'labels': labels} if labels else {})}
+        document['lists'] = {**recipient_lists(document),
+                             key: {'name': name, 'numbers': list(number or []), 'prefixes': list(prefix or [])}}
     _definitions_command(state.api(), scope, change, f"Recipient group '{name}' saved.")
 
 
@@ -1316,8 +1346,7 @@ def lists_labels(label: list[str] = typer.Argument(None, metavar='LABEL',
     labels = [item.strip() for value in label or [] for item in value.split(',') if item.strip()]
 
     def change(document, _):
-        lists = recipient_lists(document)
-        document['lists'] = {**lists, **({'labels': labels} if labels else {})}
+        document['labels'] = labels
     _definitions_command(state.api(), scope, change, 'Labels saved: ' + (', '.join(labels) or 'none') + '.')
 
 
@@ -1369,8 +1398,15 @@ def sites_list(scope: str = SCOPE):
         [[item['key'], item.get('name'), country_name(item['country']) if item.get('country') else '-',
           item.get('time_zone') or '-', ', '.join(names.mailbox(value) for value in item.get('mailboxes') or []) or '-',
           ', '.join(names.group(value) for value in item.get('groups') or []) or '-',
-          ', '.join(account['label'] for account in accounts if account.get('site') == item['key']) or '-']
-         for item in sites], empty='No sites yet.'))
+          ', '.join(site_accounts(item, accounts)) or '-'] for item in sites], empty='No sites yet.'))
+
+
+def site_accounts(site, accounts):
+    """A site's accounts: those it lists, then those whose own site names it."""
+    labels = {account['key']: account['label'] for account in accounts}
+    listed = list(site.get('accounts') or [])
+    own = [account['key'] for account in accounts if account.get('site') == site['key'] and account['key'] not in listed]
+    return [labels.get(key, key) for key in listed + own]
 
 
 @sites_app.command('set')
@@ -1380,6 +1416,8 @@ def sites_set(key: str = _key_option('site'),
               time_zone: str = typer.Option(None, '--time-zone', help='Its time zone, such as Europe/London.'),
               mailbox: list[str] = typer.Option(None, '--mailbox', help='A mailbox that sends from it (repeat it).'),
               group: list[str] = typer.Option(None, '--group', help='A group that sends from it (repeat it).'),
+              account: list[str] = typer.Option(None, '--account', metavar='KEY',
+                                                help='An account its calls start from (repeat it).'),
               scope: str = SCOPE):
     """Add a site, or replace one. Give an account its site with 'faxbot providers accounts update KEY --site'."""
     def change(document, choices):
@@ -1387,7 +1425,8 @@ def sites_set(key: str = _key_option('site'),
                 'mailboxes': [_resolve_named(choices, 'mailboxes', value, 'mailbox', "See 'faxbot numbers mailboxes "
                                                                                     "list'.") for value in mailbox or []],
                 'groups': [_resolve_named(choices, 'groups', value, 'group', "See 'faxbot access groups list'.")
-                           for value in group or []]}
+                           for value in group or []],
+                'accounts': _accounts(choices, account or [])}
         sites = document.get('sites') or []
         if any(item.get('key') == key for item in sites):
             document['sites'] = [site if item.get('key') == key else item for item in sites]

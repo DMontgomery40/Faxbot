@@ -44,6 +44,9 @@ def _root():
     providers = typer.Typer(no_args_is_help=True)
     providers.add_typer(rules_module.rules, name='rules')
     providers.add_typer(accounts_module.accounts, name='accounts')
+    costs = typer.Typer(no_args_is_help=True)
+    costs.command('quote')(accounts_module.quote_command)
+    app.add_typer(costs, name='costs')
     app.add_typer(providers, name='providers')
     sent = typer.Typer(no_args_is_help=True)
     sent.command('route')(rules_module.route_command)
@@ -72,6 +75,7 @@ CHOICES = {
     'keys': [{'id': 'k-scan', 'name': 'Scanner key'}],
     'groups': [{'id': 'g-legal', 'name': 'Legal'}],
     'mailboxes': [{'id': 'm-leeds', 'name': 'Leeds intake'}],
+    'recipients': [{'id': 'd-county', 'name': 'County clinic'}],
 }
 
 ACTIVE = {'format': 1, 'sites': [{'key': 'leeds', 'name': 'Leeds office', 'country': 'GB', 'mailboxes': []}],
@@ -197,6 +201,13 @@ class FakeServer:
                     {'change': 'added', 'section': 'limits', 'id': 'l-hf', 'name': 'No HumbleFax', 'before': None,
                      'after': {'when': {}, 'then': {'never': ['humblefax']}}}]}
             return 200, scope['revisions'][int(parts[4]) - 1]
+        if path == '/routing/quote':
+            return 200, {'quotes': [
+                {'account': 'sip-leeds', 'label': 'Leeds trunk (Gamma)', 'origin_label': 'Leeds office',
+                 'estimate': {'currency': 'GBP', 'amount': '0.008'},
+                 'sentence': 'From Leeds office to numbers starting with +44113, read on 2026-10-07.'},
+                {'account': 'sinch-uk', 'label': 'Sinch (UK)', 'origin_label': None, 'estimate': None,
+                 'sentence': 'No price for this number yet.'}]}
         if path == '/intake/connectors':
             return 200, {'connectors': [{'id': 'c-night', 'name': 'Night inbox'}]}
         if path == '/access/inbound-rules/explain':
@@ -210,8 +221,12 @@ class FakeServer:
                                      'quote': {'currency': 'USD', 'amount': '0.031'}, 'origin': 'Leeds office',
                                      'usable': True}],
                          'holds': [], 'dial': None, 'page_layout': 'Pages per sheet: as the receiving machine allows.',
-                         'trace': [{'scope': 'Organization', 'rule_id': 'r-uk', 'name': 'UK numbers go through Sinch',
-                                    'kind': 'route', 'matched': True, 'failed': None}]}
+                         'trace': [{'kind': 'route', 'result': 'not_matched', 'scope': 'organization', 'revision': 1,
+                                    'rule_id': 'r-x', 'rule_name': 'Clinics use the trunk', 'field': 'destination.lists'},
+                                   {'kind': 'route', 'result': 'matched', 'scope': 'organization', 'revision': 1,
+                                    'rule_id': 'r-uk', 'rule_name': 'UK numbers go through Sinch'},
+                                   {'kind': 'preferred', 'result': 'not_applied', 'scope': 'organization',
+                                    'note': 'mandatory'}]}
         if path == '/routing/rules/apply-to-waiting':
             return 200, {'checked': 4, 'changed': 1, 'sentence': '1 of 4 waiting faxes will go differently.'}
         if path == '/routing/holds':
@@ -445,6 +460,8 @@ def test_explain_sends_the_fax_facts_and_reads_the_answer(fake):
     shown = flat(result)
     assert "Sinch (UK) first, because the rule 'UK numbers go through Sinch' matched." in shown
     assert '$0.031' in shown and 'Leeds office' in shown and 'Pages per sheet: as the receiving machine allows.' in shown
+    assert 'Organization, version 1 Clinics use the trunk Did not match to-list did not match.' in shown
+    assert "The recipient's preferred route Matched, but did not choose A mandatory rule chose instead." in shown
     both = fake('providers', 'rules', 'explain', '--to', '+15550100', '--draft', '--revision', '1')
     assert both.exit_code == 1 and 'Choose --draft or --revision, not both.' in both.stderr
     when = fake('providers', 'rules', 'explain', '--to', '+15550100', '--at', 'tonight')
@@ -467,29 +484,30 @@ def test_lists_regions_sites_and_workflows(fake):
                 '--prefix', '+4420').exit_code == 0
     assert fake('providers', 'rules', 'lists', 'labels', 'legal,clinical', 'billing').exit_code == 0
     document = fake.sent('PUT', '/routing/rules/draft')[-1]['document']
-    assert document['lists'] == {'uk-clinics': {'name': 'UK clinics', 'numbers': ['+441782684953'],
-                                                'prefixes': ['+4420']}, 'labels': ['legal', 'clinical', 'billing']}
+    assert document['lists'] == {'uk-clinics': {'name': 'UK clinics', 'numbers': ['+441782684953'], 'prefixes': ['+4420']}}
+    assert document['labels'] == ['legal', 'clinical', 'billing']
     assert fake('providers', 'rules', 'regions', 'set', 'north', '--name', 'Northern England', '--prefix', '+44113'
                 ).exit_code == 0
     assert fake('providers', 'rules', 'sites', 'set', 'leeds', '--name', 'Leeds office', '--country', 'gb',
-                '--time-zone', 'Europe/London', '--mailbox', 'Leeds intake', '--group', 'legal').exit_code == 0
+                '--time-zone', 'Europe/London', '--mailbox', 'Leeds intake', '--group', 'legal', '--account', 'humblefax'
+                ).exit_code == 0
     assert fake('providers', 'rules', 'workflows', 'set', 'referrals', '--name', 'Referrals', '--label', 'clinical'
                 ).exit_code == 0
     document = fake.sent('PUT', '/routing/rules/draft')[-1]['document']
     assert document['regions'] == {'north': {'name': 'Northern England', 'countries': [], 'prefixes': ['+44113']}}
     assert document['sites'] == [{'key': 'leeds', 'name': 'Leeds office', 'country': 'GB', 'time_zone': 'Europe/London',
-                                  'mailboxes': ['m-leeds'], 'groups': ['g-legal']}]
+                                  'mailboxes': ['m-leeds'], 'groups': ['g-legal'], 'accounts': ['humblefax']}]
     assert document['workflows'] == [{'key': 'referrals', 'name': 'Referrals', 'labels': ['clinical'], 'mailboxes': []}]
     sites = fake('providers', 'rules', 'sites', 'list')
-    assert 'Leeds office' in flat(sites) and 'Sinch (UK)' in flat(sites) and 'Leeds intake' in flat(sites)
+    assert 'Leeds office' in flat(sites) and 'HumbleFax, Sinch (UK)' in flat(sites) and 'Leeds intake' in flat(sites)
     listed = fake('providers', 'rules', 'lists', 'list')
     assert 'Labels: legal, clinical, billing' in flat(listed)
     # A rule can now name them by key or by name.
     added = fake('providers', 'rules', 'add', 'Clinics', '--when', 'to-list=UK clinics', '--when', 'workflow=Referrals',
-                 '--when', 'to-region=north', '--use', 'sip')
+                 '--when', 'to-region=north', '--when', 'to-recipient=County clinic', '--use', 'sip')
     assert added.exit_code == 0, added.stderr
     assert fake.sent('PUT', '/routing/rules/draft')[-1]['document']['routes'][-1]['when'] == {
-        'destination': {'lists': ['uk-clinics'], 'regions': ['north']}, 'workflows': ['referrals']}
+        'destination': {'lists': ['uk-clinics'], 'regions': ['north'], 'recipients': ['d-county']}, 'workflows': ['referrals']}
     gone = fake('providers', 'rules', 'regions', 'remove', 'south')
     assert gone.exit_code == 5 and "No region has the key 'south'." in gone.stderr
 
@@ -626,6 +644,25 @@ def test_adding_an_account_reads_secrets_from_stdin_or_a_hidden_prompt(fake):
     assert typo.exit_code == 1 and 'Sinch has no setting called projectid. Its settings are: project_id.' in typo.stderr
     assert len(fake.sent('POST', '/admin/providers/accounts')) == 2
     assert fake.sent('PATCH', '/admin/providers/accounts/sinch-uk') == []
+
+
+def test_prices_by_where_calls_start(fake, capsys, monkeypatch):
+    monkeypatch.setenv('COLUMNS', '220')
+    result = fake('costs', 'quote', '--to', '+441132000001', '--pages', '2', '--from-site', 'leeds')
+    assert result.exit_code == 0, result.stderr
+    assert [params for verb, path, params, _ in fake.requests if path == '/routing/quote'] == [
+        {'to': '+441132000001', 'pages': '2', 'site': 'leeds'}]
+    shown = flat(result)
+    assert 'Leeds trunk (Gamma) Leeds office About 0.008 GBP' in shown and 'Sinch (UK) - Not priced yet' in shown
+    out = output.Output()
+    accounts_module.origin_rows(out, {'label': 'Gamma SIP trunk', 'rows': [
+        {'origin_label': 'Leeds office', 'destination_prefix': '+44113', 'currency': 'USD', 'per_minute': '0.004',
+         'per_page': '0', 'per_call': '0', 'billing_increment_seconds': 60, 'minimum_seconds': 60,
+         'source_url': 'https://example.com/gamma-rates', 'captured_on': '2026-10-07'}]})
+    printed = ' '.join(capsys.readouterr().out.split())
+    assert 'Gamma SIP trunk: prices by where calls start' in printed
+    assert 'Leeds office +44113 $0.004 a minute whole minutes, at least 60 seconds' in printed
+    assert 'read on 2026-10-07' in printed
 
 
 def test_switching_accounts_and_defaults(fake):
