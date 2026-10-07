@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 from api.app.routing import schedule
 from api.app.routing.schedule import (
-    BusyHours, Decision, Fax, Hours, Observation, Settings, decide, learn, send_by_view,
+    Decision, Fax, Hours, Observation, Settings, decide, learn, send_by_view,
 )
 from api.tests.test_capacity import Install
 from api.tests.test_schema import database  # noqa: F401 (fixture)
@@ -417,6 +417,9 @@ def test_send_by_times_are_read_in_the_installations_zone_and_refused_when_past_
                            ('tomorrow', 'Give the send-by time as a date and time')):
         with pytest.raises(ValueError, match=message):
             schedule.parse_send_by(value, now, 'America/Denver')
+    # A replay of an accepted request is read without the checks, so it still finds its original fax.
+    assert schedule.parse_send_by('2026-10-07 08:00', now, 'America/Denver', check=False) == datetime(2026, 10, 7,
+                                                                                                    14, 0)
 
 
 def test_a_close_send_by_time_does_not_wait_to_go_with_other_faxes():

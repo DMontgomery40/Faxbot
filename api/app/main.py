@@ -1789,10 +1789,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     # One canonical destination, resolved before fingerprinting, provider
     # selection and acceptance; the job stores it so settings cannot redirect it.
     destination, destination_error = resolve(revision.values.fax_default_country)
-    # The send-by time, as UTC (routing/schedule.py); refused when it has passed or is over a month away.
+    # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
+    # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
     try:
-        send_by_at = fax_schedule.parse_send_by(send_by, datetime.utcnow(), revision.values.time_zone)
+        send_by_at = fax_schedule.parse_send_by(send_by, datetime.utcnow(), revision.values.time_zone, check=False)
     except ValueError as error:
         raise HTTPException(400, detail=str(error)) from None
     request_identity = None
@@ -1829,6 +1830,10 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, existing)))
     if destination is None:
         raise HTTPException(400, detail=str(destination_error))
+    try:
+        fax_schedule.check_send_by(send_by_at, datetime.utcnow())
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
     if queue_only and not settings.fax_disabled:
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
     profile_id = revision.profile_id('outbound')

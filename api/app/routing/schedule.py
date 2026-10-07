@@ -47,7 +47,7 @@ its approved toll-free number, because both reach the same fax machine.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from uuid import uuid4
 
@@ -572,12 +572,13 @@ def send_by_view(send_by, state, *, pages=1, finished_at=None, now):
 SEND_BY_HORIZON = timedelta(days=31)
 
 
-def parse_send_by(value, now, zone_name=''):
+def parse_send_by(value, now, zone_name='', *, check=True):
     """Naive UTC from a send-by time, or None for none; raises ValueError with a sentence for people.
 
     Accepts a date and time with an offset ('2026-10-08T17:00-04:00', '...Z'), a date and time without
     one ('2026-10-08 17:00', read in ``zone_name``, the installation's zone), or a time alone ('17:00':
-    its next occurrence there).
+    its next occurrence there). ``check`` refuses a time that has passed or is over 31 days away; a replay
+    of an accepted request is read without it, so it still finds its original fax.
     """
     if value is None or not str(value).strip():
         return None
@@ -598,11 +599,19 @@ def parse_send_by(value, now, zone_name=''):
     except ValueError:
         raise ValueError('Give the send-by time as a date and time, such as 2026-10-08 17:00, or a time '
                          'such as 17:00.') from None
+    if check:
+        check_send_by(moment, now)
+    return moment
+
+
+def check_send_by(moment, now):
+    """Refuse a send-by time that has passed or is more than 31 days away."""
+    if moment is None:
+        return
     if moment <= now:
         raise ValueError('The send-by time has already passed.')
     if moment > now + SEND_BY_HORIZON:
         raise ValueError('Choose a send-by time within the next 31 days.')
-    return moment
 
 
 def too_soon_to_wait(send_by, pages, now, wait=timedelta(hours=1)):
