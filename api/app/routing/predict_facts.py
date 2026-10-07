@@ -117,6 +117,20 @@ def _allowance(card, plans):
     return None, None
 
 
+def _score(destination, prefixes, entry):
+    """How closely an international entry fits a number: its longest matching prefix ("+1867" beats "+44"),
+    then its countries (``regions``, "CA"), then an entry for every other country; None when it does not fit."""
+    regions = tuple(region for region in entry.get('regions') or () if isinstance(region, str))
+    match = destination.matches(prefixes) if prefixes else None
+    if match is not None:
+        return len(match)
+    if regions and destination.region in regions:
+        return 2.5  # above a bare country code such as "+1", below any longer prefix
+    if not prefixes and not regions:
+        return 0
+    return None
+
+
 def terms_for(identity, destination, card, data):
     """(RateTerms or None, missing clause or None): the price of a call to ``destination`` on this route.
 
@@ -133,16 +147,12 @@ def terms_for(identity, destination, card, data):
     if destination.kind == PREMIUM:
         return None, None
     best = None
-    for route, pricing, terms, prefixes, _ in data['classes'].get(destination.kind, ()):
+    for route, pricing, terms, prefixes, entry in data['classes'].get(destination.kind, ()):
         if route != identity:
             continue
-        if destination.kind == INTERNATIONAL:
-            match = destination.matches(prefixes)
-            if match is None or (best is not None and len(match) <= len(best[0])):
-                continue
-            best = (match, pricing, terms)
-        elif best is None:
-            best = ('', pricing, terms)
+        score = _score(destination, prefixes, entry) if destination.kind == INTERNATIONAL else 0
+        if score is not None and (best is None or score > best[0]):
+            best = (score, pricing, terms)
     if best is None:
         return None, None
     _, pricing, terms = best
@@ -184,7 +194,11 @@ def _typical_rate(values, destination):
         return AUDIO_RATE if getattr(values, 'sip_t38_enabled', True) is False else TYPICAL_RATE
 
 
-def route_label(route_key):
+def route_label(route_key, preset=''):
+    """The route's name in a sentence: the SIP trunk is named after its carrier."""
+    if route_key == 'sip':
+        from ..provider_labels import trunk_name
+        return trunk_name(preset or None)
     from .plan import route_label as label
     return label(route_key)
 
@@ -279,10 +293,10 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     data = shipped() if data is None else data
     country = getattr(values, 'fax_default_country', 'US') or 'US'
     where = classify(destination, country)
-    label = route_label(route_key)
+    preset = getattr(values, 'sip_trunk_preset', '') or ''
+    label = route_label(route_key, preset)
     if route_key in NO_CALL_ROUTES:
         return RouteFacts(route_key, label, where, None)
-    preset = getattr(values, 'sip_trunk_preset', '') or ''
     identity = (f'sip-{preset}' if preset else 'sip') if route_key == 'sip' else route_key
     card = None
     if engine is not None:

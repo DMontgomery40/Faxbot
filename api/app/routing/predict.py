@@ -202,7 +202,10 @@ def duration_text(seconds):
 
 
 def _count(number, noun):
-    return f"{number} {noun}{'' if number == 1 else 's'}"
+    """'1 page', '3 pages', '2 earlier faxes'."""
+    if number == 1:
+        return f'{number} {noun}'
+    return f"{number} {noun}{'es' if noun.endswith(('x', 's')) else 's'}"
 
 
 def _price_clause(terms, billed_pages, seconds):
@@ -228,6 +231,11 @@ def _where(destination):
     if destination.kind == INTERNATIONAL:
         return f'numbers in {country_name(destination.region)}'
     return CLASS_TEXT[destination.kind]
+
+
+def _what(facts):
+    """A trunk places calls; a fax service sends faxes."""
+    return 'calls' if facts.route_key == 'sip' else 'faxes'
 
 
 def _sentence(*clauses):
@@ -327,7 +335,7 @@ def predict_from(facts, shape):
     seconds, how = line_seconds(shape, facts.link)
     terms = facts.terms
     if terms is None:
-        missing = facts.missing or f'{facts.label} publishes no price for calls to {_where(facts.destination)}'
+        missing = facts.missing or f'{facts.label} publishes no price for {_what(facts)} to {_where(facts.destination)}'
         return Prediction(None, seconds, None, _sentence(f'{missing}, so the cost is unknown', how), False)
     if terms.max_pages_per_fax and shape.pages > terms.max_pages_per_fax:
         return Prediction(None, seconds, None, _sentence(
@@ -342,11 +350,11 @@ def predict_from(facts, shape):
         return Prediction(billed_pages, seconds, None, _sentence(f'{reason}, so the cost is unknown', how), False)
     cost = Money(micros, terms.card.currency)
     if micros == 0 and facts.destination.kind != LOCAL:
-        price = f'{facts.label} charges nothing for calls to {_where(facts.destination)}'
+        price = f'{facts.label} charges nothing for {_what(facts)} to {_where(facts.destination)}'
     else:
         price = _price_clause(terms, billed_pages, seconds) or f'{facts.label} charges nothing for this fax'
         if terms.published and facts.destination.kind != LOCAL:
-            price += f", {facts.label}'s published price for calls to {_where(facts.destination)}"
+            price += f", {facts.label}'s published price for {_what(facts)} to {_where(facts.destination)}"
     return Prediction(billed_pages, seconds, cost, _sentence(price, how), False)
 
 
@@ -445,11 +453,11 @@ def jbig_choice(facts, shape):
     faster = 'jbig' if (jbig.seconds or 0) < (standard.seconds or 0) else 'standard'
     if faster == 'jbig':
         saved = (standard.seconds or 0) - (jbig.seconds or 0)
-        sentence = (f'This number took JBIG before, which Faxbot only sends through its SSL Fax engine; for the '
-                    f'{_count(halftone_pages(shape), "photo-like page")} here that should save {duration_text(saved)} '
-                    'on the line.')
+        sentence = (f"An earlier fax to this number used the coding that suits photos, which only Faxbot's fast fax "
+                    f'service sends; for the {_count(halftone_pages(shape), "photo-like page")} here it should save '
+                    f'{duration_text(saved)} on the line.')
     else:
-        sentence = 'JBIG would not make this fax shorter, so Faxbot keeps its usual coding.'
+        sentence = 'The coding that suits photos would not make this fax shorter, so Faxbot keeps its usual coding.'
     return EngineChoice(standard, jbig, faster, sentence)
 
 

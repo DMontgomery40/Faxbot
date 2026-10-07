@@ -1834,6 +1834,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `recommendations`: Show ways to pay less: numbers where...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
+* `predict`: Show what a fax to a number would take and...
 
 ### `faxbot costs spending`
 
@@ -1963,6 +1964,24 @@ $ faxbot costs plans [OPTIONS] [provider]
 **Options**:
 
 * `--in-use`: Plans for every sending provider that has no rate card yet.
+* `--help`: Show this message and exit.
+
+### `faxbot costs predict`
+
+Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent.
+
+**Usage**:
+
+```console
+$ faxbot costs predict [OPTIONS]
+```
+
+**Options**:
+
+* `--to <str>`: Fax number to price, for example +12025550123.  [required]
+* `--pages <int range>`: Pages in the fax.  [default: 1; 1&lt;=x&lt;=1000]
+* `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
+* `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
 * `--help`: Show this message and exit.
 
 ## `faxbot access`

@@ -127,6 +127,8 @@ READS = {
     ("GET", "/routing/recommendations/sending"): ("settings:read", False),
     ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
     ("GET", "/routing/recommendations/plans"): ("settings:read", False),
+    # The dry run: what a fax would cost on each route, before sending; nothing is sent or recorded.
+    ("GET", "/routing/predict"): ("settings:read", False),
 }
 
 

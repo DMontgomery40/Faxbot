@@ -991,6 +991,22 @@ def test_costs_savings_reads_as_estimates(cli):
     assert result['sentence'] in ' '.join(cli('costs', 'savings', '--days', '7').stdout.split())
 
 
+def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
+    result = cli.json('costs', 'predict', '--to', '+12025550123', '--pages', '3')
+    assert result['number_class'] == 'local' and result['pages'] == 3
+    phaxio = next(route for route in result['routes'] if route['route'] == 'phaxio')
+    assert phaxio['cost'] == {'amount': '0.21', 'currency': 'USD'} and phaxio['billed_pages'] == 3
+    human = ' '.join(cli('costs', 'predict', '--to', '+12025550123', '--pages', '3').stdout.split())
+    assert '+12025550123 is a local number; 3 pages.' in human
+    assert 'Route Cost Time on the line' in human and 'Phaxio: Billed as 3 pages at $0.07 a page;' in human
+    assert result['sentence'] in human
+    assert 'Estimates before sending; the bill comes from your carrier or provider.' in human
+    toll_free = cli.json('costs', 'predict', '--to', '+18005550100')
+    assert toll_free['number_class_text'] == 'a toll-free number'
+    refused = cli('costs', 'predict', '--to', '+12025550123', '--layout', 'tall')
+    assert refused.exit_code != 0 and 'Choose a normal or dense layout.' in refused.stdout + refused.stderr
+
+
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):
     result = cli.json('costs', 'recommendations')['receiving']
     assert result['days'] == 30 and result['estimate'] is True and result['pool']['state'] == 'no_trunk'
