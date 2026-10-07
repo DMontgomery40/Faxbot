@@ -140,20 +140,17 @@ class SourceStore:
         name = self._name(name)
         envelope = self.secrets.seal(secret, source_id) if secret else None
         key = key or (None, None, None)
-        try:
-            with write_transaction(self.engine) as connection:
-                if connection.execute(sa.select(self.sources.c.id).where(
-                        self.sources.c.normalized_name == normalized(name))).first() is not None:
-                    raise SourceConflict('Another connector already has this name.')
-                connection.execute(self.sources.insert().values(
-                    id=source_id, kind=kind, direction=direction, name=name, normalized_name=normalized(name),
-                    enabled=1, settings=json.dumps(settings, sort_keys=True), secret_envelope=envelope,
-                    key_id=key[0], key_binding_id=key[1], key_principal_id=key[2], next_check_at=now,
-                    version=1, created_at=now, updated_at=now))
-                self._write_senders(connection, source_id, senders, now)
-                return self.get(source_id, connection)
-        except DeliveryStoreError:
-            raise
+        with write_transaction(self.engine) as connection:
+            if connection.execute(sa.select(self.sources.c.id).where(
+                    self.sources.c.normalized_name == normalized(name))).first() is not None:
+                raise SourceConflict('Another connector already has this name.')
+            connection.execute(self.sources.insert().values(
+                id=source_id, kind=kind, direction=direction, name=name, normalized_name=normalized(name),
+                enabled=1, settings=json.dumps(settings, sort_keys=True), secret_envelope=envelope,
+                key_id=key[0], key_binding_id=key[1], key_principal_id=key[2], next_check_at=now,
+                version=1, created_at=now, updated_at=now))
+            self._write_senders(connection, source_id, senders, now)
+            return self.get(source_id, connection)
 
     def update(self, source_id, *, version, name=None, settings=None, secret=None, senders=None):
         now = self.clock()
@@ -285,17 +282,21 @@ class SourceStore:
         """Lease one due connector (or the named one) for a check; returns (Source, token) or None."""
         now = self.clock()
         token = token_source.token_hex(16)
+        query = sa.select(self.sources.c.id).where(
+            self.sources.c.removed_at.is_(None),
+            sa.or_(self.sources.c.claim_token.is_(None), self.sources.c.claim_expires_at <= now))
+        if source_id is None:
+            query = query.where(self.sources.c.enabled == 1, sa.or_(
+                self.sources.c.next_check_at.is_(None), self.sources.c.next_check_at <= now))
+        else:
+            query = query.where(self.sources.c.id == source_id)
+        query = query.order_by(self.sources.c.next_check_at, self.sources.c.id).limit(1)
+        # A read first: most steps find nothing due and take no write lock.
+        with read_connection(self.engine) as connection:
+            if connection.execute(query).first() is None:
+                return None
         with write_transaction(self.engine) as connection:
-            query = sa.select(self.sources.c.id).where(
-                self.sources.c.removed_at.is_(None),
-                sa.or_(self.sources.c.claim_token.is_(None), self.sources.c.claim_expires_at <= now))
-            if source_id is None:
-                query = query.where(self.sources.c.enabled == 1, sa.or_(
-                    self.sources.c.next_check_at.is_(None), self.sources.c.next_check_at <= now))
-            else:
-                query = query.where(self.sources.c.id == source_id)
-            found = connection.execute(query.order_by(self.sources.c.next_check_at, self.sources.c.id)
-                                       .limit(1)).scalar_one_or_none()
+            found = connection.execute(query).scalar_one_or_none()
             if found is None:
                 return None
             connection.execute(self.sources.update().where(self.sources.c.id == found).values(
@@ -407,7 +408,7 @@ class SourceStore:
             sa.or_(self.items.c.reply_state == 'due',
                    sa.and_(self.items.c.reply_state == 'waiting', self.items.c.fax_job_id.is_not(None))),
             sa.or_(self.items.c.reply_next_at.is_(None), self.items.c.reply_next_at <= now))
-            .order_by(self.items.c.created_at, self.items.c.id).limit(limit))
+            .order_by(self.items.c.reply_next_at, self.items.c.created_at, self.items.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 

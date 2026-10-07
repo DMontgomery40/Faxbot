@@ -337,6 +337,13 @@ def test_a_sidecar_names_the_number_and_a_missing_folder_is_one_sentence(client,
         'name': 'Nowhere', 'kind': 'folder', 'direction': 'receive', 'settings': {'path': str(tmp_path / 'absent')}})
     assert missing.status_code == 400
     assert missing.json()['detail'] == text.FOLDER_MISSING.format(path=str(tmp_path / 'absent'))
+    own = os.environ['FAX_DATA_DIR']
+    refused = client.post('/intake/sources', headers=B, json={
+        'name': 'Own files', 'kind': 'folder', 'direction': 'receive', 'settings': {'path': own}})
+    assert refused.status_code == 400 and refused.json()['detail'] == text.FOLDER_IS_FAXBOT.format(path=own)
+    system = client.post('/intake/sources', headers=B, json={
+        'name': 'System', 'kind': 'folder', 'direction': 'receive', 'settings': {'path': '/etc'}})
+    assert system.status_code == 400 and system.json()['detail'] == text.FOLDER_IS_FAXBOT.format(path='/etc')
 
 
 # -- email to fax -----------------------------------------------------------------------------

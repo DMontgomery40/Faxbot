@@ -7,6 +7,7 @@ pausing, resuming or removing it issues or revokes the connector's own key.
 that came in by email, to anyone who may see that fax.
 """
 import logging
+import os
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -83,6 +84,14 @@ def _context(request):
     else:
         poller.store = store
     return store, poller, request.app.state.access_runtime
+
+
+def _values(request):
+    snapshot = request.scope.get('faxbot.configuration')
+    if snapshot is not None:
+        return snapshot.active.values
+    _, runtime = installation_engine(request.app)
+    return runtime.manager.store.read().active.values
 
 
 async def _call(operation):
@@ -325,7 +334,7 @@ async def create_source(body: SourceIn, request: Request, identity=Depends(requi
         if sending and body.kind == 'email' and not senders:
             raise SourceInputError('Add at least one person who may send faxes by email, with their address.')
         if body.kind == 'folder':
-            folder_check(settings['path'])
+            folder_check(settings['path'], _values(request))
         key = None
         if sending:
             if store.find(body.name) is not None:
@@ -347,8 +356,22 @@ async def create_source(body: SourceIn, request: Request, identity=Depends(requi
     return await _call(create)
 
 
-def folder_check(path):
+SYSTEM_FOLDERS = ('/bin', '/boot', '/dev', '/etc', '/lib', '/lib64', '/proc', '/root', '/run', '/sbin', '/sys',
+                  '/usr', '/var/lib', '/app')
+
+
+def _inside(path, folder):
+    path, folder = os.path.realpath(path), os.path.realpath(folder)
+    return path == folder or path.startswith(folder.rstrip('/') + '/')
+
+
+def folder_check(path, values=None):
+    """A folder Faxbot may watch: it exists, can be read and written, and is not one of Faxbot's or the system's."""
     from . import folder
+    own = [getattr(values, 'fax_data_dir', None)] if values is not None else []
+    if (any(_inside(path, system) for system in SYSTEM_FOLDERS)
+            or any(item and (_inside(path, item) or _inside(item, path)) for item in own)):
+        raise SourceInputError(text.FOLDER_IS_FAXBOT.format(path=path))
     try:
         folder.check(path)
     except folder.FolderError as error:
@@ -369,7 +392,7 @@ async def update_source(source_id: str, body: SourceUpdate, request: Request):
         if body.settings is not None:
             settings = settings_module.validate(current.kind, current.direction, {**current.settings, **body.settings})
             if current.kind == 'folder':
-                folder_check(settings['path'])
+                folder_check(settings['path'], _values(request))
         secret = None
         effective = settings or current.settings
         if current.kind == 'email' and (body.secret is not None or settings is not None):

@@ -7,9 +7,10 @@ only after what became of it was recorded. Anything Faxbot cannot decide now
 sending key was revoked) leaves the message or file where it is for the next
 check, and the connector's status line says why.
 """
+from datetime import timedelta
 import hashlib
-import os
 import logging
+import os
 
 from ...work.imports import ImportInputError, parse_sidecar
 from . import folder as folders, mail, receive, replies, send, text
@@ -19,6 +20,7 @@ from .oauth import TokenUnavailable, Tokens
 
 LOG = logging.getLogger(__name__)
 PER_CHECK = 20
+RESULT_WAIT = timedelta(days=7)
 
 
 class Poller:
@@ -50,7 +52,7 @@ class Poller:
             ok, result = self.check(source)
         except Exception:
             LOG.warning('A connector check stopped unexpectedly.')
-            ok, result = False, text.MAIL_SERVER_ERROR
+            ok, result = False, text.CHECK_STOPPED
         self.store.finish(source, lease, ok=ok, result=result)
         return ok, result
 
@@ -381,7 +383,10 @@ class Poller:
                     self.store.reply_done(item, state='failed', note='The fax no longer exists, so no reply was sent.')
                     continue
                 if not replies.needs_result(outcome['state']):
-                    self.store.reply_wait(item)
+                    if self.store.clock() - item['created_at'] > RESULT_WAIT:
+                        self.store.reply_done(item, state='failed', note=text.NO_FINAL_RESULT)
+                    else:
+                        self.store.reply_wait(item)
                     continue
             message = replies.compose(source, item, outcome=outcome)
             try:
