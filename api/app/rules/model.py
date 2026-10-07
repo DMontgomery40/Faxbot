@@ -50,7 +50,7 @@ scope's limits apply to whichever rule chooses.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime
 from functools import lru_cache
 import hashlib
@@ -91,6 +91,8 @@ STEP_KINDS = ('limit', 'route', 'preferred')
 # ``not_applied``: the rule matched but did not decide, because a mandatory rule or a more specific
 # scope chose, or because its accounts were all excluded (the preferred route under a limit).
 STEP_RESULTS = ('matched', 'not_matched', 'unless', 'not_reached', 'not_applied')
+# A stored decision keeps the steps that decided something; the rest are reproduced by replaying its facts.
+STORED_RESULTS = ('matched', 'unless', 'not_applied')
 
 # Decision.reason when the outcome is ``blocked``. A blocked fax is held for the administrator (Q1).
 BLOCKED_REASONS = (
@@ -467,6 +469,15 @@ class Decision:
             raise ValueError('A blocked decision, and only a blocked one, has a reason.')
         _one_of(self.reason, BLOCKED_REASONS, 'blocked reason', optional=True)
 
+    def compact(self):
+        """The decision as stored with a fax: its trace keeps only the steps that decided something.
+
+        Rules that did not match are left out (with hundreds of rules they would be most of the record);
+        replaying the stored facts under the stored revisions gives them back exactly.
+        """
+        return replace(self, trace=tuple(step for step in self.trace
+                                         if step.result in STORED_RESULTS or step.kind == 'preferred'))
+
     @property
     def revision_ids(self):
         """``{scope name: revision ID}``: the ``revisions`` column of fax_job_rule_decisions."""
@@ -578,10 +589,16 @@ def parse_scope(name):
 
 # Canonical JSON ------------------------------------------------------------------------------------------------
 
+_NAMES = {}
+
+
 def plain(value):
     """Dataclasses as dicts and tuples as lists, for JSON."""
-    if is_dataclass(value):
-        return {item.name: plain(getattr(value, item.name)) for item in fields(value)}
+    names = _NAMES.get(type(value))
+    if names is None and is_dataclass(value):
+        names = _NAMES[type(value)] = tuple(item.name for item in fields(value))
+    if names is not None:
+        return {name: plain(getattr(value, name)) for name in names}
     if isinstance(value, (tuple, list)):
         return [plain(item) for item in value]
     if isinstance(value, float):
