@@ -433,12 +433,20 @@ class DirectRoute:
         route = faximage.peer_route(peer, preference=self.preference)
         if route is None and self.preference == faximage.NEVER_PEER:
             raise DirectRefused('A routing rule keeps this fax off direct delivery.')
-        image = None
-        if route is not None and route.kind == FAX_IMAGE:
+        # An attempt prepared again (nothing was sent the first time) sends the same kind of document, and a fax
+        # image keeps the time of its first preparation, so its bytes and digest stay those already recorded.
+        earlier = await run_lifecycle_step(lambda: service.store.find('outbound', claim.attempt_id))
+        wants_image = (earlier['kind'] == FAX_IMAGE if earlier is not None
+                       else route is not None and route.kind == FAX_IMAGE)
+        image, signed_at = None, None
+        if wants_image:
+            # The header's time is the manifest's signed time, so the image and its digest can be made again.
+            signed_at = json.loads(earlier['manifest'])['created_at'] if earlier is not None else timestamp()
             try:
-                image = await run_lifecycle_step(lambda: faximage.build(values, claim.job_id))
+                image = await run_lifecycle_step(lambda: faximage.build(values, claim.job_id,
+                                                                        moment=parse_timestamp(signed_at)))
             except faximage.FaxImageUnavailable:
-                image = None  # Nothing was sent; the original still goes directly, with no telephone call.
+                image, signed_at = None, None  # Nothing was sent; the original still goes directly, with no call.
         document = image.data if image is not None else await run_lifecycle_step(pdf.read_bytes)
         from ..routing.numbers import normalize_number
         sender_number = None
@@ -452,7 +460,7 @@ class DirectRoute:
             fax_number=sender_number, recipient_number=peer['phone_number'],
             recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
             document=document, pages=image.pages if image is not None else job.get('pages'),
-            fax=image.facts if image is not None else None)
+            fax=image.facts if image is not None else None, created_at=signed_at)
         await run_lifecycle_step(lambda: service.store.record_outbound(
             message_id=message_id, peer_id=peer['id'], job_id=claim.job_id, attempt_id=claim.attempt_id,
             recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),

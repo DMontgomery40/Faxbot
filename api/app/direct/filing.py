@@ -3,9 +3,10 @@
 Accepting a direct delivery and filing it are two steps, because they use two
 different stores: the signed receipt is given once the document is stored and
 recorded, and filing then makes it a received fax through the same acquisition
-records as any fax (source ``local``, account ``direct:<partner>``; ``inbound/acquisition.py``). Received
-shows where it came from, mailbox rules place it, email delivery sends it once,
-and Work gives it an owner and a deadline.
+records as any fax (``inbound/acquisition.py``): source ``local``, because
+Faxbot itself delivers it with no provider, and account ``direct:<partner>``.
+Received shows where it came from, mailbox rules place it, email delivery sends
+it once, and Work gives it an owner and a deadline.
 
 Filing is idempotent on the message ID, so a crash between the receipt and the
 filing heals itself: ``DirectFiling.step`` files every accepted arrival that is
@@ -16,7 +17,7 @@ import json
 import logging
 
 from .crypto import FAX_IMAGE, kind_of
-from .store import FILING_ACCOUNT, FILING_SOURCE
+from .store import FILING_ACCOUNT
 
 
 def received_text(record):

@@ -305,6 +305,27 @@ async def test_a_lost_answer_for_a_fax_image_is_asked_about_never_sent_again(pee
 
 
 @pytest.mark.asyncio
+async def test_an_attempt_prepared_again_before_sending_builds_the_same_fax_image(peer_pair, monkeypatch):
+    from types import SimpleNamespace
+    from api.app.direct import service as direct_service
+    pair = peer_pair
+    opt_in(pair)
+    job = accept(pair)
+    claim = pair['delivery'].claim('synthetic-worker')
+    plan = SimpleNamespace(peer=pair['b_on_a'])
+    route = DirectRoute(pair['a'])
+    monkeypatch.setattr(direct_service, 'timestamp', lambda: '2026-10-07T12:00:00Z')
+    async with route.prepare(claim, plan, {'pages': 1}) as first:
+        pass  # Faxbot stopped here, before anything was sent.
+    # Prepared again five minutes later: a fresh header would print another time and change the bytes.
+    monkeypatch.setattr(direct_service, 'timestamp', lambda: '2026-10-07T12:05:00Z')
+    async with route.prepare(claim, plan, {'pages': 1}) as again:
+        pass
+    assert first.digest == again.digest == pair['a'].store.find('outbound', claim.attempt_id)['digest']
+    assert job == claim.job_id and pair['to_b'].posts == 0
+
+
+@pytest.mark.asyncio
 async def test_an_arrival_accepted_just_before_a_crash_is_filed_once_by_the_filing_step(peer_pair, monkeypatch):
     pair = peer_pair
     opt_in(pair)
