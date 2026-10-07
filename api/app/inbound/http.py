@@ -553,7 +553,7 @@ def receive_handover(request: Request, payload: dict, root: str):
         country=settings.fax_default_country))()
     if begun.state == 'pending':
         try:
-            artifact = convert_tiff(tiff_path, begun.inbound_fax_id)
+            artifact = convert_tiff(tiff_path, begun.inbound_fax_id, engine=store.engine)
             discard(artifact, store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
                                              size=artifact.size, pages=artifact.pages,
                                              media_type=artifact.media_type, source_received_at=source_time))

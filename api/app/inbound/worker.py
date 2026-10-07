@@ -99,7 +99,7 @@ class Acquirer:
             return
         if source == 'sip':
             path = inside_directory(claim.get('tiff_path'), settings.fax_data_dir)
-            artifact = await run_lifecycle_step(lambda: convert_tiff(path, inbound_id))
+            artifact = await run_lifecycle_step(lambda: convert_tiff(path, inbound_id, engine=self.store.engine))
         elif source in ('phaxio', 'sinch'):
             service, name = provider_service(source, settings)
             if account_identity(source, _account_value(source, settings)) != claim['account']:

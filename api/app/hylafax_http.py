@@ -113,10 +113,15 @@ def _record_engine(request, job_id, attempt_id, payload, row):
     hylafax_records.safely(records.record_result, direction='outbound', call_key=attempt_id, details=details,
                            job_id=job_id, number=(row or {}).get('called'))
     # What the call negotiated, from the call's session log (measurement only).
-    from .fax_negotiation import engine_values
+    from .fax_negotiation import engine_values, page_capability
     hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',
                            values=engine_values(payload.get('negotiation_b64')), job_id=job_id,
                            number=(row or {}).get('called'))
+    # What the other machine said it accepts (its DIS): dense pages pack and trim from it.
+    capability = page_capability(payload.get('negotiation_b64'))
+    if capability:
+        hylafax_records.safely(records.record_page_capability, call_key=attempt_id, values=capability,
+                               job_id=job_id, number=(row or {}).get('called'))
 
 
 async def _settled_call(request, attempt_id, row):

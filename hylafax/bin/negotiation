@@ -12,6 +12,17 @@
 # error correction are reported only when the call agreed them (a training
 # succeeded, or the pages went over SSL Fax); null means not reported. Only
 # protocol lines are read: never the other machine's ID or numbers.
+#
+# Sent calls also report what the other machine said it accepts (its DIS, as
+# "REMOTE max ..." and "REMOTE best vres ..."): page_length ("A4", "B4" or
+# "unlimited"), page_width ("A4", "B4" or "A3") and fine (1 when its best
+# vertical resolution is finer than 3.85 line/mm, else 0), remote_ecm (1 when
+# it offers error correction, else 0) and scan_ms (its minimum time per scan
+# line at 7.7 line/mm, from "REMOTE best ... ms/scanline"); and the time
+# between pages: boundary_ms, the average milliseconds from each "SEND end
+# page" to the next "SEND begin page" (the end-of-page exchange and the next
+# training), over boundaries pages, never for SSL Fax. Faxbot packs pages for
+# this machine from them (api/app/pages); null means not reported.
 set -u
 
 log=${1:-}
@@ -51,12 +62,50 @@ function one(kind) {
   return distinct[kind] > 1 ? "\"mixed\"" : "\"" only[kind] "\""
 }
 function number(value) { return value ? value : "null" }
+function quoted(value) { return value != "" ? "\"" value "\"" : "null" }
+function width_of(text) {
+  if (text == "A4 page width (215 mm)") return "A4"
+  if (text == "B4 page width (255 mm)") return "B4"
+  if (text == "A3 page width (303 mm)") return "A3"
+  return ""
+}
+function length_of(text) {
+  if (text == "A4 page length (297 mm)") return "A4"
+  if (text == "B4 page length (364 mm)") return "B4"
+  if (text ~ /^unlimited page length/) return "unlimited"
+  return ""
+}
+function capability() {
+  printf ",\"page_length\":%s,\"page_width\":%s,\"fine\":%s", quoted(page_length), quoted(page_width), (fine == "" ? "null" : fine)
+  # Error correction and the scan line time are known only when the DIS was logged (its page length).
+  printf ",\"remote_ecm\":%s,\"scan_ms\":%s", (page_length == "" ? "null" : (remote_ecm ? 1 : 0)), (page_length == "" || scan == "" ? "null" : scan)
+  if (boundaries && !sslfax) printf ",\"boundary_ms\":%d,\"boundaries\":%d}", (boundary_total * 1000 / boundaries + 0.5), boundaries
+  else printf ",\"boundary_ms\":null,\"boundaries\":null}"
+}
 function seconds(clock,   part) {
   split(clock, part, ":")
   return part[1] * 3600 + part[2] * 60 + part[3]
 }
 {
   text = message($0)
+  if (text ~ /^REMOTE max .*page width/) page_width = width_of(substr(text, 12))
+  else if (text ~ /^REMOTE max .*page length/) page_length = length_of(substr(text, 12))
+  else if (text ~ /^REMOTE best vres /) fine = (substr(text, 18) ~ /^(3\.85 line\/mm|200 x 100 dpi)$/) ? 0 : 1
+  else if (text ~ /^REMOTE supports .*ECM$/ && text !~ /no ECM$/) remote_ecm = 1
+  else if (text ~ /^REMOTE best [0-9]+ ms.*\/scanline$/) {
+    # "20 ms, 10 ms/scanline": the time at 3.85 line/mm, then at 7.7 line/mm; the last one is for fine pages.
+    if (match(text, /[0-9]+ ms\/scanline$/)) scan = substr(text, RSTART, RLENGTH) + 0
+  }
+  else if (text ~ /^SEND end page$/) ended = seconds($3)
+  else if (text ~ /^SEND begin page$/) {
+    if (ended != "") {
+      now = seconds($3)
+      if (now < ended) now += 86400
+      boundary_total += now - ended
+      boundaries++
+    }
+    ended = ""
+  }
   if (text ~ /^SESSION BEGIN/) begin = seconds($3)
   else if (text ~ /^SESSION END/) end = seconds($3)
   else if (text ~ /^(SEND|RECV) training at /) {
@@ -98,12 +147,14 @@ END {
   if (begin != "" && end != "" && end >= begin) session = sprintf("%d", end - begin + 0.5)
   if (!agreed && !sslfax) {
     printf "{\"rate_first\":null,\"rate_lowest\":null,\"rate_last\":null,\"trainings\":%s,", number(trainings)
-    printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s}", session
+    printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s", session
+    capability()
     exit
   }
   ecm = "null"
   if (offers) ecm = corrected == 0 ? "\"off\"" : corrected >= offers ? "\"on\"" : "\"mixed\""
   if (sslfax) { first = 0; lowest = 0; last = 0 }
   printf "{\"rate_first\":%s,\"rate_lowest\":%s,\"rate_last\":%s,\"trainings\":%s,", number(first), number(lowest), number(last), number(trainings)
-  printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s}", one("compression"), one("resolution"), ecm, session
+  printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s", one("compression"), one("resolution"), ecm, session
+  capability()
 }' "$log" | base64 | tr -d '\n'

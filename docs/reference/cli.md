@@ -959,7 +959,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, whether it accepts case packets, or how faxes sent together to it mark each document.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -981,6 +981,8 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--index-page`: Faxes sent together to this number start with one index page listing each document&#x27;s pages, instead of a separator page before each document. Records that the recipient agreed to it. Sending together must be on (&#x27;faxbot recipients together set&#x27;).
 * `--page-headers`: Faxes sent together to this number have a line at the top of every page naming its document and page, with no separator or index page. Records that the recipient agreed to it. Needs your header text and sending number (faxbot system settings set fax_header=... fax_station_id=...).
 * `--separator-pages`: Go back to a separator page before each document sent together to this number.
+* `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
+* `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`
@@ -1463,6 +1465,7 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `validate`: Check the file that describes a fax...
 * `install`: Install a custom HTTP fax provider from...
 * `import`: Add several fax services at once from a...
+* `long-pages`: Show or set long pages for each delivery...
 * `efax`: eFax receiving: whether Faxbot is...
 * `humblefax`: HumbleFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
@@ -1606,6 +1609,26 @@ $ faxbot providers import [OPTIONS] {FILE}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot providers long-pages`
+
+Show or set long pages for each delivery route, and blank space at the bottom of pages.
+
+**Usage**:
+
+```console
+$ faxbot providers long-pages [OPTIONS] [route]
+```
+
+**Arguments**:
+
+* `route`: Route to change, as listed: sip, sinch, documo, humblefax, efax, phaxio or signalwire.
+
+**Options**:
+
+* `--long-pages ON|OFF|DEFAULT`: Several pages on one long page on this route: on, off, or default.
+* `--blank-space ON|OFF|DEFAULT`: For all faxes on your phone line (route sip): leave out the blank bottom of pages for machines without error correction. On, off, or default.
 * `--help`: Show this message and exit.
 
 ### `faxbot providers efax`

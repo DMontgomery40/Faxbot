@@ -103,15 +103,21 @@ def builtin_values(rate, resolution, pages):
     return {name: value for name, value in values.items() if value is not None}
 
 
-def engine_values(encoded):
-    """The SSL Fax engine's values for one call, from hylafax/bin/negotiation (base64 JSON); {} when absent."""
+def _report(encoded):
+    """hylafax/bin/negotiation's object (base64 JSON), or {} when absent or not one."""
     if not isinstance(encoded, str) or not encoded or len(encoded) > 1024:
         return {}
     try:
         data = json.loads(base64.b64decode(encoded, validate=True).decode('ascii'))
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return {}
-    if not isinstance(data, dict):
+    return data if isinstance(data, dict) else {}
+
+
+def engine_values(encoded):
+    """The SSL Fax engine's values for one call, from hylafax/bin/negotiation (base64 JSON); {} when absent."""
+    data = _report(encoded)
+    if not data:
         return {}
     values = {'rate_first': _rate(data.get('rate_first')), 'rate_lowest': _rate(data.get('rate_lowest')),
               'rate_last_page': _rate(data.get('rate_last')), 'trainings': _count(data.get('trainings'), 99),
@@ -125,6 +131,31 @@ def engine_values(encoded):
         values['rate_last_page'] = None
     if not values['trainings']:
         values['trainings'] = None
+    return {name: value for name, value in values.items() if value is not None}
+
+
+PAGE_LENGTHS = {'A4': 'a4', 'B4': 'b4', 'unlimited': 'unlimited'}
+PAGE_WIDTHS = {'A4': 'a4', 'B4': 'b4', 'A3': 'a3'}
+
+
+def page_capability(encoded):
+    """What the other machine said it accepts on a sent call (its DIS, from the session log) and the call's
+    measured time between pages: {'max_length', 'max_width', 'fine', 'ecm', 'scan_ms', 'boundary_ms',
+    'boundaries'} with only what was reported; {} when the log named no page length (``pages.capability``)."""
+    data = _report(encoded)
+    length = PAGE_LENGTHS.get(data.get('page_length')) if isinstance(data.get('page_length'), str) else None
+    if length is None:
+        return {}
+    values = {'max_length': length,
+              'max_width': PAGE_WIDTHS.get(data['page_width']) if isinstance(data.get('page_width'), str) else None,
+              'fine': data.get('fine') if data.get('fine') in (0, 1) and not isinstance(data.get('fine'), bool)
+              else None,
+              'ecm': data.get('remote_ecm') if data.get('remote_ecm') in (0, 1)
+              and not isinstance(data.get('remote_ecm'), bool) else None,
+              'scan_ms': _count(data.get('scan_ms'), 40),
+              'boundary_ms': _count(data.get('boundary_ms'), 600000), 'boundaries': _count(data.get('boundaries'), 999)}
+    if not values['boundaries'] or values['boundary_ms'] is None:
+        values['boundary_ms'] = values['boundaries'] = None
     return {name: value for name, value in values.items() if value is not None}
 
 

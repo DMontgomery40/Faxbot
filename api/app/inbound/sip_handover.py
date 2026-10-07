@@ -147,7 +147,7 @@ def recover(store, engine, values, *, now=None) -> Recovered:
             country=values.fax_default_country or DEFAULT_COUNTRY)
         if begun.state == 'pending':
             try:
-                artifact = convert_tiff(str(path), begun.inbound_fax_id)
+                artifact = convert_tiff(str(path), begun.inbound_fax_id, engine=engine)
                 completion = store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
                                             size=artifact.size, pages=artifact.pages, media_type=artifact.media_type,
                                             source_received_at=modified)

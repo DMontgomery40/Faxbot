@@ -26,6 +26,7 @@ import { numberHint, settingsNumberFormat } from '../common/numbers';
 import { providerLabel } from '../../providerLabels';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
+import { RoutePagesPanel } from './PagesSettings';
 import { DeliveryError } from './shared';
 
 type FormValue = string | number | boolean;
@@ -235,6 +236,8 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
             onChange={(checked) => onChange('local_delivery_enabled', checked)}
             helper={LOCAL_DELIVERY_HELP} />
+          <RoutePagesPanel client={client} canWrite={canWrite}
+            routes={[outbound, ...parseRoutes(form.outbound_routes)]} />
         </ResponsiveFormSection>
       )}
 

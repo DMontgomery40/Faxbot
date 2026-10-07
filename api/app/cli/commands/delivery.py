@@ -116,10 +116,15 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
     api = state.api()
     view = api.get('/routing/destinations/' + segment(number), params={'pages': pages})
     from .sslfax import limits_fields
+    from .pages import page_fields
     try:
         limits = api.get('/routing/destinations/' + segment(number) + '/fax-limits')
     except CliError:
         limits = None
+    try:
+        page_view = api.get('/routing/destinations/' + segment(number) + '/pages')
+    except CliError:
+        page_view = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -129,7 +134,7 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
-                    *(limits_fields(limits) if limits else [])])
+                    *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):
@@ -170,14 +175,22 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         '(faxbot system settings set fax_header=... fax_station_id=...).'),
                                separator_pages: bool = typer.Option(False, '--separator-pages',
                                    help='Go back to a separator page before each document sent together to this '
-                                        'number.')):
-    """Change a number's name, notes, preferred route, calls at once, whether it accepts case packets, or how faxes sent together to it mark each document."""
+                                        'number.'),
+                               pages_per_sheet: str = typer.Option(None, '--pages-per-sheet', metavar='MACHINE|NEVER',
+                                   help='Several pages on one long page: machine (as the receiving machine allows) '
+                                        'or never.'),
+                               blank_space: str = typer.Option(None, '--blank-space', metavar='ON|OFF|DEFAULT',
+                                   help='Leave out the blank bottom of pages when this machine has no error '
+                                        'correction: on, off, or default for the setting all faxes use.')):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, or how faxes sent together to it mark each document."""
     api = state.api()
     chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
                                         (separator_pages, 'separators')) if flag]
     if len(chosen) > 1:
         raise CliError('Choose one of --index-page, --page-headers or --separator-pages.')
     boundaries = chosen[0] if chosen else None
+    from .pages import recipient_page_body
+    page_body = recipient_page_body(pages_per_sheet, blank_space)
     body = {}
     if name is not None:
         body['display_name'] = name
@@ -194,11 +207,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body and boundaries is None:
+    if not body and not page_body and boundaries is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
     # How documents are marked is part of sending together (/batching); set it first, so a refusal changes nothing.
     together = _set_boundaries(api, number, boundaries) if boundaries is not None else None
     view = None
+    if page_body:
+        view = api.put('/routing/destinations/' + segment(number) + '/pages', json=page_body)
     if body:
         current = api.get('/routing/destinations/' + segment(number))
         view = api.patch('/routing/destinations/' + segment(number),
@@ -395,7 +410,7 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'Separator pages left out'),
                 ('direct_delivery', 'Direct delivery'),
                 ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
-                ('toll_free', 'Approved toll-free numbers'))
+                ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):

@@ -231,6 +231,16 @@ class CapturedTransport:
                     expires_at=datetime.utcnow() + timedelta(minutes=values.pdf_token_ttl_minutes)))
             except ValueError:
                 raise PreparationFailure('provider_unavailable') from None
+        # Dense pages (pages/sending.py): several original pages on one long page when the receiving machine
+        # and the route allow it and it saves; blank page bottoms left out for a machine without error
+        # correction. The fax's own files never change; this never stops a send.
+        from .pages import sending as page_sending
+        store_engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
+        changed = await run_lifecycle_step(lambda: page_sending.prepare(
+            store_engine, values, configuration, claim, job, pdf, tiff))
+        if changed is not None:
+            pdf = Path(changed.pdf) if changed.pdf else pdf
+            tiff = Path(changed.tiff) if changed.tiff else tiff
         engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
             engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff)

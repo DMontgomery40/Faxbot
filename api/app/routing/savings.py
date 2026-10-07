@@ -244,12 +244,16 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     # Faxes that called the toll-free number their recipient approved, kept apart: the recipient pays those calls.
     from .alternates import savings as toll_free_savings
     toll_free = toll_free_savings(routes, engine, since=since, days=days)
+    # Pages saved by packing several pages onto long pages, and blank space left out (pages/).
+    from ..pages.views import savings as page_savings
+    packing = page_savings(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, index, direct, packets, sslfax, own, toll_free):
+    for part in (together, index, direct, packets, sslfax, own, toll_free, packing):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'separator_pages': index, 'direct_delivery': direct,
-            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'total': total,
+            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'packing': packing,
+            'total': total,
             'total_sentence': total_sentence(total, days)}
 
 

@@ -539,7 +539,9 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             # Faxes to the installation's own numbers, delivered inside Faxbot with no call.
             'own_numbers': _saving_view(result['own_numbers']),
             # Faxes that called their recipient's approved toll-free number; the recipient pays those calls.
-            'toll_free': _saving_view(result['toll_free'])}
+            'toll_free': _saving_view(result['toll_free']),
+            # Pages saved by packing them onto long pages, and blank page bottoms left out (pages/).
+            'packing': _saving_view(result['packing'])}
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])

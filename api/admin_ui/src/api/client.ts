@@ -1,5 +1,5 @@
 import type {
-  CallNegotiation, NegotiationSummary, RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
+  CallNegotiation, NegotiationSummary, RecipientFaxLimits, RecipientPages, RoutePages, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
 } from './sipTypes';
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
@@ -1046,6 +1046,24 @@ class AdminAPIClient {
 
   async saveFaxLimits(number: string, body: { max_rate: number | null; ecm: boolean | null }): Promise<RecipientFaxLimits> {
     return this.json(`/routing/destinations/${id(number)}/fax-limits`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // How long a page one fax machine takes, and this number's pages per sheet and blank-space settings.
+  async getRecipientPages(number: string): Promise<RecipientPages> {
+    return this.json(`/routing/destinations/${id(number)}/pages`);
+  }
+
+  async saveRecipientPages(number: string, body: { packing?: 'allow' | 'never'; trim_blank?: boolean | null }): Promise<RecipientPages> {
+    return this.json(`/routing/destinations/${id(number)}/pages`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Long pages for each delivery route, and the installation's blank-space setting (the phone line's row).
+  async getRoutePages(): Promise<{ routes: RoutePages[] }> {
+    return this.json('/routing/page-routes');
+  }
+
+  async saveRoutePages(route: string, body: { long_pages?: boolean | null; trim_blank?: boolean | null }): Promise<RoutePages> {
+    return this.json(`/routing/page-routes/${id(route)}`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   // Sending short faxes to the same number together in one call.

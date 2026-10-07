@@ -29,6 +29,7 @@ from .ami import ami_client
 from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .hylafax_http import router as hylafax_router
+from .pages.http import router as pages_router
 from .freeswitch_service import originate_txfax, fs_cli_available
 import hmac
 import hashlib
@@ -194,6 +195,7 @@ app.include_router(inbound_router)
 app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(hylafax_router)
+app.include_router(pages_router)
 app.include_router(batching_router)
 app.include_router(diagnostics_router)
 
@@ -1618,8 +1620,18 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     from .hylafax_records import records_for, safely
     fax_engine = await run_lifecycle_step(
         lambda: safely(records_for(_configuration_manager().store.engine).sent_detail, job_id))
+    # Pages Faxbot packed onto long pages, blank space it left out, or standard resolution kept (pages/).
+    from .pages.views import sent_view
+
+    def pages_view():
+        try:
+            root = str(_outbound_document_path(job_id, '.tiff').parent)
+        except Exception:
+            root = None
+        return safely(sent_view, _configuration_manager().store.engine, job_id, root)
+    page_view = await run_lifecycle_step(pages_view)
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
-            'together': together.get(job_id), 'fax_engine': fax_engine,
+            'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
@@ -2069,6 +2081,10 @@ def _cleanup_outbound_documents(cutoff):
                     path.unlink(missing_ok=True)
             except (OSError, HTTPException, ConfigurationStoreError):
                 audit_event('outbound_retention_requires_attention', job_id=identity)
+    # Pages packed or trimmed for one send (pages/sending.py) are kept as long as the fax's own files.
+    from .pages.sending import cleanup as cleanup_changed_pages
+    if not cleanup_changed_pages(settings.fax_data_dir, cutoff):
+        audit_event('outbound_retention_requires_attention')
     # A shared call's image copies its faxes' pages; it is normally removed when the call ends.
     try:
         for path in Path(settings.fax_data_dir).glob('batch-*.tiff'):
