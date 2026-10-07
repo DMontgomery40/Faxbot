@@ -549,6 +549,17 @@ export interface RulesApi {
   explainReceived(body: ReceivedExplainRequest): Promise<ReceivedExplainResult>;
 }
 
+// The rules API of a console API client, one per client, so screens see the same object on every render.
+const perClient = new WeakMap<object, RulesApi>();
+export function rulesApiFor(client: { call: <T>(request: ApiRequest) => Promise<T> }): RulesApi {
+  let api = perClient.get(client);
+  if (!api) {
+    api = rulesApi(<T,>(request: ApiRequest) => client.call<T>(request));
+    perClient.set(client, api);
+  }
+  return api;
+}
+
 // The rules API over one request function.
 export function rulesApi(send: Send): RulesApi {
   return {

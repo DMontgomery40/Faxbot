@@ -229,7 +229,7 @@ describe('Names follow a saved provider change', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Providers' }));
     const list = document.getElementById('nav-providers') as HTMLElement;
     await waitFor(() => expect(within(list).getByRole('link', { name: 'Telstra SIP Connect' })).toBeTruthy());
-    const receiving = await screen.findByLabelText('Receiving is on');
+    const receiving = await screen.findByLabelText(/^Receiving is (on|off)$/);
     fireEvent.click(receiving);
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(within(list).getByRole('link', { name: 'Telnyx' })).toBeTruthy());

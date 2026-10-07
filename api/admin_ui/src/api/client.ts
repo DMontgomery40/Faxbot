@@ -986,6 +986,16 @@ class AdminAPIClient {
     };
   }
 
+  // One request from the provider-rules table (components/ProviderRulesApi.ts): rules, approvals and accounts.
+  // An empty answer (204 after discarding a draft) reads as undefined.
+  async call<T>(request: { method: string; path: string; body?: unknown }): Promise<T> {
+    const res = await this.fetch(request.path, {
+      method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
+    });
+    const text = res.status === 204 ? '' : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
   // Delivery routes, intake and direct delivery
   async listDestinations(): Promise<{ window_days: number; destinations: Destination[] }> {
     return this.json('/routing/destinations');
