@@ -626,3 +626,46 @@ def test_plans_and_carriers_over_http_and_the_budget_saved_as_a_setting(client):
     reader = scoped_key(client, ['fax:send'])
     assert client.get('/routing/plans', headers=reader).status_code == 403
     assert client.get('/routing/recommendations/carriers', headers=reader).status_code == 403
+
+
+# The command line ------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def plan_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for served in _serve(monkeypatch, tmp_path, FAX_OUTBOUND_ROUTES='humblefax'):
+        yield Cli(served)
+
+
+def test_costs_plans_budget_show_and_carriers_on_the_command_line(plan_cli):
+    cli = plan_cli
+    saved = cli('costs', 'plans', 'budget', 'humblefax', '--pages', '300', '--billing-day', '9')
+    assert saved.exit_code == 0, (saved.stdout, saved.stderr)
+    assert 'HumbleFax' in saved.stdout and 'The 9th' in saved.stdout
+    view = cli.json('costs', 'plans', 'show')
+    assert view['plan_budgets'] == 'humblefax:pages=300,day=9'
+    (plan,) = [plan for plan in view['plans'] if plan['route'] == 'humblefax']
+    # Only the values given change: the fax budget keeps Faxbot's starting 50.
+    assert (plan['budget']['pages'], plan['budget']['faxes'], plan['budget']['day']) == (300, 50, 9)
+    more = cli('costs', 'plans', 'budget', 'humblefax', '--faxes', 'none')
+    assert more.exit_code == 0, more.stderr
+    assert cli.json('costs', 'plans', 'show')['plan_budgets'] == 'humblefax:pages=300,faxes=none,day=9'
+    assert cli('costs', 'plans', 'show', '--by-day').exit_code == 0
+    back = cli('costs', 'plans', 'budget', 'humblefax', '--default')
+    assert back.exit_code == 0 and cli.json('costs', 'plans', 'show')['plan_budgets'] == ''
+    for wrong, sentence in (
+            (('--pages', 'lots'), 'Give --pages as a whole number from 1 to 1,000,000, or none.'),
+            ((), 'Give at least one of --pages, --faxes, --billing-day, --included-pages, --page-overage, '
+                 '--included-minutes or --commitment, or --default.'),
+            (('--default', '--pages', '5'), 'Use --default on its own: it goes back to the starting budget.'),
+            (('--page-overage', 'ten'), 'Enter amounts as numbers, such as 0.10 or 50.')):
+        refused = cli('costs', 'plans', 'budget', 'efax', *wrong)
+        assert refused.exit_code == 1 and refused.stderr.strip() == sentence
+    carriers = cli.json('costs', 'recommendations', 'carriers')
+    assert carriers['sentence'] == NOTHING.format(days=30) and carriers['switching_sentence'] == SWITCHING
+    shown = cli('costs', 'recommendations', 'carriers')
+    assert shown.exit_code == 0 and 'never switches anything' in shown.stdout
+    assert 'carriers' in cli.json('costs', 'recommendations')
+    # The older form still lists a fax service's published plans.
+    assert cli.json('costs', 'plans', 'efax')['plans']
+    assert cli.json('costs', 'plans', 'published', 'efax')['plans']

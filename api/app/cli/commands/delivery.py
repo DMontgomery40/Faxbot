@@ -649,6 +649,39 @@ def show_toll_free(out, result):
         out.line('To record an approval, run faxbot recipients toll-free approve.')
 
 
+def _read_carriers(api):
+    return api.get('/routing/recommendations/carriers')
+
+
+def _left_out(row):
+    """What a carrier's figure leaves out because it publishes no price for it."""
+    parts = []
+    if row.get('not_priced'):
+        parts.append(f"{row['not_priced']} {'fax' if row['not_priced'] == 1 else 'faxes'}")
+    if row.get('numbers_not_priced'):
+        parts.append(f"{row['numbers_not_priced']} {'number' if row['numbers_not_priced'] == 1 else 'numbers'}")
+    return ', '.join(parts) or '-'
+
+
+def show_carriers(out, result):
+    """What your last 30 days of faxing would have cost at each carrier's published prices. Advice only."""
+    out.line(result.get('sentence') or '')
+    rows = result.get('carriers') or []
+    if rows:
+        def name(row):
+            notes = [note for note, on in (('yours', row.get('yours')), ('cheapest', row.get('cheapest'))) if on]
+            return row['name'] + (f" ({', '.join(notes)})" if notes else '')
+        out.table(['Carrier', 'Estimate', 'Left out (no published price)', 'Less than now', 'Prices read on'],
+                  [[name(row), money(row.get('total')), _left_out(row), money(row.get('difference')),
+                    _day(row.get('advertised_on'))] for row in rows],
+                  title=f"Your last {result.get('days', 30)} days at each carrier's published prices")
+        for row in rows:
+            out.line(f"{row['name']}: {row['sentence']}")
+    if result.get('unpublished_sentence'):
+        out.line(result['unpublished_sentence'])
+    out.line(result.get('switching_sentence') or '')
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
@@ -658,6 +691,7 @@ RECOMMENDATION_SECTIONS = [
     ('billing_steps', 'Billing steps', _read_billing_steps, show_billing_steps),
     ('partners', 'Partner candidates', _read_partners, show_partners),
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
+    ('carriers', 'Other carriers', _read_carriers, show_carriers),
 ]
 
 recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
@@ -666,7 +700,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates and toll-free numbers. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers and what other carriers would have cost. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -705,7 +739,10 @@ for _name, _read, _show, _help in (
         ('service-numbers', _read_service_numbers, show_service_numbers,
          'Show quiet numbers at your carrier and at HumbleFax and eFax, with what each costs to keep.'),
         ('toll-free', _read_toll_free, show_toll_free,
-         'Show recipients with a toll-free fax number on file and whether their approval is recorded.')):
+         'Show recipients with a toll-free fax number on file and whether their approval is recorded.'),
+        ('carriers', _read_carriers, show_carriers,
+         "Show what your last 30 days of faxing would have cost at each carrier's published prices. Advice only: "
+         'switching carriers means moving your numbers, and Faxbot never switches anything.')):
     recommendations.command(_name, help=_help)(_section(_read, _show))
 
 
@@ -989,6 +1026,173 @@ def routing_plans(provider: str = typer.Argument(None, help='The fax service, fo
             out.line('To use the first plan as your estimate, add it as a rate card in Costs, Prices and plans, '
                      'or with faxbot costs rate-cards --replace.')
     state.out().result(result, human)
+
+
+# -- costs plans: budgets, the contract view and published plans ---------------------------------
+
+from typer.core import TyperGroup  # noqa: E402
+
+
+class _PlansGroup(TyperGroup):
+    """`faxbot costs plans efax` and `faxbot costs plans --in-use` still list published plans.
+
+    A first word that is not one of the group's commands goes to `published`, so
+    the older command keeps working beside `show` and `budget`.
+    """
+    def parse_args(self, ctx, args):
+        if not args or (args[0] not in self.commands and args[0] not in ('--help', '-h')):
+            args = ['published', *args]
+        return super().parse_args(ctx, args)
+
+
+plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or allowance this month and what is "
+                                          'committed (show), setting a budget (budget), and the plans a fax service '
+                                          'publishes (published, or name the service: faxbot costs plans efax).')
+plans.command('published')(routing_plans)
+
+
+def _day(value):
+    """'15 Oct' for a date the server sends as YYYY-MM-DD."""
+    from datetime import date
+    try:
+        day = date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return text(value)
+    return f'{day.day} {day:%b}'
+
+
+def _ordinal(day):
+    """'The 1st', 'The 22nd'"""
+    suffix = 'th' if 11 <= day % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    return f'The {day}{suffix}'
+
+
+def _count(value, empty='-'):
+    return empty if value is None else f'{value:,}'
+
+
+def show_contract(out, result, *, burn_down=False):
+    """Each plan this billing period: its budget or allowance, what is left, what is committed; all estimates."""
+    plans_ = result.get('plans') or []
+    if not plans_:
+        out.line(result.get('empty_sentence') or '')
+        return
+    for index, plan in enumerate(plans_):
+        if index:
+            out.line('')
+        budget, used, left, period = plan['budget'], plan['used'], plan['left'], plan['period']
+        fee = money(plan.get('monthly_fee'), empty='')
+        out.line(plan['sentence'])
+        rows = [['Pages sent and received', _count(used['pages'])], ['Faxes sent and received', _count(used['faxes'])]]
+        if budget.get('pages') is not None or budget.get('faxes') is not None:
+            rows.append(['Normal-use budget a month', ' and '.join(
+                part for part in (f"{budget['pages']:,} pages" if budget.get('pages') is not None else '',
+                                  f"{budget['faxes']:,} faxes" if budget.get('faxes') is not None else '') if part)])
+            rows.append(['Left of the budget', ' and '.join(
+                part for part in (f"{max(0, left['pages']):,} pages" if left.get('pages') is not None else '',
+                                  f"{max(0, left['faxes']):,} faxes" if left.get('faxes') is not None else '')
+                if part)])
+        if budget.get('included_pages'):
+            rows.append(['Pages the plan includes', _count(budget['included_pages'])])
+            rows.append(['Included pages left', _count(max(0, left['allowance']))])
+            rows.append(['Price of each extra page', money(budget.get('page_overage'), empty='Not known')])
+        if budget.get('included_minutes'):
+            rows.append(['Minutes the plan includes', _count(budget['included_minutes'])])
+            rows.append(['Minutes used', _count(used.get('minutes'))])
+        if budget.get('commitment'):
+            rows.append(['Monthly commitment', money(budget['commitment'])])
+            rows.append(['Spent so far', money(used.get('spend'), empty='Not known')])
+        overage = plan.get('overage') or {}
+        if overage.get('pages') or overage.get('minutes'):
+            rows.append(['Past the allowance so far', 'Not known' if overage.get('cost_unknown')
+                         else money(overage.get('cost'))])
+        rows.append(['Committed this period', money(plan.get('committed'), empty='Nothing')])
+        rows.append(['Bill so far', money(plan.get('bill_so_far'), empty='Not known')])
+        rows.append(['Billing day', _ordinal(budget['day'])])
+        rows.append(['Counts start again', _day(period.get('next_day'))])
+        out.table(['Estimate', 'This period'], rows,
+                  title=f"{plan['name']}" + (f', {fee} a month' if fee else ''))
+        for sentence in (budget.get('sentence'), plan.get('pace_sentence'), plan.get('bill_sentence'),
+                         plan.get('count_sentence')):
+            if sentence:
+                out.line(sentence)
+        for row in plan.get('own_accounts') or []:
+            out.line(row['sentence'])
+        if burn_down and plan.get('burn_down'):
+            out.table(['Day', 'Pages so far', 'Faxes so far'],
+                      [[_day(row['date']), _count(row['pages']), _count(row['faxes'])] for row in plan['burn_down']],
+                      title=f"{plan['name']}, day by day since {_day(period.get('first_day'))}")
+    out.line('')
+    out.line('To change a budget, run faxbot costs plans budget <plan>, for example faxbot costs plans budget '
+             'humblefax --pages 500.')
+
+
+@plans.command('show')
+def plans_show(burn_down: bool = typer.Option(False, '--by-day', help='Also show the pages and faxes carried each day '
+                                                                       'of this billing period.')):
+    """Show each plan's normal-use budget or allowance this billing period, what is committed, and faxes between your own accounts. Every figure is an estimate."""
+    result = state.api().get('/routing/plans')
+    state.out().result(result, lambda out: show_contract(out, result, burn_down=burn_down))
+
+
+def _limit(value, name):
+    """A whole number for a budget, or None for 'none' (no limit)."""
+    if value is None:
+        return None
+    word = value.strip().lower()
+    if word in ('none', 'no-limit'):
+        return 'none'
+    if not word.isdigit() or not 0 < int(word) <= 1_000_000:
+        raise CliError(f'Give {name} as a whole number from 1 to 1,000,000, or none.')
+    return int(word)
+
+
+@plans.command('budget')
+def plans_budget(plan: str = typer.Argument(..., help='The plan, for example humblefax or efax; the carrier trunk '
+                                                      'is sip.'),
+                 pages: str = typer.Option(None, '--pages', metavar='COUNT', help='Normal-use pages a month, or none for no limit.'),
+                 faxes: str = typer.Option(None, '--faxes', metavar='COUNT', help='Normal-use faxes a month, or none for no limit.'),
+                 billing_day: int = typer.Option(None, '--billing-day', min=1, max=31,
+                                                 help="The day of the month the plan's counts start again."),
+                 included_pages: str = typer.Option(None, '--included-pages', metavar='COUNT',
+                                                    help='Pages the plan includes each month, or none.'),
+                 page_overage: str = typer.Option(None, '--page-overage', metavar='PRICE',
+                                                  help='The price of each page past them, such as 0.10.'),
+                 included_minutes: str = typer.Option(None, '--included-minutes', metavar='COUNT',
+                                                      help='Minutes the plan includes each month, or none.'),
+                 commitment: str = typer.Option(None, '--commitment', metavar='AMOUNT',
+                                                help='A monthly amount you have committed to spend, such as 50.'),
+                 default: bool = typer.Option(False, '--default',
+                                              help="Go back to Faxbot's starting budget for this plan.")):
+    """Set a plan's monthly normal-use budget, allowance or commitment, and the day its counts start again. Faxbot never changes the plan itself."""
+    from ...routing.plan_budget import InvalidBudget, parse_budgets, with_entry
+    from ..settings_write import write_settings
+    api = state.api()
+    view = api.get('/routing/plans')
+    current = view.get('plan_budgets') or ''
+    changes = {'pages': _limit(pages, '--pages'), 'faxes': _limit(faxes, '--faxes'), 'day': billing_day,
+               'included_pages': _limit(included_pages, '--included-pages'), 'page_overage': page_overage,
+               'included_minutes': _limit(included_minutes, '--included-minutes'), 'commitment': commitment}
+    given = {key: value for key, value in changes.items() if value is not None}
+    if default and given:
+        raise CliError('Use --default on its own: it goes back to the starting budget.')
+    if not default and not given:
+        raise CliError('Give at least one of --pages, --faxes, --billing-day, --included-pages, --page-overage, '
+                       '--included-minutes or --commitment, or --default.')
+    try:
+        key = plan.strip().lower()
+        known = dict(parse_budgets(current).get('sip' if key.startswith('sip') else key) or {})
+        if not default:
+            # Only the values given change; the rest keep what you set before, else Faxbot's starting values.
+            entry_text = ','.join(f'{name}={value}' for name, value in given.items())
+            parsed = parse_budgets(f'{key}:{entry_text}')
+            known.update(next(iter(parsed.values())))
+        updated = with_entry(current, key, None if default else known)
+    except InvalidBudget as error:
+        raise CliError(str(error)) from None
+    write_settings(api, {'plan_budgets': updated})
+    result = api.get('/routing/plans')
+    state.out().result(result, lambda out: show_contract(out, result))
 
 
 # -- intake ------------------------------------------------------------------------------
