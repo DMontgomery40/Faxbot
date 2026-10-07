@@ -146,10 +146,10 @@ async def delete_number(number: str, request: Request, identity=Depends(require_
     return await _save(request, identity, _number(number, request), NumberSetting(enabled=False))
 
 
-def _send_view(row):
+def _send_view(row, status):
     if row is None:
         return {'encoded': False, 'sentence': None}
-    return {'encoded': True, 'sentence': send.sentence(row), 'pages_original': row['pages_original'],
+    return {'encoded': True, 'sentence': send.sentence(row, status), 'pages_original': row['pages_original'],
             'pages_encoded': row['pages_encoded'], 'layout': row['layout'], 'provider': row['provider_id'],
             'encrypted': bool(row['encrypted']), 'seconds_original': row['seconds_original'],
             'seconds_encoded': row['seconds_encoded'], 'experimental': True}
@@ -158,9 +158,10 @@ def _send_view(row):
 @router.get('/faxes/{job_id}')
 async def fax(job_id: str, request: Request, identity=Depends(require_identity)):
     service = access_runtime(request)
-    await run_lifecycle_step(private_operation(lambda: service.queries.job(identity.actor, job_id)))
+    job = await run_lifecycle_step(private_operation(lambda: service.queries.job(identity.actor, job_id)))
     engine, _ = _engine(request)
-    return await _call(lambda: _send_view(send_for(engine, job_id)))
+    status = (job or {}).get('status') or 'queued'
+    return await _call(lambda: _send_view(send_for(engine, job_id), status))
 
 
 def _receipt_view(receipt):

@@ -53,3 +53,14 @@ test('a file without payload pages says so', async () => {
   page.gray.fill(255);
   assert.equal(readPage(page), null);
 });
+
+test('a forged header that claims a huge stream is refused before anything is allocated', async () => {
+  const { decodeHeaderForTest } = await import('../decoder.js');
+  const header = new Uint8Array(32);
+  header.set([0x46, 0x58, 0x50, 1, 1, 32]);
+  const view = new DataView(header.buffer);
+  view.setUint16(8, 1); view.setUint32(14, 0x7fffffff); view.setUint32(18, 0x7fffffff); header[30] = 15;
+  assert.equal(decodeHeaderForTest(header), null);
+  view.setUint32(18, 2000); view.setUint32(14, 9); // the real size of a 2,000-byte container at parity 32
+  assert.notEqual(decodeHeaderForTest(header), null);
+});

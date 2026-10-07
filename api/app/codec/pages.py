@@ -472,6 +472,11 @@ def _decode_header(payload):
         return None
     if count < 1 or index >= count or length < 1 or end < first:
         return None
+    # The header is untrusted: its sizes must be the ones a real container of that length has.
+    from .container import MAX_DOCUMENT_BYTES
+    if (length > MAX_DOCUMENT_BYTES + 4096 or parity >= 255
+            or codewords != streams.codeword_count(length, parity) or not 1 <= limit <= 63):
+        return None
     return {'layout': LAYOUT_NAMES[layout], 'parity': parity, 'page': index, 'pages': count, 'tag': tag,
             'codewords': codewords, 'container_length': length, 'first_bit': first, 'end_bit': end,
             'run_limit': limit}

@@ -32,20 +32,22 @@ def check_document(engine, inbound_fax_id, data, *, from_number=None, folder, se
         return None
     if existing is not None:
         return existing
-    try:
-        images = codec.read_images(data)
-    except codec.CodecError:
-        return None
-    if not images or not any(codec.looks_like_payload(image) for image in images[:1]):
+    # Probe page one only; an ordinary fax costs one page's image and one scan for the pattern.
+    probe = codec.first_page(data)
+    if probe is None or not codec.looks_like_payload(probe):
         return None
     try:
         secrets = CodecSettings(engine, seal).secrets(from_number)
     except Exception:
         secrets = []
     try:
-        document, report = codec.decode_images(images, secrets=secrets)
+        document, report = codec.decode_images(codec.read_images(data), secrets=secrets)
     except codec.CodecError as error:
         return record_receipt(engine, inbound_fax_id, {'state': 'failed', 'reason': _reason(error)})
+    except Exception:
+        log.warning('Decoding a received payload fax failed; it is delivered as received.')
+        return record_receipt(engine, inbound_fax_id, {
+            'state': 'failed', 'reason': 'The encoded pages could not be read, so the fax is delivered as received.'})
     if document.content_type == 'application/pdf':
         from ..conversion import DocumentConversionError, validate_pdf
         descriptor, temporary = tempfile.mkstemp(prefix='.codec-', suffix='.pdf', dir=folder)

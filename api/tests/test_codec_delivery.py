@@ -210,7 +210,10 @@ def test_an_opted_in_fax_on_a_per_page_route_goes_as_one_encoded_page(client, mo
     assert detail.status_code == 200, detail.text
     pages, encoded = sent.json()['pages'], detail.json()['pages_encoded']
     assert 1 <= encoded < pages
-    assert detail.json()['sentence'] == f'Sent as {encoded} encoded pages instead of {pages} (experimental).'
+    # Held (FAX_DISABLED) faxes have not gone yet.
+    assert detail.json()['sentence'] == f'Going as {encoded} encoded pages instead of {pages} (experimental).'
+    assert send.sentence({'pages_encoded': 1, 'pages_original': 23}) == (
+        'Sent as 1 encoded page instead of 23 (experimental).')
     root = Path(main.settings.fax_data_dir)
     original = (root / f'{job}.pdf').read_bytes()
     payload = root / f'{job}.payload-phaxio.pdf'

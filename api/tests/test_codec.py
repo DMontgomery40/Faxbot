@@ -323,3 +323,46 @@ def test_jbig_recoding_is_the_identity_on_pixels(tmp_path):
     subprocess.run([decoder, str(tmp_path / 'page.jbg'), str(tmp_path / 'back.pbm')], check=True)
     with Image.open(tmp_path / 'back.pbm') as back:
         assert back.convert('1').tobytes() == encoded.pages[0].tobytes()
+
+
+def test_a_forged_header_cannot_make_the_decoder_allocate_a_huge_stream():
+    document = _document(2000, seed=20)
+    encoded = codec.encode_document(document, layout='grid')
+    geo = encoded.geometry
+    forged = pages.HEADER.pack(b'FXP', 1, 1, 32, 0, 1, encoded.tag, 0x7FFFFFFF, 0x7FFFFFFF, 0, 8, 15, 0)
+    sizes = geo.row_layout
+    line = pages._grid_line(geo, pages.row_bits(pages.ZERO_TAG, pages.HEADER_OFFSETS[0],
+                                                forged + bytes(sum(sizes) - len(forged)), sizes))
+    page = encoded.pages[0].copy()
+    width = page.size[0] // 8
+    raw = bytearray(page.tobytes())
+    ladder = pages.find_ladder(page)[0]
+    for y in range(ladder - 40, ladder - 30):  # a forged header row above the real ones
+        raw[y * width:(y + 1) * width] = line
+    tampered = Image.frombytes('1', page.size, bytes(raw))
+    assert pages._decode_header(forged) is None
+    back, _ = _decode([tampered])  # the forged row is ignored; the real header still reads
+    assert back.data == document.data
+
+
+def test_a_multi_page_document_survives_dropped_and_repeated_lines_on_every_page():
+    document = _document(300 * 1024, seed=21)
+    encoded = codec.encode_document(document, layout='grid', fec='medium')
+    assert encoded.page_count >= 3
+    damaged = [channel.repeat_lines(channel.drop_lines(page, 0.02, seed=index), 0.02, seed=index + 50)
+               for index, page in enumerate(encoded.pages)]
+    assert _decode(damaged)[0].data == document.data
+
+
+def test_two_megabytes_survive_dropped_lines():
+    document = _document(2 * 1024 * 1024, seed=22)
+    encoded = codec.encode_document(document, layout='runs', fec='medium')
+    damaged = [channel.drop_lines(page, 0.01, seed=index) for index, page in enumerate(encoded.pages)]
+    back, report = _decode(damaged)
+    assert back.data == document.data and report['erased_bytes'] > 0
+
+
+def test_a_picture_page_survives_fine_to_standard_conversion():
+    document = _document(10 * 1024, seed=23)
+    encoded = codec.encode_document(document, layout='picture', fec='medium')
+    assert _decode([channel.halve_lines(encoded.pages[0])])[0].data == document.data

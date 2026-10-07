@@ -124,6 +124,11 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
             InputLabelProps={{ shrink: true }} sx={{ width: 240 }}>
             {STYLES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </TextField>
+          {style === 'picture' && (view.has_key || key !== '') && !clearKey && (
+            <Typography variant="body2" color="text.secondary" sx={{ width: '100%' }}>
+              With a shared key, the picture is a plain pattern instead of the first page, so the page shows nothing of the document.
+            </Typography>
+          )}
           <TextField select size="small" label="Error correction" value={fec} SelectProps={{ native: true }}
             onChange={(e) => setFec(e.target.value as 'low' | 'medium' | 'high')} disabled={!canWrite || busy}
             helperText="Higher survives a noisier line but carries less on each page."

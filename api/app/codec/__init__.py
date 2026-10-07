@@ -90,6 +90,30 @@ def read_images(path_or_bytes):
     return images
 
 
+def first_page(data):
+    """Page one of a received fax file only, or None: the cheap probe before reading every page."""
+    from PIL import Image
+    data = bytes(data)
+    try:
+        if data[:5] == b'%PDF-':
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            images = sorted((item.image for item in reader.pages[0].images),
+                            key=lambda image: image.size[0] * image.size[1])
+            if images:
+                return images[-1]
+            rendered = _rendered(data, last_page=1)
+            return rendered[0] if rendered else None
+        with Image.open(io.BytesIO(data)) as source:
+            return source.copy()
+    except Exception:
+        try:
+            rendered = _rendered(data, last_page=1) if data[:5] == b'%PDF-' else []
+        except CodecError:
+            return None
+        return rendered[0] if rendered else None
+
+
 def _pdf_images(data):
     """The largest image on each PDF page; Ghostscript renders pages whose images pypdf cannot decode."""
     from pypdf import PdfReader
@@ -115,7 +139,7 @@ def _pdf_images(data):
     return images
 
 
-def _rendered(data):
+def _rendered(data, last_page=MAX_INPUT_PAGES):
     import shutil
     import subprocess
     import tempfile
@@ -129,7 +153,7 @@ def _rendered(data):
         target = Path(folder) / 'page-%03d.png'
         try:
             subprocess.run([executable, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pngmono', '-r204x196',
-                            f'-dLastPage={MAX_INPUT_PAGES}', f'-sOutputFile={target}', str(source)],
+                            f'-dLastPage={last_page}', f'-sOutputFile={target}', str(source)],
                            check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except (subprocess.SubprocessError, OSError):
             raise CodecError('This PDF could not be read.') from None

@@ -116,7 +116,8 @@ def plan_for_fax(engine, *, provider_id, needs_tiff, destination, pdf_path, tiff
             pdf_to_tiff(pdf_path, temporary)
             measured = temporary
         page_bits = _tiff_page_bits(measured)
-        picture = _first_page_picture(measured) if setting['style'] == 'picture' else None
+        # With a shared key the visible picture is a plain pattern: the first page would show through.
+        picture = (_first_page_picture(measured) if setting['style'] == 'picture' and not secret else None)
         choice = decision.choose(
             document, route_key=provider_id, destination=destination, pages_original=pages,
             page_bits_original=page_bits, exact_raster=needs_tiff,
@@ -201,9 +202,14 @@ def combine(*steps):
     return run
 
 
-def sentence(row):
-    """The fax detail line for a fax sent as payload pages, or None."""
+def sentence(row, status='success'):
+    """The fax detail line for a fax sent (or going) as payload pages, or None."""
     if not row:
         return None
     count, original = row['pages_encoded'], row['pages_original']
-    return f'Sent as {count} encoded page{"s" if count != 1 else ""} instead of {original} (experimental).'
+    pages = f'{count} encoded page{"s" if count != 1 else ""} instead of {original} (experimental).'
+    if status == 'success':
+        return 'Sent as ' + pages
+    if status in ('failed', 'cancelled'):
+        return 'Prepared as ' + pages
+    return 'Going as ' + pages

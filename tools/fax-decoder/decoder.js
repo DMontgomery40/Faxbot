@@ -579,6 +579,10 @@ function pictureBits(page, y, edges) {
 function decodeHeader(bytes) {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes[0] !== 0x46 || bytes[1] !== 0x58 || bytes[2] !== 0x50 || bytes[3] !== 1 || !LAYOUTS[bytes[4]]) return null;
+  // The header is untrusted: its sizes must be the ones a real container of that length has.
+  const parity = bytes[5]; const length = v.getUint32(18);
+  if (parity < 1 || parity > 128 || length < 1 || length > 32 * 1024 * 1024 + 4096
+      || v.getUint32(14) !== Math.max(1, Math.ceil(length / (255 - parity))) || bytes[30] < 1 || bytes[30] > 63) return null;
   return {
     layout: LAYOUTS[bytes[4]], parity: bytes[5], page: v.getUint16(6), pages: v.getUint16(8),
     tag: Array.from(bytes.subarray(10, 14)), codewords: v.getUint32(14), containerLength: v.getUint32(18),
@@ -785,3 +789,5 @@ export async function decodeFiles(files, { secrets = [] } = {}) {
   const document = await unpack(container, secrets.filter(Boolean));
   return { ...document, pagesRead, pagesExpected, layout: reads[0].header.layout };
 }
+
+export const decodeHeaderForTest = decodeHeader;

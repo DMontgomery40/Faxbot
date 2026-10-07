@@ -44,7 +44,7 @@ def encoded_set(number: str = typer.Argument(..., help='Fax number.'),
                          'Needed to turn encoded pages on.'),
                 style: str = typer.Option(None, '--style', metavar='dense|picture',
                     help='Dense pages (the default), or a picture of the first page with the document hidden in its '
-                         'dots.'),
+                         'dots. With a shared key the picture is a plain pattern instead.'),
                 fec: str = typer.Option(None, '--error-correction', metavar='low|medium|high',
                     help='How much damage on the line the pages survive (default medium). Higher carries less.'),
                 key: str = typer.Option(None, '--shared-key', metavar='KEY',
