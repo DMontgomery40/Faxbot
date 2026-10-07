@@ -1,0 +1,312 @@
+"""Facts for the pre-dial predictor: the price for a number's class, what recorded calls showed, plan use.
+
+``predict.predict`` reads its facts here, and the pure ``predict.predict_from``
+does the arithmetic. Without an installation database the facts are the
+shipped published prices (``config/rate_cards.json``) and the predictor's
+cited defaults; with one they are the rate cards saved in Faxbot, the
+negotiation records of earlier calls (``fax_engine_calls``, migration 0023)
+and this month's use of each plan. Reading only: nothing here places a call
+or writes a record.
+
+Prices by number class live in ``config/rate_cards.json`` beside the cards:
+
+- ``cards``, ``providers`` and ``plans``: calls to local numbers (as saved in
+  Faxbot, which take precedence).
+- ``toll_free`` (Builder AE's list) and ``international``: one entry per route
+  with ``route`` (the provider identity, ``sip-<preset>`` for a SIP trunk),
+  ``pricing`` ('own' with the prices in the entry, 'same_as_card' for the
+  route's own card, or 'not_published'), the card fields, ``source_url`` and
+  ``advertised_on``. An ``international`` entry also lists ``prefixes``
+  ("+44"); the longest match wins. Any entry may carry ``page_time_seconds``
+  (the greater-of rule) and ``max_pages_per_fax``.
+- ``reference_plans``: a plan's ``included_pages`` and ``overage_per_page``,
+  matched to a saved plan card by provider and monthly fee.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+import json
+from pathlib import Path
+import statistics
+
+import sqlalchemy as sa
+
+from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
+from .destinations import INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
+from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, PlanUse, RouteFacts
+from .seed import _date, _increment, default_path, load_cards
+
+
+WINDOW_DAYS = 90
+NO_CALL_ROUTES = ('local', 'direct')
+
+
+# Shipped prices ---------------------------------------------------------------------
+
+def _document(path=None):
+    path = Path(path) if path is not None else default_path()
+    try:
+        document = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
+def _int(value):
+    return value if type(value) is int and value > 0 else None
+
+
+def _class_entry(entry, kind):
+    """(route identity, pricing, RateTerms or None) for one ``toll_free`` or ``international`` entry; None if bad."""
+    route = str(entry.get('route') or '').strip().lower()
+    if not route:
+        return None
+    pricing = entry.get('pricing') if entry.get('pricing') in ('own', 'same_as_card', 'not_published') else 'not_published'
+    prefixes = tuple(prefix for prefix in entry.get('prefixes') or () if isinstance(prefix, str))
+    terms = None
+    if pricing == 'own':
+        try:
+            card = RateCard(None, route, 'outbound', str(entry.get('label') or route)[:100],
+                            str(entry.get('currency') or 'USD').upper(),
+                            parse_amount(str(entry.get('per_minute', '0'))), parse_amount(str(entry.get('per_page', '0'))),
+                            parse_amount(str(entry.get('per_call', '0'))), _increment(entry),
+                            int(entry.get('minimum_seconds', 0)), entry.get('source_url') or None,
+                            _date(entry.get('advertised_on')))
+            terms = RateTerms(card, kind, prefixes, _int(entry.get('page_time_seconds')),
+                              max_pages_per_fax=_int(entry.get('max_pages_per_fax')), published=True)
+        except (InvalidRateCard, ValueError, TypeError):
+            pricing, terms = 'not_published', None
+    return route, pricing, terms, prefixes, entry
+
+
+@lru_cache(maxsize=4)
+def shipped(path=None):
+    """Everything the predictor reads from the shipped file, parsed once."""
+    document = _document(path)
+    classes = {TOLL_FREE: [], INTERNATIONAL: []}
+    for kind in classes:
+        listed = document.get(kind)
+        for entry in listed if isinstance(listed, list) else []:
+            found = _class_entry(entry, kind) if isinstance(entry, dict) else None
+            if found is not None:
+                classes[kind].append(found)
+    plans = [plan for plan in document.get('reference_plans') or () if isinstance(plan, dict)]
+    return {'cards': tuple(load_cards(path)), 'classes': classes, 'plans': plans}
+
+
+def _card_for(cards, identity):
+    return next((card for card in cards if card.provider_id == identity and card.direction == 'outbound'), None)
+
+
+def _allowance(card, plans):
+    """(included pages, overage micros) of the published plan a saved plan card matches, else (None, None)."""
+    if card is None or not card.flat_plan:
+        return None, None
+    for plan in plans:
+        try:
+            fee = parse_amount(str(plan.get('monthly_fee')), whole_digits=4) if plan.get('monthly_fee') else None
+        except InvalidRateCard:
+            continue
+        if plan.get('provider_id') == card.provider_id and fee == card.monthly_fee_micros and plan.get('included_pages'):
+            overage = plan.get('overage_per_page')
+            try:
+                return _int(plan.get('included_pages')), (parse_amount(str(overage)) if overage else None)
+            except InvalidRateCard:
+                return _int(plan.get('included_pages')), None
+    return None, None
+
+
+def terms_for(identity, destination, card, data):
+    """(RateTerms or None, missing clause or None): the price of a call to ``destination`` on this route.
+
+    Local numbers use the route's card. Toll-free and international numbers
+    use the route's entry for that class: its own price, its card's price, or
+    nothing when the route publishes none (unknown stays unknown).
+    """
+    if destination.kind == LOCAL:
+        if card is None:
+            return None, None
+        included, overage = _allowance(card, data['plans'])
+        return RateTerms(card, LOCAL, included_pages=included, overage_page_micros=overage,
+                         published=card.id is None), None
+    if destination.kind == PREMIUM:
+        return None, None
+    best = None
+    for route, pricing, terms, prefixes, _ in data['classes'].get(destination.kind, ()):
+        if route != identity:
+            continue
+        if destination.kind == INTERNATIONAL:
+            match = destination.matches(prefixes)
+            if match is None or (best is not None and len(match) <= len(best[0])):
+                continue
+            best = (match, pricing, terms)
+        elif best is None:
+            best = ('', pricing, terms)
+    if best is None:
+        return None, None
+    _, pricing, terms = best
+    if pricing == 'own':
+        return terms, None
+    if pricing == 'same_as_card' and card is not None:
+        return RateTerms(card, destination.kind, published=card.id is None), None
+    return None, None
+
+
+# Configuration ------------------------------------------------------------------------
+
+def _values():
+    try:
+        from ..config import managed_configuration_values
+        return managed_configuration_values()
+    except Exception:
+        return None
+
+
+def _engine():
+    """The installation database, when this process has one; never opens a connection itself."""
+    try:
+        from .. import config
+        source = getattr(config, '_source', None)
+        return getattr(source, 'engine', None)
+    except Exception:
+        return None
+
+
+def _typical_rate(values, destination):
+    """The highest speed the trunk would offer this number now, or the predictor's default."""
+    if values is None:
+        return TYPICAL_RATE
+    try:
+        from ..hylafax_engine import call_settings
+        return int(call_settings(values, destination).max_rate) or TYPICAL_RATE
+    except Exception:
+        return AUDIO_RATE if getattr(values, 'sip_t38_enabled', True) is False else TYPICAL_RATE
+
+
+def route_label(route_key):
+    from .plan import route_label as label
+    return label(route_key)
+
+
+# Recorded calls --------------------------------------------------------------------------
+
+def _rate(row):
+    if row.get('sslfax') == 1:
+        return None
+    return row.get('rate_lowest') or row.get('rate_last_page') or None
+
+
+def learn(rows, number, *, typical_rate=TYPICAL_RATE):
+    """A ``Link`` from recorded calls on the trunk route: successful, at least one page, engine-reported.
+
+    ``rows`` join ``fax_engine_calls`` and ``sip_call_records``. A row whose
+    engine reported no negotiation is skipped: its speed and coding were what
+    Faxbot asked for, not what the call reached (a failed T.38 call on
+    2026-10-05 recorded 14,400 bit/s JBIG it never used).
+    """
+    usable = [row for row in rows if row.get('negotiation_by') and row.get('fax_status') == 'SUCCESS'
+              and (row.get('pages') or 0) > 0]
+    mine = [row for row in usable if row.get('number') == number]
+    rates = [rate for rate in (_rate(row) for row in mine) if rate]
+    scope, rate, rate_calls = None, None, 0
+    if rates:
+        scope, rate, rate_calls = 'number', statistics.median_low(rates), len(rates)
+    else:
+        route_rates = [rate for rate in (_rate(row) for row in usable) if rate]
+        if len(route_rates) >= MIN_CALLS:
+            scope, rate, rate_calls = 'route', statistics.median_low(route_rates), len(route_rates)
+    newest = sorted(mine, key=lambda row: row.get('created_at') or datetime.min)
+    coding = next((row['compression'] for row in reversed(newest) if row.get('compression') in CODINGS), None)
+    per_page, setups = [], []
+    for row in mine:
+        pages, connected, transfer = row['pages'], row.get('connected_seconds'), row.get('transfer_seconds')
+        if transfer is not None:
+            per_page.append(transfer / pages)
+            if connected is not None and connected >= transfer:
+                setups.append(float(connected - transfer))
+        elif connected is not None:
+            from .predict import SETUP_SECONDS
+            per_page.append(max(0.0, connected - SETUP_SECONDS) / pages)
+    jbig = any(row.get('compression') == 'JBIG' and (row.get('engine') == 'hylafax' or row.get('engine_ref'))
+               for row in mine)
+    return Link(rate=rate, rate_calls=rate_calls, rate_scope=scope, coding=coding,
+                seconds_per_page=statistics.median(per_page) if per_page else None, page_calls=len(per_page),
+                setup_seconds=statistics.median(setups) if setups else None, setup_calls=len(setups),
+                typical_rate=typical_rate, jbig=jbig)
+
+
+def recorded_calls(engine, *, since):
+    """Outbound trunk calls since ``since``, joined with their call records; [] when the tables are missing."""
+    from .database import reflect
+    try:
+        tables = reflect(engine, ('fax_engine_calls', 'sip_call_records'))
+    except Exception:
+        return []
+    calls, records = tables['fax_engine_calls'], tables['sip_call_records']
+    if 'negotiation_by' not in calls.c:
+        return []
+    with engine.connect() as connection:
+        return [dict(row) for row in connection.execute(sa.select(
+            calls.c.number, calls.c.engine, calls.c.engine_ref, calls.c.sslfax, calls.c.negotiation_by,
+            calls.c.rate_lowest, calls.c.rate_last_page, calls.c.compression, calls.c.ecm, calls.c.transfer_seconds,
+            calls.c.created_at, records.c.fax_status, records.c.pages, records.c.connected_seconds,
+        ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key))
+            .where(calls.c.direction == 'outbound', calls.c.created_at >= since)).mappings()]
+
+
+def plan_use(engine, route_key, *, now):
+    """Pages and faxes sent on a route since the first of this month (UTC); None when unreadable."""
+    from .database import reflect
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    try:
+        costs = reflect(engine, ('delivery_attempt_costs',))['delivery_attempt_costs']
+        with engine.connect() as connection:
+            faxes, pages = connection.execute(sa.select(
+                sa.func.count(), sa.func.coalesce(sa.func.sum(costs.c.billed_pages), 0)).where(
+                    costs.c.route == route_key, costs.c.outcome == 'success', costs.c.created_at >= start)).one()
+    except Exception:
+        return None
+    return PlanUse(pages=int(pages), faxes=int(faxes))
+
+
+# Putting them together -------------------------------------------------------------------
+
+def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None):
+    """The ``RouteFacts`` for one route and number, from the installation when it has a database."""
+    values = _values() if values is None else values
+    engine = _engine() if engine is None else engine
+    data = shipped() if data is None else data
+    country = getattr(values, 'fax_default_country', 'US') or 'US'
+    where = classify(destination, country)
+    label = route_label(route_key)
+    if route_key in NO_CALL_ROUTES:
+        return RouteFacts(route_key, label, where, None)
+    preset = getattr(values, 'sip_trunk_preset', '') or ''
+    identity = (f'sip-{preset}' if preset else 'sip') if route_key == 'sip' else route_key
+    card = None
+    if engine is not None:
+        try:
+            from .store import RouteStore
+            card = RouteStore(engine, sip_preset=lambda: preset).card_for(route_key)
+        except Exception:
+            card = None
+    if card is None:
+        card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)
+    terms, missing = terms_for(identity, where, card, data)
+    if terms is None and where.kind == LOCAL and card is None:
+        missing = f'{label} has no rate card'
+    moment = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    link = Link(typical_rate=_typical_rate(values, where.number or destination))
+    plan = None
+    if engine is not None:
+        if route_key == 'sip':
+            try:
+                rows = recorded_calls(engine, since=moment - timedelta(days=WINDOW_DAYS))
+            except Exception:
+                rows = []
+            link = learn(rows, where.number or destination, typical_rate=link.typical_rate)
+        if terms is not None and (terms.card.flat_plan or terms.included_pages):
+            plan = plan_use(engine, route_key, now=moment)
+    currency = card.currency if card is not None else 'USD'
+    return RouteFacts(route_key, label, where, terms, link, plan, currency, missing)
