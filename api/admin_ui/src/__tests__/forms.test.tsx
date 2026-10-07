@@ -71,12 +71,22 @@ describe('Faxes → Forms', () => {
       { send: true, jobs: true, inbox: true }, { pluginsEnabled: false })
       .find((area) => area.id === 'faxes')?.pages.map((page) => page.id);
     expect(pages(['settings:read', 'fax:send'])).toContain('forms');
-    expect(pages(['fax:send', 'fax:read', 'inbound:list'])).not.toContain('forms');
+    // A fax operator fills in and sends forms, but does not see the forms others sent.
+    expect(pages(['fax:send', 'fax:read', 'inbound:list'])).toContain('forms');
+    expect(pages(['inbound:list', 'inbound:read'])).not.toContain('forms');
+  });
+
+  it('lets a fax operator fill in and send, without the Sent forms tab', async () => {
+    formsBackend();
+    render(<Forms client={client()} canWrite={false} canSend canReadSettings={false} />);
+    expect(await screen.findByRole('tab', { name: 'Send a form' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Sent forms' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Import a form' })).toBeNull();
   });
 
   it('lists forms and shows a version\'s fields and its page as it is faxed', async () => {
     formsBackend();
-    render(<Forms client={client()} canWrite canSend canReadPartners />);
+    render(<Forms client={client()} canWrite canSend canReadSettings />);
     const table = await screen.findByRole('table', { name: 'Registered forms' });
     expect(within(table).getByText('Referral')).toBeTruthy();
     expect(within(table).getByText('Imported from an SVG drawing with a field-position file.')).toBeTruthy();
@@ -92,7 +102,7 @@ describe('Faxes → Forms', () => {
   it('fills in a form and sends it to a partner as values', async () => {
     const sent: any[] = [];
     formsBackend(sent);
-    render(<Forms client={client()} canWrite={false} canSend canReadPartners />);
+    render(<Forms client={client()} canWrite={false} canSend canReadSettings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Fill in and send' }));
     fireEvent.change(await screen.findByLabelText('Patient name (required)'), { target: { value: 'Ann Example' } });
     fireEvent.click(screen.getByLabelText('Urgent'));
@@ -112,7 +122,7 @@ describe('Faxes → Forms', () => {
     const faxed: string[] = [];
     formsBackend([], faxed, [delivery({ id: 'd2', state: 'mismatch', can_fax: true,
       status: "The partner's pages did not match, so nothing was filed. Send the pages as a fax if they are needed." })]);
-    render(<Forms client={client()} canWrite canSend canReadPartners={false} />);
+    render(<Forms client={client()} canWrite canSend canReadSettings />);
     fireEvent.click(await screen.findByRole('tab', { name: 'Sent forms' }));
     const table = await screen.findByRole('table', { name: 'Sent forms' });
     expect(within(table).getByText(/did not match, so nothing was filed/)).toBeTruthy();
@@ -133,7 +143,7 @@ describe('Received: a form a partner delivered as values', () => {
   const received: ReceivedForm = {
     ...delivery({ direction: 'inbound', state: 'matched', status: 'Received: the pages matched and were filed with their values.',
       form_version: 3 }),
-    message_id: 'b'.repeat(32), intake_item_id: 'i5', inbound_fax_id: null,
+    message_id: 'b'.repeat(32), intake_item_id: 'i5', inbound_fax_id: null, can_open_values: true,
     values: { patient: 'Ann Example', born: '1980-02-29', urgent: true, signature: { width: 1, height: 1, bits: 'AA==' } },
     fields: [{ name: 'patient', label: 'Patient name', type: 'text' }, { name: 'born', label: 'Date of birth', type: 'date' },
       { name: 'urgent', label: 'Urgent', type: 'checkbox' }, { name: 'signature', label: 'Signature', type: 'signature' }],
@@ -162,6 +172,7 @@ describe('Received: a form a partner delivered as values', () => {
 
   it('words values for people', () => {
     expect(formSentence({ form: 'Referral', form_version: 3 })).toBe('Rendered from Referral v3; values attached.');
+    expect(formSentence({ form: 'Referral', form_version: 3, can_open_values: false })).toBe('Rendered from Referral v3.');
     expect(valueText(false)).toBe('No');
     expect(valueText('')).toBe('-');
     expect(valueText('1234.50', 'number')).toBe('1234.50');

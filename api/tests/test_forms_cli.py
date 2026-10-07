@@ -75,3 +75,24 @@ def test_a_new_version_leaves_the_first_one_as_it_was(cli, tmp_path):
     assert cli.json('forms', 'show', 'Referral', '--version', '1')['number'] == 1
     assert 'has no version 3' in cli('forms', 'show', 'Referral', '--version', '3').stdout + \
         cli('forms', 'show', 'Referral', '--version', '3').stderr
+
+
+def test_a_fax_operator_key_lists_and_sends_forms_but_opens_sent_values_only_with_fax_document(cli, tmp_path):
+    from api.tests.test_cli import restricted_key
+    template, positions = files(tmp_path)
+    cli('forms', 'import', template, '--name', 'Referral', '--positions', positions)
+    _, sender = restricted_key(cli, name='Front desk scanner', permissions=('fax:send',))
+    assert [form['name'] for form in cli.json('forms', 'list', key=sender)] == ['Referral']
+    assert cli.json('forms', 'show', 'Referral', key=sender)['field_list'][0]['label'] == 'Patient name'
+    sent = cli.json('forms', 'send', 'Referral', '+15551230009', '--value', 'patient=Ann Example', key=sender)
+    assert sent['route'] == 'fax' and sent['fax_id']
+    hidden = cli.json('forms', 'sent', sent['id'], key=sender)
+    assert hidden['values'] is None and hidden['can_open_values'] is False
+    assert "opening what was filled in needs access to this fax's document" in cli(
+        'forms', 'sent', sent['id'], key=sender).stdout
+    # Importing still needs settings:write.
+    assert cli('forms', 'import', template, '--name', 'Other', '--positions', positions, key=sender).exit_code != 0
+    # fax:document opens them, as it opens the sent fax's document; so does the owner's key.
+    _, reader = restricted_key(cli, name='Records desk', permissions=('fax:send', 'fax:document'))
+    assert cli.json('forms', 'sent', sent['id'], key=reader)['values'] == {'patient': 'Ann Example'}
+    assert cli.json('forms', 'sent', sent['id'])['values'] == {'patient': 'Ann Example'}

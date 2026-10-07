@@ -188,6 +188,8 @@ def forms_sent(delivery: str = typer.Argument(None, help='One ID from the list, 
                         ('What happened', item['status'])])
             if item.get('detail') and item['state'] != 'delivered':
                 out.line(item['detail'])
+            if item.get('values') is None and not item.get('can_open_values'):
+                out.line("You can see that this form was sent, but opening what was filled in needs access to this fax's document.")
             for name, entry in (item.get('values') or {}).items():
                 out.line(f"  {labels.get(name, name)}: {'signature picture' if isinstance(entry, dict) else text(entry)}")
         state.out().result(item, one)
@@ -249,8 +251,11 @@ def forms_received():
             out.line('No forms received from partners yet.')
         for item in items:
             labels = {field['name']: field['label'] for field in item.get('fields') or []}
+            attached = '; values attached.' if item.get('can_open_values') else '.'
             out.line(f"{local_time(item['created_at'])}: {item['form'] or 'A form'} v{item['form_version'] or '?'} "
-                     f"from {item['partner']}; values attached.")
+                     f"from {item['partner']}{attached}")
+            if not item.get('can_open_values'):
+                out.line("  Opening what was filled in needs access to this received fax's document.")
             for name, entry in (item.get('values') or {}).items():
                 shown = 'signature picture' if isinstance(entry, dict) else text(entry)
                 out.line(f'  {labels.get(name, name)}: {shown}')

@@ -17,8 +17,9 @@ export function valueText(value: FormValue | undefined, type?: string): string {
   return value;
 }
 
-export function formSentence(form: Pick<ReceivedForm, 'form' | 'form_version'>): string {
-  return `Rendered from ${form.form ?? 'a registered form'}${form.form_version ? ` v${form.form_version}` : ''}; values attached.`;
+export function formSentence(form: Pick<ReceivedForm, 'form' | 'form_version' | 'can_open_values'>): string {
+  const name = `${form.form ?? 'a registered form'}${form.form_version ? ` v${form.form_version}` : ''}`;
+  return form.can_open_values === false ? `Rendered from ${name}.` : `Rendered from ${name}; values attached.`;
 }
 
 export function FormValuesTable({ form }: { form: Pick<ReceivedForm, 'values' | 'fields'> }) {
@@ -45,7 +46,9 @@ export default function ReceivedFormLine({ form }: { form: ReceivedForm }) {
   return (
     <Box onClick={(event) => event.stopPropagation()}>
       <Typography variant="caption" color="text.secondary" display="block">{formSentence(form)}</Typography>
-      <Button size="small" onClick={() => setOpen(true)} sx={{ px: 0, minWidth: 0 }}>Show the values</Button>
+      {form.can_open_values !== false && (
+        <Button size="small" onClick={() => setOpen(true)} sx={{ px: 0, minWidth: 0 }}>Show the values</Button>
+      )}
       <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>{form.form ?? 'Form'}{form.form_version ? ` v${form.form_version}` : ''} from {form.partner ?? 'a partner'}</DialogTitle>
         <DialogContent>

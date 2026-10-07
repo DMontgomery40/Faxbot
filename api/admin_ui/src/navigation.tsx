@@ -221,9 +221,10 @@ export const NAVIGATION: NavArea[] = [
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
           configError={ctx.contextError} onOpenJob={ctx.openJob} /> },
       // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
-      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: SETTINGS_READ },
+      // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
+      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
         render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
-          canSend={Boolean(ctx.context.navigation.send)} canReadPartners={ctx.permissions.has('settings:read')} /> },
+          canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {

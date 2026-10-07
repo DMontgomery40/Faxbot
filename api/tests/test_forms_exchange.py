@@ -339,3 +339,62 @@ def test_the_form_kind_is_a_strict_manifest_shape():
     for bad in (document + b' ', document.replace(b'"fine"', b'"draft"'), b'{}'):
         with pytest.raises(a_model.FormError):
             parse_payload(bad)
+
+
+def test_received_values_follow_each_faxs_mailbox_access(forms):
+    from api.tests.test_cli import Cli
+    client, boot = forms['client'], ADMIN['X-API-Key']
+    cli = Cli(client)
+    for label in ('Referrals', 'Billing'):
+        assert cli('numbers', 'mailboxes', 'add', label, key=boot).exit_code == 0
+    assert cli('numbers', 'add', B_NUMBER, '--mailbox', 'Referrals', key=boot).exit_code == 0
+    assert cli('numbers', 'add', OTHER_NUMBER, '--mailbox', 'Billing', key=boot).exit_code == 0
+    keys = {}
+    for name, mailbox, permissions in (('Referral desk', 'Referrals', ('inbound:read', 'inbound:document')),
+                                       ('Billing desk', 'Billing', ('inbound:read', 'inbound:document')),
+                                       ('Referral clerk', 'Referrals', ('inbound:read',))):
+        assert cli('access', 'integrations', 'add', name, key=boot).exit_code == 0
+        granted = cli('access', 'grants', 'add', name, 'Fax Viewer', '--on', f'mailbox:{mailbox}', key=boot)
+        assert granted.exit_code == 0, granted.stdout + granted.stderr
+        keys[name] = cli.json('access', 'keys', 'create', '--for', name,
+                              *[part for permission in permissions for part in ('-p', permission)],
+                              '--name', name + ' key', key=boot)['token']
+    a_sends(forms['a'])
+
+    def seen(name):
+        response = client.get('/forms/received', headers={'X-API-Key': keys[name]})
+        assert response.status_code == 200, response.text
+        return response.json()['received']
+    (desk,) = seen('Referral desk')
+    assert desk['can_open_values'] is True and desk['values']['patient'] == 'Ána Müller-Øster'
+    # Another mailbox's reader does not see it at all; a reader without document access sees no values.
+    assert seen('Billing desk') == []
+    (clerk,) = seen('Referral clerk')
+    assert clerk['can_open_values'] is False and clerk['values'] is None and clerk['form'] == 'Referral'
+
+
+def test_values_of_a_form_sent_to_a_partner_need_fax_document_on_the_senders_faxes(forms):
+    from api.tests.test_cli import Cli
+    client, boot = forms['client'], ADMIN['X-API-Key']
+    cli = Cli(client)
+    version = import_on_b(client)
+    keys = {}
+    for name, permissions in (('Front desk', ('fax:send',)), ('Records', ('fax:send', 'fax:document'))):
+        assert cli('access', 'integrations', 'add', name, key=boot).exit_code == 0
+        assert cli('access', 'grants', 'add', name, 'Fax operator', key=boot).exit_code == 0
+        keys[name] = {'X-API-Key': cli.json('access', 'keys', 'create', '--for', name,
+                                            *[part for permission in permissions for part in ('-p', permission)],
+                                            '--name', name + ' key', key=boot)['token']}
+    # A fax operator reads the form and sends it; it goes to the partner as values, with no fax.
+    assert client.get('/forms', headers=keys['Front desk']).status_code == 200
+    sent = client.post('/forms/send', headers=keys['Front desk'], json={
+        'version_id': version['id'], 'to': A_NUMBER, 'values': VALUES})
+    assert sent.status_code == 200, sent.text
+    assert sent.json()['route'] == 'direct' and sent.json()['state'] == 'delivered' and sent.json()['fax_id'] is None
+    path = f"/forms/deliveries/{sent.json()['id']}"
+    hidden = client.get(path, headers=keys['Front desk']).json()
+    assert hidden['values'] is None and hidden['can_open_values'] is False and hidden['form'] == 'Referral'
+    shown = client.get(path, headers=keys['Records']).json()
+    assert shown['can_open_values'] is True and shown['values']['clinic'] == 'South'
+    # The list of forms sent stays with settings:read.
+    assert client.get('/forms/deliveries', headers=keys['Records']).status_code == 403

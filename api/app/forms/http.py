@@ -1,10 +1,16 @@
 """Registered forms: import, versions, previews, sending, and the partner protocol.
 
-Operator routes: reading forms needs settings:read and importing them
+Operator routes: reading forms and their versions needs settings:read or
+fax:send (a person who may send can fill a form in), and importing them
 settings:write. Filling, previewing filled pages and sending need fax:send,
-like ``POST /fax``. The values of received forms are the content of a
-received fax, so they need mailboxes:read, as the list of documents partners
-delivered directly does.
+like ``POST /fax``. The list of forms sent needs settings:read.
+
+Values are document content. A sent form's values need fax:document,
+checked as for the sent fax's own document: on that fax, or, for a form that
+went to a partner as values, on the sender's own faxes. A received form's
+values follow that received fax's access (inbound:document on the fax, or on
+the mailbox a document a partner delivered is filed in), through
+``access/inbound.py``.
 
 Partner routes (``/forms/partner/…``) carry no API key: each request is
 signed by an enrolled direct delivery partner, and they answer 404 while
@@ -16,7 +22,13 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..access.route_policy import require_permission
+import sqlalchemy as sa
+
+from ..access.fax_resources import FaxAccessError
+from ..access.http import private_operation, require_identity, runtime as access_runtime, utcnow as access_now
+from ..access.mutation_types import MutationDeniedError
+from ..access.route_policy import authorize, require_permission
+from ..access.types import ResourceRef
 from ..config_runtime import run_lifecycle_step
 from ..direct.crypto import DirectProtocolError
 from ..direct.http import service_for as direct_service_for
@@ -39,6 +51,65 @@ SOURCE_TEXT = {
 }
 TYPE_TEXT = {'text': 'Text', 'date': 'Date', 'checkbox': 'Checkbox', 'choice': 'Choice', 'number': 'Number',
              'signature': 'Signature picture'}
+
+
+def require_any(*permissions):
+    """Authenticate, then allow the request when any one of ``permissions`` is allowed.
+
+    fax:send is checked at the person's own container, as ``require_permission`` does.
+    """
+    async def any_permission(request: Request, identity=Depends(require_identity)):
+        service = access_runtime(request)
+        denial = None
+        for permission in permissions:
+            try:
+                await run_lifecycle_step(lambda: authorize(service, identity.actor, permission))
+                return identity
+            except MutationDeniedError as error:
+                denial = error
+        raise denial
+    any_permission.route_permissions = tuple(permissions)
+    return any_permission
+
+
+# Reading forms and versions: whoever reads settings, or may send a fax and so fill one in.
+READ_FORMS = require_any('settings:read', 'fax:send')
+
+
+@private_operation
+def may_open_sent(service, actor, row):
+    """fax:document for a sent form, as for the sent fax's own document.
+
+    A form faxed is checked on that fax. A form that went to a partner as values
+    has no fax, so it is checked on the sender's own faxes (their container),
+    where each fax they send is kept.
+    """
+    with service.store.transaction() as connection:
+        now = access_now()
+        job = row['fax_job_id']
+        if job and not job.startswith('claim-'):
+            try:
+                service.fax_resources.require_outbound_on(connection, actor, job, 'fax:document', now=now)
+                return True
+            except FaxAccessError:
+                return False
+        resources = service.store.tables['access_resources']
+        container = None
+        if row['principal_id']:
+            container = connection.execute(sa.select(resources.c.id).where(
+                resources.c.kind == 'personal', resources.c.principal_id == row['principal_id'])).scalar_one_or_none()
+        place = ResourceRef(container if container is not None else 'legacy')
+        return service.control.authorize_child_on(connection, actor, 'fax:document', place, now=now)
+
+
+@private_operation
+def received_access(service, actor, rows, country):
+    """{row id: (may read, may open the values)}, each by that received fax's own access."""
+    with service.store.transaction() as connection:
+        now = access_now()
+        return {row['id']: service.inbound.received_access_on(
+            connection, actor, inbound_id=row['inbound_fax_id'], to_number=row['to_number'], country=country, now=now)
+            for row in rows}
 
 
 def exchange_for(app):
@@ -142,7 +213,7 @@ async def _upload(file, limit, what):
 
 
 # Forms ----------------------------------------------------------------------------------------
-@router.get('', dependencies=[Depends(require_permission('settings:read'))])
+@router.get('', dependencies=[Depends(READ_FORMS)])
 async def list_forms(request: Request):
     exchange = exchange_for(request.app)
     forms = await _call(exchange.store.list_forms)
@@ -170,19 +241,33 @@ async def import_form(request: Request, name: str = Form(..., max_length=200), f
     return await _import(request, file=file, positions=positions, name=name, identity=identity)
 
 
-@router.get('/received', dependencies=[Depends(require_permission('mailboxes:read'))])
-async def received_forms(request: Request):
-    """Forms partners delivered whose pages matched, with their values, for the Received screen."""
+@router.get('/received')
+async def received_forms(request: Request, identity=Depends(require_identity)):
+    """Forms partners delivered whose pages matched, for the Received screen.
+
+    Each one is listed to whoever may read that received fax, and its values
+    only to whoever may open its document.
+    """
     exchange = exchange_for(request.app)
+    service = access_runtime(request)
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
 
     def read():
         rows = exchange.store.received()
-        return rows, _titles(exchange.store), _labels(exchange, {row['form_version_id'] for row in rows})
-    rows, titles, labels = await _call(read)
-    return {'received': [{**_delivery_view(row, values=True, titles=titles),
-                          'message_id': row['message_id'], 'intake_item_id': row['intake_item_id'],
-                          'inbound_fax_id': row['inbound_fax_id'],
-                          'fields': labels.get(row['form_version_id'], [])} for row in rows]}
+        access = received_access(service, identity.actor, rows, country)
+        rows = [row for row in rows if access[row['id']][0]]
+        return rows, access, _titles(exchange.store), _labels(exchange, {row['form_version_id'] for row in rows})
+    rows, access, titles, labels = await _call(read)
+    result = []
+    for row in rows:
+        opened = access[row['id']][1]
+        view = _delivery_view(row, values=opened, titles=titles)
+        if not opened:
+            view['values'] = None
+        result.append({**view, 'can_open_values': opened, 'message_id': row['message_id'],
+                       'intake_item_id': row['intake_item_id'], 'inbound_fax_id': row['inbound_fax_id'],
+                       'fields': labels.get(row['form_version_id'], [])})
+    return {'received': result}
 
 
 def _labels(exchange, version_ids):
@@ -202,14 +287,20 @@ async def list_deliveries(request: Request, direction: str | None = Query(defaul
     return {'deliveries': [_delivery_view(row, titles=titles) for row in rows]}
 
 
-@router.get('/deliveries/{delivery_id}', dependencies=[Depends(require_permission('settings:read'))])
-async def get_delivery(delivery_id: str, request: Request):
+@router.get('/deliveries/{delivery_id}')
+async def get_delivery(delivery_id: str, request: Request, identity=Depends(READ_FORMS)):
+    """One form sent or received; a sent form's values only with fax:document for it."""
     exchange = exchange_for(request.app)
+    service = access_runtime(request)
     row = await _call(lambda: exchange.store.delivery(delivery_id))
     if row is None:
         raise HTTPException(404, detail='This form delivery does not exist.')
     titles = await _call(lambda: _titles(exchange.store))
-    view = _delivery_view(row, values=row['direction'] == 'outbound', titles=titles)
+    opened = row['direction'] == 'outbound' and await _call(lambda: may_open_sent(service, identity.actor, row))
+    view = _delivery_view(row, values=opened, titles=titles)
+    if not opened:
+        view['values'] = None
+    view['can_open_values'] = opened
     view['fields'] = (await _call(lambda: _labels(exchange, {row['form_version_id']}))).get(row['form_version_id'], [])
     return view
 
@@ -234,7 +325,7 @@ async def partner_forms(peer_id: str, request: Request):
             'message': f'{peer["organization"]} holds {len(held)} form version{"" if len(held) == 1 else "s"}.'}
 
 
-@router.get('/versions/{version_id}', dependencies=[Depends(require_permission('settings:read'))])
+@router.get('/versions/{version_id}', dependencies=[Depends(READ_FORMS)])
 async def get_version(version_id: str, request: Request):
     exchange = exchange_for(request.app)
     version = await _call(lambda: exchange.store.version(version_id=version_id))
@@ -243,7 +334,7 @@ async def get_version(version_id: str, request: Request):
     return _version_detail(version)
 
 
-@router.get('/versions/{version_id}/template', dependencies=[Depends(require_permission('settings:read'))])
+@router.get('/versions/{version_id}/template', dependencies=[Depends(READ_FORMS)])
 async def get_template(version_id: str, request: Request):
     exchange = exchange_for(request.app)
     found = await _call(lambda: exchange.store.template(version_id))
@@ -253,7 +344,7 @@ async def get_template(version_id: str, request: Request):
     return Response(content=data, media_type=media_type or 'application/octet-stream')
 
 
-@router.get('/versions/{version_id}/pages/{page}', dependencies=[Depends(require_permission('settings:read'))])
+@router.get('/versions/{version_id}/pages/{page}', dependencies=[Depends(READ_FORMS)])
 async def preview_page(version_id: str, page: int, request: Request, fields: bool = Query(default=False)):
     """The blank page as it is faxed, optionally with each field's box outlined (preview only)."""
     exchange = exchange_for(request.app)

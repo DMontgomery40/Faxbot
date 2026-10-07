@@ -294,7 +294,7 @@ class FormStore:
     def received(self, *, limit=200):
         """Matched arrivals that a partner's direct delivery filed, with what they were filed as."""
         d, direct, items = self.deliveries, self.direct, self.intake
-        query = (sa.select(d, direct.c.id.label('direct_delivery_id'))
+        query = (sa.select(d, direct.c.id.label('direct_delivery_id'), direct.c.recipient_number.label('to_number'))
                  .select_from(d.join(direct, sa.and_(direct.c.direction == 'inbound',
                                                      direct.c.message_id == d.c.message_id,
                                                      direct.c.state == 'accepted')))

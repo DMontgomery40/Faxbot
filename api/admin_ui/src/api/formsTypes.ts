@@ -77,6 +77,8 @@ export interface FormDelivery {
   created_at: string;
   updated_at: string;
   values?: Record<string, FormValue> | null;
+  // False when this person may see the form but not open what was filled in (document access).
+  can_open_values?: boolean;
   fields?: Array<{ name: string; label: string; type: FormFieldType }>;
   message?: string;
 }

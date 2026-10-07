@@ -582,7 +582,9 @@ function SentForms({ client, deliveries, canSend, onChanged }: {
         <DialogTitle>{opened?.form ?? 'Form'}{opened?.form_version ? ` v${opened.form_version}` : ''} to {opened?.partner ?? opened?.fax_number}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{opened?.status}</Typography>
-          {opened && <FormValuesTable form={{ values: opened.values ?? null, fields: opened.fields ?? [] }} />}
+          {opened && (opened.can_open_values === false
+            ? <Typography variant="body2">You can see that this form was sent, but opening what was filled in needs access to this fax's document.</Typography>
+            : <FormValuesTable form={{ values: opened.values ?? null, fields: opened.fields ?? [] }} />)}
         </DialogContent>
         <DialogActions><Button onClick={() => setOpened(null)}>Close</Button></DialogActions>
       </Dialog>
@@ -590,14 +592,14 @@ function SentForms({ client, deliveries, canSend, onChanged }: {
   );
 }
 
-export default function Forms({ client, canWrite, canSend, canReadPartners }: {
+export default function Forms({ client, canWrite, canSend, canReadSettings }: {
   client: AdminAPIClient;
   // Import forms and new versions (settings:write).
   canWrite: boolean;
   // Send filled-in forms (fax:send).
   canSend: boolean;
-  // Read the partner list, to say when a number belongs to a partner (settings:read).
-  canReadPartners: boolean;
+  // Read the forms sent and the partner list (settings:read); a fax operator fills in and sends only.
+  canReadSettings: boolean;
 }) {
   const [tab, setTab] = useState<FormsTab>('forms');
   const [forms, setForms] = useState<RegisteredForm[] | null>(null);
@@ -614,22 +616,23 @@ export default function Forms({ client, canWrite, canSend, canReadPartners }: {
       setForms([]);
       setError(failure);
     }
+    if (!canReadSettings) return;
     try {
       setDeliveries((await client.listFormDeliveries()).deliveries);
     } catch {
       setDeliveries([]);
     }
-  }, [client]);
+  }, [client, canReadSettings]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!canReadPartners) return;
+    if (!canReadSettings) return;
     client.listDirectPartners().then((result) => setPartners(result.peers)).catch(() => setPartners(null));
-  }, [client, canReadPartners]);
+  }, [client, canReadSettings]);
 
   const sent = (delivery: FormDelivery) => {
     setNotice(delivery.route === 'fax' ? 'The form is on its way as a fax.' : delivery.status);
-    setTab('sent');
+    if (canReadSettings) setTab('sent');
     void load();
   };
 
@@ -642,7 +645,7 @@ export default function Forms({ client, canWrite, canSend, canReadPartners }: {
       <Tabs value={tab} onChange={(_, next: FormsTab) => setTab(next)} sx={{ mb: 3 }}>
         <Tab value="forms" label="Forms" />
         <Tab value="send" label="Send a form" />
-        <Tab value="sent" label="Sent forms" />
+        {canReadSettings && <Tab value="sent" label="Sent forms" />}
       </Tabs>
       {tab === 'forms' && (
         <FormsList client={client} forms={forms} canWrite={canWrite}
