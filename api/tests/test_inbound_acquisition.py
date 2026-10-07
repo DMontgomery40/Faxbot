@@ -382,9 +382,10 @@ def test_with_checks_off_a_notification_is_only_a_hint_confirmed_by_lookup(isola
     assert 'attacker.example' not in providers.hosts()
 
 
-@pytest.mark.parametrize('event', ['INCOMING_FAX', '"INCOMING_FAX"'])
+@pytest.mark.parametrize('event, fax_as_file', [('INCOMING_FAX', False), ('"INCOMING_FAX"', False),
+                                                ('INCOMING_FAX', True)])
 def test_sinchs_default_multipart_webhook_with_receiving_on_the_trunk_is_confirmed_by_lookup(
-        isolated_installation, monkeypatch, providers, event):
+        isolated_installation, monkeypatch, providers, event, fax_as_file):
     """The form Sinch's reference shows (event, the fax as JSON, the PDF), with no basic auth.
 
     Receiving is set to the SIP trunk without FAX_INBOUND_BACKEND, as on an installation
@@ -398,6 +399,9 @@ def test_sinchs_default_multipart_webhook_with_receiving_on_the_trunk_is_confirm
            'projectId': SINCH_PROJECT, 'serviceId': 'synthetic-service'}
     form = {'event': event, 'eventTime': '2026-10-03T14:00:01Z', 'fax': json.dumps(fax)}
     attached = {'file': ('01MULTIPARTFAX.pdf', pdf_bytes('attached, never used unauthenticated'), 'application/pdf')}
+    if fax_as_file:
+        # The fax part sent with a file name, as a JSON attachment.
+        attached['fax'] = ('fax.json', form.pop('fax').encode(), 'application/json')
     with client() as http:
         assert http.post('/sinch-inbound', data=form, files=attached).json() == {'status': 'ignored'}
         assert rows(isolated_installation, 'inbound_faxes') == []

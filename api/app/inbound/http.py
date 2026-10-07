@@ -382,6 +382,14 @@ async def _sinch_payload(request, raw):
         except CallbackFormError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
         data = _form_dict(fields)
+        if 'fax' not in data:
+            # The fax part arrives as JSON; sent with a file name, it is parsed as a file part.
+            part = next((content for name, content in files if name == 'fax'), None)
+            if part is not None:
+                try:
+                    data['fax'] = part.decode('utf-8')
+                except UnicodeDecodeError:
+                    data['fax'] = None
         if isinstance(data.get('fax'), str):
             try:
                 data['fax'] = json.loads(data['fax'])
