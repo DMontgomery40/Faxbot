@@ -6,7 +6,7 @@ Phaxio install and no history: every section says it has nothing to advise yet.
 from api.tests.test_cli import cli, server  # noqa: F401  (fixtures)
 
 
-SECTIONS = {'sending', 'receiving', 'plans', 'fax_marker', 'billing_steps', 'partners', 'toll_free'}
+SECTIONS = {'sending', 'receiving', 'plans', 'fax_marker', 'billing_steps', 'partners', 'toll_free', 'carriers'}
 
 
 def test_recommendations_alone_shows_every_section_and_each_has_its_own_command(cli):  # noqa: F811
@@ -16,12 +16,13 @@ def test_recommendations_alone_shows_every_section_and_each_has_its_own_command(
     assert result['partners']['state'] == 'none' and result['toll_free']['state'] == 'none'
     human = ' '.join(cli('costs', 'recommendations').stdout.split())
     for heading in ('Sending', 'Receiving', 'Plans', 'Fax marker', 'Billing steps', 'Partner candidates',
-                    'Toll-free numbers'):
+                    'Toll-free numbers', 'Other carriers'):
         assert heading in human
     assert ('Faxbot placed no calls over your carrier line in the last 90 days, so there is nothing to compare yet.'
             in human)
     for command, key in (('fax-marker', 'fax_marker'), ('billing-steps', 'billing_steps'), ('partners', 'partners'),
-                         ('toll-free', 'toll_free'), ('sending', 'sending'), ('plans', 'plans')):
+                         ('toll-free', 'toll_free'), ('sending', 'sending'), ('plans', 'plans'),
+                         ('carriers', 'carriers')):
         alone = cli('costs', 'recommendations', command)
         assert alone.exit_code == 0, alone.stdout
         expected = result[key].get('sentence') or result[key].get('empty_sentence')
