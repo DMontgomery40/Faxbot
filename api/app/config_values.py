@@ -288,6 +288,9 @@ class ConfigurationValues(BaseModel):
     # rate a route needs at a number before it stops being chosen first.
     outbound_routes: str = Field('', validation_alias='FAX_OUTBOUND_ROUTES', pattern=r'^[a-z0-9_.,\s-]*$')
     route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
+    # Monthly normal-use budgets, allowances and billing days of flat and allowance plans, one entry a route
+    # ("humblefax:pages=200,faxes=50,day=1"); empty uses Faxbot's cautious defaults (routing/plan_budget.py).
+    plan_budgets: str = Field('', validation_alias='FAX_PLAN_BUDGETS', max_length=2000)
     # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
     local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
     # Default intake email connector; more connectors are managed in the console.
@@ -327,6 +330,12 @@ class ConfigurationValues(BaseModel):
     @classmethod
     def normalize_selector(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("plan_budgets")
+    @classmethod
+    def normalize_plan_budgets(cls, value):
+        from .routing.plan_budget import normalize_budgets
+        return normalize_budgets(value)
 
     @field_validator("fax_default_country", mode="before")
     @classmethod

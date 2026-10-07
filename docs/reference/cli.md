@@ -4024,9 +4024,9 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
-* `plans`: Show the price plans a fax service...
 * `predict`: Show what a fax to a number would take and...
 * `recommendations`: Ways to pay less, from what your faxes and...
+* `plans`: Your plans: each plan&#x27;s budget or...
 
 ### `faxbot costs spending`
 
@@ -4128,25 +4128,6 @@ $ faxbot costs rate-cards [OPTIONS]
 * `--replace FILE`: Replace all rate cards with the cards in this JSON file ({&quot;cards&quot;: [...]}, or &#x27;-&#x27; for standard input).
 * `--help`: Show this message and exit.
 
-### `faxbot costs plans`
-
-Show the price plans a fax service advertises, with where Faxbot found them and when.
-
-**Usage**:
-
-```console
-$ faxbot costs plans [OPTIONS] [provider]
-```
-
-**Arguments**:
-
-* `provider`: The fax service, for example efax.
-
-**Options**:
-
-* `--in-use`: Plans for every sending provider that has no rate card yet.
-* `--help`: Show this message and exit.
-
 ### `faxbot costs predict`
 
 Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent.
@@ -4189,6 +4170,7 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `partners`: Show the numbers whose faxes cost the most...
 * `service-numbers`: Show quiet numbers at your carrier and at...
 * `toll-free`: Show recipients with a toll-free fax...
+* `carriers`: Show what your last 30 days of faxing...
 
 #### `faxbot costs recommendations sending`
 
@@ -4300,6 +4282,100 @@ $ faxbot costs recommendations toll-free [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations carriers`
+
+Show what your last 30 days of faxing would have cost at each carrier&#x27;s published prices. Advice only: switching carriers means moving your numbers, and Faxbot never switches anything.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations carriers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot costs plans`
+
+Your plans: each plan&#x27;s budget or allowance this month and what is committed (show), setting a budget (budget), and the plans a fax service publishes (published, or name the service: faxbot costs plans efax).
+
+**Usage**:
+
+```console
+$ faxbot costs plans [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `published`: Show the price plans a fax service...
+* `show`: Show each plan&#x27;s normal-use budget or...
+* `budget`: Set a plan&#x27;s monthly normal-use budget,...
+
+#### `faxbot costs plans published`
+
+Show the price plans a fax service advertises, with where Faxbot found them and when.
+
+**Usage**:
+
+```console
+$ faxbot costs plans published [OPTIONS] [provider]
+```
+
+**Arguments**:
+
+* `provider`: The fax service, for example efax.
+
+**Options**:
+
+* `--in-use`: Plans for every sending provider that has no rate card yet.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs plans show`
+
+Show each plan&#x27;s normal-use budget or allowance this billing period, what is committed, and faxes between your own accounts. Every figure is an estimate.
+
+**Usage**:
+
+```console
+$ faxbot costs plans show [OPTIONS]
+```
+
+**Options**:
+
+* `--by-day`: Also show the pages and faxes carried each day of this billing period.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs plans budget`
+
+Set a plan&#x27;s monthly normal-use budget, allowance or commitment, and the day its counts start again. Faxbot never changes the plan itself.
+
+**Usage**:
+
+```console
+$ faxbot costs plans budget [OPTIONS] {plan}
+```
+
+**Arguments**:
+
+* `plan`: The plan, for example humblefax or efax; the carrier trunk is sip.  [required]
+
+**Options**:
+
+* `--pages COUNT`: Normal-use pages a month, or none for no limit.
+* `--faxes COUNT`: Normal-use faxes a month, or none for no limit.
+* `--billing-day <int range>`: The day of the month the plan&#x27;s counts start again.  [1&lt;=x&lt;=31]
+* `--included-pages COUNT`: Pages the plan includes each month, or none.
+* `--page-overage PRICE`: The price of each page past them, such as 0.10.
+* `--included-minutes COUNT`: Minutes the plan includes each month, or none.
+* `--commitment AMOUNT`: A monthly amount you have committed to spend, such as 50.
+* `--default`: Go back to Faxbot&#x27;s starting budget for this plan.
 * `--help`: Show this message and exit.
 
 ## `faxbot access`

@@ -823,3 +823,106 @@ export interface TollFreeRecommendations {
   days: number;
   items: Array<TollFreeRow & { display_name: string | null; approved: boolean; spend: Money | null; sentence: string }>;
 }
+
+// GET /routing/plans: each plan this billing period (Costs → Prices & plans). Every figure is an estimate. The budgets
+// themselves are the setting plan_budgets ("humblefax:pages=200,faxes=50,day=1; efax:included_pages=200").
+export interface PlanBudgetTerms {
+  pages: number | null;            // normal-use pages a month; null: no limit
+  faxes: number | null;
+  day: number;                     // the billing day, 1 to 31
+  included_pages: number | null;
+  page_overage: Money[];
+  included_minutes: number | null;
+  per_minute: Money[];
+  commitment: Money[];
+  source: 'set' | 'default' | 'published';
+  sentence: string;
+}
+
+export interface PlanOwnAccounts {
+  direction: 'sent' | 'received';
+  other: string;
+  faxes: number;
+  pages: number;
+  sending_bill: string;
+  receiving_bill: string | null;
+  sending_cost: Money[];
+  sentence: string;
+}
+
+export interface PlanContract {
+  route: string;
+  name: string;
+  currency: string;
+  estimate: true;
+  monthly_fee: Money[];
+  // metered: a monthly fee and a price for each fax, with no allowance to use first.
+  kind: 'flat' | 'allowance' | 'minutes' | 'commitment' | 'metered';
+  budget: PlanBudgetTerms;
+  period: { start: string; end: string; first_day: string; next_day: string; next_day_text: string };
+  used: {
+    sent_faxes: number; sent_pages: number; received_faxes: number; received_pages: number; faxes: number;
+    pages: number; minutes: number | null; spend: Money[]; not_priced: number;
+    // Faxes counted by pages alone: the plan also counts time on the line, which was not known for them.
+    counted_by_pages_only: number;
+  };
+  left: { pages: number | null; faxes: number | null; allowance: number | null; minutes: number | null; commitment: Money[] };
+  overage: { pages: number; minutes: number; cost: Money[]; cost_unknown: boolean };
+  committed: Money[];
+  bill_so_far: Money[];
+  bill_sentence: string | null;
+  state: 'within' | 'over_budget' | 'past_allowance' | 'no_limit';
+  over: boolean;
+  sentence: string;
+  pace_sentence: string | null;
+  count_sentence: string | null;
+  untimed_sentence: string | null;
+  burn_down: Array<{ date: string; pages: number; faxes: number }>;
+  own_accounts: PlanOwnAccounts[];
+}
+
+export interface PlanContracts {
+  plans: PlanContract[];
+  estimate: true;
+  plan_budgets: string;
+  empty_sentence: string | null;
+}
+
+// GET /routing/recommendations/carriers: your last 30 days at each carrier's published prices. Advice only.
+export interface CarrierPrice {
+  id: string;
+  name: string;
+  kind: 'trunk' | 'service' | 'plan';
+  yours: boolean;
+  total: Money[];
+  complete: boolean;
+  sending: Money[];
+  receiving: Money[];
+  monthly: Money[];
+  not_priced: number;
+  numbers_not_priced: number;
+  over_budget: boolean;
+  cheapest: boolean;
+  difference: Money[];             // what your current services cost minus this; empty when either is incomplete
+  source_url: string | null;
+  advertised_on: string | null;
+  sentence: string;
+}
+
+export interface CarrierComparison {
+  days: number;
+  estimate: true;
+  advice_only: true;
+  sent: number;
+  received: number;
+  sentence: string;
+  switching_sentence: string;
+  unpublished_sentence: string | null;
+  cheapest: string | null;
+  // Your current services priced the same way, with every plan fee you pay (idle_plans carried no fax).
+  current: {
+    total: Money[]; complete: boolean; not_priced: number; routes: string[];
+    idle_plans: Array<{ name: string; monthly_fee: Money[] }>;
+  } | null;
+  carriers: CarrierPrice[];
+}

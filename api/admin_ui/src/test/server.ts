@@ -680,6 +680,14 @@ const consoleHandlers = [
   // Plans: no fax service with a monthly fee.
   http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
     empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
+  // Plans this month (Prices & plans) and other carriers (Recommendations): no plan, and no faxes to compare yet.
+  http.get('/routing/plans', () => json({ plans: [], estimate: true, plan_budgets: '',
+    empty_sentence: 'You pay no monthly fee for a fax service and set no allowance or commitment, so there is no plan to show.' })),
+  http.get('/routing/recommendations/carriers', () => json({ days: 30, estimate: true, advice_only: true, sent: 0,
+    received: 0, sentence: 'You sent and received no faxes in the last 30 days, so there is nothing to compare yet.',
+    switching_sentence: 'Changing carriers means moving (porting) your fax numbers to the new carrier and opening an '
+      + 'account there, often under a contract; Faxbot only compares published prices and never switches anything.',
+    unpublished_sentence: null, cheapest: null, current: null, carriers: [] })),
   // The advice from history (fax marker, billing steps, partner candidates, toll-free numbers): nothing yet.
   http.get('/routing/recommendations/fax-marker', () => json(newFaxMarkerAdvice())),
   http.get('/routing/recommendations/billing-steps', () => json({ days: 30, estimate: true, carrier: null,

@@ -67,6 +67,8 @@ import type {
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
+  PlanContracts,
+  CarrierComparison,
   FaxMarkerAdvice,
   BillingSteps,
   PartnerCandidates,
@@ -1296,6 +1298,17 @@ class AdminAPIClient {
   // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
   async getPlanRecommendations(): Promise<PlanRecommendations> {
     return this.json('/routing/recommendations/plans');
+  }
+
+  // Each plan this billing period: budget or allowance used and left, what is committed, the burn-down (Costs →
+  // Prices & plans). The budgets are the setting plan_budgets, saved with updateSettings.
+  async getPlans(): Promise<PlanContracts> {
+    return this.json('/routing/plans');
+  }
+
+  // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).
+  async getCarrierRecommendations(): Promise<CarrierComparison> {
+    return this.json('/routing/recommendations/carriers');
   }
 
   // Calls marked as fax against calls not marked, from history (Costs → Recommendations → Fax marker).

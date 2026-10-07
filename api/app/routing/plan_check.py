@@ -411,3 +411,218 @@ def plan_report(routes, values, *, now=None, days=WINDOW_DAYS, bound=None, sugge
     """
     accounts = known_account_numbers(values) if accounts is None else accounts
     return PlanCheck(routes, values, now=now, days=days, bound=bound, path=path, accounts=accounts).report(suggested)
+
+
+# The contract view (B11) ----------------------------------------------------------------------------
+#
+# Per plan, for the current billing period: the budget or allowance used and left, the overage so far, what
+# is committed (the plan fee and any monthly commitment), the bill so far, a day-by-day burn-down, and whose
+# bill a fax falls on when both sides are your own accounts. Every figure is an estimate.
+
+def _pages(count):
+    return f"{count} {'page' if count == 1 else 'pages'}"
+
+
+def _owners(values, accounts, country):
+    """{number: route} for the numbers each of your accounts holds (the trunk's as ``sip``)."""
+    owners = {}
+    for key in ('sip', *PROVIDER_NUMBERS):
+        for number in _plan_numbers(values, key, country, accounts):
+            owners.setdefault(number, key)
+    return owners
+
+
+def _sum_money(rows, currency):
+    """(micros, how many rows had no known cost in ``currency``) for reported-else-estimated costs."""
+    total, unknown = 0, 0
+    for row in rows:
+        if row.reported_cost_micros is not None and row.reported_currency == currency:
+            total += int(row.reported_cost_micros)
+        elif row.estimated_cost_micros is not None and row.currency == currency:
+            total += int(row.estimated_cost_micros)
+        else:
+            unknown += 1
+    return total, unknown
+
+
+class ContractView:
+    def __init__(self, routes, values, *, now=None, path=None, accounts=None):
+        self.routes, self.values, self.path = routes, values, path
+        self.now = (now or utcnow()).replace(microsecond=0)
+        self.accounts = dict(accounts or {})
+        self.country = getattr(values, 'fax_default_country', 'US') or 'US'
+        self.zone = getattr(values, 'time_zone', '') or ''
+        self.check = PlanCheck(routes, values, now=self.now, path=path, accounts=self.accounts)
+        self.owners = _owners(values, self.accounts, self.country)
+        self.here = receiving_numbers(values) if getattr(values, 'local_delivery_enabled', True) else set()
+
+    def plan_routes(self):
+        """Plans in use or that carried faxes, and every route you gave a budget, allowance or commitment."""
+        from .plan_budget import InvalidBudget, parse_budgets
+        found = set(self.check.plans())
+        try:
+            found |= set(parse_budgets(getattr(self.values, 'plan_budgets', '') or ''))
+        except InvalidBudget:
+            pass
+        return sorted(found)
+
+    def _attempts(self, start, end, *, route=None, other_than=None, destinations=None):
+        c, j = self.routes.costs, self.routes.jobs
+        query = sa.select(c.c.route, c.c.destination, j.c.pages, c.c.billed_pages, c.c.reported_cost_micros,
+                          c.c.reported_currency, c.c.estimated_cost_micros, c.c.currency).select_from(
+            c.outerjoin(j, j.c.id == c.c.job_id)).where(
+            c.c.outcome == 'success', c.c.created_at >= start, c.c.created_at < end)
+        if route is not None:
+            query = query.where(c.c.route == route)
+        if other_than is not None:
+            query = query.where(c.c.route != other_than, c.c.route != DIRECT, c.c.route != 'local')
+        if destinations is not None:
+            if not destinations:
+                return []
+            query = query.where(c.c.destination.in_(sorted(destinations)))
+        with read_connection(self.routes.engine) as connection:
+            return connection.execute(query).all()
+
+    def own_accounts(self, key, budget, start, end):
+        """Faxes between two of your own accounts this period, and whose bill each side falls on."""
+        name = self.check.label(key)
+        mine = set(_plan_numbers(self.values, key, self.country, self.accounts))
+        rows = []
+        # Sent by this plan to a number of yours held elsewhere, or to one that receives into this Faxbot.
+        groups = {}
+        for row in self._attempts(start, end, route=key):
+            if row.destination not in self.owners and row.destination not in self.here:
+                continue
+            owner = self.owners.get(row.destination) or 'local'
+            if owner == key:
+                continue  # a fax to the plan's own number is a test on one account, not two
+            groups.setdefault(owner, []).append(row)
+        uses = 'your allowance' if budget is not None and budget.included_pages else 'your plan'
+        for owner, items in sorted(groups.items()):
+            pages = sum(max(1, int(row.pages or row.billed_pages or 0)) for row in items)
+            them = 'it' if len(items) == 1 else 'them'
+            if owner == 'local':
+                other, receive = 'this Faxbot', 'nothing was charged for receiving'
+                where = 'own number that receives into this Faxbot'
+            else:
+                other = self.check.label(owner)
+                receive, where = f'receiving {them} is on your {other} bill', f'{other} number'
+            rows.append({'direction': 'sent', 'other': other, 'faxes': len(items), 'pages': pages,
+                         'sending_bill': name, 'receiving_bill': None if owner == 'local' else other,
+                         'sending_cost': [],
+                         'sentence': f'{_faxes(len(items))} from {name} went to your {where}: sending {them} used '
+                                     f'{uses} with {name}, and {receive}.'})
+        # Sent to this plan's number by another of your routes.
+        incoming = {}
+        for row in self._attempts(start, end, other_than=key, destinations=mine):
+            incoming.setdefault(row.route, []).append(row)
+        for route, items in sorted(incoming.items()):
+            other = self.check.label(route)
+            card = self.routes.card_for(_route_key(route))
+            currency = card.currency if card is not None else (budget.currency if budget else 'USD')
+            micros, unknown = _sum_money(items, currency)
+            pages = sum(max(1, int(row.pages or row.billed_pages or 0)) for row in items)
+            them = 'it' if len(items) == 1 else 'them'
+            flat = card is not None and card.flat_plan
+            if flat:
+                charge = f'sending {them} used your {other} plan'
+            elif unknown:
+                charge = f'{other} billed the calls, at a cost Faxbot does not know yet'
+            else:
+                charge = f'{other} billed the calls (about {_about(micros, currency)}, estimate)'
+            if budget is not None and budget.included_pages:
+                receive = f'their {_pages(pages)} count against your {name} allowance'
+            else:
+                receive = f'{name} received {them} inside your plan'
+            rows.append({'direction': 'received', 'other': other, 'faxes': len(items), 'pages': pages,
+                         'sending_bill': other, 'receiving_bill': name,
+                         'sending_cost': [] if unknown or flat else _money(micros, currency),
+                         'sentence': f'{_faxes(len(items))} from {other} came to your {name} number: {charge}, and '
+                                     f'{receive}.'})
+        return rows
+
+    def plan(self, key):
+        from .plan_budget import (budget_left, burn_down, day_text, metered, pace_sentence, shipped_budgets,
+                                  untimed_sentence)
+        left = budget_left(key, self.now, engine=self.routes.engine, values=self.values, path=self.path)
+        if left is None:
+            return None
+        budget, used, period = left.budget, left.used, left.period
+        currency = budget.currency
+        fee = budget.monthly_fee_micros or 0
+        overage = left.overage_micros if budget.included_pages else 0
+        minutes_extra = left.overage_minute_micros if budget.included_minutes else 0
+        committed = fee + (budget.commitment_micros or 0)
+        above = 0
+        if budget.commitment_micros is not None and used.spend_micros is not None:
+            above = max(0, used.spend_micros - budget.commitment_micros)
+        bill = None if overage is None else committed + overage + minutes_extra + above
+        rows = burn_down(self.routes.engine, left, now=self.now, zone_name=self.zone)
+        money = lambda micros: _money(micros, currency) if micros is not None else []  # noqa: E731
+        return {'route': key, 'name': budget.label, 'currency': currency, 'estimate': True,
+                'monthly_fee': money(fee or None),
+                'kind': ('allowance' if budget.included_pages else 'minutes' if budget.included_minutes
+                         else 'commitment' if budget.commitment_micros is not None and not budget.flat
+                         else 'metered' if metered(budget) else 'flat'),
+                'budget': {'pages': budget.pages, 'faxes': budget.faxes, 'day': budget.day,
+                           'included_pages': budget.included_pages, 'page_overage': money(budget.page_overage_micros),
+                           'included_minutes': budget.included_minutes,
+                           'per_minute': money(budget.per_minute_micros if budget.included_minutes else None),
+                           'commitment': money(budget.commitment_micros), 'source': budget.source,
+                           'sentence': budget.sentence},
+                'period': {'start': period.start, 'end': period.end, 'first_day': period.first_day.isoformat(),
+                           'next_day': period.next_day.isoformat(), 'next_day_text': day_text(period.next_day)},
+                'used': {'sent_faxes': used.sent_faxes, 'sent_pages': used.sent_pages,
+                         'received_faxes': used.received_faxes, 'received_pages': used.received_pages,
+                         'faxes': used.faxes, 'pages': used.pages, 'minutes': used.minutes,
+                         'spend': money(used.spend_micros), 'not_priced': used.unpriced,
+                         # Faxes counted by pages alone: the plan also counts time on the line, which was not known.
+                         'counted_by_pages_only': used.untimed},
+                'left': {'pages': left.pages_left, 'faxes': left.faxes_left, 'allowance': left.allowance_left,
+                         'minutes': left.minutes_left, 'commitment': money(left.commitment_left_micros)},
+                'overage': {'pages': left.overage_pages, 'minutes': left.overage_minutes,
+                            'cost': [] if overage is None else _money(overage + minutes_extra, currency),
+                            'cost_unknown': overage is None},
+                'committed': money(committed or None),
+                'bill_so_far': [] if bill is None or not bill else _money(bill, currency),
+                'bill_sentence': self._bill_sentence(budget, overage, minutes_extra + above, used),
+                'state': left.state, 'over': left.over, 'sentence': left.sentence,
+                'pace_sentence': pace_sentence(left, rows),
+                'count_sentence': (shipped_budgets(self.path).get(key) or {}).get('count_sentence'),
+                'untimed_sentence': untimed_sentence(left),
+                'burn_down': [{'date': row.day.isoformat(), 'pages': row.pages, 'faxes': row.faxes} for row in rows],
+                'own_accounts': self.own_accounts(key, budget, period.start,
+                                                  min(period.end, self.now + timedelta(seconds=1)))}
+
+    @staticmethod
+    def _bill_sentence(budget, overage, extra, used):
+        """What is committed this period and anything past it, in one sentence; None with nothing committed."""
+        currency, name = budget.currency, budget.label
+        parts = []
+        if budget.monthly_fee_micros:
+            parts.append(f'the {_fee_text(budget.monthly_fee_micros, currency)} plan fee')
+        if budget.commitment_micros is not None:
+            parts.append(f'your {_fee_text(budget.commitment_micros, currency)} monthly commitment')
+        if not parts:
+            return None
+        head = f"Committed this period with {name}: {' and '.join(parts)}"
+        if overage is None:
+            return head + ', plus extra pages at a price Faxbot does not know.'
+        if overage + extra:
+            return head + f', plus about {_about(overage + extra, currency)} past it so far (estimate).'
+        if budget.commitment_micros is not None and used.spend_micros is not None:
+            return head + f'; about {_about(used.spend_micros, currency)} of the commitment used so far (estimate).'
+        return head + '; nothing past it so far.'
+
+    def report(self):
+        plans = [view for view in (self.plan(key) for key in self.plan_routes()) if view is not None]
+        return {'plans': plans, 'estimate': True, 'plan_budgets': getattr(self.values, 'plan_budgets', '') or '',
+                'empty_sentence': None if plans else (
+                    'You pay no monthly fee for a fax service and set no allowance or commitment, so there is no plan '
+                    'to show.')}
+
+
+def contract_report(routes, values, *, now=None, path=None, accounts=None):
+    """The contract view for every plan; ``accounts`` maps a provider to its account's numbers (default: cached)."""
+    accounts = known_account_numbers(values) if accounts is None else accounts
+    return ContractView(routes, values, now=now, path=path, accounts=accounts).report()
