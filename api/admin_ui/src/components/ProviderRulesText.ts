@@ -6,7 +6,7 @@ import type { Money } from '../api/deliveryTypes';
 import { countryName } from './common/numbers';
 import { formatMoney } from './delivery/shared';
 import type {
-  Actions, Choices, Conditions, Day, RecipientList, Region, Rule, RulesDocument, TimeCondition,
+  Actions, Choices, Conditions, Day, ReceivingOptions, RecipientList, Region, Rule, RulesDocument, TimeCondition,
 } from './ProviderRulesApi';
 import { DAYS, recipientLists } from './ProviderRulesApi';
 
@@ -242,6 +242,43 @@ export function ruleSentence(rule: Pick<Rule, 'when' | 'unless' | 'then'>, names
   const main = `${opening}, ${actions.length > 0 ? joinAnd(actions) : 'change nothing'}.`;
   return [main, ...settingSentences(rule.then)].join(' ');
 }
+
+// Minutes after midnight as a 24-hour time ("18:00").
+export function minutesText(minutes: number): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}`;
+}
+
+export function textMinutes(time: string): number | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+// A number rule in words: "Faxes to +17208565062 received on Telnyx from numbers starting with +1303 on weekdays
+// between 09:00 and 17:00 go to Front desk, marked urgent, with no email, kept for 30 days."
+export function receivingSentence(rule: { to_number: string; mailbox_label: string } & Partial<ReceivingOptions>,
+  names: { account: (key: string) => string; connector: (id: string) => string }): string {
+  let sentence = rule.any_number || !rule.to_number ? 'Faxes to any of your numbers' : `Faxes to ${rule.to_number}`;
+  if (rule.account_key) sentence += ` received on ${names.account(rule.account_key)}`;
+  const from = (rule.from_numbers ?? []).map((entry) => (entry.endsWith('*')
+    ? `numbers starting with ${entry.slice(0, -1)}` : entry));
+  if (from.length > 0) sentence += ` from ${joinOr(from)}`;
+  const window = windowText({
+    days: rule.days ?? [],
+    from: rule.start_minute === null || rule.start_minute === undefined ? undefined : minutesText(rule.start_minute),
+    until: rule.end_minute === null || rule.end_minute === undefined ? undefined : minutesText(rule.end_minute),
+  });
+  if (window) sentence += ` ${window}`;
+  sentence += ` go to ${rule.mailbox_label}`;
+  if (rule.urgent) sentence += ', marked urgent';
+  if (rule.email_off) sentence += ', with no email';
+  else if (rule.email_connector_id) sentence += `, emailed through ${names.connector(rule.email_connector_id)}`;
+  if (rule.keep_days) sentence += `, kept for ${rule.keep_days === 1 ? '1 day' : `${rule.keep_days} days`}`;
+  return `${sentence}.`;
+}
+
+export const KEEP_DAYS_NOTE = 'This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not '
+  + 'promise to keep the fax that long.';
 
 // The fixed last row of the routing list.
 export const AUTOMATIC_ROW = 'Everything else: the cheapest reliable route, as before.';

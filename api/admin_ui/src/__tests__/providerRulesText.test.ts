@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './providerRulesSentences.json';
-import { namesFrom, ruleSentence, windowText, AUTOMATIC_ROW } from '../components/ProviderRulesText';
+import { namesFrom, receivingSentence, ruleSentence, windowText, AUTOMATIC_ROW } from '../components/ProviderRulesText';
 import { ORGANIZATION, requests, rulesApi, scopeParam, type ApiRequest, type Rule } from '../components/ProviderRulesApi';
 
 describe('provider rules in words', () => {
@@ -8,6 +8,11 @@ describe('provider rules in words', () => {
 
   it.each(fixture.cases.map((item) => [item.sentence, item.rule]))('%s', (sentence, rule) => {
     expect(ruleSentence(rule as unknown as Rule, names)).toBe(sentence);
+  });
+
+  it.each(fixture.receiving_cases.map((item) => [item.sentence, item.rule]))('%s', (sentence, rule) => {
+    const connectors: Record<string, string> = fixture.connectors;
+    expect(receivingSentence(rule as never, { account: names.account, connector: (id) => connectors[id] })).toBe(sentence);
   });
 
   it('reads the last routing row and time windows the way people say them', () => {

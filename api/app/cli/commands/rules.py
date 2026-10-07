@@ -357,6 +357,43 @@ def rule_sentence(rule, names):
     return ' '.join([main, *setting_sentences(rule.get('then') or {})])
 
 
+def minutes_text(minutes):
+    """Minutes after midnight as a 24-hour time ("18:00")."""
+    return f'{(minutes // 60) % 24:02d}:{minutes % 60:02d}'
+
+
+def receiving_sentence(rule, names, connectors=None):
+    """A number rule in words, as the console's Numbers page reads it."""
+    sentence = 'Faxes to any of your numbers' if rule.get('any_number') or not rule.get('to_number') \
+        else f"Faxes to {rule['to_number']}"
+    if rule.get('account_key'):
+        sentence += f" received on {names.account(rule['account_key'])}"
+    sources = [f'numbers starting with {entry[:-1]}' if entry.endswith('*') else entry
+               for entry in rule.get('from_numbers') or []]
+    if sources:
+        sentence += f' from {join_or(sources)}'
+    window = window_text({
+        'days': rule.get('days') or [],
+        'from': None if rule.get('start_minute') is None else minutes_text(rule['start_minute']),
+        'until': None if rule.get('end_minute') is None else minutes_text(rule['end_minute'])})
+    if window:
+        sentence += f' {window}'
+    sentence += f" go to {rule['mailbox_label']}"
+    if rule.get('urgent'):
+        sentence += ', marked urgent'
+    if rule.get('email_off'):
+        sentence += ', with no email'
+    elif rule.get('email_connector_id'):
+        sentence += f", emailed through {(connectors or {}).get(rule['email_connector_id'], 'another email connector')}"
+    if rule.get('keep_days'):
+        sentence += f", kept for {'1 day' if rule['keep_days'] == 1 else str(rule['keep_days']) + ' days'}"
+    return sentence + '.'
+
+
+KEEP_DAYS_NOTE = ('This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to '
+                  'keep the fax that long.')
+
+
 # -- reading and saving a scope's draft ---------------------------------------------------------------
 
 rules = typer.Typer(help='Sending rules: which provider account carries each fax, and limits every fax must meet. '
@@ -1126,7 +1163,7 @@ def show_explain(out, result):
 def _local_moment(value):
     text = value.strip().replace(' ', 'T')
     if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$', text):
-        raise CliError("Write the time as 2026-10-07 18:30, in your local time.")
+        raise CliError("Write the time as 2026-10-07 18:30, in this installation's time zone.")
     return text
 
 
@@ -1141,7 +1178,8 @@ def rules_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='Th
                   urgent: bool = typer.Option(False, '--urgent', help='The fax is marked urgent.'),
                   real_call: bool = typer.Option(False, '--real-call', help='The sender asks for a real call.'),
                   label: list[str] = typer.Option(None, '--label', help='A label the sender puts on the fax.'),
-                  at: str = typer.Option(None, '--at', metavar='TIME', help='When it is sent, such as 2026-10-07 18:30.'),
+                  at: str = typer.Option(None, '--at', metavar='TIME',
+                                         help="When it is sent, in this installation's time zone, such as 2026-10-07 18:30."),
                   draft: bool = typer.Option(False, '--draft', help='Try the draft instead of the published rules.'),
                   revision: int = typer.Option(None, '--revision', min=1, help='Try an earlier version.'),
                   scope: str = SCOPE):
@@ -1475,18 +1513,50 @@ def route_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The 
     state.out().result(result, human)
 
 
+def _anyway_lines(hold):
+    lines = [f"  {option['account']}: {option['label']}, {option['reason']}" for option in hold.get('options') or []]
+    return '\n'.join(lines + [f'  {sentence}' for sentence in hold.get('not_offered') or []])
+
+
 def approve_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
-                                                                              '--held.')):
-    """Approve a fax your rules held for approval. It goes out at once."""
+                                                                              '--held.'),
+                    account: str = typer.Option(None, '--account', metavar='KEY',
+                                                help='For a fax no route your rules allow: send it by this account '
+                                                     'anyway. Faxbot offers only accounts left out by a cost cap or by '
+                                                     'being down or busy.')):
+    """Approve a fax your rules held for approval, or send a fax with no allowed route by an account anyway."""
     api = state.api()
     hold = _hold_for(api, fax_id)
-    if hold['kind'] != 'approval':
-        raise CliError(f"Fax {fax_id} is not waiting for approval: {hold['reason']}")
+    if hold['kind'] == 'window':
+        raise CliError(f"Fax {fax_id} is waiting for its time window, not for approval: {hold['reason']}")
     if not hold.get('can_decide', True):
         raise CliError('Someone other than the sender must approve this fax.')
-    result = api.post('/routing/holds/' + segment(hold['id']) + '/approve', json={'version': hold['version']})
+    body = {'version': hold['version']}
+    label = None
+    if hold['kind'] == 'no_route':
+        options = {option['account']: option['label'] for option in hold.get('options') or []}
+        if not options:
+            raise CliError(f"{hold['reason']} No account can take it now. Run 'faxbot sent check-again {fax_id}' later, or "
+                           'change your rules.')
+        if account not in options:
+            raise CliError(f"{hold['reason']} Choose an account with --account:\n{_anyway_lines(hold)}")
+        body['account'], label = account, options[account]
+    elif account:
+        raise CliError('--account is only for a fax with no route your rules allow.')
+    result = api.post('/routing/holds/' + segment(hold['id']) + '/approve', json=body)
+    fallback = (f"Approved. The fax to {hold['to_number']} goes by {label}." if label
+                else f"Approved. The fax to {hold['to_number']} is no longer held.")
+    state.out().result(result, lambda out: out.line(result.get('sentence') or fallback))
+
+
+def check_again_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
+                                                                                  '--held.')):
+    """Look again for a route your rules allow for a held fax, for when an account may be back."""
+    api = state.api()
+    hold = _hold_for(api, fax_id)
+    result = api.post('/routing/holds/' + segment(hold['id']) + '/check-again', json={'version': hold['version']})
     state.out().result(result, lambda out: out.line(
-        result.get('sentence') or f"Approved. The fax to {hold['to_number']} is no longer held."))
+        result.get('sentence') or f"Faxbot checked the routes for the fax to {hold['to_number']} again."))
 
 
 def refuse_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
@@ -1502,3 +1572,67 @@ def refuse_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The
                       json={'version': hold['version'], 'reason': reason})
     state.out().result(result, lambda out: out.line(
         result.get('sentence') or f"Refused. Nothing was sent to {hold['to_number']}."))
+
+
+# -- receiving rules (faxbot numbers add, update and explain) ---------------------------------------------
+
+# The options `faxbot numbers add` and `update` gain; access.py passes them through receiving_options().
+NUMBER_ACCOUNT = typer.Option(None, '--account', metavar='KEY', help='Only faxes received on this account.')
+NUMBER_FROM = typer.Option(None, '--from', metavar='NUMBER',
+                           help='Only faxes from this number; end it with * for every number that starts with it '
+                                '(repeat it).')
+NUMBER_DAYS = typer.Option(None, '--days', metavar='DAYS', help='Only faxes received on these days, such as mon-fri.')
+NUMBER_BETWEEN = typer.Option(None, '--between', metavar='HH:MM-HH:MM',
+                              help="Only faxes received between these times, in this installation's time zone.")
+NUMBER_EMAIL = typer.Option(None, '--email', metavar='CONNECTOR', help='Email these faxes through this connector.')
+NUMBER_NO_EMAIL = typer.Option(False, '--no-email', help='Send no email for these faxes.')
+NUMBER_URGENT = typer.Option(None, '--urgent/--not-urgent', help='Mark these faxes urgent.')
+NUMBER_KEEP = typer.Option(None, '--keep-days', min=1, metavar='DAYS',
+                           help='Remove these faxes from Faxbot after this many days. ' + KEEP_DAYS_NOTE)
+NUMBER_POSITION = typer.Option(None, '--position', min=1, metavar='N',
+                               help='Its place among your number rules; the first that matches a fax places it.')
+NUMBER_ANY = typer.Option(None, '--any-number/--this-number-only', help='Use the rule for faxes to any of your numbers.')
+
+
+def receiving_options(api, *, account=None, from_numbers=None, days=None, between=None, email=None, no_email=False,
+                      urgent=None, keep_days=None, position=None, any_number=None):
+    """The receiving-rule fields of an /access/inbound-rules body, from the options given."""
+    if email and no_email:
+        raise CliError('Choose --email CONNECTOR or --no-email, not both.')
+    body = {}
+    if account:
+        body['account_key'] = account
+    if from_numbers:
+        body['from_numbers'] = list(from_numbers)
+    if days:
+        body['days'] = parse_days(days)
+    if between:
+        start, end = parse_between(between)
+        body['start_minute'] = int(start[:2]) * 60 + int(start[3:])
+        body['end_minute'] = int(end[:2]) * 60 + int(end[3:])
+    if email:
+        from .delivery import _connector
+        body['email_connector_id'], body['email_off'] = _connector(api, email)['id'], False
+    if no_email:
+        body['email_connector_id'], body['email_off'] = None, True
+    if urgent is not None:
+        body['urgent'] = urgent
+    if keep_days is not None:
+        body['keep_days'] = keep_days
+    if position is not None:
+        body['position'] = position
+    if any_number is not None:
+        body['any_number'] = any_number
+    return body
+
+
+def numbers_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='Your number the fax is sent to.'),
+                    sender: str = typer.Option(None, '--from', metavar='NUMBER', help='The number it comes from.'),
+                    account: str = typer.Option(None, '--account', metavar='KEY', help='The account it arrives on.'),
+                    at: str = typer.Option(None, '--at', metavar='TIME',
+                                           help="When it arrives, in this installation's time zone, such as "
+                                                '2026-10-07 18:30.')):
+    """Which mailbox, email and urgency a received fax would get, and why. Nothing is saved."""
+    result = state.api().post('/access/inbound-rules/explain', json={
+        'to_number': to, 'from_number': sender, 'account_key': account, 'at': _local_moment(at) if at else None})
+    state.out().result(result, lambda out: out.line(result.get('sentence') or ''))

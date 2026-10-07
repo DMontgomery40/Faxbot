@@ -25,6 +25,19 @@ KEY = 'synthetic-rules-key'
 FIXTURE = Path(__file__).resolve().parents[1] / 'admin_ui/src/__tests__/providerRulesSentences.json'
 
 
+def _options_probe(account: str = rules_module.NUMBER_ACCOUNT, sender: list[str] = rules_module.NUMBER_FROM,
+                   days: str = rules_module.NUMBER_DAYS, between: str = rules_module.NUMBER_BETWEEN,
+                   email: str = rules_module.NUMBER_EMAIL, no_email: bool = rules_module.NUMBER_NO_EMAIL,
+                   urgent: bool = rules_module.NUMBER_URGENT, keep_days: int = rules_module.NUMBER_KEEP,
+                   position: int = rules_module.NUMBER_POSITION, any_number: bool = rules_module.NUMBER_ANY):
+    """Stands in for faxbot numbers add/update until access.py gains these options: prints the body it would send."""
+    from app.cli import state
+    body = rules_module.receiving_options(state.api(), account=account, from_numbers=sender, days=days, between=between,
+                                          email=email, no_email=no_email, urgent=urgent, keep_days=keep_days,
+                                          position=position, any_number=any_number)
+    state.out().json(body)
+
+
 def _root():
     app = typer.Typer(cls=cli_main.FaxbotGroup, no_args_is_help=True, pretty_exceptions_enable=False)
     app.callback()(cli_main.main)
@@ -37,6 +50,11 @@ def _root():
     sent.command('approve')(rules_module.approve_command)
     sent.command('refuse')(rules_module.refuse_command)
     sent.command('held')(rules_module.held_list)
+    sent.command('check-again')(rules_module.check_again_command)
+    numbers = typer.Typer(no_args_is_help=True)
+    numbers.command('explain')(rules_module.numbers_explain)
+    numbers.command('options')(_options_probe)
+    app.add_typer(numbers, name='numbers')
     app.add_typer(sent, name='sent')
     return app
 
@@ -73,7 +91,13 @@ class FakeServer:
         self.holds = [{'id': 'h-1', 'job_id': 'f' * 32, 'kind': 'approval', 'to_number': '+15550100001', 'pages': 24,
                        'sender_name': 'Nia New', 'requested_at': '2026-10-07T16:00:00', 'until': None,
                        'reason': "Waiting for approval: the rule 'Faxes over 20 pages need approval' matched.",
-                       'can_decide': True, 'version': 3}]
+                       'can_decide': True, 'version': 3},
+                      {'id': 'h-2', 'job_id': 'e' * 32, 'kind': 'no_route', 'to_number': '+442071234567', 'pages': 1,
+                       'sender_name': 'Ada Admin', 'requested_at': '2026-10-07T16:05:00', 'until': None,
+                       'reason': 'No route your rules allow costs less than $0.10 for this fax.', 'can_decide': True,
+                       'version': 1, 'options': [{'account': 'sip', 'label': 'Telnyx', 'reason': 'every line is busy'}],
+                       'not_offered': ["HumbleFax is not offered: the limit 'Never send UK faxes by HumbleFax' forbids "
+                                       'it.']}]
         self.generation = 7
         # Someone else saves the draft, or publishes, between this command's read and its write.
         self.draft_race = False
@@ -173,6 +197,12 @@ class FakeServer:
                     {'change': 'added', 'section': 'limits', 'id': 'l-hf', 'name': 'No HumbleFax', 'before': None,
                      'after': {'when': {}, 'then': {'never': ['humblefax']}}}]}
             return 200, scope['revisions'][int(parts[4]) - 1]
+        if path == '/intake/connectors':
+            return 200, {'connectors': [{'id': 'c-night', 'name': 'Night inbox'}]}
+        if path == '/access/inbound-rules/explain':
+            return 200, {'sentence': 'It would go to Front desk, marked urgent, because of the rule for +17208565062.',
+                         'mailbox_label': 'Front desk', 'email': None, 'urgent': True, 'keep_days': None,
+                         'rule_to_number': '+17208565062'}
         if path == '/routing/explain':
             return 200, {'outcome': 'route', 'sentence': "Sinch (UK) first, because the rule 'UK numbers go through "
                                                          "Sinch' matched.",
@@ -190,6 +220,8 @@ class FakeServer:
             hold = next(item for item in self.holds if item['id'] == path.split('/')[3])
             if body['version'] != hold['version']:
                 return 409, {'detail': 'Someone else decided on this fax meanwhile.'}
+            if path.endswith('/check-again'):
+                return 200, {**hold, 'sentence': 'Still no route your rules allow. The fax keeps waiting.'}
             return 200, {**hold, 'version': hold['version'] + 1}
         if path.startswith('/routing/faxes/'):
             return 200, {'job_id': path.split('/')[3], 'sentence': "Sent by Sinch (UK) because the rule 'UK numbers go "
@@ -257,6 +289,8 @@ def test_rules_read_as_the_same_sentences_as_the_console(monkeypatch):
     names = rules_module.Names(fixture['names'])
     for case in fixture['cases']:
         assert rules_module.rule_sentence(case['rule'], names) == case['sentence']
+    for case in fixture['receiving_cases']:
+        assert rules_module.receiving_sentence(case['rule'], names, fixture['connectors']) == case['sentence']
     # The console's rule editor offers a condition for each of these (providerRules.test.tsx).
     assert list(rules_module.CONDITION_FIELDS) == fixture['cli_condition_fields']
     # Every action and route setting the console's editor writes, the command can write too.
@@ -414,7 +448,7 @@ def test_explain_sends_the_fax_facts_and_reads_the_answer(fake):
     both = fake('providers', 'rules', 'explain', '--to', '+15550100', '--draft', '--revision', '1')
     assert both.exit_code == 1 and 'Choose --draft or --revision, not both.' in both.stderr
     when = fake('providers', 'rules', 'explain', '--to', '+15550100', '--at', 'tonight')
-    assert when.exit_code == 1 and 'Write the time as 2026-10-07 18:30' in when.stderr
+    assert when.exit_code == 1 and "Write the time as 2026-10-07 18:30, in this installation's time zone." in when.stderr
 
 
 def test_mailbox_scope_by_name_and_apply_to_waiting(fake):
@@ -490,8 +524,45 @@ def test_held_faxes_are_listed_approved_and_refused_with_their_versions(fake):
     fake.holds[0]['can_decide'] = False
     blocked = fake('sent', 'approve', 'f' * 32)
     assert blocked.exit_code == 1 and 'Someone other than the sender must approve this fax.' in blocked.stderr
-    missing = fake('sent', 'approve', 'e' * 32)
+    missing = fake('sent', 'approve', 'd' * 32)
     assert missing.exit_code == 5 and 'is not waiting for you' in missing.stderr
+
+
+def test_a_fax_with_no_allowed_route_is_sent_anyway_only_by_an_offered_account(fake):
+    asked = fake('sent', 'approve', 'e' * 32)
+    assert asked.exit_code == 1
+    assert 'Choose an account with --account:' in asked.stderr and 'sip: Telnyx, every line is busy' in asked.stderr
+    assert "HumbleFax is not offered: the limit 'Never send UK faxes by HumbleFax' forbids it." in asked.stderr
+    refused = fake('sent', 'approve', 'e' * 32, '--account', 'humblefax')
+    assert refused.exit_code == 1 and fake.sent('POST', '/routing/holds/h-2/approve') == []
+    sent = fake('sent', 'approve', 'e' * 32, '--account', 'sip')
+    assert sent.exit_code == 0 and 'Approved. The fax to +442071234567 goes by Telnyx.' in flat(sent)
+    assert fake.sent('POST', '/routing/holds/h-2/approve') == [{'version': 1, 'account': 'sip'}]
+    wrong = fake('sent', 'approve', 'f' * 32, '--account', 'sip')
+    assert wrong.exit_code == 1 and '--account is only for a fax with no route your rules allow.' in wrong.stderr
+    again = fake('sent', 'check-again', 'e' * 32)
+    assert again.exit_code == 0 and 'Still no route your rules allow. The fax keeps waiting.' in flat(again)
+    assert fake.sent('POST', '/routing/holds/h-2/check-again') == [{'version': 1}]
+
+
+def test_number_rule_options_and_try_a_received_fax(fake):
+    result = fake('numbers', 'options', '--account', 'sinch-uk', '--from', '+13035550100', '--from', '+1303*',
+                  '--days', 'weekdays', '--between', '18:00-07:00', '--email', 'night inbox', '--urgent',
+                  '--keep-days', '30', '--position', '2', '--any-number')
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        'account_key': 'sinch-uk', 'from_numbers': ['+13035550100', '+1303*'], 'days': ['mon', 'tue', 'wed', 'thu', 'fri'],
+        'start_minute': 1080, 'end_minute': 420, 'email_connector_id': 'c-night', 'email_off': False, 'urgent': True,
+        'keep_days': 30, 'position': 2, 'any_number': True}
+    quiet = fake('numbers', 'options', '--no-email', '--not-urgent')
+    assert json.loads(quiet.stdout) == {'email_connector_id': None, 'email_off': True, 'urgent': False}
+    both = fake('numbers', 'options', '--email', 'Night inbox', '--no-email')
+    assert both.exit_code == 1 and 'Choose --email CONNECTOR or --no-email, not both.' in both.stderr
+    explained = fake('numbers', 'explain', '--to', '+17208565062', '--from', '+13035550100', '--account', 'sip',
+                     '--at', '2026-10-07 18:30')
+    assert explained.exit_code == 0 and 'It would go to Front desk, marked urgent' in flat(explained)
+    assert fake.sent('POST', '/access/inbound-rules/explain') == [
+        {'to_number': '+17208565062', 'from_number': '+13035550100', 'account_key': 'sip', 'at': '2026-10-07T18:30'}]
 
 
 def test_why_this_route(fake):

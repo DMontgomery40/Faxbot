@@ -134,8 +134,9 @@ export default function ProviderRulesTry({ api, scope, state, document }: {
               onChange={(event) => setPages(event.target.value)} sx={{ width: 120 }} />
             <TextField size="small" label="File size (MB)" type="number" value={sizeMb} inputProps={{ min: 0, step: 0.1 }}
               onChange={(event) => setSizeMb(event.target.value)} sx={{ width: 160 }} />
-            <TextField size="small" label="When it is sent" type="datetime-local" value={at} InputLabelProps={{ shrink: true }}
-              helperText="Leave empty for now." onChange={(event) => setAt(event.target.value)} />
+            <TextField size="small" label={`Time at this installation (${state.time_zone})`} type="datetime-local" value={at}
+              InputLabelProps={{ shrink: true }} helperText="When the fax is sent. Leave empty for now."
+              onChange={(event) => setAt(event.target.value)} />
           </Stack>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} flexWrap="wrap" useFlexGap>
             {select('Sent by', sender, setSender, [['me', 'Me'], ...state.choices.people.map((person): [string, string] => [person.id, person.name])])}

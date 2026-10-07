@@ -210,6 +210,8 @@ export interface RulesState {
   matches_30_days: Record<string, number>;
   can_write: boolean;
   choices: Choices;
+  // The installation's time zone, which rules about times of day and "Try a fax" use.
+  time_zone: string;
 }
 
 export interface DiffChange {
@@ -287,7 +289,14 @@ export interface Hold {
   // False when the rule needs someone other than the sender and this person sent it.
   can_decide: boolean;
   version: number;
+  // A fax with no route the rules allow: the accounts it may still be sent by anyway, each left out only by a
+  // cost cap or by being down or busy, with the reason ("over the $0.50 cap: estimated $0.90").
+  options?: SendAnywayOption[];
+  // Why other accounts are not offered (a mandatory limit, a never rule, direct delivery required).
+  not_offered?: string[];
 }
+
+export interface SendAnywayOption { account: string; label: string; reason: string }
 
 // The recipient's approved alternate number an attempt dialed instead of the number the sender gave.
 export interface AlternateDial {
@@ -393,6 +402,55 @@ export interface AccountHealth {
   details: string[];
 }
 
+// -- receiving rules (Numbers) ---------------------------------------------------------------------
+
+// What a number rule adds to "faxes to this number go to this mailbox" (design §4.9). A rule without
+// options behaves exactly as number rules always have.
+export interface ReceivingOptions {
+  // The rule's place among number rules; the first that matches a received fax places it.
+  position: number | null;
+  enabled: boolean;
+  // Matches a fax to any of your numbers, not only this rule's number.
+  any_number: boolean;
+  // Only faxes that arrive on this account.
+  account_key: string | null;
+  // Only faxes from these numbers; an entry ending in * matches numbers that start with it.
+  from_numbers: string[];
+  days: Day[];
+  // Minutes after midnight, in the installation's time zone; a window may run past midnight.
+  start_minute: number | null;
+  end_minute: number | null;
+  // Deliver by email through this connector instead of the usual one; email_off sends no email at all.
+  email_connector_id: string | null;
+  email_off: boolean;
+  urgent: boolean;
+  // How long the received fax is kept before cleanup removes it. Not a legal hold.
+  keep_days: number | null;
+}
+
+export const NO_RECEIVING_OPTIONS: ReceivingOptions = {
+  position: null, enabled: true, any_number: false, account_key: null, from_numbers: [], days: [], start_minute: null,
+  end_minute: null, email_connector_id: null, email_off: false, urgent: false, keep_days: null,
+};
+
+export interface ReceivedExplainRequest {
+  to_number: string;
+  from_number: string | null;
+  account_key: string | null;
+  // A local time to try ("2026-10-07T18:30"), or now.
+  at: string | null;
+}
+
+export interface ReceivedExplainResult {
+  sentence: string;
+  mailbox_label: string | null;
+  email: string | null;
+  urgent: boolean;
+  keep_days: number | null;
+  // The number rule that placed it, or null when the usual placement applies.
+  rule_to_number: string | null;
+}
+
 // -- requests ---------------------------------------------------------------------------------------
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -430,8 +488,13 @@ export const requests = {
   applyToWaiting: (): ApiRequest => ({ method: 'POST', path: '/routing/rules/apply-to-waiting', body: {} }),
   faxRoute: (jobId: string): ApiRequest => ({ method: 'GET', path: `/routing/faxes/${segment(jobId)}/route` }),
   holds: (): ApiRequest => ({ method: 'GET', path: '/routing/holds?state=open' }),
-  approve: (hold: Hold): ApiRequest => ({
-    method: 'POST', path: `/routing/holds/${segment(hold.id)}/approve`, body: { version: hold.version },
+  // For a fax with no route the rules allow, `account` is the one to send it by anyway.
+  approve: (hold: Hold, account?: string): ApiRequest => ({
+    method: 'POST', path: `/routing/holds/${segment(hold.id)}/approve`,
+    body: account ? { version: hold.version, account } : { version: hold.version },
+  }),
+  checkAgain: (hold: Hold): ApiRequest => ({
+    method: 'POST', path: `/routing/holds/${segment(hold.id)}/check-again`, body: { version: hold.version },
   }),
   refuse: (hold: Hold, reason: string): ApiRequest => ({
     method: 'POST', path: `/routing/holds/${segment(hold.id)}/refuse`, body: { version: hold.version, reason },
@@ -442,6 +505,9 @@ export const requests = {
   }),
   updateAccount: (key: string, patch: AccountPatch, generation: number): ApiRequest => ({
     method: 'PATCH', path: `/admin/providers/accounts/${segment(key)}`, body: { ...patch, expected_generation: generation },
+  }),
+  explainReceived: (body: ReceivedExplainRequest): ApiRequest => ({
+    method: 'POST', path: '/access/inbound-rules/explain', body,
   }),
   accountHealth: (key: string): ApiRequest => ({
     method: 'GET', path: `/admin/providers/accounts/${segment(key)}/health`,
@@ -462,12 +528,14 @@ export interface RulesApi {
   applyToWaiting(): Promise<{ changed: number; checked: number; sentence: string }>;
   faxRoute(jobId: string): Promise<FaxRoute>;
   holds(): Promise<{ holds: Hold[] }>;
-  approve(hold: Hold): Promise<HoldDecision>;
+  approve(hold: Hold, account?: string): Promise<HoldDecision>;
+  checkAgain(hold: Hold): Promise<HoldDecision>;
   refuse(hold: Hold, reason: string): Promise<HoldDecision>;
   accounts(): Promise<AccountsState>;
   addAccount(input: AccountInput, generation: number): Promise<AccountsState>;
   updateAccount(key: string, patch: AccountPatch, generation: number): Promise<AccountsState>;
   accountHealth(key: string): Promise<AccountHealth>;
+  explainReceived(body: ReceivedExplainRequest): Promise<ReceivedExplainResult>;
 }
 
 // The rules API over one request function.
@@ -486,11 +554,13 @@ export function rulesApi(send: Send): RulesApi {
     applyToWaiting: () => send(requests.applyToWaiting()),
     faxRoute: (jobId) => send(requests.faxRoute(jobId)),
     holds: () => send(requests.holds()),
-    approve: (hold) => send(requests.approve(hold)),
+    approve: (hold, account) => send(requests.approve(hold, account)),
+    checkAgain: (hold) => send(requests.checkAgain(hold)),
     refuse: (hold, reason) => send(requests.refuse(hold, reason)),
     accounts: () => send(requests.accounts()),
     addAccount: (input, generation) => send(requests.addAccount(input, generation)),
     updateAccount: (key, patch, generation) => send(requests.updateAccount(key, patch, generation)),
     accountHealth: (key) => send(requests.accountHealth(key)),
+    explainReceived: (body) => send(requests.explainReceived(body)),
   };
 }

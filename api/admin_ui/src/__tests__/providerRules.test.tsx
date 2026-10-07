@@ -157,6 +157,7 @@ describe('Providers → Rules: the other tabs', () => {
     expect(screen.getByText('About $0.031')).toBeTruthy();
     expect(screen.getByText('Not priced yet')).toBeTruthy();
     expect(screen.getByText('The number is not in UK clinics.')).toBeTruthy();
+    expect(screen.getByLabelText('Time at this installation (America/Denver)')).toBeTruthy();
     expect(fake.sent('POST', '/routing/explain')).toEqual([{ to: '+442071234567', pages: 3, size_bytes: null, as: 'me',
       mailbox: 'm-leeds', workflow: null, urgent: false, real_call: false, labels: ['legal'], at: null, scope: 'organization',
       source: { revision: 1 } }]);
@@ -248,12 +249,31 @@ describe('held faxes and why a fax took its route', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve the fax to +15550100001' }));
     expect(await screen.findByText('Approved. The fax to +15550100001 is no longer held.')).toBeTruthy();
     expect(fake.sent('POST', '/routing/holds/h-1/approve')).toEqual([{ version: 3 }]);
-    fireEvent.click(screen.getByRole('button', { name: 'Refuse the fax to +442071234567' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check again for the fax to +442071234567' }));
+    expect(await screen.findByText('Still no route your rules allow. The fax keeps waiting.')).toBeTruthy();
+    expect(fake.sent('POST', '/routing/holds/h-2/check-again')).toEqual([{ version: 1 }]);
+    fireEvent.click(screen.getByRole('button', { name: 'Send the fax to +442071234567 anyway' }));
+    const anyway = await screen.findByRole('dialog', { name: 'Send the fax to +442071234567 anyway?' });
+    expect(within(anyway).getByText('HumbleFax is not offered: the limit ‘Never send UK faxes by HumbleFax’ forbids it.')).toBeTruthy();
+    fireEvent.click(within(anyway).getByLabelText('Telnyx: every line is busy'));
+    fireEvent.click(within(anyway).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Refuse the fax to +442071234567' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'Wrong recipient' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Refuse' }));
     expect(await screen.findByText('Refused. Nothing was sent to +442071234567.')).toBeTruthy();
     expect(fake.sent('POST', '/routing/holds/h-2/refuse')).toEqual([{ version: 1, reason: 'Wrong recipient' }]);
+  });
+
+  it('sends a fax with no allowed route anyway, by an account left out only by a cap or being busy', async () => {
+    const fake = new FakeRules();
+    render(<HeldFaxes api={fake.api()} canApprove />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Send the fax to +442071234567 anyway' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Send the fax to +442071234567 anyway?' });
+    fireEvent.click(within(dialog).getByLabelText('Telnyx: every line is busy'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send by Telnyx anyway' }));
+    expect(await screen.findByText('Approved. The fax to +442071234567 goes by Telnyx.')).toBeTruthy();
+    expect(fake.sent('POST', '/routing/holds/h-2/approve')).toEqual([{ version: 1, account: 'sip' }]);
   });
 
   it('tells someone without the permission where to give it, and keeps the sender from approving their own fax', async () => {
@@ -265,6 +285,7 @@ describe('held faxes and why a fax took its route', () => {
     unmount();
     render(<HeldFaxes api={new FakeRules().api()} canApprove={false} />);
     expect(await screen.findByText('Approving a fax needs the Approve faxes permission. Give it on Access → Roles.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /anyway$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Approve the fax/ })).toBeNull();
   });
 

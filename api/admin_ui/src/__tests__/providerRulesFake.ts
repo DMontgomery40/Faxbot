@@ -52,6 +52,9 @@ export class FakeRules {
     id: 'h-2', job_id: 'job-2', kind: 'no_route', to_number: '+442071234567', pages: 1, sender_name: 'Ada Admin',
     requested_at: '2026-10-07T16:05:00', until: null, reason: 'No route your rules allow costs less than $0.10 for this fax.',
     can_decide: true, version: 1,
+    options: [{ account: 'sinch-uk', label: 'Sinch (UK)', reason: 'over the $0.10 cap: estimated $0.031 a page, $0.25 for this fax' },
+      { account: 'sip', label: 'Telnyx', reason: 'every line is busy' }],
+    not_offered: ['HumbleFax is not offered: the limit ‘Never send UK faxes by HumbleFax’ forbids it.'],
   }];
   accounts: AccountsState = {
     generation: 7, default_sending: 'sip', default_receiving: 'sip', sites: [{ key: 'leeds', name: 'Leeds office' }],
@@ -111,6 +114,7 @@ export class FakeRules {
       matches_30_days: { 'r-uk': 12, 'l-hf-uk': 0 },
       can_write: true,
       choices: CHOICES,
+      time_zone: 'America/Denver',
     };
   }
 
@@ -178,11 +182,18 @@ export class FakeRules {
           { scope: 'Organization', rule_id: 'r-x', name: 'Clinics use the trunk', kind: 'route', matched: false,
             failed: 'The number is not in UK clinics.' }] };
     }
+    if (path === '/access/inbound-rules/explain') {
+      return { sentence: 'It would go to Front desk, marked urgent, with no email, because of the rule for +17208565062.',
+        mailbox_label: 'Front desk', email: null, urgent: true, keep_days: 30, rule_to_number: '+17208565062' };
+    }
     if (path === '/routing/rules/apply-to-waiting') return { checked: 4, changed: 1, sentence: '1 of 4 waiting faxes will go differently.' };
     if (path === '/routing/holds') return { holds: this.holds };
     if (path.startsWith('/routing/holds/')) {
       const hold = this.holds.find((item) => item.id === path.split('/')[3])!;
       if (body.version !== hold.version) fail(409, 'Someone else decided on this fax meanwhile.');
+      if (path.endsWith('/check-again')) {
+        return { ...hold, version: hold.version + 1, sentence: 'Still no route your rules allow. The fax keeps waiting.' };
+      }
       this.holds = this.holds.filter((item) => item.id !== hold.id);
       return { ...hold, version: hold.version + 1 };
     }

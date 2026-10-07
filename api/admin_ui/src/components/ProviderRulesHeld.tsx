@@ -3,8 +3,8 @@
 // tells, for one fax, which rule chose its route and what happened on each attempt.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItem, ListItemText, Paper, Stack,
-  Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
+  Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, ListItem, ListItemText,
+  Paper, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import { formatLocalDate, formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
@@ -34,6 +34,45 @@ function RefuseDialog({ hold, onClose, onRefuse }: { hold: Hold | null; onClose:
   );
 }
 
+// A fax with no route the rules allow: send it by one of the accounts left out only by a cost cap or by being
+// down or busy. Accounts a rule forbids outright are never offered, and the dialog says why.
+function SendAnywayDialog({ hold, onClose, onSend }: { hold: Hold | null; onClose: () => void; onSend: (account: string) => void }) {
+  const [account, setAccount] = useState('');
+  useEffect(() => { if (hold) setAccount(hold.options?.[0]?.account ?? ''); }, [hold]);
+  const options = hold?.options ?? [];
+  const label = options.find((option) => option.account === account)?.label;
+  return (
+    <Dialog open={hold !== null} onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="send-anyway-title">
+      <DialogTitle id="send-anyway-title">Send the fax to {hold?.to_number} anyway?</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" sx={{ mb: 1 }}>{hold?.reason}</Typography>
+        {options.length === 0 ? (
+          <Typography variant="body2">No account can take this fax now. Check again later, or change your rules.</Typography>
+        ) : (
+          <RadioGroup value={account} onChange={(event) => setAccount(event.target.value)} aria-label="Account to send by">
+            {options.map((option) => (
+              <FormControlLabel key={option.account} value={option.account} control={<Radio />}
+                label={`${option.label}: ${option.reason}`} />
+            ))}
+          </RadioGroup>
+        )}
+        {(hold?.not_offered ?? []).map((sentence) => (
+          <Typography key={sentence} variant="body2" color="text.secondary" sx={{ mt: 1 }}>{sentence}</Typography>
+        ))}
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>
+          Your name and the reason are kept with the fax.
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" disabled={!account} onClick={() => onSend(account)}>
+          {label ? `Send by ${label} anyway` : 'Send anyway'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   api: RulesApi;
   // Holds the "Approve faxes" permission.
@@ -45,6 +84,7 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refusing, setRefusing] = useState<Hold | null>(null);
+  const [sendingAnyway, setSendingAnyway] = useState<Hold | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -103,10 +143,20 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
                     )}
                   </TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                    {canApprove && hold.can_decide && hold.kind !== 'window' && (
+                    {canApprove && hold.can_decide && hold.kind === 'approval' && (
                       <Button size="small" variant="contained" disabled={busy} aria-label={`Approve the fax to ${hold.to_number}`}
                         onClick={() => void decide(() => api.approve(hold), `Approved. The fax to ${hold.to_number} is no longer held.`)}>
                         Approve
+                      </Button>
+                    )}
+                    {canApprove && hold.can_decide && hold.kind === 'no_route' && (
+                      <Button size="small" variant="contained" disabled={busy} aria-label={`Send the fax to ${hold.to_number} anyway`}
+                        onClick={() => setSendingAnyway(hold)}>Send anyway</Button>
+                    )}
+                    {hold.kind === 'no_route' && (
+                      <Button size="small" disabled={busy} aria-label={`Check again for the fax to ${hold.to_number}`}
+                        onClick={() => void decide(() => api.checkAgain(hold), `Faxbot checked the routes for the fax to ${hold.to_number} again.`)}>
+                        Check again
                       </Button>
                     )}
                     {canApprove && hold.can_decide && (
@@ -123,11 +173,17 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
           </Table>
         </Box>
       )}
-      {!canApprove && holds.some((hold) => hold.kind === 'approval') && (
+      {!canApprove && holds.some((hold) => hold.kind !== 'window') && (
         <Alert severity="info" sx={{ mt: 1 }}>
           Approving a fax needs the Approve faxes permission. Give it on Access → Roles.
         </Alert>
       )}
+      <SendAnywayDialog hold={sendingAnyway} onClose={() => setSendingAnyway(null)} onSend={(account) => {
+        const hold = sendingAnyway!;
+        const label = hold.options?.find((option) => option.account === account)?.label ?? account;
+        setSendingAnyway(null);
+        void decide(() => api.approve(hold, account), `Approved. The fax to ${hold.to_number} goes by ${label}.`);
+      }} />
       <RefuseDialog hold={refusing} onClose={() => setRefusing(null)} onRefuse={(reason) => {
         const hold = refusing!;
         setRefusing(null);
@@ -177,5 +233,33 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
       ))}
       {route.hold && <ListItem><ListItemText primary={KIND_TITLE[route.hold.kind]} secondary={route.hold.reason} /></ListItem>}
     </>
+  );
+}
+
+// Overview: "Faxes waiting for you", when your rules hold any.
+export function WaitingForYouCard({ api, onOpen }: { api: RulesApi; onOpen: () => void }) {
+  const [holds, setHolds] = useState<Hold[]>([]);
+  useEffect(() => {
+    let live = true;
+    api.holds().then((value) => { if (live) setHolds(value.holds); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api]);
+  if (holds.length === 0) return null;
+  const count = (kind: Hold['kind']) => holds.filter((hold) => hold.kind === kind).length;
+  const parts = [
+    count('approval') > 0 && `${count('approval')} waiting for approval`,
+    count('no_route') > 0 && `${count('no_route')} with no route your rules allow`,
+    count('window') > 0 && `${count('window')} waiting for a time window`,
+  ].filter(Boolean);
+  return (
+    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} aria-label="Faxes waiting for you" role="region">
+      <Typography variant="subtitle1">
+        {holds.length === 1 ? '1 fax is waiting for you' : `${holds.length} faxes are waiting for you`}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        {parts.join(', ')}. Nothing has been sent for them.
+      </Typography>
+      <Button size="small" onClick={onOpen}>Open Sent</Button>
+    </Paper>
   );
 }
