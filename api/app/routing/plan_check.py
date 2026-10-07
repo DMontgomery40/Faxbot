@@ -542,7 +542,7 @@ class ContractView:
         return rows
 
     def plan(self, key):
-        from .plan_budget import budget_left, burn_down, day_text, pace_sentence, shipped_budgets
+        from .plan_budget import budget_left, burn_down, day_text, metered, pace_sentence, shipped_budgets
         left = budget_left(key, self.now, engine=self.routes.engine, values=self.values, path=self.path)
         if left is None:
             return None
@@ -561,7 +561,8 @@ class ContractView:
         return {'route': key, 'name': budget.label, 'currency': currency, 'estimate': True,
                 'monthly_fee': money(fee or None),
                 'kind': ('allowance' if budget.included_pages else 'minutes' if budget.included_minutes
-                         else 'commitment' if budget.commitment_micros is not None and not budget.flat else 'flat'),
+                         else 'commitment' if budget.commitment_micros is not None and not budget.flat
+                         else 'metered' if metered(budget) else 'flat'),
                 'budget': {'pages': budget.pages, 'faxes': budget.faxes, 'day': budget.day,
                            'included_pages': budget.included_pages, 'page_overage': money(budget.page_overage_micros),
                            'included_minutes': budget.included_minutes,

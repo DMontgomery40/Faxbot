@@ -379,6 +379,26 @@ def test_the_contract_view_covers_allowances_commitments_and_minute_bundles(plan
                                  '$0.005 extra so far (estimate); the minutes start again on 1 November.')
 
 
+def test_a_metered_plan_with_a_monthly_fee_shows_its_fee_and_keeps_its_price_per_fax(plans):
+    multi, routes = plans
+    trunk_plan = card('sip-telnyx', minute='0.005', minimum=60, monthly='25')
+    routes.replace_cards([trunk_plan, SINCH])
+    settings = values(effective_outbound='sip', outbound_route_providers=('sinch',))
+    record(multi, routes, 'sip', LAB, OCTOBER, pages=2, seconds=50, cost=5_000)
+    (plan,) = contract_report(routes, settings, now=OCTOBER, accounts={})['plans']
+    assert (plan['route'], plan['kind'], plan['committed'], plan['state']) == ('sip', 'metered', money(25_000_000),
+                                                                               'no_limit')
+    assert plan['budget']['sentence'] == ('Telnyx charges for each fax on top of its monthly fee, so Faxbot sets no '
+                                          'normal-use budget for it.')
+    assert plan['sentence'] == 'Telnyx has carried 2 pages and 1 fax since 1 October; the counts start again on ' \
+                               '1 November.'
+    assert plan['bill_sentence'] == 'Committed this period with Telnyx: the $25 plan fee; nothing past it so far.'
+    left = budget_left('sip', OCTOBER, engine=routes.engine, values=settings)
+    each = marginal(left, 2, prediction(5_000))
+    # The fee is paid whatever is sent: one more fax costs the trunk's own price.
+    assert (each.cost, each.uses_budget, each.over_budget) == (Money(5_000, 'USD'), False, False)
+
+
 def test_with_no_plan_the_contract_view_says_so(plans):
     _, routes = plans
     routes.replace_cards([TELNYX_OUT, SINCH])

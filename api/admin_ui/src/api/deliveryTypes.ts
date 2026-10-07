@@ -805,7 +805,8 @@ export interface PlanContract {
   currency: string;
   estimate: true;
   monthly_fee: Money[];
-  kind: 'flat' | 'allowance' | 'minutes' | 'commitment';
+  // metered: a monthly fee and a price for each fax, with no allowance to use first.
+  kind: 'flat' | 'allowance' | 'minutes' | 'commitment' | 'metered';
   budget: PlanBudgetTerms;
   period: { start: string; end: string; first_day: string; next_day: string; next_day_text: string };
   used: {

@@ -296,7 +296,15 @@ def _default_sentence(route, label, budget, default):
         overage = (f' and charges {_money(budget.page_overage_micros, budget.currency)} for each page past them'
                    if budget.page_overage_micros is not None else '')
         return f"{label}'s published plan includes {_plural(budget.included_pages, 'page')} a month{overage}."
+    if not budget.flat and budget.monthly_fee_micros:
+        return f'{label} charges for each fax on top of its monthly fee, so Faxbot sets no normal-use budget for it.'
     return f'Faxbot sets no normal-use budget for {label}.'
+
+
+def metered(budget):
+    """A route whose every fax is charged at its own price: no plan room, allowance or commitment to use first."""
+    return (not budget.flat and not budget.included_pages and not budget.included_minutes
+            and budget.commitment_micros is None)
 
 
 def _budget_text(budget):
@@ -335,8 +343,8 @@ def budget_for(route, card, values=None, *, path=None, inbound=None):
     if included:
         defaults['included_pages'], defaults['page_overage'] = included, overage
         source = 'published'
-    if entry is None and not flat and not included:
-        return None  # a per-fax route with nothing set: no budget
+    if entry is None and not flat and not included and not (plan_card is not None and plan_card.monthly_fee_micros):
+        return None  # a per-fax route with nothing set and no monthly fee: no budget
     merged = {**defaults, **(entry or {})}
     label = _label(route, values)
     currency = plan_card.currency if plan_card is not None else 'USD'
@@ -631,6 +639,8 @@ def left_sentence(left):
                 f'{_about(left.commitment_left_micros, budget.currency)} of your '
                 f'{_fee(budget.commitment_micros, budget.currency)} monthly commitment is left until {again} '
                 '(estimate).')
+    if not budget.flat:
+        return f'{name} has carried {_carried(used)} since {since}; the counts start again on {again}.'
     return f'{name} has carried {_carried(used)} since {since}; you set no normal-use budget for it.'
 
 
@@ -710,7 +720,7 @@ def marginal(left, pages, prediction=None):
     """What one fax of ``pages`` pages adds to the bill on a route (``left``: its ``budget_left``, or None)."""
     from .costs import Money
     pages = pages if isinstance(pages, int) and pages > 0 else 1
-    if left is None:
+    if left is None or metered(left.budget):
         if prediction is None:
             raise ValueError('Give the prediction for a route without a plan.')
         return Marginal(prediction.cost, False, False, prediction.basis)
