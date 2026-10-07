@@ -718,6 +718,9 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  http.get('/forms', () => json({ forms: [], renderer: 'faxbot-forms-1' })),
+  http.get('/forms/received', () => json({ received: [] })),
+  http.get('/forms/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
   // What fax calls negotiated (measurement only): no calls, and no call for any received fax.

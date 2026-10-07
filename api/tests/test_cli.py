@@ -151,7 +151,9 @@ def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server(
     from app.cli.nouns import NOUNS
     assert NOUNS == ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
     root = typer.main.get_command(cli_app)
-    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
+    # Faxes → Forms is `faxbot forms`, beside received and sent.
+    assert [name for name, command in root.commands.items() if not command.hidden] == [
+        'send', 'status', 'received', 'sent', 'forms', *NOUNS[2:]]
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     plain = _plain(result.stdout)
     assert result.exit_code == 0 and ' received ' in plain and ' system ' in plain

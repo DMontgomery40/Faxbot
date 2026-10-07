@@ -164,6 +164,30 @@ class InboundResources:
         return sa.select(resources.c.inbound_fax_id).where(resources.c.id.in_(visible),
             resources.c.kind == 'inbound', resources.c.inbound_fax_id.is_not(None))
 
+    def received_access_on(self, connection, actor, *, inbound_id=None, to_number=None, country=DEFAULT_COUNTRY,
+                           now):
+        """(may read, may open the document) for one received fax.
+
+        For a document a partner delivered that is not filed as a received fax
+        (yet), the answer is the one for the place a fax to ``to_number`` is
+        filed in: its mailbox, or the unassigned received faxes.
+        """
+        permissions = ('inbound:read', 'inbound:document')
+        if inbound_id is not None:
+            resources = self.tables['access_resources']
+            identity = connection.execute(sa.select(resources.c.id).where(
+                resources.c.kind == 'inbound', resources.c.inbound_fax_id == inbound_id)).scalar_one_or_none()
+            if identity is None:
+                return False, False
+            read, document = (self.control.authorize_on(connection, actor, permission, ResourceRef(identity),
+                                                        now=now).allowed for permission in permissions)
+            return read, document
+        route = self._route_on(connection, to_number, country)
+        place = ResourceRef(route.id if route is not None else 'legacy')
+        read, document = (self.control.authorize_child_on(connection, actor, permission, place, now=now)
+                          for permission in permissions)
+        return read, document
+
     def require_inbound_on(self, connection, actor, inbound_id, permission, *, now):
         """Permit the exact action; a denied action reveals existence only with inbound:read."""
         source = self.control._current_source_on(connection, actor, now)

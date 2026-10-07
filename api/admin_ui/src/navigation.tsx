@@ -83,6 +83,7 @@ import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOve
 import ReplyNumber from './components/ReplyNumber';
 import BlockedSenders from './components/BlockedSenders';
 import BlockIcon from '@mui/icons-material/Block';
+import Forms from './components/forms/Forms';
 
 export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
 
@@ -253,6 +254,11 @@ export const NAVIGATION: NavArea[] = [
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
           configError={ctx.contextError} onOpenJob={ctx.openJob} sendChoices={ctx.context.send} /> },
+      // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
+      // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
+      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
+        render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {

@@ -81,6 +81,9 @@ import type {
 import type { EfaxStatus, HumbleFaxStatus } from './types';
 import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
+import type {
+  FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
+} from './formsTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1450,6 +1453,74 @@ class AdminAPIClient {
   async buildChecklistPacket(caseId: string, body: ChecklistBuildRequest): Promise<ChecklistBuild> {
     return this.json(`/cases/${id(caseId)}/checklist-packets`, {
       method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // Registered forms (Faxes → Forms): forms and their immutable versions.
+  async listForms(): Promise<{ forms: RegisteredForm[]; renderer: string }> {
+    return this.json('/forms');
+  }
+
+  // A new form, or (with formId) the next version of one; earlier versions never change.
+  async importForm(file: File, options: { name?: string; formId?: string; positions?: File | null }): Promise<FormImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options.positions) formData.append('positions', options.positions);
+    if (options.formId) return this.json(`/forms/${id(options.formId)}/versions`, { method: 'POST', body: formData });
+    formData.append('name', options.name ?? '');
+    return this.json('/forms', { method: 'POST', body: formData });
+  }
+
+  async getFormVersion(versionId: string): Promise<FormVersionDetail> {
+    return this.json(`/forms/versions/${id(versionId)}`);
+  }
+
+  // The blank page as it is faxed, optionally with each field's box outlined.
+  async formPagePicture(versionId: string, page: number, outlined: boolean): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/pages/${page}${query({ fields: outlined ? 'true' : undefined })}`);
+    return res.blob();
+  }
+
+  async downloadFormTemplate(versionId: string): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/template`);
+    return res.blob();
+  }
+
+  // The filled pages exactly as they would be faxed (a PDF, or one page as a picture); nothing is sent.
+  async renderForm(versionId: string, values: Record<string, FormValue>, format: 'pdf' | 'png', page = 1): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/render${query({ format, page })}`, {
+      method: 'POST', body: JSON.stringify({ values }),
+    });
+    return res.blob();
+  }
+
+  // Sending is never retried here: a lost answer may mean the form went.
+  async sendForm(request: SendFormRequest): Promise<FormDelivery> {
+    return this.json('/forms/send', {
+      method: 'POST', body: JSON.stringify({ ...request, to: normalizeFaxDestination(request.to) }),
+    });
+  }
+
+  async listFormDeliveries(): Promise<{ deliveries: FormDelivery[] }> {
+    return this.json(`/forms/deliveries${query({ direction: 'outbound' })}`);
+  }
+
+  async getFormDelivery(deliveryId: string): Promise<FormDelivery> {
+    return this.json(`/forms/deliveries/${id(deliveryId)}`);
+  }
+
+  // A person's decision to send a form's pages as an ordinary fax; Faxbot never does this by itself.
+  async faxFormDelivery(deliveryId: string): Promise<FormDelivery> {
+    return this.json(`/forms/deliveries/${id(deliveryId)}/fax`, { method: 'POST', body: '{}' });
+  }
+
+  // Forms partners delivered whose pages matched, with their values (Faxes → Received).
+  async listReceivedForms(): Promise<{ received: ReceivedForm[] }> {
+    return this.json('/forms/received');
+  }
+
+  // Which form versions a partner holds, asked of the partner now.
+  async getPartnerForms(peerId: string): Promise<PartnerForms> {
+    return this.json(`/forms/partners/${id(peerId)}`);
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

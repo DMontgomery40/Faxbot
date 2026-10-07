@@ -85,6 +85,7 @@ from .engine_frames_http import router as fax_machines_router
 from .intake.http import router as intake_router
 from .direct.http import router as direct_router
 from .cases.http import router as cases_router
+from .forms.http import router as forms_router
 from .inbound.http import router as inbound_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
@@ -199,6 +200,7 @@ app.include_router(fax_machines_router)
 app.include_router(intake_router)
 app.include_router(direct_router)
 app.include_router(cases_router)
+app.include_router(forms_router)
 app.include_router(inbound_router)
 app.include_router(work_router)
 app.include_router(imports_router)

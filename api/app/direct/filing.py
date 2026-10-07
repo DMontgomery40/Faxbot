@@ -16,7 +16,7 @@ not filed yet. Fences (a "not received" answer) and arrivals accepted before
 import json
 import logging
 
-from .crypto import FAX_IMAGE, kind_of
+from .crypto import FAX_IMAGE, FORM, kind_of
 from .store import FILING_ACCOUNT
 
 
@@ -30,7 +30,26 @@ def received_text(record):
     partner = report.get('partner') if isinstance(report.get('partner'), str) and report.get('partner') else 'a partner'
     if report.get('kind') == FAX_IMAGE:
         return f'Delivered directly as a fax image by {partner}; no telephone call.'
+    if report.get('kind') == FORM:
+        form = report.get('form') if isinstance(report.get('form'), dict) else {}
+        name, number = form.get('name'), form.get('version')
+        if isinstance(name, str) and name and type(number) is int:
+            return f'Delivered directly by {partner} as the form {name} (version {number}); no telephone call.'
+        return f'Delivered directly by {partner} as a registered form; no telephone call.'
     return f'Delivered directly by {partner} as the original document; no telephone call.'
+
+
+def _form_drawn(engine, message_id):
+    """The registered form a partner's form arrival was drawn from, as its name and version (forms/), or None."""
+    from ..forms.store import FormStore
+    try:
+        forms = FormStore(engine)
+        delivery = forms.delivery(direction='inbound', message_id=message_id)
+        version = forms.version(version_id=delivery['form_version_id']) if delivery else None
+    except Exception:
+        logging.getLogger(__name__).warning('The form a partner delivered could not be named in Received.')
+        return None
+    return {'name': version.title, 'version': version.number} if version is not None else None
 
 
 def account(peer_id):
@@ -60,6 +79,8 @@ class DirectFiling:
                   'sha256': document['sha256'], 'size': document['size'], 'pages': document['pages']}
         if kind == FAX_IMAGE:
             report['fax'] = manifest['fax']
+        elif kind == FORM:
+            report['form'] = _form_drawn(self.store.engine, row['message_id'])
         values = self.values()
         return self.store.intake.add_fax_image(
             ImportStore(resources), account=account(row['peer_id']), message_id=row['message_id'],

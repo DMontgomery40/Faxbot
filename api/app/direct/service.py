@@ -24,8 +24,9 @@ from ..outbound_worker import SubmissionReceipt
 from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
-from .crypto import (FAX_IMAGE, DirectProtocolError, capabilities, card, canonical, check_card, check_signed, kind_of,
-                     open_document, parse_capabilities, parse_manifest, parse_timestamp, seal, signed, timestamp, verify)
+from .crypto import (FAX_IMAGE, FORM, DirectProtocolError, capabilities, card, canonical, check_card, check_signed,
+                     kind_of, open_document, parse_capabilities, parse_manifest, parse_timestamp, seal, signed,
+                     timestamp, verify)
 from . import faximage
 from .filing import DirectFiling
 from .identity import IdentityUnavailable, identity_path, load_identity
@@ -222,6 +223,12 @@ class DirectService:
             document = open_document(identity, manifest, ciphertext)
         except DirectProtocolError as error:
             return 400, self._refusal(identity, message_id, error.reason, str(error), peer)
+        if kind == FORM:
+            # A registered form: the pages drawn here from its data are filed, and only when they match.
+            from ..forms.exchange import receive_form
+            refusal, document = receive_form(self, peer, manifest, document)
+            if refusal is not None:
+                return refusal[0], self._refusal(identity, message_id, refusal[1], refusal[2], peer)
         folder = Path(values.fax_data_dir) / 'direct'
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         if kind == FAX_IMAGE:

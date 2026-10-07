@@ -36,6 +36,9 @@ FAX_FACTS = frozenset({'resolution', 'x_dpi', 'y_dpi', 'width', 'compression', '
 FAX_WIDTHS = (1728, 2048, 2432)
 FAX_LINES = {98: 'standard', 196: 'fine', 391: 'superfine'}
 FAX_COMPRESSIONS = ('MH', 'MR', 'MMR')
+# A registered form (api/app/forms): field values and the page hashes a pinned renderer must reproduce.
+FORM = 'form'
+FORM_TYPE = 'application/vnd.faxbot.form+json'
 
 
 class DirectProtocolError(ValueError):
@@ -102,8 +105,9 @@ def parse_capabilities(value):
 
 
 def kind_of(manifest):
-    """``fax_image`` or ``original``."""
-    return FAX_IMAGE if manifest.get('kind') == FAX_IMAGE else 'original'
+    """``fax_image``, ``form`` or ``original``."""
+    kind = manifest.get('kind')
+    return kind if kind in (FAX_IMAGE, FORM) else 'original'
 
 
 class Identity:
@@ -147,11 +151,12 @@ def _aad(manifest):
 
 
 def seal(identity, *, message_id, organization, fax_number, recipient_number, recipient_signing_key,
-         recipient_exchange_key, document, pages=None, created_at=None, fax=None):
+         recipient_exchange_key, document, pages=None, created_at=None, fax=None, form=False):
     """Encrypt ``document`` to the recipient; returns (manifest bytes, signature, ciphertext).
 
     ``fax`` makes it a fax image: ``document`` is the TIFF and ``fax`` holds the
     planned fax facts (``faximage.facts``), which the signed manifest carries.
+    ``form=True`` makes it a registered form: ``document`` is the form payload (``forms/exchange.py``).
     """
     content_key, nonce, key_nonce = AESGCM.generate_key(bit_length=256), os.urandom(12), os.urandom(12)
     ephemeral = X25519PrivateKey.generate()
@@ -162,11 +167,13 @@ def seal(identity, *, message_id, organization, fax_number, recipient_number, re
         'version': PROTOCOL, 'message_id': message_id, 'created_at': created_at or timestamp(),
         'sender': {'organization': organization, 'signing_key': identity.signing_key, 'fax_number': fax_number},
         'recipient': {'fax_number': recipient_number, 'signing_key': recipient_signing_key},
-        'document': {'media_type': 'application/pdf' if fax is None else FAX_IMAGE_TYPE,
+        'document': {'media_type': FAX_IMAGE_TYPE if fax is not None else FORM_TYPE if form else 'application/pdf',
                      'sha256': hashlib.sha256(document).hexdigest(), 'size': len(document), 'pages': pages},
     }
     if fax is not None:
         manifest.update(kind=FAX_IMAGE, fax=dict(fax))
+    elif form:
+        manifest['kind'] = FORM
     ciphertext = AESGCM(content_key).encrypt(nonce, document, _aad(manifest))
     wrapped = AESGCM(_kek(shared, ephemeral_public, recipient_public, message_id)).encrypt(
         key_nonce, content_key, canonical({'message_id': message_id}))
@@ -185,8 +192,8 @@ def parse_manifest(encoded):
         manifest = json.loads(encoded)
         if canonical(manifest) != encoded:
             raise ValueError
-        image = manifest.get('kind') == FAX_IMAGE
-        if (set(manifest) != _MANIFEST_KEYS | ({'kind', 'fax'} if image else set())
+        image, form = manifest.get('kind') == FAX_IMAGE, manifest.get('kind') == FORM
+        if (set(manifest) != _MANIFEST_KEYS | ({'kind', 'fax'} if image else {'kind'} if form else set())
                 or manifest['version'] != PROTOCOL or not MESSAGE_ID.fullmatch(manifest['message_id'])):
             raise ValueError
         if image and not _fax_facts(manifest['fax'], manifest['document']['pages']):
@@ -202,7 +209,8 @@ def parse_manifest(encoded):
                 or not _B64.fullmatch(recipient['signing_key']):
             raise ValueError
         if (set(document) != {'media_type', 'sha256', 'size', 'pages'}
-                or document['media_type'] != (FAX_IMAGE_TYPE if image else 'application/pdf')
+                or document['media_type'] != (FAX_IMAGE_TYPE if image
+                                              else FORM_TYPE if form else 'application/pdf')
                 or not _HEX64.fullmatch(document['sha256']) or type(document['size']) is not int
                 or not 0 < document['size'] <= 100 * 1024 * 1024
                 or not (document['pages'] is None or (type(document['pages']) is int and 0 < document['pages'] <= 10000))):

@@ -46,7 +46,7 @@ describe('the navigation table', () => {
   it('shows a fax operator their faxes and their own sessions only', () => {
     const areas = visible(['fax:send', 'fax:read', 'inbound:list', 'inbound:read'], { send: true, jobs: true, inbox: true });
     expect(areas.map((area) => area.id)).toEqual(['faxes', 'access']);
-    expect(pagesOf(areas, 'faxes')).toEqual(['received', 'sent', 'send']);
+    expect(pagesOf(areas, 'faxes')).toEqual(['received', 'sent', 'send', 'forms']);
     expect(pagesOf(areas, 'access')).toEqual(['sessions']);
   });
 
@@ -203,7 +203,7 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(42);  // with Providers → Rules and Numbers → Blocked senders
+    expect(opened).toHaveLength(43);  // with Providers → Rules, Numbers → Blocked senders and Faxes → Forms
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);
