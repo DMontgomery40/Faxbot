@@ -392,6 +392,7 @@ def test_with_receiving_off_nothing_is_asked_of_humblefax(isolated_installation,
         assert asyncio.run(receiver().step()) == 60
         shown = status(http)
         assert shown['receiving'] is False and shown['reason'] == reason and shown['checked_at'] is None
+        assert shown['turned_on'] is (reason != 'Receive faxes from HumbleFax is off.')
         refused = http.post('/admin/inbound/humblefax/check', headers=ADMIN)
         assert refused.status_code == 409 and refused.json()['detail'] == reason
     assert humblefax.requests == []
@@ -406,7 +407,7 @@ def test_the_switch_receives_beside_another_receiving_provider(isolated_installa
         assert asyncio.run(receiver().step()) == 120
         shown = status(http)
         assert shown['receiving'] is True and shown['receiving_provider'] is False and shown['found'] == 1
-        assert shown['account'] == 'humblefax'
+        assert shown['account'] == 'humblefax' and shown['turned_on'] is True
         assert shown['poll_seconds'] == 120 and shown['checked_at'] is not None and shown['problem'] is None
         settings = http.get('/admin/settings', headers=ADMIN).json()['humblefax']
         assert (settings['receive'], settings['poll_seconds']) == (True, 120)

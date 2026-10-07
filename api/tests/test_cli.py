@@ -1303,6 +1303,32 @@ def test_settings_reload_together_check_and_efax_status_read_as_sentences(cli):
     assert cli.json('providers', 'efax', 'status')['receiving'] is False
 
 
+def test_humblefax_receiving_status_and_check_read_as_sentences(cli):
+    status = cli('providers', 'humblefax', 'status')
+    assert status.exit_code == 0 and status.stdout.strip() == 'Receive faxes from HumbleFax is off.'
+    assert cli.json('providers', 'humblefax', 'status')['receiving'] is False
+    refused = cli('providers', 'humblefax', 'check')
+    assert refused.exit_code != 0 and 'Receive faxes from HumbleFax is off.' in refused.stderr
+
+
+def test_humblefax_receiving_lines_say_when_faxbot_last_checked():
+    from app.cli.commands.settings import _humblefax_lines
+    from app.cli.output import local_time
+    checked = '2026-10-07T15:41:00'
+    lines = _humblefax_lines({'receiving': True, 'receiving_provider': False, 'checked_at': checked, 'found': 2,
+                              'problem': None, 'poll_seconds': 120})
+    assert lines == ['Faxbot collects the faxes your HumbleFax numbers receive.',
+                     f'Faxbot last checked HumbleFax at {local_time(checked)} and found 2 new faxes.',
+                     'Faxbot checks HumbleFax every 2 minutes.']
+    assert _humblefax_lines({'receiving': True, 'receiving_provider': True, 'checked_at': None, 'found': None,
+                             'problem': 'HumbleFax rejected the account access key or secret key.',
+                             'poll_seconds': 60}) == [
+        'HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.',
+        'HumbleFax rejected the account access key or secret key.', 'Faxbot checks HumbleFax every minute.']
+    assert _humblefax_lines({'receiving': True, 'checked_at': None, 'poll_seconds': 30})[1:] == [
+        'Faxbot has not checked HumbleFax yet.', 'Faxbot checks HumbleFax every 30 seconds.']
+
+
 def test_costs_of_received_faxes_and_published_plans_in_use(cli):
     first = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990001')['id']
     second = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990002')['id']

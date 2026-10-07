@@ -343,7 +343,9 @@ class HumbleFaxReceiver:
     def status(self, values):
         """What the console and the command line say about receiving through this HumbleFax account."""
         reason = self.inactive_reason(values)
+        account = self.account(values)
         return {'account': self.account_key, 'receiving': reason is None, 'reason': reason,
+                'turned_on': bool(account is not None and account.receives),
                 'receiving_provider': values.effective_inbound == SOURCE,
                 'poll_seconds': self._interval(values, self.account(values)), 'checked_at': self.last_checked,
                 'found': self.last_found, 'problem': self.last_problem if reason is None else None}

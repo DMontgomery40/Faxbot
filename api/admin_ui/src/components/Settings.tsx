@@ -46,6 +46,7 @@ import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/Respon
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
+import HumbleFaxReceiving, { humblefaxReceivingValues } from './HumbleFaxReceiving';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
 import { BUILTIN_PROVIDERS, PROVIDER_LABELS, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
@@ -164,6 +165,7 @@ function editorValues(data: SettingsType): SettingsForm {
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
+    ...humblefaxReceivingValues(data),
     ...efaxEditorValues(data),
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
@@ -974,6 +976,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       {...envField('humblefax_secret_key')}
                     />
                     {textField('Send from this HumbleFax number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
+                    <HumbleFaxReceiving values={form} onChange={handleForm} disabled={!canEdit} client={client}
+                      receivingProvider={effectiveInbound === 'humblefax' && !!form.inbound_enabled} settings={settings} />
                   </ResponsiveSettingSection>
                 )}
 
@@ -1063,11 +1067,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           >
             {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
               { disabled: !form.inbound_enabled && !receiverCanReceive })}
-            {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
-              <Alert severity="warning">
-                HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
-              </Alert>
-            )}
 
             <ResponsiveSettingItem
               icon={<SettingsIcon />}

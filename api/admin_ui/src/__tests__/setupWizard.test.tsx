@@ -209,7 +209,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     await start(settingsFixture());
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Receiving' }));
     const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
-    expect(names).toEqual(['No provider', 'Fax services', 'eFax', 'Phaxio', 'Sinch Fax',
+    expect(names).toEqual(['No provider', 'Fax services', 'HumbleFax', 'eFax', 'Phaxio', 'Sinch Fax',
       'Your own fax line through a carrier', 'Telnyx']);
   });
 });

@@ -182,6 +182,9 @@ export interface Settings {
     // The fax numbers on the HumbleFax account, read from HumbleFax.
     account_numbers?: string[];
     configured: boolean;
+    // Receive faxes from HumbleFax, and how often Faxbot asks HumbleFax for them.
+    receive?: boolean;
+    poll_seconds?: number;
   };
   efax?: {
     app_id: string;
@@ -756,6 +759,23 @@ export interface ImportResult {
   import_id: string;
   inbound_id: string;
   status: 'received' | 'duplicate';
+}
+
+// GET /admin/inbound/humblefax (and POST .../check): Faxbot checking HumbleFax for received faxes.
+export interface HumbleFaxStatus {
+  account: string;
+  receiving: boolean;
+  // Why Faxbot is not checking HumbleFax, in one sentence; null while it is.
+  reason: string | null;
+  // Receiving through HumbleFax is turned on (the switch, or HumbleFax is the receiving provider).
+  turned_on: boolean;
+  // HumbleFax is the receiving provider, so receiving through it needs no separate switch.
+  receiving_provider: boolean;
+  poll_seconds: number;
+  checked_at: string | null;
+  // New faxes the last check found.
+  found: number | null;
+  problem: string | null;
 }
 
 // GET /admin/inbound/efax: Faxbot checking eFax for received faxes, and copies left at eFax.

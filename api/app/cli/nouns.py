@@ -111,6 +111,10 @@ providers.command('import')(settings.providers_import)
 efax = _group('eFax receiving: whether Faxbot is collecting your faxes from eFax.')
 efax.command('status')(settings.efax_status)
 providers.add_typer(efax, name='efax')
+humblefax = _group('HumbleFax receiving: whether Faxbot is collecting your faxes from HumbleFax, and checking now.')
+humblefax.command('status')(settings.humblefax_status)
+humblefax.command('check')(settings.humblefax_check)
+providers.add_typer(humblefax, name='humblefax')
 providers.add_typer(trunk.trunk, name='trunk')
 
 # -- costs ---------------------------------------------------------------------------
