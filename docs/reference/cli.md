@@ -59,6 +59,9 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
 * `--urgent`: Send before other faxes waiting for the same line, without waiting to go together with other faxes.
 * `--by-call`: Place a real call through your carrier even when the number is one of your own, for example to test your fax line.
+* `--mailbox <str>`: Send from this mailbox, so its sending rules apply.
+* `--workflow KEY`: The workflow this fax is part of, such as referrals.
+* `--label <str>`: A label for this fax, such as legal (repeat it).
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -447,6 +450,10 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 * `evidence`: Show the evidence of a sent fax&#x27;s...
 * `confirm-receipt`: Confirm receipt of a fax whose delivery is...
 * `send-now`: Send a waiting fax now; the faxes waiting...
+* `route`: Why a sent fax took its route: the rule...
+* `approve`: Approve a fax your rules held for...
+* `refuse`: Refuse a held fax.
+* `check-again`: Look again for a route your rules allow...
 
 ### `faxbot sent list`
 
@@ -465,6 +472,7 @@ $ faxbot sent list [OPTIONS]
 * `--limit <int range>`: How many faxes to show.  [default: 50; 1&lt;=x&lt;=100]
 * `--offset <int range>`: Skip this many of the newest faxes.  [default: 0; x&gt;=0]
 * `--ids`: Also show each fax&#x27;s ID, to use with faxbot sent show, pdf and refresh.
+* `--held`: Only faxes your rules are holding: waiting for approval, for a time window or for a route the rules allow.
 * `--help`: Show this message and exit.
 
 ### `faxbot sent show`
@@ -579,6 +587,80 @@ $ faxbot sent send-now [OPTIONS] {fax_id}
 
 * `--help`: Show this message and exit.
 
+### `faxbot sent route`
+
+Why a sent fax took its route: the rule that chose it, and what happened on each attempt.
+
+**Usage**:
+
+```console
+$ faxbot sent route [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The fax id, from faxbot sent list.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot sent approve`
+
+Approve a fax your rules held for approval, or send a fax with no allowed route by an account anyway.
+
+**Usage**:
+
+```console
+$ faxbot sent approve [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The held fax, from faxbot sent list --held.  [required]
+
+**Options**:
+
+* `--account KEY`: For a fax no route your rules allow: send it by this account anyway. Faxbot offers only accounts left out by a cost cap or by being down or busy.
+* `--help`: Show this message and exit.
+
+### `faxbot sent refuse`
+
+Refuse a held fax. Nothing is sent, and the fax is marked failed with your reason.
+
+**Usage**:
+
+```console
+$ faxbot sent refuse [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The held fax, from faxbot sent list --held.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why, for the sender and the history, such as &quot;wrong recipient&quot;.  [required]
+* `--help`: Show this message and exit.
+
+### `faxbot sent check-again`
+
+Look again for a route your rules allow for a held fax, for when an account may be back.
+
+**Usage**:
+
+```console
+$ faxbot sent check-again [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The held fax, from faxbot sent list --held.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `faxbot numbers`
 
 Your fax numbers: which mailbox each number&#x27;s faxes go to, the mailboxes themselves, and email delivery.
@@ -597,7 +679,8 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 
 * `list`: List your fax numbers: who provides each...
 * `add`: Send faxes that arrive on a number to a...
-* `update`: Change a fax number&#x27;s mailbox, or the...
+* `update`: Change a fax number&#x27;s mailbox, the number...
+* `explain`: Which mailbox, email and urgency a...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
 
@@ -618,7 +701,7 @@ $ faxbot numbers list [OPTIONS]
 
 ### `faxbot numbers add`
 
-Send faxes that arrive on a number to a mailbox.
+Send faxes that arrive on a number to a mailbox, optionally only some of them and with their own email and urgency.
 
 **Usage**:
 
@@ -633,11 +716,21 @@ $ faxbot numbers add [OPTIONS] {number}
 **Options**:
 
 * `--mailbox <str>`: Mailbox that receives faxes sent to this number.  [required]
+* `--account KEY`: Only faxes received on this account.
+* `--from NUMBER`: Only faxes from this number; end it with * for every number that starts with it (repeat it).
+* `--days DAYS`: Only faxes received on these days, such as mon-fri.
+* `--between HH:MM-HH:MM`: Only faxes received between these times, in this installation&#x27;s time zone.
+* `--email CONNECTOR`: Email these faxes through this connector.
+* `--no-email`: Send no email for these faxes.
+* `--urgent / --not-urgent`: Mark these faxes urgent.
+* `--keep-days DAYS`: Remove these faxes from Faxbot after this many days. This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to keep the fax that long.  [x&gt;=1]
+* `--position N`: Its place among your number rules; the first that matches a fax places it.  [x&gt;=1]
+* `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers update`
 
-Change a fax number&#x27;s mailbox, or the number itself.
+Change a fax number&#x27;s mailbox, the number itself, or which of its faxes the rule takes and how.
 
 **Usage**:
 
@@ -653,6 +746,34 @@ $ faxbot numbers update [OPTIONS] {number}
 
 * `--number <str>`: New fax number.
 * `--mailbox <str>`: New mailbox.
+* `--account KEY`: Only faxes received on this account.
+* `--from NUMBER`: Only faxes from this number; end it with * for every number that starts with it (repeat it).
+* `--days DAYS`: Only faxes received on these days, such as mon-fri.
+* `--between HH:MM-HH:MM`: Only faxes received between these times, in this installation&#x27;s time zone.
+* `--email CONNECTOR`: Email these faxes through this connector.
+* `--no-email`: Send no email for these faxes.
+* `--urgent / --not-urgent`: Mark these faxes urgent.
+* `--keep-days DAYS`: Remove these faxes from Faxbot after this many days. This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to keep the fax that long.  [x&gt;=1]
+* `--position N`: Its place among your number rules; the first that matches a fax places it.  [x&gt;=1]
+* `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
+* `--help`: Show this message and exit.
+
+### `faxbot numbers explain`
+
+Which mailbox, email and urgency a received fax would get, and why. Nothing is saved.
+
+**Usage**:
+
+```console
+$ faxbot numbers explain [OPTIONS]
+```
+
+**Options**:
+
+* `--to NUMBER`: Your number the fax is sent to.  [required]
+* `--from NUMBER`: The number it comes from.
+* `--account KEY`: The account it arrives on.
+* `--at TIME`: When it arrives, in this installation&#x27;s time zone, such as 2026-10-07 18:30.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers mailboxes`
@@ -1463,6 +1584,8 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `efax`: eFax receiving: whether Faxbot is...
 * `humblefax`: HumbleFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
+* `accounts`: The provider accounts Faxbot sends and...
+* `rules`: Sending rules: which provider account...
 
 ### `faxbot providers list`
 
@@ -2015,6 +2138,948 @@ $ faxbot providers trunk telnyx name-lookup-off [OPTIONS] {NUMBER}
 
 * `--help`: Show this message and exit.
 
+### `faxbot providers accounts`
+
+The provider accounts Faxbot sends and receives with, trunks included: add one, switch one off, or choose the defaults.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List every provider account, what it does...
+* `show`: Show one account: its settings, its...
+* `add`: Add another provider account, such as a...
+* `update`: Change an extra account.
+* `enable`: Switch an account on.
+* `disable`: Switch an account off.
+* `default-sending`: Choose the account Faxbot sends by when no...
+* `default-receiving`: Choose the account whose notifications...
+* `health`: Whether each account is ready, and what to...
+
+#### `faxbot providers accounts list`
+
+List every provider account, what it does and whether it is ready.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts show`
+
+Show one account: its settings, its numbers and the address to give your provider.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts show [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts add`
+
+Add another provider account, such as a second Sinch account or a second trunk. Asks for its secrets.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts add [OPTIONS]
+```
+
+**Options**:
+
+* `--provider <str>`: The provider, such as sinch or sip for a trunk.  [required]
+* `--key <str>`: A short key for rules to name it, such as sinch-uk.  [required]
+* `--label <str>`: Its name, such as &quot;Sinch (UK)&quot;.
+* `--site <str>`: The site its calls start from (see faxbot providers rules sites).
+* `--sends / --no-sends`: Faxbot may send faxes by it.  [default: sends]
+* `--receives / --no-receives`: Faxbot receives faxes on it. On when the provider can receive.
+* `--number <str>`: A fax number this account receives on (repeat it).
+* `--at-once <int range>`: Faxes at once on this account, or lines at once on a trunk; 0 for no limit.  [x&gt;=0]
+* `--calls-per-second <int range>`: Trunks: calls started each second; 0 for no limit.  [x&gt;=0]
+* `--daily-limit AMOUNT`: Stop using this account for the day once it has cost this much; none for no limit.
+* `--setting NAME=VALUE`: A provider setting that is not secret (repeat it). &#x27;show&#x27; lists them.
+* `--secrets-from-stdin`: Read secrets as NAME=VALUE lines from standard input instead of asking for each one.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts update`
+
+Change an extra account. The first account of a provider is changed on its own provider settings.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts update [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--label <str>`: A new name.
+* `--site <str>`: The site its calls start from (see faxbot providers rules sites).
+* `--no-site`: Take it out of its site.
+* `--sends / --no-sends`: Faxbot may send faxes by it.
+* `--receives / --no-receives`: Faxbot receives faxes on it.
+* `--number <str>`: Replace its fax numbers with these (repeat it).
+* `--at-once <int range>`: Faxes at once on this account, or lines at once on a trunk; 0 for no limit.  [x&gt;=0]
+* `--calls-per-second <int range>`: Trunks: calls started each second; 0 for no limit.  [x&gt;=0]
+* `--daily-limit AMOUNT`: Stop using this account for the day once it has cost this much; none for no limit.
+* `--setting NAME=VALUE`: A provider setting that is not secret (repeat it). &#x27;show&#x27; lists them.
+* `--secret NAME`: A secret to change; Faxbot asks for its new value.
+* `--secrets-from-stdin`: Read secrets as NAME=VALUE lines from standard input instead of asking for each one.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts enable`
+
+Switch an account on. Faxbot uses it for new attempts at once.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts enable [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts disable`
+
+Switch an account off. Waiting faxes go by other accounts their rules allow, or wait; none is sent twice.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts disable [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts default-sending`
+
+Choose the account Faxbot sends by when no rule says otherwise.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts default-sending [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts default-receiving`
+
+Choose the account whose notifications arrive at the provider&#x27;s original address.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts default-receiving [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts health`
+
+Whether each account is ready, and what to do when it is not.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts health [OPTIONS] [KEY]
+```
+
+**Arguments**:
+
+* `KEY`: One account&#x27;s key or name; all when left out.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers rules`
+
+Sending rules: which provider account carries each fax, and limits every fax must meet. Changes go into a draft until you publish it.
+
+**Usage**:
+
+```console
+$ faxbot providers rules [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the rules, as they read in your draft...
+* `show`: Show the published rules, or an earlier...
+* `add`: Add a rule to the draft.
+* `update`: Change a rule in the draft.
+* `move`: Move a rule.
+* `enable`: Switch a rule on in the draft.
+* `disable`: Switch a rule off in the draft, keeping it...
+* `remove`: Remove a rule from the draft.
+* `check`: Check the draft for problems, and see...
+* `publish`: Put the draft into effect for new faxes.
+* `discard`: Throw away the draft.
+* `history`: List the published versions of the rules,...
+* `diff`: Show what changed between two versions of...
+* `restore`: Make an earlier version the draft, so you...
+* `explain`: Which route a fax would take, and why.
+* `apply-to-waiting`: Send faxes that are still waiting by the...
+* `export`: Print the draft (or the published rules)...
+* `import`: Replace the draft with rules from a JSON...
+* `lists`: Recipient groups that rules can name, and...
+* `regions`: Regions: named sets of countries and...
+* `sites`: Sites: the places your organization sends...
+* `workflows`: Workflows: named kinds of work, such as...
+
+#### `faxbot providers rules list`
+
+List the rules, as they read in your draft when you have one.
+
+**Usage**:
+
+```console
+$ faxbot providers rules list [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules show`
+
+Show the published rules, or an earlier version of them.
+
+**Usage**:
+
+```console
+$ faxbot providers rules show [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--revision <int range>`: An earlier version to show.  [x&gt;=1]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules add`
+
+Add a rule to the draft. A rule that says how to send is a routing rule; any other rule is a limit.
+
+**Usage**:
+
+```console
+$ faxbot providers rules add [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: What the rule is for, in your words, such as &quot;UK numbers go through Sinch&quot;.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--when FIELD=VALUE`: A condition, FIELD=VALUE; give several, and every one must match. Fields: to-number, to-list, to-prefix, to-country, to-region, to-recipient, partner, own-number, approved-alternate, in-site-country, from-person, from-key, from-group, from-mailbox, from-site, workflow, pages-over, pages-under, larger-than-mb, case-packet, urgent, real-call, label, days, between, site-time. Several values: to-country=GB,IE. Yes or no fields: partner=yes. days=mon-fri or weekends; between=18:00-07:00.
+* `--unless FIELD=VALUE`: An exception, FIELD=VALUE, with the same fields as --when: the rule does not apply to a fax that matches every exception.
+* `--use ACCOUNT`: Send by this account only.
+* `--try ACCOUNT`: Try these accounts in the order given (repeat it).
+* `--cheapest ACCOUNT`: Send by the cheapest reliable of these accounts (repeat it).
+* `--site-accounts SITE`: Send by a site&#x27;s accounts: sender for the sender&#x27;s own site, or a site&#x27;s key.
+* `--in-order`: With --site-accounts: use the site&#x27;s accounts in their listed order.
+* `--automatic`: Let Faxbot choose the cheapest reliable route, as it does today.
+* `--never ACCOUNT`: Never send by these accounts (repeat it).
+* `--require-direct`: Send only by direct delivery to a verified partner.
+* `--require-encryption`: Send only encrypted: direct delivery, or SSL Fax where the number has used it before. SSL Fax cannot confirm who answers at the other end.
+* `--cap AMOUNT`: Use only routes that cost at most this much for the fax.
+* `--approval`: Hold the fax until someone who may approve faxes approves it.
+* `--separate-approver`: Hold the fax for approval by someone other than the sender.
+* `--send-days DAYS`: Send the fax only on these days, such as mon-fri.
+* `--send-between HH:MM-HH:MM`: Send the fax only between these times, such as 18:00-07:00.
+* `--real-call`: Place a real call, even to your own numbers.
+* `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
+* `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
+* `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
+* `--before RULE`: Put it before this rule.
+* `--off`: Add it switched off.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules update`
+
+Change a rule in the draft. --when replaces all its conditions, and any action option replaces all it does.
+
+**Usage**:
+
+```console
+$ faxbot providers rules update [OPTIONS] {RULE}
+```
+
+**Arguments**:
+
+* `RULE`: The rule&#x27;s id or name.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--name <str>`: A new name.
+* `--when FIELD=VALUE`: A condition, FIELD=VALUE; give several, and every one must match. Fields: to-number, to-list, to-prefix, to-country, to-region, to-recipient, partner, own-number, approved-alternate, in-site-country, from-person, from-key, from-group, from-mailbox, from-site, workflow, pages-over, pages-under, larger-than-mb, case-packet, urgent, real-call, label, days, between, site-time. Several values: to-country=GB,IE. Yes or no fields: partner=yes. days=mon-fri or weekends; between=18:00-07:00.
+* `--unless FIELD=VALUE`: An exception, FIELD=VALUE, with the same fields as --when: the rule does not apply to a fax that matches every exception.
+* `--no-unless`: Remove the exceptions.
+* `--use ACCOUNT`: Send by this account only.
+* `--try ACCOUNT`: Try these accounts in the order given (repeat it).
+* `--cheapest ACCOUNT`: Send by the cheapest reliable of these accounts (repeat it).
+* `--site-accounts SITE`: Send by a site&#x27;s accounts: sender for the sender&#x27;s own site, or a site&#x27;s key.
+* `--in-order`: With --site-accounts: use the site&#x27;s accounts in their listed order.
+* `--automatic`: Let Faxbot choose the cheapest reliable route, as it does today.
+* `--never ACCOUNT`: Never send by these accounts (repeat it).
+* `--require-direct`: Send only by direct delivery to a verified partner.
+* `--require-encryption`: Send only encrypted: direct delivery, or SSL Fax where the number has used it before. SSL Fax cannot confirm who answers at the other end.
+* `--cap AMOUNT`: Use only routes that cost at most this much for the fax.
+* `--approval`: Hold the fax until someone who may approve faxes approves it.
+* `--separate-approver`: Hold the fax for approval by someone other than the sender.
+* `--send-days DAYS`: Send the fax only on these days, such as mon-fri.
+* `--send-between HH:MM-HH:MM`: Send the fax only between these times, such as 18:00-07:00.
+* `--real-call`: Place a real call, even to your own numbers.
+* `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
+* `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
+* `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules move`
+
+Move a rule. Routing rules are read from the top, and the first that matches a fax chooses its route.
+
+**Usage**:
+
+```console
+$ faxbot providers rules move [OPTIONS] {RULE}
+```
+
+**Arguments**:
+
+* `RULE`: The rule&#x27;s id or name.  [required]
+
+**Options**:
+
+* `--before RULE`: Put it before this rule.
+* `--to-end`: Put it last.
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules enable`
+
+Switch a rule on in the draft.
+
+**Usage**:
+
+```console
+$ faxbot providers rules enable [OPTIONS] {RULE}
+```
+
+**Arguments**:
+
+* `RULE`: The rule&#x27;s id or name.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules disable`
+
+Switch a rule off in the draft, keeping it for later.
+
+**Usage**:
+
+```console
+$ faxbot providers rules disable [OPTIONS] {RULE}
+```
+
+**Arguments**:
+
+* `RULE`: The rule&#x27;s id or name.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules remove`
+
+Remove a rule from the draft.
+
+**Usage**:
+
+```console
+$ faxbot providers rules remove [OPTIONS] {RULE}
+```
+
+**Arguments**:
+
+* `RULE`: The rule&#x27;s id or name.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules check`
+
+Check the draft for problems, and see which recent faxes it would send differently.
+
+**Usage**:
+
+```console
+$ faxbot providers rules check [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--replay <int range>`: How many recent faxes to try under the draft.  [default: 200; 0&lt;=x&lt;=1000]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules publish`
+
+Put the draft into effect for new faxes. Faxes already waiting keep the rules they were accepted under.
+
+**Usage**:
+
+```console
+$ faxbot providers rules publish [OPTIONS]
+```
+
+**Options**:
+
+* `--note <str>`: What changed and why, for the history.  [required]
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules discard`
+
+Throw away the draft. The published rules stay as they are.
+
+**Usage**:
+
+```console
+$ faxbot providers rules discard [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--yes`: Do not ask first.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules history`
+
+List the published versions of the rules, newest first.
+
+**Usage**:
+
+```console
+$ faxbot providers rules history [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules diff`
+
+Show what changed between two versions of the rules.
+
+**Usage**:
+
+```console
+$ faxbot providers rules diff [OPTIONS] {A} {B}
+```
+
+**Arguments**:
+
+* `A`: The earlier version.  [required]
+* `B`: The later version.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules restore`
+
+Make an earlier version the draft, so you can check and publish it again.
+
+**Usage**:
+
+```console
+$ faxbot providers rules restore [OPTIONS] {N}
+```
+
+**Arguments**:
+
+* `N`: The version to start from.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules explain`
+
+Which route a fax would take, and why. Nothing is sent and nothing is saved.
+
+**Usage**:
+
+```console
+$ faxbot providers rules explain [OPTIONS]
+```
+
+**Options**:
+
+* `--to NUMBER`: The fax number to try.  [required]
+* `--pages <int range>`: Pages in the fax.  [default: 1; 1&lt;=x&lt;=1000]
+* `--size-mb <float range>`: The file size in megabytes.  [x&gt;=0]
+* `--as PERSON`: Who sends it: a person or integration, or me (the default).
+* `--mailbox <str>`: The mailbox it is sent from.
+* `--workflow KEY`: The workflow it is part of.
+* `--urgent`: The fax is marked urgent.
+* `--real-call`: The sender asks for a real call.
+* `--label <str>`: A label the sender puts on the fax.
+* `--at TIME`: When it is sent, in this installation&#x27;s time zone, such as 2026-10-07 18:30.
+* `--draft`: Try the draft instead of the published rules.
+* `--revision <int range>`: Try an earlier version.  [x&gt;=1]
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules apply-to-waiting`
+
+Send faxes that are still waiting by the current rules. Faxes already sent or being sent stay as they are.
+
+**Usage**:
+
+```console
+$ faxbot providers rules apply-to-waiting [OPTIONS]
+```
+
+**Options**:
+
+* `--yes`: Do not ask first.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules export`
+
+Print the draft (or the published rules) as JSON, to edit many rules at once.
+
+**Usage**:
+
+```console
+$ faxbot providers rules export [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--file <path>`: Write to this file instead of the screen.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules import`
+
+Replace the draft with rules from a JSON file. Nothing takes effect until you publish.
+
+**Usage**:
+
+```console
+$ faxbot providers rules import [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: A JSON file from &#x27;export&#x27;, or - for standard input.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules lists`
+
+Recipient groups that rules can name, and the labels senders can put on a fax.
+
+**Usage**:
+
+```console
+$ faxbot providers rules lists [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the recipient groups and the labels...
+* `set`: Add a recipient group, or replace one.
+* `remove`: Remove a recipient group.
+* `labels`: Set the labels senders can put on a fax,...
+
+##### `faxbot providers rules lists list`
+
+List the recipient groups and the labels senders can use.
+
+**Usage**:
+
+```console
+$ faxbot providers rules lists list [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules lists set`
+
+Add a recipient group, or replace one.
+
+**Usage**:
+
+```console
+$ faxbot providers rules lists set [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the recipient group, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--name <str>`: Its name, such as &quot;UK clinics&quot;.  [required]
+* `--number <str>`: A fax number in the group (repeat it).
+* `--prefix <str>`: Numbers starting with this, such as +4420 (repeat it).
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules lists remove`
+
+Remove a recipient group. Rules that name it must change first, or the check says so.
+
+**Usage**:
+
+```console
+$ faxbot providers rules lists remove [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the recipient group, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules lists labels`
+
+Set the labels senders can put on a fax, such as legal or clinical.
+
+**Usage**:
+
+```console
+$ faxbot providers rules lists labels [OPTIONS] [LABEL]
+```
+
+**Arguments**:
+
+* `LABEL`: Every label senders may choose; none removes them all.
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules regions`
+
+Regions: named sets of countries and number prefixes that rules can name.
+
+**Usage**:
+
+```console
+$ faxbot providers rules regions [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the regions.
+* `set`: Add a region, or replace one.
+* `remove`: Remove a region.
+
+##### `faxbot providers rules regions list`
+
+List the regions.
+
+**Usage**:
+
+```console
+$ faxbot providers rules regions list [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules regions set`
+
+Add a region, or replace one.
+
+**Usage**:
+
+```console
+$ faxbot providers rules regions set [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the region, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--name <str>`: Its name, such as &quot;Northern England&quot;.  [required]
+* `--country <str>`: A country code, such as GB (repeat it).
+* `--prefix <str>`: Numbers starting with this (repeat it).
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules regions remove`
+
+Remove a region.
+
+**Usage**:
+
+```console
+$ faxbot providers rules regions remove [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the region, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules sites`
+
+Sites: the places your organization sends from, with their mailboxes and groups.
+
+**Usage**:
+
+```console
+$ faxbot providers rules sites [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the sites, with their mailboxes,...
+* `set`: Add a site, or replace one.
+* `remove`: Remove a site.
+
+##### `faxbot providers rules sites list`
+
+List the sites, with their mailboxes, groups and accounts.
+
+**Usage**:
+
+```console
+$ faxbot providers rules sites list [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules sites set`
+
+Add a site, or replace one. Give an account its site with &#x27;faxbot providers accounts update KEY --site&#x27;.
+
+**Usage**:
+
+```console
+$ faxbot providers rules sites set [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the site, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--name <str>`: Its name, such as &quot;Leeds office&quot;.  [required]
+* `--country <str>`: Its country code, such as GB.
+* `--time-zone <str>`: Its time zone, such as Europe/London.
+* `--mailbox <str>`: A mailbox that sends from it (repeat it).
+* `--group <str>`: A group that sends from it (repeat it).
+* `--account KEY`: An account its calls start from (repeat it).
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules sites remove`
+
+Remove a site.
+
+**Usage**:
+
+```console
+$ faxbot providers rules sites remove [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the site, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules workflows`
+
+Workflows: named kinds of work, such as referrals, that can have their own rules.
+
+**Usage**:
+
+```console
+$ faxbot providers rules workflows [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the workflows.
+* `set`: Add a workflow, or replace one.
+* `remove`: Remove a workflow.
+
+##### `faxbot providers rules workflows list`
+
+List the workflows.
+
+**Usage**:
+
+```console
+$ faxbot providers rules workflows list [OPTIONS]
+```
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules workflows set`
+
+Add a workflow, or replace one. A workflow can then have its own rules: --scope workflow:KEY.
+
+**Usage**:
+
+```console
+$ faxbot providers rules workflows set [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the workflow, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--name <str>`: Its name, such as &quot;Referrals&quot;.  [required]
+* `--mailbox <str>`: A mailbox whose faxes are part of it (repeat it).
+* `--label <str>`: A label that puts a fax in it (repeat it).
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules workflows remove`
+
+Remove a workflow.
+
+**Usage**:
+
+```console
+$ faxbot providers rules workflows remove [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: A short key for the workflow, such as uk-clinics.  [required]
+
+**Options**:
+
+* `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
 ## `faxbot costs`
 
 What faxing costs you: spending by route, charges from your carrier, and the prices and plans Faxbot uses.
@@ -2033,7 +3098,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 
 * `spending`: Show what faxing cost per route: carrier...
 * `reconcile`: Ask your SIP trunk carrier now what each...
-* `fax`: Show what one fax cost: the carrier&#x27;s...
+* `fax`: Show what one fax cost (the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
@@ -2071,21 +3136,24 @@ $ faxbot costs reconcile [OPTIONS]
 
 ### `faxbot costs fax`
 
-Show what one fax cost: the carrier&#x27;s charge, or why it is not known yet.
+Show what one fax cost (the carrier&#x27;s charge, or why it is not known yet), or with --to what one would cost.
 
 **Usage**:
 
 ```console
-$ faxbot costs fax [OPTIONS] {fax_id}
+$ faxbot costs fax [OPTIONS] [fax_id]
 ```
 
 **Arguments**:
 
-* `fax_id`: Fax ID from &#x27;faxbot sent list --ids&#x27; or, with --received, from &#x27;faxbot received list --ids&#x27;.  [required]
+* `fax_id`: Fax ID from &#x27;faxbot sent list --ids&#x27; or, with --received, from &#x27;faxbot received list --ids&#x27;.
 
 **Options**:
 
 * `--received`: The fax is a received fax.
+* `--to NUMBER`: Instead of a sent fax: what a fax to this number would cost by each account your rules allow.
+* `--pages <int range>`: With --to: pages in the fax.  [default: 1; 1&lt;=x&lt;=1000]
+* `--from-site SITE`: With --to: price calls from this site&#x27;s accounts first.
 * `--help`: Show this message and exit.
 
 ### `faxbot costs received`

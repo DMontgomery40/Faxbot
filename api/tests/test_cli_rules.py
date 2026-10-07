@@ -3,8 +3,7 @@
 The server below answers the provider-rules routes (design §6.2) the way the console's tests expect:
 one draft per scope with a version, 409 for a stale draft or publish, holds with versions, and accounts
 with a configuration generation. It records every request, so each test checks what the command sent.
-Until the commands are registered under `faxbot providers` and `faxbot sent`, they run under a small
-root that uses the real global options and error reporting.
+The commands run through the real faxbot command, as people type them.
 """
 import copy
 import json
@@ -12,10 +11,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-import typer
 from typer.testing import CliRunner
 
-from app.cli import main as cli_main
+from app.cli.main import app as cli_app
 from app.cli import output
 from app.cli.commands import accounts as accounts_module
 from app.cli.commands import rules as rules_module
@@ -25,44 +23,7 @@ KEY = 'synthetic-rules-key'
 FIXTURE = Path(__file__).resolve().parents[1] / 'admin_ui/src/__tests__/providerRulesSentences.json'
 
 
-def _options_probe(account: str = rules_module.NUMBER_ACCOUNT, sender: list[str] = rules_module.NUMBER_FROM,
-                   days: str = rules_module.NUMBER_DAYS, between: str = rules_module.NUMBER_BETWEEN,
-                   email: str = rules_module.NUMBER_EMAIL, no_email: bool = rules_module.NUMBER_NO_EMAIL,
-                   urgent: bool = rules_module.NUMBER_URGENT, keep_days: int = rules_module.NUMBER_KEEP,
-                   position: int = rules_module.NUMBER_POSITION, any_number: bool = rules_module.NUMBER_ANY):
-    """Stands in for faxbot numbers add/update until access.py gains these options: prints the body it would send."""
-    from app.cli import state
-    body = rules_module.receiving_options(state.api(), account=account, from_numbers=sender, days=days, between=between,
-                                          email=email, no_email=no_email, urgent=urgent, keep_days=keep_days,
-                                          position=position, any_number=any_number)
-    state.out().json(body)
-
-
-def _root():
-    app = typer.Typer(cls=cli_main.FaxbotGroup, no_args_is_help=True, pretty_exceptions_enable=False)
-    app.callback()(cli_main.main)
-    providers = typer.Typer(no_args_is_help=True)
-    providers.add_typer(rules_module.rules, name='rules')
-    providers.add_typer(accounts_module.accounts, name='accounts')
-    costs = typer.Typer(no_args_is_help=True)
-    costs.command('quote')(accounts_module.quote_command)
-    app.add_typer(costs, name='costs')
-    app.add_typer(providers, name='providers')
-    sent = typer.Typer(no_args_is_help=True)
-    sent.command('route')(rules_module.route_command)
-    sent.command('approve')(rules_module.approve_command)
-    sent.command('refuse')(rules_module.refuse_command)
-    sent.command('held')(rules_module.held_list)
-    sent.command('check-again')(rules_module.check_again_command)
-    numbers = typer.Typer(no_args_is_help=True)
-    numbers.command('explain')(rules_module.numbers_explain)
-    numbers.command('options')(_options_probe)
-    app.add_typer(numbers, name='numbers')
-    app.add_typer(sent, name='sent')
-    return app
-
-
-ROOT = _root()
+ROOT = cli_app
 
 CHOICES = {
     'accounts': [{'key': 'sip', 'label': 'Telnyx', 'provider': 'sip', 'sends': True, 'enabled': True, 'site': None},
@@ -145,6 +106,13 @@ class FakeServer:
         body = json.loads(request.content) if request.content else None
         path, method = request.url.path, request.method
         self.requests.append((method, path, dict(request.url.params), body))
+        if path == '/auth/me':
+            return 200, {'policy_version': 4}
+        if path == '/access/inbound-rules' and method == 'GET':
+            return 200, {'items': [{'id': 'rule-1', 'to_number': '+17208565062', 'mailbox_id': 'm-leeds',
+                                    'mailbox_label': 'Leeds intake', 'version': 2}], 'next_cursor': None}
+        if path.startswith('/access/inbound-rules') and method in ('POST', 'PATCH') and not path.endswith('/explain'):
+            return 200, {'rule': {'id': 'rule-1', 'to_number': body.get('to_number', '+17208565062')}, 'policy_version': 5}
         if path == '/access/mailboxes':
             return 200, {'items': [{'id': 'm-leeds', 'label': 'Leeds intake', 'enabled': True, 'resource_id': 'r',
                                     'rule_count': 0, 'version': 1}], 'next_cursor': None}
@@ -530,7 +498,7 @@ def test_export_and_import_move_the_whole_draft(fake, tmp_path):
 # -- held faxes ------------------------------------------------------------------------------------------
 
 def test_held_faxes_are_listed_approved_and_refused_with_their_versions(fake):
-    held = fake('sent', 'held')
+    held = fake('sent', 'list', '--held')
     assert held.exit_code == 0
     assert "Waiting for approval: the rule 'Faxes over 20 pages need approval' matched." in flat(held)
     approved = fake('sent', 'approve', 'f' * 32)
@@ -564,18 +532,25 @@ def test_a_fax_with_no_allowed_route_is_sent_anyway_only_by_an_offered_account(f
 
 
 def test_number_rule_options_and_try_a_received_fax(fake):
-    result = fake('numbers', 'options', '--account', 'sinch-uk', '--from', '+13035550100', '--from', '+1303*',
-                  '--days', 'weekdays', '--between', '18:00-07:00', '--email', 'night inbox', '--urgent',
-                  '--keep-days', '30', '--position', '2', '--any-number')
+    result = fake('numbers', 'add', '+17208565062', '--mailbox', 'Leeds intake', '--account', 'sinch-uk',
+                  '--from', '+13035550100', '--from', '+1303*', '--days', 'weekdays', '--between', '18:00-07:00',
+                  '--email', 'night inbox', '--urgent', '--keep-days', '30', '--position', '2', '--any-number')
     assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        'account_key': 'sinch-uk', 'from_numbers': ['+13035550100', '+1303*'], 'days': ['mon', 'tue', 'wed', 'thu', 'fri'],
-        'start_minute': 1080, 'end_minute': 420, 'email_connector_id': 'c-night', 'email_off': False, 'urgent': True,
-        'keep_days': 30, 'position': 2, 'any_number': True}
-    quiet = fake('numbers', 'options', '--no-email', '--not-urgent')
-    assert json.loads(quiet.stdout) == {'email_connector_id': None, 'email_off': True, 'urgent': False}
-    both = fake('numbers', 'options', '--email', 'Night inbox', '--no-email')
+    assert fake.sent('POST', '/access/inbound-rules') == [{
+        'to_number': '+17208565062', 'mailbox_id': 'm-leeds', 'account_key': 'sinch-uk',
+        'from_numbers': ['+13035550100', '+1303*'], 'days': ['mon', 'tue', 'wed', 'thu', 'fri'], 'start_minute': 1080,
+        'end_minute': 420, 'email_connector_id': 'c-night', 'email_off': False, 'urgent': True, 'keep_days': 30,
+        'position': 2, 'any_number': True, 'expected_policy_version': 4}]
+    quiet = fake('numbers', 'update', '+17208565062', '--no-email', '--not-urgent')
+    assert quiet.exit_code == 0, quiet.stderr
+    assert fake.sent('PATCH', '/access/inbound-rules/rule-1') == [
+        {'email_connector_id': None, 'email_off': True, 'urgent': False, 'version': 2, 'expected_policy_version': 4}]
+    both = fake('numbers', 'update', '+17208565062', '--email', 'Night inbox', '--no-email')
     assert both.exit_code == 1 and 'Choose --email CONNECTOR or --no-email, not both.' in both.stderr
+    unchanged = fake('numbers', 'add', '+17208565063', '--mailbox', 'Leeds intake')
+    assert unchanged.exit_code == 0
+    assert fake.sent('POST', '/access/inbound-rules')[-1] == {'to_number': '+17208565063', 'mailbox_id': 'm-leeds',
+                                                             'expected_policy_version': 4}
     explained = fake('numbers', 'explain', '--to', '+17208565062', '--from', '+13035550100', '--account', 'sip',
                      '--at', '2026-10-07 18:30')
     assert explained.exit_code == 0 and 'It would go to Front desk, marked urgent' in flat(explained)
@@ -646,9 +621,36 @@ def test_adding_an_account_reads_secrets_from_stdin_or_a_hidden_prompt(fake):
     assert fake.sent('PATCH', '/admin/providers/accounts/sinch-uk') == []
 
 
+def test_send_from_a_mailbox_with_labels_and_a_workflow(fake, tmp_path, monkeypatch):
+    original = fake.handle
+
+    def handle(request):
+        if request.url.path == '/auth/context':
+            fake.requests.append((request.method, request.url.path, {}, None))
+            return 200, {'send': {'mailboxes': [{'id': 'm-leeds', 'label': 'Leeds intake'}]}}
+        if request.url.path == '/fax':
+            fake.requests.append((request.method, request.url.path, {}, request.content))
+            return 202, {'id': 'f' * 32, 'to_number': '+15551234567', 'status': 'queued', 'pages': 1, 'backend': 'sip'}
+        if request.url.path.startswith('/batching/faxes/') or request.url.path.startswith('/routing/destinations/'):
+            return 404, {'detail': 'Not Found'}
+        return original(request)
+    monkeypatch.setattr(fake, 'handle', handle)
+    document = tmp_path / 'referral.pdf'
+    document.write_bytes(b'%PDF-1.4 synthetic')
+    sent = fake('send', '+15551234567', document, '--mailbox', 'leeds intake', '--workflow', 'referrals',
+                '--label', 'legal', '--label', 'clinical')
+    assert sent.exit_code == 0, sent.stderr
+    body = next(content for verb, path, _, content in fake.requests if path == '/fax').decode('latin-1')
+    for name, value in (('mailbox', 'm-leeds'), ('workflow', 'referrals'), ('labels', 'legal'), ('labels', 'clinical')):
+        assert f'name="{name}"\r\n\r\n{value}\r\n' in body, name
+    refused = fake('send', '+15551234567', document, '--mailbox', 'Front desk')
+    assert refused.exit_code == 1
+    assert "You cannot send from a mailbox called 'Front desk'. You may send from: Leeds intake." in refused.stderr
+
+
 def test_prices_by_where_calls_start(fake, capsys, monkeypatch):
     monkeypatch.setenv('COLUMNS', '220')
-    result = fake('costs', 'quote', '--to', '+441132000001', '--pages', '2', '--from-site', 'leeds')
+    result = fake('costs', 'fax', '--to', '+441132000001', '--pages', '2', '--from-site', 'leeds')
     assert result.exit_code == 0, result.stderr
     assert [params for verb, path, params, _ in fake.requests if path == '/routing/quote'] == [
         {'to': '+441132000001', 'pages': '2', 'site': 'leeds'}]
