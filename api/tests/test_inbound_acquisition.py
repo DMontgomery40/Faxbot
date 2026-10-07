@@ -382,6 +382,42 @@ def test_with_checks_off_a_notification_is_only_a_hint_confirmed_by_lookup(isola
     assert 'attacker.example' not in providers.hosts()
 
 
+@pytest.mark.parametrize('event, fax_as_file', [('INCOMING_FAX', False), ('"INCOMING_FAX"', False),
+                                                ('INCOMING_FAX', True)])
+def test_sinchs_default_multipart_webhook_with_receiving_on_the_trunk_is_confirmed_by_lookup(
+        isolated_installation, monkeypatch, providers, event, fax_as_file):
+    """The form Sinch's reference shows (event, the fax as JSON, the PDF), with no basic auth.
+
+    Receiving is set to the SIP trunk without FAX_INBOUND_BACKEND, as on an installation
+    that also has a Sinch number: the notification is still taken, only as a hint, and the
+    fax and its document come from Sinch's API by ID, never from the notification.
+    """
+    environment(monkeypatch, FAX_BACKEND='sip')
+    fax = {'id': '01MULTIPARTFAX', 'direction': 'INBOUND', 'from': FROM, 'to': TO, 'numberOfPages': 1,
+           'status': 'COMPLETED', 'price': {'amount': '0.0450', 'currencyCode': 'USD'},
+           'createTime': '2026-10-03T13:59:00Z', 'completedTime': '2026-10-03T14:00:00Z',
+           'projectId': SINCH_PROJECT, 'serviceId': 'synthetic-service'}
+    form = {'event': event, 'eventTime': '2026-10-03T14:00:01Z', 'fax': json.dumps(fax)}
+    attached = {'file': ('01MULTIPARTFAX.pdf', pdf_bytes('attached, never used unauthenticated'), 'application/pdf')}
+    if fax_as_file:
+        # The fax part sent with a file name, as a JSON attachment.
+        attached['fax'] = ('fax.json', form.pop('fax').encode(), 'application/json')
+    with client() as http:
+        assert http.post('/sinch-inbound', data=form, files=attached).json() == {'status': 'ignored'}
+        assert rows(isolated_installation, 'inbound_faxes') == []
+        providers.sinch('01MULTIPARTFAX')
+        providers.files[('sinch', '01MULTIPARTFAX')] = (200, pdf_bytes('the real Sinch document'))
+        assert http.post('/sinch-inbound', data=form, files=attached).json() == {'status': 'ok'}
+        assert step() is True
+        received = only_fax(http)
+        assert (received['status'], received['backend'], received['provider_fax_id']) == (
+            'received', 'sinch', '01MULTIPARTFAX')
+        pdf = http.get('/inbound/' + received['id'] + '/pdf', headers=ADMIN)
+        assert b'the real Sinch document' in pdf.content or 'the real Sinch document' in ''.join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf.content)).pages)
+    assert providers.hosts() == {'fax.api.sinch.com'}
+
+
 def test_sinch_without_webhook_auth_confirms_by_lookup_and_ignores_unknown_faxes(isolated_installation, monkeypatch,
                                                                                 providers):
     environment(monkeypatch)

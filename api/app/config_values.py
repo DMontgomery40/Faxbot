@@ -243,6 +243,10 @@ class ConfigurationValues(BaseModel):
     phaxio_inbound_verify_signature: bool = Field(True, validation_alias='PHAXIO_INBOUND_VERIFY_SIGNATURE')
     sinch_inbound_basic_user: str = Field('', validation_alias='SINCH_INBOUND_BASIC_USER')
     sinch_inbound_basic_pass: str = Field('', validation_alias='SINCH_INBOUND_BASIC_PASS', repr=False, json_schema_extra={'secret': True})
+    # Where Sinch reaches Faxbot with received faxes when that is not PUBLIC_API_URL, such as a
+    # tunnel that passes only /sinch-inbound. Empty uses PUBLIC_API_URL.
+    sinch_webhook_base_url: str = Field('', validation_alias='SINCH_WEBHOOK_BASE_URL',
+                                        pattern=r'^(?:|https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~/-]*)?)$')
     storage_backend: str = Field('local', validation_alias='STORAGE_BACKEND')
     s3_bucket: str = Field('', validation_alias='S3_BUCKET')
     s3_prefix: str = Field('inbound/', validation_alias='S3_PREFIX')
@@ -491,6 +495,24 @@ class ConfigurationValues(BaseModel):
     def sinch_inbound_basic_configured(self) -> bool:
         """Sinch's basic auth is in force only with both a user name and a password."""
         return bool(self.sinch_inbound_basic_user and self.sinch_inbound_basic_pass)
+
+    @property
+    def sinch_incoming_webhook_url(self) -> str:
+        """The exact address to paste into Sinch's fax service as its Incoming webhook URL."""
+        return (self.sinch_webhook_base_url or self.public_api_url).rstrip('/') + '/sinch-inbound'
+
+    @property
+    def sinch_incoming_webhook_login_url(self) -> str | None:
+        """That address with the basic-auth user name in it and PASSWORD where the password goes; None without one.
+
+        Sinch takes webhook credentials inside the address, as https://username:password@host
+        (Fax API v3 reference, WebhookBasicAuth, read 2026-10-07).
+        """
+        from urllib.parse import quote
+        if not self.sinch_inbound_basic_configured:
+            return None
+        scheme, _, rest = self.sinch_incoming_webhook_url.partition('://')
+        return f"{scheme}://{quote(self.sinch_inbound_basic_user, safe='')}:PASSWORD@{rest}"
 
     def _saved_number(self, name, value, changes):
         """Save numbers entered nationally for the installation country in E.164.

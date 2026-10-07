@@ -338,6 +338,17 @@ def _replayed(request, body):
     return StarletteRequest(request.scope, receive)
 
 
+def sinch_webhook_notes(values):
+    """Where the Incoming webhook URL goes in Sinch and, with basic auth, how the password goes in it."""
+    where = ('In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste '
+             'this address into Incoming webhook URL.')
+    login = values.sinch_incoming_webhook_login_url
+    if login is None:
+        return where + ' Faxbot checks each fax with Sinch before it keeps it.'
+    return (where + f' Because you set a user name and password for received faxes, paste it as {login} '
+            'with your password in place of PASSWORD; Sinch then shows the password as ***.')
+
+
 def _sinch_basic_configured():
     """Basic auth is in force only with both a user name and a password: the one rule, in ConfigurationValues."""
     return settings.sinch_inbound_basic_configured
@@ -371,11 +382,27 @@ async def _sinch_payload(request, raw):
         except CallbackFormError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
         data = _form_dict(fields)
+        if 'fax' not in data:
+            # The fax part arrives as JSON; sent with a file name, it is parsed as a file part.
+            part = next((content for name, content in files if name == 'fax'), None)
+            if part is not None:
+                try:
+                    data['fax'] = part.decode('utf-8')
+                except UnicodeDecodeError:
+                    data['fax'] = None
         if isinstance(data.get('fax'), str):
             try:
                 data['fax'] = json.loads(data['fax'])
             except ValueError:
                 data['fax'] = None
+        # Sinch's reference declares the multipart event part as JSON, so it may arrive quoted ("INCOMING_FAX").
+        event = data.get('event')
+        if isinstance(event, str) and event.strip().startswith('"'):
+            try:
+                decoded = json.loads(event)
+            except ValueError:
+                decoded = None
+            data['event'] = decoded if isinstance(decoded, str) else event
         return data, next((content for name, content in files if name == 'file'), None)
     try:
         data = json.loads(raw) if raw else {}

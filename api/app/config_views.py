@@ -166,6 +166,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'api_key': mask_secret(values.sinch_api_key),
             'api_secret': mask_secret(values.sinch_api_secret),
             'configured': bool(values.sinch_project_id and values.sinch_api_key and values.sinch_api_secret),
+            'webhook_base_url': values.sinch_webhook_base_url,
+            'incoming_webhook_url': values.sinch_incoming_webhook_url,
+            'incoming_webhook_login_url': values.sinch_incoming_webhook_login_url,
         },
         'signalwire': {
             'space_url': values.signalwire_space_url,

@@ -42,7 +42,8 @@ def _valid_actor(actor):
 def _failure_sentences():
     """Provider adapters' own failure sentences, the only reasons history shows."""
     from .humblefax_service import FAILURE_SENTENCES
-    return FAILURE_SENTENCES
+    from .sinch_service import FAILURE_SENTENCES as SINCH_SENTENCES
+    return FAILURE_SENTENCES | SINCH_SENTENCES
 
 
 def _safe_event_details(encoded):
@@ -788,7 +789,8 @@ class OutboundStore:
             status=status, provider_sid=final_sid, error=error if status == 'failed' else None, updated_at=now))
         return True
 
-    def record_receipt(self, claim, *, provider_sid, status, now=None):
+    def record_receipt(self, claim, *, provider_sid, status, now=None, error=None):
+        """``error``: the adapter's plain sentence when the provider refused the fax at once."""
         now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
             results = []
@@ -807,7 +809,8 @@ class OutboundStore:
                         profile_id = attempt_profile
                 # A shared SIP call identifies each fax by its own job, as a single SIP fax does.
                 results.append(self._observe(connection, row, attempt_id=member.attempt_id, profile_id=profile_id,
-                    provider_sid=member.job_id if claim.members else provider_sid, status=status, now=now))
+                    provider_sid=member.job_id if claim.members else provider_sid, status=status, now=now,
+                    error=error if status == 'failed' else None))
         for result in results:
             if isinstance(result, _ObservationRefusal):
                 raise DeliveryConflict(result.message)

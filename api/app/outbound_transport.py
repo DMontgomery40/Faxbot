@@ -83,7 +83,13 @@ class PreparedSubmission:
                 attempt_id=self.claim.attempt_id)
             return _receipt(result)
         if pid == 'sinch':
-            return _receipt(await self.service.send_fax_file(to, self.pdf_path), sinch=True)
+            from .sinch_service import SinchRefused
+            try:
+                result = await self.service.send_fax_file(to, self.pdf_path)
+            except SinchRefused as refused:
+                # Sinch provably did not take the fax: a definite failure another route may send.
+                return SubmissionReceipt(None, 'failed', error=refused.sentence)
+            return _receipt(result, sinch=True)
         if pid == 'documo':
             return _receipt(await self.service.send_fax_file(to, self.pdf_path))
         if pid == 'humblefax':
