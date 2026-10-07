@@ -160,8 +160,12 @@ class Capacity:
         except Exception:
             return None
 
-    def decision(self, connection, values, job_ids, now):
-        """(``schedule.Decision``, ``schedule.Settings``) for faxes going in one call, or (None, None)."""
+    def decision(self, connection, values, job_ids, now, memo=None):
+        """(``schedule.Decision``, ``schedule.Settings``) for faxes going in one call, or (None, None).
+
+        ``memo`` keeps each number's settings and learned busy hours for the rest of one claim, so a queue of
+        faxes to one number reads its history once.
+        """
         scheduler = self._scheduler(connection)
         if scheduler is None:
             return None, None
@@ -169,7 +173,7 @@ class Capacity:
             fax = scheduler.fax_on(connection, job_ids, values)
             if fax is None:
                 return None, None
-            return scheduler.decide_on(connection, fax, values, now)
+            return scheduler.decide_on(connection, fax, values, now, memo)
         except Exception:
             # A schedule that cannot be read never stops a fax.
             return None, None
@@ -286,12 +290,12 @@ class Capacity:
     def _first_due(self, connection, values, now, query, deliveries):
         """The first offered delivery its recipient's schedule lets start now (see ``next_ready``)."""
         from .routing.schedule import RECHECK
-        skip, later = self._held(now), None
+        skip, later, memo = self._held(now), None, {}
         for _ in range(self.PAGES):
             page = query.where(deliveries.c.id.not_in(skip)) if skip else query
             ids = connection.execute(page.limit(self.CANDIDATES)).scalars().all()
             for job_id in ids:
-                decision, _ = self.decision(connection, values, [job_id], now)
+                decision, _ = self.decision(connection, values, [job_id], now, memo)
                 if decision is not None and decision.hold_until is not None:
                     self.held[job_id] = min(decision.hold_until, now + RECHECK)
                 elif decision is not None and decision.later:
@@ -399,7 +403,7 @@ class Capacity:
         if decision.why == 'busy':
             pages = connection.scalar(sa.select(self.t['fax_jobs'].c.pages).where(self.t['fax_jobs'].c.id == job_id))
             price = attempt_price(route, row['to_number'], pages, now=now)
-        return reason(decision, settings, route_label=provider_label(route), price_text=price)
+        return reason(decision, settings, route_label=provider_label(route), price_text=price, now=now)
 
     def waiting_for_line(self, values, now, *, waiting=None):
         """How many faxes are ready to go but wait for room (Overview)."""

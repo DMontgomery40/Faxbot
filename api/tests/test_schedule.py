@@ -14,6 +14,7 @@ from api.app.routing.schedule import (
     Decision, Fax, Hours, Observation, Settings, decide, learn, send_by_view,
 )
 from api.tests.test_capacity import Install
+from api.tests.test_batching import NUMBER as BATCH_NUMBER, T0 as HELD_AT, accept as accept_held, sip  # noqa: F401
 from api.tests.test_schema import database  # noqa: F401 (fixture)
 
 
@@ -78,10 +79,10 @@ def test_the_sentence_says_why_until_when_and_what_a_failed_try_may_cost(monkeyp
     monkeypatch.setattr(schedule, '_clock', lambda moment: f'{moment:%H:%M} UTC')
     busy = learn(realistic(), NOW, NEW_YORK)
     held = decide(sinch(), SETTINGS, busy, NOW)
-    assert schedule.reason(held, SETTINGS, route_label='Sinch', price_text='$0.09') == (
+    assert schedule.reason(held, SETTINGS, route_label='Sinch', price_text='$0.09', now=NOW) == (
         'Waiting until 14:00 UTC: this number was busy at this hour on 6 of the last 8 weekdays Faxbot called it, '
         'and a failed try may cost about $0.09 with Sinch.')
-    assert schedule.reason(held, SETTINGS, route_label='Sinch') == (
+    assert schedule.reason(held, SETTINGS, route_label='Sinch', now=NOW) == (
         'Waiting until 14:00 UTC: this number was busy at this hour on 6 of the last 8 weekdays Faxbot called it, '
         'and Sinch may charge for a failed try.')
 
@@ -167,6 +168,22 @@ def test_a_fax_that_cannot_make_its_send_by_time_says_so_before_it_is_late(monke
     assert send_by_view(send_by, 'success', finished_at=send_by - timedelta(minutes=5),
                         now=send_by)['sentence'] == 'Sent before its send-by time of 15:00 UTC.'
     assert send_by_view(None, 'ready', now=send_by) is None
+
+
+def test_times_beyond_today_name_their_day(monkeypatch):
+    from api.app import people_time
+    monkeypatch.setattr(people_time, 'installation_zone_name', lambda: 'America/Denver')
+    now = datetime(2026, 10, 7, 15, 0)                      # Wednesday 9:00 AM in Denver
+    assert schedule._when(datetime(2026, 10, 7, 23, 0), now) == '5:00 PM MDT'
+    assert schedule._when(datetime(2026, 10, 8, 23, 0), now) == 'tomorrow at 5:00 PM MDT'
+    assert schedule._when(datetime(2026, 10, 9, 23, 0), now) == 'Friday at 5:00 PM MDT'
+    assert schedule._when(datetime(2026, 10, 20, 23, 0), now) == '20 Oct 5:00 PM MDT'
+    assert send_by_view(datetime(2026, 10, 9, 23, 0), 'ready', now=now)['sentence'] == 'Send by Friday at 5:00 PM MDT.'
+    hours = Settings(Hours(frozenset(range(5)), 9 * 60, 17 * 60, NEW_YORK), True, NEW_YORK, True)
+    friday_evening = at(date(2026, 10, 9), 18, 0)
+    held = decide(sinch(), hours, None, friday_evening)
+    assert schedule.reason(held, hours, now=friday_evening) == (
+        'Waiting until Monday at 7:00 AM MDT: this recipient takes faxes only Monday to Friday, 9:00 AM to 5:00 PM EDT.')
 
 
 # -- recipient hours ---------------------------------------------------------------------------
@@ -371,20 +388,52 @@ def test_faxes_whose_send_by_time_is_near_go_first_after_urgent_ones(scheduled):
     assert order == [first_deadline, later_deadline, plain]
 
 
-def test_the_recipients_hours_hold_a_fax_through_the_claim(scheduled):
+def test_the_recipients_hours_hold_a_fax_through_a_weekend_and_it_never_fails_for_waiting(scheduled):
     scheduler = schedule.for_engine(scheduled.engine)
     scheduler.save(NUMBER, time_zone=NEW_YORK, days=frozenset(range(5)), start=9 * 60, end=17 * 60,
-                   learn_busy=True, now=NOW - timedelta(days=1))
-    saturday = at(date(2026, 10, 17), 10, 0)
-    job = scheduled.normal(at=saturday)
-    assert scheduled.store.claim('worker', now=saturday) is None
-    assert scheduled.waiting(job, saturday).endswith(
-        ': this recipient takes faxes only Monday to Friday, 9:00 AM to 5:00 PM in their time zone.')
-    assert scheduled.state(job) == 'ready'
-    urgent = scheduled.accept(NUMBER, urgent=True, at=saturday)
-    assert scheduled.store.claim('worker', now=saturday + timedelta(seconds=1)).job_id == urgent
+                   learn_busy=True, now=NOW - timedelta(days=4))
+    friday = at(date(2026, 10, 16), 18, 0)
+    job = scheduled.normal(at=friday)
+    assert scheduled.store.claim('worker', now=friday) is None
+    sentence = scheduled.waiting(job, friday)
+    assert sentence.startswith('Waiting until Monday at ')
+    assert sentence.endswith(': this recipient takes faxes only Monday to Friday, 9:00 AM to 5:00 PM EDT.')
+    # Held all weekend: recovered leases, claims every few hours, never failed, never claimed.
+    moment = friday
+    while moment < at(MONDAY, 8, 0):
+        scheduled.store.recover_expired(now=moment)
+        assert scheduled.store.claim('worker', now=moment) is None
+        assert scheduled.state(job) == 'ready'
+        moment += timedelta(hours=5, minutes=7)
+    # An urgent fax goes at once, even outside the recipient's hours.
+    early = at(MONDAY, 8, 30)
+    urgent = scheduled.accept(NUMBER, urgent=True, at=early)
+    claim = scheduled.store.claim('worker', now=early + timedelta(seconds=1))
+    assert claim.job_id == urgent
+    scheduled.store.begin_submission(claim, now=early + timedelta(seconds=1))
+    scheduled.store.record_receipt(claim, provider_sid='SIDurgent', status='success', now=early + timedelta(seconds=50))
+    claim = scheduled.store.claim('worker', now=at(MONDAY, 9, 0, NEW_YORK) + timedelta(minutes=2))
+    assert claim is not None and claim.job_id == job
 
 
+def test_a_held_group_sent_together_never_keeps_another_numbers_group_waiting(sip):  # noqa: F811
+    from api.app.batching import store as batching
+    configuration, delivery, *_ = sip
+    other = '+12025550124'
+    batching.BatchingSettings(configuration.engine).save(other, enabled=True, recipient_agreed=True,
+                                                         actor='principal:p1', actor_name='Owner')
+    # The first number takes faxes only on weekdays; HELD_AT is a Saturday evening.
+    schedule.for_engine(configuration.engine).save(
+        BATCH_NUMBER, time_zone=NEW_YORK, days=frozenset(range(5)), start=9 * 60, end=17 * 60, learn_busy=True,
+        now=HELD_AT - timedelta(days=1))
+    held = [accept_held(sip, at=HELD_AT), accept_held(sip, at=HELD_AT + timedelta(seconds=1))]
+    going = [accept_held(sip, at=HELD_AT + timedelta(minutes=1), number=other),
+             accept_held(sip, at=HELD_AT + timedelta(minutes=1, seconds=1), number=other)]
+    due = HELD_AT + timedelta(minutes=12)
+    claims = [delivery.claim('worker', now=due + timedelta(seconds=index)) for index in range(3)]
+    started = [claim for claim in claims if claim is not None]
+    assert len(started) == 1 and [member.job_id for member in started[0].members] == going
+    assert [batching.member(configuration.engine, job)['state'] for job in held] == ['waiting', 'waiting']
 def test_the_newest_schedule_row_counts_and_no_row_is_ever_changed(scheduled):
     scheduler = schedule.for_engine(scheduled.engine)
     scheduler.save(NUMBER, time_zone=NEW_YORK, days=frozenset(range(5)), start=9 * 60, end=17 * 60,

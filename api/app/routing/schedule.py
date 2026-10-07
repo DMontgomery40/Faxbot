@@ -495,6 +495,24 @@ def _clock(moment):
     return clock(moment)
 
 
+def _when(moment, now=None):
+    """'2:00 PM MDT' today, 'tomorrow at 9:00 AM MDT', 'Monday at 9:00 AM MDT' within a week, else '9 Nov 9:00 AM MST'.
+
+    In the installation's time zone, as every time Faxbot shows.
+    """
+    from ..people_time import installation_zone_name, short
+    now = now or datetime.utcnow()
+    zone = _zone(installation_zone_name())
+    days = (_local(moment, zone).date() - _local(now, zone).date()).days
+    if days == 0:
+        return _clock(moment)
+    if days == 1:
+        return f'tomorrow at {_clock(moment)}'
+    if 1 < days < 7:
+        return f'{DAY_NAMES[_local(moment, zone).weekday()]} at {_clock(moment)}'
+    return short(moment)
+
+
 def hours_text(hours):
     """'Monday to Friday, 8:00 AM to 6:00 PM' (their time); 'any time' when unset."""
     if hours.always:
@@ -531,13 +549,14 @@ def charge_clause(charge, route_label, price_text):
             else f', and {route_label} may charge for a failed try')
 
 
-def reason(decision, settings, *, route_label='this route', price_text=None):
+def reason(decision, settings, *, route_label='this route', price_text=None, now=None):
     """One sentence for Sent details while the scheduler holds a fax, else None."""
     if decision.hold_until is None:
         return None
-    until = _clock(decision.hold_until)
+    until = _when(decision.hold_until, now)
     if decision.why == 'hours':
-        zone = ' in their time zone' if settings.zone_set else ''
+        # Their hours in their own zone, named by its abbreviation then ("EST"); none when it is the installation's.
+        zone = f' {_local(decision.hold_until, _zone(settings.zone_name)).tzname()}' if settings.zone_set else ''
         return f'Waiting until {until}: this recipient takes faxes only {hours_text(settings.hours)}{zone}.'
     if decision.why == 'busy' and decision.slot is not None:
         return (f'Waiting until {until}: {decision.slot.sentence()}'
@@ -549,7 +568,7 @@ def send_by_view(send_by, state, *, pages=1, finished_at=None, now):
     """The send-by time and one sentence for Sent details and ``faxbot sent show``; None without one."""
     if send_by is None:
         return None
-    at = _clock(send_by)
+    at = _when(send_by, now)
     latest = latest_start(Fax('', pages=pages or 1, send_by=send_by))
     if state == 'success':
         late = finished_at is not None and finished_at > send_by
@@ -776,12 +795,17 @@ class Scheduler:
                    urgent=any(row.get('urgent') for row in rows), send_by=min(deadlines) if deadlines else None,
                    route=rows[0]['backend'] or '', preset=getattr(values, 'sip_trunk_preset', '') or '')
 
-    def decide_on(self, connection, fax, values, now):
-        settings = self.settings(connection, fax.number, values)
+    def decide_on(self, connection, fax, values, now, memo=None):
+        """(``Decision``, ``Settings``); ``memo`` keeps each number's settings and busy hours for one claim."""
+        memo = {} if memo is None else memo
+        if fax.number not in memo:
+            memo[fax.number] = [self.settings(connection, fax.number, values), None]
+        settings = memo[fax.number][0]
         if fax.urgent:
             return decide(fax, settings, None, now), settings
-        busy = self.busy_hours(connection, fax.number, settings, now) if settings.learn_busy else None
-        return decide(fax, settings, busy, now), settings
+        if settings.learn_busy and memo[fax.number][1] is None:
+            memo[fax.number][1] = self.busy_hours(connection, fax.number, settings, now)
+        return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now), settings
 
 
 _CACHE = {}
