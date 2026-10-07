@@ -234,19 +234,34 @@ describe('Send follows the installation country', () => {
 });
 
 describe('Before sending', () => {
-  it('words a per-minute and a per-page route by their own units, and estimates this document once its pages are known', async () => {
+  it('words a route by its own unit, then asks the shared predictor what this document would cost', async () => {
     const asked: string[] = [];
-    let card = { label: 'Telnyx', rate: '$0.005 a minute, at least 1 minute', one: '0.005', two: '0.01' };
+    const predicted: string[] = [];
+    let card = { route: 'sip', label: 'Telnyx', rate: '$0.005 a minute, at least 1 minute', one: '0.005', two: '0.01',
+      basis: 'Billed as 1 minute at $0.005 a minute; about 46 seconds on the line, for typical pages at a typical fax speed.' };
     server.use(http.get('/routing/destinations/:number', ({ params, request }) => {
       const pages = Number(new URL(request.url).searchParams.get('pages') ?? '1');
       asked.push(`${params.number} ${pages}`);
       return HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
         accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null, available_routes: [],
-        recommended_routes: [{ route: 'sip', label: card.label, reason: 'cheapest',
+        recommended_routes: [{ route: card.route, label: card.label, reason: 'cheapest',
           explanation: 'Faxbot picks the cheapest route that works reliably.',
           estimated_cost_one_page: { currency: 'USD', amount: card.one }, pages,
-          estimated_cost: { currency: 'USD', amount: pages === 2 ? card.two : card.one }, rate: card.rate,
+          // The older estimate (30 s + 30 s a page) is never shown once the predictor answers.
+          estimated_cost: { currency: 'USD', amount: '9.99' }, rate: card.rate,
           included_in_plan: false, monthly_fee: null }] });
+    }), http.get('/routing/predict', ({ request }) => {
+      const url = new URL(request.url);
+      const pages = Number(url.searchParams.get('pages'));
+      predicted.push(`${url.searchParams.get('to')} ${pages}`);
+      return HttpResponse.json({ to: '+12025550123', number_class: 'local', number_class_text: 'a local number', pages,
+        layout: 'normal', resolution: 'fine', sentence: '', note: '',
+        routes: [{ route: 'other', label: 'Other', billed_pages: 0, seconds: 40, billed_seconds: 60, seconds_to_next_step: 20,
+          cost: { currency: 'USD', amount: '0.50' }, cost_text: '$0.50', marginal: false,
+          headline: 'About $0.50 for this 2-page fax.', basis: 'Not this route.' },
+        { route: card.route, label: card.label, billed_pages: card.route === 'phaxio' ? 2 : 0, seconds: 46,
+          billed_seconds: 60, seconds_to_next_step: 14, cost: { currency: 'USD', amount: card.two }, cost_text: null,
+          marginal: false, headline: `About $${card.two} for this 2-page fax.`, basis: card.basis }] });
     }));
     const view = openSend();
     fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
@@ -255,20 +270,46 @@ describe('Before sending', () => {
     expect(route.textContent).toContain('Faxbot picks the cheapest route that works reliably.');
     // Without a document, the price in the carrier's own unit: never "a page" for a per-minute carrier.
     expect(screen.getByTestId('send-cost').textContent).toBe('About $0.005 a minute, at least 1 minute.');
+    expect(screen.queryByTestId('send-cost-basis')).toBeNull();
     const twoPages = new File(['%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n'
       + '3 0 obj << /Type /Pages /Count 2 >> endobj\n'], 'two.pdf', { type: 'application/pdf' });
     fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages] } });
     await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
-      .toBe('About $0.01 for this 2-page fax ($0.005 a minute, at least 1 minute).'), { timeout: 2000 });
+      .toBe('What would this cost? About $0.01 for this 2-page fax.'), { timeout: 2000 });
+    expect(screen.getByTestId('send-cost-basis').textContent).toBe(card.basis);
+    expect(screen.queryByText(/9\.99/)).toBeNull();
     expect(asked).toEqual(['+12025550123 1', '+12025550123 2']);
+    expect(predicted).toContain('+12025550123 2');
     view.unmount();
-    card = { label: 'Phaxio', rate: '$0.07 a page', one: '0.07', two: '0.14' };
+    card = { route: 'phaxio', label: 'Phaxio', rate: '$0.07 a page', one: '0.07', two: '0.14',
+      basis: 'Billed as 2 pages at $0.07 a page; about 46 seconds on the line, for typical pages at a typical fax speed.' };
     openSend();
     fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
     fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages] } });
     await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
-      .toBe('About $0.14 for this 2-page fax ($0.07 a page).'), { timeout: 2000 });
+      .toBe('What would this cost? About $0.14 for this 2-page fax.'), { timeout: 2000 });
     expect(screen.getByRole('heading', { name: 'Send a fax' })).toBeTruthy();
+  });
+
+  it("keeps the route's own price when the predictor can't answer", async () => {
+    server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
+      display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
+      estimated_cost_30_days: [], direct_partner: null, available_routes: [],
+      recommended_routes: [{ route: 'sip', label: 'Telnyx', reason: 'cheapest', explanation: 'Cheapest.',
+        estimated_cost_one_page: { currency: 'USD', amount: '0.005' }, pages: 2,
+        estimated_cost: { currency: 'USD', amount: '0.01' }, rate: '$0.005 a minute, at least 1 minute',
+        included_in_plan: false, monthly_fee: null }] })),
+    http.get('/routing/predict', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const twoPages = new File(['%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n'
+      + '3 0 obj << /Type /Pages /Count 2 >> endobj\n'], 'two.pdf', { type: 'application/pdf' });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages] } });
+    await screen.findByTestId('send-route', {}, { timeout: 2000 });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.getByTestId('send-cost').textContent).toBe('About $0.005 a minute, at least 1 minute.');
+    expect(screen.queryByTestId('send-cost-basis')).toBeNull();
+    expect(screen.queryByText(/Forbidden/)).toBeNull();
   });
 
   it('offers a real call for one of your own numbers and sends that choice', async () => {

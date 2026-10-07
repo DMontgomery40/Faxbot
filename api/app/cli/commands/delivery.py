@@ -790,6 +790,45 @@ def toll_free_lookup(number: str = typer.Argument(..., help="The recipient's own
         if result.get('items'):
             out.line(f"To record an approval, run faxbot recipients toll-free approve {result['number']} "
                      f"{result['items'][0]['fax_number']} --by NAME --on DATE --evidence TEXT.")
+
+def _line_time(seconds):
+    """'about 52 s' for the time column; '-' when unknown."""
+    if seconds is None:
+        return '-'
+    whole = int(round(seconds))
+    return f'about {whole // 60} min {whole % 60} s' if whole >= 60 else f'about {whole} s'
+
+
+def _predicted_cost(route):
+    if route.get('cost') is None:
+        return 'Unknown'
+    amount = money([route['cost']])
+    if not route.get('marginal'):
+        return amount
+    return 'Nothing extra' if float(route['cost']['amount']) == 0 else f'{amount} extra'
+
+
+def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to price, for example +12025550123.'),
+                    pages: int = typer.Option(1, '--pages', min=1, max=1000, help='Pages in the fax.'),
+                    layout: str = typer.Option('normal', '--layout',
+                                               help='normal, or dense for pages packed with more text.'),
+                    resolution: str = typer.Option('fine', '--resolution',
+                                                   help='standard, fine, superfine, 300 or 400.')):
+    """Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent."""
+    result = state.api().get('/routing/predict', params={'to': to, 'pages': pages, 'layout': layout,
+                                                         'resolution': resolution})
+
+    def human(out):
+        out.line(f"{result['to']} is {result['number_class_text']}; {result['pages']} "
+                 f"page{'' if result['pages'] == 1 else 's'}.")
+        routes = result.get('routes') or []
+        if routes:
+            out.table(['Route', 'Cost', 'Time on the line'],
+                      [[route['label'], _predicted_cost(route), _line_time(route.get('seconds'))] for route in routes])
+            for route in routes:
+                out.line(f"{route['label']}: {route['basis']}")
+        out.line(result['sentence'])
+        out.line(result['note'])
     state.out().result(result, human)
 
 
