@@ -76,6 +76,93 @@ class RateCard:
             raise InvalidRateCard('A monthly fee is zero or more and at most 2,000.')
 
 
+@dataclass(frozen=True)
+class RateTerms:
+    """A rate card and the terms a stored card does not hold: the numbers it prices and how it counts pages.
+
+    Stored cards price calls to local numbers (``destination_class`` 'local').
+    Prices for other classes, and terms such as Fax.Plus's page-or-time rule,
+    come from ``config/rate_cards.json`` with their source and date, so a card
+    saved in the console never loses them. Pure data; ``terms_cost`` prices it.
+
+    - ``destination_class``: 'local', 'toll_free', 'international' or 'premium' (``destinations.CLASSES``).
+    - ``prefixes``: for an international price, the E.164 prefixes it covers ("+44"); the longest match wins.
+    - ``page_time_seconds``: the greater-of rule. A page is also counted for each started period of this
+      many seconds on the line, and the bill counts the greater of the two (Fax.Plus: 60).
+    - ``included_pages`` and ``overage_page_micros``: a plan's monthly page allowance and the price of
+      each page past it.
+    - ``max_pages_per_fax``: the most pages the route takes in one fax, when it publishes a limit.
+    - ``published``: True for a shipped published price, False for a rate card saved in Faxbot.
+    """
+    card: RateCard
+    destination_class: str = 'local'
+    prefixes: tuple = ()
+    page_time_seconds: int | None = None
+    included_pages: int | None = None
+    overage_page_micros: int | None = None
+    max_pages_per_fax: int | None = None
+    published: bool = False
+
+    def __post_init__(self):
+        from .destinations import CLASSES, UNKNOWN
+        if not isinstance(self.card, RateCard):
+            raise InvalidRateCard('Rate terms need a rate card.')
+        if self.destination_class not in CLASSES or self.destination_class == UNKNOWN:
+            raise InvalidRateCard('Choose local, toll-free, international or premium-rate numbers.')
+        if not isinstance(self.prefixes, tuple) or any(
+                not isinstance(prefix, str) or re.fullmatch(r'\+[1-9][0-9]{0,6}', prefix) is None
+                for prefix in self.prefixes):
+            raise InvalidRateCard('Write each number prefix with its country code, such as +44.')
+        for name, highest in (('page_time_seconds', 3600), ('included_pages', 1_000_000), ('max_pages_per_fax', 10_000)):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or not 1 <= value <= highest):
+                raise InvalidRateCard('Page and time limits are whole numbers above zero.')
+        if self.overage_page_micros is not None and (type(self.overage_page_micros) is not int
+                                                     or not 0 <= self.overage_page_micros <= MAX_RATE_MICROS):
+            raise InvalidRateCard('Rates must be zero or more and at most 100 per unit.')
+
+
+def greater_of_pages(pages, seconds, unit_seconds):
+    """The greater of the pages sent and each started ``unit_seconds`` on the line; None when ``seconds`` is unknown.
+
+    Fax.Plus counts "the greater of physical pages or full/partial 60-second
+    transmission or connection intervals", so one page that takes 66 seconds
+    is billed as two pages.
+    """
+    if seconds is None:
+        return None
+    pages = pages if isinstance(pages, int) and pages > 0 else 0
+    if seconds <= 0:
+        return pages
+    started = _ceil_div(_ceil_div(int(seconds * 1000), 1000), unit_seconds)
+    return max(pages, started)
+
+
+def terms_cost(terms, *, seconds, pages):
+    """(pages billed at a page price, cost in micros) for one delivered fax under ``terms``.
+
+    Pages billed are the pages sent on a per-page card, the greater-of count
+    under a page-or-time rule, and 0 on a card without a page price. The cost
+    is None when it depends on a call length nobody knows: unknown is never
+    priced as zero.
+    """
+    card = terms.card
+    pages = pages if isinstance(pages, int) and pages > 0 else 0
+    if terms.page_time_seconds:
+        billed_pages = greater_of_pages(pages, seconds, terms.page_time_seconds)
+        if billed_pages is None:
+            return None, None
+    else:
+        billed_pages = pages if card.per_page_micros else 0
+    billed = billed_seconds(card, seconds)
+    if billed is None:
+        if card.per_minute_micros:
+            return billed_pages, None
+        billed = 0
+    return billed_pages, (card.per_call_micros + _ceil_div(billed * card.per_minute_micros, 60)
+                          + billed_pages * card.per_page_micros)
+
+
 class UnknownAmount(TypeError):
     """An unknown amount met a known one in arithmetic. Count it as not priced (``Tally``) instead."""
 
@@ -242,7 +329,7 @@ def rate_text(card):
         parts.append(f'{money_text(card.per_call_micros, card.currency)} a call')
     if card.per_minute_micros:
         least = billed_seconds(card, 1)
-        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} seconds'
+        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} second' + ('' if least == 1 else 's')
         parts.append(f'{money_text(card.per_minute_micros, card.currency)} a minute, at least {floor}')
     if card.per_page_micros:
         parts.append(f'{money_text(card.per_page_micros, card.currency)} a page')

@@ -30,7 +30,7 @@ import {
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 import type { BatchingCheck } from '../api/batchingTypes';
-import type { RecommendedRoute } from '../api/deliveryTypes';
+import type { RecommendedRoute, RoutePrediction } from '../api/deliveryTypes';
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
@@ -154,7 +154,24 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber, pages]);
-  const costSentence = route ? routeCostSentence(route, pages) : null;
+
+  // What would this cost? Once the document's pages are known, the shared predictor prices this fax on
+  // that route; until then (or if it can't answer) the route's price in its own unit.
+  const [prediction, setPrediction] = useState<RoutePrediction | null>(null);
+  const routeKey = route?.route ?? null;
+  useEffect(() => {
+    setPrediction(null);
+    if (!routeKey || !pages || !/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.predictCost(toNumber, pages)
+        .then((answer) => { if (live) setPrediction(answer.routes.find((item) => item.route === routeKey) ?? null); })
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber, routeKey, pages]);
+  const costSentence = prediction ? `What would this cost? ${prediction.headline}`
+    : (route ? routeCostSentence(route, null) : null);
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
@@ -345,6 +362,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                     <Typography variant="body2" color="text.secondary">{route.explanation}</Typography>
                     {costSentence && (
                       <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
+                    )}
+                    {prediction && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-basis">
+                        {prediction.basis}
+                      </Typography>
                     )}
                   </Box>
                 )}

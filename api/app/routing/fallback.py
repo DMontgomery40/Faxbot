@@ -48,11 +48,22 @@ class FallbackScheduler:
         with read_connection(self.routes.engine) as connection:
             job = connection.execute(sa.select(jobs.c.to_number, jobs.c.pages).where(jobs.c.id == job_id)).one()
         planner = RoutePlanner(self.routes)
-        exclude = planner.tried_routes(job_id, attempt_id) | {failed_route}
+        # Every submitted attempt, the failed one included, leaves out its route for the number it called. A
+        # definite failure calling the approved alternate moves the fax to the number the sender entered.
+        tried = planner.tried(job_id)
+        dial = dict(self.delivery.dial_state(job_id))
+        if dial['alternate'] and 'dialed_number' in self.routes.attempts.c:
+            # Asked inside the failure's own transaction, the failed attempt does not read as failed yet.
+            with read_connection(self.routes.engine) as connection:
+                failed_number = connection.scalar(sa.select(self.routes.attempts.c.dialed_number).where(
+                    self.routes.attempts.c.id == attempt_id))
+            dial['refused'] = dial['refused'] or failed_number == dial['alternate']
         plan = planner.plan(to_number=job.to_number, bound=bound.configuration.provider_id, values=revision.values,
-                            pages=job.pages, alternates=True, exclude=exclude)
+                            pages=job.pages, alternates=True, dial=dial, tried=tried)
+        done = {(route, number or plan.destination) for route, number in tried}
         return next((choice for choice in plan.choices
-                     if choice.route.key not in exclude and self._usable(choice, revision)), None)
+                     if (choice.route.key, plan.number_for(choice.route.key)) not in done
+                     and self._usable(choice, revision)), None)
 
     def step(self):
         moved = 0

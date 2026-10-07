@@ -708,6 +708,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {costs.get(detailJob.id)?.route_explanation}
                       </Typography>
                     )}
+                    {costs.get(detailJob.id)?.dialed?.sentence && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-dialed-number">
+                        {costs.get(detailJob.id)?.dialed?.sentence}
+                      </Typography>
+                    )}
                   </>}
                 />
               </ListItem>

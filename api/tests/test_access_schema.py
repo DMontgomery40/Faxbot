@@ -151,11 +151,10 @@ def test_0004_enrollment_preserves_all_rows_and_narrows_unproven_authority(datab
     upgrade_schema(database)
     after = snapshot(database)
     for name, rows in before.items():
-        if name == 'fax_jobs':
-            # 0020 adds a nullable column to every sent fax; nothing else in the row changes.
-            assert [{k: v for k, v in row.items() if k not in ('send_by_call', 'urgent')} for row in after[name]] == rows
-        elif name != 'alembic_version':
-            assert after[name] == rows
+        if name != 'alembic_version':
+            # Later migrations only add nullable columns to existing rows (0020, 0021, 0027 and on):
+            # compare each row on the columns it had before the upgrade.
+            assert ([{k: row[k] for k in rows[0]} for row in after[name]] == rows) if rows else after[name] == []
     bindings = {r['id']: r for r in after['access_key_bindings']}
     assert set(bindings) == {case[0] for case in cases}
     assert len({r['principal_id'] for r in bindings.values()}) == len(cases)

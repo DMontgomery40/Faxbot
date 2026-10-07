@@ -35,30 +35,32 @@ def _downgrade(engine, revision):
 
 # -- migration 0026 ------------------------------------------------------------------------------------------
 
-def test_0026_is_head_after_negotiation_and_adds_one_empty_table(database):  # noqa: F811
-    assert schema.HEAD == schema_tollfree.REVISION == '0026_tollfree_approval'
-    assert schema.NEGOTIATION == '0023_negotiation' and schema_tollfree.TABLES == frozenset({'toll_free_approvals'})
-    at_revision(database, '0023_negotiation')
+def test_0026_follows_the_shared_manifest_and_adds_one_empty_table(database):  # noqa: F811
+    assert schema.TOLLFREE == schema_tollfree.REVISION == '0026_tollfree_approval'
+    assert schema.SHARED_MANIFEST == '0025_shared_manifest' and schema_tollfree.TABLES == frozenset({'toll_free_approvals'})
+    at_revision(database, '0025_shared_manifest')
     before = snapshot(database)
     schema.upgrade_schema(database)
     after = snapshot(database)
     assert after['alembic_version'] == [{'version_num': schema.HEAD}]
     assert after['toll_free_approvals'] == []
-    assert {name: rows for name, rows in after.items() if name not in ('alembic_version', 'toll_free_approvals')} == {
-        name: rows for name, rows in before.items() if name != 'alembic_version'}
+    for name, rows in before.items():
+        if name != 'alembic_version':
+            # Later migrations add tables and nullable columns; compare what existed before, on its own columns.
+            assert ([{k: row[k] for k in rows[0]} for row in after[name]] == rows) if rows else after[name] == [], name
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
-    _downgrade(database, '0023_negotiation')
+    _downgrade(database, '0025_shared_manifest')
     with database.connect() as connection:
         assert not sa.inspect(connection).has_table('toll_free_approvals')
-        assert schema.validate_schema(connection, require_version=True) == '0023_negotiation'
+        assert schema.validate_schema(connection, require_version=True) == '0025_shared_manifest'
     schema.upgrade_schema(database)
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
 
 
 def test_a_table_left_from_elsewhere_stops_the_upgrade(database):  # noqa: F811
-    at_revision(database, '0023_negotiation')
+    at_revision(database, '0025_shared_manifest')
     with database.begin() as connection:
         connection.exec_driver_sql('CREATE TABLE toll_free_approvals (id VARCHAR(40) PRIMARY KEY)')
     with pytest.raises(schema.SchemaUpgradeError):

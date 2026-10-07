@@ -112,7 +112,7 @@ def test_0022_moves_deletion_marks_out_of_reports_keeps_every_other_row_and_down
     assert imports['import-3']['report'] == reports['import-3']
     assert imports['import-4']['report'] == 'saved-report'
     for row in before['inbound_imports']:
-        assert {k: v for k, v in imports[row['id']].items() if k != 'report'} == {
+        assert {k: v for k, v in imports[row['id']].items() if k not in ('report', 'account_key')} == {
             k: v for k, v in row.items() if k != 'report'}
     deletions = _rows(database, 'inbound_provider_deletions')
     assert [(row['id'], row['inbound_fax_id'], row['state'], row['attempts'], row['since'], row['next_at'])

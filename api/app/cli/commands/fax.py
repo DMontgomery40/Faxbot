@@ -171,8 +171,9 @@ def _together_line(view):
         until = local_time(view.get('waiting_until'))
         return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot sent send-now ID'
     if view['state'] == 'together':
-        share = (view.get('share') or {}).get('sentence')
-        return view['sentence'] + (' ' + share if share else '')
+        # How the call marked this fax (its separator page, or its line on the index page), then its share.
+        parts = [view['sentence'], view.get('layout_sentence'), (view.get('share') or {}).get('sentence')]
+        return ' '.join(part for part in parts if part)
     return None
 
 
@@ -253,6 +254,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The route that carried the fax and why Faxbot chose it, as Sent details show them.
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
+    # The number the fax dialed when it was the recipient's approved toll-free number, as Sent details show it.
+    if (cost.get('dialed') or {}).get('sentence'):
+        route.append(('Dialed', cost['dialed']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):
@@ -264,7 +268,10 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
 
     def human(out):
-        out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
+        place = {'index_page': 'Reference on the index page',
+                 'page_headers': 'Reference at the top of its pages'}.get(together.get('layout'),
+                                                                          'Reference on its separator page')
+        out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
                    + ([('How the call went', negotiation)] if negotiation else []))
         if line:

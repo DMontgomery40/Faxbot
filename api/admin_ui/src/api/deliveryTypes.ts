@@ -110,6 +110,37 @@ export interface RecommendedRoute {
   monthly_fee?: Money | null;
 }
 
+// What a fax would take and cost on one route before sending (GET /routing/predict); every figure an estimate.
+export interface RoutePrediction {
+  route: string;
+  label: string;
+  // Pages charged at a page price: 0 on a route that bills by time or includes faxes in a plan.
+  billed_pages: number | null;
+  // Predicted time on the line in seconds, and what the carrier bills for it (per-minute routes only).
+  seconds: number | null;
+  billed_seconds: number | null;
+  seconds_to_next_step: number | null;
+  // Null when unknown, never zero.
+  cost: Money | null;
+  cost_text: string | null;
+  // A monthly plan: the cost is what this fax adds to the bill.
+  marginal: boolean;
+  headline: string;
+  basis: string;
+}
+
+export interface PredictionAnswer {
+  to: string;
+  number_class: string;
+  number_class_text: string;
+  pages: number;
+  layout: string;
+  resolution: string;
+  routes: RoutePrediction[];
+  sentence: string;
+  note: string;
+}
+
 export interface DestinationDetail extends Destination {
   direct_partner: { organization: string; verified: boolean } | null;
   recommended_routes: RecommendedRoute[];
@@ -219,6 +250,34 @@ export interface FaxCost {
   // Why the latest attempt went by its route, in one sentence, as recorded when Faxbot chose it.
   route_reason?: string | null;
   route_explanation?: string | null;
+  // The number the fax dialed when it was not the one entered (the recipient's approved toll-free number),
+  // or why it went back to the number entered; null when it simply called the number entered.
+  dialed?: DialedNumber | null;
+}
+
+// GET /routing/rate-cards toll_free: what one sending route publishes about calling toll-free numbers.
+export interface TollFreeTerms {
+  provider_id: string;
+  route: string;
+  provider_name: string;
+  label: string;
+  reaches: 'yes' | 'no' | 'not_published';
+  reach_text: string;
+  price_text: string;
+  pricing: 'own' | 'same_as_card' | 'not_published';
+  caller_id_text: string | null;
+  advertised_on: string | null;
+  source_url: string | null;
+}
+
+export interface DialedNumber {
+  number: string;
+  display: string;
+  toll_free: boolean;
+  recipient_name: string | null;
+  approved_on: string | null;
+  withdrawn_on: string | null;
+  sentence: string;
 }
 
 export interface ReconcileResult {
@@ -420,6 +479,8 @@ export interface Savings {
   sending_together: SavingPart & {
     numbers: number; calls: number; faxes: number; calls_saved: number; priced_calls: number;
   };
+  // Separator pages shared calls left out (an index page or page marks); optional for older servers.
+  separator_pages?: SavingPart & { calls: number; pages_saved: number; priced_calls: number };
   direct_delivery: SavingPart & {
     faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
   };
@@ -435,6 +496,10 @@ export interface Savings {
   // Faxes to this installation's own numbers, delivered inside Faxbot with no call; optional for older servers.
   own_numbers?: SavingPart & {
     faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
+  };
+  // Faxes that called their recipient's approved toll-free number; the recipient pays those calls.
+  toll_free?: SavingPart & {
+    faxes: number; priced: number; in_plan: number; unpriced: number;
   };
 }
 

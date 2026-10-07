@@ -273,6 +273,21 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert unconfirmed.exit_code == 1 and '--confirm-original-account' in unconfirmed.stderr
 
 
+def test_sent_show_says_which_approved_number_a_fax_dialed(cli, tmp_path, monkeypatch):
+    from app.routing import provenance
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue')
+    sentence = 'Dialed 1-800-555-0100, the toll-free number Example Clinic approved on October 3, 2026.'
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: {
+        'number': '+18005550100', 'display': '1-800-555-0100', 'toll_free': True, 'recipient_name': 'Example Clinic',
+        'approved_on': 'October 3, 2026', 'withdrawn_on': None, 'sentence': sentence} if job_id == sent['id'] else None)
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Dialed ' + sentence in shown
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: None)
+    assert 'Dialed' not in cli('sent', 'show', sent['id']).stdout
+
+
 def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
     note = tmp_path / 'note.txt'
     note.write_text('Synthetic\n')
@@ -786,6 +801,11 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     # Money as money, the provider by name and the date in words: no bare decimals, currency codes or ids.
     shown = cli('costs', 'rate-cards').stdout
     assert '$0.07' in shown and 'Sending' in shown and 'October' in shown
+    # What calling a recipient's approved toll-free number costs on each sending route, with its source date.
+    toll_free = cli.json('costs', 'rate-cards')['toll_free']
+    assert [(item['provider_id'], item['price_text']) for item in toll_free] == [
+        ('phaxio', 'The same as its sending price.')]
+    assert 'Calls to toll-free numbers' in shown and 'Caller ID it needs' in shown
     assert 'USD' not in shown and '0.07 ' not in shown.replace('$0.07', '') and '2026-10-01' not in shown
     # Each route says how it charges and what this fax would cost, for the pages asked.
     three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
@@ -825,6 +845,30 @@ def test_routing_batching_show_set_off_and_send_now(cli, tmp_path):
     assert sent['status'] == 'queued'
     waiting = cli('sent', 'send-now', sent['id'])
     assert waiting.exit_code != 0 and 'not waiting' in waiting.stderr
+
+
+def test_recipients_set_index_page_or_page_headers_records_the_agreement_and_needs_sending_together(cli):
+    refused = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert refused.exit_code != 0
+    assert 'Turn on sending together before choosing how documents are marked.' in refused.stderr
+    assert cli('recipients', 'set', '+15551230002', '--separator-pages').exit_code == 0  # already separators
+    both_flags = cli('recipients', 'set', '+15551230002', '--index-page', '--page-headers')
+    assert both_flags.exit_code != 0 and 'Choose one of' in both_flags.stderr
+    cli.json('recipients', 'together', 'set', '+15551230002', '--recipient-agreed')
+    on = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert on.exit_code == 0, on.stdout + on.stderr
+    assert 'start with one index page' in ' '.join(on.stdout.split())
+    shown = cli.json('recipients', 'together', 'show', '+15551230002')
+    assert shown['boundaries'] == 'index_page' and shown['boundaries_agreement']['boundaries_agreed'] is True
+    human = cli('recipients', 'together', 'show', '+15551230002')
+    assert 'Agreement to that recorded by' in human.stdout and "One index page listing each document's pages" in (
+        ' '.join(human.stdout.split()))
+    marks = cli.json('recipients', 'set', '+15551230002', '--page-headers')
+    assert marks['boundaries'] == 'page_headers'
+    both = cli.json('recipients', 'set', '+15551230002', '--name', 'Records desk', '--separator-pages')
+    assert both['display_name'] == 'Records desk' and both['sending_together']['boundaries'] == 'separators'
+    savings = cli('costs', 'savings')
+    assert savings.exit_code == 0 and 'Separator pages left out' in savings.stdout
 
 
 @pytest.fixture
@@ -1015,6 +1059,22 @@ def test_costs_savings_reads_as_estimates(cli):
     assert 'No money saved in the last 30 days, as far as Faxbot can tell.' in human.stdout
     assert 'Sending together' in human.stdout and 'Direct delivery' in human.stdout and 'Case packets' in human.stdout
     assert result['sentence'] in ' '.join(cli('costs', 'savings', '--days', '7').stdout.split())
+
+
+def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
+    result = cli.json('costs', 'predict', '--to', '+12025550123', '--pages', '3')
+    assert result['number_class'] == 'local' and result['pages'] == 3
+    phaxio = next(route for route in result['routes'] if route['route'] == 'phaxio')
+    assert phaxio['cost'] == {'amount': '0.21', 'currency': 'USD'} and phaxio['billed_pages'] == 3
+    human = ' '.join(cli('costs', 'predict', '--to', '+12025550123', '--pages', '3').stdout.split())
+    assert '+12025550123 is a local number; 3 pages.' in human
+    assert 'Route Cost Time on the line' in human and 'Phaxio: Billed as 3 pages at $0.07 a page;' in human
+    assert result['sentence'] in human
+    assert 'Estimates before sending; the bill comes from your carrier or provider.' in human
+    toll_free = cli.json('costs', 'predict', '--to', '+18005550100')
+    assert toll_free['number_class_text'] == 'a toll-free number'
+    refused = cli('costs', 'predict', '--to', '+12025550123', '--layout', 'tall')
+    assert refused.exit_code != 0 and 'Choose a normal or dense layout.' in refused.stdout + refused.stderr
 
 
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):

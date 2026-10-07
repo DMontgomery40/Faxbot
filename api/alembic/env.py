@@ -37,7 +37,11 @@ config.attributes["schema_local_delivery"] = importlib.import_module(package + "
 config.attributes["schema_capacity"] = importlib.import_module(package + ".schema_capacity")
 config.attributes["schema_history"] = importlib.import_module(package + ".schema_history")
 config.attributes["schema_negotiation"] = importlib.import_module(package + ".schema_negotiation")
+config.attributes["schema_shared_manifest"] = importlib.import_module(package + ".schema_shared_manifest")
 config.attributes["schema_tollfree"] = importlib.import_module(package + ".schema_tollfree")
+config.attributes["schema_dialed"] = importlib.import_module(package + ".schema_dialed")
+config.attributes["schema_routing_rules"] = importlib.import_module(package + ".schema_routing_rules")
+config.attributes["schema_receiving_rules"] = importlib.import_module(package + ".schema_receiving_rules")
 
 
 def migrate(connection):

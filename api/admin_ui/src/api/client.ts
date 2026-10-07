@@ -42,6 +42,7 @@ import type {
   Destination,
   DestinationDetail,
   DestinationPatch,
+  PredictionAnswer,
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
@@ -50,7 +51,7 @@ import type {
   FaxCost,
   IntakeCounts,
   IntakeItem,
-  PublishedPlans, RateCard,
+  PublishedPlans, RateCard, TollFreeTerms,
   ReconcileResult,
   RouteCostsResponse,
   CaseDocuments,
@@ -1022,6 +1023,11 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
   }
 
+  // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
+  async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
+    return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
+  }
+
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
@@ -1092,7 +1098,7 @@ class AdminAPIClient {
     return this.json(`/routing/inbound-costs${query({ ids: inboundIds.join(',') })}`);
   }
 
-  async listRateCards(): Promise<{ cards: RateCard[] }> {
+  async listRateCards(): Promise<{ cards: RateCard[]; toll_free?: TollFreeTerms[] }> {
     return this.json('/routing/rate-cards');
   }
 

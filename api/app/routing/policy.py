@@ -39,6 +39,9 @@ class RouteCandidate:
     card: object = None
     bound: bool = False
     peer_id: str | None = None
+    # Between routes of equal cost, the lower goes first: 1 for a route that may not reach the number it would
+    # dial (its toll-free support is not published), 0 otherwise (``plan``).
+    doubt: int = 0
 
     def __post_init__(self):
         if self.kind not in {'local', 'direct', 'provider'}:
@@ -128,7 +131,7 @@ class RoutePolicy:
             estimate = estimates[candidate.key]
             # Unknown cost sorts after known cost; ties keep configured order,
             # which puts the job's own provider first.
-            return (estimate is None, estimate if estimate is not None else 0,
+            return (estimate is None, estimate if estimate is not None else 0, candidate.doubt,
                     not candidate.bound, position[candidate.key])
 
         def first_reason(candidate):

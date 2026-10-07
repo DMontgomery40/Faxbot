@@ -18,6 +18,53 @@ MIN_PAGES, MAX_PAGES = 2, 200
 # A minimum (or billing step) at least this long makes a short call pay for unused time.
 SAVING_MINIMUM_SECONDS = 30
 AGREEMENT = 'This recipient has agreed to receive several documents in one call.'
+# How a shared call marks where each document starts (migration 0025): a separator page before each
+# document; one index page listing each document's pages (research D6); or a line Faxbot adds at the top
+# of every page, with no page added at all (research M20). Anything but separators needs the recipient's
+# agreement to that convention.
+LAYOUT_SEPARATORS, LAYOUT_INDEX_PAGE, LAYOUT_PAGE_HEADERS = 'separators', 'index_page', 'page_headers'
+LAYOUTS = (LAYOUT_SEPARATORS, LAYOUT_INDEX_PAGE, LAYOUT_PAGE_HEADERS)
+LAYOUT_LABELS = {LAYOUT_SEPARATORS: 'A separator page before each document',
+                 LAYOUT_INDEX_PAGE: "One index page listing each document's pages",
+                 LAYOUT_PAGE_HEADERS: 'A line at the top of every page, with no page added'}
+INDEX_PAGE_AGREEMENT = ("This recipient has agreed to one index page listing each document's pages, "
+                        'instead of a separator page before each document.')
+PAGE_HEADERS_AGREEMENT = ('This recipient has agreed to find where each document starts from a line at the top '
+                          'of every page, with no separator or index page.')
+AGREEMENTS = {LAYOUT_INDEX_PAGE: INDEX_PAGE_AGREEMENT, LAYOUT_PAGE_HEADERS: PAGE_HEADERS_AGREEMENT}
+REFUSALS = {LAYOUT_INDEX_PAGE: 'Record that the recipient agreed to one index page before using it.',
+            LAYOUT_PAGE_HEADERS: 'Record that the recipient agreed to marks at the top of every page before using them.'}
+# What either convention leaves out, and what it never touches (R07 §3.3: a recipient's own routing pages).
+INDEX_PAGE_KEEPS = ("Only Faxbot's separator pages are left out; cover sheets and barcode pages inside "
+                    'your documents are always sent.')
+# 47 CFR 68.318(d): the date, time, sender and sending number on every page. The fax engine prints that
+# header above Faxbot's own line, so marks at the top of every page need both set.
+HEADER_NEEDS = ('Faxes to this number use separator pages for now, because marks at the top of every page need '
+                'your header text and sending number set in Numbers > Sender identity.')
+# The most documents one index page lists, each on at most three lines (``image.index_pdf``).
+INDEX_PAGE_DOCUMENTS = 15
+
+
+def header_identifies_sender(values):
+    """True when every page's header line will show who sent it and from which number (47 CFR 68.318(d)).
+
+    The built-in fax engine (spandsp 0.0.6, t4_tx.c) prints, above the page's own rows and only when the
+    header text is set, the date and time, the header text and the station ID (the sending number: the
+    station ID setting, or else the SIP trunk's caller ID) and the page number. The shipped header text
+    ("Faxbot") names the software, not the sender, so it does not count, nor does the placeholder station ID.
+    """
+    from ..config_values import PLACEHOLDER_DEFAULTS, ConfigurationValues
+    header = str(getattr(values, 'fax_header', '') or '').strip() if values is not None else ''
+    if not header or header == ConfigurationValues.model_fields['fax_header'].default:
+        return False
+    station = str(getattr(values, 'fax_station_id', '') or '').strip()
+    if station and station != PLACEHOLDER_DEFAULTS['fax_station_id']:
+        return True
+    from .. import sip_trunk
+    try:
+        return sip_trunk.configured(values) and bool(sip_trunk.effective_trunk(values, for_calls=True).caller_id)
+    except (ValueError, AttributeError):
+        return False
 
 
 @dataclass(frozen=True)
