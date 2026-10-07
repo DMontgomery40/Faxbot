@@ -269,6 +269,8 @@ EOF
     printf 'CountryCode:\t\t1\nAreaCode:\t\t\nLongDistancePrefix:\t1\nInternationalPrefix:\t011\n'
     printf 'FAXNumber:\t\t%s\n' "$fax_number"
     printf 'LocalIdentifier:\t"%s"\n' "$station_id"
+    # Each job may send its own station ID (Faxbot's reply number, JPARM TSI); faxsend ignores it otherwise.
+    printf 'UseJobTSI:\t\tyes\n'
     printf 'ServerTracing:\t\t0x00201\nSessionTracing:\t\t%s\n' "$session_tracing"
     printf 'RecvFileMode:\t\t0600\nLogFileMode:\t\t0600\nDeviceMode:\t\t0600\n'
     printf 'RingsBeforeAnswer:\t1\nSpeakerVolume:\t\toff\nGettyArgs:\t\t"-h %%l dx_%%s"\n'

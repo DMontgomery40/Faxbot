@@ -6,7 +6,7 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
+from .commands import access, admin, delivery, fax, operations, reply, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -75,6 +75,7 @@ numbers.add_typer(mailboxes, name='mailboxes')
 email = _group('Email delivery of received faxes.')
 email.add_typer(delivery.connectors, name='connectors')
 numbers.add_typer(email, name='email')
+numbers.add_typer(reply.reply, name='reply')
 
 # -- recipients ----------------------------------------------------------------------
 

@@ -222,6 +222,12 @@ class ConfigurationValues(BaseModel):
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     # The fax number printed for the receiving machine; empty means the trunk's caller ID, or none.
     fax_station_id: str = Field('', validation_alias='FAX_LOCAL_STATION_ID')
+    # The number replies to your faxes reach (routing/reply_number.py): printed in each page's header line
+    # and sent as the station ID. Empty: Faxbot uses your cheapest number that receives into a mailbox.
+    fax_reply_number: str = Field('', validation_alias='FAX_REPLY_NUMBER', pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    # Mailboxes with a reply number of their own: "<mailbox ID>=<number>" pairs separated by semicolons.
+    fax_reply_numbers: str = Field('', validation_alias='FAX_REPLY_NUMBERS', pattern=(
+        r'^(?:[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}(?:;[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}){0,99})?$'))
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')

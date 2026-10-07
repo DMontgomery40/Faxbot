@@ -387,8 +387,10 @@ def test_a_job_is_created_with_one_dial_one_try_and_the_tag_then_submitted_only_
     assert f'JPARM DIALSTRING "{tag}"' in parms and f'JPARM JOBINFO "{JOB}.{ATTEMPT}"' in parms
     assert 'JPARM MAXDIALS 1' in parms and 'JPARM MAXTRIES 1' in parms
     assert 'JPARM NOTIFY "DONE+REQUEUE"' in parms and 'JPARM DOCUMENT /tmp/doc7.tif' in parms
-    # Faxbot's header, with % kept literal (HylaFAX reads % as a format code).
-    assert 'JPARM TAGLINE "Faxbot proof 100%%"' in parms and 'JPARM USETAGLINE YES' in parms
+    # Faxbot's header line (47 CFR 68.318(d): date and time, who sends, the station ID, the page), with % kept
+    # literal through HylaFAX's strftime and its own % codes (routing/reply_number.tagline).
+    assert ('JPARM TAGLINE "%d %b %Y %H:%M|Faxbot proof 100%%%%|%%l|Page %%P of %%T"' in parms
+            and 'JPARM USETAGLINE YES' in parms)
     assert job.submit() == '7' and server.commands[-1] == 'JSUBM'
     job.close()
     # No header in Faxbot: no header line from the engine either.

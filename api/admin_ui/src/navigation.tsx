@@ -74,6 +74,7 @@ import ResourceAccess from './components/ResourceAccess';
 import Sessions from './components/Sessions';
 import DeliveryRoutes from './components/DeliveryRoutes';
 import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOverview';
+import ReplyNumber from './components/ReplyNumber';
 
 export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
 
@@ -240,7 +241,12 @@ export const NAVIGATION: NavArea[] = [
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
       { id: 'identity', label: 'Sender identity', icon: <BadgeIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['identity'], 'Sender identity') },
+        render: (ctx) => (
+          <>
+            {settingsPage(['identity'], 'Sender identity')(ctx)}
+            <ReplyNumber client={ctx.client} canWrite={ctx.permissions.has('settings:write')} />
+          </>
+        ) },
     ],
   },
   {

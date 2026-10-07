@@ -65,6 +65,7 @@ import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
 import type { EfaxStatus } from './types';
+import type { ReplyNumberView } from './numbersTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1209,6 +1210,23 @@ class AdminAPIClient {
       formData.append('titles', document.title);
     }
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
+  }
+
+  // Numbers → Sender identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
+  async getReplyNumber(): Promise<ReplyNumberView> {
+    return this.json('/numbers/reply');
+  }
+
+  async setReplyNumber(number: string): Promise<{ ok: true; number: string | null }> {
+    return this.json('/numbers/reply', { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async setMailboxReplyNumber(mailboxId: string, number: string): Promise<{ ok: true; number: string }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async clearMailboxReplyNumber(mailboxId: string): Promise<{ ok: true }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

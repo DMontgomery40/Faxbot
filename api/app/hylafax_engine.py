@@ -757,9 +757,13 @@ _DATA_FORMATS = {'mh': 'G31D', 'mr': 'G32D', 'mmr': 'G4', 'jbig': 'JBIG'}
 
 
 def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str, header: str = '',
-               settings: CallSettings | None = None,
+               settings: CallSettings | None = None, station: str | None = None,
                host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
-    """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking)."""
+    """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking).
+
+    ``station``: this job's station ID (TSI), the reply number (routing/reply_number.py); the engine sends
+    it, and prints it in the header line, because its modems run with UseJobTSI. None keeps the engine's own.
+    """
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported fax engine job')
     password = engine_secrets(values)['submit_password']
@@ -792,15 +796,19 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             f'JPARM USESSLFAX {"NO" if not getattr(values, "sip_sslfax_enabled", True) else "YES"}',
             f'JPARM DOCUMENT {document}',
         ]
-        # The header line on each page, as the built-in engine prints it; none when Faxbot's is empty.
-        # HylaFAX reads % as a format code, so a literal % is doubled.
+        # The header line on each page, as the built-in engine prints it (47 CFR 68.318(d): date and time,
+        # who sends, the reply number, the page); none when Faxbot's header is empty.
+        if station is not None:
+            station = re.sub(r'[^+0-9 ]', '', station)[:20]
+            commands.append(f'JPARM TSI {_quote(station)}')
         if settings is not None:
             # This call's highest speed (code 0-5), error correction and best compression.
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
                          f'JPARM USEECM {"YES" if settings.ecm else "NO"}',
                          f'JPARM DATAFORMAT {_quote(_DATA_FORMATS[settings.compression])}']
         if header:
-            commands += [f'JPARM TAGLINE {_quote(header[:100].replace("%", "%%"))}', 'JPARM USETAGLINE YES']
+            from .routing.reply_number import tagline
+            commands += [f'JPARM TAGLINE {_quote(tagline(header))}', 'JPARM USETAGLINE YES']
         else:
             commands.append('JPARM USETAGLINE NO')
         for command in commands:
@@ -818,14 +826,18 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
 async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
+    from .ami import reply_choice
     settings = settings or call_settings(values, dest, engine=True)
-    fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id)
+    # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
+    choice = await asyncio.to_thread(reply_choice, values)
+    fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice)
     tag = new_tag()
     plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
-                                      tiff_path=tiff_path, header=values.fax_header or '', settings=settings)
+                                      tiff_path=tiff_path, header=values.fax_header or '', settings=settings,
+                                      station=choice.number)
     except BaseException:
         await forget_plan(ami, tag)
         raise

@@ -148,25 +148,62 @@ def prepare_originate_fields(
     return fields
 
 
-def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None):
+def _database():
+    """The installation's database engine, or None before it is ready (reply numbers fall back then)."""
+    try:
+        from . import db
+        return db.engine
+    except Exception:
+        return None
+
+
+def reply_choice(values, *, mailbox_id=None):
+    """The reply number this fax shows in its header line and station ID (routing/reply_number.py).
+
+    Never raises: when nothing can be read the fax shows the line's own number, as before.
+    """
+    from .routing import reply_number
+    try:
+        store = None
+        engine = _database()
+        if engine is not None:
+            try:
+                from .routing.store import RouteStore
+                store = RouteStore(engine)
+            except Exception:
+                store = None
+        return reply_number.choose(values, engine=engine, store=store, mailbox_id=mailbox_id)
+    except Exception:
+        return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
+
+
+def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
+                         choice=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
     (ValueError naming fields only) when the trunk cannot place calls. Without
     one, the call carries the station ID as before; an empty station ID sends none.
-    An empty station ID on a trunk call means the trunk's caller ID.
     ``call`` (hylafax_engine.CallSettings) adds this call's speed and error correction.
+
+    The station ID (TSI) and the number in each page's header line are the
+    reply number (``reply_choice``: the mailbox's, the organization's, the
+    station ID setting, or the cheapest number that reaches a mailbox); with
+    none, a trunk call shows the trunk's caller ID. The caller ID becomes the
+    reply number only when it is one of the same trunk's numbers.
     """
     from . import sip_trunk
+    from .routing.reply_number import caller_id_for
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
+    choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
     if not sip_trunk.configured(values):
-        return prepare_originate_fields(job_id, dest, tiff_path, caller_id=values.fax_station_id,
+        return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=values.fax_header, attempt_id=attempt_id, **limits)
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
-        job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
-        attempt_id=attempt_id, station_id=values.fax_station_id or None,
+        job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
+        header=values.fax_header, attempt_id=attempt_id, station_id=choice.number or None,
         dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
 
 

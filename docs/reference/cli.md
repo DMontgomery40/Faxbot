@@ -600,6 +600,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `update`: Change a fax number&#x27;s mailbox, or the...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
+* `reply`: The number printed on the faxes you send,...
 
 ### `faxbot numbers list`
 
@@ -897,6 +898,89 @@ $ faxbot numbers email connectors remove [OPTIONS] {name}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot numbers reply`
+
+The number printed on the faxes you send, so replies reach you on your cheapest number.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show the number your faxes show, why, what...
+* `numbers`: List your numbers with the mailbox each...
+* `set`: Print this number on every fax (or on...
+* `clear`: Let Faxbot choose the number again (or...
+
+#### `faxbot numbers reply show`
+
+Show the number your faxes show, why, what caller ID each provider shows, and which number is cheapest.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply numbers`
+
+List your numbers with the mailbox each reaches and what receiving on it costs.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply numbers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply set`
+
+Print this number on every fax (or on faxes from one mailbox) and send it as the station ID.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply set [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Your fax number that replies should reach.  [required]
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply clear`
+
+Let Faxbot choose the number again (or give a mailbox&#x27;s faxes the organization&#x27;s number).
+
+**Usage**:
+
+```console
+$ faxbot numbers reply clear [OPTIONS]
+```
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
 * `--help`: Show this message and exit.
 
 ## `faxbot recipients`
