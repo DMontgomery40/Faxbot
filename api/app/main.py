@@ -1497,13 +1497,14 @@ def admin_inbound_callbacks(request: Request):
             "notes": "Set this as the receive callback URL in Phaxio. Faxbot checks Phaxio's signature with the Callback Token.",
         })
     elif backend == "sinch":
+        from .inbound.http import sinch_webhook_notes
         out["callbacks"].append({
-            "name": "Sinch Fax Inbound",
-            "url": f"{base}/sinch-inbound",
+            "name": "Sinch incoming webhook URL",
+            "url": settings.sinch_incoming_webhook_url,
             "auth": {
                 "basic": settings.sinch_inbound_basic_configured,
             },
-            "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
+            "notes": sinch_webhook_notes(settings),
         })
     elif backend == "efax" and settings.efax_webhook_secret:
         out["callbacks"].append({

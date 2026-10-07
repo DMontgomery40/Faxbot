@@ -201,6 +201,9 @@ export interface Settings {
     api_key: string;
     api_secret: string;
     configured: boolean;
+    webhook_base_url?: string;
+    incoming_webhook_url?: string;
+    incoming_webhook_login_url?: string | null;
   };
   signalwire?: {
     space_url: string;

@@ -176,6 +176,55 @@ function QuietNumbers({ advice }: { advice: Advice }) {
           </Table>
         </TableContainer>
       )}
+      {quiet.numbers.length > 0 && (
+        <Typography variant="body2" sx={{ mt: 1.5 }} data-testid="receiving-quiet-question">{STILL_PUBLISHED}</Typography>
+      )}
+    </Paper>
+  );
+}
+
+export const STILL_PUBLISHED = 'Before you give up a number, ask: is it still printed on your letterhead, forms or '
+  + 'website, or listed anywhere? If it is, keep it.';
+
+// HumbleFax's and eFax's own numbers: their faxes in the window and the plan they come with (advice only).
+function ServiceNumbers({ advice }: { advice: Advice }) {
+  const services = advice.provider_numbers;
+  if (!services || services.state === 'none') return null;
+  return (
+    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="receiving-service-numbers">
+      <Heading title="Fax service numbers" />
+      <Typography variant="body1">{services.sentence}</Typography>
+      <TableContainer sx={{ mt: 2 }}>
+        <Table size="small" aria-label="Fax service numbers">
+          <TableHead>
+            <TableRow>
+              <TableCell>Fax service</TableCell>
+              <TableCell>Number</TableCell>
+              <TableCell align="right">{`Received, last ${advice.days} days`}</TableCell>
+              <TableCell align="right">{`Sent, last ${advice.days} days`}</TableCell>
+              <TableCell align="right">Plan a month</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {services.numbers.map((row) => (
+              <TableRow key={`${row.provider}-${row.number}`}>
+                <TableCell>{row.name}</TableCell>
+                <TableCell>{row.number}</TableCell>
+                <TableCell align="right">{row.received}</TableCell>
+                <TableCell align="right">{row.sent}</TableCell>
+                <TableCell align="right">{formatMoneyList(row.plan_fee, 'No price yet')}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <Stack spacing={0.5} sx={{ mt: 1.5 }}>
+        {services.numbers.filter((row) => row.sentence !== services.sentence || row.question).map((row) => (
+          <Typography key={`${row.provider}-${row.number}-sentence`} variant="body2">
+            {row.question ? `${row.sentence} ${row.question}` : row.sentence}
+          </Typography>
+        ))}
+      </Stack>
     </Paper>
   );
 }
@@ -255,7 +304,7 @@ export default function ReceivingRecommendations({ client, onCount }: {
     try {
       const loaded = await client.getReceivingRecommendations();
       setAdvice(loaded);
-      onCount?.(waitingForHistory(loaded) ? 0 : 1);
+      onCount?.(waitingForHistory(loaded) && loaded.provider_numbers?.state !== 'quiet' ? 0 : 1);
     } catch (failure) {
       setError(failure);
       onCount?.(null);
@@ -284,6 +333,7 @@ export default function ReceivingRecommendations({ client, onCount }: {
               <QuietNumbers advice={advice} />
             </>
           )}
+          <ServiceNumbers advice={advice} />
           <FaxServices advice={advice} />
           <Prices advice={advice} />
         </Stack>

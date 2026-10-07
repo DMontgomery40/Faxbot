@@ -156,6 +156,7 @@ function editorValues(data: SettingsType): SettingsForm {
     phaxio_verify_signature: data.phaxio.verify_signature,
     sinch_project_id: data.sinch.project_id,
     sinch_base_url: data.sinch.base_url ?? '',
+    sinch_webhook_base_url: data.sinch.webhook_base_url ?? '',
     sinch_api_key: data.sinch.api_key,
     sinch_api_secret: data.sinch.api_secret,
     documo_api_key: data.documo?.api_key ?? '',
@@ -903,6 +904,21 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     {textField('Sinch address (optional)', 'sinch_base_url', 'Leave it empty to use the usual Sinch address.')}
                     {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
                     {textField('Sinch API Secret', 'sinch_api_secret', 'Leave unchanged to keep the saved secret.', 'password')}
+                    {textField('Address Sinch sends received faxes to (optional)', 'sinch_webhook_base_url',
+                      "Leave it empty to use this server's public address. Fill it in when Sinch reaches Faxbot at another address, such as https://fax-hooks.example.com.")}
+                    {settings.sinch?.incoming_webhook_url && (
+                      <Alert severity="info" sx={{ mt: 2 }} data-testid="sinch-incoming-webhook">
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>Incoming webhook URL</Typography>
+                        <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                          {settings.sinch.incoming_webhook_login_url || settings.sinch.incoming_webhook_url}
+                        </Typography>
+                        <Typography variant="body2" sx={{ mt: 1 }}>
+                          {settings.sinch.incoming_webhook_login_url
+                            ? 'In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste this into Incoming webhook URL, with your password in place of PASSWORD. Sinch then shows the password as ***.'
+                            : 'In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste this into Incoming webhook URL. Faxbot checks each fax with Sinch before it keeps it.'}
+                        </Typography>
+                      </Alert>
+                    )}
                   </ResponsiveSettingSection>
                 )}
 
@@ -1014,7 +1030,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                           label="Telnyx API key"
                           value={settings.sip.telnyx_api_key_set ? 'Saved' : ''}
                           editValue={form.telnyx_api_key ?? ''}
-                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) on your numbers; it changes a number only when you select Turn on T.38."
+                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) and caller-name lookup on your numbers; it changes a number only when you select Turn on T.38 or Turn off name lookup."
                           placeholder="Telnyx API key"
                           onChange={(value) => handleForm('telnyx_api_key', value)}
                           type="password"

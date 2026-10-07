@@ -145,6 +145,17 @@ const s = () => backend.state;
 const nextId = (prefix: string) => `${prefix}_${++s().sequence}`;
 const json = (body: JsonBodyType, status = 200) => HttpResponse.json(body, { status });
 
+// GET /routing/recommendations/fax-marker for a new installation: no calls yet.
+export function newFaxMarkerAdvice() {
+  const side = { calls: 0, delivered: 0, failed: 0, result_unknown: 0, delivered_percent: null, t38: 0, audio: 0,
+    mode_unknown: 0, t38_percent: null, average_seconds: null, seconds_per_page: null, cost_per_delivered: null,
+    cost_text: 'None delivered', settled: 0, reported: 0, estimated: 0, unpriced: 0 };
+  return { days: 90, min_calls: 10, state: 'no_calls', enough: false, setting_on: true, difference: null, caveat: null,
+    sentence: 'Faxbot placed no calls over your carrier line in the last 90 days, so there is nothing to compare yet.',
+    setting_sentence: 'Mark calls as fax is on, and Faxbot leaves it on: this comparison never changes a setting.',
+    left_out: 0, left_out_sentence: null, marked: side, not_marked: side };
+}
+
 // GET /routing/recommendations/receiving for a new installation: too little call history to advise.
 export function newReceivingAdvice() {
   const window = (start: string, end: string) => ({ start, end, days: 30 });
@@ -648,6 +659,25 @@ const consoleHandlers = [
   // Plans: no fax service with a monthly fee.
   http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
     empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
+  // The advice from history (fax marker, billing steps, partner candidates, toll-free numbers): nothing yet.
+  http.get('/routing/recommendations/fax-marker', () => json(newFaxMarkerAdvice())),
+  http.get('/routing/recommendations/billing-steps', () => json({ days: 30, estimate: true, carrier: null,
+    state: 'no_trunk', sentence: 'Faxbot has no carrier line set up, so there are no calls to measure.', min_calls: 3,
+    step: null, numbers: [], numbers_total: 0, calls_near: 0, saving: null })),
+  http.get('/routing/recommendations/partners', () => json({ days: 30, min_faxes: 3, estimate: true, state: 'none',
+    sentence: 'Nothing to suggest: in the last 30 days no fax went by a route that charges per call, or every number '
+      + 'you fax is already a partner.', items: [], items_total: 0, link: 'recipients/partners' })),
+  http.get('/routing/recommendations/toll-free', () => json({ state: 'none', days: 30, items: [],
+    sentence: 'No recipient has a toll-free fax number on file. If one publishes a toll-free number for the same '
+      + 'intake, add it under Recipients → Details; Faxbot uses it only once you record their approval, because the '
+      + 'recipient pays for those calls.' })),
+  // A recipient's toll-free number: none on file.
+  http.get('/routing/destinations/:number/toll-free', ({ params }) => json({ number: String(params.number), current: null,
+    history: [], approved_alternate: null, sentence: null })),
+  // Caller-name lookup at Telnyx: nothing to show until a test says otherwise.
+  http.get('/admin/sip/telnyx/names', () => json({ applies: false, numbers: [], text: null,
+    price: { text: '$0.40 a month for each number', monthly: { currency: 'USD', amount: '0.40' },
+      source_url: 'https://support.telnyx.com/en/articles/4366901-your-number-lookup-guide', read_on: '2026-10-07' } })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.

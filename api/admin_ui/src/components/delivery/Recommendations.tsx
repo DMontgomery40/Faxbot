@@ -4,21 +4,30 @@
 import { useCallback, useState } from 'react';
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
+import type { AdminDestination } from '../../navigation';
 import { ScreenHeader } from '../access/AccessViews';
+import { BillingStepsSection, FaxMarkerSection, PartnersSection, TollFreeSection } from './AdviceSections';
 import PlanRecommendations from './PlanRecommendations';
 import ReceivingRecommendations from './ReceivingRecommendations';
 import SendingRecommendations from './SendingRecommendations';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
-type Section = 'sending' | 'receiving' | 'plans';
+type Section = 'sending' | 'receiving' | 'plans' | 'marker' | 'steps' | 'partners' | 'tollFree';
+const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'marker', 'steps', 'partners', 'tollFree'];
 
-export default function Recommendations({ client, canWrite = false }: { client: AdminAPIClient; canWrite?: boolean }) {
+export default function Recommendations({ client, canWrite = false, onNavigate }: {
+  client: AdminAPIClient;
+  canWrite?: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
+}) {
   // null until a section has loaded (or when it could not load).
-  const [counts, setCounts] = useState<Record<Section, number | null>>({ sending: null, receiving: null, plans: null });
-  const onSending = useCallback((count: number | null) => setCounts((known) => ({ ...known, sending: count })), []);
-  const onReceiving = useCallback((count: number | null) => setCounts((known) => ({ ...known, receiving: count })), []);
-  const onPlans = useCallback((count: number | null) => setCounts((known) => ({ ...known, plans: count })), []);
+  const [counts, setCounts] = useState<Record<Section, number | null>>(
+    Object.fromEntries(SECTIONS.map((section) => [section, null])) as Record<Section, number | null>);
+  const report = useCallback((section: Section) => (count: number | null) => setCounts((known) => (
+    known[section] === count ? known : { ...known, [section]: count })), []);
+  const [callbacks] = useState(() => Object.fromEntries(SECTIONS.map((section) => [section, report(section)])) as
+    Record<Section, (count: number | null) => void>);
   const empty = Object.values(counts).every((count) => count === 0);
 
   return (
@@ -30,9 +39,13 @@ export default function Recommendations({ client, canWrite = false }: { client: 
             <Typography variant="body1" color="text.secondary" data-testid="recommendations-empty">{NO_RECOMMENDATIONS}</Typography>
           </Paper>
         )}
-        <SendingRecommendations client={client} canWrite={canWrite} onCount={onSending} />
-        <ReceivingRecommendations client={client} onCount={onReceiving} />
-        <PlanRecommendations client={client} onCount={onPlans} />
+        <SendingRecommendations client={client} canWrite={canWrite} onCount={callbacks.sending} />
+        <ReceivingRecommendations client={client} onCount={callbacks.receiving} />
+        <PlanRecommendations client={client} onCount={callbacks.plans} />
+        <BillingStepsSection client={client} onCount={callbacks.steps} />
+        <PartnersSection client={client} onCount={callbacks.partners} onNavigate={onNavigate} />
+        <TollFreeSection client={client} onCount={callbacks.tollFree} onNavigate={onNavigate} />
+        <FaxMarkerSection client={client} onCount={callbacks.marker} />
       </Stack>
     </Box>
   );

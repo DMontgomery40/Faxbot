@@ -1,7 +1,7 @@
 import type {
   CallNegotiation, NegotiationSummary, RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
 } from './sipTypes';
-import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
+import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
   HealthStatus,
@@ -60,6 +60,13 @@ import type {
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
+  FaxMarkerAdvice,
+  BillingSteps,
+  PartnerCandidates,
+  TollFreeRecommendations,
+  TollFreeState,
+  TollFreeChange,
+  TollFreeSuggestions,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -684,6 +691,15 @@ class AdminAPIClient {
     return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/t38`, { method: 'POST' });
   }
 
+  // Telnyx's caller-name lookup on each trunk number with its price, and turning it off for one number.
+  async getTelnyxNames(): Promise<TelnyxNamesReport> {
+    return this.json('/admin/sip/telnyx/names');
+  }
+
+  async turnOffTelnyxNameLookup(number: string): Promise<TelnyxNamesReport> {
+    return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/name-lookup-off`, { method: 'POST' });
+  }
+
   // Bring in faxes the SIP trunk received but could not hand to Faxbot.
   async recoverInbound(): Promise<{ found: number; imported: number; waiting: number; message: string }> {
     return this.json('/admin/inbound/recover', { method: 'POST', body: JSON.stringify({}) });
@@ -1188,6 +1204,41 @@ class AdminAPIClient {
   // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
   async getPlanRecommendations(): Promise<PlanRecommendations> {
     return this.json('/routing/recommendations/plans');
+  }
+
+  // Calls marked as fax against calls not marked, from history (Costs → Recommendations → Fax marker).
+  async getFaxMarkerAdvice(): Promise<FaxMarkerAdvice> {
+    return this.json('/routing/recommendations/fax-marker');
+  }
+
+  // Numbers whose calls end just past a billed minute (Costs → Recommendations → Billing steps).
+  async getBillingSteps(): Promise<BillingSteps> {
+    return this.json('/routing/recommendations/billing-steps');
+  }
+
+  // Numbers whose faxes cost the most again and again (Costs → Recommendations → Partner candidates).
+  async getPartnerCandidates(): Promise<PartnerCandidates> {
+    return this.json('/routing/recommendations/partners');
+  }
+
+  // Recipients with a toll-free fax number on file (Costs → Recommendations → Toll-free numbers).
+  async getTollFreeRecommendations(): Promise<TollFreeRecommendations> {
+    return this.json('/routing/recommendations/toll-free');
+  }
+
+  // A recipient's toll-free fax number and its approvals (Recipients → Details); each change is a new row.
+  async getTollFree(number: string): Promise<TollFreeState> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free`);
+  }
+
+  async recordTollFree(number: string, change: TollFreeChange): Promise<TollFreeState> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free`, { method: 'POST', body: JSON.stringify(change) });
+  }
+
+  // Toll-free fax numbers the NPI registry (NPPES) lists for a provider: suggestions, never approvals.
+  async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
+    : Promise<TollFreeSuggestions> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
   }
 
   // The newest cases this installation sent packets for, with recipient and counts.
