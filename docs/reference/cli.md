@@ -1098,6 +1098,8 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one number you fax: its settings, how...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
+* `fax-machine`: What a number&#x27;s fax machine said on recent...
+* `iaf`: Fast fax (Internet Aware Fax) to fax...
 * `together`: Send short faxes to the same number...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
@@ -1176,6 +1178,96 @@ $ faxbot recipients limits [OPTIONS] {number}
 
 * `--speed RATE`: Highest speed for this number: 14400, 9600, 7200, 4800, or default for the setting all faxes use.
 * `--error-correction ON|OFF`: Error correction for this number: on, off, or default.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients fax-machine`
+
+What a number&#x27;s fax machine said on recent calls, and what Faxbot learned from them.
+
+**Usage**:
+
+```console
+$ faxbot recipients fax-machine [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: A fax number you send to or receive from.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients iaf`
+
+Fast fax (Internet Aware Fax) to fax servers that receive over the internet, such as another Faxbot or a Brooktrout SR140.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the fax servers you approved for fast...
+* `add`: Send faxes to and from a fax server as...
+* `remove`: Stop fast fax for a fax server: its faxes...
+
+#### `faxbot recipients iaf list`
+
+List the fax servers you approved for fast fax, and partner offices marked for it.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients iaf add`
+
+Send faxes to and from a fax server as fast fax. Never for a fax machine on a phone line.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The fax server&#x27;s number.  [required]
+
+**Options**:
+
+* `--kind <str>`: faxbot (another Faxbot) or server (a fax server that takes fast fax, such as an SR140).  [required]
+* `--name <str>`: A name you will recognise, such as &quot;Head office SR140&quot;.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients iaf remove`
+
+Stop fast fax for a fax server: its faxes go at fax line speed again.
+
+**Usage**:
+
+```console
+$ faxbot recipients iaf remove [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The approved number (or its ID, from --json).  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients together`

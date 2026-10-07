@@ -304,3 +304,15 @@ def test_the_command_line_shows_sets_and_clears_the_reply_number(monkeypatch, tm
         assert 'Faxbot now chooses the number' in cli('numbers', 'reply', 'clear').stdout
         assert "show the organization's reply number again" in cli('numbers', 'reply', 'clear', '--mailbox',
                                                                     'Billing').stdout
+
+
+def test_caller_id_status_cites_each_carriers_published_rule_or_says_none_was_found():
+    telnyx = reply_number.caller_id(values(), HUMBLE)[0]
+    assert telnyx['shows'] is False and 'verified in the Telnyx portal' in telnyx['sentence']
+    assert telnyx['source_url'].startswith('https://support.telnyx.com/') and telnyx['read_on'] == '2026-10-07'
+    gamma = reply_number.caller_id(values(SIP_TRUNK_PRESET='gamma', SIP_TRUNK_HOST='sip.gamma.example',
+                                          SIP_TRUNK_AUTH='ip'), HUMBLE)[0]
+    assert gamma['sentence'] == ('Gamma calls keep showing +13035550101 as caller ID: Gamma has not published which '
+                                 "other numbers it lets you show, so Faxbot can't confirm it allows this one.")
+    cloud = reply_number.caller_id(values(FAX_OUTBOUND_BACKEND='humblefax'), DID_A)
+    assert cloud[-1]['sentence'].startswith('Faxes sent through HumbleFax show the number set in your HumbleFax account')

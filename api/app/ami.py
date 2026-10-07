@@ -77,6 +77,8 @@ def prepare_originate_fields(
     fax_preference: bool = False,
     max_rate: Optional[int] = None,
     ecm: Optional[bool] = None,
+    t38_now: bool = False,
+    iaf: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -130,6 +132,14 @@ def prepare_originate_fields(
         variables["FAXBOT_MAXRATE"] = str(max_rate)
     if ecm is not None:
         variables["FAXBOT_ECM"] = "yes" if ecm else "no"
+    # Patch 0004: ask for T.38 at once (a number that never asks itself), and Internet Aware Fax (an approved
+    # fax server or enrolled partner only). Both are learned or approved per number (engine_frames.py).
+    if t38_now:
+        variables["FAXBOT_T38_NOW"] = "yes"
+    if iaf is not None:
+        if iaf not in ("peer", "endpoint"):
+            raise ValueError("Unsupported AMI fax mode")
+        variables["FAXBOT_IAF"] = iaf
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -179,6 +189,28 @@ def reply_choice(values, *, mailbox_id=None):
         return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
 
 
+def frame_options(values, dest, max_rate=None):
+    """What Faxbot learned or was told about ``dest`` (engine_frames.py), as Originate keyword arguments.
+
+    T.38 at once and a learned starting speed come from Faxbot's own calls to the number; a learned speed
+    only ever lowers this call's speed. Internet Aware Fax only for a number you approved or an enrolled
+    partner marked IAF capable. Never raises: nothing known changes nothing.
+    """
+    from . import engine_frames
+    try:
+        options = engine_frames.call_options(values, dest, engine=_database())
+    except Exception:
+        return {}
+    found = {}
+    if options.t38_now:
+        found["t38_now"] = True
+    if options.iaf:
+        found["iaf"] = options.iaf
+    if options.max_rate and (max_rate is None or options.max_rate < max_rate):
+        found["max_rate"] = options.max_rate
+    return found
+
+
 def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
                          choice=None):
     """The exact Originate fields for these settings; preflight and submission share it.
@@ -199,6 +231,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     from .routing.reply_number import caller_id_for
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
+    limits.update(frame_options(values, dest, limits.get("max_rate")))
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=values.fax_header, attempt_id=attempt_id, **limits)
@@ -422,6 +455,8 @@ class AMIClient:
             self._emit("FaxEngineMissed", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxscreened":
             self._emit("FaxScreened", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxframes":
+            self._emit("FaxFrames", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -599,6 +634,10 @@ class AMIClient:
     def on_engine_missed(self, cb: Callable[[Dict[str, str]], None]):
         """A received call none of the SSL Fax engine's free lines answered (the built-in engine took it)."""
         self._listen("FaxEngineMissed", cb)
+
+    def on_frames(self, cb: Callable[[Dict[str, str]], None]):
+        """What the far end's fax machine said on a built-in engine call (patch 0004's FaxFrames event)."""
+        self._listen("FaxFrames", cb)
 
     def on_screened(self, cb: Callable[[Dict[str, str]], None]):
         """A call from a blocked sender, turned away before it was answered (the dialplan's FaxScreened event)."""

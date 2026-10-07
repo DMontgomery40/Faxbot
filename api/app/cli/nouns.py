@@ -6,7 +6,8 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, blocked, delivery, fax, operations, reply, settings, setup, sslfax, trunk, work
+from .commands import (access, admin, blocked, delivery, fax, fax_machines, operations, reply, settings, setup, sslfax,
+                       trunk, work)
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -87,6 +88,8 @@ recipients.command('list')(delivery.routing_destinations)
 recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
 recipients.command('limits')(sslfax.recipient_limits)
+recipients.command('fax-machine')(fax_machines.fax_machine)
+recipients.add_typer(fax_machines.iaf, name='iaf')
 recipients.add_typer(delivery.batching, name='together')
 partners = _group('Partners: other offices running Faxbot, which get your faxes over the internet instead of a phone '
                   'call.')

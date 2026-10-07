@@ -399,9 +399,29 @@ def caller_id_for(values, number) -> str | None:
     return number if number in trunk else None
 
 
-# Each carrier's published rule for showing a number as caller ID. Filled from the providers' own pages
-# (source and the date read); 'same_account' means a number that carrier gives you on that account.
-CALLER_ID_RULES = {}
+# Each carrier's published rule for showing a number other than the line's as caller ID, with its source and the
+# date it was read. Faxbot confirms only the first kind itself (a number on the same trunk); for any other number it
+# keeps the line's caller ID and says why. A carrier with no rule here has not published one Faxbot could find.
+CALLER_ID_RULES = {
+    'telnyx': {
+        'other': ('Telnyx shows another number only when it was bought on your Telnyx account, ported to Telnyx or '
+                  'verified in the Telnyx portal (Numbers, Verified Numbers), and rejects calls that show any other '
+                  "number; Faxbot can't confirm that for this number"),
+        'source_url': 'https://support.telnyx.com/en/articles/6790265-verified-numbers-faq', 'read_on': '2026-10-07'},
+    'signalwire': {
+        'other': ('SignalWire shows another number only when it was bought on your SignalWire space or verified there '
+                  "(set it as Send As on the SIP credential); Faxbot can't confirm that for this number"),
+        'source_url': 'https://signalwire.com/docs/platform/voice/how-to-set-caller-id-or-cnam',
+        'read_on': '2026-10-07'},
+    'flowroute': {
+        'other': ('Flowroute accepts only a valid local North American number assigned to you, never a toll-free one, '
+                  "and Faxbot can't confirm that this number is one of them"),
+        'source_url': 'https://support.bcmone.com/flowroute-support/docs/outbound-ani-requirements',
+        'read_on': '2026-10-07'},
+}
+# Fax services set the sending number themselves: Faxbot's header line and station ID apply to faxes sent over the
+# SIP trunk (both engines), never to these.
+CLOUD_PROVIDERS = ('humblefax', 'efax', 'signalwire', 'sinch', 'phaxio', 'documo')
 
 
 def caller_id(values, number) -> list:
@@ -422,17 +442,19 @@ def caller_id(values, number) -> list:
                            'sentence': f'{name} calls show {number} as caller ID: {name} gives you that number on '
                                        'this trunk.'})
         else:
-            why = rule.get('other') or (f'{name} shows another number only when it is on your {name} account, and '
-                                        "Faxbot can't confirm that for this number")
+            why = rule.get('other') or (f"{name} has not published which other numbers it lets you show, so Faxbot "
+                                        "can't confirm it allows this one")
             result.append({'provider': name, 'shows': False, 'source_url': rule.get('source_url'),
                            'read_on': rule.get('read_on'),
                            'sentence': f'{name} calls keep showing {line} as caller ID: {why}.'})
-    for provider in ('humblefax', 'efax', 'signalwire', 'sinch', 'phaxio', 'documo'):
-        rule = CALLER_ID_RULES.get(provider)
-        if rule is None or provider not in {getattr(values, 'effective_outbound', ''), *_outbound_routes(values)}:
+    in_use = {getattr(values, 'effective_outbound', ''), *_outbound_routes(values)}
+    for provider in CLOUD_PROVIDERS:
+        if provider not in in_use:
             continue
-        result.append({'provider': provider_label(provider), 'shows': False, 'source_url': rule.get('source_url'),
-                       'read_on': rule.get('read_on'), 'sentence': rule['sentence']})
+        label = provider_label(provider)
+        result.append({'provider': label, 'shows': False, 'source_url': None, 'read_on': None,
+                       'sentence': (f'Faxes sent through {label} show the number set in your {label} account; the '
+                                    'reply number is printed on faxes sent over your SIP trunk.')})
     return result
 
 

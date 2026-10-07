@@ -65,7 +65,7 @@ import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
 import type { EfaxStatus } from './types';
-import type { BlockedSender, BlockedSendersView, ReplyNumberView } from './numbersTypes';
+import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1240,6 +1240,23 @@ class AdminAPIClient {
 
   async unblockSender(entryId: string): Promise<{ ok: true; entry: BlockedSender }> {
     return this.json(`/screening/senders/${id(entryId)}`, { method: 'DELETE' });
+  }
+
+  // Recipients → Details, "Their fax machine": what it said on recent calls, what Faxbot learned, and IAF.
+  async getFaxMachine(number: string): Promise<FaxMachineView> {
+    return this.json(`/fax-machines/numbers/${id(number)}`);
+  }
+
+  async listIafServers(): Promise<{ servers: IafServer[]; partners: string[] }> {
+    return this.json('/fax-machines/iaf');
+  }
+
+  async approveIaf(body: { number: string; kind: 'peer' | 'endpoint'; label: string }): Promise<{ ok: true; server: IafServer }> {
+    return this.json('/fax-machines/iaf', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async removeIaf(serverId: string): Promise<{ ok: true; server: IafServer }> {
+    return this.json(`/fax-machines/iaf/${id(serverId)}`, { method: 'DELETE' });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

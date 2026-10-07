@@ -167,10 +167,16 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
         "Return",
         "Gosub",
     }
-    # The only subroutine is the base64 helper, which itself only sets variables.
-    assert all("Gosub(faxbot-b64,s,1(" in line for line in send + terminal if ",Gosub(" in line)
+    # The subroutines are the base64 helper, which only sets variables, and patch 0004's far-end frames,
+    # which only reports them (one FaxFrames event, never a second result, a call or an answer).
+    assert all("Gosub(faxbot-b64,s,1(" in line or "Gosub(faxbot-frames,s,1(" in line
+               for line in send + terminal if ",Gosub(" in line)
     helper = contexts["faxbot-b64"]
     assert all(re.search(r",(Set|GotoIf|Return)\(", line) for line in helper if not line.startswith("#"))
+    frames = contexts["faxbot-frames"]
+    assert all(re.search(r",(GotoIf|UserEvent|Return)\(", line) for line in frames)
+    assert sum("UserEvent(FaxFrames," in line for line in frames) == 1
+    assert not any("FaxResult" in line for line in frames)
     assert applications.count("SendFAX") == 1
     assert sum("UserEvent(FaxResult," in line for line in send) == 0
     assert sum("UserEvent(FaxResult," in line for line in terminal) == 1

@@ -65,3 +65,38 @@ export interface BlockedSendersView {
   entries: BlockedSender[];
   rejections: RejectedCall[];
 }
+
+// Recipients → Details, "Their fax machine" (patch 0004's frames and what Faxbot learned).
+export interface FaxMachineCall {
+  when: string;
+  direction: 'in' | 'out';
+  mode: string | null;
+  status: string | null;
+  rate_first: number | null;
+  rate_lowest: number | null;
+  trainings: number | null;
+  failures_to_train: number | null;
+  t38_after_ms: number | null;
+  t38_by: string | null;
+  iaf: string | null;
+  sentences: string[];
+  subaddress: string | null;
+}
+
+export interface FaxMachineView {
+  number: string;
+  sentence: string;
+  calls: FaxMachineCall[];
+  learned: { t38_now: boolean; max_rate: number | null; inbound_rate: number | null; sentences: string[] };
+  iaf: 'peer' | 'endpoint' | null;
+}
+
+export interface IafServer {
+  id: string;
+  number: string;
+  kind: 'peer' | 'endpoint';
+  label: string;
+  added_by: string | null;
+  added_at: string;
+  removed_at: string | null;
+}

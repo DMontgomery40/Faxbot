@@ -1,0 +1,266 @@
+Faxbot: what the far end's fax machine said, Internet Aware Fax, and T.38 at once (spandsp 0.0.6).
+
+The built-in engine (res_fax_spandsp) carries most of Faxbot's faxes but told
+Faxbot nothing about the far end: not its capabilities (DIS), not the speeds
+it trained at, not its internet address (CSA) or the subaddress it was given
+(SUB). Three changes, the spandsp steps of each in faxbot_t38_gateway.h, which
+the replay proof in asterisk/tests compiles as well:
+
+1. Far-end frames. spandsp's real-time frame handler keeps, bounded to 32
+   octets each, the far end's DIS (or DTC), the session's first and last DCS
+   and which side sent it, each DCS's speed code, the CSA, TSA, SUB and NSF
+   it received, and how many trainings and failures to train there were.
+   When the session ends (phase E), they go on the channel as FAXBOT_FAR_DIS,
+   FAXBOT_DCS_FIRST, FAXBOT_DCS_LAST, FAXBOT_DCS_SENT, FAXBOT_DCS_RATES,
+   FAXBOT_FAR_CSA, FAXBOT_FAR_TSA, FAXBOT_FAR_SUB, FAXBOT_FAR_NSF,
+   FAXBOT_TRAININGS, FAXBOT_FTT and FAXBOT_IAF_USED, for the dialplan's
+   FaxFrames event, with one NOTICE line per session. res_pjsip_t38 adds when
+   T.38 started and who asked for it (FAXBOT_T38_AT in epoch milliseconds,
+   FAXBOT_T38_BY "far" or "faxbot"), once per channel.
+
+2. Internet Aware Fax (IAF). On a call the dialplan marks FAXBOT_IAF ("peer":
+   another Faxbot, both ends skip the training check; "endpoint": an IAF fax
+   server an administrator approved), the T.38 terminal gets spandsp's IAF
+   mode and sends faster than real time. spandsp's own unpaced mode is not
+   used: in 0.0.6 it puts up to 300 octets in a T.38 packet and ignores the
+   far end's datagram size, and Asterisk cuts any packet larger than the far
+   end accepts (98 octets on Faxbot's trunks). Instead the T.38 front end's
+   clock jumps to each next paced chunk, up to nine more per 20 ms tick, while
+   the T.30 timers keep real time, and every queued packet goes out in that
+   tick. Never set for a carrier call by guesswork.
+
+3. T.38 at once. With FAXBOT_T38_NOW=yes, SendFAX asks for T.38 as soon as the
+   call is answered instead of after three CNG tones (about ten seconds), for
+   numbers whose calls never switched by themselves. A refusal goes on as
+   audio on the same call, as before (SendFAX option f).
+
+Nothing here changes a call Faxbot did not mark, beyond keeping the frames.
+
+--- a/res/res_pjsip_t38.c
++++ b/res/res_pjsip_t38.c
+@@ -143,6 +143,28 @@
+ }
+ 
+ /*! \brief Helper function for changing the T.38 state */
++/*!
++ * \brief Faxbot (0004): when T.38 started on this call and who asked for it, once per channel.
++ *
++ * FAXBOT_T38_AT is the moment in epoch milliseconds; FAXBOT_T38_BY is "far" (the far end re-invited) or
++ * "faxbot" (this side did, as SendFAX does after three CNG tones). With the answer time, Faxbot learns which
++ * numbers never ask for T.38 themselves (engine_frames.py, early T.38).
++ */
++static void faxbot_t38_started(struct ast_channel *chan, enum ast_sip_session_t38state old_state)
++{
++	struct timeval now = ast_tvnow();
++	char at[24];
++
++	ast_channel_lock(chan);
++	if (!pbx_builtin_getvar_helper(chan, "FAXBOT_T38_AT")) {
++		snprintf(at, sizeof(at), "%lld", (long long) now.tv_sec * 1000 + now.tv_usec / 1000);
++		pbx_builtin_setvar_helper(chan, "FAXBOT_T38_AT", at);
++		pbx_builtin_setvar_helper(chan, "FAXBOT_T38_BY", old_state == T38_PEER_REINVITE ? "far"
++			: old_state == T38_LOCAL_REINVITE ? "faxbot" : "");
++	}
++	ast_channel_unlock(chan);
++}
++
+ static void t38_change_state(struct ast_sip_session *session, struct ast_sip_session_media *session_media,
+ 	struct t38_state *state, enum ast_sip_session_t38state new_state)
+ {
+@@ -196,6 +218,7 @@
+ 		parameters.max_ifp = ast_udptl_get_far_max_ifp(session_media->udptl);
+ 		parameters.request_response = AST_T38_NEGOTIATED;
+ 		ast_udptl_set_tag(session_media->udptl, "%s", ast_channel_name(session->channel));
++		faxbot_t38_started(session->channel, old_state);
+ 		break;
+ 	case T38_REJECTED:
+ 	case T38_DISABLED:
+--- a/res/res_fax.c
++++ b/res/res_fax.c
+@@ -2379,6 +2379,24 @@
+ 
+ 	/* If the channel hungup return -1; otherwise, return 0 to continue in the dialplan */
+ 	return (!channel_alive) ? -1 : 0;
++}
++
++/*!
++ * \brief Faxbot (0004): FAXBOT_T38_NOW=yes asks for T.38 at once instead of after three CNG tones.
++ *
++ * Faxbot sets it for a number whose calls never switched to T.38 by themselves (engine_frames.py learns
++ * that from its own calls); a far end that refuses goes on as audio on the same call (SendFAX option f).
++ */
++static int faxbot_t38_now(struct ast_channel *chan)
++{
++	const char *value;
++	int now;
++
++	ast_channel_lock(chan);
++	value = pbx_builtin_getvar_helper(chan, "FAXBOT_T38_NOW");
++	now = value && !strcmp(value, "yes");
++	ast_channel_unlock(chan);
++	return now;
+ }
+ 
+ static int sendfax_t38_init(struct ast_channel *chan, struct ast_fax_session_details *details)
+@@ -2395,7 +2413,7 @@
+ 	 *
+ 	 * 10500 is enough time for 3 CNG tones
+ 	 */
+-	timeout_ms = 10500;
++	timeout_ms = faxbot_t38_now(chan) ? 0 : 10500;
+ 
+ 	/* don't send any audio if we've already received a T.38 reinvite */
+ 	if (ast_channel_get_t38_state(chan) != T38_STATE_NEGOTIATING) {
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -169,6 +169,10 @@
+ 	unsigned int faxbot_empty_preambles;
+ 	/*! Faxbot: fast modem signals left open that the gateway ended (see faxbot_end_empty_training) */
+ 	unsigned int faxbot_empty_trainings;
++	/*! Faxbot (0004): the T.30 frames this session exchanged, for the channel variables at its end */
++	faxbot_frames_t faxbot_frames;
++	/*! Faxbot (0004): Internet Aware Fax on this call (FAXBOT_IAF_PEER or FAXBOT_IAF_ENDPOINT), or 0 */
++	int faxbot_iaf;
+ };
+ 
+ static int spandsp_v21_new(struct spandsp_pvt *p);
+@@ -381,6 +385,92 @@
+ 	return 0;
+ }
+ 
++/*! \brief Faxbot (0004): spandsp's real-time frame handler; keeps what each side said (faxbot_frames_record). */
++static void faxbot_frame_handler(t30_state_t *t30, void *user_data, int direction, const uint8_t msg[], int len)
++{
++	struct spandsp_pvt *p = user_data;
++
++	faxbot_frames_record(&p->faxbot_frames, direction, msg, len);
++}
++
++/*!
++ * \brief Faxbot (0004): what the far end's fax machine said, on the channel when the session ends, logged once.
++ *
++ * The dialplan's FaxFrames event carries these to Faxbot (engine_frames.py), for sent and received faxes alike.
++ * Hex T.30 frames, at most FAXBOT_FRAME_MAX octets each, empty when not seen: FAXBOT_FAR_DIS (its DIS or DTC),
++ * FAXBOT_DCS_FIRST and FAXBOT_DCS_LAST, FAXBOT_FAR_CSA, FAXBOT_FAR_TSA, FAXBOT_FAR_SUB and FAXBOT_FAR_NSF. Then
++ * FAXBOT_DCS_SENT (1 when this side sent the DCS), FAXBOT_DCS_RATES (each DCS's speed code, dot separated),
++ * FAXBOT_TRAININGS, FAXBOT_FTT (failures to train) and FAXBOT_IAF_USED (peer, endpoint or empty).
++ */
++static void faxbot_frames_export(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	const faxbot_frames_t *f = &p->faxbot_frames;
++	struct {
++		const char *name;
++		const faxbot_frame_t *frame;
++	} kept[] = {
++		{ "FAXBOT_FAR_DIS", &f->dis }, { "FAXBOT_DCS_FIRST", &f->dcs_first }, { "FAXBOT_DCS_LAST", &f->dcs_last },
++		{ "FAXBOT_FAR_CSA", &f->csa }, { "FAXBOT_FAR_TSA", &f->tsa }, { "FAXBOT_FAR_SUB", &f->sub },
++		{ "FAXBOT_FAR_NSF", &f->nsf },
++	};
++	char hex[2 * FAXBOT_FRAME_MAX + 1];
++	char rates[3 * FAXBOT_RATES_MAX + 1];
++	char count[12];
++	int i, first = 0, lowest = 0, rate;
++
++	if (!s->chan) {
++		return;
++	}
++	for (i = 0; i < ARRAY_LEN(kept); i++) {
++		faxbot_hex(kept[i].frame->frame, kept[i].frame->len, hex);
++		pbx_builtin_setvar_helper(s->chan, kept[i].name, hex);
++	}
++	faxbot_rates_text(f, rates, sizeof(rates));
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_DCS_RATES", rates);
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_DCS_SENT", f->dcs ? (f->dcs_sent ? "1" : "0") : "");
++	snprintf(count, sizeof(count), "%u", f->dcs);
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_TRAININGS", count);
++	snprintf(count, sizeof(count), "%u", f->ftt);
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_FTT", count);
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_IAF_USED",
++		p->faxbot_iaf == FAXBOT_IAF_PEER ? "peer" : p->faxbot_iaf == FAXBOT_IAF_ENDPOINT ? "endpoint" : "");
++	for (i = 0; i < f->rates_len; i++) {
++		rate = faxbot_dcs_rate(f->rates[i]);
++		if (!i) {
++			first = rate;
++		}
++		if (rate && (!lowest || rate < lowest)) {
++			lowest = rate;
++		}
++	}
++	faxbot_hex(f->dis.frame, f->dis.len, hex);
++	ast_log(LOG_NOTICE, "Faxbot fax frames on %s: the far end's DIS %s; %u trainings, first at %d bit/s, lowest %d "
++		"bit/s; %u failures to train%s\n", ast_channel_name(s->chan), hex[0] ? hex : "not seen", f->dcs, first,
++		lowest, f->ftt, p->faxbot_iaf ? "; Internet Aware Fax" : "");
++}
++
++/*!
++ * \brief Faxbot (0004): Internet Aware Fax sends its next chunks now, and everything queued goes out this tick.
++ *
++ * spandsp_fax_read returns one frame per 20 ms timer tick; the chunks faxbot_iaf_send_ahead adds go out here,
++ * all but the last, which spandsp_fax_read returns as usual.
++ */
++static void faxbot_iaf_send_queued(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	struct ast_frame *f;
++	int i;
++
++	for (i = 0; i < FAXBOT_IAF_AHEAD && faxbot_iaf_send_ahead(&p->t38_state); i++) {
++	}
++	while (AST_LIST_FIRST(&p->read_frames) && AST_LIST_NEXT(AST_LIST_FIRST(&p->read_frames), frame_list)) {
++		f = AST_LIST_REMOVE_HEAD(&p->read_frames, frame_list);
++		if (s->chan) {
++			ast_write(s->chan, f);
++		}
++		ast_frfree(f);
++	}
++}
++
+ /*! \brief Phase E handler callback.
+  * \param t30_state the span t30 state
+  * \param data this will be the ast_fax_session
+@@ -446,6 +536,9 @@
+ 
+ 	t30_get_tx_page_header_info(t30_state, headerinfo);
+ 	ast_string_field_set(s->details, headerinfo, headerinfo);
++
++	/* Faxbot (0004): what the far end said, for the dialplan's FaxFrames event. */
++	faxbot_frames_export(s, p);
+ }
+ 
+ /*! \brief Send spandsp log messages to asterisk.
+@@ -689,6 +782,9 @@
+ 
+ 	if (p->ist38) {
+ 		t38_terminal_send_timeout(&p->t38_state, SPANDSP_FAX_SAMPLES);
++		if (p->faxbot_iaf) {
++			faxbot_iaf_send_queued(s, p);
++		}
+ 		if ((f = AST_LIST_REMOVE_HEAD(&p->read_frames, frame_list))) {
+ 			return f;
+ 		}
+@@ -1105,11 +1201,26 @@
+ 	/* perhaps set_transmit_on_idle() should be called */
+ 
+ 	t30_set_phase_e_handler(p->t30_state, t30_phase_e_handler, s);
++	/* Faxbot (0004): keep the frames both sides send, for the channel variables at the end of the session. */
++	t30_set_real_time_frame_handler(p->t30_state, faxbot_frame_handler, p);
+ 
+ 	/* set T.38 parameters */
+ 	if (p->ist38) {
+ 		set_logging(&p->t38_core_state->logging, s->details);
+ 
++		/* Faxbot (0004): Internet Aware Fax, only on a call Faxbot marked FAXBOT_IAF (an enrolled partner or an
++		 * approved fax server), never a carrier call by guesswork. */
++		if (s->chan) {
++			ast_channel_lock(s->chan);
++			p->faxbot_iaf = faxbot_iaf_kind(pbx_builtin_getvar_helper(s->chan, "FAXBOT_IAF"));
++			ast_channel_unlock(s->chan);
++		}
++		if (p->faxbot_iaf) {
++			t30_set_iaf_mode(p->t30_state, faxbot_iaf_t30_mode(p->faxbot_iaf));
++			ast_log(LOG_NOTICE, "Faxbot: Internet Aware Fax (%s) on %s\n",
++				p->faxbot_iaf == FAXBOT_IAF_PEER ? "peer" : "endpoint", s->chan ? ast_channel_name(s->chan) : "<gone>");
++		}
++
+ 		t38_set_max_datagram_size(p->t38_core_state, s->details->their_t38_parameters.max_ifp);
+ 
+ 		if (s->details->their_t38_parameters.fill_bit_removal) {
