@@ -114,7 +114,7 @@ def _write_rules_records(engine):
 def test_rules_follow_negotiation():
     assert schema.NEGOTIATION == '0023_negotiation'
     assert schema.ROUTING_RULES == schema_routing_rules.REVISION == '0029_routing_rules'
-    assert schema.HEAD == schema_receiving_rules.REVISION == '0030_receiving_accounts'
+    assert schema.RECEIVING_RULES == schema_receiving_rules.REVISION == '0030_receiving_accounts'
     assert schema_routing_rules.TABLES == frozenset({
         'routing_rule_revisions', 'routing_rule_state', 'routing_rule_drafts', 'fax_job_rule_decisions',
         'delivery_rule_choices', 'outbound_holds'})
