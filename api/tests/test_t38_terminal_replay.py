@@ -5,8 +5,9 @@ with the steps 0004 adds from asterisk/patches/faxbot_t38_gateway.h, the file th
 
 - Far-end frames: synthetic T.38 from a far end (a DIS, or a sender's TSI, SUB and DCS) replayed into a terminal
   that sends or receives; the frames 0004 keeps must be the octets the far end sent. With FAXBOT_T38_PCAPS set to
-  a folder of real captures (kept outside the repository: they hold real numbers), every capture is replayed too,
-  and the far end's DIS that 0004 keeps must equal the DIS decoded from the capture's own T.38 packets.
+  a folder of real captures (kept outside the repository: they hold real numbers), every capture is replayed too:
+  for a send capture the far end's DIS that 0004 keeps must equal the DIS decoded from the capture's own T.38
+  packets, and for a receive capture (whose far end sends no DIS) its first DCS.
 - Internet Aware Fax: two terminals back to back send the same three pages paced (as Asterisk runs spandsp) and
   as two Faxbots with 0004's IAF ("peer"). IAF must finish sooner, with the same pages, pixel for pixel.
 

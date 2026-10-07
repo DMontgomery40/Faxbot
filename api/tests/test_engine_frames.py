@@ -229,6 +229,9 @@ def test_their_fax_machine_and_iaf_approval_over_http_with_audit_rows(client):
     added = client.post('/fax-machines/iaf', headers=B, json={'number': NUMBER, 'kind': 'peer', 'label': 'Partner'})
     assert added.status_code == 200, added.text
     server = added.json()['server']
+    # What a send to this number uses, through the database Faxbot itself opens (no test double).
+    running = app.state.configuration_runtime.manager.store.read().active.values
+    assert ami.frame_options(running, NUMBER).get('iaf') == 'peer'
     assert client.get('/fax-machines/numbers/' + NUMBER, headers=B).json()['iaf'] == 'peer'
     assert [item['id'] for item in client.get('/fax-machines/iaf', headers=B).json()['servers']] == [server['id']]
     assert client.delete('/fax-machines/iaf/' + server['id'], headers=B).status_code == 200

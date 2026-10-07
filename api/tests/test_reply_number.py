@@ -243,6 +243,10 @@ def test_the_numbers_screen_saves_only_a_number_that_reaches_the_same_mailbox(cl
     from api.tests.test_work_http import mailbox
     front = mailbox(client, 'Front desk', DID_A)
     billing = mailbox(client, 'Billing', DID_B)
+    # What a send uses, through the database Faxbot itself opens (no test double): the cheapest routed number.
+    from app.main import app
+    running = app.state.configuration_runtime.manager.store.read().active.values
+    assert ami.reply_choice(running).source == 'automatic'
     view = client.get('/numbers/reply', headers=B)
     assert view.status_code == 200, view.text
     body = view.json()
