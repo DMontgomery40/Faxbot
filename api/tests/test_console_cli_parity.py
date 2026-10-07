@@ -95,10 +95,34 @@ CLI_ONLY = {
 }
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
-AWAITING_CONSOLE: dict = {}
+AWAITING_CONSOLE: dict = {
+    # The sending-rules engine's routes (WP-A); their screens come from WP-D.
+    ('GET', '/routing/rules'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('PUT', '/routing/rules/draft'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('DELETE', '/routing/rules/draft'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/draft/check'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/publish'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions/{number}'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions/{first}/diff/{second}'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/revisions/{number}/restore'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/explain'): 'Providers → Rules (WP-D, Builder RD, ent/rules-console)',
+}
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
-AWAITING_CLI: dict = {}
+AWAITING_CLI: dict = {
+    # The sending-rules engine's routes (WP-A); their commands come from WP-D.
+    ('GET', '/routing/rules'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('PUT', '/routing/rules/draft'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('DELETE', '/routing/rules/draft'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/draft/check'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/publish'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions/{number}'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('GET', '/routing/rules/revisions/{first}/diff/{second}'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/rules/revisions/{number}/restore'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+    ('POST', '/routing/explain'): 'faxbot providers rules (WP-D, Builder RD, ent/rules-console)',
+}
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,
          'AWAITING_CONSOLE': AWAITING_CONSOLE, 'AWAITING_CLI': AWAITING_CLI}

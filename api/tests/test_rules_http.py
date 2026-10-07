@@ -221,3 +221,54 @@ def test_rules_need_identity_and_the_scopes_permission(client):
                                ('POST', '/routing/explain', {'to': UK})]:
         assert client.request(method, path, json=body, headers=sender).status_code == 403, (method, path)
         assert client.request(method, path, json=body).status_code == 401, (method, path)
+
+
+def _mailbox(client, label):
+    version = client.get('/auth/me', headers=ADMIN).json()['policy_version']
+    created = client.post('/access/mailboxes', headers=ADMIN,
+                          json={'label': label, 'enabled': True, 'expected_policy_version': version})
+    assert created.status_code == 200, created.text
+    return created.json()['mailbox']['id']
+
+
+def test_a_mailboxs_rules_follow_mailbox_management_and_narrow_its_faxes(client):
+    mailbox = _mailbox(client, 'Front desk')
+    scope = {'scope': f'mailbox:{mailbox}'}
+    state = client.get('/routing/rules', params=scope, headers=ADMIN)
+    assert state.status_code == 200, state.text
+    assert state.json()['scope'] == {'kind': 'mailbox', 'id': mailbox, 'name': 'Front desk'}
+    assert state.json()['can_write'] is True
+    published = _publish(client, {'format': 1, 'limits': [rule('m-no-sip', {'never': ['sip']})], 'routes': []},
+                         scope=f'mailbox:{mailbox}', note='No trunk from the front desk')
+    assert published['number'] == 1
+    body = client.post('/routing/explain', headers=ADMIN, json={'to': US, 'mailbox': mailbox}).json()
+    assert [route['account'] for route in body['routes'] if route['usable']] == ['phaxio', 'signalwire']
+    assert ('m-no-sip', True) in [(step['rule_id'], step['matched']) for step in body['trace']]
+    other = client.post('/routing/explain', headers=ADMIN, json={'to': US}).json()
+    assert [route['account'] for route in other['routes'] if route['usable']] == ['phaxio', 'sip', 'signalwire']
+    response = client.post('/admin/api-keys', headers=ADMIN, json={'name': 'sender', 'scopes': ['fax:send']})
+    sender = {'X-API-Key': response.json()['token']}
+    assert client.get('/routing/rules', params=scope, headers=sender).status_code == 403
+    assert client.put('/routing/rules/draft', params=scope, headers=sender,
+                      json={'document': {'format': 1}, 'expected_version': 0}).status_code == 403
+
+
+def test_a_rule_that_matched_nothing_counts_zero_and_the_check_says_so(client):
+    document = {**DOCUMENT, 'routes': [UK_RULE, rule('r-idle', {'use': 'sip'}, {'destination': {'countries': ['FR']}})]}
+    _publish(client, document)
+    engine = _engine()
+    store = RuleStore(engine)
+    accounts = (model.Account('phaxio', 'phaxio', default=True, automatic=True),
+                model.Account('sip', 'sip', automatic=True), model.Account('signalwire', 'signalwire', automatic=True))
+    now = datetime.utcnow().replace(microsecond=0)
+    facts = model.Facts(UK, now.isoformat(), country='GB')
+    with engine.begin() as connection:
+        _fax(connection, 'job-1', UK, now)
+        store.record_decision_on(connection, job_id='job-1', facts=facts,
+                                 decision=decide(store.compiled_active(), facts, accounts), now=now)
+    matches = client.get('/routing/rules', headers=ADMIN).json()['matches_30_days']
+    assert matches == {'l-no-phaxio-uk': 1, 'r-uk': 1, 'r-idle': 0}
+    client.put('/routing/rules/draft', headers=ADMIN, json={'document': document, 'expected_version': 0})
+    checked = client.post('/routing/rules/draft/check', headers=ADMIN, json={'replay': 0}).json()
+    assert [warning['rule_id'] for warning in checked['warnings']] == ['r-idle']
+    assert 'matched no fax in the last 30 days' in checked['warnings'][0]['message']

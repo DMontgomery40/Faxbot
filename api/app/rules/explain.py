@@ -74,12 +74,9 @@ class FactsReader:
     def sslfax_seen(self, connection, number):
         observations = sa.table('sslfax_observations', sa.column('number'), sa.column('accepts'),
                                 sa.column('observed_at'), sa.column('id'))
-        try:
-            newest = connection.execute(sa.select(observations.c.accepts).where(observations.c.number == number)
-                                        .order_by(observations.c.observed_at.desc(), observations.c.id.desc())
-                                        .limit(1)).scalar_one_or_none()
-        except sa.exc.SQLAlchemyError:
-            return False
+        newest = connection.execute(sa.select(observations.c.accepts).where(observations.c.number == number)
+                                    .order_by(observations.c.observed_at.desc(), observations.c.id.desc())
+                                    .limit(1)).scalar_one_or_none()
         return newest == 1
 
     def quotes(self, accounts, pages, alternate):
@@ -102,20 +99,26 @@ class FactsReader:
 
     def read(self, *, to_number, accounts, pages=1, size_bytes=0, principal_id=None, sender_kind=None,
              key_id=None, mailbox_id=None, workflow=None, labels=(), urgent=False, by_call=False, case_packet=False,
-             accepted_at=None):
+             accepted_at=None, connection=None):
+        """The facts of one fax. Pass ``connection`` to read inside the caller's transaction (acceptance)."""
+        if connection is None:
+            with self.engine.connect() as own:
+                return self.read(to_number=to_number, accounts=accounts, pages=pages, size_bytes=size_bytes,
+                                 principal_id=principal_id, sender_kind=sender_kind, key_id=key_id,
+                                 mailbox_id=mailbox_id, workflow=workflow, labels=labels, urgent=urgent,
+                                 by_call=by_call, case_packet=case_packet, accepted_at=accepted_at, connection=own)
         from ..routing.numbers import normalize_number
         destination = normalize_number(to_number, country=getattr(self.values, 'fax_default_country', 'US'))
         moment = accepted_at or datetime.now(timezone.utc).replace(tzinfo=None)
         if isinstance(moment, str):
             moment = datetime.fromisoformat(moment)
-        row = self.routes.get_destination(destination)
+        row = self.routes.get_destination(destination, connection=connection)
         direct_on = getattr(self.values, 'direct_delivery_enabled', False) and (
             self.direct_ready() if self.direct_ready is not None else True)
-        partner = bool(direct_on and self.routes.verified_peer(destination) is not None)
+        partner = bool(direct_on and self.routes.verified_peer(destination, connection=connection) is not None)
         alternate = self.alternates(destination) if self.alternates is not None else None
-        with self.engine.connect() as connection:
-            groups = self.groups(connection, principal_id)
-            seen = self.sslfax_seen(connection, destination)
+        groups = self.groups(connection, principal_id)
+        seen = self.sslfax_seen(connection, destination)
         return model.Facts(
             destination=destination, accepted_at=moment.replace(microsecond=0).isoformat(),
             country=country_of(destination), recipient_id=row['id'] if row else None,

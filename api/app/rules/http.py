@@ -2,8 +2,9 @@
 
 The organization's and a workflow's rules need ``settings:read`` to read and
 ``settings:write`` to change. A mailbox's rules need ``mailboxes:read`` and
-``mailboxes:manage`` on that mailbox. Every route requires an identity; the
-scope's permission is checked in the handler, because the scope is a parameter.
+``mailboxes:manage``, which are granted at the installation, as for every other
+mailbox change. Every route requires an identity; the scope's permission is
+checked in the handler, because the scope is a parameter.
 """
 from datetime import datetime, timedelta, timezone
 import json
@@ -120,25 +121,24 @@ def _permission(kind, write):
 
 
 def _allowed(request, identity, kind, scope_id, write):
+    """Whether the caller holds the scope's permission. Mailbox permissions are granted at the installation (as
+    every mailbox change checks them), so a mailbox's rules follow them there."""
     from ..access.types import ResourceRef
     service = _access(request)
     with service.store.transaction() as connection:
         service.store.require_lock_on(connection)
-        resource = 'installation'
-        if kind == model.MAILBOX:
-            resources = sa.table('access_resources', sa.column('id'), sa.column('kind'), sa.column('mailbox_id'))
-            resource = connection.execute(sa.select(resources.c.id).where(
-                resources.c.kind == 'mailbox', resources.c.mailbox_id == scope_id)).scalar_one_or_none() \
-                or 'installation'
         return service.control.authorize_on(connection, identity.actor, _permission(kind, write),
-                                            ResourceRef(resource), now=utcnow()).allowed
+                                            ResourceRef('installation'), now=utcnow()).allowed
 
 
 async def _require(request, identity, kind, scope_id, *, write=False):
+    from ..access.types import AccessUnavailableError, AuthenticationError
     try:
         allowed = await run_lifecycle_step(lambda: _allowed(request, identity, kind, scope_id, write))
-    except Exception:
-        allowed = False
+    except AuthenticationError:
+        raise HTTPException(401, detail='Your sign-in has expired. Sign in again.') from None
+    except AccessUnavailableError:
+        raise HTTPException(503, detail='Access control is unavailable.') from None
     if not allowed:
         raise HTTPException(403, detail='You don’t have permission to change these rules.' if write
                             else 'You don’t have permission to see these rules.')
@@ -204,10 +204,17 @@ def _choices(request, accounts):
 
 
 def _matches(store, kind, scope_id):
-    """Faxes each rule of this scope matched in the last 30 days, from stored decisions."""
+    """Faxes each rule of this scope's active rules matched in the last 30 days, from stored decisions.
+
+    Every rule starts at 0: stored decisions keep only the steps that decided something, so a rule that
+    matched nothing never appears in them. A match a more specific or mandatory rule overrode still counts.
+    """
     since = utcnow() - timedelta(days=MATCH_WINDOW_DAYS)
     decisions = store.decisions
-    counts = {}
+    active = store.active(kind, scope_id)
+    document = json.loads(active['document']) if active else {}
+    counts = {rule.get('id'): 0 for section in ('limits', 'routes') for rule in document.get(section) or ()
+              if isinstance(rule, dict) and rule.get('id')}
     with read_connection(store.engine) as connection:
         rows = connection.execute(sa.select(decisions.c.decision).where(
             decisions.c.sequence == 1, decisions.c.created_at >= since)
@@ -219,10 +226,8 @@ def _matches(store, kind, scope_id):
                 continue
             for step in trace:
                 if step.get('scope') == kind and step.get('scope_id') == scope_id and step.get('rule_id') \
-                        and step.get('kind') != 'preferred':
-                    counts.setdefault(step['rule_id'], 0)
-                    if step.get('result') == 'matched':
-                        counts[step['rule_id']] += 1
+                        and step.get('kind') != 'preferred' and step.get('result') in ('matched', 'not_applied'):
+                    counts[step['rule_id']] = counts.get(step['rule_id'], 0) + 1
     return counts
 
 
