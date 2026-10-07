@@ -106,6 +106,37 @@ export interface RecommendedRoute {
   monthly_fee?: Money | null;
 }
 
+// What a fax would take and cost on one route before sending (GET /routing/predict); every figure an estimate.
+export interface RoutePrediction {
+  route: string;
+  label: string;
+  // Pages charged at a page price: 0 on a route that bills by time or includes faxes in a plan.
+  billed_pages: number | null;
+  // Predicted time on the line in seconds, and what the carrier bills for it (per-minute routes only).
+  seconds: number | null;
+  billed_seconds: number | null;
+  seconds_to_next_step: number | null;
+  // Null when unknown, never zero.
+  cost: Money | null;
+  cost_text: string | null;
+  // A monthly plan: the cost is what this fax adds to the bill.
+  marginal: boolean;
+  headline: string;
+  basis: string;
+}
+
+export interface PredictionAnswer {
+  to: string;
+  number_class: string;
+  number_class_text: string;
+  pages: number;
+  layout: string;
+  resolution: string;
+  routes: RoutePrediction[];
+  sentence: string;
+  note: string;
+}
+
 export interface DestinationDetail extends Destination {
   direct_partner: { organization: string; verified: boolean } | null;
   recommended_routes: RecommendedRoute[];

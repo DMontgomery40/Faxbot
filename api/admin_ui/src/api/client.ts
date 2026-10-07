@@ -42,6 +42,7 @@ import type {
   Destination,
   DestinationDetail,
   DestinationPatch,
+  PredictionAnswer,
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
@@ -978,6 +979,11 @@ class AdminAPIClient {
   // The route order for the next fax to a number; with `pages`, each estimate is for a fax that long.
   async getDestination(number: string, pages?: number): Promise<DestinationDetail> {
     return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
+  }
+
+  // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
+  async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
+    return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
   }
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
