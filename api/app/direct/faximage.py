@@ -32,6 +32,7 @@ from pathlib import Path
 import re
 import tempfile
 
+from ..conversion import MAX_DOCUMENT_PAGES, MAX_RASTER_TOTAL_PIXELS
 from .crypto import FAX_COMPRESSIONS, FAX_IMAGE, FAX_LINES, FAX_WIDTHS
 
 
@@ -44,7 +45,9 @@ NO_CALL_TEXT = 'No telephone call.'
 # The header band: 32 rows at fine resolution (the built-in engine prints a 16-row font twice).
 BAND_ROWS_FINE = 32
 FONT_PIXELS = 22
-MAX_PAGES = 10000
+# The conversion's own limits: an image the receiver could not turn into a PDF is never built or accepted.
+MAX_PAGES = MAX_DOCUMENT_PAGES
+MAX_TOTAL_PIXELS = MAX_RASTER_TOTAL_PIXELS
 MAX_PAGE_ROWS = 20000
 MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
@@ -238,15 +241,17 @@ def check(data, facts, pages):
             count = getattr(image, 'n_frames', 1)
             if image.format != 'TIFF' or not 0 < count <= MAX_PAGES or (pages is not None and count != pages):
                 raise FaxImageInvalid('The fax image does not match its description.')
+            total = 0
             for index in range(count):
+                # Only each page's tags are read here; the one bounded decode is the conversion's (readable_copy).
                 image.seek(index)
                 x_dpi, y_dpi = (round(float(value)) for value in image.info.get('dpi', (0, 0)))
                 width, height = image.size
+                total += width * height
                 if (image.mode != '1' or width != facts['width'] or x_dpi != facts['x_dpi']
                         or y_dpi != facts['y_dpi'] or image.info.get('compression') != compression
-                        or not 0 < height <= MAX_PAGE_ROWS):
+                        or not 0 < height <= MAX_PAGE_ROWS or total > MAX_TOTAL_PIXELS):
                     raise FaxImageInvalid('The fax image does not match its description.')
-                image.load()
     except FaxImageInvalid:
         raise
     except Exception:

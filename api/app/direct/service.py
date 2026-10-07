@@ -316,10 +316,12 @@ class DirectService:
         return 200, {'recorded': True}
 
     async def tell_partner(self, peer):
-        """Tell a partner, signed, what we accept from it now; False when it could not be reached.
+        """Tell a partner, signed, what we accept from it now: ``told``, ``unreachable`` or ``unsupported``.
 
-        A partner that misses this learns it from the next receipt, refusal or
-        status answer we sign for it, which carry the same statement.
+        A partner that could not be reached learns it from the next receipt,
+        refusal or status answer we sign for it, which carry the same statement.
+        ``unsupported`` is a partner whose Faxbot has no fax images yet (it
+        answers 404 for the statement), so it keeps sending original documents.
         """
         identity = await run_lifecycle_step(lambda: self.identity(create=True))
         envelope = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'],
@@ -327,11 +329,13 @@ class DirectService:
         try:
             status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/capabilities', json=envelope)
         except (PartnerUnreachable, httpx.HTTPError):
-            return False
-        return status == 200 and isinstance(body, dict) and body.get('recorded') is True
+            return 'unreachable'
+        if status == 200 and isinstance(body, dict) and body.get('recorded') is True:
+            return 'told'
+        return 'unsupported' if status in (404, 405) else 'unreachable'
 
     async def set_fax_images(self, peer_id, accept):
-        """Accept fax images from a partner, or stop; returns (partner, whether the partner was told now)."""
+        """Accept fax images from a partner, or stop; returns (partner, ``told``, ``unreachable`` or ``unsupported``)."""
         peer = await run_lifecycle_step(lambda: self.store.set_receive_fax_images(peer_id, accept))
         return peer, await self.tell_partner(peer)
 
@@ -445,8 +449,12 @@ class DirectRoute:
             try:
                 image = await run_lifecycle_step(lambda: faximage.build(values, claim.job_id,
                                                                         moment=parse_timestamp(signed_at)))
-            except faximage.FaxImageUnavailable:
-                image, signed_at = None, None  # Nothing was sent; the original still goes directly, with no call.
+            except faximage.FaxImageUnavailable as error:
+                # Nothing was sent; the original still goes directly, with no call. Said once per fax, so a partner
+                # who opted in but keeps getting originals can be explained (no fax image tools in this image).
+                logging.getLogger(__name__).warning('A fax went directly as the original document instead of a fax '
+                                                    'image: %s', error)
+                image, signed_at = None, None
         document = image.data if image is not None else await run_lifecycle_step(pdf.read_bytes)
         from ..routing.numbers import normalize_number
         sender_number = None

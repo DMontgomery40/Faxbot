@@ -201,12 +201,15 @@ async def set_fax_images(peer_id: str, payload: FaxImagesIn, request: Request):
     except DeliveryStoreError:
         raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
     name = peer['organization']
-    if told:
+    if told == 'told':
         detail = (f'{name} now sends you faxes as the exact fax image.' if payload.accept
                   else f'{name} now sends you the original documents.')
+    elif told == 'unsupported':
+        detail = f"Saved. {name}'s Faxbot cannot send fax images yet, so their documents keep arriving as originals."
     else:
-        detail = f'Saved. Faxbot could not reach {name} just now; they learn it with their next delivery to you.'
-    return {**_peer_view(peer), 'detail': detail, 'partner_told': told}
+        detail = (f'Saved. Faxbot could not reach {name} just now; it tells them when it answers their next '
+                  'delivery to you.')
+    return {**_peer_view(peer), 'detail': detail, 'partner_told': told == 'told'}
 
 
 @router.post('/peers/{peer_id}/revoke', dependencies=[Depends(require_permission('settings:write'))])

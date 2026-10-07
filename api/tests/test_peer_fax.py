@@ -28,6 +28,7 @@ from api.app.direct.crypto import capabilities, seal, signed, timestamp
 from api.app.direct.service import DirectReconciler, DirectRoute, DirectService
 from api.app.outbound_store import OutboundStore
 from api.app.outbound_worker import OutboundWorker
+from api.app.routing.savings import savings as count_savings
 from api.app.routing.store import RouteStore
 from api.app.routing.transport import RoutedTransport
 from api.app.schema import create_database_engine, upgrade_schema
@@ -40,11 +41,14 @@ ORIGINAL_LABEL = 'Delivered directly by Valley Hospital as the original document
 
 
 class ToA:
-    """B's transport to installation A, answered in-process; ``drop`` loses B's statements about fax images."""
+    """B's transport to installation A, answered in-process.
+
+    ``drop`` loses B's statements about fax images; ``older`` answers them as a Faxbot without fax images does (404).
+    """
 
     def __init__(self, service):
         self.service = service
-        self.drop = False
+        self.drop = self.older = False
 
     async def request(self, method, url, **kwargs):
         body = kwargs['json']
@@ -53,6 +57,8 @@ class ToA:
         assert method == 'POST' and url == 'https://a.example/direct/capabilities'
         if self.drop:
             raise httpx.ConnectTimeout('partner offline')
+        if self.older:
+            return 404, {'detail': 'Not Found'}
         return await asyncio.to_thread(self.service.note, body['statement'], body['signature'])
 
 
@@ -244,6 +250,11 @@ async def test_a_fax_image_arrives_byte_for_byte_as_a_received_fax_with_work_ema
     labels = [direct_http.delivery_text(a_row), fax['status_text'], history[0]['text'],
               *[item['status'] for item in client.get('/direct/deliveries', headers=ADMIN).json()['deliveries']]]
     assert direct_http.delivery_text(a_row) == 'Delivered directly as a fax image to County Clinic; no telephone call.'
+
+    # Savings count the telephone call the fax image avoided once, as a fax image and not as an original.
+    found = count_savings(pair['routes'], pair['routes'].engine)
+    assert found['direct_fax_images']['calls_avoided'] == 1 and found['direct_delivery']['faxes'] == 0
+    assert found['direct_fax_images']['sentence'].startswith('1 telephone call avoided by direct fax images')
     assert all('faxed' not in label.lower() for label in labels), labels
 
 
@@ -255,6 +266,8 @@ async def test_a_partner_that_has_not_opted_in_gets_the_original_directly_and_it
     assert row['state'] == 'success' and conventional.submissions == 0
     sent = pair['a'].store.find('outbound', row['attempt_id'])
     assert sent['kind'] is None
+    found = count_savings(pair['routes'], pair['routes'].engine)
+    assert found['direct_delivery']['calls_avoided'] == 1 and found['direct_fax_images']['faxes'] == 0
     original = (pair['data'] / (job + '.pdf')).read_bytes()
     assert sent['digest'] == sha(original)
     (fax,) = received(pair)
@@ -404,6 +417,11 @@ def test_fax_image_settings_need_settings_permission(peer_pair):
     assert client.post('/direct/capabilities', json={'statement': '{}', 'signature': 'x'}).json()['recorded'] is False
     on = opt_in(peer_pair)
     assert on['fax_images_text'] == 'Their faxes to you arrive as the exact fax image and are filed like any received fax.'
+    # A partner on a Faxbot without fax images answers 404; it is told honestly that originals keep arriving.
+    peer_pair['to_a'].older = True
+    older = opt_in(peer_pair, accept=False)
+    assert older['partner_told'] is False and older['detail'] == (
+        "Saved. Valley Hospital's Faxbot cannot send fax images yet, so their documents keep arriving as originals.")
 
 
 # -- the fax image itself, and the route choice a rule can ask for ------------------------------------
@@ -429,6 +447,19 @@ def test_the_header_line_carries_what_68_318_d_requires_on_every_page_above_the_
     again, _ = faximage.stamp(engine_image(3), header='Valley Hospital', station=A_NUMBER, moment=moment,
                               zone_name='America/Denver')
     assert sha(again) == sha(data)
+
+
+def test_a_huge_fax_image_is_refused_from_its_page_sizes_before_any_page_is_decoded():
+    from PIL import Image
+    pages = [Image.new('1', (1728, 20000), 1) for _ in range(3)]  # blank: tiny in Group 4, 103 million pixels
+    output = io.BytesIO()
+    pages[0].save(output, 'TIFF', compression='group4', save_all=True, append_images=pages[1:], dpi=(204, 196))
+    facts = {'resolution': 'fine', 'x_dpi': 204, 'y_dpi': 196, 'width': 1728, 'compression': 'MMR',
+             'header_line': 'Synthetic header'}
+    assert len(output.getvalue()) < 100_000
+    with pytest.raises(faximage.FaxImageInvalid):
+        faximage.check(output.getvalue(), facts, 3)
+    assert faximage.check(engine_image(2, width=1728), facts, 2) == 2
 
 
 def test_a_fax_image_is_built_from_the_engine_image_or_the_same_conversion(tmp_path):
