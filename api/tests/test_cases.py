@@ -315,6 +315,18 @@ def test_a_received_acknowledgement_fax_must_be_one_the_person_can_read(client):
     unknown = confirm(client, ['Medical record'], note=None, received_fax_id=uuid4().hex)
     assert unknown.status_code == 404
     assert by_title(client)['Medical record']['state'] == 'sent'
+    # The recipient faxed back "received, filed to your case": that received fax is the evidence.
+    inbound, now = uuid4().hex, utcnow()
+    main.app.state.access_runtime.inbound.accept(dict(
+        id=inbound, from_number=TO, to_number='+15555550100', status='received', backend='sip', pages=1,
+        created_at=now, received_at=now, updated_at=now), country='US')
+    recorded = confirm(client, ['Medical record'], note=None, received_fax_id=inbound)
+    assert recorded.status_code == 200, recorded.text
+    view = by_title(client)['Medical record']
+    assert (view['state'], view['accepted_how'], view['accepted_note']) == ('accepted', 'received_fax', None)
+    with engine().connect() as connection:
+        assert connection.execute(sa.text("SELECT evidence_id FROM case_entry_events WHERE source = 'received_fax'")
+                                  ).scalar_one() == inbound
 
 
 def test_case_inputs_and_permissions(client):
