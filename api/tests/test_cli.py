@@ -977,6 +977,11 @@ def test_connectors_add_test_pause_resume_items_and_remove(cli, tmp_path):
     listed_keys = cli.json('access', 'keys', 'list')
     keys = {key['id']: key for key in (listed_keys['items'] if isinstance(listed_keys, dict) else listed_keys)}
     assert keys[sending['sending_key_id']]['name'] == 'Outbox'
+    # Settings rights alone cannot give a connector its own sending key.
+    _, token = restricted_key(cli, 'Settings helper', role='Administrator', permissions=('settings:read', 'settings:write'))
+    refused = cli('numbers', 'connectors', 'pause', 'Outbox', key=token)
+    assert refused.exit_code != 0 and refused.stderr.strip() == (
+        'A connector that sends faxes gets its own sending key, so this needs permission to manage keys.')
     paused = cli.json('numbers', 'connectors', 'pause', 'Outbox')
     assert paused['paused'] is True and paused['has_sending_key'] is False
     assert cli('numbers', 'connectors', 'pause', 'Outbox').stdout.strip().startswith('Outbox: Paused by ')
