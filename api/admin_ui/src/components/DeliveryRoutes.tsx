@@ -4,11 +4,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import AdminAPIClient from '../api/client';
-import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts } from '../api/deliveryTypes';
+import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts, TollFreeTerms } from '../api/deliveryTypes';
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
 import RateCards from './delivery/RateCards';
+import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
 
 export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners';
@@ -45,6 +46,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
   const [received, setReceived] = useState<ReceivedCosts[]>([]);
   const [carrier, setCarrier] = useState<CarrierChargeStatus | null>(null);
   const [cards, setCards] = useState<RateCard[]>([]);
+  const [tollFree, setTollFree] = useState<TollFreeTerms[]>([]);
   const [partners, setPartners] = useState<DirectPartner[]>([]);
   const shows = (part: DeliveryRoutesSection) => !section || section === part;
 
@@ -65,7 +67,10 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
         setReceived(costs.received ?? []);
         setCarrier(costs.carrier_charges ?? null);
       }
-      if (rates) setCards(rates.cards);
+      if (rates) {
+        setCards(rates.cards);
+        setTollFree(rates.toll_free ?? []);
+      }
       if (peers) setPartners(peers.peers);
       setState('ready');
     } catch (failure) {
@@ -96,7 +101,10 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
             <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
               partners={section === 'numbers' ? partners : null} />)}
           {shows('rates') && part('rates',
-            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />)}
+            <>
+              <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
+              <TollFreePrices items={tollFree} />
+            </>)}
           {shows('partners') && part('partners',
             <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />)}
         </>

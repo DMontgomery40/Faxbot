@@ -352,7 +352,8 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 
 
 SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
-                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'))
+                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
+                ('toll_free', 'Approved toll-free numbers'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
@@ -536,17 +537,27 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
     else:
         result = api.get('/routing/rate-cards')
     from .trunk import local_date
-    # Money as money and the provider's name, as Costs → Prices & plans shows them.
-    state.out().result(result, lambda out: out.table(
-        ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
-         'Advertised on'],
-        [[card.get('provider_name') or card['provider_id'], card['label'],
-          'Receiving' if card.get('direction') == 'inbound' else 'Sending',
-          _card_price(card, 'per_minute'), _card_price(card, 'per_page'), _card_price(card, 'per_call'),
-          (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
-           else _monthly(card) if card.get('monthly_fee') else '-'),
-          _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
-         for card in result.get('cards', [])], empty='No rate cards.'))
+
+    def human(out):
+        # Money as money and the provider's name, as Costs → Prices & plans shows them.
+        out.table(
+            ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
+             'Advertised on'],
+            [[card.get('provider_name') or card['provider_id'], card['label'],
+              'Receiving' if card.get('direction') == 'inbound' else 'Sending',
+              _card_price(card, 'per_minute'), _card_price(card, 'per_page'), _card_price(card, 'per_call'),
+              (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
+               else _monthly(card) if card.get('monthly_fee') else '-'),
+              _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
+             for card in result.get('cards', [])], empty='No rate cards.')
+        # What each sending route publishes about calling a recipient's approved toll-free number.
+        if result.get('toll_free'):
+            out.line()
+            out.table(['Provider', 'Calls to toll-free numbers', 'Price', 'Caller ID it needs', 'Advertised on'],
+                      [[item.get('provider_name') or item['provider_id'], item['reach_text'], item['price_text'],
+                        item.get('caller_id_text') or '-', local_date(item['advertised_on'])]
+                       for item in result['toll_free']], title='Calls to toll-free numbers')
+    state.out().result(result, human)
 
 
 # -- routing batching --------------------------------------------------------------------

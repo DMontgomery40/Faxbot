@@ -174,9 +174,13 @@ def test_every_toll_free_code_in_service_is_toll_free(number):
         number[2:5] + '-' + number[5:8] + '-' + number[8:]
 
 
-@pytest.mark.parametrize('number', ['+18225550100', '+18805550100', '+13035550100', '+442071838750', '', None,
+@pytest.mark.parametrize('number', ['+18225550100', '+18805550100', '+18815550100', '+18825550100', '+18835550100',
+                                    '+18845550100', '+18855550100', '+18865550100', '+18875550100', '+18995550100',
+                                    '+18000550100', '+18001550100', '+13035550100', '+442071838750', '', None,
                                     '+1800555010'])
 def test_reserved_codes_local_numbers_and_other_countries_are_standard(number):
+    # Pinned for the swap to one shared classifier (routing.destinations.classify): 822 and 880 to 887 are not in
+    # service, and an exchange never starts with 0 or 1.
     assert dialing.number_class(number) == 'standard'
 
 
