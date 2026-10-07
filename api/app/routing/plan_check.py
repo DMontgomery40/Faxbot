@@ -542,7 +542,8 @@ class ContractView:
         return rows
 
     def plan(self, key):
-        from .plan_budget import budget_left, burn_down, day_text, metered, pace_sentence, shipped_budgets
+        from .plan_budget import (budget_left, burn_down, day_text, metered, pace_sentence, shipped_budgets,
+                                  untimed_sentence)
         left = budget_left(key, self.now, engine=self.routes.engine, values=self.values, path=self.path)
         if left is None:
             return None
@@ -574,7 +575,9 @@ class ContractView:
                 'used': {'sent_faxes': used.sent_faxes, 'sent_pages': used.sent_pages,
                          'received_faxes': used.received_faxes, 'received_pages': used.received_pages,
                          'faxes': used.faxes, 'pages': used.pages, 'minutes': used.minutes,
-                         'spend': money(used.spend_micros), 'not_priced': used.unpriced},
+                         'spend': money(used.spend_micros), 'not_priced': used.unpriced,
+                         # Faxes counted by pages alone: the plan also counts time on the line, which was not known.
+                         'counted_by_pages_only': used.untimed},
                 'left': {'pages': left.pages_left, 'faxes': left.faxes_left, 'allowance': left.allowance_left,
                          'minutes': left.minutes_left, 'commitment': money(left.commitment_left_micros)},
                 'overage': {'pages': left.overage_pages, 'minutes': left.overage_minutes,
@@ -586,6 +589,7 @@ class ContractView:
                 'state': left.state, 'over': left.over, 'sentence': left.sentence,
                 'pace_sentence': pace_sentence(left, rows),
                 'count_sentence': (shipped_budgets(self.path).get(key) or {}).get('count_sentence'),
+                'untimed_sentence': untimed_sentence(left),
                 'burn_down': [{'date': row.day.isoformat(), 'pages': row.pages, 'faxes': row.faxes} for row in rows],
                 'own_accounts': self.own_accounts(key, budget, period.start,
                                                   min(period.end, self.now + timedelta(seconds=1)))}

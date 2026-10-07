@@ -400,13 +400,14 @@
         "pages": 200,
         "faxes": 50,
         "billing_day": 1,
+        "page_time_seconds": 60,
         "sentence": "Faxbot starts HumbleFax at 200 pages and 50 faxes a month because HumbleFax's terms keep unlimited faxing for normal, individual use without naming a number; this is a cautious start, not a limit HumbleFax has promised to accept.",
         "basis": "HumbleFax publishes no monthly number. 200 pages is what individual fax plans include where a number is published (eFax Personal: 200 pages a month, read 2026-10-04); 50 faxes is 200 pages at four pages a fax. The administrator sets the real budget.",
         "terms_url": "https://humblefax.com/terms",
         "terms_read_on": "2026-10-07",
         "terms_quote": "\"For individual, non-commercial use, we offer unlimited faxing accounts.\" Accounts may be suspended, with notice and an offer to upgrade, for \"unusual calling patterns inconsistent with normal, individual use, for example, regular faxes of short duration or faxes to multiple numbers in a short period of time\".",
-        "page_rule": "HumbleFax's terms, read 2026-10-07: \"The Company defines one 'fax page' as the greater of 60 seconds of transmission time or one document page.\" Faxbot counts the pages sent, so HumbleFax's own count can be higher.",
-        "count_sentence": "HumbleFax counts each document page or each 60 seconds on the line, whichever is more, so its own count can be higher than Faxbot's."
+        "page_rule": "HumbleFax's terms, read 2026-10-07: \"The Company defines one 'fax page' as the greater of 60 seconds of transmission time or one document page.\" Faxbot counts the same way wherever it knows the time on the line (its own call records, or the transmission time HumbleFax reports for a received fax) and counts pages alone where it does not.",
+        "count_sentence": "HumbleFax counts each document page or each 60 seconds on the line, whichever is more, and Faxbot counts the same way wherever it knows the time on the line."
       }
     }
   ],

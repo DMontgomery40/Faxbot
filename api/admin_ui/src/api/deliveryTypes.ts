@@ -812,6 +812,8 @@ export interface PlanContract {
   used: {
     sent_faxes: number; sent_pages: number; received_faxes: number; received_pages: number; faxes: number;
     pages: number; minutes: number | null; spend: Money[]; not_priced: number;
+    // Faxes counted by pages alone: the plan also counts time on the line, which was not known for them.
+    counted_by_pages_only: number;
   };
   left: { pages: number | null; faxes: number | null; allowance: number | null; minutes: number | null; commitment: Money[] };
   overage: { pages: number; minutes: number; cost: Money[]; cost_unknown: boolean };
@@ -823,6 +825,7 @@ export interface PlanContract {
   sentence: string;
   pace_sentence: string | null;
   count_sentence: string | null;
+  untimed_sentence: string | null;
   burn_down: Array<{ date: string; pages: number; faxes: number }>;
   own_accounts: PlanOwnAccounts[];
 }
@@ -865,6 +868,10 @@ export interface CarrierComparison {
   switching_sentence: string;
   unpublished_sentence: string | null;
   cheapest: string | null;
-  current: { total: Money[]; complete: boolean; not_priced: number; routes: string[] } | null;
+  // Your current services priced the same way, with every plan fee you pay (idle_plans carried no fax).
+  current: {
+    total: Money[]; complete: boolean; not_priced: number; routes: string[];
+    idle_plans: Array<{ name: string; monthly_fee: Money[] }>;
+  } | null;
   carriers: CarrierPrice[];
 }

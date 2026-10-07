@@ -34,7 +34,15 @@ delivery records use: ``sip`` for the carrier trunk, else the provider
 What counts: faxes sent through the route that were delivered or whose outcome
 is uncertain (they may have gone), and faxes received through it, since the
 billing day in the installation's time zone. A page the record does not count
-is counted as one.
+is counted as one. A plan that also counts time on the line (HumbleFax: each
+started minute is a page) counts each fax as the greater of the two wherever
+the time is known (the trunk's own call record, or the time the provider
+reported for a received fax), and pages alone otherwise, which the screen
+says (``untimed_sentence``).
+
+The predictor prices a plan with the allowance and extra-page price from here
+(``predict_facts.plan_terms``): what you set in ``plan_budgets`` first, then
+the published plan the card matches.
 
 Contract for callers (the predictor, and the rules' "cheapest marginal" method)
 ---------------------------------------------------------------------------------
@@ -230,6 +238,7 @@ class Budget:
     page_overage_micros: int | None = None
     included_minutes: int | None = None    # a minute allowance; minutes past it at ``per_minute_micros``
     commitment_micros: int | None = None   # a committed monthly spend
+    page_time_seconds: int | None = None   # the plan also counts each started period this long as a page (HumbleFax: 60)
     currency: str = 'USD'
     monthly_fee_micros: int | None = None
     per_minute_micros: int = 0
@@ -355,7 +364,9 @@ def budget_for(route, card, values=None, *, path=None, inbound=None):
                     commitment_micros=merged.get('commitment'), currency=currency,
                     monthly_fee_micros=plan_card.monthly_fee_micros if plan_card is not None else None,
                     per_minute_micros=plan_card.per_minute_micros if plan_card is not None else 0, flat=flat,
-                    source='set' if entry is not None else source)
+                    source='set' if entry is not None else source,
+                    page_time_seconds=shipped.get('page_time_seconds') if type(shipped.get('page_time_seconds')) is int
+                    and shipped['page_time_seconds'] > 0 else None)
     if entry is not None:
         sentence = f'You set this budget for {label}.'
     else:
@@ -435,6 +446,7 @@ class Usage:
     minutes: int | None = None          # counted only with a minute allowance
     spend_micros: int | None = None     # counted only with a commitment
     unpriced: int = 0                   # faxes and calls with no known cost (with a commitment)
+    untimed: int = 0                    # faxes counted by pages only: the plan counts minutes, none were known
 
     @property
     def faxes(self):
@@ -446,7 +458,8 @@ class Usage:
 
 
 _REFLECTED = weakref.WeakKeyDictionary()
-_TABLE_NAMES = ('delivery_attempt_costs', 'fax_jobs', 'inbound_faxes', 'sip_call_records', 'provider_rate_cards')
+_TABLE_NAMES = ('delivery_attempt_costs', 'fax_jobs', 'inbound_faxes', 'sip_call_records', 'provider_rate_cards',
+                'inbound_imports')
 
 
 def _tables(engine):
@@ -459,22 +472,61 @@ def _tables(engine):
     return found
 
 
-def records(engine, route, start, end):
-    """``[(when, direction, pages)]`` for every fax ``route`` carried in ``[start, end)``, oldest first."""
+def _reported_seconds(report):
+    """The time on the line a provider reported for a received fax (HumbleFax's ``transmissionTime``), or None."""
+    try:
+        found = json.loads(report or '{}')
+    except (TypeError, ValueError):
+        return None
+    fax = found.get('fax') if isinstance(found, dict) else None
+    seconds = fax.get('transmission_seconds') if isinstance(fax, dict) else None
+    return seconds if type(seconds) is int and seconds >= 0 else None
+
+
+def records(engine, route, start, end, *, page_time_seconds=None):
+    """``[(when, direction, pages, timed)]`` for every fax ``route`` carried in ``[start, end)``, oldest first.
+
+    With ``page_time_seconds`` (HumbleFax: 60), a fax counts as the greater of
+    its pages and each started period of that many seconds on the line, the
+    rule ``costs.RateTerms.page_time_seconds`` prices (``costs.greater_of_pages``),
+    wherever the time is known: the trunk's own record of a sent call, or the
+    time the provider reported for a received fax. ``timed`` is False when the
+    rule applies and the time is not known, so only the pages count.
+    """
+    from .costs import greater_of_pages
     from .database import read_connection
     import sqlalchemy as sa
     tables = _tables(engine)
     costs, jobs, faxes = tables['delivery_attempt_costs'], tables['fax_jobs'], tables['inbound_faxes']
+    calls, imports = tables['sip_call_records'], tables['inbound_imports']
     received_at = sa.func.coalesce(faxes.c.received_at, faxes.c.created_at)
     with read_connection(engine) as connection:
-        sent = connection.execute(sa.select(costs.c.created_at, jobs.c.pages, costs.c.billed_pages).select_from(
-            costs.outerjoin(jobs, jobs.c.id == costs.c.job_id)).where(
+        sent = connection.execute(sa.select(costs.c.created_at, jobs.c.pages, costs.c.billed_pages,
+                                            calls.c.connected_seconds).select_from(
+            costs.outerjoin(jobs, jobs.c.id == costs.c.job_id).outerjoin(
+                calls, sa.and_(calls.c.attempt_id == costs.c.id, calls.c.direction == 'outbound'))).where(
             costs.c.route == route, costs.c.outcome.in_(SENT_OUTCOMES), costs.c.created_at >= start,
             costs.c.created_at < end)).all()
-        received = connection.execute(sa.select(received_at.label('at'), faxes.c.pages).where(
+        received = connection.execute(sa.select(faxes.c.id, received_at.label('at'), faxes.c.pages,
+                                                imports.c.report).select_from(
+            faxes.outerjoin(imports, imports.c.inbound_fax_id == faxes.c.id)).where(
             faxes.c.backend == route, received_at >= start, received_at < end)).all()
-    found = [(row.created_at, 'sent', max(1, int(row.pages or row.billed_pages or 0))) for row in sent]
-    found += [(row.at, 'received', max(1, int(row.pages or 0))) for row in received]
+
+    def counted(when, direction, pages, seconds):
+        if not page_time_seconds:
+            return when, direction, pages, True
+        if seconds is None:
+            return when, direction, pages, False
+        return when, direction, greater_of_pages(pages, seconds, page_time_seconds), True
+
+    found = [counted(row.created_at, 'sent', max(1, int(row.pages or row.billed_pages or 0)), row.connected_seconds)
+             for row in sent]
+    seen = {}
+    for row in received:  # one fax, whichever of its import records reported a time
+        seconds = _reported_seconds(row.report)
+        if row.id not in seen or (seen[row.id][3] is None and seconds is not None):
+            seen[row.id] = (row.at, max(1, int(row.pages or 0)), row.id, seconds)
+    found += [counted(at, 'received', pages, seconds) for at, pages, _, seconds in seen.values()]
     return sorted(found, key=lambda item: item[0])
 
 
@@ -539,13 +591,26 @@ def usage(engine, budget, period, *, now=None, inbound_card=None):
     """What the route carried from the period's start until ``now`` (or the period's end)."""
     # Up to and including ``now``: a fax recorded this second has been carried.
     end = min(period.end, now + timedelta(seconds=1)) if now is not None else period.end
-    found = records(engine, budget.route, period.start, end)
-    sent = [pages for _, direction, pages in found if direction == 'sent']
-    received = [pages for _, direction, pages in found if direction == 'received']
+    found = records(engine, budget.route, period.start, end, page_time_seconds=budget.page_time_seconds)
+    sent = [pages for _, direction, pages, _ in found if direction == 'sent']
+    received = [pages for _, direction, pages, _ in found if direction == 'received']
     minutes = _minutes(engine, budget.route, period.start, end, inbound_card) if budget.included_minutes else None
     spend, unpriced = (_spend(engine, budget.route, period.start, end, budget.currency, inbound_card)
                        if budget.commitment_micros is not None else (None, 0))
-    return Usage(len(sent), sum(sent), len(received), sum(received), minutes, spend, unpriced)
+    untimed = sum(1 for *_, timed in found if not timed)
+    return Usage(len(sent), sum(sent), len(received), sum(received), minutes, spend, unpriced, untimed)
+
+
+def untimed_sentence(left):
+    """For a plan that counts minutes on the line: how many faxes Faxbot could count by pages only; None if none."""
+    budget, untimed = left.budget, left.used.untimed
+    if not budget.page_time_seconds or not untimed:
+        return None
+    them = ('this fax' if untimed == 1 else f'{_number(untimed)} of these faxes') if untimed < left.used.faxes \
+        else ('this fax' if untimed == 1 else f'these {_number(untimed)} faxes')
+    unit = 'minute' if budget.page_time_seconds == 60 else f'{budget.page_time_seconds} seconds'
+    return (f'{budget.label} also counts each started {unit} on the line as a page, but the time on the line was not '
+            f"known for {them}, so Faxbot counted pages only and {budget.label}'s own count may be higher.")
 
 
 # What is left ---------------------------------------------------------------------------------------
@@ -823,10 +888,11 @@ def burn_down(engine, left, *, now, zone_name=''):
     tz = _zone(zone_name)
     period = left.period
     end = min(period.end, now + timedelta(seconds=1))
-    found = records(engine, left.budget.route, period.start, end) if engine is not None else []
+    found = records(engine, left.budget.route, period.start, end,
+                    page_time_seconds=left.budget.page_time_seconds) if engine is not None else []
     today = now.replace(tzinfo=timezone.utc).astimezone(tz).date()
     totals = {}
-    for when, _, pages in found:
+    for when, _, pages, _ in found:
         day = when.replace(tzinfo=timezone.utc).astimezone(tz).date()
         pages_so_far, faxes_so_far = totals.get(day, (0, 0))
         totals[day] = (pages_so_far + pages, faxes_so_far + 1)

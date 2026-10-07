@@ -22,7 +22,7 @@ function humblefax(changes: Partial<PlanContract> = {}): PlanContract {
     period: { start: '2026-10-01T00:00:00', end: '2026-11-01T00:00:00', first_day: '2026-10-01',
       next_day: '2026-11-01', next_day_text: '1 November' },
     used: { sent_faxes: 30, sent_pages: 200, received_faxes: 4, received_pages: 10, faxes: 34, pages: 210, minutes: null,
-      spend: [], not_priced: 0 },
+      spend: [], not_priced: 0, counted_by_pages_only: 30 },
     left: { pages: -10, faxes: 16, allowance: null, minutes: null, commitment: [] },
     overage: { pages: 0, minutes: 0, cost: usd('0.00'), cost_unknown: false },
     committed: usd('10.00'), bill_so_far: usd('10.00'),
@@ -31,8 +31,10 @@ function humblefax(changes: Partial<PlanContract> = {}): PlanContract {
     sentence: 'HumbleFax has carried 210 pages and 34 faxes since 1 October, past your normal-use budget of 200 pages '
       + 'and 50 faxes; the budget starts again on 1 November.',
     pace_sentence: 'At this pace HumbleFax will carry about 320 pages by 1 November, past your normal-use budget of 200.',
-    count_sentence: "HumbleFax counts each document page or each 60 seconds on the line, whichever is more, so its own "
-      + "count can be higher than Faxbot's.",
+    count_sentence: 'HumbleFax counts each document page or each 60 seconds on the line, whichever is more, and Faxbot '
+      + 'counts the same way wherever it knows the time on the line.',
+    untimed_sentence: 'HumbleFax also counts each started minute on the line as a page, but the time on the line was not '
+      + "known for 30 of these faxes, so Faxbot counted pages only and HumbleFax's own count may be higher.",
     burn_down: [{ date: '2026-10-01', pages: 12, faxes: 3 }, { date: '2026-10-02', pages: 30, faxes: 6 }],
     own_accounts: [{ direction: 'received', other: 'Telnyx', faxes: 2, pages: 6, sending_bill: 'Telnyx',
       receiving_bill: 'HumbleFax', sending_cost: usd('0.01'),
@@ -72,6 +74,8 @@ describe('Costs → Prices & plans → Your plans this month', () => {
     expect(cells('Counts start again')[1]).toMatch(/2026/);
     expect(within(plan).getByText(/Committed this period with HumbleFax/)).toBeTruthy();
     expect(within(plan).getByText(/whichever is more/)).toBeTruthy();
+    // Sent HumbleFax faxes have no known time on the line: the screen says they were counted by pages only.
+    expect(within(plan).getByText(/counted pages only/)).toBeTruthy();
     expect(within(plan).getByTestId('plan-own-accounts').textContent).toContain('Telnyx billed the calls');
     fireEvent.click(within(plan).getByText(/Day by day since/));
     const days = within(plan).getByRole('table', { name: 'HumbleFax day by day' });

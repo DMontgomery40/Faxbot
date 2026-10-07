@@ -297,7 +297,8 @@ def compare(engine, values, *, now=None, days=WINDOW_DAYS, path=None):
                      budget_pages=budget.pages if budget is not None else None)
         yours = carrier.id in _yours(faxes, preset)
         rows.append((carrier, bill, yours))
-    current = _current(found, faxes, preset, country, days, data, currency)
+    current = _current(found, faxes, preset, country, days, data, currency,
+                       plans=plans_you_pay(engine, values, now=now))
     complete = [(carrier, bill) for carrier, bill, _ in rows if bill.complete and not bill.over_budget]
     cheapest = min(complete, key=lambda item: (item[1].total, item[0].id)) if complete else None
     views = []
@@ -314,7 +315,10 @@ def compare(engine, values, *, now=None, days=WINDOW_DAYS, path=None):
                       'sentence': _carrier_sentence(carrier, bill, sent, received, numbers, currency)})
     return {**base, 'carriers': views, 'cheapest': cheapest[0].id if cheapest else None,
             'current': {'total': _money(current['micros'], currency), 'complete': current['complete'],
-                        'not_priced': current['not_priced'], 'routes': current['routes']},
+                        'not_priced': current['not_priced'], 'routes': current['routes'],
+                        # Plans you pay for that carried no fax in the window: their fees are in the total.
+                        'idle_plans': [{'name': name, 'monthly_fee': _money(fee, currency)}
+                                       for name, fee in current['idle']]},
             'sentence': _summary(cheapest, current, days, currency)}
 
 
@@ -331,15 +335,26 @@ def _yours(faxes, preset):
     return {_identity(fax.route, preset) for fax in faxes}
 
 
-def _current(found, faxes, preset, country, days, data, currency):
+def plans_you_pay(engine, values, *, now=None):
+    """{route: plan card} for every plan in use or that carried faxes, as Prices & plans lists them."""
+    from .plan_check import PlanCheck
+    from .store import RouteStore
+    preset = getattr(values, 'sip_trunk_preset', '') or ''
+    return PlanCheck(RouteStore(engine, sip_preset=lambda: preset), values, now=now, accounts={}).plans()
+
+
+def _current(found, faxes, preset, country, days, data, currency, *, plans=None):
     """The same faxes with the services you use now, priced the same way: each fax at the route it took.
 
     The numbers are counted as for every other carrier: each route keeps the
     numbers that received on it, and with nothing received the one number
-    needed to send is kept on the route that sent the most.
+    needed to send is kept on the route that sent the most. Every plan you pay
+    for (``plans``: {route: its card}) adds its fee for the window, also one
+    that carried no fax, because you pay it either way.
     """
+    from .costs import plan_fee_for_days
     by_id = {carrier.id: carrier for carrier in found}
-    total, unpriced, routes = 0, 0, []
+    total, unpriced, routes, idle = 0, 0, [], []
     groups = {}
     for fax in faxes:
         groups.setdefault(_identity(fax.route, preset), []).append(fax)
@@ -357,7 +372,25 @@ def _current(found, faxes, preset, country, days, data, currency):
         bill = price(carrier, items, country=country, days=days, numbers=numbers[identity], data=data)
         total += bill.total
         unpriced += bill.not_priced + bill.numbers_unpriced
-    return {'micros': total, 'complete': not unpriced, 'not_priced': unpriced, 'routes': routes}
+    for route, card in sorted((plans or {}).items()):
+        identity = _identity(route, preset)
+        if identity in groups or not card.monthly_fee_micros:
+            continue
+        if card.currency != currency:
+            unpriced += 1
+            continue
+        total += plan_fee_for_days(card, days)
+        idle.append((_name(identity), card.monthly_fee_micros))
+    return {'micros': total, 'complete': not unpriced, 'not_priced': unpriced, 'routes': routes, 'idle': idle}
+
+
+def _idle_clause(current, days, currency):
+    """', including the $10 HumbleFax plan, which carried no faxes in these 30 days', or ''."""
+    from .costs import plan_fee_text
+    if not current.get('idle'):
+        return ''
+    plans = [f'the {plan_fee_text(fee, currency)} {name} plan' for name, fee in current['idle']]
+    return f', including {_join(plans)}, which carried no faxes in these {days} days'
 
 
 def _summary(cheapest, current, days, currency):
@@ -373,7 +406,8 @@ def _summary(cheapest, current, days, currency):
     saving = current['micros'] - bill.total
     if saving <= 0:
         return (f'At published prices, no carrier Faxbot knows would have cost less than your current services for '
-                f"{period}: about {_about(current['micros'], currency)} (estimate).")
+                f"{period}: about {_about(current['micros'], currency)}{_idle_clause(current, days, currency)} "
+                '(estimate).')
     return (f'At published prices, {carrier.name} would have cost least for {period}: about '
             f"{_about(bill.total, currency)}, {_about(saving, currency)} less than your current services' "
-            f"{_about(current['micros'], currency)} (estimate).")
+            f"{_about(current['micros'], currency)}{_idle_clause(current, days, currency)} (estimate).")

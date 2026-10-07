@@ -1113,7 +1113,7 @@ def show_contract(out, result, *, burn_down=False):
         out.table(['Estimate', 'This period'], rows,
                   title=f"{plan['name']}" + (f', {fee} a month' if fee else ''))
         for sentence in (budget.get('sentence'), plan.get('pace_sentence'), plan.get('bill_sentence'),
-                         plan.get('count_sentence')):
+                         plan.get('count_sentence'), plan.get('untimed_sentence')):
             if sentence:
                 out.line(sentence)
         for row in plan.get('own_accounts') or []:

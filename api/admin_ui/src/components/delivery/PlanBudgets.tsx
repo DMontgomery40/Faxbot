@@ -210,7 +210,7 @@ function Plan({ plan, canWrite, onEdit, onDefault, busy }: {
         </Table>
       </TableContainer>
       <Stack spacing={0.5} sx={{ mt: 1.5 }}>
-        {[plan.budget.sentence, plan.pace_sentence, plan.bill_sentence, plan.count_sentence].filter(Boolean).map((sentence) => (
+        {[plan.budget.sentence, plan.pace_sentence, plan.bill_sentence, plan.count_sentence, plan.untimed_sentence].filter(Boolean).map((sentence) => (
           <Typography key={sentence} variant="body2" color="text.secondary">{sentence}</Typography>
         ))}
       </Stack>

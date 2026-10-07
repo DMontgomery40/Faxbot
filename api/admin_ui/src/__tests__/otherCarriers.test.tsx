@@ -27,7 +27,7 @@ function comparison(): CarrierComparison {
     switching_sentence: 'Changing carriers means moving (porting) your fax numbers to the new carrier and opening an '
       + 'account there, often under a contract; Faxbot only compares published prices and never switches anything.',
     unpublished_sentence: 'Gamma trunk and eFax publish no price Faxbot can use, so they are left out.',
-    current: { total: usd('1.0164'), complete: true, not_priced: 0, routes: ['Telnyx trunk'] },
+    current: { total: usd('1.0164'), complete: true, not_priced: 0, routes: ['Telnyx trunk'], idle_plans: [] },
     carriers: [
       carrier('sip-anveo', 'AnveoDirect trunk', '0.157', { cheapest: true, difference: usd('0.8594') }),
       carrier('sip-telnyx', 'Telnyx trunk', '1.0164', { yours: true, difference: usd('0') }),

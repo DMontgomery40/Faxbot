@@ -91,13 +91,23 @@ def record(multi, routes, route, number, when, *, pages=3, outcome='success', se
     return attempt
 
 
-def received(routes, backend, number, when, *, pages=1, count=1):
+def received(routes, backend, number, when, *, pages=1, count=1, transmission_seconds=None):
+    """Received faxes; ``transmission_seconds`` adds the provider's import record with the time it reported."""
     faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)
+    imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=routes.engine)
     with routes.engine.begin() as connection:
         for _ in range(count):
-            connection.execute(faxes.insert().values(id=uuid4().hex, from_number=CLINIC, to_number=number,
+            fax = uuid4().hex
+            connection.execute(faxes.insert().values(id=fax, from_number=CLINIC, to_number=number,
                                                      status='received', backend=backend, pages=pages, created_at=when,
                                                      received_at=when, updated_at=when))
+            if transmission_seconds is not None:
+                report = {'listed_by': backend, 'account_key': backend, 'fax': {
+                    'id': uuid4().hex[:12], 'pages': pages, 'transmission_seconds': transmission_seconds}}
+                connection.execute(imports.insert().values(
+                    id=uuid4().hex, source=backend, account=backend, operation_id=uuid4().hex, revision='1',
+                    state='pending', attempts=0, imported_at=when, source_received_at=when, report=json.dumps(report),
+                    inbound_fax_id=fax, created_at=when, updated_at=when))
 
 
 def money(micros):
@@ -325,8 +335,8 @@ def test_the_contract_view_says_whose_bill_each_side_falls_on_between_your_own_a
         "Faxbot starts HumbleFax at 200 pages and 50 faxes a month because HumbleFax's terms keep unlimited faxing for "
         'normal, individual use without naming a number; this is a cautious start, not a limit HumbleFax has '
         'promised to accept.')
-    assert plan['count_sentence'] == ("HumbleFax counts each document page or each 60 seconds on the line, whichever "
-                                      "is more, so its own count can be higher than Faxbot's.")
+    assert plan['count_sentence'] == ('HumbleFax counts each document page or each 60 seconds on the line, whichever '
+                                      'is more, and Faxbot counts the same way wherever it knows the time on the line.')
     sent, came = plan['own_accounts']
     assert (sent['direction'], sent['faxes'], sent['pages'], sent['sending_bill'], sent['receiving_bill']) == (
         'sent', 1, 2, 'HumbleFax', 'Telnyx')
@@ -634,7 +644,7 @@ def test_unknown_prices_stay_unknown_and_are_never_the_cheapest(plans):
                                                'monthly price, 1 fax it publishes no price for left out) (estimate).')
     assert views['humblefax']['not_priced'] == 1 and views['humblefax']['cheapest'] is False
     assert result['current'] == {'total': money(1_005_000), 'complete': False, 'not_priced': 1,
-                                 'routes': ['Telnyx trunk']}
+                                 'routes': ['Telnyx trunk'], 'idle_plans': []}
     # AnveoDirect publishes a UK price, so it covers both faxes, plus one number at $0.15 a month.
     uk = next(entry for entry in json.loads(_rate_cards())['international'] if entry.get('prefixes') == ['+44'])
     from api.app.routing.costs import RateTerms
@@ -682,6 +692,96 @@ def test_the_carrier_list_reads_only_published_prices():
     assert 'sip-gamma' not in names and 'Gamma trunk' in missing and 'eFax' in missing
     assert all(carrier.sending.per_minute_micros or carrier.sending.per_page_micros or carrier.sending.flat_plan
                for carrier in found)
+
+
+# The coordinator's three fixes ---------------------------------------------------------------------------------
+
+def test_an_allowance_you_set_prices_the_predictors_extra_pages(plans):
+    multi, routes = plans
+    shape = Shape(3, None, 'standard', 'normal')
+    routes.replace_cards([card('efax', monthly='25'), TELNYX_OUT])  # $25 matches no published eFax plan
+    record(multi, routes, 'efax', LAB, OCTOBER, pages=9)
+    flat = predict_from(facts_for('efax', LAB, now=OCTOBER, engine=routes.engine, values=values()), shape)
+    assert flat.cost == Money(0, 'USD')  # no allowance known: a flat plan adds nothing
+    mine = values(plan_budgets='efax:included_pages=10,page_overage=0.20')
+    facts = facts_for('efax', LAB, now=OCTOBER, engine=routes.engine, values=mine)
+    assert (facts.terms.included_pages, facts.terms.overage_page_micros) == (10, 200_000)
+    # 9 of your 10 pages used: 2 of these 3 pages are past the allowance, at your $0.20.
+    past = predict_from(facts, shape)
+    assert (past.billed_pages, past.cost, past.marginal) == (2, Money(400_000, 'USD'), True)
+    # A published plan (eFax Personal: 200 pages, then $0.10) with your own extra-page price.
+    routes.replace_cards([EFAX, TELNYX_OUT])
+    record(multi, routes, 'efax', LAB, OCTOBER, pages=195)  # 204 used
+    published = predict_from(facts_for('efax', LAB, now=OCTOBER, engine=routes.engine, values=values()), shape)
+    assert published.cost == Money(300_000, 'USD')
+    yours = predict_from(facts_for('efax', LAB, now=OCTOBER, engine=routes.engine,
+                                   values=values(plan_budgets='efax:page_overage=0.05')), shape)
+    assert yours.cost == Money(150_000, 'USD')
+    # Your setting with no allowance at all turns the published one off.
+    none = facts_for('efax', LAB, now=OCTOBER, engine=routes.engine, values=values(plan_budgets='efax:included_pages=none'))
+    assert none.terms.included_pages is None and predict_from(none, shape).cost == Money(0, 'USD')
+
+
+def test_your_current_setup_includes_every_plan_fee_you_pay(plans):
+    multi, routes = plans
+    settings = values(effective_outbound='sip', outbound_route_providers=('humblefax',))
+    for _ in range(2):
+        record(multi, routes, 'sip', LAB, OCTOBER, pages=3, seconds=50)
+    result = compare(routes.engine, settings, now=datetime(2026, 10, 21))
+    telnyx = 2 * attempt_cost(shipped_card('sip-telnyx'), seconds=50, pages=3, delivered=True) + 1_000_000
+    anveo = 2 * attempt_cost(shipped_card('sip-anveo'), seconds=50, pages=3, delivered=True) + 150_000
+    current = telnyx + 10_000_000  # HumbleFax carried nothing, and its $10 is still paid
+    assert result['current']['total'] == money(current)
+    assert result['current']['idle_plans'] == [{'name': 'HumbleFax', 'monthly_fee': money(10_000_000)}]
+    views = {view['id']: view for view in result['carriers']}
+    assert views['sip-telnyx']['difference'] == money(current - telnyx)
+    assert result['sentence'] == (f'At published prices, AnveoDirect trunk would have cost least for your last 30 '
+                                  f'days of faxing: about {_short(anveo)}, {_short(current - anveo)} less than your '
+                                  f"current services' {_short(current)}, including the $10 HumbleFax plan, which "
+                                  'carried no faxes in these 30 days (estimate).')
+    from api.app.routing.carrier_compare import Carrier, Bill, _summary
+    dear = Carrier('sip-telnyx', 'Telnyx trunk', 'trunk', shipped_card('sip-telnyx'), None, 1_000_000)
+    assert _summary((dear, Bill(sent=20_000_000)), {'micros': 11_000_000, 'complete': True,
+                                                    'idle': [('HumbleFax', 10_000_000), ('eFax', 18_990_000)]},
+                    30, 'USD') == (
+        'At published prices, no carrier Faxbot knows would have cost less than your current services for your last 30 '
+        'days of faxing: about $11.00, including the $10 HumbleFax plan and the $18.99 eFax plan, which carried no '
+        'faxes in these 30 days (estimate).')
+
+
+def test_humblefax_counts_the_greater_of_pages_and_started_minutes_where_the_time_is_known(plans):
+    multi, routes = plans
+    settings = values()
+    # Received: HumbleFax reported 150 seconds on the line for a 1-page fax, so it counts 3 pages.
+    received(routes, 'humblefax', HUMBLE, OCTOBER, pages=1, transmission_seconds=150)
+    received(routes, 'humblefax', HUMBLE, OCTOBER, pages=4, transmission_seconds=30)  # 4 pages beat 1 minute
+    left = budget_left('humblefax', OCTOBER, engine=routes.engine, values=settings)
+    assert left.budget.page_time_seconds == 60
+    assert (left.used.received_pages, left.used.untimed) == (7, 0)
+    assert plan_budget.untimed_sentence(left) is None
+    # Sent: Faxbot keeps no time on the line for a fax HumbleFax sent, so its pages count and the screen says so.
+    record(multi, routes, 'humblefax', LAB, OCTOBER, pages=2)
+    left = budget_left('humblefax', OCTOBER, engine=routes.engine, values=settings)
+    assert (left.used.sent_pages, left.used.pages, left.used.untimed) == (2, 9, 1)
+    assert plan_budget.untimed_sentence(left) == (
+        'HumbleFax also counts each started minute on the line as a page, but the time on the line was not known for '
+        "this fax, so Faxbot counted pages only and HumbleFax's own count may be higher.")
+    record(multi, routes, 'humblefax', LAB, OCTOBER, pages=1)
+    received(routes, 'humblefax', HUMBLE, OCTOBER, pages=1)  # listed without a reported time
+    left = budget_left('humblefax', OCTOBER, engine=routes.engine, values=settings)
+    assert plan_budget.untimed_sentence(left) == (
+        'HumbleFax also counts each started minute on the line as a page, but the time on the line was not known for '
+        "3 of these faxes, so Faxbot counted pages only and HumbleFax's own count may be higher.")
+    (plan,) = contract_report(routes, settings, now=OCTOBER, accounts={})['plans']
+    assert plan['used']['counted_by_pages_only'] == 3 and plan['untimed_sentence'] == plan_budget.untimed_sentence(left)
+    # Faxbot's own record of a call: a trunk plan counting by the minute takes the call's measured time.
+    record(multi, routes, 'sip', LAB, OCTOBER, pages=1, seconds=130)
+    record(multi, routes, 'sip', LAB, OCTOBER, pages=2)  # no call record
+    found = plan_budget.records(routes.engine, 'sip', datetime(2026, 10, 1), datetime(2026, 11, 1),
+                                page_time_seconds=60)
+    assert sorted((pages, timed) for _, _, pages, timed in found) == [(2, False), (3, True)]
+    plain = plan_budget.records(routes.engine, 'sip', datetime(2026, 10, 1), datetime(2026, 11, 1))
+    assert sorted(pages for _, _, pages, _ in plain) == [1, 2]
 
 
 # Over HTTP ---------------------------------------------------------------------------------------------------------

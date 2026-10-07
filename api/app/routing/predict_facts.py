@@ -313,6 +313,27 @@ def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
         return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
+def plan_terms(route_key, terms, card, values):
+    """A monthly plan's allowance and extra-page price from its budget (``plan_budget``) first.
+
+    The budget is what you set in ``plan_budgets``, else the published plan the
+    card matches, so an allowance or extra-page price you set prices the fax
+    here too. Terms that are not the route's own plan card are unchanged.
+    """
+    if terms is None or card is None or terms.card is not card or not card.monthly_fee_micros:
+        return terms
+    try:
+        from .plan_budget import budget_for
+        budget = budget_for(route_key, card, values)
+    except Exception:
+        return terms
+    if budget is None:
+        return terms
+    included = budget.included_pages
+    return replace(terms, included_pages=included,
+                   overage_page_micros=budget.page_overage_micros if included else None)
+
+
 def plan_use(engine, route_key, *, now, values=None):
     """Pages and faxes the plan carried this billing period, with its page budget (``plan_budget``); None if unreadable."""
     try:
@@ -347,6 +368,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     if card is None and not saved:
         card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)
     terms, refusal = terms_for(identity, where, card, data, label=label)
+    terms = plan_terms(route_key, terms, card, values)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
