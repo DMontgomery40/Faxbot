@@ -881,12 +881,13 @@ def direct_deliveries():
 
 @cases.command('list')
 def cases_list(limit: int = typer.Option(50, '--limit', min=1, max=200, help='How many cases to show.')):
-    """List the newest cases you sent packets for: who received them, documents sent and received, and when."""
+    """List the newest cases you sent packets for: who received them, what was delivered and acknowledged, and when."""
     result = state.api().get('/cases', params={'limit': limit})
     items = result.get('cases') or []
     state.out().result(result, lambda out: out.table(
         ['Case', 'Recipient', 'Documents', 'Pages', 'Last sent'],
-        [[item['case_id'], item['to'], f"{item['documents']} sent, {item['accepted']} received", item['pages'],
+        [[item['case_id'], item['to'],
+          f"{item['documents']} sent, {item.get('sent', 0)} delivered, {item['accepted']} acknowledged", item['pages'],
           local_time(item.get('last_sent_at'))] for item in items],
         empty='No case packets sent yet.'))
 
@@ -894,15 +895,23 @@ def cases_list(limit: int = typer.Option(50, '--limit', min=1, max=200, help='Ho
 @cases.command('documents')
 def cases_documents(case_id: str = typer.Argument(..., help='Your case reference.'),
                     to: str = typer.Option(..., '--to', help='Recipient fax number.'),
-                    ids: bool = typer.Option(False, '--ids', help='Also show the fax ID each document was sent in.')):
-    """List the documents of a case already sent to a recipient, and which they accepted."""
+                    ids: bool = typer.Option(False, '--ids', help='Also show the fax ID each document was last sent in.')):
+    """List the documents of a case sent to a recipient: delivered, acknowledged, too old, or not found by them."""
+    from .cases import detail, state_text
     result = state.api().get(f'/cases/{segment(case_id)}/documents', params={'to': to})
 
     def human(out):
-        out.line(f"Recipient accepts references: {text(result.get('accepts_references'))}")
-        out.table(['Document', 'Pages', 'Accepted', 'Reference'] + (['Fax ID'] if ids else []),
-                  [[item['title'], item['pages'], local_time(item.get('accepted_at'), empty='no'), item['reference']]
-                   + ([item.get('fax_id')] if ids else []) for item in result.get('documents', [])],
+        out.line('This recipient accepts a one-page list instead of documents it acknowledged.'
+                 if result.get('accepts_references') else 'This recipient wants every document in full.')
+        if result.get('reuse_days') == 0:
+            out.line('Its acknowledgements are trusted with no time limit.')
+        else:
+            out.line(f"Its acknowledgements are trusted for {result.get('reuse_days')} days.")
+        out.table(['Document', 'Version and source', 'Purpose', 'Pages', 'State', 'Reference']
+                  + (['Fax ID'] if ids else []),
+                  [[item['title'], detail(item), item.get('purpose') or '-', item['pages'], state_text(item),
+                    item['reference']] + ([item.get('fax_id')] if ids else [])
+                   for item in result.get('documents', [])],
                   empty='Nothing has been sent for this case to this recipient.')
     state.out().result(result, human)
 
@@ -914,18 +923,28 @@ def cases_send(case_id: str = typer.Argument(..., help='Your case reference.'),
                                                   help='PDF documents for the packet, in order.'),
                title: list[str] = typer.Option(None, '--title', help='Title for each document, in the same order. '
                                                                      'Default: the file name.'),
+               purpose: str = typer.Option('', '--purpose', help='What the packet is for. The same document sent '
+                                           'for another purpose is sent in full.'),
+               source: list[str] = typer.Option(None, '--source', help='Where each document came from, in order.'),
+               version: list[str] = typer.Option(None, '--version', help='Version of each document, in order.'),
+               kind: list[str] = typer.Option(None, '--type', help='Document type of each document, in order.'),
+               date: list[str] = typer.Option(None, '--date', help='The date on each document, in order, as '
+                                                                   'year-month-day.'),
                preview: bool = typer.Option(False, '--preview', help='Show what would be sent without sending.')):
-    """Send a case packet, leaving out documents the recipient already has."""
+    """Send a case packet, listing documents the recipient acknowledged instead of sending them again."""
+    from .cases import WHY_TEXT
     with ExitStack() as stack:
         uploads = [('documents', (path.name, stack.enter_context(path.open('rb')), 'application/pdf'))
                    for path in files]
-        data = {'to': to, 'preview': 'true' if preview else 'false', 'titles': list(title or [])}
+        data = {'to': to, 'preview': 'true' if preview else 'false', 'titles': list(title or []), 'purpose': purpose,
+                'sources': list(source or []), 'versions': list(version or []), 'types': list(kind or []),
+                'dates': list(date or [])}
         result = state.api().post(f'/cases/{segment(case_id)}/faxes', data=data, files=uploads)
 
     def human(out):
-        out.table(['Document', 'Pages', 'In this packet'],
-                  [[item['title'], item['pages'], 'included' if item['status'] == 'included' else 'referred to']
-                   for item in result.get('documents', [])])
+        out.table(['Document', 'Pages', 'In this packet', 'Why'],
+                  [[item['title'], item['pages'], 'included' if item['status'] == 'included' else 'listed only',
+                    WHY_TEXT.get(item.get('why'), '-')] for item in result.get('documents', [])])
         out.line(f"{result['pages']} pages to send, {result['pages_saved']} pages saved.")
         if result.get('fax_id'):
             out.line(f"Sent as fax {result['fax_id']}. Check on it with: faxbot status {result['fax_id']}")
