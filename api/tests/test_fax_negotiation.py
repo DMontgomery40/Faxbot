@@ -453,8 +453,8 @@ def _columns(engine):
         return {column['name'] for column in sa.inspect(connection).get_columns('fax_engine_calls')}
 
 
-def test_negotiation_is_head_after_history():
-    assert schema.HEAD == schema_negotiation.REVISION == '0023_negotiation'
+def test_negotiation_follows_history():
+    assert schema.NEGOTIATION == schema_negotiation.REVISION == '0023_negotiation'
     assert schema.HISTORY == '0022_history' and schema_negotiation.TABLES == frozenset()
 
 
