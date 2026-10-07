@@ -234,8 +234,18 @@ def _caption_lines(geo, page_index, page_count):
 
 def _picture_tones(geo, picture, rows):
     """Black dots per cell, 1..unit-1, by error diffusion of the picture's darkness."""
-    gray = picture.convert('L').resize((geo.columns, rows), Image.Resampling.LANCZOS)
-    values = gray.tobytes()
+    # Fit the picture inside the data area keeping its proportions; a cell is unit dots wide and
+    # ``height`` lines tall, so it is not square on paper.
+    res = geo.resolution
+    area_width, area_height = geo.columns * geo.unit / res.xdpi, rows * geo.height / res.ydpi
+    source = picture.convert('L')
+    scale = min(area_width / source.size[0], area_height / source.size[1])
+    cells_across = max(1, min(geo.columns, round(source.size[0] * scale * res.xdpi / geo.unit)))
+    cells_down = max(1, min(rows, round(source.size[1] * scale * res.ydpi / geo.height)))
+    fitted = Image.new('L', (geo.columns, rows), 255)
+    fitted.paste(source.resize((cells_across, cells_down), Image.Resampling.LANCZOS),
+                 ((geo.columns - cells_across) // 2, (rows - cells_down) // 2))
+    values = fitted.tobytes()
     unit = geo.unit
     span = unit - 2
     tones = []
@@ -301,6 +311,12 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
             for offset in range(start, end, per_row):
                 chunk = data[offset:offset + per_row]
                 rows.append((offset * 8, chunk + bytes(per_row - len(chunk))))
+            if layout == 'picture':
+                # The whole picture shows: rows past the stream carry zeros the decoder ignores.
+                filler = start + per_row * len(rows)
+                while len(rows) < geo.rows_per_page:
+                    rows.append((filler * 8, bytes(per_row)))
+                    filler += per_row
             plans.append((start * 8, end * 8, rows))
     else:
         source = format(int.from_bytes(data, 'big'), f'0{total_bits}b')
