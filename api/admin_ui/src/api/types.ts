@@ -85,6 +85,31 @@ export interface FaxJob extends DeliveryMetadata {
   urgent?: boolean;
   // Why it has not started yet, or why its number stays reserved; null otherwise.
   waiting_reason?: string | null;
+  // The time the sender needs it sent by, and one sentence (whether it may miss it); null without one.
+  send_by?: { at: string; sentence: string; at_risk: boolean } | null;
+}
+
+// Recipients, Details: the hours a recipient takes faxes and the busy hours Faxbot learned for its number.
+export interface RecipientSchedule {
+  number: string;
+  time_zone: string;              // the recipient's own zone; '' means the installation's
+  installation_time_zone: string;
+  days: string[] | null;          // 'mon' … 'sun'; null means every day
+  start: string | null;           // 'HH:MM'; null means any time of day
+  end: string | null;
+  learn_busy: boolean;
+  hours_sentence: string;
+  busy_hours: { label: string; sentence: string }[];
+  busy_sentence: string;
+  failed_try: { route: string | null; label: string; sentence: string; sources: string[]; read_on: string };
+}
+
+export interface RecipientScheduleSave {
+  time_zone: string | null;
+  days: string[] | null;
+  start: string | null;
+  end: string | null;
+  learn_busy: boolean;
 }
 
 export interface DeliveryHistoryEvent {

@@ -13,6 +13,7 @@ import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './sh
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
 import RecipientFaxLimitsPanel from './RecipientFaxLimits';
+import RecipientSchedulePanel from './RecipientSchedule';
 import TollFreeApprovalPanel from './TollFreeApproval';
 
 function routeSummary(destination: Destination): string {
@@ -186,6 +187,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
             label="Accepts a one-page index instead of documents it already received for a case" />
           <SendingTogetherPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />
+          <RecipientSchedulePanel client={client} number={detail.number} canWrite={canWrite} />
           <TollFreeApprovalPanel client={client} number={detail.number} canWrite={canWrite} />
         </>
       )}
