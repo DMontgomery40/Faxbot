@@ -2,10 +2,11 @@
 // setting in a fax number's Details, and a fax's waiting or shared-call lines in Jobs.
 import { useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, Checkbox, Divider, FormControlLabel, ListItem, ListItemText, Stack, Switch, TextField, Typography,
+  Alert, Box, Button, Checkbox, Divider, FormControl, FormControlLabel, FormLabel, ListItem, ListItemText, Radio,
+  RadioGroup, Stack, Switch, TextField, Typography,
 } from '@mui/material';
 import AdminAPIClient from '../../api/client';
-import type { BatchingNumber, FaxTogether, FaxTogetherSummary } from '../../api/batchingTypes';
+import type { BatchingNumber, Boundaries, FaxTogether, FaxTogetherSummary } from '../../api/batchingTypes';
 import { DeliveryError } from './shared';
 import { formatServerTime } from '../../api/time';
 
@@ -78,7 +79,10 @@ export function FaxTogetherItem({ client, jobId, together, onChanged }: {
             <Stack component="span" spacing={0.5} sx={{ display: 'flex' }}>
               <span>{line ?? 'Sent on its own.'}</span>
               {current.state === 'together' && (
-                <span>Its separator page says {current.reference} (document {current.document_number} of {current.documents}).</span>
+                <span data-testid="together-layout">
+                  {detail?.layout_sentence
+                    ?? `Its separator page says ${current.reference} (document ${current.document_number} of ${current.documents}).`}
+                </span>
               )}
               {detail?.share && <span>{detail.share.sentence}</span>}
             </Stack>
@@ -107,6 +111,8 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
   const [wait, setWait] = useState('10');
   const [pages, setPages] = useState('30');
   const [mixed, setMixed] = useState(false);
+  const [boundaries, setBoundaries] = useState<Boundaries>('separators');
+  const [marksAgreed, setMarksAgreed] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -118,6 +124,8 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
     setWait(String(loaded.max_wait_minutes));
     setPages(String(loaded.max_pages));
     setMixed(loaded.mixed_senders);
+    setBoundaries(loaded.boundaries ?? 'separators');
+    setMarksAgreed(false);
   };
 
   useEffect(() => {
@@ -136,8 +144,13 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
   const maxPages = Number(pages);
   const valid = Number.isInteger(waitMinutes) && waitMinutes >= 1 && waitMinutes <= 60
     && Number.isInteger(maxPages) && maxPages >= 2 && maxPages <= 200;
+  // How each document is marked: separator pages need no agreement; anything else needs the recipient's.
+  const currentMarks = view.boundaries ?? 'separators';
+  const marksChanged = enabled && boundaries !== currentMarks;
+  const marksChoice = view.boundaries_choices?.find((choice) => choice.value === boundaries);
+  const marksNeedAgreement = marksChanged && Boolean(marksChoice?.agreement_text);
   const changed = enabled !== view.enabled || (enabled && (waitMinutes !== view.max_wait_minutes
-    || maxPages !== view.max_pages || mixed !== view.mixed_senders));
+    || maxPages !== view.max_pages || mixed !== view.mixed_senders || marksChanged));
 
   const save = async () => {
     setBusy(true);
@@ -148,6 +161,7 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
         ? await client.saveBatching(number, {
           enabled: true, recipient_agreed: agreed, max_wait_minutes: waitMinutes, max_pages: maxPages,
           mixed_senders: mixed, version: view.version,
+          ...(marksChanged ? { boundaries, boundaries_agreed: marksNeedAgreement && marksAgreed } : {}),
         })
         : await client.turnOffBatching(number);
       show(result);
@@ -170,6 +184,17 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
         </Typography>
       )}
       <Typography variant="body2" color="text.secondary">{view.savings.sentence}</Typography>
+      {view.boundaries_sentence && (
+        <Typography variant="body2" color="text.secondary" data-testid="boundaries-state">{view.boundaries_sentence}</Typography>
+      )}
+      {view.boundaries_agreement && (
+        <Typography variant="body2" color="text.secondary">
+          The recipient's agreement to this was recorded by {view.boundaries_agreement.by} on {formatServerTime(view.boundaries_agreement.at)}.
+        </Typography>
+      )}
+      {Boolean(view.savings.separator_pages?.calls) && (
+        <Typography variant="body2" color="text.secondary">{view.savings.separator_pages?.sentence}</Typography>
+      )}
       <DeliveryError error={error} onClose={() => setError(null)} />
       {saved && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSaved(null)}>{saved}</Alert>}
       <FormControlLabel sx={{ mt: 1 }} disabled={!canWrite || busy}
@@ -193,10 +218,30 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
             label="Faxes from different senders may share a call" />
         </Box>
       )}
+      {enabled && view.boundaries_choices && (
+        <FormControl sx={{ mt: 1 }} disabled={!canWrite || busy}>
+          <FormLabel id={`boundaries-${number}`}>How each document is marked</FormLabel>
+          <RadioGroup aria-labelledby={`boundaries-${number}`} value={boundaries}
+            onChange={(e) => { setBoundaries(e.target.value as Boundaries); setMarksAgreed(false); }}>
+            {view.boundaries_choices.map((choice) => (
+              <FormControlLabel key={choice.value} value={choice.value} control={<Radio size="small" />} label={choice.label} />
+            ))}
+          </RadioGroup>
+          {view.boundaries_keeps && (
+            <Typography variant="body2" color="text.secondary">{view.boundaries_keeps}</Typography>
+          )}
+          {marksNeedAgreement && marksChoice?.agreement_text && (
+            <FormControlLabel
+              control={<Checkbox checked={marksAgreed} onChange={(e) => setMarksAgreed(e.target.checked)} />}
+              label={marksChoice.agreement_text} />
+          )}
+        </FormControl>
+      )}
       {canWrite && (
         <Box mt={1}>
           <Button size="small" variant="outlined" onClick={() => void save()}
-            disabled={busy || !changed || (enabled && !valid) || (turningOn && !agreed)}>
+            disabled={busy || !changed || (enabled && !valid) || (turningOn && !agreed)
+              || (marksNeedAgreement && !marksAgreed)}>
             {enabled ? 'Save sending together' : 'Turn off sending together'}
           </Button>
         </Box>

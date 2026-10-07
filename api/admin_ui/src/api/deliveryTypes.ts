@@ -414,6 +414,8 @@ export interface Savings {
   sending_together: SavingPart & {
     numbers: number; calls: number; faxes: number; calls_saved: number; priced_calls: number;
   };
+  // Separator pages shared calls left out (an index page or page marks); optional for older servers.
+  separator_pages?: SavingPart & { calls: number; pages_saved: number; priced_calls: number };
   direct_delivery: SavingPart & {
     faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
   };

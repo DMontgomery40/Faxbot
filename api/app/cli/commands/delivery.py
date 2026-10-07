@@ -157,9 +157,27 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         "'default' for one at a time."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
                                    help='Whether this recipient accepts case packets that reference documents '
-                                        'they already received instead of resending them.')):
-    """Change a number's name, notes, preferred route, calls at once, or whether it accepts case packets."""
+                                        'they already received instead of resending them.'),
+                               index_page: bool = typer.Option(False, '--index-page',
+                                   help="Faxes sent together to this number start with one index page listing "
+                                        "each document's pages, instead of a separator page before each document. "
+                                        "Records that the recipient agreed to it. Sending together must be on "
+                                        "('faxbot recipients together set')."),
+                               page_headers: bool = typer.Option(False, '--page-headers',
+                                   help='Faxes sent together to this number have a line at the top of every page '
+                                        'naming its document and page, with no separator or index page. Records '
+                                        'that the recipient agreed to it. Needs your header text and sending number '
+                                        '(faxbot system settings set fax_header=... fax_station_id=...).'),
+                               separator_pages: bool = typer.Option(False, '--separator-pages',
+                                   help='Go back to a separator page before each document sent together to this '
+                                        'number.')):
+    """Change a number's name, notes, preferred route, calls at once, whether it accepts case packets, or how faxes sent together to it mark each document."""
     api = state.api()
+    chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
+                                        (separator_pages, 'separators')) if flag]
+    if len(chosen) > 1:
+        raise CliError('Choose one of --index-page, --page-headers or --separator-pages.')
+    boundaries = chosen[0] if chosen else None
     body = {}
     if name is not None:
         body['display_name'] = name
@@ -176,11 +194,34 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body:
+    if not body and boundaries is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
-    current = api.get('/routing/destinations/' + segment(number))
-    view = api.patch('/routing/destinations/' + segment(number), json={**body, 'version': current.get('version', 0)})
-    state.out().result(view, lambda out: out.line(f"Destination {view['number']} updated."))
+    # How documents are marked is part of sending together (/batching); set it first, so a refusal changes nothing.
+    together = _set_boundaries(api, number, boundaries) if boundaries is not None else None
+    view = None
+    if body:
+        current = api.get('/routing/destinations/' + segment(number))
+        view = api.patch('/routing/destinations/' + segment(number),
+                         json={**body, 'version': current.get('version', 0)})
+    result = together if view is None else view if together is None else {**view, 'sending_together': together}
+
+    def human(out):
+        if view is not None:
+            out.line(f"Destination {view['number']} updated.")
+        if together is not None:
+            out.line(together.get('boundaries_sentence')
+                     or 'Sending together is off for this number, so each fax goes in its own call.')
+    state.out().result(result, human)
+
+
+def _set_boundaries(api, number, boundaries):
+    """Choose how a number's shared calls mark each document, recording the recipient's agreement to it."""
+    current = api.get('/batching/numbers/' + segment(number))
+    if boundaries == 'separators' and current.get('boundaries', 'separators') == 'separators':
+        return current  # already separators: nothing to record
+    return api.put('/batching/numbers/' + segment(number), json={
+        'enabled': current['enabled'], 'boundaries': boundaries, 'boundaries_agreed': boundaries != 'separators',
+        'version': current.get('version', 0)})
 
 
 def _monthly(card):
@@ -351,7 +392,8 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
         ['From', 'Received', 'Cost'], _received_cost_rows(costs, items), empty='No received faxes.'))
 
 
-SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
+SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'Separator pages left out'),
+                ('direct_delivery', 'Direct delivery'),
                 ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'))
 
 
@@ -786,15 +828,24 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 def _batching_human(view):
     def human(out):
         agreement = view.get('agreement') or {}
+        marks = view.get('boundaries_agreement') or {}
+        labels = {choice['value']: choice['label'] for choice in view.get('boundaries_choices') or []}
         out.line(view['state_sentence'])
         out.line(view['route_sentence'])
+        if view.get('boundaries_sentence'):
+            out.line(view['boundaries_sentence'])
         out.fields([('Fax number', view['number']), ('Sending together', 'on' if view['enabled'] else 'off'),
                     ('Longest wait', f"{view['max_wait_minutes']} minutes"),
                     ('Most pages in one call', view['max_pages']),
                     ('Different senders may share a call', view['mixed_senders']),
                     ('Recipient agreement recorded by', agreement.get('by')),
-                    ('Recorded', local_time(agreement.get('at')) if agreement else None)])
+                    ('Recorded', local_time(agreement.get('at')) if agreement else None),
+                    ('Each document is marked by', labels.get(view.get('boundaries'))),
+                    ('Agreement to that recorded by', marks.get('by')),
+                    ('Agreement to that recorded', local_time(marks.get('at')) if marks else None)])
         out.line(view['savings']['sentence'])
+        if (view['savings'].get('separator_pages') or {}).get('calls'):
+            out.line(view['savings']['separator_pages']['sentence'])
     return human
 
 

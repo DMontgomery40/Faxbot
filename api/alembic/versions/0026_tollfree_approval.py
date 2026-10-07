@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0026_tollfree_approval'
 # The lead sets down_revision to the highest revision at integration.
-down_revision = '0023_negotiation'
+down_revision = '0025_shared_manifest'
 branch_labels = None
 depends_on = None
 

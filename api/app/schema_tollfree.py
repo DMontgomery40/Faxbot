@@ -23,7 +23,7 @@ rows with it.
 """
 import sqlalchemy as sa
 
-from .schema_negotiation import frozen_metadata as previous_metadata
+from .schema_shared_manifest import frozen_metadata as previous_metadata
 
 
 REVISION = '0026_tollfree_approval'
