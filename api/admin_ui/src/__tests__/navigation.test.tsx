@@ -203,7 +203,8 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(40);
+    // 41 with Faxes → Forms (registered forms).
+    expect(opened).toHaveLength(41);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);

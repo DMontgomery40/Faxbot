@@ -602,6 +602,8 @@ $ faxbot forms [OPTIONS] COMMAND [ARGS]...
 * `render`: Fill in a form and save the pages exactly...
 * `send`: Fill in a form and send it: to a partner...
 * `sent`: List forms you sent, with what happened to...
+* `preview`: Save a page of the blank form, as it is...
+* `original`: Download the file a form version was...
 * `fax`: Send the pages of a form that did not...
 * `received`: List forms partners sent whose pages...
 * `partner`: Ask a partner which forms it holds.
@@ -711,16 +713,64 @@ $ faxbot forms send [OPTIONS] {form} {to}
 
 ### `faxbot forms sent`
 
-List forms you sent, with what happened to each.
+List forms you sent, with what happened to each; with an ID, show one with its values.
 
 **Usage**:
 
 ```console
-$ faxbot forms sent [OPTIONS]
+$ faxbot forms sent [OPTIONS] [delivery]
 ```
+
+**Arguments**:
+
+* `delivery`: One ID from the list, to show the values that were sent.
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot forms preview`
+
+Save a page of the blank form, as it is faxed, as a PNG picture.
+
+**Usage**:
+
+```console
+$ faxbot forms preview [OPTIONS] {form}
+```
+
+**Arguments**:
+
+* `form`: Form name.  [required]
+
+**Options**:
+
+* `--version <int range>`: The version to use. Default: the newest.  [x&gt;=1]
+* `--page <int range>`: Which page.  [default: 1; x&gt;=1]
+* `--fields`: Outline each field&#x27;s box.
+* `-o, --output <str>`: File to write. Use &#x27;-&#x27; for standard output.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot forms original`
+
+Download the file a form version was imported from.
+
+**Usage**:
+
+```console
+$ faxbot forms original [OPTIONS] {form}
+```
+
+**Arguments**:
+
+* `form`: Form name.  [required]
+
+**Options**:
+
+* `--version <int range>`: The version to use. Default: the newest.  [x&gt;=1]
+* `-o, --output <str>`: File to write. Use &#x27;-&#x27; for standard output.
+* `--force`: Replace the file if it exists.
 * `--help`: Show this message and exit.
 
 ### `faxbot forms fax`

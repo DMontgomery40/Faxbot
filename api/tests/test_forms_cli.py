@@ -55,6 +55,12 @@ def test_import_list_show_render_and_send_a_form(cli, tmp_path):
     assert first['form'] == 'Referral' and first['state'] == 'faxed'
     assert 'as a fax' in cli('forms', 'sent').stdout
     assert cli('forms', 'received').stdout.strip() == 'No forms received from partners yet.'
+    one = cli('forms', 'sent', first['id'])
+    assert 'Patient name: Ann Example' in one.stdout and 'Signature: signature picture' in one.stdout
+    blank = cli('forms', 'preview', 'Referral', '--fields', '--output', tmp_path / 'blank.png')
+    assert blank.exit_code == 0 and (tmp_path / 'blank.png').read_bytes().startswith(b'\x89PNG')
+    original = cli('forms', 'original', 'Referral', '--output', tmp_path / 'original.svg')
+    assert original.exit_code == 0 and (tmp_path / 'original.svg').read_bytes() == SVG
 
 
 def test_a_new_version_leaves_the_first_one_as_it_was(cli, tmp_path):

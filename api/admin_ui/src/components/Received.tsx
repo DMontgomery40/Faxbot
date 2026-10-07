@@ -59,6 +59,8 @@ import ImportDocument from './ImportDocument';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 import { providerLabel } from '../providerLabels';
+import type { ReceivedForm } from '../api/formsTypes';
+import ReceivedFormLine from './forms/ReceivedFormLine';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -171,6 +173,8 @@ export default function Received({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [deliveries, setDeliveries] = useState<IntakeItem[] | null>(null);
+  // Registered forms partners delivered whose pages matched, with their values.
+  const [receivedForms, setReceivedForms] = useState<ReceivedForm[] | null>(null);
   const [notDelivered, setNotDelivered] = useState<number | null>(null);
   const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
   const [callbacks, setCallbacks] = useState<any | null>(null);
@@ -224,6 +228,11 @@ export default function Received({
     } catch {
       setConnectors(null);
     }
+    try {
+      setReceivedForms((await client.listReceivedForms()).received);
+    } catch {
+      setReceivedForms(null);
+    }
   }, [client, receiving, canReadDelivery]);
 
   // How received faxes reach Faxbot: one line for the trunk or eFax.
@@ -271,6 +280,10 @@ export default function Received({
   const deliveryFor = useMemo(() => new Map((deliveries ?? []).filter((item) => item.inbound_fax_id)
     .map((item) => [item.inbound_fax_id as string, item])), [deliveries]);
   const directItems = (deliveries ?? []).filter((item) => item.source === 'direct');
+  const formByItem = useMemo(() => new Map((receivedForms ?? []).filter((form) => form.intake_item_id)
+    .map((form) => [form.intake_item_id as string, form])), [receivedForms]);
+  const formByFax = useMemo(() => new Map((receivedForms ?? []).filter((form) => form.inbound_fax_id)
+    .map((form) => [form.inbound_fax_id as string, form])), [receivedForms]);
 
   const rows = useMemo<Row[]>(() => {
     const byFax = new Map((work ?? []).map((item) => [item.inbound_fax_id, item]));
@@ -613,6 +626,7 @@ export default function Received({
                         {pages(row) ? ` · ${pages(row)} ${pages(row) === 1 ? 'page' : 'pages'}` : ''}
                       </Typography>
                       {row.fax && <InboundCostLine cost={costs.get(row.fax.id)} />}
+                      {row.fax && formByFax.get(row.fax.id) && <ReceivedFormLine form={formByFax.get(row.fax.id)!} />}
                       <OwnerAndState row={row} />
                       {deliveries !== null && row.fax && (
                         <Box>
@@ -655,6 +669,7 @@ export default function Received({
                         <TableCell>
                           <Typography variant="body2">{through(row)}</Typography>
                           {row.fax && <InboundCostLine cost={costs.get(row.fax.id)} />}
+                          {row.fax && formByFax.get(row.fax.id) && <ReceivedFormLine form={formByFax.get(row.fax.id)!} />}
                         </TableCell>
                         <TableCell><Typography variant="body2">{pages(row) || '-'}</Typography></TableCell>
                         <TableCell sx={{ maxWidth: 300 }}><OwnerAndState row={row} /></TableCell>
@@ -676,7 +691,8 @@ export default function Received({
       )}
 
       {receiving && (
-        <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)} />
+        <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)}
+          forms={formByItem} />
       )}
 
 

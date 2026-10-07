@@ -74,6 +74,7 @@ import ResourceAccess from './components/ResourceAccess';
 import Sessions from './components/Sessions';
 import DeliveryRoutes from './components/DeliveryRoutes';
 import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOverview';
+import Forms from './components/forms/Forms';
 
 export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
 
@@ -219,6 +220,10 @@ export const NAVIGATION: NavArea[] = [
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
           configError={ctx.contextError} onOpenJob={ctx.openJob} /> },
+      // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
+      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          canSend={Boolean(ctx.context.navigation.send)} canReadPartners={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {

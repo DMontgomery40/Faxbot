@@ -175,14 +175,61 @@ def forms_send(form: str = typer.Argument(..., help='Form name.'), to: str = typ
 
 
 @forms.command('sent')
-def forms_sent():
-    """List forms you sent, with what happened to each."""
-    items = state.api().get('/forms/deliveries', params={'direction': 'outbound'})['deliveries']
+def forms_sent(delivery: str = typer.Argument(None, help='One ID from the list, to show the values that were sent.')):
+    """List forms you sent, with what happened to each; with an ID, show one with its values."""
+    api = state.api()
+    if delivery is not None:
+        item = api.get(f'/forms/deliveries/{segment(delivery)}')
+        labels = {field['name']: field['label'] for field in item.get('fields') or []}
+
+        def one(out):
+            out.fields([('Form', f"{item['form'] or '?'} v{item['form_version'] or '?'}"),
+                        ('To', item['partner'] or item['fax_number']), ('Sent', local_time(item['created_at'])),
+                        ('What happened', item['status'])])
+            if item.get('detail') and item['state'] != 'delivered':
+                out.line(item['detail'])
+            for name, entry in (item.get('values') or {}).items():
+                out.line(f"  {labels.get(name, name)}: {'signature picture' if isinstance(entry, dict) else text(entry)}")
+        state.out().result(item, one)
+        return
+    items = api.get('/forms/deliveries', params={'direction': 'outbound'})['deliveries']
     state.out().result(items, lambda out: out.table(
         ['Sent', 'Form', 'To', 'Went', 'What happened', 'ID'],
         [[local_time(item['created_at']), f"{item['form'] or '?'} v{item['form_version'] or '?'}",
           item['partner'] or item['fax_number'], 'to the partner' if item['route'] == 'direct' else 'as a fax',
           item['status'], item['id']] for item in items], empty='No forms sent yet.'))
+
+
+@forms.command('preview')
+def forms_preview(form: str = typer.Argument(..., help='Form name.'), version: int = VERSION,
+                  page: int = typer.Option(1, '--page', min=1, help='Which page.'),
+                  outlines: bool = typer.Option(False, '--fields', help="Outline each field's box."),
+                  output: str = typer.Option(None, '--output', '-o', help="File to write. Use '-' for standard output."),
+                  force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):
+    """Save a page of the blank form, as it is faxed, as a PNG picture."""
+    api = state.api()
+    chosen_form, chosen = _version(api, form, version)
+    response = api.get(f"/forms/versions/{segment(chosen['id'])}/pages/{page}",
+                       params={'fields': 'true' if outlines else None}, raw=True, headers={'Accept': 'image/png'})
+    default = f"{chosen_form['name']} v{chosen['number']} page {page}.png".replace('/', '-')
+    target = save_document(response, output, default, force)
+    if target is not None:
+        state.out().result({'saved_to': str(target)}, lambda out: out.line(f'Saved page {page} to {target}.'))
+
+
+@forms.command('original')
+def forms_original(form: str = typer.Argument(..., help='Form name.'), version: int = VERSION,
+                   output: str = typer.Option(None, '--output', '-o', help="File to write. Use '-' for standard output."),
+                   force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):
+    """Download the file a form version was imported from."""
+    api = state.api()
+    chosen_form, chosen = _version(api, form, version)
+    response = api.get(f"/forms/versions/{segment(chosen['id'])}/template", raw=True)
+    kind = 'svg' if 'svg' in response.headers.get('content-type', '') else 'pdf'
+    target = save_document(response, output, f"{chosen_form['name']} v{chosen['number']}.{kind}".replace('/', '-'),
+                           force)
+    if target is not None:
+        state.out().result({'saved_to': str(target)}, lambda out: out.line(f'Saved the imported file to {target}.'))
 
 
 @forms.command('fax')
