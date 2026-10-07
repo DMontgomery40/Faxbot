@@ -363,11 +363,51 @@ def test_a_standard_fax_turned_into_a_pdf_and_back_is_the_same_standard_raster(t
     standard = [page(seed, height=1078, dpi=(204.0, 98.0)) for seed in range(2)]
     conversion.write_fax_tiff(standard, str(tmp_path / 'received.tiff'))
     conversion.tiff_to_pdf(str(tmp_path / 'received.tiff'), str(tmp_path / 'forward.pdf'))
-    conversion.pdf_to_tiff(str(tmp_path / 'forward.pdf'), str(tmp_path / 'send.tiff'))
+    conversion.pdf_to_tiff(str(tmp_path / 'forward.pdf'), str(tmp_path / 'send.tiff'), match_resolution=True)
     back = conversion.read_fax_frames(str(tmp_path / 'send.tiff'))
     assert [frame.info['dpi'] for frame in back] == [(204.0, 98.0)] * 2
     assert all(same(a, b) for a, b in zip(back, standard))
     assert conversion.fax_image_resolution(str(tmp_path / 'send.tiff')) == 'standard'
+    # An accepted fax's own image stays fine: faxes sent together share one call (batching/image.py).
+    conversion.pdf_to_tiff(str(tmp_path / 'forward.pdf'), str(tmp_path / 'accepted.tiff'))
+    assert conversion.fax_image_resolution(str(tmp_path / 'accepted.tiff')) == 'fine'
+
+
+@pytest.mark.skipif(shutil.which('gs') is None, reason='Ghostscript renders PDF pages')
+def test_a_forwarded_standard_fax_goes_at_standard_resolution_on_its_own_call(installation, database, tmp_path):
+    standard = [page(seed, height=1078, dpi=(204.0, 98.0)) for seed in range(2)]
+    conversion.write_fax_tiff(standard, str(tmp_path / 'received.tiff'))
+    conversion.tiff_to_pdf(str(tmp_path / 'received.tiff'), str(tmp_path / f'{JOB}.pdf'))
+    conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
+    configuration = SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True})
+    claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
+    changed = sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration, claim, {'to_number': PEER},
+                              tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff', now=NOW)
+    assert (changed.original_pages, changed.sent_pages) == (2, 2)
+    assert all(same(a, b) for a, b in zip(conversion.read_fax_frames(changed.tiff), standard))
+    view = views.sent_view(database, JOB)
+    assert view['sentences'] == ['Sent at standard resolution, as received.'] and view['seconds_saved'] >= 0
+    # Faxes sent together are left alone: their shared call keeps one resolution.
+    assert sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration,
+                           SimpleNamespace(job_id=JOB, attempt_id='c' * 32, members=('x',)), {'to_number': PEER},
+                           tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff') is None
+
+
+def test_what_the_engine_reports_after_a_send_is_found_for_the_next_send_to_that_number(installation, database):
+    """The engine's result names the number as the call record holds it; the next send looks it up by the
+    fax's canonical number. Both are the same string."""
+    from app import hylafax_http, sip_calls
+    calls = sip_calls.SipCallRecords(database)
+    calls.record_submission({'JobID': JOB, 'AttemptID': ATTEMPT, 'Called': PEER, 'CallerID': '+15555550100'}, now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    report = base64.b64encode(json.dumps({'page_length': 'unlimited', 'page_width': 'A4', 'fine': 1, 'remote_ecm': 1,
+                                          'scan_ms': 0, 'boundary_ms': 3100, 'boundaries': 3}).encode()).decode()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(configuration_runtime=SimpleNamespace(
+        manager=SimpleNamespace(store=SimpleNamespace(engine=database))))))
+    hylafax_http._record_engine(request, JOB, ATTEMPT, {'engine_id': '0123456789abcdef', 'commid': '000000031',
+                                                        'why': 'done', 'pages': 3, 'negotiation_b64': report}, row)
+    known = installation.capability(PEER)
+    assert (known.limit, known.learned, known.ecm, known.boundary_seconds) == ('unlimited', True, True, 3.1)
 
 
 def test_a_mixed_document_and_a_true_fine_page_stay_fine():

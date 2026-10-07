@@ -3,7 +3,6 @@ to put in local time, money from the route's own billing (always an estimate).""
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 import re
 
 import sqlalchemy as sa
@@ -47,12 +46,7 @@ def sent_view(engine, job_id, root=None):
     if engine is None or not _HEX32.fullmatch(str(job_id or '')):
         return None
     change = records_for(engine).change_for_job(job_id)
-    resolution = None
-    if root:
-        from ..conversion import fax_image_resolution
-        image = Path(root) / f'{job_id}.tiff'
-        if image.is_file() and not image.is_symlink():
-            resolution = fax_image_resolution(str(image))
+    resolution = (change or {}).get('resolution')
     sentences = [text for text in (packed_sentence(change), trimmed_sentence(change),
                                    RESOLUTION_SENTENCE if resolution == 'standard' else None) if text]
     if not sentences:
@@ -67,7 +61,7 @@ def sent_view(engine, job_id, root=None):
 def capability_sentence(cap):
     if not cap.learned:
         return ("Faxbot does not know yet how long a page this fax machine takes, so it keeps to A4 length. "
-                'It finds out on the next fax to it over your phone line.')
+                'It learns this from the next fax your fast fax service sends to it on your phone line.')
     if cap.limit == 'unlimited':
         return 'This fax machine takes pages of unlimited length.'
     return f'This fax machine takes pages up to {LIMIT_TEXT[cap.limit]}.'

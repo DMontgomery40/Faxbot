@@ -420,8 +420,13 @@ def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
 FAX_IMAGE_MODE = 0o640
 
 
-def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
-    """Rasterize a validated PDF to real Group 4 fax TIFF at 204 by 196 DPI (mode FAX_IMAGE_MODE)."""
+def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False) -> Tuple[int, str]:
+    """Rasterize a validated PDF to real Group 4 fax TIFF at 204 by 196 DPI (mode FAX_IMAGE_MODE).
+
+    ``match_resolution``: a document that is really standard resolution comes out at 204 by 98
+    (pages/resolution.py). Off by default: an accepted fax's own image stays fine, because faxes sent
+    together share one call and the built-in engine is not reliable with mixed resolutions in a call;
+    each single send matches its resolution at send time (pages/sending.py)."""
     pages = _inspect_pdf(pdf_path, raster=True)
     executable = shutil.which("gs")
     if executable is None:
@@ -445,11 +450,11 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
                     actual_pages = sum(1 for _ in _tiff_frames(image))
             if actual_pages != pages:
                 raise ValueError("Incomplete raster output")
-            # A document that is really standard resolution stays standard (pages/resolution.py).
-            from .pages.resolution import standard_frames
-            standard = standard_frames(read_fax_frames(temporary) or [])
-            if standard is not None:
-                _write_frames(standard, temporary)
+            if match_resolution:
+                from .pages.resolution import standard_frames
+                standard = standard_frames(read_fax_frames(temporary) or [])
+                if standard is not None:
+                    _write_frames(standard, temporary)
             os.chmod(temporary, FAX_IMAGE_MODE)
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None

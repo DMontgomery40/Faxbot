@@ -20,7 +20,7 @@ def page_fields(view):
     trim = ('as set for all faxes (' + ('on' if view.get('trim_blank_default') else 'off') + ')' if own is None
             else 'on for machines without error correction' if own else 'off')
     return [('Longest page', capability),
-            ('Error correction', view.get('ecm_sentence') or 'not known yet'),
+            ('This machine', view.get('ecm_sentence') or 'error correction not known yet'),
             ('Pages per sheet', 'as the receiving machine allows' if view.get('packing') != 'never' else 'never'),
             ('Blank space at the bottom of pages', trim)]
 

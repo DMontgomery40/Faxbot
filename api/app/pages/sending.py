@@ -106,7 +106,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     from .. import conversion
     from .decision import Shape, decide
     from .packing import NotPackable, layout_for, render
-    from .resolution import is_standard
+    from .decision import LINE_BITS_PER_SECOND
+    from .resolution import is_standard, standard_frames
     from .trim import rendered_pages, trim_frames
     if engine is None or getattr(claim, 'members', None):
         return None
@@ -120,7 +121,9 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     cap = records.capability(number)
     packing_ok, _ = capabilities.long_pages_allowed(engine, route, number, rule=rule)
     trim_ok = mode == 'image' and cap.ecm is False and records.trim_allowed(number)
-    if not packing_ok and not trim_ok:
+    # A document that is really standard resolution goes at standard (lossless; Faxbot's own engines only).
+    match_ok = mode == 'image'
+    if not packing_ok and not trim_ok and not match_ok:
         return None
     root = Path(str(pdf)).parent
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
@@ -135,6 +138,9 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         frames = conversion.read_fax_frames(str(source))
         if not frames:
             return None
+        matched = standard_frames(frames) if match_ok else None
+        if matched is not None:
+            frames = matched
         resolution = 'standard' if is_standard(frames) else 'fine'
         if mode == 'image' and resolution == 'fine' and (_call_resolution(values) != 'fine' or cap.fine is False):
             # The SSL Fax engine would draw these pages again at standard resolution: leave them alone.
@@ -161,7 +167,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             decision = decide(route, number, normal, dense, card=route_card)
             if not decision.pack:
                 decision = None
-        if decision is None and not trimmed_pages:
+        if decision is None and not trimmed_pages and matched is None:
             return None
         pages = render(frames, layout) if decision is not None else frames
         conversion.write_fax_tiff(pages, str(out_tiff))
@@ -175,11 +181,15 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         trim_seconds = _trim_seconds(trimmed_rows, cap, resolution)
         if trim_seconds is not None:
             seconds = (seconds or 0) + trim_seconds
+        if matched is not None and decision is None:
+            before, after = conversion.fax_page_bits(str(source)), conversion.fax_page_bits(str(out_tiff))
+            if before and after:
+                seconds = (seconds or 0) + max(0, (sum(before) - sum(after)) // LINE_BITS_PER_SECOND)
         records.record_change(
             job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=len(frames),
             sent_pages=len(pages), capability=cap, billing=_billing(route_card) if decision is not None else None,
-            trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None, seconds_saved=seconds,
-            now=now)
+            trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None,
+            resolution='standard' if matched is not None else None, seconds_saved=seconds, now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
                              len(frames), len(pages), trimmed_pages)
     except BaseException:

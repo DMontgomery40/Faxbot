@@ -290,15 +290,17 @@ class PageRecords:
     # Changed sends and split received faxes -----------------------------------------------------------------
 
     def record_change(self, *, job_id, attempt_id, number, route, original_pages, sent_pages, capability=None,
-                      billing=None, trimmed_pages=None, trimmed_rows=None, seconds_saved=None, now=None):
-        """One send whose pages Faxbot changed (packed, trimmed or both), once per attempt; returns its ID."""
+                      billing=None, trimmed_pages=None, trimmed_rows=None, resolution=None, seconds_saved=None,
+                      now=None):
+        """One send whose pages Faxbot changed (packed, trimmed, kept at standard resolution, or more than one),
+        once per attempt; returns its ID."""
         if not (_ID.fullmatch(str(job_id or '')) and _ID.fullmatch(str(attempt_id or ''))):
             raise ValueError('Unsupported page record')
         if not (isinstance(original_pages, int) and isinstance(sent_pages, int) and 1 <= sent_pages <= original_pages):
             raise ValueError('Unsupported page record')
         packed = sent_pages < original_pages
         trimmed = trimmed_pages if isinstance(trimmed_pages, int) and trimmed_pages > 0 else None
-        if not packed and trimmed is None:
+        if resolution not in (None, 'standard') or (not packed and trimmed is None and resolution is None):
             raise ValueError('Unsupported page record')
         now = now or utcnow()
         table = self.table('fax_page_changes')
@@ -316,7 +318,7 @@ class PageRecords:
                 limit_learned_at=capability.learned_at if packed and capability is not None else None,
                 billing=billing if packed else None, pages_saved=original_pages - sent_pages,
                 trimmed_pages=trimmed, trimmed_rows=trimmed_rows if trimmed and trimmed_rows else None,
-                seconds_saved=seconds, created_at=now))
+                resolution=resolution, seconds_saved=seconds, created_at=now))
             return identity
         return self._write(apply)
 

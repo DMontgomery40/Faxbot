@@ -32,7 +32,9 @@ it rendered itself (``pages``). This revision adds five tables:
   not packed) and when it was learned (NULL: the A4 default), the route's
   billing (``per_page``, ``per_minute``, ``plan`` or ``unpriced``; NULL when
   not packed), pages saved, pages whose blank bottom was left out and how
-  many rows, and the estimated seconds saved (NULL when not estimated).
+  many rows, ``resolution`` 'standard' when a document that was really
+  standard resolution went at standard, and the estimated seconds saved
+  (NULL when not estimated).
 - ``inbound_page_splits``: one row per received fax whose long pages Faxbot
   split back into the original pages: pages received and pages delivered.
   The received image itself is never changed.
@@ -135,11 +137,14 @@ def _definitions():
             sa.Column('pages_saved', sa.Integer(), nullable=False),
             sa.Column('trimmed_pages', sa.Integer(), nullable=True),
             sa.Column('trimmed_rows', sa.Integer(), nullable=True),
+            # 'standard' when a document that was really standard resolution went at standard; else NULL.
+            sa.Column('resolution', sa.String(16), nullable=True),
             sa.Column('seconds_saved', sa.Integer(), nullable=True),
             sa.Column('created_at', sa.DateTime(), nullable=False),
             sa.PrimaryKeyConstraint('id', name='pk_fax_page_changes'),
             sa.CheckConstraint(_choice('page_limit', LENGTHS), name='ck_fax_page_changes_limit'),
             sa.CheckConstraint(_choice('billing', BILLING), name='ck_fax_page_changes_billing'),
+            sa.CheckConstraint("resolution = 'standard'", name='ck_fax_page_changes_resolution'),
             sa.CheckConstraint('original_pages >= 1 AND sent_pages >= 1 AND pages_saved >= 0 AND trimmed_pages >= 1 '
                                'AND trimmed_rows >= 1 AND seconds_saved >= 0', name='ck_fax_page_changes_pages'),
         ),
