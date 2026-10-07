@@ -23,8 +23,8 @@ from ..outbound_worker import SubmissionReceipt
 from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
-from .crypto import (DirectProtocolError, card, canonical, check_card, check_signed, open_document, parse_manifest,
-                     parse_timestamp, seal, signed, timestamp, verify)
+from .crypto import (FORM, DirectProtocolError, card, canonical, check_card, check_signed, kind_of, open_document,
+                     parse_manifest, parse_timestamp, seal, signed, timestamp, verify)
 from .identity import IdentityUnavailable, identity_path, load_identity
 from .store import DirectConflict, DirectStore
 
@@ -191,6 +191,12 @@ class DirectService:
             document = open_document(identity, manifest, ciphertext)
         except DirectProtocolError as error:
             return 400, self._refusal(identity, message_id, error.reason, str(error))
+        if kind_of(manifest) == FORM:
+            # A registered form: the pages drawn here from its data are filed, and only when they match.
+            from ..forms.exchange import receive_form
+            refusal, document = receive_form(self, peer, manifest, document)
+            if refusal is not None:
+                return refusal[0], self._refusal(identity, message_id, refusal[1], refusal[2])
         if not document.startswith(b'%PDF'):
             return 400, self._refusal(identity, message_id, 'not_pdf', 'Only PDF documents can be delivered directly.')
         folder = Path(values.fax_data_dir) / 'direct'

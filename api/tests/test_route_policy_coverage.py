@@ -37,6 +37,8 @@ OWN_AUTHENTICATION = {
     ("POST", "/direct/deliveries"): "signed partner manifest",
     ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
     ("POST", "/direct/verifications"): "signed partner code confirmation",
+    ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
+    ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",
