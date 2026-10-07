@@ -1,0 +1,481 @@
+// Provider rules and provider accounts: the shapes the console reads and writes, and one table of
+// requests (method, address, body) for every rules, approvals and accounts route. The screens use
+// `rulesApi(send)`; the console's API client supplies `send`, and tests supply an in-memory server.
+// The rules document follows the provider-rules design (§4.1); the engine owns its meaning.
+import type { Money } from '../api/deliveryTypes';
+
+// -- the rules document --------------------------------------------------------------------------
+
+export type Day = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+export const DAYS: Day[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+export interface TimeCondition {
+  days?: Day[];
+  // Local time of day, 24-hour "HH:MM". A window may run past midnight (18:00 to 07:00).
+  from?: string;
+  until?: string;
+  // Whose clock: the installation's (default) or the sender's site's.
+  time_zone?: 'installation' | 'sender_site';
+}
+
+export interface DestinationCondition {
+  numbers?: string[];
+  lists?: string[];
+  prefixes?: string[];
+  countries?: string[];
+  regions?: string[];
+  partner?: boolean;
+  own_number?: boolean;
+  approved_alternate?: boolean;
+  in_sender_country?: boolean;
+}
+
+export interface SenderCondition {
+  people?: string[];
+  keys?: string[];
+  groups?: string[];
+  mailboxes?: string[];
+  sites?: string[];
+}
+
+export interface DocumentCondition {
+  pages_over?: number;
+  pages_under?: number;
+  size_over?: number;
+  case_packet?: boolean;
+}
+
+export interface Conditions {
+  destination?: DestinationCondition;
+  sender?: SenderCondition;
+  workflows?: string[];
+  document?: DocumentCondition;
+  urgent?: boolean;
+  real_call?: boolean;
+  labels?: string[];
+  time?: TimeCondition;
+}
+
+export type RouteMode = 'ordered' | 'cheapest_reliable';
+export type PageLayout = 'as_receiver_allows' | 'one_per_sheet';
+export type AlternateNumber = 'use' | 'never' | 'only';
+
+export interface Actions {
+  // Routing actions (one per routing rule).
+  use?: string;
+  try_in_order?: string[];
+  cheapest_reliable?: string[];
+  site_accounts?: string;  // 'sender' or a site key
+  mode?: RouteMode;
+  automatic?: boolean;
+  // Route settings.
+  when_busy?: 'wait' | 'next';
+  page_layout?: PageLayout;
+  alternate_number?: AlternateNumber;
+  // Limits.
+  never?: string[];
+  require_direct?: boolean;
+  require_encryption?: boolean;
+  cap_cost?: Money;
+  hold_for_approval?: { separate_approver?: boolean };
+  hold_until?: TimeCondition;
+  place_a_real_call?: boolean;
+}
+
+export interface Rule {
+  id: string;
+  name: string;
+  on: boolean;
+  mandatory?: boolean;
+  when: Conditions;
+  unless?: Conditions;
+  then: Actions;
+}
+
+export interface RecipientList { name: string; numbers?: string[]; prefixes?: string[] }
+export interface Region { name: string; countries?: string[]; prefixes?: string[] }
+export interface Site {
+  key: string; name: string; country?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
+}
+export interface Workflow { key: string; name: string; mailboxes?: string[]; labels?: string[] }
+
+export interface RulesDocument {
+  format: 1;
+  // Named recipient groups, plus `labels`: the labels senders may attach to a fax.
+  lists?: { labels?: string[] } & Record<string, RecipientList | string[] | undefined>;
+  regions?: Record<string, Region>;
+  sites?: Site[];
+  workflows?: Workflow[];
+  limits?: Rule[];
+  routes?: Rule[];
+}
+
+export type RuleKind = 'limits' | 'routes';
+
+export function emptyDocument(): RulesDocument {
+  return { format: 1, limits: [], routes: [] };
+}
+
+// The named recipient groups of a document, without its labels.
+export function recipientLists(document: RulesDocument): Record<string, RecipientList> {
+  const lists: Record<string, RecipientList> = {};
+  for (const [key, value] of Object.entries(document.lists ?? {})) {
+    if (key !== 'labels' && value && !Array.isArray(value)) lists[key] = value;
+  }
+  return lists;
+}
+
+export function documentLabels(document: RulesDocument): string[] {
+  return document.lists?.labels ?? [];
+}
+
+// A copy of the document with its recipient groups and labels replaced.
+export function withLists(document: RulesDocument, lists: Record<string, RecipientList>, labels: string[]): RulesDocument {
+  return { ...document, lists: { ...lists, ...(labels.length > 0 ? { labels } : {}) } };
+}
+
+// -- scopes ---------------------------------------------------------------------------------------
+
+export type ScopeKind = 'organization' | 'mailbox' | 'workflow';
+export interface Scope { kind: ScopeKind; id?: string }
+export const ORGANIZATION: Scope = { kind: 'organization' };
+
+// The scope as the API's `scope` query value: organization, mailbox:ID or workflow:KEY.
+export function scopeParam(scope: Scope): string {
+  return scope.kind === 'organization' ? 'organization' : `${scope.kind}:${scope.id ?? ''}`;
+}
+
+// -- what the rules routes return ------------------------------------------------------------------
+
+export interface Revision {
+  number: number;
+  note: string | null;
+  actor_name: string | null;
+  created_at: string;
+}
+
+export interface RevisionDetail extends Revision { document: RulesDocument }
+
+export interface Issue {
+  // The rule, list, site or other entry the issue is about, when there is one.
+  rule_id?: string | null;
+  message: string;
+}
+
+export interface ReplayItem {
+  job_id: string;
+  to_number: string;
+  accepted_at: string;
+  before: string;
+  after: string;
+  // Accepted before rules existed: replayed with today's groups and preferences.
+  approximate: boolean;
+}
+
+export interface CheckResult {
+  errors: Issue[];
+  warnings: Issue[];
+  replay: { checked: number; changed: number; approximate: number; items: ReplayItem[] } | null;
+}
+
+export interface Draft {
+  document: RulesDocument;
+  version: number;
+  base_revision: number | null;
+  actor_name: string | null;
+  updated_at: string;
+  check: CheckResult | null;
+}
+
+export interface AccountChoice {
+  key: string; label: string; provider: string; sends: boolean; enabled: boolean; site?: string | null;
+}
+
+// Names the editor offers and the sentences use.
+export interface Choices {
+  accounts: AccountChoice[];
+  people: Array<{ id: string; name: string; kind: 'user' | 'integration' }>;
+  keys: Array<{ id: string; name: string }>;
+  groups: Array<{ id: string; name: string }>;
+  mailboxes: Array<{ id: string; name: string }>;
+}
+
+export interface RulesState {
+  scope: Scope & { name: string };
+  active: RevisionDetail | null;
+  draft: Draft | null;
+  // The organization's rules above a mailbox or workflow scope, shown read-only.
+  organization: RevisionDetail | null;
+  // Faxes each rule matched in the last 30 days, by rule id.
+  matches_30_days: Record<string, number>;
+  can_write: boolean;
+  choices: Choices;
+}
+
+export interface DiffChange {
+  change: 'added' | 'removed' | 'changed' | 'moved';
+  section: 'limits' | 'routes' | 'lists' | 'labels' | 'regions' | 'sites' | 'workflows';
+  id: string;
+  name: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface Diff { from: number; to: number; changes: DiffChange[] }
+
+// -- the dry run -----------------------------------------------------------------------------------
+
+export interface ExplainRequest {
+  to: string;
+  pages?: number | null;
+  size_bytes?: number | null;
+  // A person or integration id, or 'me'.
+  as?: string | null;
+  mailbox?: string | null;
+  workflow?: string | null;
+  urgent?: boolean;
+  real_call?: boolean;
+  labels?: string[];
+  // A local time to try ("2026-10-07T18:30"), or now.
+  at?: string | null;
+  // The rules to try: the active ones, the draft, or an earlier revision of the scope.
+  source: 'active' | 'draft' | { revision: number };
+  scope?: string;
+}
+
+export interface TraceStep {
+  scope: string;
+  rule_id: string;
+  name: string;
+  kind: 'limit' | 'route';
+  matched: boolean;
+  // The first condition that did not match, in words.
+  failed: string | null;
+}
+
+export interface ExplainRoute {
+  account: string;
+  label: string;
+  sentence: string;
+  quote: Money | null;
+  origin: string | null;
+  usable: boolean;
+}
+
+export interface ExplainResult {
+  outcome: 'route' | 'held' | 'blocked';
+  sentence: string;
+  routes: ExplainRoute[];
+  holds: string[];
+  dial: { number: string; sentence: string } | null;
+  page_layout: string | null;
+  trace: TraceStep[];
+}
+
+// -- held faxes and provenance ---------------------------------------------------------------------
+
+export interface Hold {
+  id: string;
+  job_id: string;
+  kind: 'approval' | 'window' | 'no_route';
+  to_number: string;
+  pages: number | null;
+  sender_name: string | null;
+  requested_at: string;
+  until: string | null;
+  reason: string;
+  // False when the rule needs someone other than the sender and this person sent it.
+  can_decide: boolean;
+  version: number;
+}
+
+export interface RouteAttempt {
+  number: number;
+  account_label: string;
+  dialed_number: string | null;
+  page_layout: string | null;
+  sentence: string;
+  estimate: Money | null;
+}
+
+export interface FaxRoute {
+  job_id: string;
+  sentence: string;
+  attempts: RouteAttempt[];
+  hold: Hold | null;
+}
+
+// -- provider accounts -----------------------------------------------------------------------------
+
+export type HealthState = 'ready' | 'not_set_up' | 'off' | 'waiting' | 'failing' | 'spending_limit';
+
+export interface AccountLimits { at_once: number | null; calls_per_second: number | null; daily_limit: Money | null }
+
+export interface ProviderAccount {
+  key: string;
+  provider: string;
+  label: string;
+  site: string | null;
+  primary: boolean;
+  sends: boolean;
+  receives: boolean;
+  enabled: boolean;
+  numbers: string[];
+  limits: AccountLimits;
+  health: { state: HealthState; sentence: string };
+  // The address to give the provider for received faxes, when this account receives by notification.
+  webhook_address: string | null;
+  settings: Record<string, string | number | boolean | null>;
+  // Secret fields that hold a value; secrets themselves are never sent back.
+  secrets_set: string[];
+}
+
+export interface ProviderField {
+  name: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  help?: string | null;
+}
+
+export interface ProviderKind {
+  id: string;
+  label: string;
+  supports_inbound: boolean;
+  fields: ProviderField[];
+}
+
+export interface AccountsState {
+  generation: number;
+  default_sending: string | null;
+  default_receiving: string | null;
+  accounts: ProviderAccount[];
+  providers: ProviderKind[];
+  sites: Array<{ key: string; name: string }>;
+}
+
+export interface AccountInput {
+  key: string;
+  provider: string;
+  label: string;
+  site: string | null;
+  sends: boolean;
+  receives: boolean;
+  numbers: string[];
+  limits: AccountLimits;
+  settings: Record<string, string | number | boolean | null>;
+  credentials: Record<string, string>;
+}
+
+export type AccountPatch = Partial<Omit<AccountInput, 'key' | 'provider'>> & {
+  enabled?: boolean; default_sending?: boolean; default_receiving?: boolean;
+};
+
+export interface AccountHealth {
+  key: string;
+  state: HealthState;
+  sentence: string;
+  details: string[];
+}
+
+// -- requests ---------------------------------------------------------------------------------------
+
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export interface ApiRequest { method: Method; path: string; body?: unknown }
+export type Send = <T>(request: ApiRequest) => Promise<T>;
+
+const segment = (value: string | number) => encodeURIComponent(String(value));
+const scoped = (path: string, scope: Scope) => `${path}?scope=${segment(scopeParam(scope))}`;
+
+// Every request the rules, approvals and accounts screens make.
+export const requests = {
+  rules: (scope: Scope): ApiRequest => ({ method: 'GET', path: scoped('/routing/rules', scope) }),
+  saveDraft: (scope: Scope, document: RulesDocument, expectedVersion: number): ApiRequest => ({
+    method: 'PUT', path: scoped('/routing/rules/draft', scope), body: { document, expected_version: expectedVersion },
+  }),
+  discardDraft: (scope: Scope): ApiRequest => ({ method: 'DELETE', path: scoped('/routing/rules/draft', scope) }),
+  checkDraft: (scope: Scope, replay = 200): ApiRequest => ({
+    method: 'POST', path: scoped('/routing/rules/draft/check', scope), body: { replay },
+  }),
+  publish: (scope: Scope, expectedActive: number | null, expectedDraft: number, note: string): ApiRequest => ({
+    method: 'POST', path: scoped('/routing/rules/publish', scope),
+    body: { expected_active_revision: expectedActive, expected_draft_version: expectedDraft, note },
+  }),
+  revisions: (scope: Scope): ApiRequest => ({ method: 'GET', path: scoped('/routing/rules/revisions', scope) }),
+  revision: (scope: Scope, number: number): ApiRequest => ({
+    method: 'GET', path: scoped(`/routing/rules/revisions/${segment(number)}`, scope),
+  }),
+  diff: (scope: Scope, from: number, to: number): ApiRequest => ({
+    method: 'GET', path: scoped(`/routing/rules/revisions/${segment(from)}/diff/${segment(to)}`, scope),
+  }),
+  restore: (scope: Scope, number: number): ApiRequest => ({
+    method: 'POST', path: scoped(`/routing/rules/revisions/${segment(number)}/restore`, scope), body: {},
+  }),
+  explain: (body: ExplainRequest): ApiRequest => ({ method: 'POST', path: '/routing/explain', body }),
+  applyToWaiting: (): ApiRequest => ({ method: 'POST', path: '/routing/rules/apply-to-waiting', body: {} }),
+  faxRoute: (jobId: string): ApiRequest => ({ method: 'GET', path: `/routing/faxes/${segment(jobId)}/route` }),
+  holds: (): ApiRequest => ({ method: 'GET', path: '/routing/holds?state=open' }),
+  approve: (hold: Hold): ApiRequest => ({
+    method: 'POST', path: `/routing/holds/${segment(hold.id)}/approve`, body: { version: hold.version },
+  }),
+  refuse: (hold: Hold, reason: string): ApiRequest => ({
+    method: 'POST', path: `/routing/holds/${segment(hold.id)}/refuse`, body: { version: hold.version, reason },
+  }),
+  accounts: (): ApiRequest => ({ method: 'GET', path: '/admin/providers/accounts' }),
+  addAccount: (input: AccountInput, generation: number): ApiRequest => ({
+    method: 'POST', path: '/admin/providers/accounts', body: { ...input, expected_generation: generation },
+  }),
+  updateAccount: (key: string, patch: AccountPatch, generation: number): ApiRequest => ({
+    method: 'PATCH', path: `/admin/providers/accounts/${segment(key)}`, body: { ...patch, expected_generation: generation },
+  }),
+  accountHealth: (key: string): ApiRequest => ({
+    method: 'GET', path: `/admin/providers/accounts/${segment(key)}/health`,
+  }),
+};
+
+export interface RulesApi {
+  rules(scope: Scope): Promise<RulesState>;
+  saveDraft(scope: Scope, document: RulesDocument, expectedVersion: number): Promise<Draft>;
+  discardDraft(scope: Scope): Promise<void>;
+  checkDraft(scope: Scope, replay?: number): Promise<CheckResult>;
+  publish(scope: Scope, expectedActive: number | null, expectedDraft: number, note: string): Promise<Revision>;
+  revisions(scope: Scope): Promise<{ revisions: Revision[] }>;
+  revision(scope: Scope, number: number): Promise<RevisionDetail>;
+  diff(scope: Scope, from: number, to: number): Promise<Diff>;
+  restore(scope: Scope, number: number): Promise<Draft>;
+  explain(body: ExplainRequest): Promise<ExplainResult>;
+  applyToWaiting(): Promise<{ changed: number; checked: number; sentence: string }>;
+  faxRoute(jobId: string): Promise<FaxRoute>;
+  holds(): Promise<{ holds: Hold[] }>;
+  approve(hold: Hold): Promise<Hold>;
+  refuse(hold: Hold, reason: string): Promise<Hold>;
+  accounts(): Promise<AccountsState>;
+  addAccount(input: AccountInput, generation: number): Promise<AccountsState>;
+  updateAccount(key: string, patch: AccountPatch, generation: number): Promise<AccountsState>;
+  accountHealth(key: string): Promise<AccountHealth>;
+}
+
+// The rules API over one request function.
+export function rulesApi(send: Send): RulesApi {
+  return {
+    rules: (scope) => send(requests.rules(scope)),
+    saveDraft: (scope, document, expectedVersion) => send(requests.saveDraft(scope, document, expectedVersion)),
+    discardDraft: async (scope) => { await send(requests.discardDraft(scope)); },
+    checkDraft: (scope, replay) => send(requests.checkDraft(scope, replay)),
+    publish: (scope, expectedActive, expectedDraft, note) => send(requests.publish(scope, expectedActive, expectedDraft, note)),
+    revisions: (scope) => send(requests.revisions(scope)),
+    revision: (scope, number) => send(requests.revision(scope, number)),
+    diff: (scope, from, to) => send(requests.diff(scope, from, to)),
+    restore: (scope, number) => send(requests.restore(scope, number)),
+    explain: (body) => send(requests.explain(body)),
+    applyToWaiting: () => send(requests.applyToWaiting()),
+    faxRoute: (jobId) => send(requests.faxRoute(jobId)),
+    holds: () => send(requests.holds()),
+    approve: (hold) => send(requests.approve(hold)),
+    refuse: (hold, reason) => send(requests.refuse(hold, reason)),
+    accounts: () => send(requests.accounts()),
+    addAccount: (input, generation) => send(requests.addAccount(input, generation)),
+    updateAccount: (key, patch, generation) => send(requests.updateAccount(key, patch, generation)),
+    accountHealth: (key) => send(requests.accountHealth(key)),
+  };
+}
