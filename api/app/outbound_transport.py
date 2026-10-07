@@ -137,13 +137,19 @@ class CapturedTransport:
             # One call carries every fax in the claim: separator pages and each fax's own image.
             from .batching.transport import call_image
             tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim))
-        from .routing.numbers import InvalidNumber, accepted_destination
+        from .routing.numbers import InvalidNumber, accepted_destination, is_canonical
         try:
             # Every adapter below receives this canonical number and only formats it.
-            job = {**job, 'to_number': accepted_destination(job['to_number'],
-                                                            country=values.fax_default_country)}
+            recipient = accepted_destination(job['to_number'], country=values.fax_default_country)
         except InvalidNumber:
             raise PreparationFailure('preparation_failed') from None
+        # The fax keeps its recipient; the call goes to the number recorded for this attempt (an approved
+        # alternate, ``routing.alternates``), or to the recipient's own number.
+        dialed = job.get('dialed_number') or await run_lifecycle_step(
+            lambda: self._choose_dialed(claim, job, recipient, values, pid))
+        if not is_canonical(dialed):
+            raise PreparationFailure('preparation_failed')
+        job = {**job, 'to_number': dialed, 'recipient_number': recipient}
         service = None
         manifest = configuration.manifest
         if manifest is not None or pid not in {'sip', 'freeswitch'}:
@@ -229,6 +235,19 @@ class CapturedTransport:
         finally:
             if engine_job is not None:
                 await self._finish_engine(engine_job)
+
+    def _choose_dialed(self, claim, job, recipient, values, pid):
+        """The number this attempt calls when no route choice recorded one, recorded before the submission marker."""
+        if 'dial' not in job:
+            return recipient  # a store without dialed numbers: the fax calls its recipient
+        from .routing.alternates import attempt_number, claim_dial_state
+        from .routing.dialing import reaches
+        dial = claim_dial_state(self.store, claim, job['dial'])
+        alternate = dial['alternate']
+        number, _ = attempt_number(recipient, alternate=alternate, refused=dial['refused'],
+                                   route_reaches=bool(alternate) and reaches(pid, alternate, values))
+        self.store.record_dialed(claim, number, dial['approvals'] if number != recipient else None)
+        return number
 
     async def _prepare_engine(self, values, claim, job, tiff):
         """(engine job or None, engine choice, call settings, engine records) for this trunk fax.

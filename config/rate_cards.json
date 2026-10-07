@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only. receiving_prices: what a carrier charges for receiving, read for the receiving recommendations (shared inbound channels in price tiers, received-call rates by number type, number rental and any monthly trunk fee); they are never added as rate cards.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only. receiving_prices: what a carrier charges for receiving, read for the receiving recommendations (shared inbound channels in price tiers, received-call rates by number type, number rental and any monthly trunk fee); they are never added as rate cards. toll_free: what calling a US or Canadian toll-free number (800, 833, 844, 855, 866, 877, 888) costs on each route and what the route needs, read when Faxbot dials a recipient's approved toll-free number. reaches is yes, no or not_published. pricing is own (the prices in the entry), same_as_card (the route's own sending card applies, because its published price makes no exception for toll-free numbers) or not_published (the cost stays unknown). caller_id is what caller ID the route needs on a toll-free call: account_number (a number on the account or one the carrier verified), local_number (a valid local US or Canadian number, never a toll-free one) or set (any real number). They are never added as rate cards.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -818,6 +818,193 @@
       ],
       "advertised_on": "2026-10-05",
       "notes": "Telnyx lists a $0 platform fee and pay-as-you-go calls with no contract, so a trunk has no monthly fee of its own."
+    }
+  ],
+  "toll_free": [
+    {
+      "route": "sip-telnyx",
+      "label": "Telnyx SIP trunk, calls to US toll-free numbers",
+      "country": "US",
+      "reaches": "yes",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "caller_id": "account_number",
+      "t38": "Telnyx sends a T.38 re-INVITE once it hears fax tone; when no re-INVITE comes the call continues as G.711 audio.",
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/3546251-caller-id-number-policy",
+        "https://support.telnyx.com/en/articles/1130672-fax-service-with-telnyx-via-t-38-or-g711",
+        "https://support.telnyx.com/en/articles/6988813-verified-numbers"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "The Elastic SIP price page, read October 7, 2026, lists \"Toll Free calls | Free\" beside \"Local calls | Starting at $0.005 per minute\". Telnyx rejects an outbound call whose caller ID is not valid with \"403 Caller Origination Number is Invalid D35\", and never hides the caller ID on a call to a toll-free number, because \"the owner of the toll free number will be paying for the call and therefore has the right to know who is calling them.\" Caller IDs must be Telnyx numbers or numbers Telnyx verified."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to US toll-free numbers (Standard route)",
+      "country": "US",
+      "reaches": "yes",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00182",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 1,
+      "minimum_seconds": 1,
+      "caller_id": "set",
+      "t38": "AnveoDirect describes only its Prime route as \"usually with T.38\"; the Standard route may carry the call as audio.",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv",
+        "https://www.anveodirect.com/prices/outbound"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "The Standard rate sheet, read October 7, 2026, has \"USA Toll Free\" rows for 800, 844, 855, 866, 877 and 888 at $0.00178 a minute and 833 at $0.00182, all billed per second (1-1). This entry uses $0.00182, the highest of the codes in service. The sheet has no Canadian toll-free rows; Canada uses the same toll-free codes."
+    },
+    {
+      "route": "sip-flowroute",
+      "label": "Flowroute SIP trunk, calls to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "not_published",
+      "caller_id": "local_number",
+      "t38": null,
+      "source_url": "https://support.bcmone.com/flowroute-support/docs/outbound-ani-requirements",
+      "sources": [
+        "https://support.bcmone.com/flowroute-support/docs/outbound-ani-requirements",
+        "https://flowroute.com/pricing-details/"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "Flowroute's caller ID rules, read October 7, 2026: \"A customer must utilize a valid, legitimately assigned domestic North American billing Automatic Number Identification (ANI) that's local, and not Toll-Free.\" An invalid one \"may prevent outbound calls from connecting\". Its price page lists toll-free receiving ($0.00975 a minute plus a $0.0053 dip charge a call) but no price for calling a toll-free number."
+    },
+    {
+      "route": "sip-signalwire",
+      "label": "SignalWire SIP, calls to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "not_published",
+      "caller_id": "set",
+      "t38": null,
+      "source_url": "https://signalwire.com/pricing/voice",
+      "sources": [
+        "https://signalwire.com/pricing/voice"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "SignalWire's voice price table, read October 7, 2026, lists \"Toll Free\" at $0.0147 a minute inbound and $0.0069 outbound, by number type. The table prices calls on your own toll-free number, so Faxbot does not read the outbound figure as the price of calling someone else's; that price is not published."
+    },
+    {
+      "route": "sip-sinch",
+      "label": "Sinch Elastic SIP Trunking, calls to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "not_published",
+      "caller_id": "set",
+      "t38": null,
+      "source_url": "https://sinch.com/voice/pricing/",
+      "sources": [
+        "https://sinch.com/voice/pricing/"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "Sinch shows no Elastic SIP Trunking rates without an account, so the price of calling a toll-free number is not published. Enter your contracted rate."
+    },
+    {
+      "route": "phaxio",
+      "label": "Phaxio, faxes to US and Canadian toll-free numbers",
+      "country": "US",
+      "reaches": "yes",
+      "pricing": "same_as_card",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://www.phaxio.com/pricing/",
+      "sources": [
+        "https://www.phaxio.com/pricing/",
+        "https://www.phaxio.com/faq/"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "Phaxio prices sending at 7 cents a page in the US and Canada with no exception for toll-free numbers; its FAQ says it can fax \"any machine with a 10-digit phone number in the United States or Canada\"."
+    },
+    {
+      "route": "sinch",
+      "label": "Sinch Fax API, faxes to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "same_as_card",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://sinch.com/voice/fax-api/",
+      "sources": [
+        "https://sinch.com/voice/fax-api/"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "Sinch advertises a \"Flat rate of $0.045 per page\" with no exception for toll-free numbers; it does not say whether faxes to toll-free numbers are accepted."
+    },
+    {
+      "route": "signalwire",
+      "label": "SignalWire Fax, faxes to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "not_published",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://signalwire.com/pricing/fax",
+      "sources": [
+        "https://signalwire.com/pricing/fax",
+        "https://signalwire.com/pricing/voice"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "SignalWire's fax price, $0.0095 a minute, is stated for \"48 contiguous states of the US and Canada\" with separate Alaska and Hawaii rates; it does not say which rate a toll-free number gets."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "same_as_card",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://humblefax.com/",
+      "sources": [
+        "https://humblefax.com/",
+        "https://humblefax.com/faq.php"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "HumbleFax's plan is \"Unlimited Faxing $10 / Month\" with \"No overage fees\"; its pages say nothing about toll-free numbers, so a fax to one counts as included in the plan."
+    },
+    {
+      "route": "documo",
+      "label": "Documo, faxes to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "not_published",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://www.documo.com/pricing",
+      "sources": [
+        "https://www.documo.com/pricing"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "Documo publishes plan prices ($0.07 to $0.15 an additional page) but nothing about faxes to toll-free numbers."
+    },
+    {
+      "route": "efax",
+      "label": "eFax Corporate, faxes to toll-free numbers",
+      "country": "US",
+      "reaches": "not_published",
+      "pricing": "same_as_card",
+      "caller_id": null,
+      "t38": null,
+      "source_url": "https://enterprise.efax.com/resources/faq",
+      "sources": [
+        "https://enterprise.efax.com/resources/faq"
+      ],
+      "advertised_on": "2026-10-07",
+      "notes": "eFax Corporate's FAQ says \"Outbound send rates are 10 cents per page to U.S. numbers.\" with no exception for toll-free numbers, and \"Inbound faxes to a toll free number are an additional 2 cents per page.\" for the receiver. eFax has no rate card in Faxbot, so the cost stays unknown until you add one."
     }
   ]
 }

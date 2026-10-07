@@ -4,7 +4,7 @@ Candidates come only from the configuration revision the fax was accepted
 under (its outbound provider and any listed extra routes) and from verified
 direct peers. Nothing here reads current credentials for an accepted fax.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 import sqlalchemy as sa
@@ -14,7 +14,7 @@ from .database import read_connection
 from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
-from . import local as local_delivery
+from . import dialing, local as local_delivery
 from .store import destination_key
 from ..provider_labels import PROVIDER_LABELS, trunk_name
 
@@ -59,8 +59,17 @@ def route_label(key):
     return LABELS.get(key, key)
 
 
-def explain(choice, destination=None):
-    """One sentence saying what decided this route."""
+def explain(choice, destination=None, dialed=None):
+    """One sentence saying what decided this route; it names the approved toll-free number the route calls."""
+    sentence = _explain(choice, destination)
+    if dialed and destination and dialed != destination and choice.route.kind == 'provider':
+        from .dialing import is_toll_free
+        kind = 'toll-free number' if is_toll_free(dialed) else 'other number'
+        return sentence[:-1] + f', calling the {kind} the recipient approved.'
+    return sentence
+
+
+def _explain(choice, destination=None):
     if choice.reason == 'own_number' and destination:
         from .local import display_number
         return (f'{display_number(destination)} is one of your own fax numbers, so the fax goes straight into '
@@ -97,6 +106,12 @@ class RoutePlan:
     destination: str
     choices: tuple
     peer: dict | None
+    # The number each provider route calls (route key -> E.164): the recipient's approved alternate where
+    # that route may call it, else the destination. Empty when the fax has no approved alternate.
+    dialed: dict = field(default_factory=dict)
+
+    def number_for(self, key):
+        return self.dialed.get(key, self.destination)
 
     @property
     def first(self):
@@ -118,14 +133,55 @@ class RoutePlanner:
                 costs.c.job_id == job_id, costs.c.id != current_attempt,
                 attempts.c.submitted_at.is_not(None))).scalars())
 
-    def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None, by_call=False):
-        """``by_call``: the sender asked for a real call, so an own number is not delivered inside Faxbot."""
+    def tried(self, job_id, current_attempt=None):
+        """``(route, number)`` pairs earlier submitted attempts of this fax already used.
+
+        The number is the one the attempt dialed, or None for the fax's own
+        number (an attempt recorded before dialed numbers, or a route with no
+        call). A route that failed calling the approved alternate may still call
+        the number the sender entered.
+        """
+        costs, attempts = self.store.costs, self.store.attempts
+        dialed = attempts.c.dialed_number if 'dialed_number' in attempts.c else sa.null()
+        query = sa.select(costs.c.route, dialed).join(attempts, attempts.c.id == costs.c.id).where(
+            costs.c.job_id == job_id, attempts.c.submitted_at.is_not(None))
+        if current_attempt is not None:
+            query = query.where(costs.c.id != current_attempt)
+        with read_connection(self.store.engine) as connection:
+            return {(route, number) for route, number in connection.execute(query).all()}
+
+    def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None, by_call=False,
+             dial=None, tried=None):
+        """``by_call``: the sender asked for a real call, so an own number is not delivered inside Faxbot.
+
+        ``dial`` is the number choice kept with the fax at acceptance
+        (``OutboundStore.dial_state``): each provider route that may call the
+        approved alternate calls it, priced for its class (a toll-free call by
+        the route's toll-free price, unknown when unpublished); the others call
+        the destination. ``tried`` holds ``(route, number)`` pairs earlier
+        attempts used (``tried``); a route is left out only for the number it
+        already called.
+        """
         destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
         card_for = card_for or self.store.card_for
-        candidates = [RouteCandidate(bound, 'provider', bound, card_for(bound), bound=True)]
+        alternate = (dial or {}).get('alternate')
+        if (dial or {}).get('refused') or alternate == destination:
+            alternate = None
+        preset = getattr(values, 'sip_trunk_preset', '') or ''
+        dialed = {}
+
+        def provider(identity, is_bound=False):
+            number = destination
+            if alternate and dialing.reaches(identity, alternate, values, sip_preset=preset):
+                number = alternate
+            dialed[identity] = number
+            card = card_for(identity)
+            if number != destination:
+                card = dialing.class_card(card, identity, number, sip_preset=preset)
+            return RouteCandidate(identity, 'provider', identity, card, bound=is_bound)
+        candidates = [provider(bound, True)]
         if alternates:
-            candidates += [RouteCandidate(identity, 'provider', identity, card_for(identity))
-                           for identity in extra_routes(values, bound)]
+            candidates += [provider(identity) for identity in extra_routes(values, bound)]
         peer = None
         if getattr(values, 'direct_delivery_enabled', False) and self.direct_ready():
             peer = self.store.verified_peer(destination)
@@ -134,6 +190,10 @@ class RoutePlanner:
         if self.local_ready() and local_delivery.applies(values, destination, by_call=by_call):
             candidates.insert(0, RouteCandidate(local_delivery.LOCAL, 'local', local_delivery.LOCAL, None))
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
+        if tried:
+            done = {(route, number or destination) for route, number in tried}
+            candidates = [candidate for candidate in candidates
+                          if (candidate.key, dialed.get(candidate.key, destination)) not in done]
         if destination in _trunk_numbers(values):
             # One of the trunk's own numbers: an extra route over that trunk only calls itself back
             # (seen live on 2026-10-04 when a fallback faxed the Telnyx number over the Telnyx trunk).
@@ -142,10 +202,13 @@ class RoutePlanner:
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
         # What each route really cost per delivered fax here; it decides only with enough evidence.
         providers = sum(candidate.kind == 'provider' for candidate in candidates)
-        delivered = DeliveredEvidence(self.store).for_destination(destination) if providers > 1 else {}
+        # Costs observed calling the destination say nothing about calling its approved alternate.
+        calls_alternate = any(dialed.get(candidate.key, destination) != destination for candidate in candidates)
+        delivered = (DeliveredEvidence(self.store).for_destination(destination)
+                     if providers > 1 and not calls_alternate else {})
         choices = policy.order(candidates, stats=self.store.route_stats(destination),
                                preferred=row['preferred_route'] if row else None, pages=pages, delivered=delivered)
         if not choices:
-            fallback = RouteCandidate(bound, 'provider', bound, card_for(bound), bound=True)
-            choices = [RouteChoice(fallback, 'configured', None)]
-        return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None)
+            choices = [RouteChoice(provider(bound, True), 'configured', None)]
+        return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None,
+                         {key: number for key, number in dialed.items() if number != destination})

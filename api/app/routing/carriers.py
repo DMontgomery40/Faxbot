@@ -212,16 +212,33 @@ class CarrierChargeStore:
     @staticmethod
     def view(row):
         outbound = row['direction'] == 'outbound'
+        # A sent call is matched on the number its attempt recorded as dialed (an approved toll-free
+        # number, migration 0027), else on the number the call record kept.
+        called = (row.get('dialed_number') or row['called']) if outbound else row['caller']
         return CallView(row['id'], row['direction'], row['sip_call_id'],
-                        row['caller'] if outbound else row['did'], row['called'] if outbound else row['caller'],
+                        row['caller'] if outbound else row['did'], called,
                         row['started_at'], row['answered_at'], row['ended_at'])
+
+    def _dialed(self):
+        """Each sent call's recorded dialed number (``outbound_attempts.dialed_number``), or NULL."""
+        attempts = getattr(self, '_attempts', None)
+        if attempts is None:
+            try:
+                attempts = reflect(self.engine, ('outbound_attempts',))['outbound_attempts']
+            except Exception:
+                attempts = False
+            self._attempts = attempts
+        if attempts is False or 'dialed_number' not in attempts.c:
+            return sa.null().label('dialed_number')
+        return (sa.select(attempts.c.dialed_number).where(attempts.c.id == self.calls.c.attempt_id)
+                .scalar_subquery().label('dialed_number'))
 
     # Scheduling ------------------------------------------------------------
     def due_calls(self, preset, *, now=None, force=False, give_up=GIVE_UP, limit=200):
         """Finished calls on this carrier's trunk whose charge is still open, oldest first."""
         now = now or utcnow()
         calls, checks = self.calls, self.checks
-        query = (sa.select(calls, checks.c.state, checks.c.checks)
+        query = (sa.select(calls, checks.c.state, checks.c.checks, self._dialed())
                  .select_from(calls.outerjoin(checks, checks.c.id == calls.c.id))
                  .where(calls.c.trunk_preset == preset, calls.c.ended_at.is_not(None),
                         calls.c.ended_at >= now - give_up,
@@ -235,7 +252,7 @@ class CarrierChargeStore:
     def calls_between(self, start, end, preset):
         """Every call on this trunk (any trunk when ``preset`` is None) overlapping ``[start, end)``."""
         calls = self.calls
-        query = sa.select(calls).where(calls.c.started_at < end,
+        query = sa.select(calls, self._dialed()).where(calls.c.started_at < end,
                                        sa.or_(calls.c.ended_at.is_(None), calls.c.ended_at >= start))
         if preset is not None:
             query = query.where(calls.c.trunk_preset == preset)

@@ -50,6 +50,8 @@ class CaptureTarget:
     submitted_at: object
     completed_at: object
     has_decision: bool
+    # The number the attempt dialed when it was not the destination's own (an approved toll-free number).
+    dialed: str | None = None
 
 
 def _configured_sip_preset():
@@ -317,9 +319,11 @@ class RouteStore:
         finished = sa.or_(a.c.completed_at.is_not(None), a.c.phase == 'uncertain')
         stale = sa.or_(c.c.id.is_(None), c.c.outcome == 'pending',
                        sa.and_(c.c.outcome == 'uncertain', a.c.phase != 'uncertain'))
+        dialed = a.c.dialed_number if 'dialed_number' in a.c else sa.null()
         query = (sa.select(a.c.id, a.c.job_id, a.c.phase, a.c.provider_sid, a.c.submitted_at, a.c.completed_at,
                            j.c.to_number, j.c.pages, j.c.backend, c.c.id.label('decision'),
-                           c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'))
+                           c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'),
+                           dialed.label('dialed'))
                  .select_from(a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id))
                  .where(a.c.submitted_at.is_not(None), a.c.phase.in_(tuple(OUTCOMES)), finished, stale,
                         *(() if riders is None else (a.c.id.not_in(riders),)))
@@ -329,7 +333,8 @@ class RouteStore:
         return [CaptureTarget(row['id'], row['job_id'], destination_key(row['to_number']),
                               row['decided_provider'] or row['backend'],
                               row['provider_sid'] or row['decided_sid'], row['phase'], row['pages'],
-                              row['submitted_at'], row['completed_at'], row['decision'] is not None)
+                              row['submitted_at'], row['completed_at'], row['decision'] is not None,
+                              row['dialed'] if row['dialed'] != destination_key(row['to_number']) else None)
                 for row in rows]
 
     def capture(self, target, *, observed_seconds=None, now=None):
@@ -344,6 +349,10 @@ class RouteStore:
         now = now or utcnow()
         outcome = OUTCOMES[target.phase]
         card = self.card_for(target.provider_id)
+        if target.dialed:
+            # Priced by the class of the number called: a toll-free call by the route's toll-free price.
+            from .dialing import class_card
+            card = class_card(card, target.provider_id, target.dialed, sip_preset=self.sip_preset())
         seconds = observed_seconds
         if seconds is None and target.completed_at is not None and target.submitted_at is not None:
             seconds = max(0, int((target.completed_at - target.submitted_at).total_seconds()))

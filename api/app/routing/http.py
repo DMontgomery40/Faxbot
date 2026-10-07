@@ -462,7 +462,9 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     runtime = request.app.state.access_runtime
     await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
     spending = _spending(request)
-    return _cost_view(await _call(lambda: spending.job(job_id)))
+    from .provenance import dialed_view
+    return _cost_view(await _call(lambda: {**spending.job(job_id),
+                                           'dialed': dialed_view(spending.routes.engine, job_id)}))
 
 
 @router.get('/inbound-costs')
@@ -491,6 +493,7 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                     identity=Depends(require_identity)):
     """Costs for up to 100 sent faxes at once, for the Sent list; faxes this person cannot read are left out."""
     from ..access.fax_resources import FaxAccessError
+    from .provenance import dialed_view
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
     spending = _spending(request)
@@ -502,7 +505,7 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                 private_operation(lambda: runtime.queries.job(identity.actor, job_id))()
             except FaxAccessError:
                 continue  # not visible to this person: left out, never explained
-            costs[job_id] = _cost_view(spending.job(job_id))
+            costs[job_id] = _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id)})
         return costs
     return {'costs': await _call(read)}
 
@@ -527,7 +530,9 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'case_packets': _saving_view(result['case_packets']),
             'sslfax': _saving_view(result['sslfax']),
             # Faxes to the installation's own numbers, delivered inside Faxbot with no call.
-            'own_numbers': _saving_view(result['own_numbers'])}
+            'own_numbers': _saving_view(result['own_numbers']),
+            # Faxes that called their recipient's approved toll-free number; the recipient pays those calls.
+            'toll_free': _saving_view(result['toll_free'])}
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])
@@ -598,7 +603,10 @@ class RateCardsIn(BaseModel):
 async def list_rate_cards(request: Request):
     store = _store(request)
     cards = await _call(store.current_cards)
-    return {'cards': [_card_view(card) for card in cards]}
+    # What each sending route publishes about calling toll-free numbers (an approved alternate), with its source.
+    from .dialing import terms_view
+    values = request.scope['faxbot.configuration'].active.values
+    return {'cards': [_card_view(card) for card in cards], 'toll_free': terms_view(values)}
 
 
 @router.get('/published-plans', dependencies=[Depends(require_permission('settings:read'))])
