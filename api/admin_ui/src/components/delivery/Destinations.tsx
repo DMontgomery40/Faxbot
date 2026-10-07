@@ -12,6 +12,7 @@ import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/Access
 import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
+import { EncodedPagesPanel } from './EncodedPages';
 import RecipientFaxLimitsPanel from './RecipientFaxLimits';
 
 function routeSummary(destination: Destination): string {
@@ -184,6 +185,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
           <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={references} onChange={(e) => setReferences(e.target.checked)} disabled={!canWrite} />}
             label="Accepts a one-page index instead of documents it already received for a case" />
           <SendingTogetherPanel client={client} number={detail.number} canWrite={canWrite} />
+          <EncodedPagesPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />
         </>
       )}

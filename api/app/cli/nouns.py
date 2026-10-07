@@ -6,7 +6,7 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
+from .commands import access, admin, codec, delivery, fax, operations, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -32,6 +32,7 @@ received = _group('Received faxes: list and open them, give each one an owner, a
 received.command('list')(fax.inbound_list)
 received.command('show')(fax.inbound_get)
 received.command('pdf')(fax.inbound_pdf)
+received.command('decoded')(codec.received_decoded)
 received.command('fetch')(fax.inbound_fetch)
 received.command('recover')(fax.inbound_recover)
 received.command('import')(work.import_document)
@@ -85,6 +86,7 @@ recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
 recipients.command('limits')(sslfax.recipient_limits)
 recipients.add_typer(delivery.batching, name='together')
+recipients.add_typer(codec.numbers, name='encoded')
 partners = _group('Partners: other offices running Faxbot, which get your faxes over the internet instead of a phone '
                   'call.')
 partners.command('card')(delivery.direct_card)
@@ -157,6 +159,7 @@ system.command('health')(settings.health)
 system.add_typer(operations.logs, name='logs')
 system.command('audit')(access.audit_list)
 system.command('restart')(operations.restart)
+system.add_typer(codec.tools, name='codec')
 profiles = _copy(setup.config, help='Server addresses and keys saved on this computer, so you do not have to type them each time.',
                  rename={'set-profile': 'save', 'show': 'list'})
 system.add_typer(profiles, name='profiles')

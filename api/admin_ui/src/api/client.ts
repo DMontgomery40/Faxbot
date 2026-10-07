@@ -3,6 +3,7 @@ import type {
 } from './sipTypes';
 import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
+import type { CodecFax, CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -1039,6 +1040,33 @@ class AdminAPIClient {
 
   async sendWaitingFaxNow(jobId: string): Promise<FaxTogether> {
     return this.json(`/batching/faxes/${id(jobId)}/send-now`, { method: 'POST', body: '{}' });
+  }
+
+  // Encoded pages (experimental): the per-number opt-in, a sent fax's line, a received fax's decode result.
+  async getCodecNumber(number: string): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`);
+  }
+
+  async saveCodecNumber(number: string, body: CodecSave): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async turnOffCodecNumber(number: string): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`, { method: 'DELETE' });
+  }
+
+  async getCodecFax(jobId: string): Promise<CodecFax> {
+    return this.json(`/codec/faxes/${id(jobId)}`);
+  }
+
+  async getCodecReceived(inboundId: string): Promise<CodecReceived> {
+    return this.json(`/codec/received/${id(inboundId)}`);
+  }
+
+  async downloadDecodedDocument(inboundId: string): Promise<Blob> {
+    const res = await this.send(`/codec/received/${id(inboundId)}/document`);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    return res.blob();
   }
 
   async getInboundCost(inboundId: string): Promise<FaxCost> {
