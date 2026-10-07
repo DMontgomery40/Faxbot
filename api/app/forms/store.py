@@ -4,6 +4,7 @@ Form versions are immutable: this store only ever inserts them. Importing
 content whose address is already registered returns that version unchanged.
 """
 import base64
+from datetime import timedelta
 import json
 import zlib
 from uuid import uuid4
@@ -13,6 +14,20 @@ import sqlalchemy as sa
 from ..routing.database import read_connection, reflect, utcnow, write_transaction
 from . import model
 from .raster import Bitmap
+
+
+# A person's "send the pages as a fax" holds the form this long before Faxbot checks whether it was queued.
+CLAIM_WINDOW = timedelta(minutes=5)
+CLAIM = 'claim-'
+# A sent fax's state, in the words Sent uses for it.
+FAX_STATE_TEXT = {'ready': 'waiting to be sent', 'preparing': 'waiting to be sent', 'submitting': 'being sent',
+                  'in_progress': 'being sent', 'success': 'sent', 'failed': 'not delivered', 'held': 'held',
+                  'reconciliation_required': 'waiting for its result to be confirmed'}
+
+
+def claim_job(claim):
+    """The fax id a person's claim reserved, or None for anything else."""
+    return claim[len(CLAIM):] if isinstance(claim, str) and claim.startswith(CLAIM) else None
 
 
 class FormConflict(RuntimeError):
@@ -69,7 +84,8 @@ class FormVersion:
 
 
 class FormStore:
-    TABLES = ('forms', 'form_versions', 'form_deliveries', 'intake_items', 'direct_deliveries', 'inbound_imports')
+    TABLES = ('forms', 'form_versions', 'form_deliveries', 'intake_items', 'direct_deliveries', 'inbound_imports',
+              'fax_jobs', 'outbound_deliveries')
 
     def __init__(self, engine):
         self.engine = engine
@@ -80,6 +96,8 @@ class FormStore:
         self.intake = tables['intake_items']
         self.direct = tables['direct_deliveries']
         self.imports = tables['inbound_imports']  # read only
+        self.jobs = tables['fax_jobs']  # read only
+        self.outbound = tables['outbound_deliveries']  # read only
 
     # Registry ------------------------------------------------------------------------------------
     def _version(self, connection, row):
@@ -259,7 +277,8 @@ class FormStore:
             if row is None or row['direction'] != 'outbound' or row['fax_job_id'] is not None \
                     or row['state'] not in ('mismatch', 'refused', 'not_sent', 'not_received'):
                 return None
-            claim = 'claim-' + uuid4().hex[:34]
+            # The claim names the fax in advance, so Faxbot can always tell whether it was queued.
+            claim = CLAIM + uuid4().hex
             changed = connection.execute(self.deliveries.update().where(
                 self.deliveries.c.id == identity, self.deliveries.c.fax_job_id.is_(None)).values(
                 fax_job_id=claim, decided_by=decided_by, decided_at=now, version=row['version'] + 1, updated_at=now))
@@ -270,6 +289,40 @@ class FormStore:
             connection.execute(self.deliveries.update().where(
                 self.deliveries.c.id == identity, self.deliveries.c.fax_job_id == claim).values(
                 fax_job_id=job_id, updated_at=utcnow()))
+
+    def fax_state(self, job_id):
+        """A sent fax's state in plain words, or None when there is no such fax."""
+        with read_connection(self.engine) as connection:
+            if connection.execute(sa.select(self.jobs.c.id).where(self.jobs.c.id == job_id)).first() is None:
+                return None
+            state = connection.scalar(sa.select(self.outbound.c.state).where(self.outbound.c.id == job_id))
+        return FAX_STATE_TEXT.get(state, 'in Faxes, Sent')
+
+    def settle_claim(self, identity, *, window=CLAIM_WINDOW, now=None):
+        """Settle a person's earlier claim to fax a form's pages, for certain.
+
+        Returns ``linked`` (its fax was queued; it is now linked), ``cleared``
+        (it is older than ``window`` and no fax was queued, so nothing was sent
+        and the form may be faxed), ``pending`` (still within ``window``) or
+        ``none`` (no claim). Never queues a fax.
+        """
+        now = now or utcnow()
+        with write_transaction(self.engine) as connection:
+            row = connection.execute(sa.select(self.deliveries).where(
+                self.deliveries.c.id == identity)).mappings().one_or_none()
+            claim = row['fax_job_id'] if row is not None else None
+            job_id = claim_job(claim)
+            if job_id is None:
+                return 'none'
+            where = (self.deliveries.c.id == identity, self.deliveries.c.fax_job_id == claim)
+            if connection.execute(sa.select(self.jobs.c.id).where(self.jobs.c.id == job_id)).first() is not None:
+                connection.execute(self.deliveries.update().where(*where).values(fax_job_id=job_id, updated_at=now))
+                return 'linked'
+            if row['decided_at'] is not None and now - row['decided_at'] < window:
+                return 'pending'
+            connection.execute(self.deliveries.update().where(*where).values(
+                fax_job_id=None, decided_by=None, decided_at=None, version=row['version'] + 1, updated_at=now))
+            return 'cleared'
 
     def release_fax(self, identity, claim):
         with write_transaction(self.engine) as connection:

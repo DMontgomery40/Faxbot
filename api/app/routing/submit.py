@@ -9,14 +9,18 @@ import os
 from uuid import uuid4
 
 
-def accept_generated_fax(runtime, access, actor, revision, *, to_number, document, file_name, pages):
-    """Write the document beside other fax artifacts and accept it; returns the fax id."""
+def accept_generated_fax(runtime, access, actor, revision, *, to_number, document, file_name, pages, job_id=None):
+    """Write the document beside other fax artifacts and accept it; returns the fax id.
+
+    ``job_id`` (32 hex characters) lets a caller name the fax in advance, so it
+    can later tell for certain whether the fax was queued.
+    """
     profile_id = revision.profile_id('outbound')
     if profile_id is None:
         raise RuntimeError('Outbound fax delivery is disabled in this configuration.')
     configuration = runtime.manager.store.read_profile(profile_id).configuration
     root = revision.values.fax_data_dir
-    job_id = uuid4().hex
+    job_id = job_id or uuid4().hex
     pdf = os.path.join(root, job_id + '.pdf')
     tiff = ''
     try:

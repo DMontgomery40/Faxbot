@@ -238,7 +238,8 @@ def forms_original(form: str = typer.Argument(..., help='Form name.'), version: 
 def forms_fax(delivery: str = typer.Argument(..., help="The ID from 'faxbot forms sent'.")):
     """Send the pages of a form that did not reach the partner as an ordinary fax. Faxbot never does this by itself."""
     result = state.api().post(f'/forms/deliveries/{segment(delivery)}/fax')
-    state.out().result(result, lambda out: out.line(f"{result['message']} Fax ID {result['fax_id']}."))
+    state.out().result(result, lambda out: out.line(
+        result['message'] + (f" Fax ID {result['fax_id']}." if result.get('fax_id') else '')))
 
 
 @forms.command('received')

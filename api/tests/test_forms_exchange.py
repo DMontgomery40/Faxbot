@@ -200,7 +200,7 @@ def test_after_a_mismatch_only_a_person_sends_the_pages_and_only_once(forms, mon
     assert len(jobs) == 1 and jobs[0]['to_number'] == A_NUMBER and jobs[0]['pages'] == 1
     assert faxed.json()['fax_id'] == jobs[0]['id']
     again = client.post(f"/forms/deliveries/{sent['id']}/fax", headers=ADMIN)
-    assert again.json()['message'] == 'These pages were already sent as a fax.' and len(b_jobs()) == 1
+    assert again.json()['message'].startswith('These pages were already sent as a fax; that fax is ') and len(b_jobs()) == 1
 
 
 def test_a_matching_form_sent_from_the_console_is_delivered(forms):
@@ -398,3 +398,52 @@ def test_values_of_a_form_sent_to_a_partner_need_fax_document_on_the_senders_fax
     assert shown['can_open_values'] is True and shown['values']['clinic'] == 'South'
     # The list of forms sent stays with settings:read.
     assert client.get('/forms/deliveries', headers=keys['Records']).status_code == 403
+
+
+def test_an_interrupted_fax_claim_is_settled_for_certain_and_never_sends_twice(forms, monkeypatch):
+    from datetime import datetime, timedelta
+    client = forms['client']
+    version = import_on_b(client)
+    from app.forms import exchange as b_exchange
+    prepare = b_exchange.FormExchange.prepare
+
+    def different_renderer(self, version, values, resolution='fine'):
+        normalized, rendered = prepare(self, version, values, resolution)
+        return normalized, replace(rendered, hashes=('f' * 64,) + rendered.hashes[1:])
+    monkeypatch.setattr(b_exchange.FormExchange, 'prepare', different_renderer)
+    sent = send_from_b(client, version)
+    assert sent['state'] == 'mismatch'
+    table = sa.Table('form_deliveries', sa.MetaData(), autoload_with=b_engine())
+    path = f"/forms/deliveries/{sent['id']}"
+
+    def interrupted(claim, minutes_ago):
+        # As a crash leaves it: a person's claim on the form, with or without its fax queued.
+        with b_engine().begin() as connection:
+            connection.execute(table.update().where(table.c.id == sent['id']).values(
+                fax_job_id=claim, decided_at=datetime.utcnow() - timedelta(minutes=minutes_ago)))
+
+    # A claim still within its window keeps refusing, and the console offers no button.
+    interrupted('claim-' + 'a' * 32, 1)
+    fresh = client.post(path + '/fax', headers=ADMIN)
+    assert fresh.status_code == 409
+    assert fresh.json()['detail'] == 'These pages are being sent as a fax now. Check again in a few minutes.'
+    assert client.get(path, headers=ADMIN).json()['can_fax'] is False and b_jobs() == []
+    # Older than its window, with no fax queued for it: nothing was sent, so the person may send now.
+    interrupted('claim-' + 'a' * 32, 10)
+    assert client.get(path, headers=ADMIN).json()['can_fax'] is True
+    cleared = client.post(path + '/fax', headers=ADMIN)
+    assert cleared.status_code == 200
+    assert cleared.json()['message'] == ('The earlier attempt stopped before the fax was queued, so nothing was sent. '
+                                         'You can send the pages now.')
+    assert cleared.json()['can_fax'] is True and cleared.json()['fax_id'] is None and b_jobs() == []
+    queued = client.post(path + '/fax', headers=ADMIN).json()
+    assert queued['message'] == 'The pages are on their way as a fax.'
+    (job,) = b_jobs()
+    assert queued['fax_id'] == job['id']
+    # A claim whose fax was queued before the crash: linked to that fax, never a second one.
+    interrupted('claim-' + job['id'], 10)
+    linked = client.post(path + '/fax', headers=ADMIN).json()
+    assert linked['message'].startswith('These pages were already sent as a fax; that fax is ')
+    assert linked['fax_id'] == job['id'] and linked['can_fax'] is False and len(b_jobs()) == 1
+    again = client.post(path + '/fax', headers=ADMIN).json()
+    assert again['message'].startswith('These pages were already sent as a fax') and len(b_jobs()) == 1

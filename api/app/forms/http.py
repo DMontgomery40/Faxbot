@@ -16,6 +16,7 @@ Partner routes (``/forms/partner/…``) carry no API key: each request is
 signed by an enrolled direct delivery partner, and they answer 404 while
 direct delivery is switched off.
 """
+from datetime import timedelta
 import json
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
@@ -35,12 +36,12 @@ from ..direct.http import service_for as direct_service_for
 from ..direct.identity import IdentityUnavailable
 from ..direct.service import DirectUnavailable
 from ..routing.background import installation_engine, lifespan_tasks, repeat_async
-from ..routing.database import DeliveryStoreError
+from ..routing.database import DeliveryStoreError, utcnow
 from ..routing.numbers import InvalidNumber, normalize_number
 from . import model, renderer
 from .exchange import STATE_TEXT, FormExchange
 from .importer import MAX_TEMPLATE_BYTES, from_template
-from .store import FormConflict
+from .store import CLAIM_WINDOW, FormConflict, claim_job
 
 
 SOURCE_TEXT = {
@@ -191,9 +192,12 @@ def _delivery_view(row, *, values=False, titles=None):
             'status': STATE_TEXT[row['state']], 'detail': row['detail'], 'partner': row['partner'],
             'fax_number': row['fax_number'], 'pages': row['pages'], 'form_version_id': row['form_version_id'],
             'form': title[0] if title else None, 'form_version': title[1] if title else None,
-            'fax_id': row['fax_job_id'] if row['fax_job_id'] and not row['fax_job_id'].startswith('claim-') else None,
-            'can_fax': (row['direction'] == 'outbound' and row['fax_job_id'] is None
-                        and row['state'] in ('mismatch', 'refused', 'not_sent', 'not_received')),
+            'fax_id': row['fax_job_id'] if row['fax_job_id'] and claim_job(row['fax_job_id']) is None else None,
+            # A claim older than its window is settled when the person asks again (it never sends twice).
+            'can_fax': (row['direction'] == 'outbound' and row['state'] in ('mismatch', 'refused', 'not_sent', 'not_received')
+                        and (row['fax_job_id'] is None or (claim_job(row['fax_job_id']) is not None
+                                                           and row['decided_at'] is not None
+                                                           and utcnow() - row['decided_at'] >= CLAIM_WINDOW))),
             'created_at': row['created_at'], 'updated_at': row['updated_at']}
     if values:
         view['values'] = json.loads(row['field_values']) if row['field_values'] else None
@@ -408,7 +412,7 @@ class SendIn(FillIn):
     route: str = Field(default='auto', pattern='^(auto|fax)$')
 
 
-def _fax(request, identity, version, rendered, number):
+def _fax(request, identity, version, rendered, number, job_id=None):
     """Queue the rendered pages as an ordinary fax; returns the fax id."""
     from ..access.http import runtime as access_runtime
     from ..routing.submit import accept_generated_fax
@@ -421,7 +425,7 @@ def _fax(request, identity, version, rendered, number):
     # Called in the worker thread: drawing the PDF is not done on the event loop.
     return lambda: accept_generated_fax(runtime, access, identity.actor, revision, to_number=number,
                                         document=renderer.to_pdf(rendered), file_name=name[:200],
-                                        pages=len(rendered.pages))
+                                        pages=len(rendered.pages), job_id=job_id)
 
 
 @router.post('/send')
@@ -469,26 +473,45 @@ async def fax_delivery(delivery_id: str, request: Request,
     version = await _call(lambda: exchange.store.version(version_id=row['form_version_id']))
     if version is None:
         raise HTTPException(409, detail='This form version is no longer available.')
+    if claim_job(row['fax_job_id']) is not None:
+        # An earlier attempt holds the form: find out for certain whether its fax was queued.
+        settled = await _call(lambda: exchange.store.settle_claim(delivery_id))
+        if settled == 'pending':
+            raise HTTPException(409, detail='These pages are being sent as a fax now. Check again in a few minutes.')
+        current = await _call(lambda: exchange.store.delivery(delivery_id))
+        view = _delivery_view(current, titles=await _call(lambda: _titles(exchange.store)))
+        if settled == 'cleared':
+            return {**view, 'message': 'The earlier attempt stopped before the fax was queued, so nothing was sent. '
+                                       'You can send the pages now.'}
+        if settled == 'linked':
+            return {**view, 'message': await _call(lambda: _already_sent(exchange, current['fax_job_id']))}
     values = json.loads(row['field_values'])
     rendered = await _call(lambda: renderer.render(version.content, version.backgrounds, values))
     actor_id = getattr(identity.actor, 'principal_id', None)
     claim = await _call(lambda: exchange.store.claim_fax(delivery_id, decided_by=actor_id))
     if claim is None:
         current = await _call(lambda: exchange.store.delivery(delivery_id))
-        if current['fax_job_id'] and not current['fax_job_id'].startswith('claim-'):
+        if current['fax_job_id'] and claim_job(current['fax_job_id']) is None:
             return {**_delivery_view(current, titles=await _call(lambda: _titles(exchange.store))),
-                    'message': 'These pages were already sent as a fax.'}
+                    'message': await _call(lambda: _already_sent(exchange, current['fax_job_id']))}
         raise HTTPException(409, detail='This form cannot be sent as a fax from its current state.')
-    queue = _fax(request, identity, version, rendered, row['fax_number'])
+    queue = _fax(request, identity, version, rendered, row['fax_number'], job_id=claim_job(claim))
     try:
         job_id = await _call(queue)
     except BaseException:
-        await _call(lambda: exchange.store.release_fax(delivery_id, claim))
+        # Linked if the fax was queued after all; otherwise nothing was sent and the claim is released.
+        await _call(lambda: exchange.store.settle_claim(delivery_id, window=timedelta(0)))
         raise
     await _call(lambda: exchange.store.finish_fax(delivery_id, claim, job_id))
     current = await _call(lambda: exchange.store.delivery(delivery_id))
     return {**_delivery_view(current, titles=await _call(lambda: _titles(exchange.store))),
             'message': 'The pages are on their way as a fax.'}
+
+
+def _already_sent(exchange, job_id):
+    state = exchange.store.fax_state(job_id)
+    return f'These pages were already sent as a fax; that fax is {state}.' if state else \
+        'These pages were already sent as a fax.'
 
 
 # Partner protocol (signature-authenticated) ---------------------------------------------------
