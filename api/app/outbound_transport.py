@@ -131,6 +131,8 @@ class CapturedTransport:
         tiff = root / (claim.job_id + '.tiff') if configuration.traits.get('requires_tiff') is True else None
         if any(path.is_symlink() or not path.is_file() for path in (pdf, tiff) if path is not None):
             raise PreparationFailure('artifact_unavailable')
+        from .codec.send import transmitted_pdf
+        pdf = transmitted_pdf(pdf, claim.job_id, pid)  # encoded pages made for this provider (experimental)
         if claim.members:
             if pid != 'sip' or configuration.manifest is not None:
                 raise PreparationFailure('preparation_failed')

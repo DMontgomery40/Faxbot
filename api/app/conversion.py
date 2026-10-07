@@ -442,3 +442,13 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None
     return pages, tiff_path
+
+
+def payload_pages(engine, **plan):
+    """Experimental fax payload codec (Builder AG): encoded pages for one fax when its recipient agreed and they save.
+
+    Returns (choice, acceptance step) from ``codec.send.plan_for_fax``; the
+    original PDF is never changed.
+    """
+    from .codec.send import plan_for_fax
+    return plan_for_fax(engine, **plan)

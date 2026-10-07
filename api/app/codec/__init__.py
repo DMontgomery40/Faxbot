@@ -29,12 +29,12 @@ class CodecError(ValueError):
 
 
 def encode_document(document, *, resolution='fine', layout='grid', fec='medium', secret=None, picture=None,
-                    sturdy=False, salt=None, nonce=None, max_pages=200):
+                    sturdy=False, salt=None, nonce=None, max_pages=200, run_limit=_pages.DEFAULT_RUN_LIMIT):
     """Payload pages (``pages.EncodedPages``) carrying ``document``."""
     try:
         packed = pack(document, secret=secret, salt=salt, nonce=nonce)
         return _pages.encode(packed, resolution=resolution, layout=layout, fec=fec, sturdy=sturdy,
-                             picture=picture, max_pages=max_pages)
+                             picture=picture, max_pages=max_pages, run_limit=run_limit)
     except (ContainerError, PageError) as error:
         raise CodecError(str(error)) from None
 
