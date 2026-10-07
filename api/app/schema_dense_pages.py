@@ -28,7 +28,10 @@ it rendered itself (``pages``). This revision adds five tables:
   providers until someone checks the provider sends them unchanged; trimming
   on. The SIP trunk's row holds the installation's trim setting.
 - ``fax_page_changes``: one row per sent attempt whose pages Faxbot changed:
-  original pages and pages sent, the receiving machine's limit (NULL when
+  original pages and ``sent_pages``, the pages that attempt actually sent
+  (an attempt without a row sent ``fax_jobs.pages``), the layout the chooser
+  kept (``layout``: 'dense' or 'codec'; NULL: the pages' own layout) and its
+  one-sentence ``reason``, the receiving machine's limit (NULL when
   not packed) and when it was learned (NULL: the A4 default), the route's
   billing (``per_page``, ``per_minute``, ``plan`` or ``unpriced``; NULL when
   not packed), pages saved, pages whose blank bottom was left out and how
@@ -131,6 +134,9 @@ def _definitions():
             sa.Column('route', sa.String(64), nullable=False),
             sa.Column('original_pages', sa.Integer(), nullable=False),
             sa.Column('sent_pages', sa.Integer(), nullable=False),
+            # The layout the chooser kept ('dense' or 'codec'; NULL: the pages' own layout) and its sentence.
+            sa.Column('layout', sa.String(16), nullable=True),
+            sa.Column('reason', sa.String(300), nullable=True),
             sa.Column('page_limit', sa.String(16), nullable=True),
             sa.Column('limit_learned_at', sa.DateTime(), nullable=True),
             sa.Column('billing', sa.String(16), nullable=True),
@@ -145,8 +151,9 @@ def _definitions():
             sa.CheckConstraint(_choice('page_limit', LENGTHS), name='ck_fax_page_changes_limit'),
             sa.CheckConstraint(_choice('billing', BILLING), name='ck_fax_page_changes_billing'),
             sa.CheckConstraint("resolution = 'standard'", name='ck_fax_page_changes_resolution'),
-            sa.CheckConstraint('original_pages >= 1 AND sent_pages >= 1 AND pages_saved >= 0 AND trimmed_pages >= 1 '
-                               'AND trimmed_rows >= 1 AND seconds_saved >= 0', name='ck_fax_page_changes_pages'),
+            sa.CheckConstraint("layout = 'dense' OR layout = 'codec'", name='ck_fax_page_changes_layout'),
+            sa.CheckConstraint('original_pages >= 1 AND sent_pages >= 1 AND trimmed_pages >= 1 AND trimmed_rows >= 1 '
+                               'AND seconds_saved >= 0', name='ck_fax_page_changes_pages'),
         ),
         'inbound_page_splits': (
             sa.Column('id', sa.String(40), nullable=False),

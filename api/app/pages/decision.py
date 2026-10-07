@@ -112,6 +112,30 @@ class Decision:
     billing: str
 
 
+def price_all(route_key, destination, shapes, *, card=None, predict=None):
+    """One Prediction per shape, all from the same predictor: the shared one when it prices every shape,
+    else the stand-in for all of them (never a mix)."""
+    shared = predict or predictor()
+    if shared is not None:
+        try:
+            return [shared(route_key, destination, shape) for shape in shapes]
+        except (ValueError, TypeError):
+            pass
+    return [stand_in_predict(route_key, destination, shape, card=card) for shape in shapes]
+
+
+ORDER = {'normal': 0, 'dense': 1, 'codec': 2}
+
+
+def rank(prediction, shape):
+    """Sort key: the cheapest first; when the cost is the same (or unknown), fewer billed pages, then less time
+    on the line in whole seconds; only a full tie keeps the simpler layout (normal, then dense, then codec)."""
+    cost = prediction.cost
+    billed = prediction.billed_pages if prediction.billed_pages is not None else shape.pages
+    seconds = math.floor(prediction.seconds) if prediction.seconds is not None else 0
+    return (cost is None, cost.micros if cost is not None else 0, billed, seconds, ORDER[shape.layout])
+
+
 def decide(route_key, destination, normal, dense, *, card=None, predict=None):
     """Pack only when it sends fewer pages, the call is no longer and the cost (when known) is no higher."""
     shared = predict or predictor()

@@ -612,3 +612,66 @@ def split_received_image(tiff_path: str, output_path: str) -> Optional[int]:
         return None
     write_fax_tiff(originals, output_path)
     return len(originals)
+
+
+# The layout chooser: exactly one way to send a fax's pages ------------------------------------------------------
+
+LAYOUTS = ("normal", "dense", "codec")
+
+
+def frame_bits(frames) -> Tuple[int, ...]:
+    """Compressed bits of each mode "1" page as the engines send it (Group 4, Faxbot's own fax image format)."""
+    return tuple(8 * len(_g4_data(frame) or b"") for frame in frames)
+
+
+def codec_pages(frames, *, engine=None, number=None, route=None, capability=None):
+    """The experimental fax codec's pages for this send: (pages, reason sentence), or None.
+
+    A hook: the lead wires it to Builder AG's ``payload_pages`` at integration, and the recipient's opt-in
+    is checked there. Until then it returns None, so the codec is never a candidate.
+    """
+    return None
+
+
+def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
+                  boundary_seconds=None, predict=None, describe_dense=None):
+    """Price every way these pages may go and keep exactly one, the cheapest (``pages.decision.rank``).
+
+    Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
+    ``dense_allowed`` and the receiver's ``limit`` puts fewer pages on the call); ``codec`` (``codec()``'s
+    pages, when it returns any). Dense pages and the codec never stack: each candidate starts from the same
+    pages. Each is priced with the shared predictor through ``pages.decision`` for ``route`` and
+    ``destination``; on a full tie the simpler layout wins (normal, dense, codec). Returns a dict: layout,
+    pages, reason (one sentence, None for normal), seconds_saved, predictions {layout: Prediction}.
+    """
+    from .pages import decision, packing
+    resolution = "standard" if frames and all(
+        0 < float((frame.info.get("dpi") or (0, 0))[1]) < 150 for frame in frames) else "fine"
+    candidates = {"normal": (list(frames), None)}
+    if dense_allowed:
+        try:
+            layout = packing.layout_for(frames, limit)
+            if layout.pages < len(frames):
+                packed = packing.render(frames, layout)
+                reason = describe_dense(len(frames), len(packed)) if describe_dense else None
+                candidates["dense"] = (packed, reason)
+        except packing.NotPackable:
+            pass
+    if codec is not None:
+        encoded = codec(frames)
+        if encoded:
+            pages, reason = encoded
+            if pages:
+                candidates["codec"] = (list(pages), reason)
+    shapes = {name: decision.Shape(len(pages), frame_bits(pages), resolution, name, boundary_seconds)
+              for name, (pages, _) in candidates.items()}
+    names = list(candidates)
+    predictions = dict(zip(names, decision.price_all(route, destination, [shapes[name] for name in names],
+                                                     card=card, predict=predict)))
+    chosen = min(names, key=lambda name: decision.rank(predictions[name], shapes[name]))
+    normal, picked = predictions["normal"], predictions[chosen]
+    seconds = (math.floor(normal.seconds - picked.seconds)
+               if normal.seconds is not None and picked.seconds is not None else None)
+    pages, reason = candidates[chosen]
+    return {"layout": chosen, "pages": pages, "reason": reason,
+            "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions}

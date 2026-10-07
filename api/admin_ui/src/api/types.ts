@@ -90,6 +90,7 @@ export interface FaxJob extends DeliveryMetadata {
 }
 
 export interface SentPages {
+  layout: 'normal' | 'dense' | 'codec';
   original_pages: number | null;
   sent_pages: number | null;
   pages_saved: number | null;

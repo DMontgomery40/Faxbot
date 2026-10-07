@@ -76,15 +76,6 @@ def _billing(card):
     return 'per_page' if card.per_page_micros else 'per_minute' if card.per_minute_micros else 'unpriced'
 
 
-def _sheet_bits(layout, bits, heights):
-    """Compressed bits of each packed page: its originals' bits, a split original's in proportion to the rows
-    it carries, and a few hundred bits for each band."""
-    if not bits:
-        return None
-    return tuple(sum(bits[piece.original] * piece.rows // max(1, heights[piece.original]) + 400
-                     for piece in sheet.pieces) for sheet in layout.sheets)
-
-
 def _trim_seconds(rows, cap, resolution):
     """Seconds the left-out rows would have taken: each costs the machine's minimum scan line time."""
     if not rows or cap.scan_ms is None:
@@ -104,8 +95,6 @@ def prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, 
 
 def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, now=None):
     from .. import conversion
-    from .decision import Shape, decide
-    from .packing import NotPackable, layout_for, render
     from .decision import LINE_BITS_PER_SECOND
     from .resolution import is_standard, standard_frames
     from .trim import rendered_pages, trim_frames
@@ -150,46 +139,45 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             flags = rendered_pages(str(pdf))
             if flags is not None and len(flags) == len(frames):
                 frames, trimmed_pages, trimmed_rows = trim_frames(frames, flags)
-        layout = None
-        if packing_ok:
-            try:
-                layout = layout_for(frames, cap.limit)
-            except NotPackable:
-                layout = None
-        decision = route_card = None
-        if layout is not None and layout.pages < len(frames):
-            bits = conversion.fax_page_bits(str(source))
-            bits = bits if bits and len(bits) == len(frames) else None
-            normal = Shape(len(frames), bits, resolution, 'normal', cap.boundary_seconds)
-            dense = Shape(layout.pages, _sheet_bits(layout, bits, [frame.height for frame in frames]), resolution,
-                          'dense', cap.boundary_seconds)
-            route_card = _card(engine, route)
-            decision = decide(route, number, normal, dense, card=route_card)
-            if not decision.pack:
-                decision = None
-        if decision is None and not trimmed_pages and matched is None:
+        # Exactly one layout: the pages as they are, packed onto long pages, or the experimental codec,
+        # whichever the route's billing makes cheapest (conversion.choose_layout).
+        route_card = _card(engine, route)
+        from .views import packed_sentence
+
+        def describe_dense(original, sent):
+            return packed_sentence({'layout': 'dense', 'original_pages': original, 'sent_pages': sent,
+                                    'page_limit': cap.limit, 'limit_learned_at': cap.learned_at})
+
+        def codec(pages):
+            return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap)
+        choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
+                                          dense_allowed=packing_ok, codec=codec, card=route_card,
+                                          boundary_seconds=cap.boundary_seconds, describe_dense=describe_dense)
+        layout = None if choice['layout'] == 'normal' else choice['layout']
+        if layout is None and not trimmed_pages and matched is None:
             return None
-        pages = render(frames, layout) if decision is not None else frames
+        pages = choice['pages']
         conversion.write_fax_tiff(pages, str(out_tiff))
         if mode != 'image':
             conversion.tiff_to_pdf(str(out_tiff), str(out_pdf))
             out_pdf.chmod(0o600)
             out_tiff.unlink(missing_ok=True)
         seconds = None
-        if decision is not None and decision.seconds_saved is not None:
-            seconds = decision.seconds_saved
+        if layout is not None and choice['seconds_saved'] is not None:
+            seconds = choice['seconds_saved']
         trim_seconds = _trim_seconds(trimmed_rows, cap, resolution)
         if trim_seconds is not None:
             seconds = (seconds or 0) + trim_seconds
-        if matched is not None and decision is None:
+        if matched is not None and layout is None:
             before, after = conversion.fax_page_bits(str(source)), conversion.fax_page_bits(str(out_tiff))
             if before and after:
                 seconds = (seconds or 0) + max(0, (sum(before) - sum(after)) // LINE_BITS_PER_SECOND)
         records.record_change(
             job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=len(frames),
-            sent_pages=len(pages), capability=cap, billing=_billing(route_card) if decision is not None else None,
+            sent_pages=len(pages), capability=cap, billing=_billing(route_card) if layout is not None else None,
             trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None,
-            resolution='standard' if matched is not None else None, seconds_saved=seconds, now=now)
+            resolution='standard' if matched is not None else None, seconds_saved=seconds, layout=layout,
+            reason=choice['reason'], now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
                              len(frames), len(pages), trimmed_pages)
     except BaseException:

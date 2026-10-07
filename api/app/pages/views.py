@@ -19,8 +19,12 @@ def _pages(count, word='page'):
 
 def packed_sentence(change):
     """"Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length." or None."""
-    if not change or change['sent_pages'] >= change['original_pages']:
+    if not change or change.get('layout') is None:
         return None
+    if change.get('reason'):
+        return change['reason']
+    if change['layout'] != 'dense' or change['sent_pages'] >= change['original_pages']:
+        return f"Sent as {_pages(change['sent_pages'])} instead of {change['original_pages']}." 
     head = f"Sent as {_pages(change['sent_pages'], 'long page')} instead of {change['original_pages']}"
     limit = change.get('page_limit') or capabilities.DEFAULT_LIMIT
     if change.get('limit_learned_at') is None:
@@ -52,7 +56,8 @@ def sent_view(engine, job_id, root=None):
     if not sentences:
         return None
     change = change or {}
-    return {'original_pages': change.get('original_pages'), 'sent_pages': change.get('sent_pages'),
+    return {'layout': change.get('layout') or 'normal', 'original_pages': change.get('original_pages'),
+            'sent_pages': change.get('sent_pages'),
             'page_limit': change.get('page_limit'), 'limit_learned_at': iso(change.get('limit_learned_at')),
             'pages_saved': change.get('pages_saved'), 'trimmed_pages': change.get('trimmed_pages'),
             'seconds_saved': change.get('seconds_saved'), 'resolution': resolution, 'sentences': sentences}

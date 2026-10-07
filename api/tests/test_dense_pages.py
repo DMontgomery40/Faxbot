@@ -244,6 +244,47 @@ def test_the_shared_predictor_is_used_when_given():
     assert made.pack and calls == [('sinch', PEER, 'normal'), ('sinch', PEER, 'dense')]
 
 
+def test_the_layout_chooser_keeps_exactly_one_layout_the_cheapest():
+    originals = [page(seed) for seed in range(5)]
+    sinch = card('sinch', per_page='0.045')
+    chosen = conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
+                                      dense_allowed=True, card=sinch, describe_dense=lambda a, b: f'{b} of {a}')
+    assert chosen['layout'] == 'dense' and len(chosen['pages']) == 2 and chosen['reason'] == '2 of 5'
+    assert set(chosen['predictions']) == {'normal', 'dense'}  # the codec hook returns nothing yet
+    assert conversion.codec_pages(originals) is None
+    # A codec that sends fewer pages wins alone: its pages are made from the originals, never from packed pages.
+    seen = []
+
+    def codec(pages):
+        seen.append(len(pages))
+        return [page(99, height=500)], 'Sent as 1 encoded page instead of 5.'
+    chosen = conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
+                                      dense_allowed=True, codec=codec, card=sinch)
+    assert seen == [5] and chosen['layout'] == 'codec' and len(chosen['pages']) == 1
+    assert chosen['reason'] == 'Sent as 1 encoded page instead of 5.'
+    # Not allowed, or no saving under the limit: the pages go as they are.
+    assert conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
+                                    dense_allowed=False, card=sinch)['layout'] == 'normal'
+    assert conversion.choose_layout(originals, route='sinch', destination=PEER, limit='a4',
+                                    dense_allowed=True, card=sinch)['layout'] == 'normal'
+
+
+def test_on_a_full_tie_the_simpler_layout_wins():
+    def same_price(route_key, destination, shape):
+        return decision.Prediction(0, 60.0, None, 'per_minute', False)
+
+    def codec(pages):
+        return list(pages), 'codec'
+    originals = [page(seed) for seed in range(5)]
+    chosen = conversion.choose_layout(originals, route='sip', destination=PEER, limit='unlimited',
+                                      dense_allowed=True, codec=codec, predict=same_price)
+    # Same cost and the same time: pages billed decide (none here), then normal before dense before codec.
+    assert chosen['layout'] == 'normal'
+    assert decision.rank(decision.Prediction(0, 60.4, None, 'per_minute', False),
+                         decision.Shape(2, None, 'fine', 'dense')) < decision.rank(
+        decision.Prediction(0, 60.9, None, 'per_minute', False), decision.Shape(2, None, 'fine', 'codec'))
+
+
 def test_page_or_time_routes_bill_a_slow_long_page_as_more_than_one():
     slow = decision.Shape(1, (14_400 * 125,), 'fine', 'dense')
     assert decision.stand_in_predict('efax', PEER, slow, card=card('efax', per_page='0.10')).billed_pages == 3
@@ -481,7 +522,25 @@ def test_a_trunk_send_to_an_unlimited_machine_goes_packed_and_says_so(installati
     assert len(unpack.split_frames(conversion.read_fax_frames(changed.tiff))) == 5
     view = views.sent_view(database, JOB, str(tmp_path))
     assert view['sentences'] == ['Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
-    assert view['pages_saved'] == 3 and 5 <= view['seconds_saved'] <= 9
+    assert view['layout'] == 'dense' and view['pages_saved'] == 3 and 5 <= view['seconds_saved'] <= 9
+    # The attempt carries the pages it actually sent, for costing (fax_page_changes.sent_pages).
+    table = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=database)
+    with database.connect() as connection:
+        row = connection.execute(sa.select(table).where(table.c.attempt_id == ATTEMPT)).mappings().one()
+    assert (row['layout'], row['sent_pages'], row['original_pages']) == ('dense', 2, 5)
+    assert row['reason'] == view['sentences'][0]
+
+
+def test_a_send_the_codec_makes_cheapest_records_the_codec_alone(installation, database, tmp_path, monkeypatch):
+    _learn(installation)
+    monkeypatch.setattr(conversion, 'codec_pages', lambda pages, **_: (
+        [page(98, height=600)], 'Sent as 1 encoded page instead of 5; the receiving Faxbot decodes it.'))
+    changed = _send(database, tmp_path)
+    assert (changed.original_pages, changed.sent_pages) == (5, 1)
+    assert len(conversion.read_fax_frames(changed.tiff)) == 1
+    view = views.sent_view(database, JOB)
+    assert view['layout'] == 'codec'
+    assert view['sentences'] == ['Sent as 1 encoded page instead of 5; the receiving Faxbot decodes it.']
 
 
 def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, database, tmp_path):
@@ -545,7 +604,7 @@ def test_savings_count_packed_pages_on_delivered_sends_per_billing_model(install
     _learn(installation)
     installation.record_change(job_id=JOB, attempt_id=ATTEMPT, number=PEER, route='sinch', original_pages=5,
                                sent_pages=2, capability=installation.capability(PEER), billing='per_page',
-                               seconds_saved=9, now=NOW)
+                               seconds_saved=9, layout='dense', now=NOW)
     routes = RouteStore(database, sip_preset=lambda: '')
     routes.replace_cards([card('sinch', per_page='0.045')])
     _attempt(database, ATTEMPT, 'sinch')
