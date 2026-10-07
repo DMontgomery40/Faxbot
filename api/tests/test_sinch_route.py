@@ -80,6 +80,14 @@ def mock_client(handler):
     return lambda: httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def fax_cost(configuration, routes, job):
+    """(state, sentence) for one sent fax's cost, as Sent and 'faxbot costs fax' show it."""
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.spending import Spending
+    cost = Spending(routes, CarrierChargeStore(configuration.engine)).job(job)
+    return cost['state'], cost['summary']
+
+
 # -- the published price ----------------------------------------------------------------------------
 
 def test_the_shipped_sinch_card_prices_pages_from_its_published_page_and_leaves_the_number_unknown(tmp_path):
@@ -165,6 +173,7 @@ async def test_sinch_reports_its_charge_after_delivery_and_a_correction_settles_
     billing.step(now=start + timedelta(minutes=11))
     row = routes.decision(attempt)
     assert (row['reported_cost_micros'], row['settled_cost_micros'], row['billing_checks']) == (None, None, 2)
+    assert fax_cost(configuration, routes, job) == ('waiting', 'Cost not reported yet.')
     billing.step(now=start + timedelta(minutes=22))
     row = routes.decision(attempt)
     assert (row['reported_cost_micros'], row['reported_currency'], row['settled_cost_micros']) == (135_000, 'USD', None)
@@ -186,6 +195,7 @@ async def test_sinch_reports_its_charge_after_delivery_and_a_correction_settles_
     assert delivery.get(job) == delivered and delivery.history(job) == history
     totals = routes.cost_totals(start - timedelta(days=1))[0]
     assert (totals['provider_id'], totals['settled_cost_micros'], totals['unreported']) == ('sinch', {'USD': 90_000}, 0)
+    assert fax_cost(configuration, routes, job) == ('reported', 'Sinch charged $0.09 for this fax.')
 
 
 @pytest.mark.asyncio
@@ -240,6 +250,7 @@ async def test_phaxio_reports_its_cost_and_a_credited_failure_is_a_correction(da
     # Phaxio credited the fax back: a real $0, recorded as a correction and settled.
     assert (row['reported_cost_micros'], row['settled_cost_micros'], row['estimated_cost_micros']) == (0, 0, 210_000)
     assert seen == ['https://api.phaxio.com/v2.1/faxes/48151623'] * 3
+    assert fax_cost(configuration, routes, job) == ('reported', 'Phaxio charged $0.00 for this fax.')
 
 
 def test_a_failed_charge_lookup_is_asked_again_later_and_records_nothing(database, tmp_path):
