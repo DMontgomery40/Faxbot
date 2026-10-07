@@ -3,13 +3,16 @@
 // account of each provider is set up on that provider's own page; extra accounts are added here.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Box, Button, Chip, Paper, Stack, Switch, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography,
+  Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, Switch, Table, TableBody, TableCell,
+  TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import type { AdminDestination } from '../navigation';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
 import { providerPage } from './ProvidersInUse';
-import type { AccountInput, AccountPatch, AccountsState, HealthState, ProviderAccount, RulesApi } from './ProviderRulesApi';
+import type {
+  AccountHealth, AccountInput, AccountPatch, AccountsState, HealthState, ProviderAccount, RulesApi,
+} from './ProviderRulesApi';
 import ProviderAccountsDialog from './ProviderAccountsDialog';
 
 export const HEALTH: Record<HealthState, { label: string; color: 'success' | 'default' | 'warning' | 'error' | 'info' }> = {
@@ -47,6 +50,7 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ account: ProviderAccount | null } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [health, setHealth] = useState<{ account: ProviderAccount; result: AccountHealth } | null>(null);
 
   const load = useCallback(() => {
     api.accounts().then(setState).catch(setError);
@@ -121,6 +125,10 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
                   <TableCell>
                     <Chip size="small" label={health.label} color={health.color} variant="outlined" />
                     <Typography variant="caption" display="block" color="text.secondary">{account.health.sentence}</Typography>
+                    <Button size="small" aria-label={`Health details for ${account.label}`}
+                      onClick={() => api.accountHealth(account.key).then((result) => setHealth({ account, result })).catch(setError)}>
+                      Details
+                    </Button>
                   </TableCell>
                   <TableCell>
                     {account.numbers.join(', ') || '-'}
@@ -151,6 +159,14 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
           </TableBody>
         </Table>
       </Paper>
+      <Dialog open={health !== null} onClose={() => setHealth(null)} fullWidth maxWidth="sm" aria-labelledby="account-health-title">
+        <DialogTitle id="account-health-title">{health?.account.label}: {health ? HEALTH[health.result.state].label : ''}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>{health?.result.sentence}</Typography>
+          {health?.result.details.map((detail) => <Typography key={detail} variant="body2" sx={{ mb: 0.5 }}>{detail}</Typography>)}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setHealth(null)}>Close</Button></DialogActions>
+      </Dialog>
       {editing && (
         <ProviderAccountsDialog open state={state} account={editing.account} currency={currency} saving={saving}
           onClose={() => setEditing(null)}

@@ -188,7 +188,9 @@ export class FakeRules {
     }
     if (path.startsWith('/routing/faxes/')) {
       return { job_id: path.split('/')[3], sentence: 'Sent by Sinch (UK) because the rule ‘UK numbers go through Sinch’ matched. Organization rules version 1.',
-        attempts: [{ number: 1, account_label: 'Sinch (UK)', dialed_number: '+442071234567', page_layout: 'As the receiving machine allows',
+        attempts: [{ number: 1, account_label: 'Sinch (UK)', dialed_number: '+448005550100', page_layout: 'As the receiving machine allows',
+          alternate: { original_number: '+442071234567', approved_by: 'Jane Smith', approved_on: '2026-10-07',
+            note: 'same intake, confirmed by phone', recipient_pays: true },
           sentence: 'Delivered.', estimate: { currency: 'USD', amount: '0.031' } }], hold: null };
     }
     if (path === '/admin/providers/accounts' && request.method === 'GET') return this.accounts;
@@ -200,6 +202,10 @@ export class FakeRules {
         settings: body.settings, secrets_set: Object.keys(body.credentials) });
       this.accounts.generation += 1;
       return this.accounts;
+    }
+    if (path.startsWith('/admin/providers/accounts/') && path.endsWith('/health')) {
+      return { key: path.split('/')[4], state: 'failing', sentence: 'Sinch refused its access key.',
+        details: ['Check the access key in your Sinch project, then save it here again.'] };
     }
     if (path.startsWith('/admin/providers/accounts/') && request.method === 'PATCH') {
       const key = decodeURIComponent(path.split('/')[4]);

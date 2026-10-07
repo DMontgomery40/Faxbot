@@ -4,7 +4,7 @@ import ProviderRules from '../components/ProviderRules';
 import MailboxSendingRules from '../components/MailboxSendingRules';
 import ProviderAccounts from '../components/ProviderAccounts';
 import { FaxRouteItems, HeldFaxes } from '../components/ProviderRulesHeld';
-import { CONDITION_FIELDS } from '../components/ProviderRulesEditor';
+import { CONDITION_FIELDS, limitActions, routeActions } from '../components/ProviderRulesEditor';
 import fixture from './providerRulesSentences.json';
 import { FakeRules } from './providerRulesFake';
 
@@ -233,6 +233,9 @@ describe("a mailbox's own sending rules", () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save to draft' }));
     await waitFor(() => expect(fake.requests.some((request) => request.method === 'PUT'
       && request.path === '/routing/rules/draft?scope=mailbox%3Am-leeds')).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier versions' }));
+    expect(await screen.findByText('No version is published yet.')).toBeTruthy();
+    expect(fake.requests.some((request) => request.path === '/routing/rules/revisions?scope=mailbox%3Am-leeds')).toBe(true);
   });
 });
 
@@ -243,7 +246,7 @@ describe('held faxes and why a fax took its route', () => {
     expect(await screen.findByText('Waiting for approval: the rule ‘Faxes over 20 pages need approval’ matched.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit rules' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Approve the fax to +15550100001' }));
-    expect(await screen.findByText('Approved. The fax to +15550100001 goes out now.')).toBeTruthy();
+    expect(await screen.findByText('Approved. The fax to +15550100001 is no longer held.')).toBeTruthy();
     expect(fake.sent('POST', '/routing/holds/h-1/approve')).toEqual([{ version: 3 }]);
     fireEvent.click(screen.getByRole('button', { name: 'Refuse the fax to +442071234567' }));
     const dialog = await screen.findByRole('dialog');
@@ -269,7 +272,7 @@ describe('held faxes and why a fax took its route', () => {
     render(<ul><FaxRouteItems api={new FakeRules().api()} jobId="job-1" /></ul>);
     expect(await screen.findByText('Sent by Sinch (UK) because the rule ‘UK numbers go through Sinch’ matched. Organization rules version 1.')).toBeTruthy();
     expect(screen.getByText('Attempt 1: Sinch (UK)')).toBeTruthy();
-    expect(screen.getByText('Number dialed: +442071234567')).toBeTruthy();
+    expect(screen.getByText(/^Dialed the recipient's approved alternate number \+448005550100 instead of \+442071234567, approved by Jane Smith on .*2026 \(‘same intake, confirmed by phone’\)\. The recipient pays for calls to this number\.$/)).toBeTruthy();
     expect(screen.getByText('About $0.031 (estimate)')).toBeTruthy();
   });
 });
@@ -284,6 +287,9 @@ describe('Providers → In use: accounts', () => {
     expect(screen.getByText('$25.00 a day')).toBeTruthy();
     // The default sending account cannot be switched off until another is the default.
     expect((screen.getByRole('checkbox', { name: 'Telnyx is on' }) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Health details for Sinch (UK)' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Sinch (UK): Failing' });
+    expect(within(dialog).getByText('Check the access key in your Sinch project, then save it here again.')).toBeTruthy();
   });
 
   it('adds a second account with its secrets, and switches one off', async () => {
@@ -333,5 +339,17 @@ describe('console and command line offer the same rule conditions', () => {
     const console = CONDITION_FIELDS.map((field) => field.id);
     const commandLine = fixture.cli_condition_fields.map((id: string) => (['days', 'between', 'site-time'].includes(id) ? 'time' : id));
     expect([...new Set(commandLine)]).toEqual(console);
+  });
+
+  it('writes every action and route setting the faxbot command writes', () => {
+    const settings = { when_busy: 'next', page_layout: 'one_per_sheet', alternate_number: 'only' } as const;
+    const written = new Set<string>();
+    for (const method of ['use', 'try_in_order', 'cheapest_reliable', 'site_accounts', 'automatic'] as const) {
+      Object.keys(routeActions(method, { ...settings })).forEach((key) => written.add(key));
+    }
+    Object.keys(limitActions({ never: ['humblefax'], require_direct: true, require_encryption: true,
+      cap_cost: { currency: 'USD', amount: '0' }, hold_for_approval: { separate_approver: true },
+      hold_until: { days: ['mon'] }, place_a_real_call: true }, '0.50')).forEach((key) => written.add(key));
+    expect([...written].sort()).toEqual([...fixture.action_keys].sort());
   });
 });

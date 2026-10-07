@@ -1,11 +1,12 @@
 // A mailbox's own sending rules, on that mailbox's page. They apply to faxes sent from the mailbox and
 // can only narrow the organization's rules, which are shown above them, read-only.
-import { useMemo } from 'react';
-import { Alert, Box, Typography } from '@mui/material';
+import { useMemo, useState } from 'react';
+import { Alert, Box, Button, Typography } from '@mui/material';
 import type { RulesApi, Scope } from './ProviderRulesApi';
 import { DraftBar, useRulesDraft } from './ProviderRulesDraft';
 import { RulesList } from './ProviderRulesSending';
 import { namesFor } from './ProviderRulesText';
+import ProviderRulesHistory from './ProviderRulesHistory';
 
 export default function MailboxSendingRules({ api, mailbox, canWrite, currency = 'USD' }: {
   api: RulesApi;
@@ -16,6 +17,7 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
 }) {
   const scope: Scope = useMemo(() => ({ kind: 'mailbox', id: mailbox.id }), [mailbox.id]);
   const draft = useRulesDraft(api, scope);
+  const [history, setHistory] = useState(false);
   const state = draft.state;
   const writable = canWrite && Boolean(state?.can_write);
   const organization = state?.organization ?? null;
@@ -47,6 +49,16 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
           <DraftBar draft={draft} canWrite={writable} />
           <RulesList document={draft.document} names={names} matches={state.matches_30_days} editable={writable}
             onSave={draft.save} choices={state.choices} scopeKind="mailbox" currency={currency} saving={draft.saving} />
+          <Button size="small" onClick={() => setHistory(!history)} sx={{ mt: 1 }}>
+            {history ? 'Hide earlier versions' : 'Earlier versions'}
+          </Button>
+          {history && (
+            <Box sx={{ mt: 2 }}>
+              <ProviderRulesHistory api={api} scope={scope} scopeKind="mailbox" choices={state.choices} canWrite={writable}
+                hasDraft={Boolean(state.draft)}
+                onRestored={(number) => { void draft.reload().then(() => draft.setNotice(`Version ${number} is now your draft. Check it, then publish it.`)); }} />
+            </Box>
+          )}
         </>
       )}
       {!state && !draft.loading && <DraftBar draft={draft} canWrite={false} />}

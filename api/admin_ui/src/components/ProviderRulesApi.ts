@@ -289,14 +289,29 @@ export interface Hold {
   version: number;
 }
 
+// The recipient's approved alternate number an attempt dialed instead of the number the sender gave.
+export interface AlternateDial {
+  original_number: string;
+  approved_by: string | null;
+  // The local calendar date of the approval ("2026-10-07").
+  approved_on: string | null;
+  note: string | null;
+  // A toll-free number: the recipient pays for the call.
+  recipient_pays: boolean;
+}
+
 export interface RouteAttempt {
   number: number;
   account_label: string;
   dialed_number: string | null;
+  alternate?: AlternateDial | null;
   page_layout: string | null;
   sentence: string;
   estimate: Money | null;
 }
+
+// What approving or refusing changed, with the server's own sentence for what happens next.
+export type HoldDecision = Hold & { sentence?: string | null };
 
 export interface FaxRoute {
   job_id: string;
@@ -447,8 +462,8 @@ export interface RulesApi {
   applyToWaiting(): Promise<{ changed: number; checked: number; sentence: string }>;
   faxRoute(jobId: string): Promise<FaxRoute>;
   holds(): Promise<{ holds: Hold[] }>;
-  approve(hold: Hold): Promise<Hold>;
-  refuse(hold: Hold, reason: string): Promise<Hold>;
+  approve(hold: Hold): Promise<HoldDecision>;
+  refuse(hold: Hold, reason: string): Promise<HoldDecision>;
   accounts(): Promise<AccountsState>;
   addAccount(input: AccountInput, generation: number): Promise<AccountsState>;
   updateAccount(key: string, patch: AccountPatch, generation: number): Promise<AccountsState>;

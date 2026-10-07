@@ -284,7 +284,7 @@ function ConditionList({ title, help, rows, context, onChange }: {
   );
 }
 
-type RouteMethod = 'use' | 'try_in_order' | 'cheapest_reliable' | 'site_accounts' | 'automatic';
+export type RouteMethod = 'use' | 'try_in_order' | 'cheapest_reliable' | 'site_accounts' | 'automatic';
 const METHODS: Array<{ value: RouteMethod; label: string }> = [
   { value: 'use', label: 'One account' },
   { value: 'try_in_order', label: 'Accounts in the order I choose' },
@@ -292,6 +292,35 @@ const METHODS: Array<{ value: RouteMethod; label: string }> = [
   { value: 'site_accounts', label: "A site's accounts" },
   { value: 'automatic', label: 'The cheapest reliable route, as before' },
 ];
+
+// What a routing rule does, from the editor's choices: one way to send plus its settings.
+export function routeActions(method: RouteMethod, then: Actions): Actions {
+  const settings: Actions = {};
+  if (then.when_busy) settings.when_busy = then.when_busy;
+  if (then.page_layout) settings.page_layout = then.page_layout;
+  if (then.alternate_number) settings.alternate_number = then.alternate_number;
+  switch (method) {
+    case 'use': return { use: then.use ?? '', ...settings };
+    case 'try_in_order': return { try_in_order: then.try_in_order ?? [], ...settings };
+    case 'cheapest_reliable': return { cheapest_reliable: then.cheapest_reliable ?? [], ...settings };
+    case 'site_accounts': return { site_accounts: then.site_accounts ?? 'sender', mode: then.mode ?? 'cheapest_reliable', ...settings };
+    default: return { automatic: true, ...settings };
+  }
+}
+
+// What a limit does, from the editor's choices.
+export function limitActions(then: Actions, capText: string): Actions {
+  const next: Actions = {};
+  if (then.never?.length) next.never = then.never;
+  if (then.require_direct) next.require_direct = true;
+  if (then.require_encryption) next.require_encryption = true;
+  if (then.cap_cost) next.cap_cost = { currency: then.cap_cost.currency, amount: capText.trim() };
+  if (then.hold_for_approval) next.hold_for_approval = then.hold_for_approval;
+  if (then.hold_until) next.hold_until = then.hold_until;
+  if (then.place_a_real_call) next.place_a_real_call = true;
+  if (then.alternate_number === 'never') next.alternate_number = 'never';
+  return next;
+}
 
 function methodOf(then: Actions): RouteMethod {
   if (then.try_in_order) return 'try_in_order';
@@ -413,33 +442,6 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
   const siteOptions: Option[] = [{ value: 'sender', label: "The sender's own site" },
     ...(document.sites ?? []).map((site) => ({ value: site.key, label: site.name }))];
 
-  const routeThen = (): Actions => {
-    const settings: Actions = {};
-    if (then.when_busy) settings.when_busy = then.when_busy;
-    if (then.page_layout) settings.page_layout = then.page_layout;
-    if (then.alternate_number) settings.alternate_number = then.alternate_number;
-    switch (method) {
-      case 'use': return { use: then.use ?? '', ...settings };
-      case 'try_in_order': return { try_in_order: then.try_in_order ?? [], ...settings };
-      case 'cheapest_reliable': return { cheapest_reliable: then.cheapest_reliable ?? [], ...settings };
-      case 'site_accounts': return { site_accounts: then.site_accounts ?? 'sender', mode: then.mode ?? 'cheapest_reliable', ...settings };
-      default: return { automatic: true, ...settings };
-    }
-  };
-
-  const limitThen = (): Actions => {
-    const next: Actions = {};
-    if (then.never?.length) next.never = then.never;
-    if (then.require_direct) next.require_direct = true;
-    if (then.require_encryption) next.require_encryption = true;
-    if (then.cap_cost) next.cap_cost = { currency: then.cap_cost.currency, amount: capText.trim() };
-    if (then.hold_for_approval) next.hold_for_approval = then.hold_for_approval;
-    if (then.hold_until) next.hold_until = then.hold_until;
-    if (then.place_a_real_call) next.place_a_real_call = true;
-    if (then.alternate_number === 'never') next.alternate_number = 'never';
-    return next;
-  };
-
   const built: Rule = {
     id: rule?.id ?? newRuleId(document, kind, name),
     name: name.trim(),
@@ -447,7 +449,7 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
     ...(kind === 'routes' && scopeKind === 'organization' && mandatory ? { mandatory: true } : {}),
     when: conditionsFrom(when),
     ...(unless.length > 0 && Object.keys(conditionsFrom(unless)).length > 0 ? { unless: conditionsFrom(unless) } : {}),
-    then: kind === 'routes' ? routeThen() : limitThen(),
+    then: kind === 'routes' ? routeActions(method, then) : limitActions(then, capText),
   };
 
   const problem = (() => {

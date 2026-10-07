@@ -194,7 +194,10 @@ class FakeServer:
         if path.startswith('/routing/faxes/'):
             return 200, {'job_id': path.split('/')[3], 'sentence': "Sent by Sinch (UK) because the rule 'UK numbers go "
                                                                    "through Sinch' matched. Organization rules version 1.",
-                         'attempts': [{'number': 1, 'account_label': 'Sinch (UK)', 'dialed_number': '+442071234567',
+                         'attempts': [{'number': 1, 'account_label': 'Sinch (UK)', 'dialed_number': '+448005550100',
+                                       'alternate': {'original_number': '+442071234567', 'approved_by': 'Jane Smith',
+                                                     'approved_on': '2026-10-07', 'note': 'same intake, confirmed by phone',
+                                                     'recipient_pays': True},
                                        'page_layout': 'As the receiving machine allows', 'sentence': 'Delivered.',
                                        'estimate': {'currency': 'USD', 'amount': '0.031'}}], 'hold': None}
         if path == '/admin/providers/accounts' and method == 'GET':
@@ -249,14 +252,31 @@ def flat(result):
 
 def test_rules_read_as_the_same_sentences_as_the_console(monkeypatch):
     monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    monkeypatch.setattr(rules_module, 'home_currency', lambda: 'USD')
     fixture = json.loads(FIXTURE.read_text(encoding='utf-8'))
     names = rules_module.Names(fixture['names'])
     for case in fixture['cases']:
         assert rules_module.rule_sentence(case['rule'], names) == case['sentence']
     # The console's rule editor offers a condition for each of these (providerRules.test.tsx).
     assert list(rules_module.CONDITION_FIELDS) == fixture['cli_condition_fields']
+    # Every action and route setting the console's editor writes, the command can write too.
+    common = dict(use=None, try_order=None, cheapest=None, site_accounts=None, in_order=False, automatic=False, never=None,
+                  require_direct=False, require_encryption=False, cap=None, approval=False, separate_approver=False,
+                  send_days=None, send_between=None, real_call_always=False, when_busy=None, pages_per_sheet=None,
+                  alternate=None, choices=CHOICES, document=ACTIVE)
+    written = set()
+    for options in ({'use': 'sip', 'when_busy': 'next', 'pages_per_sheet': 'one', 'alternate': 'only'},
+                    {'try_order': ['sip']}, {'cheapest': ['sip']}, {'site_accounts': 'sender', 'in_order': True},
+                    {'automatic': True},
+                    {'never': ['humblefax'], 'require_direct': True, 'require_encryption': True, 'cap': '0.5',
+                     'separate_approver': True, 'send_days': 'mon-fri', 'send_between': '18:00-07:00',
+                     'real_call_always': True}):
+        then, _ = rules_module.actions_from(**{**common, **options})
+        written |= set(then)
+    assert sorted(written) == sorted(fixture['action_keys'])
     # Without a name from the fixture, countries are named as the console's browser names them.
-    assert rules_module.Names().country('GB') in {'United Kingdom', 'GB'}
+    assert rules_module.Names().country('GB') == 'United Kingdom'
+    assert rules_module.country_name('CI') == 'Côte d’Ivoire' and rules_module.country_name('QQ') == 'QQ'
 
 
 # -- editing a draft ------------------------------------------------------------------------------------
@@ -462,7 +482,7 @@ def test_held_faxes_are_listed_approved_and_refused_with_their_versions(fake):
     assert held.exit_code == 0
     assert "Waiting for approval: the rule 'Faxes over 20 pages need approval' matched." in flat(held)
     approved = fake('sent', 'approve', 'f' * 32)
-    assert approved.exit_code == 0 and 'Approved. The fax to +15550100001 goes out now.' in flat(approved)
+    assert approved.exit_code == 0 and 'Approved. The fax to +15550100001 is no longer held.' in flat(approved)
     assert fake.sent('POST', '/routing/holds/h-1/approve') == [{'version': 3}]
     refused = fake('sent', 'refuse', 'f' * 32, '--reason', 'Wrong recipient')
     assert refused.exit_code == 0 and 'Refused. Nothing was sent to +15550100001.' in flat(refused)
@@ -479,7 +499,10 @@ def test_why_this_route(fake):
     assert result.exit_code == 0
     shown = flat(result)
     assert "Sent by Sinch (UK) because the rule 'UK numbers go through Sinch' matched." in shown
-    assert '+442071234567' in shown and '$0.031 estimate' in shown
+    assert '$0.031 estimate' in shown
+    assert ("Attempt 1: Dialed the recipient's approved alternate number +448005550100 instead of +442071234567, "
+            "approved by Jane Smith on 2026-10-07 (‘same intake, confirmed by phone’). The recipient pays for calls "
+            'to this number.') in shown
 
 
 # -- accounts --------------------------------------------------------------------------------------------
@@ -522,6 +545,16 @@ def test_adding_an_account_reads_secrets_from_stdin_or_a_hidden_prompt(fake):
     unknown = fake('providers', 'accounts', 'add', '--provider', 'sinch', '--key', 'sinch-y', '--setting', 'project_id=p',
                    '--secrets-from-stdin', input='token=abc\n')
     assert unknown.exit_code == 1 and 'Sinch has no secret called token.' in unknown.stderr
+    # A secret never comes from the command line, where the shell keeps it in its history.
+    for args in (('add', '--provider', 'sinch', '--key', 'sinch-z', '--setting', 'project_id=p', '--setting',
+                  'api_key=synthetic-leak'), ('update', 'sinch-uk', '--setting', 'api_secret=synthetic-leak')):
+        leaked = fake('providers', 'accounts', *args)
+        assert leaked.exit_code == 1, args
+        assert 'is a secret, so Faxbot asks for it instead of reading it from the command line.' in leaked.stderr
+    typo = fake('providers', 'accounts', 'update', 'sinch-uk', '--setting', 'projectid=p')
+    assert typo.exit_code == 1 and 'Sinch has no setting called projectid. Its settings are: project_id.' in typo.stderr
+    assert len(fake.sent('POST', '/admin/providers/accounts')) == 2
+    assert fake.sent('PATCH', '/admin/providers/accounts/sinch-uk') == []
 
 
 def test_switching_accounts_and_defaults(fake):

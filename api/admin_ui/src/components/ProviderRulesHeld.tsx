@@ -6,10 +6,10 @@ import {
   Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, ListItem, ListItemText, Paper, Stack,
   Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
-import { formatServerTime } from '../api/time';
+import { formatLocalDate, formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
-import type { FaxRoute, Hold, RulesApi } from './ProviderRulesApi';
+import type { AlternateDial, FaxRoute, Hold, HoldDecision, RulesApi } from './ProviderRulesApi';
 
 const KIND_TITLE: Record<Hold['kind'], string> = {
   approval: 'Waiting for approval', window: 'Waiting for its time window', no_route: 'No route your rules allow',
@@ -52,12 +52,12 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   }, [api]);
   useEffect(() => { load(); }, [load]);
 
-  const decide = async (action: () => Promise<Hold>, message: string) => {
+  const decide = async (action: () => Promise<HoldDecision>, message: string) => {
     setBusy(true);
     setError(null);
     try {
-      await action();
-      setNotice(message);
+      const decision = await action();
+      setNotice(decision.sentence || message);
       onChanged?.();
     } catch (failure) {
       setError(failure);
@@ -105,7 +105,7 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                     {canApprove && hold.can_decide && hold.kind !== 'window' && (
                       <Button size="small" variant="contained" disabled={busy} aria-label={`Approve the fax to ${hold.to_number}`}
-                        onClick={() => void decide(() => api.approve(hold), `Approved. The fax to ${hold.to_number} goes out now.`)}>
+                        onClick={() => void decide(() => api.approve(hold), `Approved. The fax to ${hold.to_number} is no longer held.`)}>
                         Approve
                       </Button>
                     )}
@@ -137,6 +137,17 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   );
 }
 
+// "Dialed the recipient's approved alternate number … instead of …, approved by … on …". Who pays is said plainly.
+export function alternateSentence(dialed: string, alternate: AlternateDial): string {
+  let sentence = `Dialed the recipient's approved alternate number ${dialed} instead of ${alternate.original_number}`;
+  if (alternate.approved_by) sentence += `, approved by ${alternate.approved_by}`;
+  if (alternate.approved_on) sentence += ` on ${formatLocalDate(alternate.approved_on)}`;
+  if (alternate.note) sentence += ` (‘${alternate.note}’)`;
+  sentence += '.';
+  if (alternate.recipient_pays) sentence += ' The recipient pays for calls to this number.';
+  return sentence;
+}
+
 // "Why this route" for one sent fax, as items for the fax's details.
 export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) {
   const [route, setRoute] = useState<FaxRoute | null>(null);
@@ -156,7 +167,8 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
           <ListItemText primary={`Attempt ${attempt.number}: ${attempt.account_label}`} secondary={(
             <Stack component="span" spacing={0.25}>
               <span>{attempt.sentence}</span>
-              {attempt.dialed_number && <span>Number dialed: {attempt.dialed_number}</span>}
+              {attempt.dialed_number && !attempt.alternate && <span>Number dialed: {attempt.dialed_number}</span>}
+              {attempt.dialed_number && attempt.alternate && <span>{alternateSentence(attempt.dialed_number, attempt.alternate)}</span>}
               {attempt.page_layout && <span>Pages per sheet: {attempt.page_layout}</span>}
               {attempt.estimate && <span>About {formatMoney(attempt.estimate)} (estimate)</span>}
             </Stack>

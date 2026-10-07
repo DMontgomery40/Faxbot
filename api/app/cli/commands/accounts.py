@@ -123,6 +123,20 @@ def _settings(pairs):
     return settings
 
 
+def plain_settings(kind, pairs):
+    """--setting values, refusing a secret: a secret on the command line stays in the shell's history."""
+    settings = _settings(pairs)
+    fields = {field['name']: field for field in kind.get('fields') or []}
+    for name in settings:
+        if fields.get(name, {}).get('secret'):
+            raise CliError(f"{fields[name]['label']} is a secret, so Faxbot asks for it instead of reading it from the "
+                           'command line. Leave it out, or give it with --secrets-from-stdin.')
+        if fields and name not in fields:
+            known = ', '.join(sorted(field for field, spec in fields.items() if not spec.get('secret'))) or 'none'
+            raise CliError(f"{kind['label']} has no setting called {name}. Its settings are: {known}.")
+    return settings
+
+
 def read_secrets(kind, *, from_stdin, only=None):
     """Secret values for a provider's secret fields, from standard input (NAME=VALUE lines) or a hidden prompt."""
     fields = [field for field in kind.get('fields') or [] if field.get('secret') and (only is None or field['name'] in only)]
@@ -184,7 +198,7 @@ def accounts_add(provider: str = typer.Option(..., '--provider', help='The provi
     api = state.api()
     current = load(api)
     kind = provider_kind(current, provider)
-    settings = _settings(setting)
+    settings = plain_settings(kind, setting)
     missing = [field['label'] for field in kind.get('fields') or []
                if field.get('required') and not field.get('secret') and field['name'] not in settings]
     if missing:
@@ -240,7 +254,8 @@ def accounts_update(key: str = typer.Argument(..., metavar='KEY', help="The acco
     if at_once is not None or calls_per_second is not None or daily_limit is not None:
         patch['limits'] = _limits(at_once, calls_per_second, daily_limit, account.get('limits'))
     if setting:
-        patch['settings'] = {**(account.get('settings') or {}), **_settings(setting)}
+        patch['settings'] = {**(account.get('settings') or {}),
+                             **plain_settings(provider_kind(current, account['provider']), setting)}
     if secret or secrets_from_stdin:
         kind = provider_kind(current, account['provider'])
         patch['credentials'] = read_secrets(kind, from_stdin=secrets_from_stdin, only=set(secret) if secret else None)
