@@ -1,0 +1,73 @@
+"""Write the browser decoder's test fixtures from the Python encoder: python tools/fax-decoder/test/make_fixtures.py [folder].
+
+Synthetic documents only. The same script runs in api/tests/test_codec_decoder.py, which checks that the
+committed fixtures are exactly what the encoder makes today. The zstd fixture needs the zstandard package.
+"""
+import hashlib
+import json
+from pathlib import Path
+import random
+import sys
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'api'))
+
+from app import codec  # noqa: E402
+from app.codec import container, rs  # noqa: E402
+from app.conversion import tiff_to_pdf  # noqa: E402
+
+TEXT = ('Synthetic referral note for the Faxbot payload decoder test.\n'
+        + ''.join(f'Line {index}: the quick brown fox faxes the lazy dog a dense page.\n' for index in range(40)))
+SECRET = 'synthetic shared key'
+
+
+def _document():
+    return codec.Document(TEXT.encode(), 'text/plain', 'referral-note.txt')
+
+
+def _rs_vectors():
+    rng = random.Random(42)
+    vectors = []
+    for parity in (16, 32, 64):
+        message = [rng.randrange(256) for _ in range(255 - parity)]
+        word = rs.encode_message(message, parity)
+        damaged = list(word)
+        positions = rng.sample(range(255), parity // 2)
+        for position in positions:
+            damaged[position] ^= rng.randrange(1, 256)
+        erasures = positions[: parity // 4]
+        vectors.append({'parity': parity, 'codeword': word, 'damaged': damaged, 'erasures': erasures})
+    return vectors
+
+
+def make(folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    document = _document()
+    salt, nonce = b'\x01' * 16, b'\x02' * 12
+    cases = {
+        'grid.tiff': dict(layout='grid', compression=container.DEFLATE),
+        'runs.pdf': dict(layout='runs', compression=container.DEFLATE),
+        'picture.tiff': dict(layout='picture', compression=container.DEFLATE),
+        'encrypted.tiff': dict(layout='grid', compression=container.DEFLATE, secret=SECRET),
+    }
+    if container.zstd_available():
+        cases['zstd.tiff'] = dict(layout='grid', compression=container.ZSTD)
+    expected = {'sha256': hashlib.sha256(document.data).hexdigest(), 'name': document.name, 'secret': SECRET,
+                'files': sorted(cases), 'rs': _rs_vectors()}
+    for name, options in cases.items():
+        packed = container.pack(document, compression=options['compression'], secret=options.get('secret'),
+                                salt=salt, nonce=nonce)
+        from app.codec import pages
+        encoded = pages.encode(packed, layout=options['layout'], fec='medium')
+        tiff = folder / (name.rsplit('.', 1)[0] + '.tiff')
+        codec.write_tiff(encoded.pages, tiff)
+        if name.endswith('.pdf'):
+            tiff_to_pdf(str(tiff), str(folder / name))
+            tiff.unlink()
+    (folder / 'expected.json').write_text(json.dumps(expected, indent=1) + '\n')
+    return folder
+
+
+if __name__ == '__main__':
+    print(make(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent / 'fixtures'))
