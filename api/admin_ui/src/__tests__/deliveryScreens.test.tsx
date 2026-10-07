@@ -115,6 +115,24 @@ describe('delivery routes', () => {
     expect(calls.find((call) => call.path === '/direct/peers/peer-1/confirm')?.body).toEqual({ code: '1234 5678' });
   });
 
+  it('turns fax images on for one partner and says whether the partner was told', async () => {
+    const { calls, record } = recorder();
+    routingHandlers(record);
+    server.use(http.post('/direct/peers/:id/fax-images', async ({ request }) => {
+      await record(request);
+      return HttpResponse.json({ id: 'peer-1', organization: 'Valley Hospital', fax_number: '+15550100001',
+        endpoint: 'https://valley.example', state: 'pending', status: 'Send a challenge fax so the partner can confirm this number.',
+        code_sent: false, code_expires_at: null, verified_at: null, expires_at: null, version: 2, receive_fax_images: true,
+        partner_receives_fax_images: false,
+        fax_images_text: 'Their faxes to you arrive as the exact fax image and are filed like any received fax.',
+        detail: 'Valley Hospital now sends you faxes as the exact fax image.', partner_told: true });
+    }));
+    render(<DeliveryRoutes client={client()} canWrite />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Accept fax images' }));
+    expect(await screen.findByText('Valley Hospital now sends you faxes as the exact fax image.')).toBeTruthy();
+    expect(calls.find((call) => call.path === '/direct/peers/peer-1/fax-images')?.body).toEqual({ accept: true });
+  });
+
   it('hides changes from people who can only read settings', async () => {
     routingHandlers(async () => undefined);
     render(<DeliveryRoutes client={client()} canWrite={false} />);
@@ -149,6 +167,7 @@ describe('Savings and Recommendations', () => {
     savings.total_sentence = 'About $0.42 saved in the last 30 days.';
     savings.sending_together.sentence = '5 faxes to the same numbers went in 2 calls instead of 5, saving 3 calls and about $0.012.';
     savings.direct_delivery.sentence = '1 document went straight to a partner instead of by fax: 1 fax call and about $0.005 saved.';
+    savings.direct_fax_images.sentence = '2 telephone calls avoided by direct fax images, saving about $0.01.';
     Object.assign(savings.case_packets, {
       sentence: '1 case packet left out 1 document the recipient already had: 39 pages and about $0.40 saved.',
       counted_from: '2026-10-04T12:00:00', earlier_not_counted: true,
@@ -159,6 +178,7 @@ describe('Savings and Recommendations', () => {
     expect(await screen.findByText(/Each figure is an estimate/)).toBeTruthy();
     expect(screen.getByTestId('savings-total').textContent).toBe('About $0.42 saved in the last 30 days.');
     for (const [id, text] of [['savings-together', 'saving 3 calls'], ['savings-direct', '1 fax call and about $0.005 saved'],
+      ['savings-fax-images', '2 telephone calls avoided by direct fax images'],
       ['savings-packets', '39 pages and about $0.40 saved']] as const) {
       const part = screen.getByTestId(id);
       expect(part.textContent).toContain(text);

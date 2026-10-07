@@ -45,6 +45,7 @@ import type {
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
+  DirectFaxImagesResult,
   EmailConnector,
   EmailConnectorInput,
   FaxCost,
@@ -1118,6 +1119,11 @@ class AdminAPIClient {
 
   async listDirectDeliveries(): Promise<{ deliveries: DirectDeliveryRecord[] }> {
     return this.json('/direct/deliveries');
+  }
+
+  // Accept fax images from a partner, or stop; the partner is told with a signed statement.
+  async setDirectFaxImages(partnerId: string, accept: boolean): Promise<DirectFaxImagesResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/fax-images`, { method: 'POST', body: JSON.stringify({ accept }) });
   }
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {

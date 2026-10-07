@@ -2,8 +2,8 @@
 // installation's card for partners to add.
 import { useState } from 'react';
 import {
-  Box, Button, Card, CardContent, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TextField, Typography,
+  Box, Button, Card, CardContent, FormControlLabel, Paper, Stack, Switch, Table, TableBody, TableCell, TableContainer,
+  TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import HandshakeIcon from '@mui/icons-material/Handshake';
 import AdminAPIClient from '../../api/client';
@@ -76,6 +76,9 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
     }
   };
 
+  const setFaxImages = (partner: DirectPartner, accept: boolean) => void run(async () => (
+    await client.setDirectFaxImages(partner.id, accept)).detail);
+
   const remove = async () => {
     if (!removing) return;
     if (await run(async () => { await client.removeDirectPartner(removing.id); return null; })) setRemoving(null);
@@ -89,6 +92,21 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       <Button size="small" onClick={() => { setError(null); setConfirming(partner); }} disabled={busy}>Confirm a code</Button>
       <Button size="small" color="error" onClick={() => { setError(null); setRemoving(partner); }} disabled={busy}>Remove</Button>
     </>
+  );
+
+  // Fax images: the exact fax image a call would carry, delivered directly and filed like any received fax.
+  const faxImages = (partner: DirectPartner) => partner.state !== 'revoked' && (
+    <Box mt={1}>
+      {canWrite && (
+        <FormControlLabel
+          control={<Switch size="small" checked={Boolean(partner.receive_fax_images)} disabled={busy}
+            onChange={(event) => setFaxImages(partner, event.target.checked)} />}
+          label="Accept fax images" />
+      )}
+      {partner.fax_images_text && (
+        <Typography variant="body2" color="text.secondary">{partner.fax_images_text}</Typography>
+      )}
+    </Box>
   );
 
   return (
@@ -111,6 +129,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
                 <Typography variant="body2" color="text.secondary">{partner.fax_number}</Typography>
                 <Box my={1}><StatusChip label={LABEL[partner.state]} tone={TONE[partner.state]} /></Box>
                 <Typography variant="body2">{partner.status}</Typography>
+                {faxImages(partner)}
                 <Box mt={1}>{actions(partner)}</Box>
               </CardContent>
             </Card>
@@ -135,6 +154,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
                   <TableCell>
                     <StatusChip label={LABEL[partner.state]} tone={TONE[partner.state]} />
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{partner.status}</Typography>
+                    {faxImages(partner)}
                   </TableCell>
                   <TableCell align="right">{actions(partner)}</TableCell>
                 </TableRow>

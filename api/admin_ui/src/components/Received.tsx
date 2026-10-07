@@ -270,7 +270,8 @@ export default function Received({
 
   const deliveryFor = useMemo(() => new Map((deliveries ?? []).filter((item) => item.inbound_fax_id)
     .map((item) => [item.inbound_fax_id as string, item])), [deliveries]);
-  const directItems = (deliveries ?? []).filter((item) => item.source === 'direct');
+  // Direct deliveries from before peer fax have no received fax; later ones are filed in the list above.
+  const directItems = (deliveries ?? []).filter((item) => item.source === 'direct' && !item.inbound_fax_id);
 
   const rows = useMemo<Row[]>(() => {
     const byFax = new Map((work ?? []).map((item) => [item.inbound_fax_id, item]));
@@ -407,6 +408,7 @@ export default function Received({
     if (!row.fax) return '-';
     // A fax sent to one of this installation's own numbers was delivered here, with no call.
     if (row.fax.backend === 'local') return 'This Faxbot';
+    if (row.fax.backend === 'direct') return 'Direct delivery';
     return row.fax.backend === 'import' ? 'Imported' : providerName(row.fax.backend);
   };
 
