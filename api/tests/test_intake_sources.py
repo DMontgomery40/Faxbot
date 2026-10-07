@@ -227,6 +227,10 @@ def test_faxbot_own_email_is_not_brought_in_again(client, imap):
     check(poller(imap), source['id'])
     assert count('inbound_imports') == 0
     assert items(client)[0]['status'] == text.OWN_MAIL
+    # A scanner mailing scans from the mailbox's own address is filed.
+    imap.add(email(sender='fax@example.com', message_id='<scan-77@scanner.example.com>', results=None))
+    check(poller(imap), source['id'])
+    assert count('inbound_imports') == 1
 
 
 def test_sign_in_problems_are_one_sentence_and_nothing_is_read(client, imap):
@@ -514,6 +518,16 @@ def test_folder_to_fax_sends_a_file_to_a_number_once(client, tmp_path):
     assert count('fax_jobs') == 1
     drop('letter-elsewhere', '+13035550111')
     assert count('fax_jobs') == 2
+    # A number Faxbot cannot dial goes to failed/ and is never sent.
+    (folder / 'short.pdf').write_bytes(pdf('Synthetic short'))
+    (folder / 'short.json').write_text('{"to": "+1555"}')
+    _old(folder / 'short.pdf')
+    _old(folder / 'short.json')
+    check(runner, source['id'])
+    clock.now += 3
+    check(runner, source['id'])
+    assert count('fax_jobs') == 2
+    assert (folder / 'failed' / 'short.pdf.reason.txt').read_text().strip() == text.BAD_NUMBER.format(text='+1555')
     # A file without its sidecar waits, then fails with the reason.
     (folder / 'orphan.pdf').write_bytes(pdf('Synthetic orphan'))
     _old(folder / 'orphan.pdf')

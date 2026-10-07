@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 
+from ...routing.numbers import is_canonical
 from ...work.imports import ImportInputError, parse_sidecar
 from . import folder as folders, mail, receive, replies, send, text
 from .imap import CannotReach, Mailbox, MailboxError, MoveFailed, NoFolder, SignInRefused, TooLarge
@@ -166,7 +167,8 @@ class Poller:
     def receive_message(self, source, message, received_at, too_large):
         values = self.values()
         sender = mail.sender(message)
-        if mail.sent_by_faxbot(message, self.own_addresses()):
+        # Only Faxbot's own Message-IDs: a scanner often mails scans from the very mailbox it sends to.
+        if mail.sent_by_faxbot(message):
             return self._record_message(source, message, state='refused', reason=text.OWN_MAIL,
                                         received_at=received_at, sender=sender)
         if too_large:
@@ -352,7 +354,7 @@ class Poller:
                               reason=text.BAD_SIDECAR.format(detail=str(error)))
             return True
         number = details.get('to_number')
-        if not number or not number.startswith('+'):
+        if not number or not is_canonical(number):
             reason = text.BAD_NUMBER.format(text=number) if number else text.NO_NUMBER.format(
                 example='a sidecar file such as {"to": "+13035550100"}')
             self._file_failed(source, root, path, sidecar, name, digest=digest, reason=reason)
