@@ -85,12 +85,16 @@ def call(**fields):
 def test_a_number_that_never_asks_for_t38_itself_gets_t38_at_once_after_three_calls():
     assert engine_frames.learn([call(), call()], values()).t38_now is False
     learned = engine_frames.learn([call(), call(), call()], values())
-    assert learned.t38_now and learned.t38_reason.startswith('The last 3 faxes to this number switched')
+    assert learned.t38_now and learned.t38_reason.startswith('The last 3 faxes to this number that waited switched')
     # The far end asked once: it can, so no early T.38. Nor with T.38 off on the trunk.
     assert engine_frames.learn([call(), call(t38_by='far', t38_after_ms=2000), call()], values()).t38_now is False
     assert engine_frames.learn([call()] * 3, values(SIP_T38_ENABLED='false')).t38_now is False
-    # Calls Faxbot already sent early don't keep proving it (they never wait now).
-    assert engine_frames.learn([call(t38_now=1, t38_after_ms=200)] * 3, values()).t38_now is False
+    # Calls made at once keep it in force (they are not evidence against it): three late calls, then five early.
+    early = call(t38_now=1, t38_after_ms=200)
+    assert engine_frames.learn([early] * 5 + [call()] * 3, values()).t38_now is True
+    # An early call the far end refused (it went on as audio) ends it; with no late calls at all, nothing to learn.
+    assert engine_frames.learn([call(t38_now=1, mode='audio', t38_by=None)] + [call()] * 3, values()).t38_now is False
+    assert engine_frames.learn([early] * 3, values()).t38_now is False
 
 
 def test_failed_trainings_at_one_speed_start_later_calls_at_the_speed_that_worked():
@@ -99,6 +103,16 @@ def test_failed_trainings_at_one_speed_start_later_calls_at_the_speed_that_worke
     assert learned.max_rate == 9600 and '14,400' in learned.rate_reason and '9,600' in learned.rate_reason
     assert engine_frames.learn([failing, call()], values()).max_rate is None
     assert engine_frames.learn([call(rate_first=14400, rate_lowest=12000, ftt=1)] * 2, values()).max_rate == 9600
+    # Steady state: once calls start at 9,600 and train cleanly, the speed stays (newest first).
+    day = datetime(2026, 10, 1)
+    failed = [call(rate_first=14400, rate_lowest=9600, ftt=2, created_at=day + timedelta(hours=hour)) for hour in (0, 1)]
+    clean = [call(rate_first=9600, rate_lowest=9600, ftt=0, created_at=day + timedelta(hours=hour)) for hour in (2, 3, 4, 5)]
+    assert engine_frames.learn(list(reversed(failed + clean)), values()).max_rate == 9600
+    # Failing at the learned speed too ends it; so does a later call that trained cleanly at the higher speed.
+    worse = call(rate_first=9600, rate_lowest=7200, ftt=1, created_at=day + timedelta(hours=6))
+    assert engine_frames.learn([worse] + list(reversed(failed + clean)), values()).max_rate is None
+    better = call(rate_first=14400, rate_lowest=14400, ftt=0, created_at=day + timedelta(hours=7))
+    assert engine_frames.learn([better] + list(reversed(failed + clean)), values()).max_rate is None
 
 
 def test_a_caller_whose_line_trained_cleanly_at_14400_over_audio_is_received_at_that_speed():

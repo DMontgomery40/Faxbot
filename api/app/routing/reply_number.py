@@ -396,7 +396,14 @@ def caller_id_for(values, number) -> str | None:
     caller = getattr(values, 'sip_trunk_caller_id', '') or ''
     if caller:
         trunk.add(stored_number(caller, country=country))
-    return number if number in trunk else None
+    if number not in trunk:
+        return None
+    if getattr(values, 'sip_trunk_preset', '') == 'flowroute':
+        # Flowroute accepts only a local number as caller ID, never a toll-free one (CALLER_ID_RULES).
+        from .receiving import number_kind
+        if number_kind(number, country) == 'toll_free':
+            return None
+    return number
 
 
 # Each carrier's published rule for showing a number other than the line's as caller ID, with its source and the

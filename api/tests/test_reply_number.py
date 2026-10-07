@@ -316,3 +316,10 @@ def test_caller_id_status_cites_each_carriers_published_rule_or_says_none_was_fo
                                  "other numbers it lets you show, so Faxbot can't confirm it allows this one.")
     cloud = reply_number.caller_id(values(FAX_OUTBOUND_BACKEND='humblefax'), DID_A)
     assert cloud[-1]['sentence'].startswith('Faxes sent through HumbleFax show the number set in your HumbleFax account')
+
+
+def test_flowroute_never_shows_a_toll_free_number_as_caller_id():
+    flowroute = values(SIP_TRUNK_PRESET='flowroute')
+    assert reply_number.caller_id_for(flowroute, TOLL_FREE) is None
+    assert reply_number.caller_id_for(flowroute, DID_B) == DID_B
+    assert reply_number.caller_id_for(values(), TOLL_FREE) == TOLL_FREE  # Telnyx: a number on your account

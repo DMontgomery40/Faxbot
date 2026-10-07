@@ -306,13 +306,13 @@ def partner_iaf_numbers(engine) -> set:
             return set()
         columns = {column['name'] for column in inspector.get_columns('direct_peers')}
         flag = next((name for name in ('iaf_capable', 'iaf') if name in columns), None)
-        number = next((name for name in ('fax_number', 'number') if name in columns), None)
-        if flag is None or number is None:
+        if flag is None or 'phone_number' not in columns:
             return set()
         peers = sa.Table('direct_peers', sa.MetaData(), autoload_with=engine)
-        query = sa.select(peers.c[number]).where(peers.c[flag] == 1)
-        if 'state' in columns:
-            query = query.where(peers.c.state == 'verified')
+        # The same partners direct delivery uses: verified and not expired (RouteStore.verified_peer).
+        query = sa.select(peers.c.phone_number).where(
+            peers.c[flag] == 1, peers.c.state == 'verified',
+            sa.or_(peers.c.expires_at.is_(None), peers.c.expires_at > utcnow()))
         with engine.connect() as connection:
             return {value for value in connection.execute(query).scalars() if value}
     except sa.exc.SQLAlchemyError:
@@ -341,28 +341,46 @@ class Learned:
     calls: int = 0
 
 
+def _allowed_rate(rate):
+    """The highest starting speed Faxbot can ask for (FAXBOT_MAXRATE) at or below ``rate``."""
+    return next((allowed for allowed in (14400, 9600, 7200, 4800) if allowed <= rate), None)
+
+
 def learn(calls, values) -> Learned:
-    """What a number's recent calls (newest first, same trunk, within LEARN_DAYS) teach, with one reason each."""
+    """What a number's recent calls (newest first, same trunk, within LEARN_DAYS) teach, with one reason each.
+
+    The evidence for a setting is only calls made without it, so a setting in force does not undo itself;
+    calls made with it keep it unless one contradicts it. Each setting ends when its evidence ages out.
+    """
     sent = [call for call in calls if call['direction'] == 'out']
     t38_now, t38_reason = False, ''
     if getattr(values, 'sip_t38_enabled', True):
-        recent = sent[:EARLY_T38_CALLS]
-        if (len(recent) >= EARLY_T38_CALLS and all(call['t38_by'] == 'faxbot' and not call['t38_now']
-                                                   and (call['t38_after_ms'] or 0) >= LATE_T38_MS for call in recent)):
+        waited = [call for call in sent if not call['t38_now']][:EARLY_T38_CALLS]
+        early = [call for call in sent if call['t38_now']][:EARLY_T38_CALLS]
+        late = (len(waited) >= EARLY_T38_CALLS
+                and all(call['t38_by'] == 'faxbot' and (call['t38_after_ms'] or 0) >= LATE_T38_MS for call in waited))
+        # Asking at once and then ending up on audio (the far end refused it) contradicts it.
+        refused = any(call['mode'] == 'audio' for call in early)
+        if late and not refused:
             t38_now = True
-            t38_reason = (f'The last {len(recent)} faxes to this number switched to fax over IP only when Faxbot '
-                          'asked, about ten seconds after the answer, so Faxbot now asks at once.')
+            t38_reason = (f'The last {len(waited)} faxes to this number that waited switched to fax over IP only when '
+                          'Faxbot asked, about ten seconds after the answer, so Faxbot now asks at once.')
     max_rate, rate_reason = None, ''
     trained = [call for call in sent if call['rate_first'] and call['rate_lowest'] and call['status'] == 'SUCCESS']
-    failing = [call for call in trained[:RATE_CALLS + 1] if (call['ftt'] or 0) > 0 and call['rate_lowest'] < call['rate_first']]
+    failing = [call for call in trained if (call['ftt'] or 0) > 0 and call['rate_lowest'] < call['rate_first']]
     if len(failing) >= RATE_CALLS:
-        lowest = max(call['rate_lowest'] for call in failing)
-        max_rate = lowest if lowest in (14400, 9600, 7200, 4800) else next((rate for rate in (9600, 7200, 4800)
-                                                                            if rate <= lowest), None)
-        if max_rate:
-            rate_reason = (f'The last {len(failing)} faxes to this number failed to train at '
-                           f'{failing[0]["rate_first"]:,} bit/s and went through at {lowest:,}, so Faxbot starts at '
-                           f'{max_rate:,} bit/s.')
+        lowest = max(call['rate_lowest'] for call in failing[:RATE_CALLS])
+        candidate = _allowed_rate(lowest)
+        newest_failure = failing[0]['created_at'] if 'created_at' in failing[0] else None
+        # Failing again at the learned speed, or a newer call that started higher and trained cleanly, ends it.
+        worse = any(call['rate_first'] <= (candidate or 0) and (call['ftt'] or 0) > 0 for call in trained)
+        better = any(call['rate_first'] > (candidate or 0) and not call['ftt']
+                     and (newest_failure is None or call.get('created_at') is None or call['created_at'] > newest_failure)
+                     for call in trained)
+        if candidate and not worse and not better:
+            max_rate = candidate
+            rate_reason = (f'Faxes to this number failed to train at {failing[0]["rate_first"]:,} bit/s and went '
+                           f'through at {lowest:,}, so Faxbot starts at {max_rate:,} bit/s.')
     clean = [call for call in sent if call['mode'] == 'audio' and call['rate_first'] == 14400
              and (call['ftt'] or 0) == 0 and call['status'] == 'SUCCESS']
     inbound_rate = 14400 if len(clean) >= RATE_CALLS else None
