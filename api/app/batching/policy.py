@@ -48,11 +48,14 @@ INDEX_PAGE_DOCUMENTS = 15
 def header_identifies_sender(values):
     """True when every page's header line will show who sent it and from which number (47 CFR 68.318(d)).
 
-    The built-in fax engine prints the date and time, the header text and the station ID (the sending
-    number: the station ID setting, or else the SIP trunk's caller ID) at the top of every page.
+    The built-in fax engine (spandsp 0.0.6, t4_tx.c) prints, above the page's own rows and only when the
+    header text is set, the date and time, the header text and the station ID (the sending number: the
+    station ID setting, or else the SIP trunk's caller ID) and the page number. The shipped header text
+    ("Faxbot") names the software, not the sender, so it does not count, nor does the placeholder station ID.
     """
-    from ..config_values import PLACEHOLDER_DEFAULTS
-    if values is None or not str(getattr(values, 'fax_header', '') or '').strip():
+    from ..config_values import PLACEHOLDER_DEFAULTS, ConfigurationValues
+    header = str(getattr(values, 'fax_header', '') or '').strip() if values is not None else ''
+    if not header or header == ConfigurationValues.model_fields['fax_header'].default:
         return False
     station = str(getattr(values, 'fax_station_id', '') or '').strip()
     if station and station != PLACEHOLDER_DEFAULTS['fax_station_id']:

@@ -500,6 +500,9 @@ def test_without_a_header_naming_the_sender_on_every_page_the_call_uses_separato
     assert http._boundaries_sentence(setting, snapshot.active.values) == policy.HEADER_NEEDS
     assert not policy.header_identifies_sender(snapshot.active.values.with_patch(
         {'fax_header': ' ', 'fax_station_id': '+15555550100'}))
+    # The shipped header text names the software, not the sender.
+    assert not policy.header_identifies_sender(snapshot.active.values.with_patch(
+        {'fax_header': 'Faxbot', 'fax_station_id': '+15555550100'}))
     assert not policy.header_identifies_sender(snapshot.active.values.with_patch(
         {'fax_station_id': '+10000000000'}))  # the placeholder is not a sending number
     assert policy.header_identifies_sender(snapshot.active.values.with_patch({'fax_station_id': '+15555550100'}))
