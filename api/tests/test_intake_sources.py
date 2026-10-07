@@ -474,6 +474,53 @@ def test_a_person_without_fax_send_is_refused_although_the_connector_key_could_s
     assert text.REPLY_NO_PASSWORD in replies['tom@example.com']
 
 
+INTERNAL_HEADERS = (('X-MS-Exchange-Organization-AuthAs', 'Internal'),
+                    ('X-MS-Exchange-Organization-AuthSource', 'SN6PR04MB4224.namprd04.prod.outlook.com'),
+                    ('X-MS-Exchange-Organization-AuthMechanism', '04'))
+INTERNAL_RESULTS = ('dkim=none (message not signed) header.d=none;dmarc=none action=none header.from=example.com;'
+                    'compauth=pass reason=115')
+
+
+def test_microsoft_365_internal_mail_sends_and_forged_internal_marks_do_not(client, tmp_path):
+    import imaplib
+    from app.intake.sources.oauth import Tokens
+    jane, nora = _people(client)
+    server = FakeImap(tmp_path, password='synthetic-mailbox-password', token='synthetic-access-token')
+    try:
+        tenant = add(client, {'name': 'Microsoft fax', 'kind': 'email', 'direction': 'send',
+                              'settings': {'provider': 'microsoft365', 'address': 'fax@example.com',
+                                           'tenant_id': 'example.onmicrosoft.com', 'client_id': 'client-1'},
+                              'secret': {'client_secret': 'synthetic-client-secret'},
+                              'senders': [{'address': 'jane@example.com', 'principal_id': jane['id']}]})
+        generic = _email_to_fax(client, server, jane, nora)
+        runner = poller(server)
+        # The Microsoft 365 connector reaches Exchange Online; here that is the stand-in on this machine.
+        runner.connect = lambda host, port, context, timeout: imaplib.IMAP4_SSL('localhost', server.port,
+                                                                               ssl_context=context, timeout=timeout)
+        runner.tokens = Tokens(post=lambda url, data: (200, {'access_token': 'synthetic-access-token',
+                                                             'expires_in': 3600}))
+        # Mail from inside the organization: no DKIM or SPF pass, but Exchange's Internal mark.
+        server.add(email(results=INTERNAL_RESULTS, headers=INTERNAL_HEADERS, subject='+13035550100',
+                         message_id='<internal-1@example.com>'))
+        assert check(runner, tenant['id'])[0]
+        assert count('fax_jobs') == 1
+        sent = items(client, 'Microsoft fax')[0]
+        assert sent['state'] == 'sent'
+        assert sent['status'] == 'Sent on to be faxed to +13035550100. ' + text.ACCEPTED_INTERNAL
+        # The same marks from outside reach a generic connector: refused, listed, no reply.
+        server.add(email(results=None, headers=INTERNAL_HEADERS, subject='+13035550100',
+                         message_id='<forged-1@example.com>'))
+        runner.connect = None
+        check(runner, generic['id'])
+        runner.reply_step()
+        assert count('fax_jobs') == 1
+        forged = items(client, 'Email to fax')[0]
+        assert forged['state'] == 'refused' and forged['status'] == text.NOT_AUTHENTICATED
+        assert FakeSMTP.sent == []
+    finally:
+        server.close()
+
+
 def test_email_to_fax_needs_one_number_and_a_document(client, imap):
     jane, nora = _people(client)
     source = _email_to_fax(client, imap, jane, nora)

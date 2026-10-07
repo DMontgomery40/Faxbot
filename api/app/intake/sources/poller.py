@@ -231,8 +231,11 @@ class Poller:
             return record(text.AUTOMATIC)
         if address is None:
             return record(text.NO_SENDER)
+        confirmed_by = None
         if not mail.confirmed(message, address, settings.get('checked_by')):
-            return record(text.NOT_AUTHENTICATED if settings.get('checked_by') else text.NO_TRUSTED_SERVER)
+            if not mail.microsoft_internal(message, address, settings):
+                return record(text.NOT_AUTHENTICATED if settings.get('checked_by') else text.NO_TRUSTED_SERVER)
+            confirmed_by = text.ACCEPTED_INTERNAL
         # The sender is confirmed: from here on they hear what happened, unless the message forbids a reply.
         reply_to = address if mail.may_reply(message) else None
         person_id, person_name = self.store.person_for(source.id, address)
@@ -256,7 +259,7 @@ class Poller:
         submission = send.Submission(
             operation_id=message.operation_id, to_number=number, documents=message.documents,
             reference=message.reference, subject=message.subject, sender=address, person_id=person_id,
-            person_name=person_name, received_at=received_at, reply_to=reply_to)
+            person_name=person_name, received_at=received_at, reply_to=reply_to, confirmed_by=confirmed_by)
         return send.submit(self.access(), self.runtime, self.store, source, submission, secret.get('key_token'))
 
     # -- folders ---------------------------------------------------------------------------

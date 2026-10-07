@@ -112,6 +112,30 @@ def test_alignment_spf_and_dkim():
     assert not mail.aligned('com', 'example.com') and mail.aligned('a.example.com', 'example.com')
 
 
+INTERNAL = [('X-MS-Exchange-Organization-AuthAs', 'Internal'),
+            ('X-MS-Exchange-Organization-AuthSource', 'SN6PR04MB4224.namprd04.prod.outlook.com'),
+            ('X-MS-Exchange-Organization-AuthMechanism', '04')]
+M365 = {'provider': 'microsoft365', 'imap_host': 'outlook.office365.com', 'checked_by': mail.MICROSOFT_365,
+        'address': 'fax@example.com'}
+
+
+def test_microsoft_365_internal_mail_is_confirmed_only_on_a_microsoft_365_connector():
+    internal = mail.parse(message(headers=INTERNAL))
+    assert mail.microsoft_internal(internal, 'jane@example.com', M365)
+    # The same headers mean nothing on any other connector: any server could have written them.
+    assert not mail.microsoft_internal(internal, 'jane@example.com', {**M365, 'provider': 'other'})
+    assert not mail.microsoft_internal(internal, 'jane@example.com', {**M365, 'imap_host': 'mail.example.com'})
+    assert not mail.microsoft_internal(internal, 'jane@example.com', {**M365, 'checked_by': 'mx.example.com'})
+    # Only the mailbox's own domain, exactly one Internal mark and one source.
+    assert not mail.microsoft_internal(internal, 'jane@example.org', M365)
+    anonymous = mail.parse(message(headers=[('X-MS-Exchange-Organization-AuthAs', 'Anonymous'), *INTERNAL[1:]]))
+    assert not mail.microsoft_internal(anonymous, 'jane@example.com', M365)
+    doubled = mail.parse(message(headers=[('X-MS-Exchange-Organization-AuthAs', 'Internal'), *INTERNAL]))
+    assert not mail.microsoft_internal(doubled, 'jane@example.com', M365)
+    sourceless = mail.parse(message(headers=INTERNAL[:1]))
+    assert not mail.microsoft_internal(sourceless, 'jane@example.com', M365)
+
+
 def test_comments_with_separators_do_not_split_results():
     server, results = mail.parse_results('mx.google.com 1; spf=pass (a; b=c (nested; x)) smtp.mailfrom='
                                          '"jane@example.com"; dkim=fail (bad; sig) header.d=example.com')

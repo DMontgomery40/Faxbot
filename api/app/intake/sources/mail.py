@@ -15,6 +15,22 @@ the topmost is the most recent. The message is confirmed when that header says
 sender domain (``smtp.mailfrom``) aligned with it. Aligned means the same
 domain, or one a subdomain of the other (relaxed alignment without a public
 suffix list: a public suffix cannot sign or pass SPF for its own name).
+
+Mail from inside a Microsoft 365 organization often carries no DKIM or SPF
+pass at all. Exchange marks it instead: ``X-MS-Exchange-Organization-AuthAs:
+Internal`` for a message submitted by an authenticated mailbox in the tenant,
+with ``X-MS-Exchange-Organization-AuthSource`` naming the server that decided.
+Exchange's header firewall removes every ``X-MS-Exchange-Organization-``
+header from messages entering the organization from untrusted sources, and
+mailbox delivery keeps AuthAs, AuthSource and AuthMechanism on the stored
+message (learn.microsoft.com/exchange/header-firewall-exchange-2013-help,
+updated 2025-09-09; techcommunity.microsoft.com, "Demystifying and
+troubleshooting hybrid mail flow: when is a message internal?"). So Faxbot
+accepts exactly one ``AuthAs: Internal`` and one AuthSource as confirmation
+only on a connector set up as Microsoft 365 that reads the mailbox from
+Exchange Online itself, and only for a From address in the mailbox's own
+domain. A generic IMAP connector never trusts these headers: any server could
+have written them.
 """
 from dataclasses import dataclass, field
 from email import policy
@@ -27,6 +43,7 @@ from ...routing.numbers import InvalidNumber, normalize_number
 
 
 MICROSOFT_365 = 'microsoft365'
+EXCHANGE_ONLINE = 'outlook.office365.com'
 DOCUMENT_TYPES = {'application/pdf': 'pdf', 'image/tiff': 'tiff', 'image/tif': 'tiff'}
 DOCUMENT_SUFFIXES = {'.pdf': 'pdf', '.tif': 'tiff', '.tiff': 'tiff'}
 SIDECAR_SUFFIX = '.json'
@@ -237,6 +254,21 @@ def confirmed(message, address, server):
             if aligned(domain_of(envelope) if '@' in envelope else envelope.strip('.'), domain):
                 return True
     return False
+
+
+def microsoft_internal(message, address, settings):
+    """Sent from inside the connector's own Microsoft 365 organization (see the module notes)."""
+    if (settings.get('provider') != MICROSOFT_365 or settings.get('imap_host') != EXCHANGE_ONLINE
+            or settings.get('checked_by') != MICROSOFT_365 or not address):
+        return False
+    marks = message.parsed.get_all('X-MS-Exchange-Organization-AuthAs') or []
+    sources = message.parsed.get_all('X-MS-Exchange-Organization-AuthSource') or []
+    if len(marks) != 1 or str(marks[0]).strip().casefold() != 'internal':
+        return False
+    if len(sources) != 1 or not str(sources[0]).strip():
+        return False
+    own = domain_of(settings.get('address'))
+    return bool(own) and domain_of(address) == own
 
 
 # -- loops and automatic mail (RFC 3834) ------------------------------------------------

@@ -233,11 +233,13 @@ GUIDANCE = {
                      'the Office 365 Exchange Online application permissions IMAP.AccessAsApp and SMTP.SendAsApp, and '
                      'grant admin consent. Then in Exchange Online PowerShell run New-ServicePrincipal for the app and '
                      'Add-MailboxPermission with FullAccess on this mailbox. Enter the tenant ID, client ID and a '
-                     'client secret here.'),
+                     'client secret here. Mail your own staff send from inside your Microsoft 365 organization is '
+                     'accepted by the internal mark Exchange gives it.'),
     'google': ('Google Workspace stopped accepting plain passwords on March 14, 2025. Create a service account, turn '
                'on domain-wide delegation for it with the scope https://mail.google.com/ in the Admin console under '
                'Security, API controls, and paste its key file here. An app password also works when the mailbox '
-               'uses 2-Step Verification.'),
+               'uses 2-Step Verification. Set up DKIM for your domain under Apps, Google Workspace, Gmail, '
+               'Authenticate email, so mail from your own staff passes the sender check.'),
     'other': ('Enter your mail server\'s IMAP address and a user name and password. Faxbot connects with TLS only, on '
               'port 993 unless you choose another.'),
 }

@@ -10,6 +10,7 @@ administrator configures (DKIM, SPF, IMAP server); no times inside sentences
 FILED = 'Filed in {mailbox}.'
 FILED_NUMBER = 'Filed for {number}.'
 QUEUED = 'Sent on to be faxed to {number}.'
+ACCEPTED_INTERNAL = 'Accepted: sent from inside your Microsoft 365 organization.'
 DUPLICATE_RECEIVE = 'Seen again {count}; it was never filed twice.'
 DUPLICATE_SEND = 'Seen again {count}; it was never faxed twice.'
 CONFLICT = 'A later copy with the same identity held a different document; the first one is kept.'

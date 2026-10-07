@@ -45,6 +45,7 @@ class Submission:
     person_name: str | None = None
     received_at: datetime | None = None
     reply_to: str | None = None
+    confirmed_by: str | None = None   # a sentence saying how the sender was confirmed, when not by DKIM or SPF
     report: dict = field(default_factory=dict)
 
 
@@ -125,7 +126,7 @@ def submit(access, runtime, store, source, submission, token):
             if why is not None:
                 raise PersonRefused(why)
         store.link_on(connection, source.id, submission.operation_id, submission.part, **_item_fields(
-            submission, state='sent', fax_job_id=job_id, document_digest=source_digest,
+            submission, state='sent', fax_job_id=job_id, document_digest=source_digest, reason=_queued(submission),
             submitted_digest=_file_digest(pdf), reply_to=submission.reply_to,
             reply_state='waiting' if reply else 'none', reply_kind='result' if reply else None))
 
@@ -166,6 +167,11 @@ def submit(access, runtime, store, source, submission, token):
         documents.discard(pdf, tiff)
         raise Retry(text.MAIL_SERVER_ERROR) from None
     return store.item(source.id, submission.operation_id, submission.part), True
+
+
+def _queued(submission):
+    sentence = text.QUEUED.format(number=submission.to_number)
+    return f'{sentence} {submission.confirmed_by}' if submission.confirmed_by else sentence
 
 
 def _file_digest(path):
