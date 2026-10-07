@@ -62,6 +62,8 @@ AGENTS.md
 _site/
 docs/_site/
 vendor/
+# The browser fax decoder ships its vendored zstd reader (tools/fax-decoder/README.md).
+!tools/fax-decoder/vendor/
 .bundle/
 
 site/
