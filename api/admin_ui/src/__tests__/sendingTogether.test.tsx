@@ -56,6 +56,55 @@ describe('Sending together in a fax number\'s Details', () => {
     expect(screen.getByText(/The recipient's agreement was recorded by Owner on/)).toBeTruthy();
   });
 
+  it('chooses one index page only after the recipient\'s agreement to it, and sends only that change', async () => {
+    const choices = [
+      { value: 'separators', label: 'A separator page before each document', agreement_text: null },
+      { value: 'index_page', label: "One index page listing each document's pages",
+        agreement_text: "This recipient has agreed to one index page listing each document's pages, instead of a separator page before each document." },
+      { value: 'page_headers', label: 'A line at the top of every page, with no page added',
+        agreement_text: 'This recipient has agreed to find where each document starts from a line at the top of every page, with no separator or index page.' },
+    ];
+    const on = {
+      ...off, enabled: true, version: 1,
+      state_sentence: 'On: a fax to this number waits up to 10 minutes to go in one call with others.',
+      boundaries: 'separators', boundaries_choices: choices, boundaries_agreement: null,
+      boundaries_sentence: 'Each document sent together to this number follows its own separator page.',
+      boundaries_keeps: "Only Faxbot's separator pages are left out; cover sheets and barcode pages inside your documents are always sent.",
+    };
+    const saved: unknown[] = [];
+    server.use(
+      http.get('/batching/numbers/:number', () => HttpResponse.json(on)),
+      http.put('/batching/numbers/:number', async ({ request }) => {
+        saved.push(await request.json());
+        return HttpResponse.json({
+          ...on, version: 2, boundaries: 'index_page',
+          boundaries_sentence: "Faxes sent together to this number start with one index page listing each document's pages, instead of a separator page before each document.",
+          boundaries_agreement: { action: 'changed', by: 'Owner', at: '2026-10-07T15:00:00+00:00', recipient_agreed: false,
+            max_wait_minutes: 10, max_pages: 30, mixed_senders: false, boundaries: 'index_page', boundaries_agreed: true },
+          savings: { ...off.savings, separator_pages: { calls: 1, pages_saved: 2, estimated_saving: [], is_estimate: true,
+            sentence: 'An index page or marks at the top of every page left out 2 separator pages in 1 shared call.' } },
+        });
+      }),
+    );
+    render(<SendingTogetherPanel client={client()} number={NUMBER} canWrite />);
+    expect(await screen.findByText(on.boundaries_keeps)).toBeTruthy();
+    expect(screen.getByTestId('boundaries-state').textContent).toBe(on.boundaries_sentence);
+    fireEvent.click(screen.getByRole('radio', { name: "One index page listing each document's pages" }));
+    const save = screen.getByRole('button', { name: 'Save sending together' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: choices[1].agreement_text as string }));
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    expect(await screen.findByText('An index page or marks at the top of every page left out 2 separator pages in 1 shared call.')).toBeTruthy();
+    expect(saved).toEqual([{ enabled: true, recipient_agreed: false, max_wait_minutes: 10, max_pages: 30,
+      mixed_senders: false, version: 1, boundaries: 'index_page', boundaries_agreed: true }]);
+    expect(screen.getByText(/The recipient's agreement to this was recorded by Owner on/)).toBeTruthy();
+    // Going back to separator pages needs no agreement.
+    fireEvent.click(screen.getByRole('radio', { name: 'A separator page before each document' }));
+    expect(screen.queryByRole('checkbox', { name: choices[1].agreement_text as string })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save sending together' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('shows a person without settings access the setting without changing it', async () => {
     server.use(http.get('/batching/numbers/:number', () => HttpResponse.json(off)));
     render(<SendingTogetherPanel client={client()} number={NUMBER} canWrite={false} />);
@@ -117,6 +166,26 @@ describe('A waiting fax in Jobs', () => {
     expect(within(dialog).getByText('Its separator page says Faxbot cccccccc (document 2 of 3).')).toBeTruthy();
     expect(within(dialog).getByText('Going in one call with other faxes to this number')).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: 'Send now' })).toBeNull();
+  });
+
+  it('says how its call marked it when the call had no separator pages', async () => {
+    const together = { state: 'together', reference: 'Faxbot cccccccc', documents: 3, document_number: 2, others: 2,
+      layout: 'page_headers', call_first_page: 3, call_last_page: 5 };
+    const marked = 'A line at the top of each of its pages marks it as document 2 of 3 (pages 3–5 of the call), under Faxbot cccccccc.';
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [{ ...job(together), status: 'success', delivery_state: 'success' }] })),
+      http.get(`/admin/fax-jobs/${JOB}`, () => HttpResponse.json({ ...job(together), status: 'success', delivery_state: 'success' })),
+      http.get(`/admin/fax-jobs/${JOB}/delivery`, () => HttpResponse.json({ version: 4, state: 'success', dispatch_mode: 'normal',
+        provider_id: 'sip', profile_id: 'p', revision_id: 'r', attempt: null, can_bind_provider_identity: false,
+        bind_refusal_reason: null, events: [], events_truncated: false })),
+      http.get(`/batching/faxes/${JOB}`, () => HttpResponse.json({ ...together, sentence: 'Sent in one call with 2 other faxes.',
+        layout_sentence: marked, share: null })),
+    );
+    render(<JobsList client={client()} />);
+    fireEvent.click(await screen.findByText('*******0123'));
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    expect(await within(dialog).findByText(marked)).toBeTruthy();
+    expect(within(dialog).queryByText(/Its separator page says/)).toBeNull();
   });
 
   it('has nothing to say about a fax that never waited', () => {

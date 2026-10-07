@@ -65,6 +65,9 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
               : `No money saved in the last ${data.days} days, as far as Faxbot can tell.`)}
           </Typography>
           <Part title="Sending together" sentence={data.sending_together.sentence} testId="savings-together" />
+          {data.separator_pages && (
+            <Part title="Separator pages left out" sentence={data.separator_pages.sentence} testId="savings-separator-pages" />
+          )}
           <Part title="Direct delivery" sentence={data.direct_delivery.sentence} testId="savings-direct" />
           <Part title="Case packets" sentence={data.case_packets.sentence} note={countedFromSentence(data.case_packets)}
             testId="savings-packets" />
