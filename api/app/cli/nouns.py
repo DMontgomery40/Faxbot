@@ -7,8 +7,8 @@ Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
-from .commands import (access, accounts, admin, blocked, codec, delivery, fax, fax_machines, forms, operations, pages,
-                       reply, rules, schedule, settings, setup, sslfax, trunk, work)
+from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
+                       operations, pages, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -70,8 +70,8 @@ sent.command('check-again')(rules.check_again_command)
 
 # -- numbers -------------------------------------------------------------------------
 
-numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the mailboxes themselves, and email "
-                 'delivery.')
+numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the mailboxes themselves, email "
+                 'delivery, and the mailboxes and folders that bring documents in or send faxes.')
 numbers.command('list')(access.numbers_list)
 numbers.command('add')(access.numbers_add)
 numbers.command('update')(access.numbers_update)
@@ -87,6 +87,7 @@ email.add_typer(delivery.connectors, name='connectors')
 numbers.add_typer(email, name='email')
 numbers.add_typer(reply.reply, name='reply')
 numbers.add_typer(blocked.blocked, name='blocked')
+numbers.add_typer(connectors.connectors, name='connectors')
 
 # -- recipients ----------------------------------------------------------------------
 

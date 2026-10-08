@@ -13,6 +13,11 @@ that the acquisition store records without touching the stored document. A new
 ``revision`` is a related, separate document. ``source_system`` is recorded in
 the acquisition report; give each source system its own API key, or keep
 operation ids unique across the systems that share one.
+
+``record_import`` is the one acquisition path for every import: ``POST /imports``
+and the intake connectors (``intake/sources``), which import under account
+``import:connector:<connector id>``. A connector's sidecar file uses the
+manifest's field names (``parse_sidecar``); the connector supplies the identity.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -118,6 +123,51 @@ def parse_manifest(raw, *, country):
         to_number=numbers['to_number'], from_number=numbers['from_number'], pages=pages)
 
 
+SIDECAR_FIELDS = MANIFEST_FIELDS | {'to'}
+
+
+def parse_sidecar(raw, *, country):
+    """A connector's sidecar JSON: the manifest's fields, every one optional; ``to`` is ``to_number``.
+
+    Returns a dict with ``to_number``, ``from_number``, ``source_received_at``,
+    ``pages`` and the sender's own ``operation_id``/``revision``/``source_system``
+    (kept in the report only; the connector decides the identity).
+    """
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = bytes(raw).decode('utf-8-sig')
+        except UnicodeDecodeError:
+            raise ImportInputError('The sidecar file is not valid JSON.') from None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ImportInputError('The sidecar file is empty.')
+    if len(raw) > 8192:
+        raise ImportInputError('The sidecar file is too large.')
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise ImportInputError('The sidecar file is not valid JSON.') from None
+    if not isinstance(data, dict):
+        raise ImportInputError('The sidecar file must hold one JSON object.')
+    unknown = sorted(set(data) - SIDECAR_FIELDS)
+    if unknown:
+        raise ImportInputError(f"The sidecar file has fields Faxbot does not use: {', '.join(unknown)}.")
+    if 'to' in data and 'to_number' in data and data['to'] != data['to_number']:
+        raise ImportInputError('The sidecar file gives two different fax numbers.')
+    pages = data.get('pages')
+    if pages is not None and (type(pages) is not int or not 1 <= pages <= 10000):
+        raise ImportInputError('pages must be a whole number from 1 to 10000.')
+    numbers = {}
+    for field, value in (('to_number', data.get('to_number', data.get('to'))),
+                         ('from_number', data.get('from_number'))):
+        value = _text(value, field, 64)
+        numbers[field] = stored_number(value, country=country) if value else None
+    return {'to_number': numbers['to_number'], 'from_number': numbers['from_number'],
+            'source_received_at': parse_time(data.get('source_received_at')), 'pages': pages,
+            'source_system': _text(data.get('source_system'), 'source_system', 64),
+            'operation_id': _text(data.get('operation_id'), 'operation_id', 100),
+            'revision': _text(data.get('revision'), 'revision', 40)}
+
+
 async def spool_upload(upload, *, max_bytes, directory):
     """Copy the upload to a private temporary file; return (path, sha256, size)."""
     if upload is None:
@@ -171,3 +221,39 @@ def store_document(path, directory):
     if location.startswith('s3://'):
         discard(final)
     return location
+
+
+CONFLICT = 'A different document was already imported with this operation id and revision; the first one is kept.'
+
+
+def record_import(access, values, *, account, manifest, path, digest, report=None, compare=True):
+    """Acquire one validated PDF through the inbound acquisition store.
+
+    Returns (status, import id, inbound fax id): ``received`` for a new document,
+    ``duplicate`` when this identity already holds a document. With ``compare``
+    (the bytes are the source's own), different bytes under the same identity
+    raise ImportConflict and the first document is kept; a caller that converts
+    what it received compares the source's digests itself and passes False.
+    """
+    from ..inbound.acquisition import ImportStore, discard as discard_artifact, store_document as store_artifact
+    store = ImportStore(access.inbound)
+    begun = store.begin(source='import', account=account, operation_id=manifest.operation_id,
+                        revision=manifest.revision, backend='import', to_number=manifest.to_number,
+                        from_number=manifest.from_number, reported_pages=manifest.pages,
+                        report=report if report is not None else manifest.report(),
+                        source_received_at=manifest.source_received_at,
+                        artifact_digest=digest if compare else None, schedule=False,
+                        country=values.fax_default_country)
+    if begun.conflict:
+        raise ImportConflict(CONFLICT)
+    if begun.state in ('received', 'conflict'):
+        return 'duplicate', begun.import_id, begun.inbound_fax_id
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    artifact = store_artifact(data, begun.inbound_fax_id, provider='The import')
+    completion = store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
+                                size=artifact.size, pages=artifact.pages, media_type=artifact.media_type)
+    discard_artifact(artifact, completion)
+    if completion.state == 'conflict':
+        raise ImportConflict(CONFLICT)
+    return ('received' if completion.stored else 'duplicate'), begun.import_id, begun.inbound_fax_id
