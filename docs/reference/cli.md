@@ -1830,6 +1830,8 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or set the highest speed and error...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
 * `schedule`: Show or set when Faxbot sends to one...
+* `polling`: Show or set whether Faxbot may collect...
+* `collect`: Call another site&#x27;s fax server once and...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `encoded`: Encoded pages (experimental): send a...
@@ -1961,6 +1963,45 @@ $ faxbot recipients schedule [OPTIONS] {number}
 * `--any-time`: The recipient takes faxes at any time (clears the days and hours).
 * `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
 * `--learn / --no-learn`: Whether Faxbot learns when this number is usually busy, slow or failing, and holds ordinary faxes for a better hour.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients polling`
+
+Show or set whether Faxbot may collect faxes from another site&#x27;s fax server by calling it.
+
+**Usage**:
+
+```console
+$ faxbot recipients polling [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
+* `--on / --off`: Allow or stop collecting faxes from this number. Faxbot never collects by itself.
+* `--name NAME`: A name for the other site, such as &quot;Denver office&quot;.
+* `--selective-address DIGITS`: The address the other fax server asks callers to give before it sends a held fax, if it asks for one.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients collect`
+
+Call another site&#x27;s fax server once and collect the fax it holds for you (it arrives in Received).
+
+**Usage**:
+
+```console
+$ faxbot recipients collect [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients iaf`

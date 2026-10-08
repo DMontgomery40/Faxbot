@@ -105,6 +105,7 @@ import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
 import type { RecipientSchedule, RecipientScheduleSave } from './types';
+import type { RecipientPolling, RecipientPollingSave } from './types';
 import type {
   CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
 } from './certaintyTypes';
@@ -1165,6 +1166,19 @@ class AdminAPIClient {
 
   async saveSchedule(number: string, body: RecipientScheduleSave): Promise<RecipientSchedule> {
     return this.json(`/routing/destinations/${id(number)}/schedule`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Collecting faxes this number's fax server holds for you (polling): the setting, the advice, and Collect now.
+  async getPolling(number: string): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`);
+  }
+
+  async savePolling(number: string, body: RecipientPollingSave): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async collectPolling(number: string): Promise<RecipientPolling & { id: string; sentence: string }> {
+    return this.json(`/routing/destinations/${id(number)}/polling/collect`, { method: 'POST' });
   }
 
   // Sending short faxes to the same number together in one call.
