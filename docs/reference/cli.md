@@ -1016,6 +1016,8 @@ $ faxbot numbers add [OPTIONS] {number}
 * `--keep-days DAYS`: Remove these faxes from Faxbot after this many days. This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to keep the fax that long.  [x&gt;=1]
 * `--position N`: Its place among your number rules; the first that matches a fax places it.  [x&gt;=1]
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
+* `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
+* `--site SITE`: Only faxes received on an account of this site.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers update`
@@ -1046,6 +1048,8 @@ $ faxbot numbers update [OPTIONS] {number}
 * `--keep-days DAYS`: Remove these faxes from Faxbot after this many days. This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to keep the fax that long.  [x&gt;=1]
 * `--position N`: Its place among your number rules; the first that matches a fax places it.  [x&gt;=1]
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
+* `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
+* `--site SITE`: Only faxes received on an account of this site.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers explain`
@@ -1064,6 +1068,7 @@ $ faxbot numbers explain [OPTIONS]
 * `--from NUMBER`: The number it comes from.
 * `--account KEY`: The account it arrives on.
 * `--at TIME`: When it arrives, in this installation&#x27;s time zone, such as 2026-10-07 18:30.
+* `--subaddress DIGITS`: The subaddress the sender&#x27;s machine gives, if any.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers mailboxes`

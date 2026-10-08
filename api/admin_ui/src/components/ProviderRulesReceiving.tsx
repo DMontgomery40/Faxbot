@@ -28,8 +28,12 @@ function SelectBox({ label, value, options, onChange }: {
   );
 }
 
+export const SUBADDRESS_HELP = 'Up to 20 digits some fax machines send with a fax, such as a department\'s extension. '
+  + 'The sender\'s machine states it, so it proves nothing about who sent the fax: it only chooses the mailbox and '
+  + 'never gives anyone access.';
+
 // The options of one number rule, as fields; the Numbers dialog saves them with the rule.
-export function ReceivingOptionsFields({ value, onChange, accounts, connectors, timeZone }: {
+export function ReceivingOptionsFields({ value, onChange, accounts, connectors, timeZone, sites = [] }: {
   value: ReceivingOptions;
   onChange: (value: ReceivingOptions) => void;
   // Accounts that receive faxes.
@@ -37,6 +41,8 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
   // Email connectors (Numbers → Email delivery).
   connectors: Named[];
   timeZone: string;
+  // Sites (Providers → Rules), for faxes that arrive on an account of one site.
+  sites?: Named[];
 }) {
   const [fromText, setFromText] = useState(value.from_numbers.join(', '));
   const set = (patch: Partial<ReceivingOptions>) => onChange({ ...value, ...patch });
@@ -55,6 +61,14 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
           options={[['', 'Any account'], ...accounts.map((account): [string, string] => [account.key, account.label])]}
           onChange={(key) => set({ account_key: key || null })} />
       )}
+      {sites.length > 0 && (
+        <SelectBox label="Only faxes received on an account of" value={value.site_key ?? ''}
+          options={[['', 'Any site'], ...sites.map((site): [string, string] => [site.key, site.label])]}
+          onChange={(key) => set({ site_key: key || null })} />
+      )}
+      <TextField size="small" label="Only faxes with subaddress" value={value.subaddress ?? ''} placeholder="2001"
+        helperText={SUBADDRESS_HELP} inputProps={{ maxLength: 20 }}
+        onChange={(event) => set({ subaddress: event.target.value.trim() || null })} />
       <TextField size="small" label="Only faxes from" value={fromText} placeholder="+13035550100, +1303*"
         helperText="Fax numbers, separated by commas. End one with * to match every number that starts with it."
         onChange={(event) => {
@@ -101,12 +115,14 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
   const [to, setTo] = useState('');
   const [from, setFrom] = useState('');
   const [account, setAccount] = useState('');
+  const [subaddress, setSubaddress] = useState('');
   const [at, setAt] = useState('');
   const [result, setResult] = useState<ReceivedExplainResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const run = () => {
     setError(null);
-    api.explainReceived({ to_number: to.trim(), from_number: from.trim() || null, account_key: account || null, at: at || null })
+    api.explainReceived({ to_number: to.trim(), from_number: from.trim() || null, account_key: account || null, at: at || null,
+      ...(subaddress.trim() ? { subaddress: subaddress.trim() } : {}) })
       .then(setResult).catch((failure) => { setResult(null); setError(failure); });
   };
   return (
@@ -118,6 +134,8 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 2 }}>
         <TextField size="small" label="Sent to your number" value={to} onChange={(event) => setTo(event.target.value)} />
         <TextField size="small" label="From" value={from} onChange={(event) => setFrom(event.target.value)} />
+        <TextField size="small" label="Subaddress" value={subaddress} inputProps={{ maxLength: 20 }}
+          onChange={(event) => setSubaddress(event.target.value)} />
         {accounts.length > 1 && (
           <Box sx={{ minWidth: 200 }}>
             <SelectBox label="Received on" value={account}

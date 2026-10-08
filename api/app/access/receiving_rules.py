@@ -454,11 +454,7 @@ def explain(access_store, intake, values, *, to_number, from_number=None, accoun
         from ..accounts import account_named
         account = account_named(values, account_key)
         site = account.site if account is not None else None
-    try:
-        moment = _local_moment(at, zone_name)
-    except ReceivingRuleError as error:
-        from fastapi import HTTPException
-        raise HTTPException(400, detail=str(error)) from None
+    moment = at if isinstance(at, datetime) else _local_moment(at, zone_name)
     facts = ReceivedFacts(to_number=to, from_number=sender, account_key=account_key, site_key=site,
                           subaddress=subaddress, received_at=moment, time_zone=zone_name)
     with access_store.engine.connect() as connection:

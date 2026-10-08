@@ -71,7 +71,11 @@ class InboundResources:
         return SimpleNamespace(id=rule['resource_id'], label=rule['mailbox_label'], to_number=rule['to_number'])
 
     def _mailbox_on(self, connection, mailbox_id, actor, now):
-        """A mailbox an import names directly: (resource id, label). The importer must be able to read it."""
+        """A mailbox an import names directly: (resource id, label).
+
+        A person importing (``actor``) must be able to read faxes in it. Without an actor the caller is Faxbot
+        itself, such as an intake connector an administrator set up for that mailbox.
+        """
         resources, mailboxes = self.tables['access_resources'], self.tables['mailboxes']
         row = connection.execute(sa.select(resources.c.id, resources.c.enabled, mailboxes.c.label)
             .select_from(mailboxes.join(resources, sa.and_(resources.c.kind == 'mailbox',
@@ -79,8 +83,8 @@ class InboundResources:
             .where(mailboxes.c.id == mailbox_id)).first() if _identity(mailbox_id) else None
         if row is None or row.enabled != 1:
             raise FaxAccessError('invalid_target')
-        if actor is None or not self.control.authorize_child_on(connection, actor, 'inbound:read',
-                                                                 ResourceRef(row.id), now=now):
+        if actor is not None and not self.control.authorize_child_on(connection, actor, 'inbound:read',
+                                                                     ResourceRef(row.id), now=now):
             raise FaxAccessError('forbidden')
         return SimpleNamespace(id=row.id, label=row.label)
 
@@ -158,10 +162,11 @@ class InboundResources:
         return self.record_inbound_on(connection, values['id'], values.get('to_number'), now, country=country,
                                       facts=facts, mailbox_id=mailbox_id, actor=actor)
 
-    def accept(self, values, *, now=None, country=DEFAULT_COUNTRY):
+    def accept(self, values, *, now=None, country=DEFAULT_COUNTRY, facts=None, mailbox_id=None, actor=None):
         """Insert one provider inbound row with its resource and audit, atomically."""
         with self.store.transaction() as connection:
-            return self.insert_on(connection, values, now or _utcnow(), country=country)
+            return self.insert_on(connection, values, now or _utcnow(), country=country, facts=facts,
+                                  mailbox_id=mailbox_id, actor=actor)
 
     def imports_table(self):
         """The 0010 acquisition records, reflected once; None before that migration."""

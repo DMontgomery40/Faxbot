@@ -422,6 +422,7 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
   const [showOptions, setShowOptions] = useState(false);
   // Accounts that receive faxes and the installation's time zone, for the receiving options.
   const [receivingAccounts, setReceivingAccounts] = useState<Named[]>([]);
+  const [sites, setSites] = useState<Named[]>([]);
   const [timeZone, setTimeZone] = useState("Faxbot's time zone");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -439,8 +440,11 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
     if (zone) setTimeZone(zone);
     if (canReadSettings) {
       rulesApiFor(client).accounts()
-        .then((accounts) => setReceivingAccounts(accounts.accounts.filter((account) => account.receives)
-          .map((account) => ({ key: account.key, label: account.label }))))
+        .then((accounts) => {
+          setReceivingAccounts(accounts.accounts.filter((account) => account.receives)
+            .map((account) => ({ key: account.key, label: account.label })));
+          setSites(accounts.sites.map((site) => ({ key: site.key, label: site.name })));
+        })
         .catch(() => setReceivingAccounts([]));
     }
   }, [client, canReadSettings]);
@@ -567,6 +571,7 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
                         <Typography variant="caption" color="text.secondary" display="block" sx={{ maxWidth: 360 }}>
                           {row.rule.enabled === false ? 'Off: ' : ''}{receivingSentence({ ...row.rule }, {
                             account: (key) => receivingAccounts.find((account) => account.key === key)?.label ?? key,
+                            site: (key) => sites.find((site) => site.key === key)?.label ?? key,
                             connector: (id) => connectors?.find((connector) => connector.id === id)?.name ?? 'another email connector',
                           })}
                         </Typography>
@@ -624,7 +629,7 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
             {showOptions && (
               <Box sx={{ mt: 1 }}>
                 <ReceivingOptionsFields value={draft.options} onChange={(options) => setDraft({ ...draft, options })}
-                  accounts={receivingAccounts} timeZone={timeZone}
+                  accounts={receivingAccounts} timeZone={timeZone} sites={sites}
                   connectors={(connectors ?? []).map((connector) => ({ key: connector.id, label: connector.name }))} />
               </Box>
             )}

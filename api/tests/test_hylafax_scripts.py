@@ -111,6 +111,27 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     assert 'X-Internal-Secret: synthetic-secret-value' in headers
 
 
+@pytest.mark.parametrize('faxinfo, log, stated', [
+    ("'    Sender: +1 555 555 0199' '   SubAddr: 20 01' '     Pages: 2'", '', '2001'),
+    # Without faxinfo's SubAddr, the session log's line; "<unspecified>" is no subaddress.
+    ("'    Sender: +1 555 555 0199' '     Pages: 2'",
+     'RECV FAX (000000007): recvq/fax000000007.tif from 5550199, subaddress <2002>, 2 pages in 0:00:12\n', '2002'),
+    ("'    Sender: +1 555 555 0199' '     Pages: 2'",
+     'RECV FAX (000000007): recvq/fax000000007.tif from 5550199, subaddress <unspecified>, 2 pages\n', None),
+])
+def test_the_subaddress_the_sender_stated_reaches_faxbot(engine, tmp_path, faxinfo, log, stated):
+    """Faxbot's number rules can route by it (it is never proof of who sent the fax)."""
+    spool, state, data, environment = engine
+    _stub(tmp_path / 'tools', 'faxinfo', f"printf '%s\\n' 'x:' {faxinfo}\n")
+    with (spool / 'log' / 'c000000007').open('a') as session:
+        session.write(log)
+    assert run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX1', '000000007', '',
+               '+15555550199', '5.15555550100', cwd=spool).returncode == 0
+    (tmp_path / 'answer').write_text('200')
+    assert run('handover', environment).returncode == 0
+    assert json.loads((tmp_path / 'body').read_text())['subaddress'] == stated
+
+
 def test_a_ticket_left_from_an_older_container_is_handed_over_from_the_volume(engine, tmp_path):
     spool, state, data, environment = engine
     assert run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX1', '000000007', '',

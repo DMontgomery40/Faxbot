@@ -372,8 +372,12 @@ def receiving_sentence(rule, names, connectors=None):
     """A number rule in words, as the console's Numbers page reads it."""
     sentence = 'Faxes to any of your numbers' if rule.get('any_number') or not rule.get('to_number') \
         else f"Faxes to {rule['to_number']}"
+    if rule.get('subaddress'):
+        sentence += f" with subaddress {rule['subaddress']}"
     if rule.get('account_key'):
         sentence += f" received on {names.account(rule['account_key'])}"
+    elif rule.get('site_key'):
+        sentence += f" received on an account of {names.site(rule['site_key'])}"
     sources = [f'numbers starting with {entry[:-1]}' if entry.endswith('*') else entry
                for entry in rule.get('from_numbers') or []]
     if sources:
@@ -1656,16 +1660,24 @@ NUMBER_KEEP = typer.Option(None, '--keep-days', min=1, metavar='DAYS',
 NUMBER_POSITION = typer.Option(None, '--position', min=1, metavar='N',
                                help='Its place among your number rules; the first that matches a fax places it.')
 NUMBER_ANY = typer.Option(None, '--any-number/--this-number-only', help='Use the rule for faxes to any of your numbers.')
+NUMBER_SUBADDRESS = typer.Option(None, '--subaddress', metavar='DIGITS',
+                                 help="Only faxes whose sender's machine gives this subaddress, such as a "
+                                      "department's 2001. It chooses the mailbox and never gives anyone access.")
+NUMBER_SITE = typer.Option(None, '--site', metavar='SITE', help='Only faxes received on an account of this site.')
 
 
 def receiving_options(api, *, account=None, from_numbers=None, days=None, between=None, email=None, no_email=False,
-                      urgent=None, keep_days=None, position=None, any_number=None):
+                      urgent=None, keep_days=None, position=None, any_number=None, subaddress=None, site=None):
     """The receiving-rule fields of an /access/inbound-rules body, from the options given."""
     if email and no_email:
         raise CliError('Choose --email CONNECTOR or --no-email, not both.')
     body = {}
     if account:
         body['account_key'] = account
+    if subaddress is not None:
+        body['subaddress'] = subaddress.strip() or None
+    if site is not None:
+        body['site_key'] = site.strip() or None
     if from_numbers:
         body['from_numbers'] = list(from_numbers)
     if days:
@@ -1695,8 +1707,12 @@ def numbers_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='
                     account: str = typer.Option(None, '--account', metavar='KEY', help='The account it arrives on.'),
                     at: str = typer.Option(None, '--at', metavar='TIME',
                                            help="When it arrives, in this installation's time zone, such as "
-                                                '2026-10-07 18:30.')):
+                                                '2026-10-07 18:30.'),
+                    subaddress: str = typer.Option(None, '--subaddress', metavar='DIGITS',
+                                                   help="The subaddress the sender's machine gives, if any.")):
     """Which mailbox, email and urgency a received fax would get, and why. Nothing is saved."""
-    result = state.api().post('/access/inbound-rules/explain', json={
-        'to_number': to, 'from_number': sender, 'account_key': account, 'at': _local_moment(at) if at else None})
+    body = {'to_number': to, 'from_number': sender, 'account_key': account, 'at': _local_moment(at) if at else None}
+    if subaddress:
+        body['subaddress'] = subaddress
+    result = state.api().post('/access/inbound-rules/explain', json=body)
     state.out().result(result, lambda out: out.line(result.get('sentence') or ''))

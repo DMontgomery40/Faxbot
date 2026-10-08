@@ -637,20 +637,26 @@ def _rule_view(service, actor, rule_id):
     return _with_options(service, [service.reads.inbound_rule(actor, rule_id)])[0]
 
 
-def _clean_rule_options(request, service, body, rule_id=None):
+def _current_options(service, rule_id):
+    """(the receiving-rule tables, a rule's stored options or None)."""
+    from .receiving_rules import options_on
+    receiving = _receiving(service)
+    if receiving is None or rule_id is None:
+        return receiving, None
+    with service.store.engine.connect() as connection:
+        return receiving, (options_on(connection, receiving, [rule_id]).get(rule_id) or (None,))[0]
+
+
+async def _clean_rule_options(request, service, body, rule_id=None):
     """(complete cleaned options or None when none were given, position). 400 with a sentence when refused."""
-    from .receiving_rules import ReceivingRuleError, clean_options, options_on
+    from .receiving_rules import ReceivingRuleError, clean_options
     given = body.model_dump(exclude_unset=True, include=set(RuleOptions.model_fields) - {'position'})
     position = body.position
     if not given:
         return None, position
-    receiving = _receiving(service)
+    receiving, current = await _read(lambda: _current_options(service, rule_id))
     if receiving is None:
         raise HTTPException(400, detail='Upgrade the database before giving a number rule options.')
-    current = None
-    if rule_id is not None:
-        with service.store.engine.connect() as connection:
-            current = (options_on(connection, receiving, [rule_id]).get(rule_id) or (None,))[0]
     country = request.scope['faxbot.configuration'].active.values.fax_default_country
     try:
         return clean_options(given, current, country=country,
@@ -681,7 +687,7 @@ def _fax_number(value, request):
 @router.post('/inbound-rules', summary='Route a fax number to a mailbox')
 async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
-    options, position = await _read(lambda: _clean_rule_options(request, service, body))
+    options, position = await _clean_rule_options(request, service, body)
     # An "any number" rule matches every receiving number and stores none.
     number = '' if options and options['any_number'] else _fax_number(body.to_number, request)
     return await _mutate(lambda: service.mutations.create_inbound_rule(actor,
@@ -694,7 +700,7 @@ async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depen
 async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
     number = None if not body.to_number else _fax_number(body.to_number, request)
-    options, position = await _read(lambda: _clean_rule_options(request, service, body, rule_id))
+    options, position = await _clean_rule_options(request, service, body, rule_id)
     def mutate():
         current = service.reads.inbound_rule(actor, rule_id)
         values = InboundRuleValues(number if number is not None else current['to_number'],
@@ -708,8 +714,12 @@ async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, i
              dependencies=[Depends(require_permission('mailboxes:read'))])
 async def explain_received(body: ReceivedExplain, request: Request):
     """The receiving rules' answer for a fax that has not arrived. Nothing is received or saved."""
-    from .receiving_rules import explain
+    from .receiving_rules import ReceivingRuleError, _local_moment, explain
     values = request.scope['faxbot.configuration'].active.values
+    try:
+        moment = _local_moment(body.at, values.time_zone)
+    except ReceivingRuleError as error:
+        raise HTTPException(400, detail=str(error)) from None
     try:
         from ..intake.http import _store as intake_store
         intake = intake_store(request)
@@ -718,7 +728,7 @@ async def explain_received(body: ReceivedExplain, request: Request):
     service = runtime(request)
     return await _read(lambda: explain(service.store, intake, values, to_number=body.to_number,
                                        from_number=body.from_number, account_key=body.account_key,
-                                       subaddress=body.subaddress, at=body.at))
+                                       subaddress=body.subaddress, at=moment))
 
 
 # -- audit --------------------------------------------------------------------------------------------

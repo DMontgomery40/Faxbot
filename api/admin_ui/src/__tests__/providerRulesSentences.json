@@ -7,7 +7,8 @@
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Front desk"}, "sentence": "Faxes to +17208565062 go to Front desk."},
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Front desk", "account_key": "sip", "from_numbers": ["+1303*"], "days": ["mon", "tue", "wed", "thu", "fri"], "start_minute": 540, "end_minute": 1020, "urgent": true, "email_off": true, "keep_days": 30}, "sentence": "Faxes to +17208565062 received on Telnyx from numbers starting with +1303 on weekdays between 09:00 and 17:00 go to Front desk, marked urgent, with no email, kept for 30 days."},
     {"rule": {"to_number": "", "any_number": true, "mailbox_label": "Night desk", "start_minute": 1080, "end_minute": 420, "email_connector_id": "c-night", "keep_days": 1}, "sentence": "Faxes to any of your numbers between 18:00 and 07:00 go to Night desk, emailed through Night inbox, kept for 1 day."},
-    {"rule": {"to_number": "+442071234567", "mailbox_label": "Leeds intake", "account_key": "sinch-uk", "from_numbers": ["+441132000000", "+4420*"], "days": ["sat", "sun"]}, "sentence": "Faxes to +442071234567 received on Sinch (UK) from +441132000000 or numbers starting with +4420 at weekends go to Leeds intake."}
+    {"rule": {"to_number": "+442071234567", "mailbox_label": "Leeds intake", "account_key": "sinch-uk", "from_numbers": ["+441132000000", "+4420*"], "days": ["sat", "sun"]}, "sentence": "Faxes to +442071234567 received on Sinch (UK) from +441132000000 or numbers starting with +4420 at weekends go to Leeds intake."},
+    {"rule": {"to_number": "+17208565062", "mailbox_label": "Billing", "subaddress": "2001", "site_key": "leeds"}, "sentence": "Faxes to +17208565062 with subaddress 2001 received on an account of Leeds office go to Billing."}
   ],
   "names": {
     "accounts": {"sip": "Telnyx", "sinch-uk": "Sinch (UK)", "humblefax": "HumbleFax", "sip-leeds": "Leeds trunk (Gamma)"},

@@ -122,6 +122,15 @@ def test_an_extra_account_has_its_own_configuration_and_nothing_leaks_from_the_f
     assert configuration.settings['project_id'] == 'synthetic-uk-project'
     primary = accounts.account_configuration(values, 'sinch', catalog=Catalog(), plugin_state={})
     assert primary == control.store.read_profile(added.active.profile_id('outbound')).configuration
+    # Sending by the extra account under the revision the fax was accepted with: its own keys, never later ones.
+    from app.routing import routes
+    routes._CATALOGS[added.active.id] = Catalog()
+    sending = accounts.route_configuration(added.active, 'sinch-uk')
+    assert (sending.provider_id, sending.credentials['api_key']) == ('sinch', 'synthetic-uk-key')
+    receive_only = with_accounts(control, added, {'sinch-uk': {**UK, 'sends': False, 'receives': True}})
+    routes._CATALOGS[receive_only.active.id] = Catalog()
+    with pytest.raises(routes.RouteUnavailable):
+        accounts.route_configuration(receive_only.active, 'sinch-uk')
 
 
 def test_rules_see_every_sending_account_and_the_automatic_ones_are_todays(database, tmp_path):
