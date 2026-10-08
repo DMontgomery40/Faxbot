@@ -47,6 +47,8 @@ class Shape:
     resolution: str = 'fine'
     layout: str = 'normal'
     boundary_seconds: float | None = None  # measured time between pages for this destination, when known
+    measured: dict | None = None  # {coding: bits per page} measured on these pages (pages/coding.py)
+    coding: str | None = None  # the coding the call is priced with, when chosen
 
 
 @dataclass(frozen=True)
@@ -58,8 +60,17 @@ class Prediction:
     marginal: bool  # True for a monthly plan (no money at the margin while pages are included)
 
 
+def _bits(shape):
+    """The bits of each page as the call sends them: measured in the chosen coding when known (pages/coding.py),
+    else the page bits given."""
+    measured = (shape.measured or {}).get(shape.coding) if shape.coding else None
+    if measured is not None and len(measured) == shape.pages:
+        return tuple(measured)
+    return shape.page_bits if shape.page_bits and len(shape.page_bits) == shape.pages else None
+
+
 def _seconds(shape):
-    bits = shape.page_bits if shape.page_bits and len(shape.page_bits) == shape.pages else None
+    bits = _bits(shape)
     data = (sum(bits) if bits else DEFAULT_PAGE_BITS * shape.pages) / LINE_BITS_PER_SECOND
     boundary = shape.boundary_seconds if shape.boundary_seconds is not None else BOUNDARY_SECONDS
     return ESTIMATE_SETUP_SECONDS + data + max(0, shape.pages - 1) * boundary
@@ -99,7 +110,8 @@ def predictor():
 
     def adapted(route_key, destination, shape):
         return shared.predict(route_key, destination,
-                              shared.Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout))
+                              shared.Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout,
+                                           getattr(shape, 'measured', None), getattr(shape, 'coding', None)))
     return adapted
 
 

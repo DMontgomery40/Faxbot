@@ -207,15 +207,68 @@ def _seconds_for(target, pages=1):
     return tuple([int(total // pages)] * pages)
 
 
+# Recorded calls that all took the same time a page: the spread of a new call's time is none at all.
+STEADY = Link(samples=((11.0, 30.0),) * 3)
+
+
 def test_per_minute_billing_crosses_a_whole_minute_and_reports_the_room_left():
     terms = RateTerms(card(minute='0.005', increment=60, minimum=60))
-    under = predict_from(facts(terms), Shape(1, _seconds_for(59), 'fine', 'normal'))
-    over = predict_from(facts(terms), Shape(1, _seconds_for(61), 'fine', 'normal'))
+    under = predict_from(facts(terms, link=STEADY), Shape(1, _seconds_for(59), 'fine', 'normal'))
+    over = predict_from(facts(terms, link=STEADY), Shape(1, _seconds_for(61), 'fine', 'normal'))
     assert under.cost == Money(5000, 'USD') and over.cost == Money(10_000, 'USD')
     assert under.billed_pages == 0 and over.billed_pages == 0
     assert predictor.boundary(terms.card, under.seconds) == (60, pytest.approx(60 - under.seconds))
     assert predictor.boundary(terms.card, over.seconds)[0] == 120
     assert under.basis.startswith('Billed as 1 minute at $0.005 a minute; about 59 seconds on the line')
+    assert (under.expected_billed_seconds, under.increment_seconds) == (60, 60)
+    # With the assumed spread (15% either way after setup), a 59-second call runs past the minute a quarter of
+    # the time, and a 61-second one stays inside it a quarter of the time: priced by the expected bill.
+    under = predict_from(facts(terms), Shape(1, _seconds_for(59), 'fine', 'normal'))
+    over = predict_from(facts(terms), Shape(1, _seconds_for(61), 'fine', 'normal'))
+    assert under.cost == Money(6250, 'USD') and over.cost == Money(8750, 'USD')
+    assert under.expected_billed_seconds == pytest.approx(75) and over.expected_billed_seconds == pytest.approx(105)
+    assert under.basis.startswith('Billed as 1 minute at $0.005 a minute, or more about 25% of the time, so about '
+                                  '$0.00625 is expected; about 59 seconds on the line')
+    assert over.basis.startswith('Billed as 2 minutes at $0.005 a minute, or less about 25% of the time, so about '
+                                 '$0.00875 is expected;')
+    assert under.p90_seconds == pytest.approx(11 + 48 * 1.15, abs=0.01) and 'assumed spread' in under.spread
+
+
+def test_a_call_of_59_or_61_seconds_with_equal_odds_bills_90_seconds_not_60():
+    """Codex's check (research 2026-10-08): the mean is 60 s, but the expected bill on 60-second steps is 90 s."""
+    terms = RateTerms(card(minute='0.005', increment=60))
+    spread = predictor.Spread(((59.0, 0.5), (61.0, 0.5)), True, 2)
+    assert predictor.expected_terms_cost(terms, spread, 1) == (7500, 90.0)
+    assert terms_cost(terms, seconds=60, pages=1) == (0, 5000)  # rounding the mean would say one minute
+    # From recorded calls: each call's 11 s of setup and its seconds a page against their middle (50 s), around a
+    # 60-second call: 49 s after setup scaled by 47/50, 49/50, 51/50 and 53/50.
+    link = Link(samples=((11.0, 47.0), (11.0, 49.0), (11.0, 51.0), (11.0, 53.0)))
+    found = predictor.spread_for(60.0, link)
+    assert found.learned and found.calls == 4
+    assert [round(seconds, 2) for seconds, _ in found.points] == [57.06, 59.02, 60.98, 62.94]
+    assert predictor.expected_terms_cost(terms, found, 1) == (7500, 90.0)
+    found = predict_from(facts(terms, link=link), Shape(1, None, 'fine', 'normal'))
+    bill = predictor.bill_of(found)
+    assert bill.increment_seconds == 60 and bill.cost == found.cost
+    assert 'the spread of 4 earlier faxes to this number' == found.spread
+
+
+def test_expected_bill_answers_steps_cost_and_completion_time():
+    terms = RateTerms(card(minute='0.005', increment=60, minimum=60))
+    with predictor.facts_source(lambda route, destination, now=None: facts(terms)):
+        bill = predictor.expected_bill('sip', NUMBER, Shape(1, _seconds_for(59), 'fine', 'normal'))
+    assert bill.units == pytest.approx(1.25) and bill.increment_seconds == 60
+    assert bill.billed_seconds == pytest.approx(75) and bill.cost == Money(6250, 'USD')
+    assert bill.seconds == pytest.approx(59, abs=0.5) and bill.p90_seconds > bill.seconds
+    with predictor.facts_source(lambda route, destination, now=None: facts(None)):
+        unknown = predictor.expected_bill('sip', NUMBER, Shape(1, None, 'fine', 'codec'))
+    assert (unknown.units, unknown.cost, unknown.seconds, unknown.p90_seconds) == (None, None, None, None)
+    with pytest.raises(predictor.ShapeRefused):
+        predictor.expected_bill('sip', NUMBER, Shape(1, (1,), 'fine', 'normal', {'MH': (1, 2)}))
+    with pytest.raises(ValueError):  # ShapeRefused is a ValueError, as every caller already catches
+        Shape(1, None, 'fine', 'normal', coding='T.6')
+    with pytest.raises(TypeError):
+        predictor.expected_bill('sip', NUMBER, (1, None, 'fine', 'normal'))
     # Six-second steps after a 30-second minimum (AnveoDirect to Canada).
     six = RateTerms(card('sip-anveo', minute='0.06', increment=6, minimum=30))
     assert predictor.boundary(six.card, 20.0)[0] == 30 and predictor.boundary(six.card, 31.2)[0] == 36
@@ -270,8 +323,14 @@ def test_the_greater_of_pages_or_started_minutes_on_a_fax_plus_fixture():
     assert greater_of_pages(1, 60, 60) == 1 and greater_of_pages(1, None, 60) is None
     fax_plus = RateTerms(card('faxplus', page='0.10'), page_time_seconds=60, published=True)
     assert terms_cost(fax_plus, seconds=66, pages=1) == (2, 200_000)
-    slow = predict_from(facts(fax_plus, route='faxplus', label='Fax.Plus'), Shape(1, _seconds_for(66), 'fine', 'normal'))
+    slow = predict_from(facts(fax_plus, route='faxplus', label='Fax.Plus', link=STEADY),
+                        Shape(1, _seconds_for(66), 'fine', 'normal'))
     assert (slow.billed_pages, slow.cost) == (2, Money(200_000, 'USD'))
+    # With the assumed spread, a 66-second page stays under a minute a quarter of the time.
+    spread = predict_from(facts(fax_plus, route='faxplus', label='Fax.Plus'),
+                          Shape(1, _seconds_for(66), 'fine', 'normal'))
+    assert (spread.billed_pages, spread.cost, spread.expected_billed_pages) == (2, Money(175_000, 'USD'), 1.75)
+    assert predictor.bill_of(spread).units == 1.75 and predictor.bill_of(spread).increment_seconds == 60
     assert 'the greater of the pages sent and each started minute on the line' in slow.basis
     unknown = predict_from(facts(fax_plus, route='faxplus', label='Fax.Plus'), Shape(1, None, 'fine', 'codec'))
     assert (unknown.billed_pages, unknown.cost) == (None, None)

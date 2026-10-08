@@ -271,7 +271,9 @@ class CapturedTransport:
             tiff = Path(changed.tiff) if changed.tiff else tiff
         engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
-            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff)
+            # The coding measured smallest for this attempt's pages goes with the call (pages/coding.py).
+            coding = getattr(getattr(changed, 'coding', None), 'coding', None)
+            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff, coding=coding)
         try:
             with self.runtime.frame(revision):
                 yield PreparedSubmission(claim, profile, job, str(pdf), str(tiff) if tiff else None,
@@ -293,12 +295,14 @@ class CapturedTransport:
         self.store.record_dialed(claim, number, dial['approvals'] if number != recipient else None)
         return number
 
-    async def _prepare_engine(self, values, claim, job, tiff):
+    async def _prepare_engine(self, values, claim, job, tiff, *, coding=None):
         """(engine job or None, engine choice, call settings, engine records) for this trunk fax.
 
         Runs before the durable marker: the call plan and the engine job exist,
         nothing is dialed. When the engine cannot take the job the built-in
-        engine places the call; the attempt's engine record says why.
+        engine places the call; the attempt's engine record says why. ``coding``
+        is the coding measured smallest for the pages ('MH', 'MR', 'MMR' or
+        'JBIG'; ``hylafax_engine.with_coding``), the most compact one the call may use.
         """
         from . import hylafax_engine, hylafax_records
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
@@ -307,7 +311,8 @@ class CapturedTransport:
         choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami)
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
-            call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
+            call = hylafax_engine.with_coding(
+                hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True), coding)
             try:
                 engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
                     attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
@@ -316,7 +321,8 @@ class CapturedTransport:
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
-        call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient)
+        call = hylafax_engine.with_coding(hylafax_engine.call_settings(values, job['to_number'], recipient=recipient),
+                                          coding)
         logging.getLogger(__name__).info('Fax %s: %s', claim.job_id, choice.reason)
         return None, choice, call, records
 
