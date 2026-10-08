@@ -397,7 +397,7 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'setup', label: 'Setup', icon: <HelpIcon />, gate: { anyOf: ['settings:write'] },
         render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')}
-          isOwner={isOwner(ctx)} /> },
+          isOwner={isOwner(ctx)} onNavigate={ctx.navigate} /> },
       { id: 'security', label: 'Security', icon: <SecurityIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['security'], 'Security') },
       { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },

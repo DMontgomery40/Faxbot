@@ -21,6 +21,8 @@ import WizardTestFax from './WizardTestFax';
 import { directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionPatch, directionProblem, loadedDirections } from './common/ProviderDirections';
 import { OWNER_ONLY_SENTENCE } from './Settings';
+import SetupPacks from './SetupPacks';
+import type { AdminDestination } from '../navigation';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -30,6 +32,8 @@ interface SetupWizardProps {
   canRestart?: boolean;
   // Is this person the installation's owner? Owner-only settings are shown disabled to everyone else.
   isOwner?: boolean;
+  // Opens another console page, for the steps a suggested pack leaves to you.
+  onNavigate?: (destination: AdminDestination) => void;
 }
 
 type FormValue = string | number | boolean;
@@ -39,7 +43,8 @@ type Provider = { id: string; name: string; source?: string; categories?: string
 type InboundCallbacks = { backend: string; callbacks: Array<{ name: string; url: string }> };
 type CredentialField = { key: string; label: string; secret?: boolean; number?: boolean; helper?: string };
 
-const STEPS = ['Choose Providers', 'Connect Providers', 'Security', 'Delivery Options', 'Finish'];
+const STEPS = ['Choose Providers', 'Connect Providers', 'Security', 'Delivery Options', 'Suggested Packs', 'Finish'];
+const PACKS_STEP = STEPS.indexOf('Suggested Packs');
 
 const credentialFields: Record<string, CredentialField[]> = {
   phaxio: [
@@ -147,7 +152,7 @@ function stepFields(step: number, data: Settings | null): string[] {
   return [];
 }
 
-function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = true }: SetupWizardProps) {
+function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = true, onNavigate }: SetupWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [config, setConfig] = useState<WizardConfig>({});
@@ -724,6 +729,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
       {settings && <DeliveryWizardFields settings={settings} config={config} baseline={baseline} onChange={handleConfigChange}
         outbound={sending} disabled={!canEdit} />}
     </Box>;
+
+    if (activeStep === PACKS_STEP) return <SetupPacks client={client} canEdit={canEdit} onNavigate={onNavigate}
+      countries={settings?.numbers?.supported_countries ?? []} />;
 
     return <Box>
       <Typography variant="h6" gutterBottom>Finish</Typography>
