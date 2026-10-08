@@ -92,6 +92,27 @@ def test_details_that_cannot_be_used_are_refused_without_repeating_them(server, 
     assert after == before
 
 
+def test_retention_removes_the_patient_details_with_the_document(server, tmp_path):
+    """The scheduled cleanup removes a finished fax's files after the retention period: its patient file too."""
+    from datetime import datetime, timedelta
+    cli = Cli(server)
+    kept = json.loads(cli('--json', 'send', '+15551230006', _note(tmp_path), '--queue').stdout)['id']
+    old = json.loads(cli('--json', 'send', '+15551230007', _note(tmp_path), '--queue', *DETAILS).stdout)['id']
+    recent = json.loads(cli('--json', 'send', '+15551230008', _note(tmp_path), '--queue', *DETAILS).stdout)['id']
+    engine = main_module.app.state.configuration_runtime.manager.store.engine
+    long_ago = datetime.utcnow() - timedelta(days=60)
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'failed', updated_at = :at "
+                                   'WHERE id IN (:old, :kept)'), {'at': long_ago, 'old': old, 'kept': kept})
+    folder = _data_dir()
+    assert (folder / f'{old}.pdf').exists() and (folder / f'{old}.patient.json').exists()
+    main_module._cleanup_outbound_documents(datetime.utcnow() - timedelta(days=30))
+    assert not (folder / f'{old}.pdf').exists() and not (folder / f'{old}.patient.json').exists()
+    assert not (folder / f'{kept}.pdf').exists()
+    # A fax still within the period, or not finished, keeps both.
+    assert (folder / f'{recent}.pdf').exists() and (folder / f'{recent}.patient.json').exists()
+
+
 def test_a_fax_that_is_not_accepted_leaves_no_patient_details_behind(server, tmp_path, monkeypatch):
     from app.routing import rules_acceptance
 

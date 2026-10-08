@@ -118,9 +118,9 @@ function PatientFields({ routeLabel, value, onChange, disabled }: {
         <TextField size="small" label="Medical record number" value={value.recordNumber} onChange={set('recordNumber')}
           disabled={disabled} inputProps={{ maxLength: 64, autoComplete: 'off', 'data-testid': 'send-patient-number' }}
           helperText="The patient's number at the receiving organization." />
-        <TextField size="small" label="Record number system (optional)" value={value.recordSystem} onChange={set('recordSystem')}
+        <TextField size="small" label="Medical record number system (optional)" value={value.recordSystem} onChange={set('recordSystem')}
           disabled={disabled} inputProps={{ maxLength: 255, autoComplete: 'off', 'data-testid': 'send-patient-system' }}
-          helperText="Leave it empty to use the one set for that system." />
+          helperText="Leave it empty to use the one set on the FHIR client." />
         <TextField size="small" label="Family name" value={value.familyName} onChange={set('familyName')}
           disabled={disabled} inputProps={{ maxLength: 100, autoComplete: 'off', 'data-testid': 'send-patient-family' }} />
         <TextField size="small" label="Given name" value={value.givenName} onChange={set('givenName')}

@@ -13,9 +13,11 @@ and an enterprise identifier, which is what ``matched`` needs.
 
 The details are document content. They are kept in one write-once file beside the fax's document
 (``<job>.patient.json`` next to ``<job>.pdf`` in the data folder), so they have the document's access, its
-backups and its lifetime; no database row, audit entry, log line, fingerprint or sentence holds them (the
-request fingerprint folds them into its one-way hash only). A ``Patient`` withholds its values from ``repr``, and
-every error names the field, never what was typed.
+backups and its lifetime (the retention cleanup, ``main._cleanup_outbound_documents``, removes it with the PDF; a
+fax that is not accepted removes both at once); no database row, audit entry, log line, fingerprint, export or
+sentence holds them (the request fingerprint folds them into its one-way hash only, and the work evidence export
+covers received faxes only). A ``Patient`` withholds its values from ``repr``, and every error names the field,
+never what was typed.
 """
 from __future__ import annotations
 

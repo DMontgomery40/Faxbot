@@ -2287,8 +2287,10 @@ def _cleanup_outbound_documents(cutoff):
         identities = connection.execute(sa.select(delivery.deliveries.c.id).where(
             delivery.deliveries.c.state.in_(tuple(TERMINAL)),
             delivery.deliveries.c.updated_at < cutoff)).scalars().all()
+    # The patient given with a fax (digital/patient.py) is document content: it goes with the document.
+    from .digital.patient import SUFFIX as PATIENT_SUFFIX
     for identity in identities:
-        for suffix in ('.pdf', '.tiff'):
+        for suffix in ('.pdf', '.tiff', PATIENT_SUFFIX):
             try:
                 path = _outbound_document_path(identity, suffix)
                 if not path.is_symlink():
