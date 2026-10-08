@@ -222,6 +222,26 @@ export function isConflict(error: unknown): boolean {
   return error instanceof AdminAPIError && error.status === 409;
 }
 
+// The patient a fax is about, for a recipient that files documents in its health records (POST /fax's patient_*).
+export interface FaxPatient {
+  recordNumber: string;
+  recordSystem?: string;
+  familyName?: string;
+  givenName?: string;
+  birthDate?: string;   // YYYY-MM-DD
+}
+
+export function patientForm(patient?: FaxPatient | null): Record<string, string> {
+  if (!patient) return {};
+  const fields: Array<[string, string | undefined]> = [
+    ['patient_record_number', patient.recordNumber], ['patient_record_system', patient.recordSystem],
+    ['patient_family_name', patient.familyName], ['patient_given_name', patient.givenName],
+    ['patient_birth_date', patient.birthDate],
+  ];
+  return Object.fromEntries(fields.map(([name, value]) => [name, (value ?? '').trim()])
+    .filter(([, value]) => value)) as Record<string, string>;
+}
+
 // One plain sentence for an access-management failure.
 export function accessErrorMessage(error: unknown): string {
   if (error instanceof AdminAPIError) {
@@ -909,7 +929,8 @@ class AdminAPIClient {
   }
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
-    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string } = {}): Promise<FaxSendResult> {
+    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
+    patient?: FaxPatient } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -926,6 +947,8 @@ class AdminAPIClient {
     for (const label of options.labels ?? []) formData.append('labels', label);
     // The time it must be sent by, as an exact moment (ISO 8601 with its offset).
     if (options.sendBy) formData.append('send_by', options.sendBy);
+    // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
+    for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 
     const res = await this.send('/fax', {
       method: 'POST',

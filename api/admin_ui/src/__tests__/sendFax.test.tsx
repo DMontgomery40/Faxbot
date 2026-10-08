@@ -340,3 +340,51 @@ describe('Before sending', () => {
     expect(screen.queryByText(/Forbidden|couldn't/)).toBeNull();
   });
 });
+
+describe("The patient, for a recipient's health record system", () => {
+  const routes = (keys: Array<[string, string]>) => http.get('/routing/destinations/:number', ({ params }) =>
+    HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
+      accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null,
+      available_routes: [], recommended_routes: keys.map(([route, label]) => ({ route, label, reason: 'cheapest',
+        explanation: 'Cheapest.', estimated_cost_one_page: null, rate: null, included_in_plan: false,
+        monthly_fee: null })) }));
+
+  it('asks for the patient only when a health record system is among the routes, and sends what was given', async () => {
+    server.use(routes([['phaxio', 'Phaxio'], [`fhir:${'e'.repeat(32)}`, 'Synthetic Hospital (FHIR)']]));
+    faxServer(['accepted']);
+    const appended = vi.spyOn(FormData.prototype, 'append');
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const section = await screen.findByTestId('send-patient', {}, { timeout: 2000 });
+    expect(section.textContent).toContain('Synthetic Hospital (FHIR) files this document in its health records.');
+    fireEvent.change(screen.getByTestId('send-patient-number'), { target: { value: 'MRN-5550199' } });
+    fireEvent.change(screen.getByTestId('send-patient-family'), { target: { value: 'Zyxwvut' } });
+    fireEvent.change(screen.getByTestId('send-patient-birth-date'), { target: { value: '1961-07-23' } });
+    await send('+12025550123', document());
+    expect(await screen.findByText(/Fax queued/)).toBeTruthy();
+    const sent = appended.mock.calls.filter(([name]) => String(name).startsWith('patient_'))
+      .map(([name, value]) => `${name}=${value}`);
+    expect(sent).toEqual(['patient_record_number=MRN-5550199', 'patient_family_name=Zyxwvut',
+      'patient_birth_date=1961-07-23']);
+    appended.mockRestore();
+    // Never kept in the browser, and cleared with the form after the send.
+    expect(JSON.stringify({ ...window.sessionStorage, ...window.localStorage })).not.toContain('MRN-5550199');
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    await screen.findByTestId('send-patient', {}, { timeout: 2000 });
+    expect((screen.getByTestId('send-patient-number') as HTMLInputElement).value).toBe('');
+  });
+
+  it('leaves the patient out for a number without a health record system', async () => {
+    server.use(routes([['phaxio', 'Phaxio']]));
+    faxServer(['accepted']);
+    const appended = vi.spyOn(FormData.prototype, 'append');
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    await screen.findByTestId('send-route', {}, { timeout: 2000 });
+    expect(screen.queryByTestId('send-patient')).toBeNull();
+    await send('+12025550123', document());
+    await screen.findByText(/Fax queued/);
+    expect(appended.mock.calls.some(([name]) => String(name).startsWith('patient_'))).toBe(false);
+    appended.mockRestore();
+  });
+});

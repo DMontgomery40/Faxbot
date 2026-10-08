@@ -69,7 +69,8 @@ def attempt_sentence(account_label, choice, decision, cost_row, attempt, next_la
     why = {'turned_off': 'it was turned off', 'not_ready': 'it was not ready', 'busy': 'it had no free line',
            'over_cap': "it was over the rule's cost cap", 'unknown_cost': "its price was unknown under a cost cap",
            'spending_limit': 'it had reached its daily spending limit', 'unavailable': 'it could not take the fax',
-           'tried': 'it was already tried'}
+           'tried': 'it was already tried',
+           'needs_patient': "its server needs the patient's details, which this fax does not have"}
     for key, reason_code in skipped:
         if key and reason_code in why:
             parts.append(f'{label(key) if label else key} was skipped: {why[reason_code]}.')

@@ -29,7 +29,9 @@ from ..rules import model
 TABLES = ('fax_job_rule_decisions', 'delivery_rule_choices', 'outbound_holds')
 RELAY = 'relay'
 # Why an allowed account was not used for one attempt (``delivery_rule_choices.skipped``).
-SKIPS = ('turned_off', 'not_ready', 'busy', 'over_cap', 'unknown_cost', 'spending_limit', 'unavailable', 'tried')
+# ``needs_patient``: a FHIR server that needs the patient's details, for a fax without them (digital/routes.py).
+SKIPS = ('turned_off', 'not_ready', 'busy', 'over_cap', 'unknown_cost', 'spending_limit', 'unavailable', 'tried',
+         'needs_patient')
 
 
 _REFLECTED = WeakKeyDictionary()
