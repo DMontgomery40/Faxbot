@@ -43,7 +43,6 @@ def registry(monkeypatch, *answers):
             raise answer
         return answer
     monkeypatch.setattr(nppes, '_fetch', fetch)
-    monkeypatch.setattr(nppes, '_LOOKUPS', {})
     return asked
 
 
@@ -133,3 +132,28 @@ def test_a_carriers_rate_file_is_imported_and_a_bad_one_is_refused(client):
     bad = client.post('/routing/jurisdiction-rates', headers=ADMIN, data={'carrier': 'anveo'},
                       files={'file': ('deck.csv', b'prefix,price\n1303,0.01\n', 'text/csv')})
     assert bad.status_code == 400 and 'within one state' in bad.json()['detail']
+
+
+
+def test_a_first_fax_keeps_the_stored_nppes_warning_with_the_fax_without_asking_the_registry(client, monkeypatch):
+    from app.routing.background import installation_engine
+    asked = registry(monkeypatch, AssertionError('the acceptance check never asks the registry'))
+    engine, _ = installation_engine(main.app)
+    nppes.NppesStore(engine).record(nppes.records_from(fixture('search_organization.json')), 'lookup')
+    named = client.patch('/routing/destinations/+13035550121', headers=ADMIN,
+                         json={'display_name': 'Synthetic Health Clinic'})
+    assert named.status_code == 200, named.text
+    sent = client.post('/fax', headers=ADMIN, data={'to': '+13035550121'},
+                       files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert sent.status_code == 202, sent.text
+    cost = client.get(f"/routing/faxes/{sent.json()['id']}/cost", headers=ADMIN)
+    assert cost.status_code == 200, cost.text
+    assert cost.json()['recipient_warning']['sentence'] == (
+        'This number is listed for SYNTHETIC HEALTH IMAGING LLC in NPPES, not Synthetic Health Clinic.')
+    listed = client.get('/routing/fax-costs', headers=ADMIN, params={'ids': sent.json()['id']}).json()['costs']
+    assert listed[sent.json()['id']]['recipient_warning']['state'] == 'listed_for_other'
+    other = client.post('/fax', headers=ADMIN, data={'to': '+13035550199'},
+                        files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert other.status_code == 202
+    assert client.get(f"/routing/faxes/{other.json()['id']}/cost", headers=ADMIN).json()['recipient_warning'] is None
+    assert asked == []

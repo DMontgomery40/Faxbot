@@ -1971,8 +1971,13 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         except Exception:
             logging.getLogger(__name__).warning('Encoded pages are unavailable; the fax goes as normal pages.')
 
+    from .routing.submit import first_send_warning, record_first_send_warning
     # One transaction accepts the row and its immutable account/profile binding.
     try:
+        # Before a first fax: what NPPES records Faxbot already read say about this number (stored reads only,
+        # never the registry); kept with the fax for Sent details once accepted, never a reason to refuse it.
+        recipient_warning = await run_lifecycle_step(lambda: first_send_warning(
+            manager.store.engine, revision.values, destination))
         accepted_at = datetime.utcnow()
         result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages,
                           backend=ob, created_at=accepted_at, updated_at=accepted_at,
@@ -2011,6 +2016,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise
     # Serialize before COMMIT; a second database read must not turn confirmed
     # acceptance into an unidentifiable error and invite duplicate submission.
+    # The NPPES warning is kept with the accepted fax; storage failures are logged, never raised.
+    await run_lifecycle_step(lambda: record_first_send_warning(manager.store.engine, job_id, recipient_warning))
     audit_event("job_created", job_id=job_id, backend=ob)
     return result
 

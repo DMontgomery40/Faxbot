@@ -1,17 +1,16 @@
 // Costs → Recommendations → Where each number should live: what each of your numbers costs at the account that
-// carries it and at your other accounts, and the steps to move (port) one where it costs less. Beside it, your NPI
-// record, so advice never suggests giving up a number still printed there. Advice only: Faxbot never moves a number.
-import { useCallback, useEffect, useState } from 'react';
+// carries it and at your other accounts, and the steps to move (port) one where it costs less. Advice only: Faxbot
+// never moves a number. Your NPI record has its own page under Numbers (NpiRecord.tsx).
+import { useEffect, useState } from 'react';
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, Link, Paper, Stack, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Chip, Link, Paper, Stack, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AdminAPIClient from '../../api/client';
-import type { NpiRecord, NumberPlacement as Placement, PortingSteps } from '../../api/numberAdviceTypes';
-import { parseServerTime } from '../../api/time';
+import type { NumberPlacement as Placement, PortingSteps } from '../../api/numberAdviceTypes';
 import { readOnText } from './ReceivingRecommendations';
-import { DeliveryError, formatMoneyList } from './shared';
+import { formatMoneyList } from './shared';
 
 export function PortingStepsView({ steps }: { steps: PortingSteps }) {
   return (
@@ -35,94 +34,8 @@ export function PortingStepsView({ steps }: { steps: PortingSteps }) {
   );
 }
 
-function readDay(value: string | null): string {
-  return parseServerTime(value ?? '')?.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) ?? '';
-}
-
-export function NpiRecordPanel({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
-  const [record, setRecord] = useState<NpiRecord | null>(null);
-  const [npi, setNpi] = useState('');
-  const [label, setLabel] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  useEffect(() => {
-    let live = true;
-    client.call<NpiRecord>({ method: 'GET', path: '/routing/npi' })
-      .then((found) => { if (live) setRecord(found); }).catch((problem) => { if (live) setError(problem); });
-    return () => { live = false; };
-  }, [client]);
-  const run = useCallback(async (request: { method: string; path: string; body?: unknown }) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setRecord(await client.call<NpiRecord>(request));
-      return true;
-    } catch (problem) {
-      setError(problem);
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }, [client]);
-  if (!record) return error ? <DeliveryError error={error} /> : null;
-  return (
-    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="npi-record">
-      <Typography variant="h6" component="h3">Your NPI record</Typography>
-      <Typography variant="body2" sx={{ mb: 1 }}>{record.sentence}</Typography>
-      {record.problem && <Alert severity="warning" sx={{ mb: 1 }}>{record.problem}</Alert>}
-      {error ? <DeliveryError error={error} onClose={() => setError(null)} /> : null}
-      {record.npis.map((item) => (
-        <Box key={item.npi} sx={{ mb: 1.5 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {`NPI ${item.npi}${item.label ? ` (${item.label})` : ''}${item.name ? `: ${item.name}` : ''}`}
-          </Typography>
-          {item.read_at && <Typography variant="caption" color="text.secondary">{`Read ${readDay(item.read_at)}`}</Typography>}
-          {item.numbers.length > 0 && (
-            <Table size="small" aria-label={`Numbers on NPI ${item.npi}`}>
-              <TableBody>
-                {item.numbers.map((number) => (
-                  <TableRow key={`${number.number}-${number.kind}-${number.where}`}>
-                    <TableCell>{number.display}</TableCell>
-                    <TableCell>{number.kind === 'fax' ? 'Fax' : 'Phone'}</TableCell>
-                    <TableCell>{number.where}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          {canWrite && (
-            <Button size="small" disabled={busy} sx={{ mt: 0.5 }}
-              onClick={() => void run({ method: 'DELETE', path: `/routing/npi/${encodeURIComponent(item.npi)}` })}>
-              Remove this NPI
-            </Button>
-          )}
-        </Box>
-      ))}
-      {canWrite && (
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1 }} alignItems={{ sm: 'center' }}>
-          <TextField size="small" label="Your NPI" value={npi} onChange={(event) => setNpi(event.target.value.trim())}
-            inputProps={{ inputMode: 'numeric', maxLength: 10, 'data-testid': 'npi-input' }} />
-          <TextField size="small" label="Location (optional)" value={label} placeholder="Denver office"
-            onChange={(event) => setLabel(event.target.value)} />
-          <Button variant="outlined" disabled={busy || npi.length !== 10}
-            onClick={() => void run({ method: 'POST', path: '/routing/npi', body: { npi, label } })
-              .then((done) => { if (done) { setNpi(''); setLabel(''); } })}>
-            Add NPI
-          </Button>
-          {record.npis.length > 0 && (
-            <Button disabled={busy} onClick={() => void run({ method: 'POST', path: '/routing/npi/check' })}>
-              Check NPPES now
-            </Button>
-          )}
-        </Stack>
-      )}
-    </Paper>
-  );
-}
-
-export default function NumberPlacement({ client, canWrite = false, onCount }: {
+export default function NumberPlacement({ client, onCount }: {
   client: AdminAPIClient;
-  canWrite?: boolean;
   onCount?: (count: number | null) => void;
 }) {
   const [placement, setPlacement] = useState<Placement | null>(null);
@@ -137,11 +50,11 @@ export default function NumberPlacement({ client, canWrite = false, onCount }: {
       .catch(() => { if (live) onCount?.(null); });
     return () => { live = false; };
   }, [client, onCount]);
-  if (!placement) return null;
+  if (!placement || placement.state === 'no_numbers') return null;
   const advice = placement.numbers.filter((row) => row.state !== 'keep' || row.notes.length > 0);
   return (
     <Stack spacing={2}>
-      {placement.state !== 'no_numbers' && (
+      {(
         <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="number-placement">
           <Box display="flex" alignItems="center" gap={1} sx={{ mb: 1 }}>
             <Typography variant="h6" component="h3">Where each number should live</Typography>
@@ -204,7 +117,6 @@ export default function NumberPlacement({ client, canWrite = false, onCount }: {
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{placement.note}</Typography>
         </Paper>
       )}
-      <NpiRecordPanel client={client} canWrite={canWrite} />
     </Stack>
   );
 }

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.routing import nppes
-from tests.test_cli import Cli, server  # noqa: F401 (fixture)
+from tests.test_cli import BOOTSTRAP, Cli, server  # noqa: F401 (fixture)
 
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'nppes'
@@ -33,7 +33,6 @@ def registry(monkeypatch):
         asked.append(dict(params))
         return answers['own'] if 'number' in params else answers['search']
     monkeypatch.setattr(nppes, '_fetch', fetch)
-    monkeypatch.setattr(nppes, '_LOOKUPS', {})
     return asked
 
 
@@ -76,3 +75,17 @@ def test_costs_commands_show_placement_sites_and_import_state_prices(cli, tmp_pa
     assert 'AnveoDirect: 1 number prefixes, 1 priced differently within one state.' in imported.stdout
     every = cli.json('costs', 'recommendations')
     assert {'numbers', 'sites'} <= set(every)
+
+
+
+def test_sent_show_says_what_nppes_listed_when_the_fax_was_accepted(cli, registry, tmp_path):
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic\n')
+    assert cli('recipients', 'check', '+13035550199', '--name', 'Synthetic Health Clinic').exit_code == 0
+    named = cli.client.patch('/routing/destinations/+13035550121', headers={'X-API-Key': BOOTSTRAP},
+                             json={'display_name': 'Synthetic Health Clinic'})
+    assert named.status_code == 200, named.text
+    sent = cli.json('send', '+13035550121', note, '--queue')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert ('NPPES This number is listed for SYNTHETIC HEALTH IMAGING LLC in NPPES, not Synthetic Health Clinic.'
+            in shown)

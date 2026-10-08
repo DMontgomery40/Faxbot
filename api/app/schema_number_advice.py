@@ -4,7 +4,7 @@ Faxbot reads the public NPI registry (NPPES) as evidence, never as authority
 (``routing/nppes.py``, M18): whether a number you might give up is still
 printed on your own NPI record, and, before the first fax to a number, whether
 the registry lists that number for the provider named on the fax. This
-revision adds four tables and changes no stored row:
+revision adds six tables and changes no stored row:
 
 - ``organization_npis``: the organization's own NPIs, one per location if it
   has several. Append-only: removing one sets ``removed_at`` and
@@ -22,6 +22,15 @@ revision adds four tables and changes no stored row:
   state. The newest read of an NPI is what counts; older reads stay as they
   were.
 
+- ``nppes_lookups``: append-only, one row per question Faxbot asked the
+  registry about a named provider before a first fax, found or not:
+  ``name_key`` (the name's words, sorted), ``state`` ('' when unknown), how
+  many records came back, and when. The same name is not asked again within
+  a day, across restarts and workers.
+- ``recipient_warnings``: at most one row per accepted fax (``job_id``): what
+  records Faxbot had already read said about the number when the fax was
+  accepted (``state``, ``sentence``, and the NPI and name of the provider it
+  is listed for). Written once; a warning never stopped a fax.
 - ``jurisdiction_rates``: a carrier's US prices for calls that stay within one
   state (``intrastate_micros``) and calls between states
   (``interstate_micros``), by the start of the number called (``prefix``,
@@ -44,7 +53,8 @@ from .schema_trunks_sites import frozen_metadata as previous_metadata
 
 
 REVISION = '0055_number_advice'
-ORDER = ('organization_npis', 'nppes_reads', 'nppes_numbers', 'jurisdiction_rates')
+ORDER = ('organization_npis', 'nppes_reads', 'nppes_numbers', 'nppes_lookups', 'recipient_warnings',
+         'jurisdiction_rates')
 MICROS = 1_000_000
 TABLES = frozenset(ORDER)
 PURPOSES = ('own', 'recipient', 'lookup')
@@ -55,6 +65,8 @@ INDEXES = (
     ('ix_nppes_reads_npi', 'nppes_reads', ('npi', 'read_at'), False),
     ('ix_nppes_numbers_number', 'nppes_numbers', ('number', 'kind'), False),
     ('ix_nppes_numbers_read', 'nppes_numbers', ('read_id',), False),
+    ('ix_nppes_lookups_name', 'nppes_lookups', ('name_key', 'state', 'asked_at'), False),
+    ('uq_recipient_warnings_job', 'recipient_warnings', ('job_id',), True),
     ('ix_jurisdiction_rates_lookup', 'jurisdiction_rates', ('route', 'prefix', 'superseded_at'), False),
 )
 
@@ -101,6 +113,26 @@ def _definitions():
             sa.CheckConstraint(_choice('address_purpose', ADDRESS_PURPOSES), name='ck_nppes_numbers_purpose'),
             sa.ForeignKeyConstraint(['read_id'], ['nppes_reads.id'], name='fk_nppes_numbers_read',
                                     ondelete='CASCADE'),
+        ),
+        'nppes_lookups': (
+            sa.Column('id', sa.String(40), nullable=False),
+            sa.Column('name_key', sa.String(200), nullable=False),
+            sa.Column('state', sa.String(2), nullable=False),
+            sa.Column('results', sa.Integer(), nullable=False),
+            sa.Column('asked_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_nppes_lookups'),
+            sa.CheckConstraint('results >= 0', name='ck_nppes_lookups_results'),
+        ),
+        'recipient_warnings': (
+            sa.Column('id', sa.String(40), nullable=False),
+            sa.Column('job_id', sa.String(40), nullable=False),
+            sa.Column('number', sa.String(32), nullable=False),
+            sa.Column('state', sa.String(24), nullable=False),
+            sa.Column('sentence', sa.String(400), nullable=False),
+            sa.Column('npi', sa.String(10), nullable=True),
+            sa.Column('listed_name', sa.String(200), nullable=True),
+            sa.Column('recorded_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_recipient_warnings'),
         ),
         'jurisdiction_rates': (
             sa.Column('id', sa.String(40), nullable=False),

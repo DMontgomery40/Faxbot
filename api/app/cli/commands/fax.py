@@ -300,6 +300,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The number the fax dialed when it was the recipient's approved toll-free number, as Sent details show it.
     if (cost.get('dialed') or {}).get('sentence'):
         route.append(('Dialed', cost['dialed']['sentence']))
+    # What NPPES records Faxbot had read said about the number when the fax was accepted (it still went).
+    if (cost.get('recipient_warning') or {}).get('sentence'):
+        route.append(('NPPES', cost['recipient_warning']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):

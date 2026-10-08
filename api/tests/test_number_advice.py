@@ -40,7 +40,6 @@ def no_registry(monkeypatch):
     def refuse(params, *, timeout=10.0):
         raise AssertionError(f'NPPES was called for real with {params}')
     monkeypatch.setattr(nppes, '_fetch', refuse)
-    monkeypatch.setattr(nppes, '_LOOKUPS', {})   # each test starts with no lookup remembered
 
 
 class Registry:
@@ -211,7 +210,11 @@ def test_a_name_nppes_does_not_know_is_asked_once_while_the_sender_checks_again(
         answer = nppes.recipient_check(database, values, number, name='Nobody Here', fetch=registry,
                                        now=NOW + timedelta(minutes=minutes))
         assert answer['state'] == 'not_found'
-    # One lookup: as an organization, then as a person; the checks after it ask nothing.
+    # One lookup: as an organization, then as a person; the checks after it ask nothing. The lookup is stored,
+    # so a restart or another worker does not ask again either.
+    with database.connect() as connection:
+        assert connection.execute(sa.text('SELECT name_key, state, results FROM nppes_lookups')).all() == [
+            ('HERE NOBODY', 'CO', 0)]
     assert [sorted(question) for question in registry.asked] == [
         ['enumeration_type', 'limit', 'organization_name', 'state'],
         ['enumeration_type', 'first_name', 'last_name', 'limit', 'state']]
@@ -476,3 +479,67 @@ def test_a_us_site_takes_a_two_letter_state_and_nothing_else_does():
     assert state_problems({'key': 'denver', 'name': 'Denver', 'state': 'CO'}) == []   # the installation's country
     assert state_problems({'key': 'x', 'name': 'X', 'country': 'US', 'state': 'XX'})
     assert state_problems({'key': 'leeds', 'name': 'Leeds', 'country': 'GB', 'state': 'CO'})
+
+
+
+# -- the check at acceptance, kept with the fax -------------------------------------------------------------------------
+
+def test_the_acceptance_check_uses_stored_reads_and_the_saved_name_and_is_kept_with_the_fax(database):  # noqa: F811
+    from api.app.routing.submit import first_send_warning, record_first_send_warning
+    upgrade_schema(database)
+    values = trunk_values()
+    nppes.NppesStore(database).record(nppes.records_from(fixture('search_organization.json')), 'lookup', now=NOW)
+    # No name on the fax and none saved: what the stored records say, as information.
+    plain = first_send_warning(database, values, '+13035550121')
+    assert plain['state'] == 'listed' and not plain['warning']
+    RouteStore(database).update_destination('+13035550121', display_name='Synthetic Health Clinic')
+    answer = first_send_warning(database, values, '+13035550121')
+    assert answer['warning'] and answer['state'] == 'listed_for_other'
+    record_first_send_warning(database, 'f' * 32, answer)
+    assert nppes.fax_warning(database, 'f' * 32) == {
+        'state': 'listed_for_other', 'npi': '1245319599', 'name': 'SYNTHETIC HEALTH IMAGING LLC',
+        'sentence': 'This number is listed for SYNTHETIC HEALTH IMAGING LLC in NPPES, not Synthetic Health Clinic.',
+        'source_url': nppes.DOCS_URL}
+    assert first_send_warning(database, values, '+13035550199') is None   # nothing stored about it
+    record_first_send_warning(database, 'a' * 32, None)
+    assert nppes.fax_warning(database, 'a' * 32) is None
+
+
+def test_storage_that_cannot_be_read_leaves_the_fax_unchecked_and_logs_why(database, monkeypatch, caplog):  # noqa: F811
+    from api.app.routing import submit
+    from api.app.routing.database import DeliveryStoreError
+    upgrade_schema(database)
+
+    def unavailable(*args, **kwargs):
+        raise DeliveryStoreError('Delivery storage is unavailable.')
+    monkeypatch.setattr(nppes, 'check_before_sending', unavailable)
+    with caplog.at_level('WARNING'):
+        assert submit.first_send_warning(database, trunk_values(), '+13035550121') is None
+    assert 'could not read stored NPPES records' in caplog.text
+    # Anything else is a bug, and it raises.
+    monkeypatch.setattr(nppes, 'check_before_sending', lambda *args, **kwargs: {}['missing'])
+    with pytest.raises(KeyError):
+        submit.first_send_warning(database, trunk_values(), '+13035550121')
+
+
+# -- the predictor's guard around prices by where calls start ---------------------------------------------------------
+
+def test_the_predictor_logs_unreadable_origin_prices_and_raises_on_a_bug(database, monkeypatch, caplog):  # noqa: F811
+    from api.app.routing.database import DeliveryStoreError
+    from api.app.routing.predict_facts import facts_for
+    upgrade_schema(database)
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'anveo',
+                                                   'SIP_TRUNK_AUTH': 'ip', 'FAX_DEFAULT_COUNTRY': 'US'})
+
+    def unavailable(*args, **kwargs):
+        raise DeliveryStoreError('Delivery storage is unavailable.')
+    monkeypatch.setattr(origin_rates, 'rated_terms', unavailable)
+    with caplog.at_level('WARNING'):
+        facts = facts_for('sip', '+13035550100', values=values, engine=database)
+    assert facts.origin is None and 'Prices by where calls start could not be read' in caplog.text
+
+    def broken(*args, **kwargs):
+        raise TypeError('a bug in origin pricing')
+    monkeypatch.setattr(origin_rates, 'rated_terms', broken)
+    with pytest.raises(TypeError, match='a bug in origin pricing'):
+        facts_for('sip', '+13035550100', values=values, engine=database)

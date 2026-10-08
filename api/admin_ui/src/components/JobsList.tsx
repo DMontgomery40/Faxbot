@@ -728,6 +728,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {costs.get(detailJob.id)?.dialed?.sentence}
                       </Typography>
                     )}
+                    {costs.get(detailJob.id)?.recipient_warning?.sentence && (
+                      <Typography component="span" variant="body2" color="warning.main" display="block"
+                        data-testid="job-recipient-warning">
+                        {costs.get(detailJob.id)?.recipient_warning?.sentence}
+                      </Typography>
+                    )}
                   </>}
                 />
               </ListItem>

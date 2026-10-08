@@ -6,8 +6,10 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { NpiRecord, NumberPlacement as Placement, SiteAdvice as Advice } from '../api/numberAdviceTypes';
 import NumberPlacement from '../components/delivery/NumberPlacement';
+import NpiRecordPanel from '../components/NpiRecord';
 import SiteAdvice from '../components/delivery/SiteAdvice';
 import SendFax from '../components/SendFax';
+import JobsList from '../components/JobsList';
 import { server } from '../test/server';
 
 type Request = { method: string; path: string; body?: unknown };
@@ -60,11 +62,9 @@ function fakeClient(answers: Record<string, unknown>, requests: Request[] = []) 
 }
 
 describe('where each number should live', () => {
-  it('names the cheaper account with the steps to move the number, and adds your NPI', async () => {
-    const requests: Request[] = [];
+  it('names the cheaper account with the steps to move the number', async () => {
     const onCount = vi.fn();
-    render(<NumberPlacement client={fakeClient({ 'GET /routing/recommendations/numbers': placement, 'GET /routing/npi': record,
-      'POST /routing/npi': read }, requests)} canWrite onCount={onCount} />);
+    render(<NumberPlacement client={fakeClient({ 'GET /routing/recommendations/numbers': placement })} onCount={onCount} />);
     const panel = await screen.findByTestId('number-placement');
     expect(within(panel).getByText(placement.sentence)).toBeTruthy();
     expect(within(panel).getByText(placement.numbers[0].sentence)).toBeTruthy();
@@ -74,6 +74,15 @@ describe('where each number should live', () => {
     // A number that stays where it is needs no sentence of its own beyond the table.
     expect(within(panel).queryByText(placement.numbers[1].sentence)).toBeNull();
     expect(onCount).toHaveBeenCalledWith(1);
+    // Your NPI record lives under Numbers, not among the recommendations.
+    expect(screen.queryByTestId('npi-record')).toBeNull();
+  });
+});
+
+describe('Numbers → Your NPI record', () => {
+  it('adds your NPI and shows the numbers NPPES lists for it', async () => {
+    const requests: Request[] = [];
+    render(<NpiRecordPanel client={fakeClient({ 'GET /routing/npi': record, 'POST /routing/npi': read }, requests)} canWrite />);
     const npi = await screen.findByTestId('npi-record');
     expect(within(npi).getByText(record.sentence)).toBeTruthy();
     fireEvent.change(screen.getByTestId('npi-input'), { target: { value: '1234567893' } });
@@ -85,7 +94,7 @@ describe('where each number should live', () => {
   });
 
   it('shows no changes to someone who may only read settings', async () => {
-    render(<NumberPlacement client={fakeClient({ 'GET /routing/recommendations/numbers': placement, 'GET /routing/npi': read })} />);
+    render(<NpiRecordPanel client={fakeClient({ 'GET /routing/npi': read })} canWrite={false} />);
     const npi = await screen.findByTestId('npi-record');
     expect(within(npi).queryByRole('button', { name: 'Add NPI' })).toBeNull();
     expect(within(npi).queryByRole('button', { name: 'Remove this NPI' })).toBeNull();
@@ -149,5 +158,27 @@ describe('Send: the check before a first fax', () => {
     expect(send.disabled).toBe(false);
     fireEvent.click(send);
     await waitFor(() => expect(posted).toBe(true));
+  });
+});
+
+describe('Sent details: the NPPES warning kept at acceptance', () => {
+  it('shows what stored NPPES records said about the number when the fax was accepted', async () => {
+    const JOB = 'e'.repeat(32);
+    const WARNING = 'This number is listed for SYNTHETIC HEALTH IMAGING LLC in NPPES, not Synthetic Health Clinic.';
+    const job = { id: JOB, to_number: '+13035550121', status: 'SUCCESS', backend: 'sip', pages: 1,
+      created_at: '2026-10-08T12:00:00', updated_at: '2026-10-08T12:01:00', delivery_state: 'success',
+      dispatch_mode: 'normal', delivery_version: 3 };
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [job] })),
+      http.get(`/admin/fax-jobs/${JOB}`, () => HttpResponse.json(job)),
+      http.get('/routing/fax-costs', () => HttpResponse.json({ costs: { [JOB]: {
+        state: 'estimated', summary: 'Estimated.', reported_cost: [], estimated_cost: [], route: 'sip', routes: ['sip'],
+        route_reason: 'cheapest', route_explanation: 'The cheapest route that works reliably for this number.', dialed: null,
+        recipient_warning: { state: 'listed_for_other', sentence: WARNING, npi: '1245319599', name: 'SYNTHETIC HEALTH IMAGING LLC' } } } })),
+    );
+    render(<JobsList client={client()} />);
+    fireEvent.click(await screen.findByText('+13035550121'));
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    expect((await within(dialog).findByTestId('job-recipient-warning')).textContent).toBe(WARNING);
   });
 });

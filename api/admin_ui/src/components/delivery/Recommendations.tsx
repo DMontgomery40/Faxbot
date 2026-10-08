@@ -60,7 +60,7 @@ export default function Recommendations({ client, canWrite = false, onNavigate }
         <FaxMarkerSection client={client} onCount={callbacks.marker} />
         <FaxFriendlyRecommendation client={client} onCount={callbacks.pages} />
         <TrunkAdvice client={client} onCount={callbacks.trunks} />
-        <NumberPlacement client={client} canWrite={canWrite} onCount={callbacks.numbers} />
+        <NumberPlacement client={client} onCount={callbacks.numbers} />
         <SiteAdvice client={client} canWrite={canWrite} onCount={callbacks.sites} />
       </Stack>
     </Box>

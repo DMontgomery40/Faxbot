@@ -396,11 +396,16 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     origin = None
     if refusal is None and (card is None or not card.flat_plan):
         # Prices by where the call starts (design §3.7): the account's site or country, the longest prefix.
+        from .database import DeliveryStoreError
+        from .origin_rates import rated_terms
         try:
-            from .origin_rates import rated_terms
             rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
                                      account_key=account, engine=engine, site=site)
-        except Exception:
+        except DeliveryStoreError as error:
+            # Saved rows or prices by state could not be read: the card's own price, and the cause logged.
+            # Anything else is a bug and raises.
+            import logging
+            logging.getLogger(__name__).warning('Prices by where calls start could not be read: %s', error)
             rated, row = None, None
         if rated is not None:
             terms, origin = rated, row.origin

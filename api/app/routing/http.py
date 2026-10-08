@@ -487,9 +487,12 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     runtime = request.app.state.access_runtime
     await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
     spending = _spending(request)
+    from .nppes import fax_warning
     from .provenance import dialed_view
+    # recipient_warning: what stored NPPES records said about the number when the fax was accepted (never a block).
     return _cost_view(await _call(lambda: {**spending.job(job_id),
-                                           'dialed': dialed_view(spending.routes.engine, job_id)}))
+                                           'dialed': dialed_view(spending.routes.engine, job_id),
+                                           'recipient_warning': fax_warning(spending.routes.engine, job_id)}))
 
 
 @router.get('/inbound-costs')
@@ -518,6 +521,7 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                     identity=Depends(require_identity)):
     """Costs for up to 100 sent faxes at once, for the Sent list; faxes this person cannot read are left out."""
     from ..access.fax_resources import FaxAccessError
+    from .nppes import fax_warning
     from .provenance import dialed_view
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
@@ -530,7 +534,8 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
                 private_operation(lambda: runtime.queries.job(identity.actor, job_id))()
             except FaxAccessError:
                 continue  # not visible to this person: left out, never explained
-            costs[job_id] = _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id)})
+            costs[job_id] = _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id),
+                                        'recipient_warning': fax_warning(spending.routes.engine, job_id)})
         return costs
     return {'costs': await _call(read)}
 

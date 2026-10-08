@@ -131,10 +131,6 @@ CHECK_TIMEOUT = 6.0
 # A lookup of a named provider is reused for a day before the registry is asked again.
 REUSE_LOOKUP = timedelta(days=1)
 SEARCH_LIMIT = 50
-# Every lookup of a named provider in this process, found or not: (name words, state) -> when. A name the registry
-# does not know is not asked again within REUSE_LOOKUP, so a sender typing cannot flood the registry.
-_LOOKUPS = {}
-_LOOKUPS_KEPT = 2_000
 _ADDRESS_PURPOSES = {'LOCATION': 'location', 'MAILING': 'mailing'}
 _PURPOSE_WORDS = {'location': 'practice location', 'mailing': 'mailing address', 'practice': 'other practice location'}
 
@@ -498,22 +494,64 @@ class NppesStore:
         return self.latest(npis) if npis else {}
 
 
+    # Lookups of a named provider (nppes_lookups): every question asked, found or not, so a name the registry
+    # does not know is not asked again within REUSE_LOOKUP, across restarts and workers.
+    def asked_recently(self, name, state, since):
+        """True when Faxbot asked the registry about ``name`` in ``state`` since ``since``, whatever it found."""
+        from .database import read_connection
+        lookups = _lookup_table()
+        with read_connection(self.engine) as connection:
+            return connection.execute(sa.select(lookups.c.id).where(
+                lookups.c.name_key == _lookup_key(name), lookups.c.state == (state or ''),
+                lookups.c.asked_at >= since).limit(1)).first() is not None
 
-def _lookup_key(name, state):
-    return (' '.join(sorted(set(_words(name)))), state or '')
+    def remember_lookup(self, name, state, results, now):
+        from .database import write_transaction
+        lookups = _lookup_table()
+        with write_transaction(self.engine) as connection:
+            connection.execute(lookups.insert().values(id=uuid4().hex, name_key=_lookup_key(name), state=state or '',
+                                                       results=max(0, int(results)), asked_at=now))
+
+    # Warnings recorded when a fax was accepted (recipient_warnings): written once, never changed.
+    def record_warning(self, job_id, answer, now):
+        from .database import write_transaction
+        warnings = _warning_table()
+        listed = (answer.get('listed') or [{}])[0]
+        with write_transaction(self.engine) as connection:
+            connection.execute(warnings.insert().values(
+                id=uuid4().hex, job_id=job_id, number=answer['number'], state=answer['state'][:24],
+                sentence=str(answer['sentence'])[:400], npi=listed.get('npi'),
+                listed_name=(listed.get('name') or None) and str(listed['name'])[:200], recorded_at=now))
+
+    def warning_for(self, job_id):
+        return fax_warning(self.engine, job_id)
 
 
-def asked_recently(name, state, since):
-    """True when this process looked ``name`` up in ``state`` since ``since``, whatever it found."""
-    moment = _LOOKUPS.get(_lookup_key(name, state))
-    return moment is not None and moment >= since
+def fax_warning(engine, job_id):
+    """The NPPES warning kept when fax ``job_id`` was accepted, for Sent details, or None."""
+    from .database import read_connection
+    warnings = _warning_table()
+    with read_connection(engine) as connection:
+        row = connection.execute(sa.select(warnings).where(warnings.c.job_id == job_id)).mappings().first()
+    return None if row is None else {'state': row['state'], 'sentence': row['sentence'], 'npi': row['npi'],
+                                     'name': row['listed_name'], 'source_url': DOCS_URL}
 
 
-def remember_lookup(name, state, now):
-    if len(_LOOKUPS) >= _LOOKUPS_KEPT:
-        for key in sorted(_LOOKUPS, key=_LOOKUPS.get)[:_LOOKUPS_KEPT // 2]:
-            del _LOOKUPS[key]
-    _LOOKUPS[_lookup_key(name, state)] = now
+def _lookup_key(name):
+    return ' '.join(sorted(set(_words(name))))[:200]
+
+
+def _lookup_table():
+    return sa.table('nppes_lookups', sa.column('id', sa.String()), sa.column('name_key', sa.String()),
+                    sa.column('state', sa.String()), sa.column('results', sa.Integer()),
+                    sa.column('asked_at', sa.DateTime()))
+
+
+def _warning_table():
+    return sa.table('recipient_warnings', sa.column('id', sa.String()), sa.column('job_id', sa.String()),
+                    sa.column('number', sa.String()), sa.column('state', sa.String()),
+                    sa.column('sentence', sa.String()), sa.column('npi', sa.String()),
+                    sa.column('listed_name', sa.String()), sa.column('recorded_at', sa.DateTime()))
 
 
 # -- your own record (M18 b) -------------------------------------------------------------------------------------------
@@ -662,7 +700,7 @@ def recipient_check(engine, values, number, *, name=None, fetch=None, now=None, 
         return _result(number, 'no_name', None, checked=False)
     state = us_state(number)
     known = store.recent_named(name, now - REUSE_LOOKUP)
-    if not known and not asked_recently(name, state, now - REUSE_LOOKUP):
+    if not known and not store.asked_recently(name, state, now - REUSE_LOOKUP):
         try:
             found = search(name, state=state, fetch=fetch, timeout=timeout)
         except NppesInputError:
@@ -670,7 +708,7 @@ def recipient_check(engine, values, number, *, name=None, fetch=None, now=None, 
         except RegistryError:
             return _result(number, 'not_checked', 'Faxbot could not reach NPPES, so this number was not checked.',
                            checked=False, name=name)
-        remember_lookup(name, state, now)
+        store.remember_lookup(name, state, len(found), now)
         if found:
             store.record(found, 'recipient', now=now)
         answer = _from_index(number, name, store.listings(number))
@@ -703,12 +741,12 @@ def recipient_check(engine, values, number, *, name=None, fetch=None, now=None, 
 def check_before_sending(engine, values, number, name=None):
     """The hook a send path runs before accepting a first fax: records already read only, never the registry.
 
-    Returns ``recipient_check``'s answer when records Faxbot already read list ``number`` (for ``name`` or for
-    someone else), else None, so it adds no wait to a send. A caller shows the sentence beside the fax; it never
-    stops the fax.
+    Returns ``recipient_check``'s answer when records Faxbot already read list ``number`` (for ``name``, else the
+    recipient's saved name, or for someone else), else None, so it adds no wait to a send. The caller records it
+    with the fax (``NppesStore.record_warning``) once accepted; it never stops the fax.
     """
     import phonenumbers
-    name = ' '.join(str(name or '').split())[:200] or None
+    name = ' '.join(str(name or '').split())[:200] or saved_name(engine, number)
     try:
         if phonenumbers.region_code_for_number(phonenumbers.parse(number, None)) != 'US':
             return None
@@ -717,3 +755,14 @@ def check_before_sending(engine, values, number, name=None):
     if sent_before(engine, number):
         return None
     return _from_index(number, name, NppesStore(engine).listings(number))
+
+
+def saved_name(engine, number):
+    """The name saved for a recipient number under Recipients, or None."""
+    from .database import read_connection
+    destinations = sa.table('delivery_destinations', sa.column('phone_number', sa.String()),
+                            sa.column('display_name', sa.String()))
+    with read_connection(engine) as connection:
+        name = connection.execute(sa.select(destinations.c.display_name).where(
+            destinations.c.phone_number == number)).scalar()
+    return ' '.join(str(name).split())[:200] if name else None

@@ -267,6 +267,8 @@ export interface FaxCost {
   // The number the fax dialed when it was not the one entered (the recipient's approved toll-free number),
   // or why it went back to the number entered; null when it simply called the number entered.
   dialed?: DialedNumber | null;
+  // What NPPES records Faxbot had read said about the number when the fax was accepted; the fax still went.
+  recipient_warning?: { state: string; sentence: string; npi: string | null; name: string | null } | null;
 }
 
 // GET /routing/rate-cards toll_free: what one sending route publishes about calling toll-free numbers.
