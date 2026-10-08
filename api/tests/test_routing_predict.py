@@ -496,3 +496,44 @@ def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
     bad = client.get('/routing/predict', headers=ADMIN, params={'to': NUMBER, 'layout': 'tall'})
     assert bad.status_code == 400 and bad.json()['detail'] == 'Choose a normal or dense layout.'
     assert client.get('/routing/predict', params={'to': NUMBER}).status_code in (401, 403)
+    # Every route says when 9 in 10 such calls finish; the trunk's spread is assumed until the number has calls.
+    assert routes['sip']['p90_seconds'] > routes['sip']['seconds']
+    assert routes['sip']['finish_sentence'].startswith('9 in 10 such calls should finish within about ')
+    assert 'an assumed spread of 15% either way until this number has 3 faxes of its own' in \
+        routes['sip']['finish_sentence']
+
+
+@pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
+def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_path):  # noqa: F811 - fixture
+    """POST /routing/predict: the document's own pages, measured, and the trunk priced with its coding."""
+    shaded = Image.new('L', (1700, 2200), 255)
+    draw = ImageDraw.Draw(shaded)
+    for row in range(40):
+        draw.rectangle((100, 100 + row * 50, 1600, 130 + row * 50), fill=200)
+        draw.text((120, 105 + row * 50), 'Synthetic shaded table row %02d' % row, fill=0)
+    pdf = tmp_path / 'shaded.pdf'
+    shaded.save(pdf, 'PDF', resolution=200)
+    with pdf.open('rb') as handle:
+        response = client.post('/routing/predict', headers=ADMIN, data={'to': '(202) 555-0123'},
+                               files={'file': ('shaded.pdf', handle.read(), 'application/pdf')})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['pages'] == 1 and body['resolution'] == 'fine' and set(body['measured']) >= {'MH', 'MR', 'MMR'}
+    assert body['measured_sentence'].startswith('Measured on these pages at 14,400 bit/s: MH about ')
+    routes = {route['route']: route for route in body['routes']}
+    trunk = routes['sip']
+    best = min(('MH', 'MR', 'MMR'), key=lambda name: body['measured'][name])
+    expected = best if best != 'MMR' else 'JBIG'  # JBIG, not measured here, where the machine takes it
+    assert trunk['coding']['coding'] == expected
+    assert trunk['coding']['sentence'].startswith(f'Faxbot would send these pages with {expected}')
+    if expected != 'JBIG':
+        assert f'from the measured size of each page in {expected}' in trunk['basis']
+    assert routes['phaxio']['coding'] is None  # a fax service codes the pages itself
+    empty = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
+                        files={'file': ('empty.pdf', b'', 'application/pdf')})
+    assert empty.status_code == 400 and empty.json()['detail'] == 'Document is empty.'
+    broken = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
+                         files={'file': ('broken.pdf', b'%PDF-1.4 not really', 'application/pdf')})
+    assert broken.status_code == 400
+    assert client.post('/routing/predict', data={'to': NUMBER},
+                       files={'file': ('shaded.pdf', b'%PDF', 'application/pdf')}).status_code in (401, 403)

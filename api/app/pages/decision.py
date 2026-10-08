@@ -143,12 +143,16 @@ ORDER = {'normal': 0, 'dense': 1, 'codec': 2}
 
 
 def rank(prediction, shape):
-    """Sort key: the cheapest first; when the cost is the same (or unknown), fewer billed pages, then less time
-    on the line in whole seconds; only a full tie keeps the simpler layout (normal, then dense, then codec)."""
+    """Sort key: the cheapest expected bill first (the shared predictor prices a call over its time's spread);
+    when that is the same (or unknown), fewer expected billing steps (minutes inside an allowance), then fewer
+    billed pages, then less expected time on the line, unrounded, so a measured coding's seconds count; only a
+    full tie keeps the simpler layout (normal, then dense, then codec)."""
     cost = prediction.cost
     billed = prediction.billed_pages if prediction.billed_pages is not None else shape.pages
-    seconds = math.floor(prediction.seconds) if prediction.seconds is not None else 0
-    return (cost is None, cost.micros if cost is not None else 0, billed, seconds, ORDER[shape.layout])
+    steps = getattr(prediction, 'expected_billed_seconds', None)
+    seconds = prediction.seconds if prediction.seconds is not None else 0.0
+    return (cost is None, cost.micros if cost is not None else 0, steps if steps is not None else 0.0, billed,
+            seconds, ORDER[shape.layout])
 
 
 def decide(route_key, destination, normal, dense, *, card=None, predict=None):
@@ -246,11 +250,6 @@ def same_bill(candidate, cheapest):
     return _within(candidate.steps, cheapest.steps) and _within(candidate.pages, cheapest.pages)
 
 
-def _cheapness(item):
-    return (item.cost is None, item.cost or 0, item.steps if item.steps is not None else 0.0,
-            item.pages if item.pages is not None else 0.0)
-
-
 @dataclass(frozen=True)
 class Candidate:
     """One way to send this attempt's pages: a rendering ('as_is', 'screened', 'whitened') in a layout."""
@@ -266,25 +265,26 @@ RENDERING_ORDER = {'as_is': 0, 'screened': 1, 'whitened': 2}
 
 
 def choose(candidates, *, faster=None):
-    """(the candidate to send, whether a faster one won for ``faster``). The cheapest expected bill first; among
-    the candidates with the same expected bill (``same_bill``), the most faithful, then the fewest pages billed,
-    then the least time on the line, then the simpler layout. With a named reason (``NAMED_REASONS``) the least
-    time on the line comes before fidelity, still only among candidates with the same expected bill."""
+    """(the candidate to send, whether a faster one won for ``faster``).
+
+    The layout ranking (``rank``: expected cost, expected billing steps, billed pages, unrounded seconds, the
+    simpler layout) finds the cheapest candidate. The candidates whose Bill is the same as its (``same_bill``:
+    within ``TIE_STEPS`` of a billing step) form the tie band; among them the most faithful wins, then ``rank``
+    again, so with nothing but the pages as they are this is exactly the layout ranking, and a candidate outside
+    the band (a strictly higher bill) never wins. With a named reason (``NAMED_REASONS``) less time on the line
+    comes before fidelity, still only inside the band."""
     if faster is not None and faster not in NAMED_REASONS:
         raise ValueError('Unknown reason for faster pages')
-    cheapest = min(candidates, key=lambda item: _cheapness(item.bill)).bill
-    tied = [item for item in candidates if same_bill(item.bill, cheapest)]
 
-    def seconds(item):
-        return math.floor(item.prediction.seconds) if item.prediction.seconds is not None else 0
-
-    def pages(item):
-        return item.prediction.billed_pages if item.prediction.billed_pages is not None else item.shape.pages
-
-    best = min(tied, key=lambda item: (item.faithful, pages(item), seconds(item), ORDER[item.layout],
-                                       RENDERING_ORDER[item.rendering]))
+    def ranked(item):
+        return rank(item.prediction, item.shape) + (RENDERING_ORDER[item.rendering],)
+    cheapest = min(candidates, key=ranked)
+    tied = [item for item in candidates if same_bill(item.bill, cheapest.bill)]
+    best = min(tied, key=lambda item: (item.faithful, ranked(item)))
     if faster is None:
         return best, False
-    quick = min(tied, key=lambda item: (seconds(item), item.faithful, pages(item), ORDER[item.layout],
-                                        RENDERING_ORDER[item.rendering]))
+
+    def seconds(item):
+        return item.prediction.seconds if item.prediction.seconds is not None else math.inf
+    quick = min(tied, key=lambda item: (seconds(item), item.faithful, ranked(item)))
     return quick, quick is not best

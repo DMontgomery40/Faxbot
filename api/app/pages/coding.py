@@ -523,38 +523,83 @@ def attempt_coding(engine, attempt_id):
 
 
 def newest_coding(engine, job_id):
-    """The coding record of the fax's newest attempt that has one, with what its call negotiated, or None."""
+    """The coding record of the fax's newest attempt, with what its call negotiated and the attempt's state
+    (``attempt_phase``); None when that attempt has none (it went by a fax service, or before measuring)."""
     import sqlalchemy as sa
     if not _ID.fullmatch(str(job_id or '')):
         return None
     table = _table(engine)
     with engine.connect() as connection:
-        row = connection.execute(sa.select(table.c.attempt_id).where(table.c.job_id == job_id).order_by(
-            table.c.created_at.desc(), table.c.id.desc()).limit(1)).first()
-    return attempt_coding(engine, row[0]) if row is not None else None
+        try:
+            attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+        except sa.exc.NoSuchTableError:
+            attempts = None
+        newest = None
+        if attempts is not None:
+            newest = connection.execute(sa.select(attempts.c.id, attempts.c.phase).where(
+                attempts.c.job_id == job_id).order_by(attempts.c.sequence.desc()).limit(1)).first()
+        query = sa.select(table.c.attempt_id).where(table.c.job_id == job_id)
+        if newest is not None:
+            query = query.where(table.c.attempt_id == newest[0])
+        row = connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)).first()
+    if row is None:
+        return None
+    record = attempt_coding(engine, row[0])
+    return {**record, 'attempt_phase': newest[1] if newest is not None else None} if record else None
 
 
-def sent_sentence(record) -> str | None:
-    """The Sent detail's coding line: "Sent with MH: 20% shorter than MMR for these pages." and, when the
-    receiving machine agreed to another coding, what the call used."""
+def sent_sentence(record, phase=None) -> str | None:
+    """The Sent detail's coding line for the attempt's state: "Sent with MH: 20% shorter than MMR for these
+    pages." (delivered, or not known), "Going with ..." (on its way), "Tried with ..." (the call failed),
+    "Prepared with ..." (cancelled); and, when the receiving machine took another coding, which one."""
     if not record:
         return None
     reason = str(record.get('reason') or '').strip()
     requested, agreed = record.get('requested'), record.get('negotiated')
     if not reason or requested not in CODINGS:
         return None
-    sentence = f'Sent with {reason}'
-    if agreed and agreed != requested and not (requested == 'JBIG' and not record.get('measured')):
+    phase = phase if phase is not None else record.get('attempt_phase')
+    verb = {None: 'Sent with', 'success': 'Sent with', 'failed': 'Tried with',
+            'cancelled': 'Prepared with'}.get(phase, 'Going with')
+    sentence = f'{verb} {reason}'
+    if agreed and agreed != requested and not (requested == 'JBIG' and agreed == 'MMR'):
         sentence += f' The receiving machine took {agreed}.'
     return sentence
 
 
+def seconds_text(bits, rate=14400):
+    """'about 49 seconds' of page data at ``rate`` bit/s."""
+    from ..routing.predict import duration_text
+    return duration_text(bits / rate)
+
+
+def measured_sentence(bits) -> str | None:
+    """"Measured on these pages at 14,400 bit/s: MH about 49 seconds, MR about 59 seconds, MMR about 1 minute
+    1 second." from the measured bits of each coding; None without measurements."""
+    parts = [f'{name} {seconds_text(bits[name])}' for name in CODINGS if name in (bits or {})]
+    return ('Measured on these pages at 14,400 bit/s: ' + ', '.join(parts) + '.') if parts else None
+
+
 def coding_view(record):
     """The coding record for the Sent detail and the command line: requested, negotiated, measured bits a
-    coding, and one sentence; None without a record."""
+    coding, and one sentence each; None without a record."""
     if not record:
         return None
+    bits = record.get('bits') or {}
     return {'requested': record['requested'], 'negotiated': record.get('negotiated'),
             'measured': bool(record.get('measured')), 'compared': record.get('compared'),
-            'pages': record.get('pages'), 'bits': record.get('bits') or {},
-            'receiver_known': bool(record.get('receiver_known')), 'sentence': sent_sentence(record)}
+            'pages': record.get('pages'), 'bits': bits,
+            'receiver_known': bool(record.get('receiver_known')), 'sentence': sent_sentence(record),
+            'measured_sentence': measured_sentence(bits)}
+
+
+def sent_view(engine, job_id):
+    """The Sent detail's coding block for the fax's newest attempt (``coding_view``), or None. Unreadable records
+    (before migration 0056) read as none."""
+    from ..routing.database import DeliveryStoreError
+    import sqlalchemy as sa
+    try:
+        return coding_view(newest_coding(engine, job_id))
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError):
+        logging.getLogger(__name__).warning('The fax coding of this fax could not be read.')
+        return None

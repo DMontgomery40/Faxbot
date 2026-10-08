@@ -141,6 +141,11 @@ export interface RoutePrediction {
   marginal: boolean;
   headline: string;
   basis: string;
+  // Over the spread of the call's time: the billed seconds expected, the time 9 in 10 such calls finish within,
+  // and that as one sentence (null when the time is unknown or there is no call).
+  expected_billed_seconds?: number | null;
+  p90_seconds?: number | null;
+  finish_sentence?: string | null;
 }
 
 export interface PredictionAnswer {

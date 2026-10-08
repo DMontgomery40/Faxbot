@@ -372,6 +372,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         {prediction.basis}
                       </Typography>
                     )}
+                    {prediction?.finish_sentence && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-finish">
+                        {prediction.finish_sentence}
+                      </Typography>
+                    )}
                   </Box>
                 )}
 

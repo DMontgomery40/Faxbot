@@ -7,10 +7,14 @@ measured with libtiff 4.7.1 on 2026-10-08 (research/faxbot-next-experiments-2026
 from datetime import datetime
 from pathlib import Path
 import stat
+from types import SimpleNamespace
 
 from PIL import Image, features
 import pytest
 
+from api.tests.test_dense_pages import ATTEMPT, JOB, PEER, _send, installation  # noqa: F401 - fixture
+from api.tests.test_hylafax_engine import engine  # noqa: F401 - fixture
+from api.tests.test_schema import database  # noqa: F401 - fixture
 from app import conversion
 from app.pages import coding
 from app.routing import predict
@@ -228,3 +232,116 @@ def test_a_shape_takes_measured_bits_only_for_every_page():
     for bad in ({'MH': (5, 6)}, {'T.6': (5,)}, {'MH': (-1,)}, 7):
         with pytest.raises(predict.ShapeRefused):
             predict.Shape(1, (10,), 'fine', 'normal', bad)
+
+
+# The coding reaches each engine -------------------------------------------------------------------------------
+
+def call_settings(ecm=True, compression='jbig'):
+    from app import hylafax_engine
+    return hylafax_engine.CallSettings(t38=True, max_rate=14400, ecm=ecm, fine=True, compression=compression)
+
+
+def test_the_ssl_fax_engine_gets_the_coding_as_its_job_data_format(engine, tmp_path):  # noqa: F811
+    from app import hylafax_engine
+    values, server = engine
+    image = tmp_path / 'fax.tiff'
+    image.write_bytes(b'II*\x00synthetic')
+    for coding_name, data_format in (('MH', 'G31D'), ('MR', 'G32D'), ('MMR', 'G4'), ('JBIG', 'JBIG')):
+        settings = hylafax_engine.with_coding(call_settings(), coding_name)
+        assert (settings.coding, settings.compression) == (coding_name, coding.SETTING[coding_name])
+        server.commands.clear()
+        hylafax_engine.create_job(values, tag=hylafax_engine.new_tag(), job_id=JOB, attempt_id=ATTEMPT,
+                                  tiff_path=str(image), settings=settings, host='127.0.0.1',
+                                  port=server.server_address[1]).discard()
+        assert f'JPARM DATAFORMAT "{data_format}"' in server.commands, coding_name
+    # No coding: the call's own compression (your setting, or what engine learning chose).
+    assert hylafax_engine.with_coding(call_settings(compression='mr'), None) == call_settings(compression='mr')
+    # MMR without error correction becomes MR; error correction is never turned on for it.
+    lowered = hylafax_engine.with_coding(call_settings(ecm=False), 'MMR')
+    assert (lowered.coding, lowered.compression, lowered.ecm) == ('MR', 'mr', False)
+    with pytest.raises(ValueError):
+        hylafax_engine.with_coding(call_settings(), 'T.6')
+
+
+def test_the_built_in_engine_gets_the_coding_as_a_channel_variable(tmp_path):
+    from app import ami, hylafax_engine
+    from api.tests.test_hylafax_records import values
+    configured = values(FAX_DATA_DIR=str(tmp_path), ASTERISK_INBOUND_SECRET='synthetic-inbound-secret-0123456789')
+    for coding_name, offered in (('MH', 'mh'), ('MR', 'mr'), ('MMR', 'mmr'), ('JBIG', 'mmr')):
+        call = hylafax_engine.with_coding(call_settings(), coding_name)
+        fields = ami.originate_fields_for(configured, JOB, PEER, '/faxdata/x.tiff', attempt_id=ATTEMPT, call=call)
+        assert f'FAXBOT_COMPRESSION={offered}' in fields['Variable'], coding_name
+        assert 'FAXBOT_ECM=yes' in fields['Variable']
+    fields = ami.originate_fields_for(configured, JOB, PEER, '/faxdata/x.tiff', attempt_id=ATTEMPT,
+                                      call=call_settings())
+    assert 'FAXBOT_COMPRESSION' not in fields['Variable']
+    with pytest.raises(ValueError):
+        ami.prepare_originate_fields(JOB, PEER, '/faxdata/x.tiff', caller_id='', compression='t6')
+
+
+# An attempt on the trunk: measured, recorded, said --------------------------------------------------------------
+
+# Shaded areas kept as they are (pages/friendly.py lightens them where that saves; measured here unlightened).
+KEEP_SHADING = SimpleNamespace(sip_fax_fine=True, fax_friendly_documents='never')
+
+def dcs(compression):
+    """A DCS frame (address, control, FCF, FIF) at 14,400 bit/s with this coding (T.30 Table 2)."""
+    fif = bytearray(4)
+    fif[1] = 0x20 | (0x80 if compression == 'MR' else 0)
+    if compression == 'MMR':
+        fif[3] = 0x04 | 0x40  # ECM and T.6
+    return (bytes([0xFF, 0x13, 0x83]) + bytes(fif)).hex()
+
+
+def add_frames(engine_db, attempt, compression):
+    import sqlalchemy as sa
+    table = sa.Table('fax_call_frames', sa.MetaData(), autoload_with=engine_db)
+    with engine_db.begin() as connection:
+        connection.execute(table.insert().values(id=f'out:{attempt}', direction='out', job_id=JOB,
+                                                 attempt_id=attempt, number=PEER, status='SUCCESS',
+                                                 dcs_first=dcs(compression), dcs_last=dcs(compression),
+                                                 created_at=datetime(2026, 10, 8, 9, 1)))
+
+
+def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_detail_says_it(
+        installation, database, tmp_path):  # noqa: F811
+    from app.pages import sending
+    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    # The pages go as they are; MH goes with the call, because the engine would otherwise take a larger coding.
+    assert sending.unchanged(changed) and changed.coding.coding == 'MH'
+    assert coding.cache_path(tmp_path / f'packed-{JOB}-{ATTEMPT}.tiff').is_file()
+    record = coding.newest_coding(database, JOB)
+    assert (record['requested'], record['measured'], record['compared'], record['pages']) == ('MH', 1, 'MMR', 1)
+    assert record['receiver_known'] == 0 and record['negotiated'] is None
+    assert set(record['bits']) >= {'MH', 'MR', 'MMR'} and record['bits']['MH'] < record['bits']['MMR']
+    view = coding.sent_view(database, JOB)
+    assert view['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'
+    assert view['measured_sentence'].startswith('Measured on these pages at 14,400 bit/s: MH about 49 seconds, MR ')
+    # What the call took, from the built-in engine's frames; a machine that took another coding is named.
+    add_frames(database, ATTEMPT, 'MH')
+    assert coding.sent_view(database, JOB)['negotiated'] == 'MH'
+    assert coding.sent_sentence({**record, 'negotiated': 'MH'}, 'failed') == (
+        'Tried with MH: 20% shorter than MMR for these pages.')
+    assert coding.sent_sentence({**record, 'requested': 'MR', 'reason': 'MR: 5% shorter than MH for these pages.',
+                                 'negotiated': 'MH'}, 'sending') == (
+        'Going with MR: 5% shorter than MH for these pages. The receiving machine took MH.')
+    # Recorded once per attempt: deciding the same attempt again keeps the first row.
+    _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']
+
+
+def test_black_text_to_an_unknown_machine_goes_with_the_usual_settings_and_still_says_why(
+        installation, database, tmp_path):  # noqa: F811
+    # MMR measured smallest: JBIG (not measured here) where the machine takes it, as the engines would anyway.
+    assert _send(database, tmp_path, pages=frames('drawn_text'), values=KEEP_SHADING) is None
+    view = coding.sent_view(database, JOB)
+    assert view['requested'] == 'JBIG' and view['measured'] is False
+    assert view['sentence'] == ('Sent with JBIG where the receiving machine takes it (not measured here), otherwise '
+                                'MMR, the smallest of the codings measured for these pages.')
+    add_frames(database, ATTEMPT, 'MMR')
+    assert coding.sent_view(database, JOB)['sentence'] == view['sentence']  # MMR is the fallback it named
+
+
+def test_a_fax_service_route_measures_nothing_and_records_nothing(installation, database, tmp_path):  # noqa: F811
+    assert _send(database, tmp_path, route='sinch', pages=frames('shaded_0'), values=KEEP_SHADING) is None
+    assert coding.newest_coding(database, JOB) is None and coding.sent_view(database, JOB) is None

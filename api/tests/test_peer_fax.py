@@ -348,6 +348,8 @@ async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_it
     digests = {}
     for encoded in (False, True):
         job = accept(pair, image=False)
+        # A full page of text, so the stand-in encoded page (blank) is clearly the cheaper layout, not a near tie.
+        (pair['data'] / (job + '.pdf')).write_bytes(_letter())
         image = pair['data'] / (job + '.tiff')
         conversion.pdf_to_tiff(str(pair['data'] / (job + '.pdf')), str(image))
         if encoded:
@@ -369,6 +371,20 @@ async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_it
         digests[encoded] = sent['digest']
     # The partner gets exactly the fax image a fax without encoded pages has.
     assert digests[True] == digests[False]
+
+
+def _letter():
+    """A synthetic one-page letter, full of text lines."""
+    from io import BytesIO
+    from reportlab.pdfgen import canvas
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    for line in range(60):
+        pdf.drawString(40, 790 - line * 12, 'Synthetic referral line %02d for the encoded pages and peer image test.'
+                       % line)
+    pdf.showPage()
+    pdf.save()
+    return output.getvalue()
 
 
 def _blank_page(height):

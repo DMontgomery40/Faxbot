@@ -20,7 +20,7 @@ never imports this metadata.
 """
 import sqlalchemy as sa
 
-from .schema_rules_delivery import frozen_metadata as previous_metadata
+from .schema_measured_codec import frozen_metadata as previous_metadata
 
 
 REVISION = '0058_shading_method'

@@ -747,6 +747,20 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   <ListItemText primary="How the pages were sent" secondary={detailJob.page_layout.sentences.join(' ')} />
                 </ListItem>
               ) : null}
+              {detailJob.coding?.sentence && (
+                <ListItem data-testid="job-coding">
+                  <ListItemText primary="Fax coding" secondary={<>
+                    <Typography component="span" variant="body2" color="text.secondary" display="block">
+                      {detailJob.coding.sentence}
+                    </Typography>
+                    {detailJob.coding.measured_sentence && (
+                      <Typography component="span" variant="caption" color="text.secondary" display="block">
+                        {detailJob.coding.measured_sentence}
+                      </Typography>
+                    )}
+                  </>} />
+                </ListItem>
+              )}
               {detailJob.fax_engine?.negotiation?.sentence && (
                 <ListItem data-testid="job-call-negotiation">
                   <ListItemText primary="How the call went" secondary={detailJob.fax_engine.negotiation.sentence} />

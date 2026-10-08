@@ -1,4 +1,4 @@
-"""Actual 0032 to 0058 upgrade and downgrade with existing rows (SQLite and PostgreSQL).
+"""Actual 0056 to 0058 upgrade and downgrade with existing rows (SQLite and PostgreSQL).
 
 0058 adds the nullable ``fax_friendly_pages.method`` (screened or whitened) and changes no stored row: a row written
 before it keeps NULL, which reads as whitened (all Faxbot did then). The downgrade refuses while any row records a
@@ -18,8 +18,8 @@ from api.tests.test_work_schema import without_later_access_changes
 from app.pages import friendly
 
 NOW = datetime(2026, 10, 8, 12, 0)
-# The migration chain follows merge order: 0058 comes after 0032 (rules in delivery).
-PRIOR = '0032_rules_delivery'
+# The migration chain follows merge order: 0058 comes after 0056 (measured codings).
+PRIOR = '0056_measured_codec'
 JOB, ATTEMPT = 'a' * 32, 'b' * 32
 
 
@@ -45,9 +45,9 @@ def _old_row(engine):
             "167000, 49, :now)"), {'job': JOB, 'attempt': ATTEMPT, 'now': NOW})
 
 
-def test_0058_follows_rules_in_delivery_and_is_the_head():
+def test_0058_follows_measured_codings_and_is_the_head():
     assert schema_shading_method.REVISION == '0058_shading_method' == schema.HEAD
-    assert schema.RULES_DELIVERY == PRIOR
+    assert schema.MEASURED_CODEC == PRIOR
     assert schema_shading_method.METHODS == friendly.METHODS
 
 

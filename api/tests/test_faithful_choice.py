@@ -64,14 +64,36 @@ def test_the_same_bill_means_within_five_hundredths_of_a_billing_step():
     assert not decision.same_bill(decision.Bill(None, 1.0, None), decision.Bill(7000, 1.0, None))
 
 
+def test_with_only_the_pages_as_they_are_the_choice_is_exactly_the_layout_ranking():
+    # The fidelity choice sits on top of the layout ranking (cost, steps, billed pages, unrounded seconds, layout):
+    # with nothing to trade, every pick is the ranking's own.
+    import random
+    rng = random.Random(58)
+    for _ in range(200):
+        items = [candidate('as_is', layout, steps=rng.choice((1.0, 1.02, 1.5, 2.0)), cost=rng.choice((None, 7000)),
+                           pages=rng.choice((None, 0.0)), seconds=rng.uniform(20, 120))
+                 for layout in ('normal', 'dense', 'codec')]
+        if len({item.bill.cost is None for item in items}) > 1:
+            continue
+        chosen, _ = decision.choose(items)
+        assert chosen is min(items, key=lambda item: decision.rank(item.prediction, item.shape))
+
+
+def test_the_faithful_pages_never_beat_a_strictly_cheaper_bill():
+    screened = candidate('screened', 'normal', steps=1.0, cost=7000, seconds=48)
+    for steps, wins in ((1.0, 'as_is'), (1.05, 'as_is'), (1.051, 'screened'), (1.5, 'screened')):
+        as_is = candidate('as_is', 'normal', steps=steps, cost=7000 if steps <= 1.05 else 10500, seconds=62)
+        assert decision.choose([as_is, screened])[0].rendering == wins, steps
+
+
 @pytest.mark.parametrize('reason', decision.NAMED_REASONS)
 def test_a_named_reason_takes_the_faster_pages_only_at_the_same_bill(reason):
-    as_is = candidate('as_is', 'normal', steps=1.0, seconds=55)
-    screened = candidate('screened', 'normal', steps=1.0, seconds=40)
-    whitened = candidate('whitened', 'normal', steps=1.0, seconds=20)
+    as_is = candidate('as_is', 'normal', steps=1.0, cost=7000, seconds=55)
+    screened = candidate('screened', 'normal', steps=1.0, cost=7000, seconds=40)
+    whitened = candidate('whitened', 'normal', steps=1.0, cost=7000, seconds=20)
     assert decision.choose([as_is, screened], faster=reason) == (screened, True)
     assert decision.choose([as_is, screened, whitened], faster=reason) == (whitened, True)
-    dearer = candidate('screened', 'normal', steps=2.0, seconds=30)
+    dearer = candidate('screened', 'normal', steps=2.0, cost=14000, seconds=30)  # a priced bill one step higher
     assert decision.choose([as_is, dearer], faster=reason) == (as_is, False)  # never at a higher bill
     with pytest.raises(ValueError):
         decision.choose([as_is], faster='the line was ecm-less')

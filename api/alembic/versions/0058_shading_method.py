@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0058_shading_method'
 # Chained after the integration head when merged (revision numbers follow merge order, not number order).
-down_revision = '0032_rules_delivery'
+down_revision = '0056_measured_codec'
 branch_labels = None
 depends_on = None
 
