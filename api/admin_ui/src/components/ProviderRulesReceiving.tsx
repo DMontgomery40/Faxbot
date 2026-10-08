@@ -9,7 +9,9 @@ import {
 import { DeliveryError } from './delivery/shared';
 import type { ReceivedExplainResult, ReceivingOptions, RulesApi } from './ProviderRulesApi';
 import { TimeEditor } from './ProviderRulesEditor';
-import { KEEP_DAYS_NOTE, minutesText, textMinutes } from './ProviderRulesText';
+import {
+  FORWARDED_HELP, FORWARDED_UNSIGNED_LABEL, KEEP_DAYS_NOTE, minutesText, textMinutes,
+} from './ProviderRulesText';
 
 export interface Named { key: string; label: string }
 
@@ -69,6 +71,14 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
       <TextField size="small" label="Only faxes with subaddress" value={value.subaddress ?? ''} placeholder="2001"
         helperText={SUBADDRESS_HELP} inputProps={{ maxLength: 20 }}
         onChange={(event) => set({ subaddress: event.target.value.trim() || null })} />
+      <TextField size="small" label="Only calls forwarded from" value={value.diverted_from ?? ''}
+        placeholder="+13035550100" helperText={FORWARDED_HELP} inputProps={{ maxLength: 40 }}
+        onChange={(event) => set({ diverted_from: event.target.value.trim() || null })} />
+      {Boolean(value.diverted_from) && (
+        <FormControlLabel label={FORWARDED_UNSIGNED_LABEL} control={
+          <Checkbox checked={Boolean(value.diversion_unsigned)}
+            onChange={(event) => set({ diversion_unsigned: event.target.checked })} />} />
+      )}
       <TextField size="small" label="Only faxes from" value={fromText} placeholder="+13035550100, +1303*"
         helperText="Fax numbers, separated by commas. End one with * to match every number that starts with it."
         onChange={(event) => {
@@ -116,13 +126,15 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
   const [from, setFrom] = useState('');
   const [account, setAccount] = useState('');
   const [subaddress, setSubaddress] = useState('');
+  const [forwarded, setForwarded] = useState('');
   const [at, setAt] = useState('');
   const [result, setResult] = useState<ReceivedExplainResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const run = () => {
     setError(null);
     api.explainReceived({ to_number: to.trim(), from_number: from.trim() || null, account_key: account || null, at: at || null,
-      ...(subaddress.trim() ? { subaddress: subaddress.trim() } : {}) })
+      ...(subaddress.trim() ? { subaddress: subaddress.trim() } : {}),
+      ...(forwarded.trim() ? { diverted_from: forwarded.trim() } : {}) })
       .then(setResult).catch((failure) => { setResult(null); setError(failure); });
   };
   return (
@@ -136,6 +148,8 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
         <TextField size="small" label="From" value={from} onChange={(event) => setFrom(event.target.value)} />
         <TextField size="small" label="Subaddress" value={subaddress} inputProps={{ maxLength: 20 }}
           onChange={(event) => setSubaddress(event.target.value)} />
+        <TextField size="small" label="Forwarded from" value={forwarded} inputProps={{ maxLength: 40 }}
+          onChange={(event) => setForwarded(event.target.value)} />
         {accounts.length > 1 && (
           <Box sx={{ minWidth: 200 }}>
             <SelectBox label="Received on" value={account}

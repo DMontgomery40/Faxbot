@@ -1018,6 +1018,8 @@ $ faxbot numbers add [OPTIONS] {number}
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
+* `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, as the network signed it. &quot;&quot; removes the condition.
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding the network did not sign, or whose signature Faxbot could not check (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers update`
@@ -1050,6 +1052,8 @@ $ faxbot numbers update [OPTIONS] {number}
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
+* `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, as the network signed it. &quot;&quot; removes the condition.
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding the network did not sign, or whose signature Faxbot could not check (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers explain`

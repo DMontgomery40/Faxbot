@@ -391,6 +391,9 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
             'fields': fields,
             'sender_endpoints': docker.asterisk(sender, 'pjsip show endpoints'),
             'receiver_endpoints': docker.asterisk(receiver, 'pjsip show endpoints'),
+            # A forwarded call's headers the receiver kept for Faxbot ([faxbot-sip-headers]), if any.
+            'receiver_sip_headers': docker.run('exec', receiver, 'sh', '-c', 'cat /faxdata/inbound/*.sip 2>/dev/null',
+                                               check=False).stdout,
         }
     finally:
         docker.close()
@@ -1103,6 +1106,40 @@ def test_a_subaddress_the_built_in_engine_asks_for_reaches_the_receiving_engine_
         report[name] = {'mode': result['Mode'], 'far_dis': row['dis'], 'received_sub': captured['body']['sub_hex'],
                         'seconds': outcome['submit_to_result_seconds'], 'image': outcome['image']}
     print(json.dumps({'subaddress_sent': report}, indent=2))
+
+
+def test_a_forwarded_calls_headers_reach_faxbot_unchanged_and_its_signature_still_checks(tmp_path):
+    """X4 over loopback: the sender stands in for a carrier that forwarded the call, adding a Diversion header, two
+    History-Info entries and a diversion PASSporT (RFC 8946) signed with a synthetic key. The receiving dialplan keeps
+    them for Faxbot ([faxbot-sip-headers]); read back, they name the forwarding number, and the PASSporT's signature
+    still checks against its certificate, so Asterisk carried every byte."""
+    from datetime import datetime, timedelta
+    from api.tests.test_diversion import _key_and_certificate, passport
+    from app.inbound import diversion
+    forwarded = '+13035550142'
+    key, certificate = _key_and_certificate(valid_from=datetime.utcnow() - timedelta(days=1),
+                                            valid_until=datetime.utcnow() + timedelta(days=1))
+    now = int(time.time())
+    identity = passport(key, div=forwarded.lstrip('+'), dest=DID.lstrip('+'), iat=now)
+    extra = {'PJSIP_HEADER(add,Diversion)': f'<sip:{forwarded}@carrier.example>;reason=unconditional;counter=1',
+             'PJSIP_HEADER(add,History-Info)': f'<sip:{forwarded}@carrier.example>;index=1',
+             'PJSIP_HEADER(add,Identity)': identity.replace('ppt="div"', 'ppt=div')}
+    outcome = exchange(tmp_path, extra_variables=extra)
+    assert outcome['result']['Status'] == 'SUCCESS', outcome['result']
+    headers = diversion.parse_header_lines(outcome['receiver_sip_headers'])
+    clues = [line for line in outcome['receiver_log'].splitlines()
+             if any(word in line for word in ('Diversion', 'History-Info', 'FILE', 'sip-header', 'Identity:', 'ERROR',
+                                              'WARNING'))]
+    assert headers.get('Diversion') == [extra['PJSIP_HEADER(add,Diversion)']], '\n'.join(clues[-30:])
+    assert headers.get('Identity') and headers['Identity'][0].split(';')[0] == identity.split(';')[0]
+    found = diversion.diversion_for(headers, did=DID, at=datetime.utcfromtimestamp(now), check=True, country='US',
+                                    fetch=lambda url: certificate)
+    assert (found.diverted_from, found.state, found.source) == (forwarded, 'signed', 'passport'), found
+    stated = diversion.diversion_for({name: values for name, values in headers.items() if name != 'Identity'},
+                                     did=DID, at=datetime.utcnow(), country='US')
+    assert (stated.diverted_from, stated.state) == (forwarded, 'stated')
+    print(json.dumps({'forwarded_call': {'headers': sorted(headers), 'state': found.state,
+                                         'from': found.diverted_from, 'image': outcome['image']}}, indent=2))
 
 
 WIREGUARD_DOCKERFILE = '''FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a

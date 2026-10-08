@@ -54,6 +54,7 @@ import type {
   DirectDeliveryRecord,
   DirectPartner,
   DirectFaxImagesResult,
+  DirectTunnelCheck,
   RelayAcceptance,
   RelayAgreement,
   RelayCost,
@@ -1292,6 +1293,15 @@ class AdminAPIClient {
   // Accept fax images from a partner, or stop; the partner is told with a signed statement.
   async setDirectFaxImages(partnerId: string, accept: boolean): Promise<DirectFaxImagesResult> {
     return this.json(`/direct/peers/${id(partnerId)}/fax-images`, { method: 'POST', body: JSON.stringify({ accept }) });
+  }
+
+  // Fax calls with a partner inside an encrypted tunnel set up outside Faxbot: take its calls, its address there.
+  async setDirectTunnelCalls(partnerId: string, accept: boolean, address: string | null): Promise<DirectFaxImagesResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/peer-calls`, { method: 'POST', body: JSON.stringify({ accept, address }) });
+  }
+
+  async checkDirectTunnel(partnerId: string): Promise<DirectTunnelCheck> {
+    return this.json(`/direct/peers/${id(partnerId)}/peer-calls/check`, { method: 'POST', body: '{}' });
   }
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {

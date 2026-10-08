@@ -2401,6 +2401,11 @@ class InboundFaxOut(BaseModel):
     account_label: Optional[str] = None
     # The subaddress the sender stated (T.33 SUB): it chose the mailbox, it proves nothing about the sender.
     subaddress: Optional[str] = None
+    # A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+    # failed or stated) and one sentence saying so. A diversion is the network's statement, not proof of the sender.
+    diverted_from: Optional[str] = None
+    diversion: Optional[str] = None
+    diversion_text: Optional[str] = None
     # A receiving rule marked the fax urgent.
     urgent: bool = False
 

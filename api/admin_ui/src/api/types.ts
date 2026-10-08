@@ -498,6 +498,11 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
+  // A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+  // failed or stated), and one sentence saying so.
+  diverted_from?: string | null;
+  diversion?: string | null;
+  diversion_text?: string | null;
   // Each time fetching the document stopped before it was set going again, oldest first.
   earlier_failures?: InboundEarlierFailure[];
   // The server's sentence about them, in the installation's time zone. The console builds its own from

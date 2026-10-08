@@ -734,6 +734,19 @@ def stated_subaddress(payload, engine=None):
     return None
 
 
+def received_diversion(payload, call, engine, *, received_at=None):
+    """The call's diversion (inbound/diversion.py) from the headers Asterisk kept for it, or None when it was not
+    forwarded. The network's signature is checked only when an enabled receiving rule depends on a diversion."""
+    from . import diversion
+    from ..access.receiving_rules import diversion_rules_exist
+    headers = diversion.read_headers(settings.fax_data_dir, payload.get('uniqueid'))
+    if not headers:
+        return None
+    moment = diversion.call_time(call, received_at or diversion.utcnow())
+    return diversion.diversion_for(headers, did=payload.get('to_number'), at=moment,
+                                   check=diversion_rules_exist(engine), country=settings.fax_default_country)
+
+
 def remote_address(payload):
     """The far end's internet fax address (host:port from its TSA) a received SSL Fax engine call reported, or
     None. Partner discovery reads it from the fax's import report (``remote_address``); it is a hint, never
@@ -803,6 +816,11 @@ def receive_handover(request: Request, payload: dict, root: str):
     peer = payload.get('peer')
     if isinstance(peer, str) and re.fullmatch(r'[a-f0-9]{32}', peer):
         report['peer_call'] = peer
+    # A forwarded call (X4): where the network said it came from, checked when a receiving rule depends on it.
+    diverted = received_diversion(payload, call, store.engine, received_at=source_time)
+    if diverted is not None:
+        report['diversion'] = {'from': diverted.diverted_from, 'state': diverted.state, 'source': diverted.source,
+                               'reason': diverted.reason, 'sentence': diverted.sentence}
     snapshot = request.scope.get('faxbot.configuration')
     runtime = getattr(request.app.state, 'configuration_runtime', None)
     binding = (account_binding(runtime.manager.store, snapshot.active, account_key)
@@ -812,7 +830,11 @@ def receive_handover(request: Request, payload: dict, root: str):
         backend='sip', inbound_backend='sip', to_number=text('to_number'),
         from_number=text('from_number'), reported_pages=_int(payload.get('faxpages')), report=report,
         source_received_at=source_time, tiff_path=tiff_path, schedule=False,
-        country=settings.fax_default_country, account_key=account_key, subaddress=subaddress, binding=binding))()
+        country=settings.fax_default_country, account_key=account_key, subaddress=subaddress, binding=binding,
+        diversion=diverted))()
+    if diverted is not None:
+        from .diversion import forget_headers
+        forget_headers(settings.fax_data_dir, payload.get('uniqueid'))
     if begun.state == 'pending':
         try:
             artifact = convert_tiff(tiff_path, begun.inbound_fax_id, engine=store.engine)

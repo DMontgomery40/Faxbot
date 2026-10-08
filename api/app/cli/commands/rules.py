@@ -376,6 +376,9 @@ def receiving_sentence(rule, names, connectors=None):
         else f"Faxes to {rule['to_number']}"
     if rule.get('subaddress'):
         sentence += f" with subaddress {rule['subaddress']}"
+    if rule.get('diverted_from'):
+        sentence += (f" forwarded from {rule['diverted_from']}"
+                     + (' (signed by the network or not)' if rule.get('diversion_unsigned') else ''))
     if rule.get('account_key'):
         sentence += f" received on {names.account(rule['account_key'])}"
     elif rule.get('site_key'):
@@ -403,7 +406,8 @@ def receiving_sentence(rule, names, connectors=None):
 
 
 RECEIVING_OPTION_KEYS = ('enabled', 'any_number', 'account_key', 'site_key', 'subaddress', 'from_numbers', 'days',
-                         'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days')
+                         'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days',
+                         'diverted_from', 'diversion_unsigned')
 
 KEEP_DAYS_NOTE = ('This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to '
                   'keep the fax that long.')
@@ -1679,10 +1683,17 @@ NUMBER_SUBADDRESS = typer.Option(None, '--subaddress', metavar='DIGITS',
                                  help="Only faxes whose sender's machine gives this subaddress, such as a "
                                       "department's 2001. It chooses the mailbox and never gives anyone access.")
 NUMBER_SITE = typer.Option(None, '--site', metavar='SITE', help='Only faxes received on an account of this site.')
+NUMBER_FORWARDED = typer.Option(None, '--forwarded-from', metavar='NUMBER',
+                                help='Only calls forwarded to this number from NUMBER, as the network signed it. '
+                                     '"" removes the condition.')
+NUMBER_FORWARDED_UNSIGNED = typer.Option(None, '--forwarded-unsigned/--forwarded-signed-only',
+                                         help='Also take a forwarding the network did not sign, or whose signature '
+                                              'Faxbot could not check (never one whose signature failed).')
 
 
 def receiving_options(api, *, account=None, from_numbers=None, days=None, between=None, email=None, no_email=False,
-                      urgent=None, keep_days=None, position=None, any_number=None, subaddress=None, site=None):
+                      urgent=None, keep_days=None, position=None, any_number=None, subaddress=None, site=None,
+                      forwarded_from=None, forwarded_unsigned=None):
     """The receiving-rule fields of an /access/inbound-rules body, from the options given."""
     if email and no_email:
         raise CliError('Choose --email CONNECTOR or --no-email, not both.')
@@ -1691,6 +1702,10 @@ def receiving_options(api, *, account=None, from_numbers=None, days=None, betwee
         body['account_key'] = account
     if subaddress is not None:
         body['subaddress'] = subaddress.strip() or None
+    if forwarded_from is not None:
+        body['diverted_from'] = forwarded_from.strip() or None
+    if forwarded_unsigned is not None:
+        body['diversion_unsigned'] = forwarded_unsigned
     if site is not None:
         body['site_key'] = site.strip() or None
     if from_numbers:

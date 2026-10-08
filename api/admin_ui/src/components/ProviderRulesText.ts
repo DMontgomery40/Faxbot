@@ -266,6 +266,9 @@ export function receivingSentence(rule: { to_number: string; mailbox_label: stri
   names: { account: (key: string) => string; connector: (id: string) => string; site?: (key: string) => string }): string {
   let sentence = rule.any_number || !rule.to_number ? 'Faxes to any of your numbers' : `Faxes to ${rule.to_number}`;
   if (rule.subaddress) sentence += ` with subaddress ${rule.subaddress}`;
+  if (rule.diverted_from) {
+    sentence += ` forwarded from ${rule.diverted_from}${rule.diversion_unsigned ? ' (signed by the network or not)' : ''}`;
+  }
   if (rule.account_key) sentence += ` received on ${names.account(rule.account_key)}`;
   else if (rule.site_key) sentence += ` received on an account of ${names.site ? names.site(rule.site_key) : rule.site_key}`;
   const from = (rule.from_numbers ?? []).map((entry) => (entry.endsWith('*')
@@ -314,6 +317,11 @@ export const ENCRYPTION_NOTE = 'SSL Fax encrypts the call, but it cannot confirm
 
 export const ALTERNATE_NOTE = 'An approved alternate number is one the recipient confirmed. When it is a toll-free '
   + 'number, the recipient pays for the call.';
+
+export const FORWARDED_HELP = 'Only calls the network says were forwarded to this number from that one. Faxbot '
+  + 'checks the network\'s signature on the forwarding; a forwarding nobody signed counts only if you tick the box below.';
+export const FORWARDED_UNSIGNED_LABEL = 'Also take a forwarding the network did not sign, or whose signature Faxbot '
+  + 'could not check';
 
 export const SUBADDRESS_NOTE = 'A department or mailbox behind the recipient\'s fax number, if they gave you one. '
   + 'Their fax machine must take subaddresses; each call shows whether it did.';
