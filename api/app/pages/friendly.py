@@ -384,6 +384,22 @@ _LEGACY = {'true': 'always', 'on': 'always', 'yes': 'always', '1': 'always',
            'false': 'never', 'off': 'never', 'no': 'never', '0': 'never'}
 
 
+def describe_setting():
+    """The setting as other screens describe it (guided setup reads its words here; keep this the one source).
+
+    ``default`` is the choice a new installation has, ``off`` the one that changes no page, and ``choices`` maps
+    each choice to its label (as Providers → In use shows it) and one sentence saying what it does.
+    """
+    return {'setting': 'fax_friendly_documents', 'label': 'Lighten shaded areas and remove specks on documents you send',
+            'default': 'where_it_saves', 'off': 'never', 'choices': {
+                'where_it_saves': ('Where it saves time', 'Faxbot lightens shaded areas and removes specks only on calls '
+                                   'billed by time and for fax machines without error correction, where it '
+                                   'shortens the call.'),
+                'always': ('Always', 'Faxbot lightens shaded areas and removes specks on every document whose pages it '
+                           'makes.'),
+                'never': ('Never', 'Faxbot sends the pages of your documents as they are.')}}
+
+
 def documents_choice(values):
     """'where_it_saves' (the default), 'always' or 'never'; the earlier on and off read as always and never."""
     value = getattr(values, 'fax_friendly_documents', 'where_it_saves')

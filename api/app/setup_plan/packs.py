@@ -212,19 +212,7 @@ def cost_pack(plan, price):
                       f'Record whether {name} approves faxes to their toll-free number', found['sentence'],
                       [{'name': 'Recipients → Details', 'detail': 'The toll-free number on file'}],
                       link=RECIPIENTS_PAGE, cli='faxbot recipients toll-free')
-    friendly = getattr(facts.values, 'fax_friendly_documents', 'where_it_saves')
-    if friendly == 'never':
-        plan.setting('cost', 'cost.fax-friendly', 'Lighten shaded areas where it saves time',
-                     'Faxbot can lighten shaded areas and remove specks on the documents you send, only on calls '
-                     'billed by time and for machines without error correction, where it shortens the call. '
-                     'It is turned off now.',
-                     [{'name': 'Providers → In use → Delivery routes', 'detail': 'Lighten shaded areas: never'}],
-                     {'fax_friendly_documents': 'where_it_saves'})
-    else:
-        plan.item('cost', 'cost.fax-friendly', 'in_effect', 'Shaded areas are lightened where it saves time',
-                  'Faxbot already lightens shaded areas and removes specks on the documents you send'
-                  + (' on every fax.' if friendly == 'always' else ', where it shortens a call billed by time.'),
-                  [{'name': 'Providers → In use → Delivery routes', 'detail': 'Lighten shaded areas'}])
+    _shading(plan)
     for found in facts.long_pages:
         if found['on']:
             plan.item('cost', f"cost.long-pages.{found['route']}", 'in_effect',
@@ -244,6 +232,21 @@ def cost_pack(plan, price):
                   [{'name': 'Costs → Prices & plans', 'detail': {'set': 'Your budget', 'published': 'The published plan',
                                                         'default': 'Faxbot’s cautious start'}.get(found['source'],
                                                                                                   'Plan budget')}])
+
+
+def _shading(plan):
+    """The shading setting, in the words of the setting itself (``pages.friendly.describe_setting``)."""
+    from ..pages.friendly import describe_setting, documents_choice
+    setting = describe_setting()
+    current = documents_choice(plan.facts.values)
+    label, sentence = setting['choices'][current]
+    source = [{'name': 'Providers → In use → Delivery routes', 'detail': f"{setting['label']}: {label}"}]
+    if current == setting['off'] and setting['default'] != current:
+        chosen, does = setting['choices'][setting['default']]
+        plan.setting('cost', 'cost.fax-friendly', f"{setting['label']}: {chosen}", f'It is set to {label} now. {does}',
+                     source, {setting['setting']: setting['default']})
+    else:
+        plan.item('cost', 'cost.fax-friendly', 'in_effect', f"{setting['label']}: {label}", sentence, source)
 
 
 def _toll_free_class(plan, price):

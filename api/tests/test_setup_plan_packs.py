@@ -143,6 +143,13 @@ def test_a_cost_heavy_installation_gets_rules_with_predicted_savings_sources_and
     # Shading is off: the setting goes back to "where it saves"; long pages are on for one route, a step for another.
     friendly = next(item for item in items(plan, 'cost') if item['key'] == 'cost.fax-friendly')
     assert friendly['kind'] == 'setting' and friendly['changes'] == {'fax_friendly_documents': 'where_it_saves'}
+    # Its words are the setting's own (pages.friendly.describe_setting), so they follow the setting when it changes.
+    from app.pages.friendly import CHOICES, describe_setting
+    setting = describe_setting()
+    assert set(setting['choices']) == set(CHOICES) and {setting['default'], setting['off']} <= set(CHOICES)
+    label, does = setting['choices'][setting['default']]
+    assert friendly['title'] == f"{setting['label']}: {label}"
+    assert friendly['sentence'] == f"It is set to {setting['choices']['never'][0]} now. {does}"
     kinds = {item['key']: item['kind'] for item in items(plan, 'cost')}
     assert kinds['cost.long-pages.sip'] == 'in_effect' and kinds['cost.long-pages.phaxio'] == 'step'
     assert kinds['cost.plan-budget.phaxio'] == 'in_effect'
