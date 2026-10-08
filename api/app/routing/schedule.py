@@ -49,7 +49,8 @@ The rules, in order:
    number's own calls decide, else every number's on the route. An ordinary
    fax that may start now waits for a later hour, within ``HOUR_WAIT`` and its
    send-by time, only when this hour is worse than the number's typical hour
-   by a margin and the later hour is not: ``SLOWER`` and ``GAIN`` for time a
+   by a margin and the later hour is not (the number's own calls only; every
+   number's on the route only price it): ``SLOWER`` and ``GAIN`` for time a
    page (on routes billed by the minute only, where it costs less), and
    ``FAILING_SHARE`` and ``FAILING_GAP`` for failures after answer. At the
    later hour the condition is false, so the fax goes then and is never held
@@ -687,6 +688,10 @@ def better_hour(fax, settings, timing, busy, now, latest):
     route = str(fax.route or '').lower()
     if fax.urgent or timing is None or not settings.learn_busy or route not in TRUNK_ROUTES:
         return None
+    # Only the number's own calls hold a fax: time a page differs mostly by receiving machine, so every number's
+    # calls on the line together could hold a fax to a new number for the wrong reason. They only price it.
+    if timing.scope != 'number':
+        return None
     typical = timing.typical
     if typical is None:
         return None
@@ -1056,10 +1061,11 @@ class Scheduler:
         rows = connection.execute(query.order_by(s.c.started_at.desc()).limit(HISTORY_READ)).mappings().all()
         return [found for found in (call_timing(dict(row)) for row in rows) if found is not None]
 
-    def timing(self, connection, number, settings, now):
-        """The number's learned call hours, or the route's as a whole when the number has too few calls."""
+    def timing(self, connection, number, settings, now, *, fallback=True):
+        """The number's learned call hours, or (``fallback``) the route's as a whole when the number has too few
+        calls; the claim asks without it, since only a number's own calls hold a fax."""
         own = learn_timing(self.call_timings(connection, now, number), now, settings.zone_name)
-        if own.typical is not None and (own.typical.timed or own.typical.judged):
+        if not fallback or (own.typical is not None and (own.typical.timed or own.typical.judged)):
             return own
         return learn_timing(self.call_timings(connection, now), now, settings.zone_name, scope='route')
 
@@ -1091,7 +1097,7 @@ class Scheduler:
         timing = None
         if settings.learn_busy and str(fax.route or '').lower() in TRUNK_ROUTES:
             if len(memo[fax.number]) < 3:
-                memo[fax.number].append(self.timing(connection, fax.number, settings, now))
+                memo[fax.number].append(self.timing(connection, fax.number, settings, now, fallback=False))
             timing = memo[fax.number][2]
         return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now, timing), settings
 

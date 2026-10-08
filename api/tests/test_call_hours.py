@@ -128,6 +128,12 @@ def test_the_send_by_time_the_wait_limit_the_switch_and_closed_hours_bound_the_m
     assert decide(trunk(), SETTINGS, None, NOW, learn_timing(slow_all_day, NOW, NEW_YORK)).hold_until is None
 
 
+def test_every_number_on_the_line_together_prices_an_hour_but_never_holds_a_fax():
+    route_wide = learn_timing(slow_mornings(), NOW, NEW_YORK, scope='route')
+    assert route_wide.factor_at(at(MONDAY, 9, 30)) > 1.5
+    assert decide(trunk(), SETTINGS, None, NOW, route_wide).hold_until is None
+
+
 def test_too_few_calls_change_nothing():
     few = learn_timing(slow_mornings()[:2] + slow_mornings()[-2:], NOW, NEW_YORK)
     assert decide(trunk(), SETTINGS, None, NOW, few).hold_until is None

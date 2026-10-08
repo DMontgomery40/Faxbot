@@ -228,6 +228,9 @@ def advice(engine, number, *, now=None, predict=None):
     amount = predictor.amount_text(prediction) if prediction is not None else None
     if amount is None:
         return what + ' Faxbot cannot tell what your own phone line would pay to collect them.'
+    if not prediction.cost.micros:
+        # A flat plan, or calls your plan already includes: the case collecting is for.
+        return what + " Collecting them would add nothing to your phone line's bill."
     return what + f' Collecting them would cost your own phone line about {amount}.'
 
 

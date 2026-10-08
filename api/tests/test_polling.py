@@ -235,6 +235,12 @@ def test_the_advice_counts_what_the_number_sent_you_and_prices_your_own_call(ins
                         'about $0.005.')
     assert polling.advice(installation, '+15555550111', now=NOW, predict=predict) is None
 
+    def flat(route, number, shape, now=None):
+        from app.routing.costs import Money
+        return SimpleNamespace(cost=Money(0, 'USD'))
+    assert polling.advice(installation, NUMBER, now=NOW, predict=flat).endswith(
+        "Collecting them would add nothing to your phone line's bill.")
+
 
 # The console's and the command line's routes -----------------------------------------------------------------------
 
@@ -268,11 +274,12 @@ def test_cli_and_api_show_turn_on_and_refuse_a_collection_the_engine_cannot_take
     assert cli.client.post(route + '/collect', headers=key).status_code == 403
 
 
-def test_the_engines_report_on_a_collection_is_its_result_and_an_unknown_one_is_refused(polling_cli):
-    from api.app.config import settings
+def test_the_engines_report_on_a_collection_is_its_result_and_an_unknown_one_is_refused(polling_cli, tmp_path):
     from api.app.routing.background import installation_engine
     cli = polling_cli
-    secret = hylafax_engine.engine_secrets(settings, lines=1)['report_secret']
+    # The served installation's own data folder (test_cli._serve), where the engine's secret lives.
+    secret = hylafax_engine.engine_secrets(SimpleNamespace(fax_data_dir=str(tmp_path / 'faxdata')),
+                                           lines=1)['report_secret']
     report = {'tag': f'{REQUEST}.{REQUEST}', 'why': 'poll_no_document', 'dials': 1}
     route = '/_internal/hylafax/result'
     assert cli.client.post(route, json=report, headers={'X-Internal-Secret': secret}).status_code == 404
@@ -287,3 +294,45 @@ def test_the_engines_report_on_a_collection_is_its_result_and_an_unknown_one_is_
     assert cli.client.post(route, json={**report, 'tag': f'{other}.{other}', 'why': 'done'},
                            headers={'X-Internal-Secret': secret}).status_code == 200
     assert [row['outcome'] for row in polling.requests(database, NUMBER) if row['id'] == other] == [None]
+
+
+def test_a_collected_fax_reaches_received_from_the_number_faxbot_called(isolated_installation, monkeypatch, tmp_path):
+    """The engine's hand-over of a collected fax (hylafax/bin/pollrcvd, then bin/handover) names its collection:
+    the fax lands in Received from the number Faxbot called, and the collection's result is that fax. As the
+    engine sends it: no caller and no called number (the engine placed the call)."""
+    from fastapi.testclient import TestClient
+    from PIL import Image
+    from api.app.main import app
+    from api.app.routing.background import installation_engine
+    data = tmp_path / 'faxdata_engine'
+    for name, value in (('INBOUND_ENABLED', 'true'), ('ASTERISK_INBOUND_SECRET', 'sekret'),
+                        ('FAX_DATA_DIR', str(data)), ('REQUIRE_API_KEY', 'true'), ('API_KEY', 'bootstrap_admin_only'),
+                        ('FAX_DEFAULT_COUNTRY', 'US')):
+        monkeypatch.setenv(name, value)
+    secret = hylafax_engine.engine_secrets(SimpleNamespace(fax_data_dir=str(data)), lines=1)['report_secret']
+    folder = data / 'hylafax-out' / 'inbound'
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / 'engine-0123456789abcdef-000000009-1.tiff'
+    Image.new('1', (1728, 400), 1).save(image, format='TIFF', compression='group4')
+    with TestClient(app, base_url='http://testserver') as client:
+        database, _ = installation_engine(client.app)
+        polling.record_request(database, REQUEST, NUMBER, now=NOW)
+        answer = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json={
+            'poll': REQUEST, 'tiff_path': str(image), 'to_number': None, 'from_number': None,
+            'faxstatus': 'SUCCESS', 'faxpages': 1, 'uniqueid': 'hylafax.0123456789abcdef.000000009-1',
+            'call': {'did': None, 'caller': None, 'pages': 1}})
+        assert answer.status_code == 200, answer.text
+        with database.connect() as connection:
+            received = connection.execute(sa.text('SELECT id, from_number FROM inbound_faxes')).mappings().all()
+        assert len(received) == 1 and received[0]['from_number'] == NUMBER
+        found = polling.requests(database, NUMBER)[0]
+        assert (found['outcome'], found['inbound_fax_id'], found['pages']) == ('received', received[0]['id'], 1)
+        # The hand-over sent again (the engine keeps a ticket until Faxbot answers): one fax, one result.
+        again = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json={
+            'poll': REQUEST, 'tiff_path': str(image), 'to_number': None, 'from_number': None,
+            'faxstatus': 'SUCCESS', 'faxpages': 1, 'uniqueid': 'hylafax.0123456789abcdef.000000009-1',
+            'call': {'did': None, 'caller': None, 'pages': 1}})
+        assert again.status_code == 200, again.text
+        with database.connect() as connection:
+            assert connection.execute(sa.text('SELECT COUNT(*) FROM inbound_faxes')).scalar() == 1
+            assert connection.execute(sa.text('SELECT COUNT(*) FROM poll_results')).scalar() == 1
