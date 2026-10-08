@@ -18,6 +18,7 @@ from api.app.routing.costs import Money
 from api.app.routing.plan_allocation import Claimant, Curve, Dim, Past, PlanRoom, choose, reserve_curve, solve
 from api.app.routing.plan_budget import Budget, Period, Usage, _left, marginal, order_key
 from api.app.routing.predict import Prediction
+from api.tests.test_routing_http import ADMIN, client, scoped_key  # noqa: F401 (fixture)
 from api.tests.test_rules_delivery import LISTED, Inner, accept, installation, publish, rule
 from api.tests.test_schema import database  # noqa: F401 (fixture)
 
@@ -486,3 +487,76 @@ def test_the_screen_and_the_reserve_read_only_earlier_faxes(allowance):  # noqa:
     scarce = allocation.scarce_plans(env.routes, values_of(env), datetime.utcnow())[0]
     assert allocation.history(env.routes, values_of(env), scarce, ['signalwire'], datetime.utcnow()) == []
     assert small and large
+
+
+def sent_before(env, number, pages, when):
+    """One fax already sent by SignalWire at ``when`` (synthetic records; nothing waits)."""
+    import sqlalchemy as sa
+    job = accept(env, to=number, pages=pages)
+    deliveries = sa.Table('outbound_deliveries', sa.MetaData(), autoload_with=env.engine)
+    with env.engine.begin() as connection:
+        connection.execute(deliveries.update().where(deliveries.c.id == job).values(state='success'))
+        connection.execute(env.routes.attempts.insert().values(id=job, job_id=job, sequence=1, phase='success',
+                                                               created_at=when, submitted_at=when, completed_at=when))
+        connection.execute(env.routes.costs.insert().values(
+            id=job, job_id=job, destination=number, route='signalwire', route_reason='cheapest',
+            provider_id='signalwire', outcome='success', billing_checks=0, created_at=when, updated_at=when))
+    return job
+
+
+def test_the_reserve_learns_only_from_faxes_sent_before_now(allowance):  # noqa: F811
+    env = allowance
+    now = datetime.utcnow().replace(microsecond=0)
+    for days in (3, 10, 17):
+        sent_before(env, SMALL, 20, now - timedelta(days=days))
+    sent_before(env, LARGE, 50, now + timedelta(days=1))  # after now: never read
+    scarce = allocation.scarce_plans(env.routes, values_of(env), now)[0]
+    found = allocation.history(env.routes, values_of(env), scarce, ['signalwire'], now)
+    assert sorted(item.units for item in found) == [20, 20, 20]
+    assert all(item.at < now and item.value == signalwire_cost(20) for item in found)
+
+
+def test_the_allocation_over_http_and_its_permission(client):  # noqa: F811
+    view = client.get('/routing/plans/allocation', headers=ADMIN)
+    assert view.status_code == 200, view.text
+    assert view.json()['estimate'] is True
+    reader = scoped_key(client, ['fax:send'])
+    assert client.get('/routing/plans/allocation', headers=reader).status_code == 403
+
+
+class Recorder:
+    def __init__(self):
+        self.lines, self.tables = [], []
+
+    def line(self, text):
+        self.lines.append(text)
+
+    def table(self, columns, rows, *, title=None, empty=''):
+        self.tables.append((title, columns, rows))
+
+
+def test_the_command_line_prints_each_plan_its_waiting_faxes_and_the_reserve(monkeypatch):
+    from api.app.cli import output
+    from api.app.cli.commands.delivery import show_allocation
+    monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    out = Recorder()
+    show_allocation(out, {'plans': [], 'empty_sentence': 'Nothing to share out.'})
+    assert out.lines == ['Nothing to share out.']
+    out = Recorder()
+    show_allocation(out, {'plans': [{
+        'route': 'efax', 'name': 'eFax', 'unit': 'pages', 'room': 100, 'reserve': 0,
+        'sentence': 'eFax has 100 included pages left until 1 November: 100 go to 1 waiting fax.',
+        'saving_sentence': 'Sharing the pages this way saves about $49.50 against giving them to the waiting faxes '
+                           'in turn (estimate).',
+        'reserve_sentence': 'Faxbot keeps nothing back: your earlier faxes do not show dearer ones coming before 1 '
+                            'November.',
+        'bound_sentence': None, 'left_sentence': 'eFax has used 100 of the 200 pages your plan includes.',
+        'faxes': [{'to': SMALL, 'pages': 60, 'units': 60, 'queued_at': '2026-10-20T15:00:00', 'outcome': 'other',
+                   'route_label': 'Telnyx', 'cost': [{'currency': 'USD', 'amount': '0.50'}]},
+                  {'to': LARGE, 'pages': 100, 'units': 100, 'queued_at': '2026-10-20T15:01:00', 'outcome': 'plan',
+                   'route_label': 'eFax', 'cost': []}]}]})
+    assert out.lines[0] == 'eFax has 100 included pages left until 1 November: 100 go to 1 waiting fax.'
+    (title, columns, rows), = out.tables
+    assert title == 'eFax, waiting faxes' and columns[-2:] == ['Route', 'Cost (estimate)']
+    assert [row[4:] for row in rows] == [['Goes another way', 'Telnyx', '$0.50'], ['Gets the plan', 'eFax', '-']]
+    assert out.lines[1].startswith('Sharing the pages this way saves about $49.50')
