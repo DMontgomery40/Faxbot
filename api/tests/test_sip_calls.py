@@ -52,7 +52,9 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
                 for i in inspector.get_indexes('sip_call_records')} == {
             (name, columns, unique) for name, columns, unique in schema_sip.INDEXES} | later
         columns = {c['name']: c for c in inspector.get_columns('sip_call_records')}
-        assert set(columns) == {column.name for column in table.columns}
+        # Every frozen column is there; later revisions only add nullable ones (0030: the call's trunk).
+        frozen = {column.name for column in table.columns}
+        assert frozen <= set(columns) and all(columns[name]['nullable'] for name in set(columns) - frozen)
         assert not columns['disposition']['nullable'] and columns['answered_at']['nullable']
     schema.upgrade_schema(database)
     assert snapshot(database) == after
