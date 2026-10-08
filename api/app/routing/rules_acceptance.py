@@ -63,6 +63,9 @@ def sender_of(actor):
     principal = getattr(actor, 'principal_id', None)
     if not principal:
         return None, 'system', None
+    if getattr(actor, 'system_sender', False):
+        # A dedicated sender Faxbot accepts faxes for itself, such as a partner relay's "Relayed for …".
+        return principal, 'system', None
     return principal, 'key' if binding else 'person', binding
 
 
