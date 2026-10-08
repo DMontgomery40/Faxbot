@@ -220,3 +220,41 @@ def test_a_success_and_a_failure_with_no_page_are_left_as_they_were():
     assert main._native_partly_sent({'Status': 'FAILED', 'Pages': '0'}) is None
     assert main._native_partly_sent({'Status': 'FAILED', 'Pages': ''}) is None
     assert main._native_partly_sent({'Status': 'FAILED', 'Pages': '4'}) == 4
+
+
+# -- FreeSWITCH (mod_spandsp's channel variables after txfax) -----------------------------------------------
+
+def test_a_freeswitch_call_that_broke_after_pages_is_partly_sent_and_never_falls_back(  # noqa: F811
+        installation, another_route, monkeypatch):
+    """The operator's result hook posts mod_spandsp's own values: fax_success "0" and the pages transferred."""
+    from api.app import main
+    configuration, store, snapshot = installation
+    snapshot = configuration.apply(snapshot, snapshot.active.values.with_patch({'asterisk_inbound_secret': 'sekret'}),
+                                   actor='test', restart_required=False,
+                                   providers={'outbound': ProviderConfiguration('freeswitch')})
+    installation = (configuration, store, snapshot)
+    monkeypatch.setattr(main, '_deliveries', lambda: store)
+
+    def result(job, attempt, pages):
+        return main.freeswitch_outbound_result(main.FSOutboundResultIn(
+            job_id=job, attempt_id=attempt, fax_status='0', fax_result_code='49',
+            fax_result_text='The call dropped prematurely', fax_document_transferred_pages=pages,
+            fax_document_total_pages=3, uuid='synthetic-channel'), x_internal_secret='sekret')
+    installation, job, claim = on_the_line(installation, ProviderConfiguration('freeswitch'), str(uuid4()))
+    assert result(job, claim.attempt_id, 2)['applied'] is True
+    assert store.get(job)['state'] == 'failed' and not fell_back(store, job)
+    assert attempt_of(store, claim.attempt_id) == {'phase': 'failed', 'error_category': 'partly_sent'}
+    with configuration.engine.connect() as connection:
+        assert connection.execute(sa.text('SELECT error FROM fax_jobs WHERE id = :id'), {'id': job}).scalar() \
+            == 'The call ended after 2 pages; the rest was not confirmed.'
+    assert item_category(store, job) == 'partly_sent'
+    # fax_success "1" is a delivered fax.
+    installation, sent, sent_claim = on_the_line(installation, ProviderConfiguration('freeswitch'), str(uuid4()))
+    main.freeswitch_outbound_result(main.FSOutboundResultIn(job_id=sent, attempt_id=sent_claim.attempt_id,
+                                                            fax_status='1', fax_document_transferred_pages=3),
+                                    x_internal_secret='sekret')
+    assert store.get(sent)['state'] == 'success'
+    # A failure with no page transferred still takes the next route, as before.
+    installation, plain, plain_claim = on_the_line(installation, ProviderConfiguration('freeswitch'), str(uuid4()))
+    result(plain, plain_claim.attempt_id, 0)
+    assert store.get(plain)['state'] == 'ready' and fell_back(store, plain)

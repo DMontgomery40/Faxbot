@@ -2772,12 +2772,18 @@ async def signalwire_callback(request: Request):
 
 
 class FSOutboundResultIn(BaseModel):
+    """The channel variables mod_spandsp sets after txfax (``phase_e_handler`` in
+    src/mod/applications/mod_spandsp/mod_spandsp_fax.c, github.com/signalwire/freeswitch, read 2026-10-08):
+    ``fax_success`` "1" or "0", ``fax_result_code`` (spandsp's T.30 completion code), ``fax_result_text``,
+    ``fax_document_transferred_pages`` (spandsp's ``pages_tx`` when sending: pages the receiving machine
+    confirmed) and ``fax_document_total_pages`` (pages in the file)."""
     attempt_id: Optional[str] = None
     job_id: Optional[str] = None
     fax_status: Optional[str] = None
     fax_result_text: Optional[str] = None
     fax_result_code: Optional[str] = None
     fax_document_transferred_pages: Optional[int] = None
+    fax_document_total_pages: Optional[int] = None
     uuid: Optional[str] = None
 
 
@@ -2785,10 +2791,21 @@ class FSOutboundResultIn(BaseModel):
           description="Deprecated: FreeSWITCH is removed in the next release.")
 def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
     status = str(payload.fax_status or '').lower()
-    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed'}.get(status, status)
+    # fax_success is "1" or "0" (mod_spandsp); older hooks sent true/false or ok/fail.
+    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed', '1': 'success',
+              '0': 'failed'}.get(status, status)
+    pages = payload.fax_document_transferred_pages
+    # Pages went before the call broke: never sent again whole by another route by itself, as on the other engines.
+    partly = status == 'failed' and type(pages) is int and pages > 0
     try:
-        applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
-            event_key='fs-result:' + status, secret=x_internal_secret)
+        if partly:
+            from .hylafax_engine import failure_sentence
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret, error=failure_sentence('', pages),
+                before_data=False, error_category='partly_sent')
+        else:
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret)
     except (DeliveryConflict, ValueError):
         raise HTTPException(409, detail='Native result does not match a verified delivery attempt.') from None
     return {'ok': True, 'applied': applied}
