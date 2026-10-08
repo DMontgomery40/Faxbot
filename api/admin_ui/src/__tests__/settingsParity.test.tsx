@@ -62,6 +62,8 @@ function settingsHandlers(data: Json, put: (body: Json) => Response | null = () 
       faxbot_direct: 1, organization: 'County Clinic', fax_number: '+12025550123', endpoint: 'https://fax.example',
       signing_key: 'public-signing', exchange_key: 'public-exchange', signature: 'signed',
     } })),
+    // The Setup Wizard's Suggested Packs step (BE): no plan suggested yet.
+    http.get('/setup/plans/latest', () => HttpResponse.json({ plan: null, mailboxes: [] })),
   );
   return writes;
 }
@@ -489,6 +491,8 @@ describe('Setup Wizard delivery options', () => {
     // Moving on saves this step's changes.
     next();
     await screen.findByText('Settings saved.');
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
+    next();
     expect(await screen.findByText('Finish', { selector: 'h6' })).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 }]);
     // The last step offers one test fax, sent only when asked; this installation does not receive.
@@ -569,7 +573,7 @@ describe('Installation country', () => {
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
     next();
-    await screen.findByText('Finish', { selector: 'h6' });
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '01782 684953' });
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect((screen.getByLabelText('Our fax number') as HTMLInputElement).value).toBe('+441782684953'));
