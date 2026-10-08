@@ -265,7 +265,8 @@ def assemble(call_image, missing_image, held):
                 pages.append(_fine_page(frame))
     output = io.BytesIO()
     pages[0].save(output, 'TIFF', compression='group4', save_all=True, append_images=pages[1:], dpi=(204, 196))
-    return output.getvalue(), len(pages)
+    from ..tiff_bytes import settle
+    return settle(output.getvalue()), len(pages)  # filed and hashed: the same pages always give the same bytes
 
 
 def slice_pages(data, first):
@@ -280,7 +281,8 @@ def slice_pages(data, first):
     output = io.BytesIO()
     pages[0].save(output, 'TIFF', compression='group4', save_all=True, append_images=pages[1:],
                   dpi=(round(float(dpi[0])), round(float(dpi[1]))))
-    return output.getvalue(), len(pages)
+    from ..tiff_bytes import settle
+    return settle(output.getvalue()), len(pages)  # signed by its digest: the same pages always give the same bytes
 
 
 class CallRepair:

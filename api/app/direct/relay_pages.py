@@ -99,7 +99,8 @@ def stamp_tiff(tiff, *, header, station, moment, zone_name='', first_page=()):
     first, y_dpi = pages[0]
     first.save(output, 'TIFF', compression='group4', save_all=True, append_images=[page for page, _ in pages[1:]],
                dpi=(204, y_dpi))
-    return output.getvalue(), len(pages), first_line
+    from ..tiff_bytes import settle
+    return settle(output.getvalue()), len(pages), first_line  # the same pages always give the same bytes
 
 
 def stamp(document, *, header, station, moment, zone_name='', first_page=(), folder):

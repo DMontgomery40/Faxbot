@@ -44,6 +44,7 @@ import struct
 import tempfile
 
 from ..conversion import MAX_DOCUMENT_PAGES, MAX_RASTER_TOTAL_PIXELS
+from ..tiff_bytes import settle
 from .crypto import FAX_COMPRESSIONS, FAX_IMAGE, FAX_LINES, FAX_WIDTHS
 
 
@@ -226,7 +227,8 @@ def stamp(tiff, *, header, station, moment, zone_name=''):
     facts = {'resolution': FAX_LINES[y_dpi], 'x_dpi': 204, 'y_dpi': y_dpi, 'width': pages[0].size[0],
              'compression': 'MMR',
              'header_line': header_line(moment, header=header, station=station, page=1, zone_name=zone_name)}
-    return output.getvalue(), facts
+    # libtiff leaves a pad byte unwritten: settled, the same pages and time always give the same signed digest.
+    return settle(output.getvalue()), facts
 
 
 def build(values, job_id, *, moment=None):
