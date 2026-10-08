@@ -1,7 +1,10 @@
 """Send a definitely failed fax again on its next route, at most twice per fax.
 
 Only a final failure reported by the provider qualifies. Uncertain attempts are
-never retried here: they wait for the provider, a partner, or an operator.
+never retried here: they wait for the provider, a partner, or an operator. Nor is
+a call that broke after pages went (``partly_sent``: the built-in and SSL Fax
+engines with pages confirmed, Sinch, Documo, HumbleFax): it waits for a person,
+who may send only its remaining pages (``routing/continuation.py``).
 
 A fax accepted under sending rules moves only to the next route its envelope
 allows (``routing.envelope``), and when a rule chose its route, only after a

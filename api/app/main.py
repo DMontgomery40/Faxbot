@@ -486,7 +486,8 @@ def _deliveries():
     return OutboundStore(_configuration_manager().store)
 
 
-def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None, error=None, before_data=None):
+def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None, error=None, before_data=None,
+                    error_category=None):
     if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
         raise DeliveryConflict('Native result has no verified attempt identity.')
@@ -503,7 +504,23 @@ def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=N
     # the create acknowledgement's SID with a channel UUID.
     return delivery.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
         provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key,
-        error=error, before_data=before_data)
+        error=error, before_data=before_data, error_category=error_category)
+
+
+def _native_partly_sent(event):
+    """How many pages a failed built-in engine call confirmed (FAXPAGES), when it confirmed any; else None.
+
+    Such a call broke after pages went: it is ``partly_sent``, so it is never sent again whole by another route
+    by itself; it waits for a person (an uncertain item), who may send only the rest (routing/continuation.py).
+    """
+    fields = {str(key).lower(): value for key, value in event.items()}
+    if normalize_status(str(fields.get('status') or '')) != 'failed':
+        return None
+    try:
+        pages = int(str(fields.get('pages') or '').strip())
+    except ValueError:
+        return None
+    return pages if pages > 0 else None
 
 
 def _handle_fax_result(event):
@@ -517,6 +534,13 @@ def _handle_fax_result(event):
         # Without the SSL Fax engine: a failure with no page transferred, and no fax machine that named itself,
         # ended before any fax data (routing/predata.py).
         from .routing.predata import native_event
+        pages = _native_partly_sent(event)
+        if pages is not None:
+            # Pages went before the call broke: never sent again whole by itself (the SSL Fax engine's sentence).
+            from .hylafax_engine import failure_sentence
+            _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+                            error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
+            return
         _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
                         error=sip_calls.result_summary(event), before_data=native_event(event))
     except Exception:

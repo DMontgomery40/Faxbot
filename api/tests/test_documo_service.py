@@ -161,7 +161,10 @@ def test_documented_statuses_and_only_safe_receipt_fields(document, operation, w
         'resultCode': '0', 'accountId': PRIVATE, 'errorInfo': PRIVATE})
     result = asyncio.run(service.send_fax_file(DESTINATION, document) if operation == 'create'
                          else service.get_fax_status(SID))
-    assert result == {'provider_sid': SID, 'status': expected}
+    # A failure adds only Faxbot's own reading of the result code (routing/predata.py: '0' says nothing); never
+    # Documo's private fields, and no page counts when Documo reports none.
+    assert result == {'provider_sid': SID, 'status': expected,
+                      **({'before_fax_data': None} if expected == 'failed' else {})}
     assert len(requests) == 1
 
 
