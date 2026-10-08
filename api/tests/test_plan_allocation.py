@@ -610,8 +610,12 @@ def test_the_reserve_learns_only_from_faxes_sent_before_now(allowance):  # noqa:
     scarce = allocation.scarce_plans(env.routes, values_of(env), now)[0]
     found = sorted(allocation.history(env.routes, values_of(env), scarce, ['signalwire'], now),
                    key=lambda item: item.at)
-    assert [(item.units, item.value) for item in found] == [(20, 2 * DOLLAR), (20, signalwire_cost(20)),
-                                                            (20, signalwire_cost(20))]
+    # A fax with no recorded cost is worth SignalWire's price today: the predictor's expected bill over the call's
+    # duration (CA), not the whole minutes of the typical call (signalwire_cost).
+    from api.app.routing.pricing import prices_for
+    today = prices_for(env.routes, values_of(env), SMALL, 20, keys=['signalwire'], now=now)['signalwire'].micros
+    assert today is not None
+    assert [(item.units, item.value) for item in found] == [(20, 2 * DOLLAR), (20, today), (20, today)]
     assert all(item.at < now for item in found)
     assert allocation.view(env.routes, values_of(env), now)['plans'][0]['sentence'].endswith(
         'and no fax is waiting.')
