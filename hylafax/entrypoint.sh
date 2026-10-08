@@ -169,6 +169,10 @@ mkdir -p "$state/received" "$state/results" "$out/inbound"
 chown uucp:uucp "$state/received" "$state/results" "$out/inbound"
 chmod 700 "$state/received" "$state/results" "$out/inbound"
 chmod 711 "$state"
+# Faxes held for another machine to collect (hfaxd puts them here; faxgetty reads them when that machine calls).
+mkdir -p "$spool/pollq"
+chown uucp:uucp "$spool/pollq"
+chmod 700 "$spool/pollq"
 
 # This start, for Faxbot: every fax this engine took before now and never
 # reported on has no result coming (kept until Faxbot has it, like every report).
@@ -292,6 +296,8 @@ EOF
     printf 'FaxRcvdCmd:\t\t/usr/local/lib/faxbot-engine/received\n'
     # A fax Faxbot collected by polling (faxsend reads PollRcvdCmd from the line's own config).
     printf 'PollRcvdCmd:\t\t/usr/local/lib/faxbot-engine/pollrcvd\n'
+    # A fax another machine collected from this engine (polled transmission, hylafax/patches/0002).
+    printf 'PolledCmd:\t\t/usr/local/lib/faxbot-engine/polled\n'
     printf 'Class1SSLFaxSupport:\t%s\nClass1SSLFaxCert:\tetc/ssl.pem\n' "$ssl_support"
     if [ "$sslfax" = yes ] && [ -n "$listener" ]; then
       printf 'Class1SSLFaxInfo:\t"%s"\n' "$listener"

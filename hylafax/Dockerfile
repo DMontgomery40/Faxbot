@@ -36,17 +36,22 @@ RUN curl --fail --location --retry 3 --output hylafax.tar.gz \
        | sha256sum --check --strict \
     && tar -xzf hylafax.tar.gz
 
-# Faxbot's changes to the SSL Fax client: refuse private, loopback, link-local,
-# metadata, multicast and reserved addresses (except this engine's own
-# listener), keep the session passcode out of logs, and let the listener bind
-# again right after a call. The policy is tested here; a failure stops the build,
-# and so does a hunk that does not apply exactly (--fuzz=0).
+# Faxbot's changes, applied in file order (0001, 0002, ...): the SSL Fax client
+# refuses private, loopback, link-local, metadata, multicast and reserved
+# addresses (except this engine's own listener), keeps the session passcode out
+# of logs, and lets the listener bind again right after a call (0001); and the
+# engine can be polled: a document held in pollq for a caller is offered in its
+# DIS and sent when the caller answers DTC (0002, T.30 role reversal). Each
+# patch's rules are tested here; a failure stops the build, and so does a hunk
+# that does not apply exactly (--fuzz=0).
 COPY patches/ /usr/src/patches/
-COPY tests/sslfax_policy_test.c++ /usr/src/tests/
+COPY tests/sslfax_policy_test.c++ tests/polled_transmit_test.c++ /usr/src/tests/
 WORKDIR /usr/src/hylafax-7.0.11
 RUN for patch in /usr/src/patches/*.patch; do patch -p1 --forward --batch --fuzz=0 < "$patch" || exit 1; done \
     && g++ -Wall -Werror -I faxd -o /usr/src/sslfax-policy-test /usr/src/tests/sslfax_policy_test.c++ \
-    && /usr/src/sslfax-policy-test
+    && /usr/src/sslfax-policy-test \
+    && g++ -Wall -Werror -I faxd -o /usr/src/polled-transmit-test /usr/src/tests/polled_transmit_test.c++ \
+    && /usr/src/polled-transmit-test
 
 # Serial make: parallel builds race on libfaxutil.
 RUN ./configure --nointeractive --disable-pam \

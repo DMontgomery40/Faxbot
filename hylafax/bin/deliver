@@ -33,6 +33,7 @@ for report in "$outbox"/*.report; do
   case $report in
     *-started.report) route=/_internal/hylafax/started ;;
     *-recv[0-9]*-failed.report) route=/_internal/hylafax/received-failed ;;
+    *-polled.report) route=/_internal/hylafax/polled ;;
     *) route=/_internal/hylafax/result ;;
   esac
   code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
