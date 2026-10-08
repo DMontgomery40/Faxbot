@@ -241,8 +241,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         coded = choice.get('coding')
         if coded is not None:
             _record_coding(engine, job_id, attempt_id, number, route, coded, usable, now)
-            if not usable.needs_request(coded.coding):
-                coded = None  # what the engines would take anyway: the call goes with its usual settings
+            if not any(usable.needs_request(coded.request(placed), placed) for placed in ('hylafax', 'builtin')):
+                coded = None  # what either engine would take anyway: the call goes with its usual settings
         encoded = layout == 'codec'
         if encoded:
             # Encoded pages go exactly as the codec made them: nothing trimmed, kept at standard or screened.

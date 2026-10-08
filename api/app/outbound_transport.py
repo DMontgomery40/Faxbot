@@ -272,8 +272,8 @@ class CapturedTransport:
         engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
             # The coding measured smallest for this attempt's pages goes with the call (pages/coding.py).
-            coding = getattr(getattr(changed, 'coding', None), 'coding', None)
-            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff, coding=coding)
+            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff,
+                                                                           coding=getattr(changed, 'coding', None))
         try:
             with self.runtime.frame(revision):
                 yield PreparedSubmission(claim, profile, job, str(pdf), str(tiff) if tiff else None,
@@ -301,8 +301,9 @@ class CapturedTransport:
         Runs before the durable marker: the call plan and the engine job exist,
         nothing is dialed. When the engine cannot take the job the built-in
         engine places the call; the attempt's engine record says why. ``coding``
-        is the coding measured smallest for the pages ('MH', 'MR', 'MMR' or
-        'JBIG'; ``hylafax_engine.with_coding``), the most compact one the call may use.
+        (``pages.coding.CodingChoice``) is the coding measured smallest for the
+        pages, asked of each engine as the most compact one the call may use
+        (``hylafax_engine.with_coding``); the built-in engine has no JBIG.
         """
         from . import hylafax_engine, hylafax_records
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
@@ -312,7 +313,8 @@ class CapturedTransport:
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
             call = hylafax_engine.with_coding(
-                hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True), coding)
+                hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True),
+                coding.request('hylafax') if coding is not None else None)
             try:
                 engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
                     attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
@@ -322,7 +324,7 @@ class CapturedTransport:
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
         call = hylafax_engine.with_coding(hylafax_engine.call_settings(values, job['to_number'], recipient=recipient),
-                                          coding)
+                                          coding.request('builtin') if coding is not None else None)
         logging.getLogger(__name__).info('Fax %s: %s', claim.job_id, choice.reason)
         return None, choice, call, records
 

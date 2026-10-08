@@ -501,6 +501,8 @@ def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
     assert routes['sip']['finish_sentence'].startswith('9 in 10 such calls should finish within about ')
     assert 'an assumed spread of 15% either way until this number has 3 faxes of its own' in \
         routes['sip']['finish_sentence']
+    # A fax service never learns a number's calls here: its spread stays assumed, and says only that.
+    assert routes['phaxio']['finish_sentence'].endswith(', from an assumed spread of 15% either way.')
 
 
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
@@ -523,11 +525,12 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     routes = {route['route']: route for route in body['routes']}
     trunk = routes['sip']
     best = min(('MH', 'MR', 'MMR'), key=lambda name: body['measured'][name])
-    expected = best if best != 'MMR' else 'JBIG'  # JBIG, not measured here, where the machine takes it
-    assert trunk['coding']['coding'] == expected
-    assert trunk['coding']['sentence'].startswith(f'Faxbot would send these pages with {expected}')
-    if expected != 'JBIG':
-        assert f'from the measured size of each page in {expected}' in trunk['basis']
+    # JBIG, not measured here, where the machine takes it; the time is priced at the smallest measured coding.
+    assert trunk['coding']['coding'] == 'JBIG' and trunk['coding']['measured'] is False
+    assert trunk['coding']['sentence'].startswith(
+        f'Faxbot would send these pages with JBIG where the receiving machine takes it (not measured here), '
+        f'otherwise {best}: ')
+    assert f'from the measured size of each page in {best}' in trunk['basis']
     assert routes['phaxio']['coding'] is None  # a fax service codes the pages itself
     empty = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
                         files={'file': ('empty.pdf', b'', 'application/pdf')})

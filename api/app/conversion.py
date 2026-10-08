@@ -730,10 +730,10 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
                     else codings.measure(pages))
         choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured)
         choices[key] = choice
-        # A JBIG request that could not be measured is priced at MMR's measured size (codings.best_coding).
+        # A JBIG request that could not be measured is priced at its fallback's measured size (codings.best_coding):
+        # ``priced`` names the coding whose measured bits (``bits_per_page``) the predictor reads.
         shapes[key] = decision.Shape(len(pages), tuple(measured["MMR"]), frames_resolution(pages), key[1],
-                                     boundary_seconds, measured=measured,
-                                     coding=choice.coding if choice.measured else "MMR")
+                                     boundary_seconds, measured=measured, coding=choice.priced)
     priced = dict(zip(keys, decision.price_all(route, destination, [shapes[key] for key in keys], card=card,
                                                predict=predict)))
     candidates = [decision.Candidate(key[0], key[1], priced[key], shapes[key], pieces[key][3],

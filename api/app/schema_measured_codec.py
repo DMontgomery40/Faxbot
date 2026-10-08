@@ -9,13 +9,16 @@ This revision adds one table:
   unique). ``requested`` is the coding asked for ('MH', 'MR', 'MMR' or
   'JBIG'); ``measured`` is 1 when that coding was measured on the pages and 0
   for a JBIG request that could not be (no encoder); ``compared`` is the
-  coding the sentence compares with, when there is one. ``pages`` is the
+  coding the sentence compares with, when there is one, and for a JBIG
+  request that could not be measured, the coding sent where JBIG is not (the
+  smallest measured; the built-in engine has no JBIG). ``pages`` is the
   number of pages measured and ``bits`` the measured bits of all of them for
   each coding, as JSON ({"MH": 698656, ...}). ``receiver_known`` is 1 when
   the receiving machine's own capabilities (its DIS) were on record, so the
   engine sends exactly the coding asked for, and 0 when the engine may fall
   back to one the machine has. ``reason`` is the one sentence the Sent
-  detail shows. What the call actually negotiated is read from the engines'
+  detail shows (for a JBIG request that could not be measured, that of the
+  coding sent where JBIG is not). What the call actually negotiated is read from the engines'
   own records of the attempt (``fax_call_frames``, ``fax_engine_calls``),
   never copied here.
 

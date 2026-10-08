@@ -373,6 +373,7 @@ class Spread:
     points: tuple
     learned: bool                        # from the number's own recorded calls; False: ``DEFAULT_SPREAD``
     calls: int = 0
+    learns: bool = True                  # the route learns from its calls (Faxbot's own trunk); a fax service does not
 
     def percentile(self, share=COMPLETION_SHARE):
         """The shortest time that this share of calls finishes within."""
@@ -387,10 +388,12 @@ class Spread:
     def clause(self):
         if self.learned:
             return f'the spread of {_count(self.calls, "earlier fax")} to this number'
+        if not self.learns:
+            return 'an assumed spread of 15% either way'
         return f'an assumed spread of 15% either way until this number has {MIN_CALLS} faxes of its own'
 
 
-def spread_for(seconds, link):
+def spread_for(seconds, link, *, learns=True):
     """The spread of a call predicted at ``seconds``: each recorded call to the number (``Link.samples``) scales
     the time after setup by its seconds a page against their median, with its own setup when known; with fewer
     than ``MIN_CALLS``, ``DEFAULT_SPREAD``. None when the time is unknown."""
@@ -405,7 +408,7 @@ def spread_for(seconds, link):
         points = tuple((max(0.0, (setup if start is None else start) + after * page / middle), weight)
                        for start, page in samples)
         return Spread(points, True, len(samples))
-    return Spread(tuple((setup + after * factor, weight) for factor, weight in DEFAULT_SPREAD), False)
+    return Spread(tuple((setup + after * factor, weight) for factor, weight in DEFAULT_SPREAD), False, learns=learns)
 
 
 def _expected(points, value):
@@ -554,7 +557,8 @@ def predict_from(facts, shape):
             'Delivered straight to a verified partner over the internet, with no phone call, so it costs nothing'),
             False, p90_seconds=0.0)
     seconds, how = line_seconds(shape, facts.link)
-    spread = spread_for(seconds, facts.link)
+    # Only Faxbot's own trunk learns each number's calls (predict_facts.learn); a fax service keeps the assumed one.
+    spread = spread_for(seconds, facts.link, learns=facts.route_key == 'sip')
     terms = facts.terms
     if terms is None:
         if facts.refused:
