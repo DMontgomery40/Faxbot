@@ -33,6 +33,7 @@ def registry(monkeypatch):
         asked.append(dict(params))
         return answers['own'] if 'number' in params else answers['search']
     monkeypatch.setattr(nppes, '_fetch', fetch)
+    monkeypatch.setattr(nppes, '_LOOKUPS', {})
     return asked
 
 

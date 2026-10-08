@@ -43,6 +43,7 @@ def registry(monkeypatch, *answers):
             raise answer
         return answer
     monkeypatch.setattr(nppes, '_fetch', fetch)
+    monkeypatch.setattr(nppes, '_LOOKUPS', {})
     return asked
 
 

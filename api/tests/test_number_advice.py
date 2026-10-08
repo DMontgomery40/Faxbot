@@ -40,6 +40,7 @@ def no_registry(monkeypatch):
     def refuse(params, *, timeout=10.0):
         raise AssertionError(f'NPPES was called for real with {params}')
     monkeypatch.setattr(nppes, '_fetch', refuse)
+    monkeypatch.setattr(nppes, '_LOOKUPS', {})   # each test starts with no lookup remembered
 
 
 class Registry:
@@ -202,6 +203,24 @@ def test_the_named_provider_lookup_names_its_listed_fax_and_is_reused_for_a_day(
     assert listed['state'] == 'listed_for_other' and len(registry.asked) == 1
 
 
+def test_a_name_nppes_does_not_know_is_asked_once_while_the_sender_checks_again(database):  # noqa: F811
+    upgrade_schema(database)
+    registry = Registry({'result_count': 0, 'results': []})
+    values = trunk_values()
+    for minutes, number in ((0, '+13035550197'), (1, '+13035550196'), (2, '+13035550195')):
+        answer = nppes.recipient_check(database, values, number, name='Nobody Here', fetch=registry,
+                                       now=NOW + timedelta(minutes=minutes))
+        assert answer['state'] == 'not_found'
+    # One lookup: as an organization, then as a person; the checks after it ask nothing.
+    assert [sorted(question) for question in registry.asked] == [
+        ['enumeration_type', 'limit', 'organization_name', 'state'],
+        ['enumeration_type', 'first_name', 'last_name', 'limit', 'state']]
+    # A day later the registry is asked again: it may have the provider by then.
+    nppes.recipient_check(database, values, '+13035550194', name='Nobody Here', fetch=registry,
+                          now=NOW + timedelta(days=1, minutes=1))
+    assert len(registry.asked) == 4
+
+
 @pytest.mark.parametrize('failure', [fixture('errors.json'), httpx.ReadTimeout('synthetic'),
                                      httpx.ConnectError('synthetic'), ValueError('not JSON')])
 def test_a_registry_failure_leaves_the_number_not_checked(database, failure):  # noqa: F811
@@ -362,6 +381,32 @@ def test_a_call_is_priced_from_its_sites_state_and_never_by_caller_id(database):
     assert row is None
     assert jurisdiction.NO_CALLER_ID == ('Faxbot never changes caller ID to lower call charges (FCC, Truth in Caller '
                                          'ID; 47 CFR 64.1601).')
+
+
+def _publish_sites(engine, sites):
+    from api.app.rules.store import RuleStore
+    store = RuleStore(engine)
+    store.save_draft('organization', '', {'format': 1, 'sites': sites}, expected_version=0)
+    store.publish('organization', '', expected_active_revision=None, expected_draft_version=1)
+
+
+def test_the_predictor_prices_a_call_from_its_published_sites_state(database):  # noqa: F811
+    from api.app.routing.pricing import price
+    upgrade_schema(database)
+    jurisdiction.import_rows(database, 'sip-anveo', jurisdiction.parse_rows(DECK, 'sip-anveo', captured_on=NOW))
+    _publish_sites(database, [{'key': 'denver', 'name': 'Denver', 'country': 'US', 'state': 'CO',
+                               'accounts': ['sip']}])
+    routes = RouteStore(database, sip_preset=lambda: 'anveo')
+    routes.seed_cards(load_cards())
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'anveo',
+                                                   'SIP_TRUNK_AUTH': 'ip', 'FAX_DEFAULT_COUNTRY': 'US'})
+    within_state = price(routes, values, 'sip', '+13035550100', 1, provider='sip')
+    between = price(routes, values, 'sip', '+18015550100', 1, provider='sip')
+    assert (within_state.origin, between.origin) == ('intrastate', 'interstate')
+    # One page, about a minute on the line, billed by the second at $0.010 and $0.003 a minute.
+    assert within_state.micros > 3 * between.micros > 0
+    advice = jurisdiction.site_advice(database, values, now=NOW)   # sites read from the published rules
+    assert advice['carriers'][0]['by_jurisdiction'] is True
 
 
 def test_telnyx_publishes_one_us_price_so_where_a_call_starts_changes_nothing(database):  # noqa: F811

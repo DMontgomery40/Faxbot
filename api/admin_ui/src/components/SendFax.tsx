@@ -105,6 +105,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [toNumber, setToNumber] = useState('');
   // Who the fax is for (optional): before a first fax, NPPES may list the number for someone else.
   const [recipientName, setRecipientName] = useState('');
+  // The name is checked once the sender leaves the field, never on each pause while typing.
+  const [checkedName, setCheckedName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -143,12 +145,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     if (!/\d{3}/.test(toNumber)) return undefined;
     let live = true;
     const timer = window.setTimeout(() => {
-      client.recipientCheck(toNumber, recipientName.trim() || undefined)
+      client.recipientCheck(toNumber, checkedName || undefined)
         .then((answer) => { if (live) setRecipientCheck(answer); })
         .catch(() => undefined);
     }, 600);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [client, toNumber, recipientName]);
+  }, [client, toNumber, checkedName]);
 
   // How many pages the chosen PDF has, so the estimate is for this document.
   const [pages, setPages] = useState<number | null>(null);
@@ -358,6 +360,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
 
                 <TextField size="small" label="Recipient name (optional)" value={recipientName}
                   onChange={(event) => setRecipientName(event.target.value)} disabled={!configReady || loading}
+                  onBlur={() => setCheckedName(recipientName.trim())}
                   inputProps={{ maxLength: 200, 'data-testid': 'send-recipient-name' }}
                   helperText="Before a first fax, Faxbot checks the number against the NPI registry (NPPES)." />
                 {recipientCheck?.sentence && (

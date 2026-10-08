@@ -266,6 +266,9 @@ def rated_terms(identities, destination, where, *, values, account_key, engine=N
     if getattr(where, 'kind', None) in (PREMIUM, TOLL_FREE, UNKNOWN):
         return None, None
     rows = rows_for(identities, engine)
+    from .jurisdiction import has_rows
+    if not rows and not has_rows(engine, identities):
+        return None, None
     if sites is None:
         sites = organization_sites(engine)
     where_from = origins(values, account_key, sites=sites, site=site)

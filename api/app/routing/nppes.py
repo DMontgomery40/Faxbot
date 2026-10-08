@@ -131,6 +131,10 @@ CHECK_TIMEOUT = 6.0
 # A lookup of a named provider is reused for a day before the registry is asked again.
 REUSE_LOOKUP = timedelta(days=1)
 SEARCH_LIMIT = 50
+# Every lookup of a named provider in this process, found or not: (name words, state) -> when. A name the registry
+# does not know is not asked again within REUSE_LOOKUP, so a sender typing cannot flood the registry.
+_LOOKUPS = {}
+_LOOKUPS_KEPT = 2_000
 _ADDRESS_PURPOSES = {'LOCATION': 'location', 'MAILING': 'mailing'}
 _PURPOSE_WORDS = {'location': 'practice location', 'mailing': 'mailing address', 'practice': 'other practice location'}
 
@@ -493,13 +497,23 @@ class NppesStore:
         npis = {row.npi for row in rows if same_provider(row.name, name)}
         return self.latest(npis) if npis else {}
 
-    def looked_up(self, name, since):
-        """True when a check looked ``name`` up since ``since`` (whatever it found)."""
-        from .database import read_connection
-        with read_connection(self.engine) as connection:
-            rows = connection.execute(sa.select(self.reads.c.name).where(
-                self.reads.c.read_at >= since, self.reads.c.purpose == 'recipient').distinct().limit(500)).all()
-        return any(same_provider(row.name, name) for row in rows)
+
+
+def _lookup_key(name, state):
+    return (' '.join(sorted(set(_words(name)))), state or '')
+
+
+def asked_recently(name, state, since):
+    """True when this process looked ``name`` up in ``state`` since ``since``, whatever it found."""
+    moment = _LOOKUPS.get(_lookup_key(name, state))
+    return moment is not None and moment >= since
+
+
+def remember_lookup(name, state, now):
+    if len(_LOOKUPS) >= _LOOKUPS_KEPT:
+        for key in sorted(_LOOKUPS, key=_LOOKUPS.get)[:_LOOKUPS_KEPT // 2]:
+            del _LOOKUPS[key]
+    _LOOKUPS[_lookup_key(name, state)] = now
 
 
 # -- your own record (M18 b) -------------------------------------------------------------------------------------------
@@ -648,7 +662,7 @@ def recipient_check(engine, values, number, *, name=None, fetch=None, now=None, 
         return _result(number, 'no_name', None, checked=False)
     state = us_state(number)
     known = store.recent_named(name, now - REUSE_LOOKUP)
-    if not known and not store.looked_up(name, now - REUSE_LOOKUP):
+    if not known and not asked_recently(name, state, now - REUSE_LOOKUP):
         try:
             found = search(name, state=state, fetch=fetch, timeout=timeout)
         except NppesInputError:
@@ -656,6 +670,7 @@ def recipient_check(engine, values, number, *, name=None, fetch=None, now=None, 
         except RegistryError:
             return _result(number, 'not_checked', 'Faxbot could not reach NPPES, so this number was not checked.',
                            checked=False, name=name)
+        remember_lookup(name, state, now)
         if found:
             store.record(found, 'recipient', now=now)
         answer = _from_index(number, name, store.listings(number))

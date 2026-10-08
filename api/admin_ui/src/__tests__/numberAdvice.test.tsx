@@ -139,6 +139,7 @@ describe('Send: the check before a first fax', () => {
     render(<SendFax client={client()} config={{ fax_disabled: false, max_file_size_mb: 10 }} configLoading={false} configError={null} />);
     fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+13035550121' } });
     fireEvent.change(screen.getByTestId('send-recipient-name'), { target: { value: 'Synthetic Health Clinic' } });
+    fireEvent.blur(screen.getByTestId('send-recipient-name'));
     const warning = await screen.findByTestId('send-recipient-check', {}, { timeout: 3000 });
     expect(warning.textContent).toBe('This number is listed for SYNTHETIC HEALTH IMAGING LLC in NPPES, not Synthetic Health Clinic.');
     expect(asked.some((url) => url.includes('name=Synthetic+Health+Clinic') || url.includes('name=Synthetic%20Health%20Clinic'))).toBe(true);

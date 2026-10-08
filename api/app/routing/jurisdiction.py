@@ -126,9 +126,28 @@ def parse_rows(text, route, *, currency='USD', source_url=None, captured_on=None
 
 # -- stored rows -----------------------------------------------------------------------------------------------------
 
+# The 0055 table as a light construct (no reflection), so a quote that asks costs one indexed read.
+TABLE = sa.table('jurisdiction_rates', sa.column('id', sa.String()), sa.column('route', sa.String()),
+                 sa.column('prefix', sa.String()), sa.column('currency', sa.String()),
+                 sa.column('interstate_micros', sa.Integer()), sa.column('intrastate_micros', sa.Integer()),
+                 sa.column('billing_increment_seconds', sa.Integer()), sa.column('minimum_seconds', sa.Integer()),
+                 sa.column('source_url', sa.String()), sa.column('captured_on', sa.DateTime()),
+                 sa.column('superseded_at', sa.DateTime()), sa.column('created_at', sa.DateTime()))
+
+
 def _table(engine):
-    from .database import reflect
-    return reflect(engine, ('jurisdiction_rates',))['jurisdiction_rates']
+    return TABLE
+
+
+def has_rows(engine, routes):
+    """True when any of ``routes`` has current prices by jurisdiction (one indexed read)."""
+    from .database import read_connection
+    routes = [route for route in routes if route]
+    if engine is None or not routes:
+        return False
+    with read_connection(engine) as connection:
+        return connection.execute(sa.select(TABLE.c.id).where(
+            TABLE.c.route.in_(routes), TABLE.c.superseded_at.is_(None)).limit(1)).first() is not None
 
 
 def import_rows(engine, route, rates, *, now=None):
