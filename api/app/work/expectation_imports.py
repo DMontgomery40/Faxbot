@@ -33,7 +33,7 @@ import sqlalchemy as sa
 
 from ..access.receiving_rules import normalize_subaddress
 from ..routing.numbers import stored_number
-from .expectations import OPEN_STATES, details_json, loads, reference_key, same_revision
+from .expectations import OPEN_STATES, ExpectationChanged, details_json, loads, reference_key, same_revision
 from .imports import ImportInputError, identity_outcome, parse_time
 
 
@@ -370,20 +370,20 @@ def apply_row(connection, store, row, digest, *, run, source, now, actor_id, act
     if outcome == 'revision':
         latest = earlier[0]
         values['replaces_id'] = latest['id']
+        if latest['state'] in OPEN_STATES:
+            # Replace the earlier revision first: if the matcher changed it meanwhile, nothing is written.
+            store.change_on(connection, latest, {'state': 'replaced', 'closed_at': now}, kind='replaced',
+                            source='import', now=now, details={'revision': row['revision'] or None},
+                            evidence={'import_id': run['id']})
+            store.settle_proposals_on(connection, latest['id'], now=now, keep=None)
         created = store.create_on(connection, values, source='import', now=now, actor_id=actor_id,
                                   actor_name=actor_name,
                                   details={'source_name': source['name'], 'revision': row['revision'],
                                            'replaces': latest['code']},
-                                  evidence={'import_id': run['id']})
+                                  evidence={'import_id': run['id'], 'replaces_id': latest['id']})
         store.event_on(connection, created['id'], 'revised', source='import', now=now,
                        details={'revision': row['revision'] or None, 'replaces': latest['code']},
                        evidence={'import_id': run['id'], 'replaces_id': latest['id']})
-        if latest['state'] in OPEN_STATES:
-            store.change_on(connection, latest, {'state': 'replaced', 'closed_at': now}, kind='replaced',
-                            source='import', now=now, details={'revision': row['revision'] or None,
-                                                               'by': created['code']},
-                            evidence={'import_id': run['id'], 'replaced_by': created['id']})
-            store.settle_proposals_on(connection, latest['id'], now=now, keep=None)
         return 'revised'
     store.create_on(connection, values, source='import', now=now, actor_id=actor_id, actor_name=actor_name,
                     details={'source_name': source['name'], 'revision': row['revision'] or None},
@@ -401,11 +401,15 @@ def missing_on(connection, store, source, run, seen, *, now):
     for row in rows:
         if (row['operation_id'], row['revision']) in seen:
             continue
+        if row['missing_since'] is None:
+            try:
+                store.change_on(connection, row, {'missing_since': now}, kind='missing_from_export',
+                                source='import', now=now, evidence={'import_id': run['id']},
+                                dedupe_key='missing:' + run['id'])
+            except ExpectationChanged:
+                continue  # A received fax or a person changed it meanwhile; the next full export looks again.
         missing.append({'code': row['code'], 'reference': row['reference'], 'mailbox_id': row['mailbox_id'],
                         'missing_since': (row['missing_since'] or now).isoformat(timespec='seconds')})
-        if row['missing_since'] is None:
-            store.change_on(connection, row, {'missing_since': now}, kind='missing_from_export', source='import',
-                            now=now, evidence={'import_id': run['id']}, dedupe_key='missing:' + run['id'])
     return missing
 
 

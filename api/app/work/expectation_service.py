@@ -826,9 +826,15 @@ class ExpectationService:
                         problems.append({'row': number, 'problem': f"You cannot add expected faxes to "
                                                                    f"{labels.get(row['mailbox_id'], 'that mailbox')}."})
                         continue
-                    outcome = importing.apply_row(connection, store, row, row_hash, run=run, source=source, now=now,
-                                                  actor_id=actor.principal_id, actor_name=name,
-                                                  installation_hours=self._hours())
+                    try:
+                        outcome = importing.apply_row(connection, store, row, row_hash, run=run, source=source,
+                                                      now=now, actor_id=actor.principal_id, actor_name=name,
+                                                      installation_hours=self._hours())
+                    except ExpectationChanged:
+                        # A received fax changed it at the same moment; importing the file again finishes the row.
+                        problems.append({'row': number, 'problem': 'It changed while importing; import the file '
+                                                                   'again to finish it.'})
+                        continue
                     counts[outcome] += 1
                     identities.append([row['operation_id'], row['revision'], row_hash, row['mailbox_id'],
                                        row['reference']])

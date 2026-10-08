@@ -347,6 +347,33 @@ def test_import_creates_replays_conflicts_revises_and_reports_missing_rows(xw):
     assert xw.expect_service.list(admin, view='missing') == []
 
 
+def test_a_row_the_matcher_changed_mid_import_is_reported_and_finished_by_a_replay(xw, monkeypatch):
+    admin = operator(xw, 'admin', 'installation', 'role_administrator')
+    save_source(xw, admin)
+    xw.expect_service.import_file(admin, 'Open purchase orders', csv_bytes('620,A,Acme,,,', '621,,Beta,,,'))
+    real = ExpectationStore.change_on
+    raced = []
+
+    def change_on(self, connection, row, values, **kwargs):
+        if kwargs.get('kind') == 'replaced' and not raced:  # a received fax changed it a moment before
+            raced.append(row['reference'])
+            from api.app.work.expectations import ExpectationChanged
+            raise ExpectationChanged()
+        return real(self, connection, row, values, **kwargs)
+    monkeypatch.setattr(ExpectationStore, 'change_on', change_on)
+    data = csv_bytes('620,B,Acme,,,', '621,,Beta,,,', '622,,Gamma,,,')
+    result = xw.expect_service.import_file(admin, 'Open purchase orders', data)
+    assert raced == ['620'] and result['problems'] == [
+        {'row': 2, 'problem': 'It changed while importing; import the file again to finish it.'}]
+    # Nothing of the raced row was written: revision A still waits and B does not exist yet.
+    assert [view['revision'] for view in xw.expect_service.list(admin, view='all', search='620')] == ['A']
+    assert result['created'] == 1 and result['unchanged'] == 1
+    again = xw.expect_service.import_file(admin, 'Open purchase orders', data)
+    assert again['replay'] and again['revised'] == 1 and again['problems'] == []
+    assert sorted(view['state'] for view in xw.expect_service.list(admin, view='all', search='620')) == [
+        'open', 'replaced']
+
+
 def test_a_new_revision_leaves_a_matched_earlier_revision_matched(xw):
     admin = operator(xw, 'admin', 'installation', 'role_administrator')
     save_source(xw, admin)

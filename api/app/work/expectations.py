@@ -35,6 +35,7 @@ Rules this module keeps:
   and replays never move it.
 """
 from datetime import timedelta
+from functools import lru_cache
 import json
 import re
 import secrets
@@ -60,11 +61,11 @@ STRONG_LOOKBACK = timedelta(days=30)
 # A known sender within the expectation's window, up to a week after its due time, may be the answer.
 WEAK_GRACE = timedelta(days=7)
 MAX_DETAILS = 8000
+# New expectations looked back over per step: the arrivals in the window are read once per batch.
+LOOK_BACK_BATCH = 1000
 # Short codes people read out and type: no 0/O, 1/I, 2/Z, 5/S, 8/B (as for uncertain sent faxes).
 CODE_LETTERS = 'ACDEFGHJKMNPQRTUVWXY34679'
 CODE_LENGTH = 6
-_REVISION_AFTER = re.compile(r'\s*[-,:;/()\]]?\s*(?:rev(?:ision)?|version|ver|v)\.?\s*[:#-]?\s*([a-z0-9][a-z0-9.\-]{0,19})',
-                             re.IGNORECASE)
 _FORM = 'form'  # direct/crypto.FORM: a partner's registered form
 
 
@@ -99,28 +100,44 @@ def loads(value, default=None):
         return default
 
 
-def _phrase(key):
-    """A pattern for ``key`` as a whole phrase: any spacing, any case, not inside a longer word or number."""
-    tokens = reference_key(key).split(' ')
-    body = r'\s+'.join(re.escape(token) for token in tokens)
-    return re.compile((r'(?<![^\W_])' if tokens[0][:1].isalnum() else '') + body
-                      + (r'(?![^\W_])' if tokens[-1][-1:].isalnum() else ''), re.IGNORECASE)
+_TOKEN = re.compile(r'[^\W_]+')
+REVISION_WORDS = frozenset({'rev', 'revision', 'version', 'ver', 'v'})
+
+
+@lru_cache(maxsize=1024)
+def _tokens(text):
+    """The words and numbers of a text, in order, as (folded, as written)."""
+    return tuple((match.group(0).casefold(), match.group(0)) for match in _TOKEN.finditer(text or ''))
+
+
+@lru_cache(maxsize=65536)
+def _key_tokens(key):
+    return tuple(folded for folded, _ in _tokens(key))
 
 
 def subject_match(subject, key):
-    """Where ``key`` appears in ``subject`` as a whole phrase, or None."""
-    if not subject or not reference_key(key):
+    """Where ``key``'s words appear in ``subject`` in a row (case, spacing and punctuation ignored): the index
+    of the word after them, or None. "PO 483" is in "Re: PO 483 signed" but not in "PO 4830"."""
+    words, wanted = _tokens(subject), _key_tokens(key)
+    if not wanted or len(wanted) > len(words):
         return None
-    return _phrase(key).search(subject)
+    folded = [word for word, _ in words]
+    first = wanted[0]
+    for index in range(len(folded) - len(wanted) + 1):
+        if folded[index] == first and tuple(folded[index:index + len(wanted)]) == wanted:
+            return index + len(wanted)
+    return None
 
 
 def revision_after(subject, key):
     """The revision a subject states right after the reference, such as "PO 483 rev B", or None."""
-    found = subject_match(subject, key)
-    if found is None:
+    end = subject_match(subject, key)
+    if end is None:
         return None
-    match = _REVISION_AFTER.match(subject, found.end())
-    return match.group(1) if match else None
+    words = _tokens(subject)
+    if end + 1 < len(words) and words[end][0] in REVISION_WORDS:
+        return words[end + 1][1]
+    return None
 
 
 def same_revision(left, right):
@@ -140,6 +157,104 @@ def may_back_up_mailbox(control, connection, principal_id, resource_id):
     """Whether this user can see every document in the mailbox, as a work backup must."""
     from .store import may_back_up_on
     return may_back_up_on(control, connection, principal_id, resource_id)
+
+
+def _words(text):
+    return set(re.findall(r'[^\W_]+', (text or '').casefold()))
+
+
+class ArrivalIndex:
+    """Received documents indexed by every key a match can use, so a lookup replaces a scan.
+
+    The index only narrows: every match it finds is still decided by
+    ``ExpectationStore.decide`` on the full facts.
+    """
+
+    def __init__(self, entries):
+        self.keys = {}
+        for entry in entries:
+            for key in self.arrival_keys(entry[1]):
+                self.keys.setdefault(key, {})[entry[0]['id']] = entry
+
+    @staticmethod
+    def arrival_keys(signals):
+        keys = set()
+        if signals.get('subaddress'):
+            keys.add(('sub', signals['subaddress']))
+        for name in ('digital_message_id', 'email_message_id', 'partner_message_id'):
+            if signals.get(name):
+                keys.add(('message', signals[name]))
+        keys.update(('message', value) for value in signals.get('digital_replies_to') or [])
+        keys.update(('form', name, reference_key(value)) for name, value in (signals.get('form_values') or {}).items())
+        keys.update(('word', word) for word in _words(signals.get('email_subject')))
+        if signals.get('from_number'):
+            keys.add(('number', signals['from_number']))
+        if signals.get('partner'):
+            keys.add(('partner', signals['partner']))
+        for name in ('direct_sender', 'email_sender'):
+            if signals.get(name):
+                keys.add(('sender', signals[name].casefold()))
+        return keys
+
+    @staticmethod
+    def expectation_keys(expectation):
+        keys = set()
+        if expectation['subaddress_key']:
+            keys.add(('sub', expectation['subaddress_key']))
+        if expectation['message_key']:
+            keys.add(('message', expectation['message_key']))
+        if expectation['form_field']:
+            keys.add(('form', expectation['form_field'], expectation['reference_key']))
+        keys.update(('word', word) for word in _words(expectation['subject_key']))
+        keys.update(('number', number) for number in loads(expectation['counterparty_numbers'], []) or [])
+        if expectation['partner_id']:
+            keys.add(('partner', expectation['partner_id']))
+        if expectation['direct_address']:
+            keys.add(('sender', expectation['direct_address'].casefold()))
+        return keys
+
+    def near(self, expectation):
+        """The arrivals sharing a key with this expectation, oldest first.
+
+        A subject phrase needs every one of its words, so only the arrivals under
+        its rarest word are taken; every other key is one exact lookup.
+        """
+        found = {}
+        keys = self.expectation_keys(expectation)
+        for key in keys:
+            if key[0] != 'word':
+                found.update(self.keys.get(key, {}))
+        words = [self.keys.get(key, {}) for key in keys if key[0] == 'word']
+        if words:
+            found.update(min(words, key=len))
+        return sorted(found.values(), key=lambda entry: (entry[0]['available_at'], entry[0]['id']))
+
+    @classmethod
+    def of_expectations(cls, candidates):
+        """The other way round: expectations by key, to find those one arrival's reference also fits.
+
+        A subject phrase is filed under its rarest word only: an arrival whose
+        subject holds the whole phrase holds that word too.
+        """
+        index = cls([])
+        counts = {}
+        for candidate in candidates:
+            for word in _words(candidate['subject_key']):
+                counts[word] = counts.get(word, 0) + 1
+        for candidate in candidates:
+            keys = {key for key in cls.expectation_keys(candidate) if key[0] != 'word'}
+            words = _words(candidate['subject_key'])
+            if words:
+                keys.add(('word', min(words, key=lambda word: (counts[word], word))))
+            for key in keys:
+                index.keys.setdefault(key, {})[candidate['id']] = candidate
+        return index
+
+    def sharing(self, signals):
+        found = {}
+        for key in self.arrival_keys(signals):
+            found.update(self.keys.get(key, {}))
+        return found.values()
 
 
 class ExpectationStore:
@@ -488,8 +603,13 @@ class ExpectationStore:
             return connection.execute(sa.select(self.expectations.c.id).where(
                 self.expectations.c.examined_at.is_(None)).limit(1)).first() is not None
 
-    def look_back(self, *, now=None, limit=100):
-        """Check each new expectation once against documents that arrived before it; return how many."""
+    def look_back(self, *, now=None, limit=LOOK_BACK_BATCH):
+        """Check each new expectation once against documents that arrived before it; return how many.
+
+        The arrivals in the window are read and indexed once per batch by every
+        key a match can use (``ArrivalIndex``), so each expectation is checked only
+        against the few arrivals that share one of its keys.
+        """
         now = now or utcnow()
         expectations, arrivals = self.expectations, self.arrivals
         with read_connection(self.engine) as connection:
@@ -502,36 +622,43 @@ class ExpectationStore:
             earlier = connection.execute(sa.select(arrivals).where(arrivals.c.available_at >= since)
                                          .order_by(arrivals.c.available_at, arrivals.c.id)).mappings().all()
             candidates = self.candidates_on(connection)
-        parsed = [(row, loads(row['signals'], {})) for row in earlier]
+        index = ArrivalIndex([(row, loads(row['signals'], {})) for row in earlier])
+        others = ArrivalIndex.of_expectations(candidates)
         done = 0
-        for entry in fresh:
+        # A hundred expectations per transaction; one that changed meanwhile sends its group to the next step.
+        for start in range(0, len(fresh), 100):
             try:
                 with write_transaction(self.engine) as connection:
-                    current = self.expectation_on(connection, entry.id)
-                    if current is None or current['examined_at'] is not None:
-                        continue
-                    connection.execute(expectations.update().where(expectations.c.id == entry.id).values(
-                        examined_at=now))
-                    for arrival, signals in parsed:
-                        current = self.expectation_on(connection, entry.id)
-                        if current['state'] not in OPEN_STATES:
-                            break
-                        strong = self.strong_hits(current, signals)
-                        if not (strong or self.weak_hits(current, signals, arrival['available_at'])):
-                            continue
-                        # The same reference also fits another expectation still waiting: a person decides.
-                        ambiguous = bool(strong) and any(
-                            other['id'] != entry.id and other['state'] in OPEN_STATES
-                            and self.strong_hits(other, signals)
-                            and arrival['available_at'] >= other['window_start'] - STRONG_LOOKBACK
-                            for other in candidates)
-                        decision = self.decide(current, signals, arrival['available_at'], ambiguous=ambiguous)
-                        if decision is not None:
-                            self.link_on(connection, current, arrival['id'], arrival['work_item_id'], decision,
-                                         now=now)
-                    done += 1
+                    done += self._look_back_on(connection, fresh[start:start + 100], index, others, now)
             except (ExpectationChanged, DeliveryStoreError):
                 continue
+        return done
+
+    def _look_back_on(self, connection, group, index, others, now):
+        expectations, done = self.expectations, 0
+        for entry in group:
+            current = self.expectation_on(connection, entry.id)
+            if current is None or current['examined_at'] is not None:
+                continue
+            connection.execute(expectations.update().where(expectations.c.id == entry.id).values(
+                examined_at=now))
+            for arrival, signals in index.near(current):
+                if current['state'] not in OPEN_STATES:
+                    break
+                strong = self.strong_hits(current, signals)
+                if not (strong or self.weak_hits(current, signals, arrival['available_at'])):
+                    continue
+                # The same reference also fits another expectation still waiting: a person decides.
+                ambiguous = bool(strong) and any(
+                    other['id'] != entry.id and other['state'] in OPEN_STATES
+                    and self.strong_hits(other, signals)
+                    and arrival['available_at'] >= other['window_start'] - STRONG_LOOKBACK
+                    for other in others.sharing(signals))
+                decision = self.decide(current, signals, arrival['available_at'], ambiguous=ambiguous)
+                if decision is not None and self.link_on(connection, current, arrival['id'],
+                                                         arrival['work_item_id'], decision, now=now):
+                    current = self.expectation_on(connection, entry.id)
+            done += 1
         return done
 
     # -- escalation ------------------------------------------------------------------
@@ -628,4 +755,4 @@ class ExpectationWorker:
         if self.next_sweep is None or now >= self.next_sweep:
             swept = self.store.examine(now=now)
             self.next_sweep = now + self.SWEEP if swept < 100 else now  # a full batch: keep sweeping
-        return looked >= 100 or swept >= 100
+        return looked >= LOOK_BACK_BATCH or swept >= 100
