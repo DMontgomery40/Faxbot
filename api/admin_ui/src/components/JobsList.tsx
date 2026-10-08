@@ -771,6 +771,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {detailJob.coding.measured_sentence}
                       </Typography>
                     )}
+                    {detailJob.coding.tuning_sentence && (
+                      <Typography component="span" variant="caption" color="text.secondary" display="block"
+                        data-testid="job-coding-tuning">
+                        {detailJob.coding.tuning_sentence}
+                      </Typography>
+                    )}
                   </>} />
                 </ListItem>
               )}

@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DOCKER_CONTAINER=true
 
-# jbigkit-bin: jbigkit's T.85 tools (pbmtojbg85, jbgtopbm85), which measure each fax's pages in JBIG before
+# jbigkit-bin: jbigkit's JBIG tools (pbmtojbg, jbgtopbm: the full jbg_enc API HylaFAX+ encodes with), which
+# measure each fax's pages in JBIG, plain and tuned (hylafax/patches/0003), before
 # dialing (api/app/pages/coding.py). jbigkit 2.1 is GPL-2.0-or-later (Markus Kuhn; jbigkit-2.1/COPYING, and
 # "(at your option) any later version" in libjbig/jbig85.c). Faxbot only runs them as separate programs, so its
 # own code stays MIT. This file installs Debian's binary package; anyone who distributes a built image must
@@ -24,7 +25,7 @@ RUN apt-get update \
        tini \
        jbigkit-bin \
     && rm -rf /var/lib/apt/lists/* \
-    && command -v pbmtojbg85 && command -v jbgtopbm85
+    && command -v pbmtojbg && command -v jbgtopbm
 
 WORKDIR /app
 

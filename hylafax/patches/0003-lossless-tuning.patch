@@ -9,7 +9,10 @@ lines), chosen by dynamic programming over each row's measured one- and
 two-dimensional code lengths, with this encoder's EOL alignment and, without
 ECM, the minimum scan line fill Class1Send adds. An MR file is coded again
 even when the session is MR too (Class1Send/Class2Send), so the tuned
-schedule is never skipped. TuneMR (default yes) turns it off.
+schedule is never skipped, and faxsend keeps a data format the job asked
+for itself (DesiredDF, measured by Faxbot) instead of switching MR or MMR
+to MH whenever tiff2fax's MH file is smaller than its MMR file
+(FaxSend.c++). TuneMR (default yes) turns the schedule off.
 
 JBIG: the page is encoded with each of 12 T.85 settings (options 0, TPBON,
 LRLTWO, both; MX 0, 8, 32; L0 128) and the smallest BIE goes, ties to the
@@ -125,6 +128,23 @@ diff -ruN a/faxd/FaxModem.h b/faxd/FaxModem.h
  public:
      void	recvRecordEmsg(TIFF* tif, fxStr& emsg);
      void	writeECMData(TIFF*, u_char*, u_int, const Class2Params&, u_short, fxStr& emsg);
+diff -ruN a/faxd/FaxSend.c++ b/faxd/FaxSend.c++
+--- a/faxd/FaxSend.c++
++++ b/faxd/FaxSend.c++
+@@ -847,7 +847,12 @@
+ 		 * JBIG will virtually always outcompress any other format, so we don't consider
+ 		 * another format when we can use JBIG.
+ 		 */
+-		if ((params.df == DF_2DMMR || params.df == DF_2DMR) && formatSize[0] < formatSize[1]) 
++		/*
++		 * Faxbot: a data format the job asked for itself (JobControls DesiredDF, which Faxbot
++		 * measured on the pages, with MR's tuned schedule) is kept; this file-size guess
++		 * compares MH only with MMR and would undo it.
++		 */
++		if (!useDF && (params.df == DF_2DMMR || params.df == DF_2DMR) && formatSize[0] < formatSize[1])
+ 		    params.df = DF_1DMH;
+ 	    }
+ 	} else {
 diff -ruN a/faxd/G3Encoder.c++ b/faxd/G3Encoder.c++
 --- a/faxd/G3Encoder.c++
 +++ b/faxd/G3Encoder.c++

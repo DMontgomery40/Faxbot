@@ -65,8 +65,9 @@ RUN ./configure --nointeractive --disable-pam \
     && grep -q '^#define HAVE_SSL 1' config.h \
     && grep -q '^#define HAVE_JBIG 1' config.h \
     && make \
-    && g++ -Wall -I. -Ifaxd -Iutil -o /usr/src/lossless-tuning-test /usr/src/tests/lossless_tuning_test.c++ \
-       faxd/libfaxserver.so.7.0.11 util/libfaxutil.so.7.0.11 -ljbig -ltiff -lcrypto \
+    && g++ -Wall -D__ANSI_CPP__ -I. -Ifaxd -Iutil -o /usr/src/lossless-tuning-test /usr/src/tests/lossless_tuning_test.c++ \
+       faxd/libfaxserver.so.7.0.11 util/libfaxutil.so.7.0.11 -ltiff -lz port/libport.a -lcrypt -lutil -lm \
+       -ljbig -ljpeg -lssl -lcrypto -lpthread \
     && LD_LIBRARY_PATH=faxd:util /usr/src/lossless-tuning-test \
     && make install INSTALLROOT=/opt/install \
     && test -x /opt/install/usr/sbin/faxgetty && test -x /opt/install/usr/sbin/faxq \

@@ -312,6 +312,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     changes = (job.get('fax_engine') or {}).get('changes') or []
     # The coding the newest attempt asked for, measured on its pages, and what the call used.
     coded = (job.get('coding') or {}).get('sentence')
+    # What lossless tuning sent, or that the machine refused a tuned page (pages/tuning.py).
+    smaller = (job.get('coding') or {}).get('tuning_sentence')
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -320,6 +322,7 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
                    + ([('Fax coding', coded)] if coded else [])
+                   + ([('Smaller pages', smaller)] if smaller else [])
                    + ([('How the call went', negotiation)] if negotiation else [])
                    + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:

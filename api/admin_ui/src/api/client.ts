@@ -1,5 +1,5 @@
 import type {
-  CallNegotiation, NegotiationSummary, RecipientFaxLimits, RecipientPages, RoutePages, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
+  CallNegotiation, NegotiationSummary, RecipientCodingTuning, RecipientFaxLimits, RecipientPages, RoutePages, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
 } from './sipTypes';
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
@@ -1137,6 +1137,15 @@ class AdminAPIClient {
 
   async saveFaxLimits(number: string, body: { max_rate: number | null; ecm: boolean | null }): Promise<RecipientFaxLimits> {
     return this.json(`/routing/destinations/${id(number)}/fax-limits`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Smaller pages (lossless tuning) for one number: your choice, what its calls use, and why.
+  async getCodingTuning(number: string): Promise<RecipientCodingTuning> {
+    return this.json(`/routing/destinations/${id(number)}/coding-tuning`);
+  }
+
+  async saveCodingTuning(number: string, body: { tune: false | null; tune_jbig: boolean }): Promise<RecipientCodingTuning> {
+    return this.json(`/routing/destinations/${id(number)}/coding-tuning`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   // How long a page one fax machine takes, and this number's pages per sheet and blank-space settings.

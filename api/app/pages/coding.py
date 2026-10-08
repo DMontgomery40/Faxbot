@@ -15,11 +15,27 @@ MH (T.4 one-dimensional), MR (T.4 two-dimensional, K = 2 at standard and 4 at
 fine resolution, as T.4 4.2.1.3.4 sets it) and MMR (T.6) through libtiff in
 Pillow, with the paper coded as white runs (``conversion._g4_data``'s
 convention), so the measured MMR bits are exactly ``conversion.frame_bits``.
-JBIG (T.85) through jbigkit's ``pbmtojbg85`` (Debian's jbigkit-bin, installed
-in the API image), with the options HylaFAX+ 7.0.11 sends on the line
-(``JBIG_OPTIONS``); without the tools JBIG is not measured and is left out of
-the result. Strip lengths leave out ECM framing, fill bits, retransmissions
-and negotiation: the bits are the page data, not the call.
+JBIG (T.85) through jbigkit's full encoder ``pbmtojbg`` (Debian's jbigkit-bin,
+installed in the API image), the ``jbg_enc`` API HylaFAX+ 7.0.11 calls; without
+the tools JBIG is not measured and is left out of the result. Strip lengths
+leave out ECM framing, retransmissions and negotiation: the bits are the page
+data, not the call.
+
+Lossless tuning (``Tuning``): on the SSL Fax engine, faxd codes MR with the
+fewest-bytes reset schedule and may tune JBIG (hylafax/patches/0003,
+faxd/LosslessTuning.h), so MR and JBIG are measured exactly as faxd sends them:
+
+- MR: each row's one- and two-dimensional code lengths from libtiff (the same
+  T.4 codes faxd's G3Encoder writes), then the bytes faxd sends: every EOL after
+  the first ends on a byte boundary, Class1Send copies the first two bytes and,
+  without error correction, fills every line to the minimum scan line bytes.
+  ``mr_schedule`` is the same dynamic program as faxd's, with the same
+  tie-break, so the result is faxd's byte count for the page; the fixed schedule
+  (a one-dimensional row every K rows) is priced the same way when tuning is off.
+- JBIG: plain is options 0, MX 0; tuned is the smallest of ``JBIG_CANDIDATES``
+  (ties to the lower options, then the lower MX), the same list as faxd's.
+
+The built-in engine (spandsp) codes MR itself; its MR stays libtiff's strip.
 
 Requesting a coding (``best_coding``)
 --------------------------------------
@@ -89,16 +105,25 @@ NEEDS_ECM = frozenset({'MMR', 'JBIG'})
 # The compression setting's values (sip_trunk.COMPRESSIONS) and HylaFAX's job data formats (hfaxd Jobs.c++).
 SETTING = {'MH': 'mh', 'MR': 'mr', 'MMR': 'mmr', 'JBIG': 'jbig'}
 FROM_SETTING = {value: key for key, value in SETTING.items()}
-JBIG_ENCODER = 'pbmtojbg85'
-JBIG_DECODER = 'jbgtopbm85'
+JBIG_ENCODER = 'pbmtojbg'
+JBIG_DECODER = 'jbgtopbm'
 JBIG_TIMEOUT_SECONDS = 60
-# The T.85 options HylaFAX+ 7.0.11 encodes with before sending (faxd/MemoryDecoder.c++, line 518:
-# jbg_enc_options(&jbigstate, 0, 0, 128, 0, 0)): no typical prediction (options byte 0), 128 lines a stripe
-# (L0) and no adaptive template moves (Mx 0). pbmtojbg85's own defaults (jbigkit 2.1 pbmtools/pbmtojbg85.c:
-# options 8 = TPBON, Mx up to 8) measured a scanned photo at a third of what the engine sends (152,048 bits
-# against 430,824). Neither tool takes "-" for both files: with no file names they read standard input and
-# write standard output.
-JBIG_OPTIONS = ('-p', '0', '-m', '0', '-s', '128')
+# HylaFAX+ 7.0.11 encodes with jbigkit's full API (faxd/MemoryDecoder.c++: jbg_enc_init, then
+# jbg_enc_options(&s, 0, options, 128, mx, 0)): one layer (D = 0, pbmtojbg -q -d 0), order 0 (-o 0), 128 lines a
+# stripe (-s 128), then the options byte (-p) and MX (-m). Plain JBIG is options 0, MX 0 (no typical prediction, no
+# adaptive template moves). pbmtojbg's own defaults are not T.85 (several layers, deterministic prediction). With no
+# file names the tools read standard input and write standard output.
+JBIG_BASE = ('-q', '-d', '0', '-o', '0', '-s', '128')
+JBIG_PLAIN = (0, 0)
+# The settings faxd tries for tuned JBIG (hylafax/patches/0003, faxd/LosslessTuning.h), in tie-break order: options
+# 0, TPBON (8), LRLTWO (64) and both (72), each with MX 0, 8 and 32. T.85 Table 1 allows all of them at L0 128.
+JBIG_CANDIDATES = tuple((options, mx) for options in (0, 8, 64, 72) for mx in (0, 8, 32))
+JBIG_OPTIONS = ('-p', '0', '-m', '0', '-s', '128')  # plain JBIG's settings, as earlier releases passed them
+
+
+def jbig_arguments(options, mx):
+    """pbmtojbg's arguments for one T.85 setting as faxd encodes it."""
+    return (*JBIG_BASE, '-p', str(int(options)), '-m', str(int(mx)))
 FINE_DPI = (204.0, 196.0)
 _INVERT = bytes(255 - value for value in range(256))
 _ID = re.compile(r'[A-Za-z0-9_-]{1,40}')
@@ -106,6 +131,27 @@ _ID = re.compile(r'[A-Za-z0-9_-]{1,40}')
 
 class CodingRefused(ValueError):
     """A documented refusal: no pages, a page that is not one-bit (mode "1"), or an unknown coding name."""
+
+
+@dataclass(frozen=True)
+class Tuning:
+    """How the engine that is expected to place the call codes MR and JBIG (``pages.tuning.for_call``).
+
+    ``engine``: 'hylafax' (the SSL Fax engine; faxd converts MR and JBIG pages, hylafax/patches/0003) or 'builtin'
+    (spandsp codes MR itself). ``mr``: faxd's fewest-bytes MR schedule (else its fixed one). ``jbig``: tuned JBIG
+    is expected (else plain). ``min_line_bytes``: without error correction, the bytes each coded line is filled to
+    (the receiving machine's minimum scan line time at the call's speed); 0 with error correction.
+    """
+    engine: str = 'hylafax'
+    mr: bool = True
+    jbig: bool = False
+    min_line_bytes: int = 0
+
+    def key(self) -> str:
+        return f'{self.engine}:mr={int(self.mr)}:jbig={int(self.jbig)}:min={int(self.min_line_bytes)}'
+
+
+PLAIN = Tuning(mr=False, jbig=False)
 
 
 def _rank(coding):
@@ -168,34 +214,150 @@ def _tiff_bits(page, coding, *, check=False):
     return bits
 
 
-def _jbig_bits(page, tools, *, check=False):
-    """Bits of one page in JBIG (T.85), through jbigkit; the page as a PBM (1 is black, as PBM has it)."""
+def jbig_setting(page, tools, *, tuned=False, check=False):
+    """(bytes, options, MX) of one page in JBIG (T.85) as faxd sends it: plain (options 0, MX 0), or the smallest of
+    ``JBIG_CANDIDATES`` with faxd's tie-break. The page goes as a PBM (1 is black, as PBM has it)."""
     from PIL import Image
     encoder, decoder = tools
     pbm = io.BytesIO()
     page.save(pbm, 'PPM')
-    encoded = subprocess.run([encoder, *JBIG_OPTIONS], input=pbm.getvalue(), capture_output=True, check=True,
-                             timeout=JBIG_TIMEOUT_SECONDS).stdout
-    if check:
-        decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
-                                 timeout=JBIG_TIMEOUT_SECONDS).stdout
-        with Image.open(io.BytesIO(decoded)) as back:
-            if back.convert('1').tobytes() != page.tobytes():
-                raise CodingRefused('JBIG did not decode to the same page.')
-    return 8 * len(encoded)
+    best = None
+    for options, mx in (JBIG_CANDIDATES if tuned else (JBIG_PLAIN,)):
+        encoded = subprocess.run([encoder, *jbig_arguments(options, mx)], input=pbm.getvalue(), capture_output=True,
+                                 check=True, timeout=JBIG_TIMEOUT_SECONDS).stdout
+        if check:
+            decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
+                                     timeout=JBIG_TIMEOUT_SECONDS).stdout
+            with Image.open(io.BytesIO(decoded)) as back:
+                if back.convert('1').tobytes() != page.tobytes():
+                    raise CodingRefused('JBIG did not decode to the same page.')
+        if best is None or len(encoded) < best[0]:
+            best = (len(encoded), options, mx)
+    return best
 
 
-def measure(raster_pages, *, codings=None, check=False) -> dict:
+def _jbig_bits(page, tools, *, check=False, tuned=False):
+    """Bits of one page in JBIG (T.85), plain or tuned (``jbig_setting``)."""
+    return 8 * jbig_setting(page, tools, tuned=tuned, check=check)[0]
+
+
+# MR as faxd sends it (hylafax/patches/0003, faxd/LosslessTuning.h) --------------------------------------------
+
+_EOL = '000000000001'
+
+
+def _row_codes(image, two_dimensional):
+    """libtiff's T.4 code of each row of a one-bit image (white runs coded as zeros), EOL removed, tag bit kept
+    for MR. One strip, so every row starts at an EOL."""
+    stream = io.BytesIO()
+    options = {'tiffinfo': {292: 1}} if two_dimensional else {}
+    image.save(stream, 'TIFF', compression='group3', dpi=FINE_DPI,
+               strip_size=math.ceil(image.width / 8) * image.height, **options)
+    value = stream.getvalue()
+    stream.seek(0)
+    from PIL import Image
+    with Image.open(stream) as written:
+        offset, length = written.tag_v2[273][0], written.tag_v2[279][0]
+    bits = ''.join(format(byte, '08b') for byte in value[offset:offset + length])
+    rows = bits.split(_EOL)
+    if rows[0] or len(rows) < image.height + 1:
+        raise CodingRefused('MR could not be measured on this page.')
+    return rows[1:image.height + 1]
+
+
+def mr_rows(page):
+    """(one, two): each row's one- and two-dimensional code length in bits (EOL and tag excluded), the
+    two-dimensional one against the row above (``two[0]`` is 0: the first row is always one-dimensional)."""
+    from PIL import Image
+    width, height = page.size
+    stride = math.ceil(width / 8)
+    raw = page.tobytes().translate(_INVERT)  # 1 is black: libtiff then codes 0 bits (paper) as white runs
+    white = bytes(stride)
+    # One white row after the page gives its last row a following EOL to split on.
+    extended = Image.frombytes('1', (width, height + 1), raw + white)
+    one = [len(code) for code in _row_codes(extended, False)[:height]]
+    mixed = _row_codes(extended, True)
+    # Rows libtiff coded one-dimensionally get their two-dimensional code from the page moved down one row.
+    shifted = _row_codes(Image.frombytes('1', (width, height + 2), white + raw + white), True)[1:]
+    two = [0] * height
+    for y in range(1, height):
+        code = mixed[y] if mixed[y][:1] == '0' else shifted[y]
+        if code[:1] != '0':
+            raise CodingRefused('MR could not be measured on this page.')
+        two[y] = len(code) - 1
+    return one, two
+
+
+def mr_row_bytes(bits, row, rows, min_line):
+    """The bytes row ``row`` adds to an MR page faxd sends (faxd/LosslessTuning.h ``mrRowBytes``)."""
+    if row == 0:
+        found = ((13 if rows == 1 else 25) + bits + 7) // 8 - 2
+    elif row + 1 == rows:
+        found = (1 + bits + 7) // 8
+    else:
+        found = (13 + bits + 7) // 8
+    return max(found, min_line)
+
+
+def mr_schedule(one, two, k, min_line=0):
+    """(bytes, one_dimensional): faxd's fewest-bytes MR schedule for these row lengths (faxd/LosslessTuning.h
+    ``scheduleMR``: the same recurrence and tie-break), and the page's bytes with its two leading bytes."""
+    rows = len(one)
+    if not rows or k < 1:
+        return 0, []
+    none = float('inf')
+    cost = [mr_row_bytes(one[0], 0, rows, min_line)] + [none] * (k - 1)
+    came = [[0] * k]
+    for y in range(1, rows):
+        best = min(range(k), key=lambda j: (cost[j], j))
+        nxt = [cost[best] + mr_row_bytes(one[y], y, rows, min_line)]
+        two_bytes = mr_row_bytes(two[y], y, rows, min_line)
+        nxt += [cost[j - 1] + two_bytes for j in range(1, k)]
+        came.append([best] + list(range(k - 1)))
+        cost = nxt
+    state = min(range(k), key=lambda j: (cost[j], j))
+    total = 2 + cost[state]
+    chosen = [False] * rows
+    for y in range(rows - 1, -1, -1):
+        chosen[y] = state == 0
+        state = came[y][state]
+    return int(total), chosen
+
+
+def mr_fixed(one, two, k, min_line=0):
+    """The bytes of faxd's fixed MR schedule (a one-dimensional row every K rows), priced the same way."""
+    rows = len(one)
+    return 2 + sum(mr_row_bytes(one[y] if y % k == 0 else two[y], y, rows, min_line) for y in range(rows)) \
+        if rows else 0
+
+
+def mr_k(page):
+    """K for the page's vertical resolution, as faxd uses it: 2 at standard, 4 otherwise (T.4 4.2.1.3.4)."""
+    return 2 if _dpi(page)[1] < 150 else 4
+
+
+def _faxd_mr_bits(page, tuning):
+    one, two = mr_rows(page)
+    k = mr_k(page)
+    found = (mr_schedule(one, two, k, tuning.min_line_bytes)[0] if tuning.mr
+             else mr_fixed(one, two, k, tuning.min_line_bytes))
+    return 8 * found
+
+
+def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
     """{coding: bits of each page} for MH, MR and MMR, and JBIG when its encoder is installed.
 
     ``codings`` limits what is measured (JBIG is still left out without an
     encoder). ``check`` decodes every page again and refuses one that comes
     back different (the tests do; the engines encode the call themselves).
-    Raises ``CodingRefused`` for no pages, a page that is not one-bit, or an
-    unknown coding name.
+    ``tuning`` (``Tuning``) says how the engine expected to place the call
+    codes MR and JBIG; None measures libtiff's MR and plain JBIG, an estimate
+    for when the call is not known yet. Raises ``CodingRefused`` for no pages,
+    a page that is not one-bit, or an unknown coding name.
     """
     pages = _pages(raster_pages)
     wanted = _known(CODINGS if codings is None else codings)
+    tuning = Tuning(engine='builtin', mr=False, jbig=False) if tuning is None else tuning
     result = {}
     for coding in CODINGS:
         if coding not in wanted:
@@ -205,9 +367,15 @@ def measure(raster_pages, *, codings=None, check=False) -> dict:
             if tools is None:
                 continue
             try:
-                result[coding] = tuple(_jbig_bits(page, tools, check=check) for page in pages)
+                result[coding] = tuple(_jbig_bits(page, tools, check=check, tuned=tuning.jbig) for page in pages)
             except (OSError, subprocess.SubprocessError):
                 logging.getLogger(__name__).warning('JBIG could not be measured on these pages.', exc_info=True)
+            continue
+        if coding == 'MR' and tuning.engine == 'hylafax':
+            if check:
+                for page in pages:
+                    _tiff_bits(page, coding, check=True)
+            result[coding] = tuple(_faxd_mr_bits(page, tuning) for page in pages)
             continue
         result[coding] = tuple(_tiff_bits(page, coding, check=check) for page in pages)
     return result
@@ -229,11 +397,11 @@ def cache_path(tiff_path):
     return path.with_name(path.stem + '.coding.json')
 
 
-def measure_cached(raster_pages, cache, *, codings=None):
-    """``measure``, kept in ``cache`` (a JSON file) by the pages' fingerprint; a later call on the same pages
-    reads it back. An unreadable or foreign cache is measured again; a cache that cannot be written is only
-    logged (the measurement itself is returned either way)."""
-    key = digest(raster_pages)
+def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
+    """``measure``, kept in ``cache`` (a JSON file) by the pages' fingerprint and the tuning; a later call on the
+    same pages reads it back. An unreadable or foreign cache is measured again; a cache that cannot be written is
+    only logged (the measurement itself is returned either way)."""
+    key = digest(raster_pages) + ';' + (tuning.key() if tuning is not None else 'estimate')
     wanted = tuple(_known(CODINGS if codings is None else codings))
     path = Path(cache)
     kept = {}
@@ -249,7 +417,7 @@ def measure_cached(raster_pages, cache, *, codings=None):
             return {name: tuple(int(bits) for bits in found[name]) for name in wanted if name in found}
         except (TypeError, ValueError):
             pass
-    measured = measure(raster_pages, codings=wanted)
+    measured = measure(raster_pages, codings=wanted, tuning=tuning)
     kept[key] = {name: list(bits) for name, bits in measured.items()}
     try:
         temporary = path.with_name(path.name + f'.{uuid.uuid4().hex[:8]}.tmp')
@@ -358,6 +526,9 @@ class Usable:
     left_out: dict                       # {coding: one sentence}
     ceiling: str                         # your setting, or what engine learning chose for the number
     failed: frozenset = frozenset()      # codings left out because calls to the number failed with them
+    # How the engine expected to place the call codes MR and JBIG (``Tuning``, from ``usable_for``); measuring
+    # prices exactly that. None: not known (libtiff's MR and plain JBIG, an estimate).
+    tuning: Tuning | None = None
 
     def allowed(self, coding) -> bool:
         return coding in self.codings
@@ -501,8 +672,38 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
     elif getattr(capability, 'codings', None):
         dis = receiver_dis((), capability)
     far_ecm = getattr(capability, 'ecm', None)
-    return usable_codings(ecm=settings.ecm, far_ecm=far_ecm, dis=dis, views=views, configured=configured,
-                          learned=learned)
+    found = usable_codings(ecm=settings.ecm, far_ecm=far_ecm, dis=dis, views=views, configured=configured,
+                           learned=learned)
+    from dataclasses import replace
+    return replace(found, tuning=measuring_tuning(values, engine, number, ecm=settings.ecm, far_ecm=far_ecm,
+                                                  max_rate=settings.max_rate, capability=capability))
+
+
+def measuring_tuning(values, engine, number, *, ecm, far_ecm, max_rate, capability=None) -> Tuning:
+    """The ``Tuning`` this call's pages are measured with: the SSL Fax engine when it is set up and running (it then
+    places the call, ``hylafax_engine.choose``), else the built-in engine; the MR schedule and tuned JBIG as
+    ``pages.tuning.for_call`` asks for them (tuned JBIG over SSL Fax only for a machine that took SSL Fax before);
+    and, without error correction on both sides, the receiving machine's minimum scan line time at this call's
+    speed, when on record."""
+    from .. import hylafax_engine, hylafax_records
+    from . import tuning as rules
+    running = (bool(getattr(values, 'fax_data_dir', None)) and hylafax_engine.engine_conf_path(values).is_file()
+               and hylafax_engine.read_status(values).state == 'running')
+    chosen = rules.for_call(values, engine, number)
+    sslfax = False
+    if engine is not None and chosen.jbig == 'sslfax':
+        import sqlalchemy as sa
+        try:
+            sslfax = bool(hylafax_records.records_for(engine).recipient_detail(number).get('accepts_sslfax'))
+        except (sa.exc.SQLAlchemyError, hylafax_records.EngineRecordError):
+            logging.getLogger(__name__).warning('Whether this number takes SSL Fax could not be read; its JBIG is '
+                                                'priced plain.', exc_info=True)
+    scan_ms = getattr(capability, 'scan_ms', None)
+    minimum = 0
+    if not (ecm and far_ecm is not False) and isinstance(scan_ms, int) and scan_ms > 0:
+        minimum = (int(max_rate) // 8 * scan_ms) // 1000
+    return Tuning(engine='hylafax' if running else 'builtin', mr=chosen.mr, jbig=chosen.priced_jbig(sslfax),
+                  min_line_bytes=minimum)
 
 
 # Recording and reading ----------------------------------------------------------------------------------------
@@ -601,7 +802,13 @@ def attempt_coding(engine, attempt_id):
     if row is None:
         return None
     agreed, placed = call_of(engine, attempt_id)
-    return {**dict(row), 'bits': _bits(row['bits']), 'negotiated': agreed, 'engine': placed}
+    from ..routing.database import DeliveryStoreError
+    from . import tuning
+    try:
+        tuned = tuning.call_tuning(engine, attempt_id)
+    except DeliveryStoreError:
+        tuned = {}  # before migration 0063: no tuning records yet
+    return {**dict(row), 'bits': _bits(row['bits']), 'negotiated': agreed, 'engine': placed, 'tuning': tuned}
 
 
 def newest_coding(engine, job_id):
@@ -654,10 +861,18 @@ def sent_sentence(record, phase=None) -> str | None:
             expected = {fallback}
         else:
             reason = f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}'
-    sentence = f'{verb} {reason}'
+    # Lossless tuning, when the engine reported it for the coding the call used: "JBIG, tuned", "MR, tuned schedule".
+    from .tuning import sent_suffix
+    tuned = record.get('tuning') or {}
     if agreed and agreed not in expected:
-        sentence += f' The call used {agreed}.'
-    return sentence
+        return f'{verb} {reason} The call used {agreed}{sent_suffix(tuned, agreed)}.'
+    used = agreed or requested
+    suffix = sent_suffix(tuned, used)
+    if suffix and reason.startswith(f'{used}:'):
+        reason = f'{used}{suffix}:' + reason[len(used) + 1:]
+    elif suffix:
+        reason += f' The call used {used}{suffix}.'
+    return f'{verb} {reason}'
 
 
 def seconds_text(bits, rate=14400):
@@ -683,7 +898,16 @@ def coding_view(record):
             'measured': bool(record.get('measured')), 'compared': record.get('compared'),
             'pages': record.get('pages'), 'bits': bits,
             'receiver_known': bool(record.get('receiver_known')), 'sentence': sent_sentence(record),
-            'measured_sentence': measured_sentence(bits)}
+            'measured_sentence': measured_sentence(bits), **_tuning_view(record.get('tuning'))}
+
+
+def _tuning_view(rows):
+    """What lossless tuning did on the call (``pages.tuning``): which codings it tuned, and one sentence."""
+    from .tuning import sent_sentence as tuning_sentence
+    rows = rows or {}
+    return {'tuned': sorted(coding for coding, row in rows.items() if row.get('tuned_pages')),
+            'tuning_refused': sorted(coding for coding, row in rows.items() if row.get('refused')),
+            'tuning_sentence': tuning_sentence(rows)}
 
 
 def sent_view(engine, job_id):

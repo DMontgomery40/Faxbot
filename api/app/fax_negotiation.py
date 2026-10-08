@@ -108,8 +108,9 @@ def builtin_values(rate, resolution, pages):
 
 
 def _report(encoded):
-    """hylafax/bin/negotiation's object (base64 JSON), or {} when absent or not one."""
-    if not isinstance(encoded, str) or not encoded or len(encoded) > 1024:
+    """hylafax/bin/negotiation's object (base64 JSON), or {} when absent or not one. Up to 16 KiB: a long fax's
+    lossless tuning report carries a raster digest a page (pages/tuning.py)."""
+    if not isinstance(encoded, str) or not encoded or len(encoded) > 16384:
         return {}
     try:
         data = json.loads(base64.b64decode(encoded, validate=True).decode('ascii'))

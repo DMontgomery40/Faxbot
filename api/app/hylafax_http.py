@@ -126,6 +126,13 @@ def _record_engine(request, job_id, attempt_id, payload, row):
     if capability:
         hylafax_records.safely(records.record_page_capability, call_key=attempt_id, values=capability,
                                job_id=job_id, number=(row or {}).get('called'))
+    # What lossless tuning did on the call (pages/tuning.py): a tuned page the machine refused makes the number's
+    # later calls plain for that coding.
+    from .fax_negotiation import _report
+    from .pages import tuning
+    hylafax_records.safely(tuning.record_call, engine, call_key=attempt_id, job_id=job_id,
+                           number=(row or {}).get('called'), negotiation=_report(payload.get('negotiation_b64')),
+                           success=payload.get('why') == 'done', sslfax=details['sslfax'])
 
 
 async def _settled_call(request, attempt_id, row):
@@ -210,6 +217,62 @@ async def put_fax_limits(number: str, payload: FaxLimits, request: Request,
         raise HTTPException(503, detail='Fax limits could not be saved. Try again.') from None
     from .audit import audit_event
     audit_event('recipient_fax_limits', number=target, max_rate=payload.max_rate, ecm=payload.ecm)
+    return result
+
+
+# Recipients, Details: smaller pages (lossless tuning, pages/tuning.py) for one number ------------------
+
+class CodingTuning(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # None: as set for all faxes; False: off for this number.
+    tune: Optional[StrictBool] = None
+    # True: the smallest page format for this number too, after its warning.
+    tune_jbig: StrictBool = False
+
+
+def _values_for(request):
+    return request.scope['faxbot.configuration'].active.values
+
+
+@router.get('/routing/destinations/{number}/coding-tuning',
+            dependencies=[Depends(require_permission('settings:read'))])
+async def get_coding_tuning(number: str, request: Request):
+    """Your smaller-pages choice for one number, what is in force for its calls and why."""
+    import sqlalchemy as sa
+    from .pages import tuning
+    from .routing.database import DeliveryStoreError
+    target = _recipient_number(number, request)
+    try:
+        return await run_lifecycle_step(lambda: tuning.recipient_view(_values_for(request), _engine_for(request),
+                                                                      target))
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        raise HTTPException(503, detail='Smaller pages settings are unavailable. Try again.') from None
+
+
+@router.put('/routing/destinations/{number}/coding-tuning')
+async def put_coding_tuning(number: str, payload: CodingTuning, request: Request,
+                            identity=Depends(require_permission('settings:write'))):
+    """Keep your smaller-pages choice for one number; saving also clears what Faxbot learned for it."""
+    import sqlalchemy as sa
+    from .pages import tuning
+    from .routing.database import DeliveryStoreError
+    if payload.tune is True:
+        raise HTTPException(400, detail='Choose off, or leave it as set for all faxes.')
+    target = _recipient_number(number, request)
+    actor = getattr(getattr(identity, 'actor', None), 'principal_id', None) or 'settings'
+
+    def save():
+        engine = _engine_for(request)
+        tuning.save_choice(engine, target, tune=payload.tune, tune_jbig=payload.tune_jbig, actor=str(actor))
+        return tuning.recipient_view(_values_for(request), engine, target)
+    try:
+        result = await run_lifecycle_step(save)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        raise HTTPException(503, detail='Smaller pages settings could not be saved. Try again.') from None
+    from .audit import audit_event
+    audit_event('recipient_coding_tuning', number=target, tune=payload.tune, tune_jbig=payload.tune_jbig)
     return result
 
 

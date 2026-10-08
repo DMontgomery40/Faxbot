@@ -147,6 +147,9 @@ class ConfigurationValues(BaseModel):
     # The best compression Faxbot may agree with the other machine (mh < mr < mmr < jbig).
     sip_fax_compression: str = Field('jbig', validation_alias='SIP_FAX_COMPRESSION', pattern=r'^(?:mh|mr|mmr|jbig)$')
     sip_fax_fine: bool = Field(True, validation_alias='SIP_FAX_FINE')
+    # Lossless tuning (hylafax/patches/0003, pages/tuning.py): the fewest-bytes MR schedule on every call, and
+    # tuned JBIG only where the receiving machine is known to decode it; the same pixels either way.
+    sip_fax_tune_coding: bool = Field(True, validation_alias='SIP_FAX_TUNE_CODING')
     # SSL Fax engine (HylaFAX+): offered on every call; fax lines at once; the receiving listener's port,
     # used only when docker-compose.sslfax.yml publishes it.
     sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')

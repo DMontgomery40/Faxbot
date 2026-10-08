@@ -325,6 +325,11 @@ class CapturedTransport:
             call = hylafax_engine.with_coding(
                 hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True),
                 coding.request('hylafax') if coding is not None else None)
+            # Lossless tuning for this call: your setting, your choice for the number and what Faxbot learned.
+            from dataclasses import replace
+            from .pages import tuning
+            chosen = await asyncio.to_thread(tuning.for_call, values, engine, job['to_number'])
+            call = replace(call, tuning=chosen.comment())
             # A notice fax to an enrolled partner also carries its notice ID as the T.33 subaddress (direct/notice.py).
             from .direct.notice import subaddress_for
             subaddress = await asyncio.to_thread(subaddress_for, engine, claim.job_id) if engine is not None else None

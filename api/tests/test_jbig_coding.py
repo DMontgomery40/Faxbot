@@ -1,8 +1,9 @@
 """JBIG on the SSL Fax engine (M7): measured with jbigkit as HylaFAX+ sends it, and chosen only for a receiving
 machine whose capabilities on record list it.
 
-- Measuring: ``pages.coding`` runs jbigkit's pbmtojbg85 with HylaFAX+ 7.0.11's own T.85 options
-  (faxd/MemoryDecoder.c++ line 518) and no file names (pbmtools/pbmtojbg85.c: a second "-" is a usage error).
+- Measuring: ``pages.coding`` runs jbigkit's full encoder pbmtojbg (the jbg_enc API HylaFAX+ 7.0.11 calls) with
+  its T.85 settings (faxd/MemoryDecoder.c++: one layer, order 0, L0 128; plain is options 0, MX 0) and no file
+  names. Tuned JBIG (hylafax/patches/0003) is tested in test_encoder_tuning.py.
   A stand-in shows the exact arguments; the real tools run when installed (the API image, CI's image), and were
   run in a Debian trixie container with jbigkit-bin 2.1 on 2026-10-08 (the report has the numbers).
 - Choosing: JBIG needs error correction, the SSL Fax engine, and a DIS on record that lists it, from either
@@ -50,17 +51,18 @@ def stand_in(tmp_path, name, output):
 # Measuring --------------------------------------------------------------------------------------------------
 
 def test_jbig_is_measured_with_the_engines_own_options_and_no_file_names(tmp_path, monkeypatch):
-    encoder = stand_in(tmp_path, 'pbmtojbg85', 'x' * 7)
-    decoder = stand_in(tmp_path, 'jbgtopbm85', '')
+    encoder = stand_in(tmp_path, 'pbmtojbg', 'x' * 7)
+    decoder = stand_in(tmp_path, 'jbgtopbm', '')
     monkeypatch.setattr(coding, 'jbig_encoder', lambda: (str(encoder), str(decoder)))
     assert coding.measure(frames('drawn_text'), codings=('JBIG',)) == {'JBIG': (8 * 7,)}
-    # Options byte 0 (no TPBON), 128 lines a stripe, no adaptive template moves: jbg_enc_options(.., 0, 0, 128, 0, 0)
-    assert (tmp_path / 'pbmtojbg85.args').read_text().split() == ['-p', '0', '-m', '0', '-s', '128']
-    assert coding.JBIG_OPTIONS == ('-p', '0', '-m', '0', '-s', '128')
+    # One layer, order 0, 128 lines a stripe, options byte 0 (no TPBON), no adaptive template moves:
+    # jbg_enc_options(.., 0, 0, 128, 0, 0)
+    assert (tmp_path / 'pbmtojbg.args').read_text().split() == ['-q', '-d', '0', '-o', '0', '-s', '128', '-p', '0',
+                                                               '-m', '0']
 
 
 def test_a_jbig_tool_that_fails_leaves_jbig_unmeasured_and_logs_why(tmp_path, monkeypatch, caplog):
-    failing = tmp_path / 'pbmtojbg85'
+    failing = tmp_path / 'pbmtojbg'
     failing.write_text('#!/bin/sh\necho "usage" >&2\nexit 1\n')
     failing.chmod(failing.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(coding, 'jbig_encoder', lambda: (str(failing), str(failing)))
@@ -72,7 +74,7 @@ def test_a_jbig_tool_that_fails_leaves_jbig_unmeasured_and_logs_why(tmp_path, mo
 REAL = coding.jbig_encoder()
 
 
-@pytest.mark.skipif(REAL is None, reason="jbigkit's pbmtojbg85 and jbgtopbm85 are not installed here (the API "
+@pytest.mark.skipif(REAL is None, reason="jbigkit's pbmtojbg and jbgtopbm are not installed here (the API "
                                           "image and the integrator's CI image have them)")
 def test_the_real_jbigkit_tools_measure_every_fixture_page_losslessly_as_hylafax_sends_it():
     for stem in ('drawn_text', 'photo', 'shaded_0', 'scan_8'):
@@ -82,7 +84,7 @@ def test_the_real_jbigkit_tools_measure_every_fixture_page_losslessly_as_hylafax
     page = frames('photo')[0]
     pbm = io.BytesIO()
     page.save(pbm, 'PPM')
-    encoded = subprocess.run([REAL[0], *coding.JBIG_OPTIONS], input=pbm.getvalue(), capture_output=True,
+    encoded = subprocess.run([REAL[0], *coding.jbig_arguments(0, 0)], input=pbm.getvalue(), capture_output=True,
                              check=True).stdout
     # The BIH (T.85 / T.82 6.2): width 1728, L0 128, MX 0, options 0, as HylaFAX+ writes it.
     assert int.from_bytes(encoded[4:8], 'big') == 1728 and int.from_bytes(encoded[12:16], 'big') == 128
@@ -194,10 +196,10 @@ def test_an_unknown_number_on_the_ssl_fax_engine_is_not_narrowed(installation, d
 
 
 def test_jbig_tools_are_found_on_the_path(tmp_path, monkeypatch):
-    for name in ('pbmtojbg85', 'jbgtopbm85'):
+    for name in ('pbmtojbg', 'jbgtopbm'):
         stand_in(tmp_path, name, '')
     monkeypatch.setenv('PATH', f'{tmp_path}{os.pathsep}{os.environ.get("PATH", "")}')
-    assert coding.jbig_encoder() == (str(tmp_path / 'pbmtojbg85'), str(tmp_path / 'jbgtopbm85'))
+    assert coding.jbig_encoder() == (str(tmp_path / 'pbmtojbg'), str(tmp_path / 'jbgtopbm'))
 
 
 def test_the_engine_is_built_with_jbig_and_the_api_image_can_measure_it():
@@ -207,6 +209,6 @@ def test_the_engine_is_built_with_jbig_and_the_api_image_can_measure_it():
     assert 'libjbig-dev' in engine_image and "grep -q '^#define HAVE_JBIG 1' config.h" in engine_image
     assert "ldd /usr/lib/libfaxserver.so.7.0.11 | grep -q 'libjbig.so'" in engine_image
     api_image = (root / 'api' / 'Dockerfile').read_text()
-    assert 'jbigkit-bin' in api_image and 'command -v pbmtojbg85 && command -v jbgtopbm85' in api_image
+    assert 'jbigkit-bin' in api_image and 'command -v pbmtojbg && command -v jbgtopbm' in api_image
     # The GPL source offer is written down beside each install.
     assert 'apt-get source jbigkit' in api_image and 'apt-get source jbigkit' in engine_image

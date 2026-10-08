@@ -235,6 +235,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_ecm': values.sip_fax_ecm,
                 'fax_compression': values.sip_fax_compression,
                 'fax_fine': values.sip_fax_fine,
+                'fax_tune_coding': values.sip_fax_tune_coding,
                 'sslfax_enabled': values.sip_sslfax_enabled,
                 'fax_lines': values.sip_fax_lines,
                 # Calls at once on the trunk and new calls a second, as set (0: the default) and as in effect.
