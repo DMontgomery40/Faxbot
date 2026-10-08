@@ -60,6 +60,13 @@ RUN ./configure --nointeractive --disable-pam \
     && test -x /opt/install/usr/sbin/hfaxd && test -d /opt/install/var/spool/hylafax/bin \
     && rm -rf /opt/install/usr/share/man
 
+# The engine's build, for what Faxbot learns from its calls (api/app/engine_learning.py): the HylaFAX+
+# release and a digest of every file in patches/, so a changed patch starts that learning again. The
+# engine reports it in its status file.
+RUN mkdir -p /opt/install/usr/share/faxbot \
+    && printf 'HylaFAX+ 7.0.11 patches %s\n' "$(cat /usr/src/patches/* | sha256sum | cut -c1-16)" \
+       > /opt/install/usr/share/faxbot/engine-version
+
 FROM base
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 LABEL org.opencontainers.image.title="Faxbot fax engine (HylaFAX+)" \

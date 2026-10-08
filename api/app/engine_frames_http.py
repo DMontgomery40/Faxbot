@@ -1,9 +1,11 @@
 """Recipients → Details, "Their fax machine": what a number's fax machine said, what Faxbot learned, and IAF.
 
 Reads need ``settings:read``; approving or removing a fax server for Internet
-Aware Fax needs ``settings:write`` and writes an access audit row. The router's
-background work records every FaxFrames event (patch 0004) and keeps
-Asterisk's faxbot-iaf and faxbot-inrate keys exact while Faxbot is connected.
+Aware Fax, and telling Faxbot to forget what failed with a number, need
+``settings:write`` and write an access audit row. The router's background work
+records every FaxFrames event (patch 0004) and what each placed call used
+(``engine_learning``), keeps what recent calls taught, and keeps Asterisk's
+faxbot-iaf, faxbot-inrate and faxbot-inmode keys exact while Faxbot is connected.
 """
 import asyncio
 import logging
@@ -15,10 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from .access.http import require_identity
 from .access.route_policy import require_permission
 from .config_runtime import run_lifecycle_step
-from . import engine_frames
+from . import engine_frames, engine_learning
 from .routing.background import installation_engine, lifespan_tasks, repeat_async
 
 SYNC_EVERY_SECONDS = 600.0
+# What failed calls taught is kept at least this often: the SSL Fax engine's result can be stored after the call's
+# last event, and a failed fax may try another call soon after.
+LEARN_EVERY_SECONDS = 60.0
 
 
 class FramesWork:
@@ -29,7 +34,12 @@ class FramesWork:
         self.dirty = True
         self.synced_for = None
         self.synced_at = 0.0
+        self.learned_at = 0.0
         ami.on_frames(self.heard)
+        # What each placed call used (both engines' Submission events), and new results to learn from.
+        ami.on_submission(self.submitted)
+        for listen in (ami.on_fax_result, ami.on_inbound_call, ami.on_engine_call):
+            listen(self.result)
 
     def _values(self):
         _, runtime = installation_engine(self.app)
@@ -55,6 +65,27 @@ class FramesWork:
         except RuntimeError:
             record()
 
+    def submitted(self, event):
+        """Keep what a placed call used and why (fax_call_choices), off the event loop; never raises."""
+        if not isinstance(event.get('Learned'), dict):
+            return
+        engine, _ = installation_engine(self.app)
+        if engine is None:
+            return
+
+        def record():
+            try:
+                engine_learning.record_choice(engine, event)
+            except Exception:
+                logging.getLogger(__name__).warning('What Faxbot changed for a fax call could not be recorded.')
+        try:
+            asyncio.get_running_loop().run_in_executor(None, record)
+        except RuntimeError:
+            record()
+
+    def result(self, _event):
+        self.dirty = True
+
     def wake(self):
         self.dirty = True
 
@@ -63,7 +94,8 @@ class FramesWork:
             return False
         now = time.monotonic()
         connection = self.ami.connected_at
-        if not (self.dirty or self.synced_for != connection or now - self.synced_at > SYNC_EVERY_SECONDS):
+        if not (self.dirty or self.synced_for != connection or now - self.synced_at > SYNC_EVERY_SECONDS
+                or now - self.learned_at > LEARN_EVERY_SECONDS):
             return False
         engine, _ = installation_engine(self.app)
         values = await run_lifecycle_step(self._values)
@@ -71,6 +103,9 @@ class FramesWork:
             return False
         self.dirty = False
         try:
+            # What recent failed calls taught, received ones too (their callers' keys follow below).
+            await run_lifecycle_step(lambda: engine_learning.learn_recent(engine, values))
+            self.learned_at = now
             store = await run_lifecycle_step(lambda: engine_frames.FrameStore(engine))
             await engine_frames.sync(self.ami, store, engine, values)
         except BaseException:
@@ -120,13 +155,90 @@ def _endpoint_view(row):
             'removed_at': row['removed_at'].isoformat() + 'Z' if row['removed_at'] else None}
 
 
-def _call_view(row):
-    return {'when': row['created_at'].isoformat() + 'Z', 'direction': row['direction'], 'mode': row['mode'],
-            'status': row['status'], 'rate_first': row['rate_first'], 'rate_lowest': row['rate_lowest'],
-            'trainings': row['trainings'], 'failures_to_train': row['ftt'], 't38_after_ms': row['t38_after_ms'],
-            't38_by': row['t38_by'], 'iaf': row['iaf'], 'sentences': engine_frames.describe(row),
-            'capabilities': engine_frames.decode_dis(row['dis']),
-            'subaddress': engine_frames.decode_sub(row['sub'])}
+MODE_WORDS = {'t38': 'Fax over IP (T.38)', 'audio': 'Audio fax'}
+# Only the fast fax service is named to people; the built-in engine is simply Faxbot.
+ENGINE_WORDS = {'hylafax': "Faxbot's fast fax service"}
+
+
+def _call_view(view):
+    """One call with a number: its call record, its engine's report and its frames, joined (engine_learning)."""
+    from .fax_negotiation import call_sentence
+    from .sip_calls import call_summary
+    frame, record, negotiated = view['frame'] or {}, view['record'], view['engine_row']
+    sentences = engine_frames.describe(frame) if frame else []
+    if negotiated is not None and (negotiated.get('negotiation_by') or negotiated.get('sslfax') == 1):
+        sentences.append(call_sentence(negotiated, record))
+    elif frame and (view['compression'] or view['ecm']):
+        coding = ', '.join(part for part in (
+            f"{view['compression']} compression" if view['compression'] not in (None, 'mixed') else None,
+            {'on': 'error correction', 'off': 'no error correction'}.get(view['ecm'])) if part)
+        if coding:
+            sentences.append(f'The call used {coding}.')
+    try:
+        outcome = call_summary(record) if record is not None else None
+    except Exception:
+        outcome = None
+    return {'when': view['when'].isoformat() + 'Z', 'direction': 'out' if view['direction'] == 'outbound' else 'in',
+            'mode': {'t38': 'T38', 'audio': 'audio'}.get(view['mode']), 'status': view['status'],
+            'rate_first': view['rate_first'], 'rate_lowest': view['rate_lowest'], 'trainings': view['trainings'],
+            'failures_to_train': view['ftt'], 't38_after_ms': view['t38_after_ms'], 't38_by': view['t38_by'],
+            'iaf': view['iaf'], 'sentences': sentences,
+            'capabilities': engine_frames.decode_dis(frame.get('dis')) if frame else None,
+            'subaddress': engine_frames.decode_sub(frame.get('sub')) if frame else None,
+            # Joined from the call record and the engine's report (both engines).
+            'engine': view['engine'], 'engine_label': ENGINE_WORDS.get(view['engine']),
+            'mode_label': MODE_WORDS.get(view['mode']), 'outcome': outcome, 'pages': view['pages'],
+            'seconds': view['seconds'], 'compression': view['compression'], 'ecm': view['ecm'],
+            'resolution': view['resolution'],
+            'changes': engine_learning.choice_sentences(view['choice'])}
+
+
+def _memory_view(row):
+    return {'direction': row['direction'], 'kind': row['kind'], 'engine': row['engine'],
+            'learned_at': row['learned_at'].isoformat() + 'Z', 'expires_at': row['expires_at'].isoformat() + 'Z',
+            'active': row['active'], 'ended': row['ended']}
+
+
+def fax_machine_view(engine, values, number, *, now=None):
+    """Everything "Their fax machine" shows for one number; reads only."""
+    from .hylafax_engine import try_t38
+    now = now or engine_learning.utcnow()
+    store = engine_frames.FrameStore(engine)
+    epoch = engine_learning.current_epoch(engine, values, now=now, write=False)
+    calls = engine_learning.joined_calls(engine, number, limit=10)
+    recent = engine_learning.joined_calls(engine, number, limit=50, since=engine_learning.evidence_since(
+        epoch, now, max(engine_learning.LEARN_DAYS, engine_learning.MEMORY_DAYS)))
+    learned = engine_frames.learned_for(store, values, number, now=now)
+    t38 = try_t38(values)
+    decisions = [engine_learning.decide(values, number, engine=kind, t38=t38, base_ecm=getattr(values, 'sip_fax_ecm', True),
+                                        base_compression=getattr(values, 'sip_fax_compression', None), db=engine,
+                                        now=now) for kind in ('builtin', 'hylafax')]
+    rows = engine_learning.memories(engine, number, epoch=epoch, now=now, views=recent)
+    sentences, notes = [], []
+    for decision in decisions:
+        sentences += [text for text in decision.reasons if text not in sentences]
+        notes += [text for text in decision.notes if text not in notes and text not in sentences]
+    received = engine_learning.memory_sentence(rows, 'inbound')
+    if received:
+        sentences.append(received)
+    if learned.inbound_rate:
+        sentences.append('Calls from this number over audio are received at 14,400 bit/s: its line trained '
+                         'cleanly at that speed on your faxes to it.')
+    since = None
+    if not epoch.get('first'):
+        since = (f'Faxbot started learning about fax numbers again on {engine_learning._day(epoch["started_at"])}, '
+                 'when your trunk settings or a fax engine changed.')
+    return {
+        'number': number, 'calls': [_call_view(view) for view in calls],
+        'learned': {'t38_now': learned.t38_now, 'max_rate': learned.max_rate, 'inbound_rate': learned.inbound_rate,
+                    'audio': decisions[0].audio, 'compression': decisions[1].compression,
+                    'ecm_on': any(decision.ecm_on for decision in decisions), 'sentences': sentences,
+                    'notes': notes, 'since': since},
+        'memory': [_memory_view(row) for row in rows], 'can_forget': any(row['active'] for row in rows),
+        'iaf': engine_frames.iaf_for(store, engine, number),
+        'sentence': ('No fax call with this number has reported its fax machine yet.' if not calls else
+                     f'From the last {len(calls)} call{"" if len(calls) == 1 else "s"} with this number.'),
+    }
 
 
 @router.get('/iaf', dependencies=[Depends(require_permission('settings:read'))])
@@ -146,22 +258,28 @@ async def read_fax_machine(number: str, request: Request):
     number = _number(number, values)
     engine = _engine(request)
 
+    return await run_lifecycle_step(lambda: fax_machine_view(engine, values, number))
+
+
+@router.post('/numbers/{number}/forget', dependencies=[Depends(require_permission('settings:write'))])
+async def forget_fax_machine(number: str, request: Request, identity=Depends(require_identity)):
+    """Forget what failed with this number (fax over IP or audio fax, both directions): its next calls use the
+    usual settings. What the calls themselves recorded stays."""
+    values = request.scope['faxbot.configuration'].active.values
+    number = _number(number, values)
+    engine = _engine(request)
+
     def run():
-        store = engine_frames.FrameStore(engine)
-        learned = engine_frames.learned_for(store, values, number)
-        calls = store.calls(number, limit=10)
-        return {
-            'number': number, 'calls': [_call_view(row) for row in calls],
-            'learned': {'t38_now': learned.t38_now, 'max_rate': learned.max_rate,
-                        'inbound_rate': learned.inbound_rate,
-                        'sentences': [text for text in (learned.t38_reason, learned.rate_reason) if text]
-                        + (['Calls from this number over audio are received at 14,400 bit/s: its line trained '
-                            'cleanly at that speed on your faxes to it.'] if learned.inbound_rate else [])},
-            'iaf': engine_frames.iaf_for(store, engine, number),
-            'sentence': ('No fax call with this number has reported its fax machine yet.' if not calls else
-                         f'From the last {len(calls)} call{"" if len(calls) == 1 else "s"} with this number.'),
-        }
-    return await run_lifecycle_step(run)
+        actor_id, actor_name = _actor(request, identity)
+        count = engine_learning.forget(engine, number, actor_id=actor_id, actor_name=actor_name)
+        if count:
+            _audit(request, identity, 'fax_machine.forget', number, {'number': number, 'forgotten': count})
+        return count
+    count = await run_lifecycle_step(run)
+    _wake(request)
+    sentence = (f'Faxbot forgot what failed with {number}; its next calls use the usual settings.' if count
+                else engine_learning.FORGET_NOTHING)
+    return {'ok': True, 'forgotten': count, 'sentence': sentence}
 
 
 def _actor(request, identity):

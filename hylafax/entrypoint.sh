@@ -50,11 +50,16 @@ refuse() { log "${2:-$1}"; write_status failed "$1"; exit 1; }
 NOT_STARTED="Faxbot's fast fax service could not start; select Apply and connect to try again."
 LINE_DOWN="Faxbot's fast fax service lost a fax line and is starting again."
 
+# The engine's build (the release and a digest of Faxbot's patches), written into the image.
+engine_version=$(tr -cd 'A-Za-z0-9 .+_-' < "${FAXBOT_ENGINE_VERSION_FILE:-/usr/share/faxbot/engine-version}" \
+  2>/dev/null | head -c 120 || true)
+engine_version=${engine_version:-7.0.11}
+
 write_status() {
   local temporary
   temporary=$(mktemp "$out/.engine.status.XXXXXX")
-  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "started": %s, "version": "7.0.11"}\n' \
-    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" "$started_at" > "$temporary"
+  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "started": %s, "version": "%s"}\n' \
+    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" "$started_at" "$engine_version" > "$temporary"
   chmod 644 "$temporary"
   mv -f "$temporary" "$status"
 }

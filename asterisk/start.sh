@@ -14,6 +14,8 @@ shared=$data_dir/asterisk
 # them only once they exist.
 engine_dir=$data_dir/hylafax
 mkdir -p "$out_dir" "$shared" "$engine_dir"
+# The engine's build (the Asterisk release and a digest of Faxbot's patches), written into the image.
+engine_version_file=${FAXBOT_ENGINE_VERSION_FILE:-/usr/share/faxbot/engine-version}
 
 refuse() { printf '%s\n' "$1" >&2; exit 1; }
 safe_value() {
@@ -245,6 +247,15 @@ fi
 # manager connection, once no call is up) to load new settings; Docker's
 # restart policy starts it again.
 date +%s > "$shared/engine-started"
+# Faxbot starts learning from its calls again when the engine's build changes (engine_learning.py).
+if [ -f "$engine_version_file" ] && [ ! -L "$engine_version_file" ]; then
+  version=$(mktemp "$shared/.engine-version.XXXXXX")
+  head -c 200 "$engine_version_file" > "$version"
+  chmod 644 "$version"
+  mv -f "$version" "$shared/engine-version"
+else
+  rm -f "$shared/engine-version"
+fi
 started=$(mktemp "$engine_dir/.asterisk-started.XXXXXX")
 date +%s > "$started"
 chmod 644 "$started"

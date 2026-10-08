@@ -17,15 +17,18 @@ From those rows, per number and only from calls Faxbot was already making
   off, never.
 - **Starting speed (M6).** When a number's calls keep failing to train at a
   speed and then train cleanly at a lower one, later calls start at the lower
-  speed (``FAXBOT_MAXRATE``), skipping the failed training. A lower setting
-  already in force (yours, or the recipient's own limits) always wins.
+  speed (``FAXBOT_MAXRATE``; the SSL Fax engine's first speed), skipping the
+  failed training. A lower setting already in force (yours, or the recipient's
+  own limits) always wins. Calls on either engine count (``engine_learning``).
 - **Received speed (M6).** A caller whose own fax line trained cleanly at
   14,400 bit/s over audio on Faxbot's calls to it gets that speed when it
   calls in over audio, not the 9,600 every other caller gets
   (``faxbot-inrate`` in Asterisk's database).
 
-Learning expires: only calls in the last ``LEARN_DAYS`` days on the same trunk
-(carrier preset and server) count, and a value needs enough calls to stand.
+Learning expires: only calls in the last ``LEARN_DAYS`` days count, on the same
+trunk configuration and fax engine builds (``engine_learning``'s epochs), and a
+value needs enough calls to stand. A speed that fails to train at the learned
+speed too steps down one speed, and stops at the floor (4,800 bit/s).
 
 Internet Aware Fax (M9) is never learned. It applies only to a fax server an
 administrator approved here (``fax_iaf_endpoints``) or to an enrolled direct
@@ -49,7 +52,11 @@ LEARN_DAYS = 30
 RATE_CALLS = 2
 FAMILY_IAF = 'faxbot-iaf'
 FAMILY_INRATE = 'faxbot-inrate'
-_HEX = re.compile(r'(?:[0-9a-f]{2}){0,32}')
+FAMILY_INMODE = 'faxbot-inmode'
+# Frames as patch 0004 keeps them: at most 32 octets, and the internet address frames (CSA, TSA) whole, up to 83
+# (address, control, FCF, then T.30 5.3.6.2.12's sequence, type and length octets and at most 77 address octets).
+FRAME_MAX, ADDRESS_MAX = 32, 83
+_HEX = re.compile(r'(?:[0-9a-f]{2}){0,83}')
 _RATES = re.compile(r'(?:[0-9a-f]{2}(?:\.[0-9a-f]{2}){0,15})?')
 
 # DCS speed codes (FIF octet 2 & 0x3C), as spandsp 0.0.6's fallback table.
@@ -115,6 +122,27 @@ def dcs_rate(text) -> int | None:
     return DCS_RATES.get(frame[4] & 0x3C)
 
 
+def decode_dcs(text) -> dict | None:
+    """What one DCS (the sender's command: address, control, FCF, FIF) chose: speed, compression, error
+    correction and resolution, from the same bits as the DIS (T.30 Table 2); None for anything else."""
+    frame = _octets(text)
+    if len(frame) < 5 or (frame[2] & 0xFE) != 0x82:
+        return None
+    fif = frame[3:]
+    if _bit(fif, 78) or _bit(fif, 79):
+        compression = 'JBIG'
+    elif _bit(fif, 31):
+        compression = 'MMR'
+    elif _bit(fif, 16):
+        compression = 'MR'
+    else:
+        compression = 'MH'
+    resolution = ('superfine' if _bit(fif, 41) or _bit(fif, 42) or _bit(fif, 43)
+                  else 'fine' if _bit(fif, 15) else 'standard')
+    return {'rate': DCS_RATES.get(fif[1] & 0x3C), 'compression': compression, 'ecm': _bit(fif, 27),
+            'resolution': resolution}
+
+
 def decode_rates(text) -> list:
     """Each DCS's speed in bit/s, in order, from the dot-separated codes."""
     text = str(text or '').strip().lower()
@@ -133,12 +161,28 @@ def decode_sub(text) -> str | None:
 
 
 def decode_address(text, fcf) -> dict | None:
-    """A CSA or TSA frame's internet address: its type octet and the address characters."""
+    """A CSA or TSA frame's internet address: its type octet and the address characters.
+
+    T.30 5.3.6.2.12 (as spandsp reads it): after the FCF, a sequence octet, the type (1 e-mail, 2 URL, 3 IPv4,
+    4 IPv6, 5 telephone number), the address length (bits 0-6) and the address, such as an SSL Fax engine's
+    "ssl://<passcode>@<address>:<port>"; one kept before migration 0048 may be cut short at 32 octets. Anything
+    else is read the older way: a type octet and the address.
+    """
     frame = _octets(text)
     if len(frame) < 5 or (frame[2] & 0xFE) != fcf:
         return None
-    address = ''.join(chr(octet) for octet in frame[4:] if 32 <= octet < 127).strip()
-    return {'type': frame[3], 'address': address} if address else None
+    if len(frame) >= 7 and 1 <= (frame[4] & 0x0F) <= 5 and len(frame) - 6 <= (frame[5] & 0x7F):
+        kind, raw = frame[4] & 0x0F, frame[6:6 + (frame[5] & 0x7F)]
+    else:
+        kind, raw = frame[3], frame[4:]
+    address = ''.join(chr(octet) for octet in raw if 32 <= octet < 127).strip()
+    return {'type': kind, 'address': address} if address else None
+
+
+def far_address(row) -> dict | None:
+    """The internet address the far end gave on a call (its CSA), whole: from ``csa_full`` (migration 0048,
+    up to 83 octets) or, for calls recorded before it, the first 32 octets in ``csa``."""
+    return decode_address((row or {}).get('csa_full') or (row or {}).get('csa'), 0x24)
 
 
 # -- the event ---------------------------------------------------------------------------------
@@ -170,8 +214,12 @@ def parse_event(event, *, trunk='') -> dict | None:
     if direction == 'in' and not call_key:
         return None
     frames = {name: _field(event, key, r'(?:[0-9a-f]{2}){0,32}') or None
-              for name, key in (('dis', 'Dis'), ('dcs_first', 'DcsFirst'), ('dcs_last', 'DcsLast'), ('csa', 'Csa'),
-                                ('tsa', 'Tsa'), ('sub', 'Sub'), ('nsf', 'Nsf'))}
+              for name, key in (('dis', 'Dis'), ('dcs_first', 'DcsFirst'), ('dcs_last', 'DcsLast'), ('sub', 'Sub'),
+                                ('nsf', 'Nsf'))}
+    # The internet address frames whole (csa_full, tsa_full), and their first 32 octets where they always were.
+    for name, key in (('csa', 'Csa'), ('tsa', 'Tsa')):
+        whole = _field(event, key, r'(?:[0-9a-f]{2}){0,83}', limit=2 * ADDRESS_MAX) or None
+        frames[name], frames[name + '_full'] = (whole[:2 * FRAME_MAX] if whole else None), whole
     rates_text = _field(event, 'Rates', _RATES.pattern) or None
     rates = decode_rates(rates_text)
     answered, t38_at = _int(_field(event, 'Answered', r'[0-9]{1,12}')), _int(_field(event, 'T38At', r'[0-9]{1,16}'))
@@ -339,11 +387,65 @@ class Learned:
     rate_reason: str = ''
     inbound_rate: int | None = None
     calls: int = 0
+    # Training failed even at the lowest starting speed: Faxbot stopped lowering it (and says why).
+    rate_note: str = ''
+
+
+# The starting speeds Faxbot can ask for (FAXBOT_MAXRATE, and the SSL Fax engine's first speed), fastest first.
+STEP_RATES = (14400, 9600, 7200, 4800)
 
 
 def _allowed_rate(rate):
     """The highest starting speed Faxbot can ask for (FAXBOT_MAXRATE) at or below ``rate``."""
-    return next((allowed for allowed in (14400, 9600, 7200, 4800) if allowed <= rate), None)
+    return next((allowed for allowed in STEP_RATES if allowed <= rate), None)
+
+
+def _below(rate):
+    """The next starting speed below ``rate``, or None at the floor (4,800 bit/s)."""
+    return next((allowed for allowed in STEP_RATES if allowed < rate), None)
+
+
+def _when(call):
+    return call.get('created_at') or datetime.min
+
+
+def learn_rate(calls):
+    """(starting speed, reason, note) from sent calls, newest first: a speed that failed to train twice and
+    worked lower starts later calls lower; failing to train at that speed too steps down one more speed;
+    failing at the floor stops lowering it (the note says so). A later call that started higher and trained
+    cleanly ends it."""
+    trained = [call for call in calls if call.get('rate_first') and call.get('rate_lowest')]
+    state, reason, note, failing = None, '', '', []
+    # Oldest first; calls without a time keep their order (given newest first).
+    for call in sorted(reversed(trained), key=_when):
+        fails = call.get('ftt') or 0
+        if note:
+            continue  # stopped at the floor: nothing lower to try until this evidence ages out
+        if state is None:
+            if fails > 0 and call['rate_lowest'] < call['rate_first'] and call.get('status') == 'SUCCESS':
+                failing.append(call)
+            if len(failing) >= RATE_CALLS:
+                recent = failing[-RATE_CALLS:]
+                lowest = max(item['rate_lowest'] for item in recent)
+                state = _allowed_rate(lowest)
+                if state:
+                    reason = (f'Faxes to this number failed to train at {recent[-1]["rate_first"]:,} bit/s and '
+                              f'went through at {lowest:,}, so Faxbot starts at {state:,} bit/s.')
+            continue
+        if call['rate_first'] <= state and fails > 0:
+            lower = _below(call['rate_first'])
+            if lower is None:
+                state, reason, failing = None, '', []
+                note = ('Faxes to this number failed to train even at 4,800 bit/s, so Faxbot no longer lowers '
+                        'its starting speed for it.')
+            else:
+                failed_at = call['rate_first']
+                state = lower
+                reason = (f'Faxes to this number failed to train at {failed_at:,} bit/s too, so Faxbot starts at '
+                          f'{state:,} bit/s.')
+        elif call['rate_first'] > state and not fails and call.get('status') == 'SUCCESS':
+            state, reason, failing = None, '', []
+    return state, reason, note
 
 
 def learn(calls, values) -> Learned:
@@ -351,12 +453,15 @@ def learn(calls, values) -> Learned:
 
     The evidence for a setting is only calls made without it, so a setting in force does not undo itself;
     calls made with it keep it unless one contradicts it. Each setting ends when its evidence ages out.
+    Calls may come from either engine (``engine``; frames rows are the built-in engine's); T.38 at once
+    is learned only from the built-in engine's calls, which report when T.38 started and who asked.
     """
     sent = [call for call in calls if call['direction'] == 'out']
     t38_now, t38_reason = False, ''
     if getattr(values, 'sip_t38_enabled', True):
-        waited = [call for call in sent if not call['t38_now']][:EARLY_T38_CALLS]
-        early = [call for call in sent if call['t38_now']][:EARLY_T38_CALLS]
+        timed = [call for call in sent if call.get('engine', 'builtin') == 'builtin']
+        waited = [call for call in timed if not call['t38_now']][:EARLY_T38_CALLS]
+        early = [call for call in timed if call['t38_now']][:EARLY_T38_CALLS]
         late = (len(waited) >= EARLY_T38_CALLS
                 and all(call['t38_by'] == 'faxbot' and (call['t38_after_ms'] or 0) >= LATE_T38_MS for call in waited))
         # Asking at once and then ending up on audio (the far end refused it) contradicts it.
@@ -365,31 +470,22 @@ def learn(calls, values) -> Learned:
             t38_now = True
             t38_reason = (f'The last {len(waited)} faxes to this number that waited switched to fax over IP only when '
                           'Faxbot asked, about ten seconds after the answer, so Faxbot now asks at once.')
-    max_rate, rate_reason = None, ''
-    trained = [call for call in sent if call['rate_first'] and call['rate_lowest'] and call['status'] == 'SUCCESS']
-    failing = [call for call in trained if (call['ftt'] or 0) > 0 and call['rate_lowest'] < call['rate_first']]
-    if len(failing) >= RATE_CALLS:
-        lowest = max(call['rate_lowest'] for call in failing[:RATE_CALLS])
-        candidate = _allowed_rate(lowest)
-        newest_failure = failing[0]['created_at'] if 'created_at' in failing[0] else None
-        # Failing again at the learned speed, or a newer call that started higher and trained cleanly, ends it.
-        worse = any(call['rate_first'] <= (candidate or 0) and (call['ftt'] or 0) > 0 for call in trained)
-        better = any(call['rate_first'] > (candidate or 0) and not call['ftt']
-                     and (newest_failure is None or call.get('created_at') is None or call['created_at'] > newest_failure)
-                     for call in trained)
-        if candidate and not worse and not better:
-            max_rate = candidate
-            rate_reason = (f'Faxes to this number failed to train at {failing[0]["rate_first"]:,} bit/s and went '
-                           f'through at {lowest:,}, so Faxbot starts at {max_rate:,} bit/s.')
+    max_rate, rate_reason, rate_note = learn_rate(sent)
     clean = [call for call in sent if call['mode'] == 'audio' and call['rate_first'] == 14400
              and (call['ftt'] or 0) == 0 and call['status'] == 'SUCCESS']
     inbound_rate = 14400 if len(clean) >= RATE_CALLS else None
-    return Learned(t38_now, t38_reason, max_rate, rate_reason, inbound_rate, len(calls))
+    return Learned(t38_now, t38_reason, max_rate, rate_reason, inbound_rate, len(calls), rate_note)
 
 
-def learned_for(store, values, number, *, now=None) -> Learned:
+def learned_for(store, values, number, *, now=None, write=False) -> Learned:
+    """What this number's sent calls on both engines teach, since the trunk and engines last changed
+    (``engine_learning``: the joined call views of the current learning epoch)."""
+    from . import engine_learning
     now = now or utcnow()
-    return learn(store.calls(number, since=now - timedelta(days=LEARN_DAYS), trunk=trunk_key(values)), values)
+    epoch = engine_learning.current_epoch(store.engine, values, now=now, write=write)
+    views = engine_learning.joined_calls(store.engine, number, direction='outbound',
+                                         since=engine_learning.evidence_since(epoch, now, LEARN_DAYS), limit=50)
+    return learn([engine_learning.as_frames(view) for view in engine_learning.on_trunk(views, values)], values)
 
 
 @dataclass(frozen=True)
@@ -403,12 +499,9 @@ def call_options(values, number, *, engine=None) -> CallOptions:
     """For one sent fax: T.38 at once, Internet Aware Fax and a learned starting speed. Never raises."""
     if engine is None:
         return CallOptions()
-    try:
-        store = FrameStore(engine)
-        learned = learned_for(store, values, number)
-        return CallOptions(learned.t38_now, iaf_for(store, engine, number), learned.max_rate)
-    except Exception:
-        return CallOptions()
+    from . import engine_learning
+    decision = engine_learning.decide(values, number, engine='builtin', db=engine)
+    return CallOptions(decision.t38_now, decision.iaf, decision.max_rate)
 
 
 # -- Asterisk's database: IAF and received speed per caller -----------------------------------
@@ -424,7 +517,7 @@ def caller_keys(number) -> set:
 
 
 def desired_families(store, engine, values, *, now=None) -> dict:
-    """{family: {key: value}} for faxbot-iaf and faxbot-inrate."""
+    """{family: {key: value}} for faxbot-iaf, faxbot-inrate and faxbot-inmode."""
     now = now or utcnow()
     iaf = {}
     for endpoint in store.endpoints_list():
@@ -444,11 +537,19 @@ def desired_families(store, engine, values, *, now=None) -> dict:
         if learned_for(store, values, number, now=now).inbound_rate == 14400:
             for key in caller_keys(number):
                 inrate[key] = '14400'
-    return {FAMILY_IAF: iaf, FAMILY_INRATE: inrate}
+    # Callers whose calls failed only over T.38 recently are answered with audio fax (engine_learning, T8), while
+    # INBOUND_AUDIO is on; off, the family stays empty and any key left in it is removed.
+    from . import engine_learning
+    inmode = {}
+    if engine_learning.INBOUND_AUDIO:
+        for number in sorted(engine_learning.inbound_audio_callers(store.engine, values, now=now)):
+            for key in caller_keys(number):
+                inmode[key] = 'audio'
+    return {FAMILY_IAF: iaf, FAMILY_INRATE: inrate, FAMILY_INMODE: inmode}
 
 
 async def sync(ami, store, engine, values, *, now=None) -> dict:
-    """Make Asterisk's faxbot-iaf and faxbot-inrate keys exactly what Faxbot knows; {family: changes}."""
+    """Make Asterisk's faxbot-iaf, faxbot-inrate and faxbot-inmode keys exactly what Faxbot knows; {family: changes}."""
     import asyncio
     from .inbound.screening import _tree
     desired = await asyncio.to_thread(desired_families, store, engine, values, now=now)
@@ -501,7 +602,7 @@ def describe(row) -> list:
         seconds = row['t38_after_ms'] / 1000
         who = 'the far end asked for it' if row.get('t38_by') == 'far' else 'Faxbot asked for it'
         lines.append(f'Fax over IP started {seconds:.1f} seconds after the answer; {who}.')
-    address = decode_address(row.get('csa'), 0x24)
+    address = far_address(row)
     if address:
         lines.append(f"The far end gave its internet address: {address['address']}.")
     sub = decode_sub(row.get('sub'))

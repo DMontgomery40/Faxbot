@@ -108,9 +108,11 @@ def test_failed_trainings_at_one_speed_start_later_calls_at_the_speed_that_worke
     failed = [call(rate_first=14400, rate_lowest=9600, ftt=2, created_at=day + timedelta(hours=hour)) for hour in (0, 1)]
     clean = [call(rate_first=9600, rate_lowest=9600, ftt=0, created_at=day + timedelta(hours=hour)) for hour in (2, 3, 4, 5)]
     assert engine_frames.learn(list(reversed(failed + clean)), values()).max_rate == 9600
-    # Failing at the learned speed too ends it; so does a later call that trained cleanly at the higher speed.
+    # Failing at the learned speed too steps down one speed (Builder AW: never back up to 14,400); a later call
+    # that started higher and trained cleanly ends it.
     worse = call(rate_first=9600, rate_lowest=7200, ftt=1, created_at=day + timedelta(hours=6))
-    assert engine_frames.learn([worse] + list(reversed(failed + clean)), values()).max_rate is None
+    stepped = engine_frames.learn([worse] + list(reversed(failed + clean)), values())
+    assert stepped.max_rate == 7200 and 'failed to train at 9,600 bit/s too' in stepped.rate_reason
     better = call(rate_first=14400, rate_lowest=14400, ftt=0, created_at=day + timedelta(hours=7))
     assert engine_frames.learn([better] + list(reversed(failed + clean)), values()).max_rate is None
 
@@ -156,9 +158,20 @@ def test_call_options_ask_for_t38_at_once_lower_the_speed_and_use_iaf_only_where
         store.record(row, now=now - timedelta(minutes=number))
     options = engine_frames.call_options(settings, NUMBER, engine=engine)
     assert options.t38_now and options.max_rate == 9600 and options.iaf is None
-    # Another trunk: nothing learned there yet.
+    # Another trunk: nothing learned there yet. Coming back does not bring the old learning back (engine
+    # learning epochs): only calls made since count, so three new ones teach it again.
     other = values(SIP_TRUNK_PRESET='signalwire', SIP_TRUNK_HOST='example.signalwire.com')
     assert engine_frames.call_options(other, NUMBER, engine=engine) == engine_frames.CallOptions()
+    # The background work keeps an epoch for the trunk in force: this one, then the other, then this one again.
+    from app import engine_learning
+    for trunk_values in (settings, other, settings):
+        engine_learning.current_epoch(engine, trunk_values)
+    assert engine_frames.call_options(settings, NUMBER, engine=engine) == engine_frames.CallOptions()
+    later = datetime.utcnow() + timedelta(seconds=1)
+    for number in range(3):
+        row = engine_frames.parse_event(event(AttemptID=f'again{number}', Rates='20.24', Ftt='1'),
+                                        trunk=engine_frames.trunk_key(settings))
+        store.record(row, now=later + timedelta(seconds=number))
     store.add_endpoint(NUMBER, 'endpoint', 'Head office SR140', actor_name='Dana Admin')
     assert engine_frames.call_options(settings, NUMBER, engine=engine).iaf == 'endpoint'
     assert engine_frames.call_options(settings, '+13035550151', engine=engine).iaf is None

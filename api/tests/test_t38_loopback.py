@@ -1007,6 +1007,35 @@ def test_the_far_ends_frames_come_with_each_built_in_engine_call_and_t38_at_once
     print(json.dumps({'frames_and_early_t38': report}, indent=2))
 
 
+def test_audio_fax_for_one_number_keeps_its_calls_on_audio_both_ways_with_the_same_pages(tmp_path):
+    """Engine learning (T8): fax over IP failed to or from one number, so Faxbot uses audio fax for it although both
+    sides offer T.38. Sent: the call carries FAXBOT_AUDIO=yes (SendFAX F refuses the far end's T.38 request).
+    Received: the caller's key in faxbot-inmode makes Faxbot answer with ReceiveFAX F; here the caller asks for T.38
+    at the answer (FAXBOT_T38_NOW), is refused and goes on as audio. Every page arrives intact.
+
+    Not covered, because it fails (measured 2026-10-07): a caller that stays silent for about ten seconds before
+    asking for T.38 (Asterisk's own SendFAX z) misses Faxbot's three DIS and gets a DCN, as GOfax.IP's inbound
+    fallback would. That failure teaches "audio failed" too, so the caller goes back to the usual settings."""
+    from app import engine_frames
+    (tmp_path / 'sent').mkdir()
+    (tmp_path / 'received').mkdir()
+    sent = exchange(tmp_path / 'sent', extra_variables={'FAXBOT_AUDIO': 'yes'})
+    received = exchange(tmp_path / 'received', extra_variables={'FAXBOT_T38_NOW': 'yes'},
+                        receiver_db={f'faxbot-inmode/{key}': 'audio' for key in engine_frames.caller_keys(CALLER)})
+    report = {}
+    for name, outcome in (('sent', sent), ('received', received)):
+        assert outcome['result']['Status'] == 'SUCCESS' and outcome['result']['Pages'] == '2', (name, outcome['result'])
+        assert outcome['result']['Mode'] == 'audio', (name, outcome['result'])
+        body = outcome['captured']['body']
+        assert body['call']['t38'] is False and body['faxpages'] == 2, (name, body['call'])
+        sent_heights, received_heights = page_heights(outcome['sent']), page_heights(outcome['received'])
+        header_rows = received_heights[0] - sent_heights[0]
+        assert [page['body_sha256'] for page in page_digests(outcome['received'], skip_rows=header_rows)] == \
+            [page['body_sha256'] for page in page_digests(outcome['sent'])], name
+        report[name] = {'mode': outcome['result']['Mode'], 'seconds': outcome['submit_to_result_seconds']}
+    print(json.dumps({'audio_for_one_number': report}, indent=2))
+
+
 def test_internet_aware_fax_between_two_faxbots_is_shorter_with_the_same_pages(tmp_path):
     image = four_pages(tmp_path / 'four.tiff')
     key = CALLER.lstrip('+')

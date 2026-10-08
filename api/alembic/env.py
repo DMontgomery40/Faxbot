@@ -53,6 +53,7 @@ config.attributes["schema_destination_schedule"] = importlib.import_module(packa
 config.attributes["schema_intake_sources"] = importlib.import_module(package + ".schema_intake_sources")
 config.attributes["schema_friendly_pages"] = importlib.import_module(package + ".schema_friendly_pages")
 config.attributes["schema_partner_relay"] = importlib.import_module(package + ".schema_partner_relay")
+config.attributes["schema_engine_learning"] = importlib.import_module(package + ".schema_engine_learning")
 
 
 def migrate(connection):

@@ -745,7 +745,7 @@ const consoleHandlers = [
   http.get('/admin/sip/negotiation', ({ request }) => json({
     days: Number(new URL(request.url).searchParams.get('days') ?? 30), calls: 0, measured_calls: 0, groups: [],
     sentence: 'No answered fax calls on your phone line in the last 30 days.',
-    note: 'Faxbot only measures these for now; it does not change speed, compression or error correction because of them.' })),
+    note: 'For one number at a time, Faxbot starts slower or uses a more robust compression only after its own calls to that number fail the same way more than once; it never turns error correction off or lowers resolution.' })),
   http.get('/admin/sip/negotiation/received/:id', () => json({ detail: 'No phone-line call carried this fax.' }, 404)),
   // The network check for fax over IP: nothing to show until a test says otherwise.
   http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),

@@ -1,8 +1,10 @@
 """What each fax call negotiated: the engines' reports, the detail sentence and the summary (migration 0023).
 
-Measurement only. Nothing here chooses a speed, a compression or error
-correction for a call, and recording runs after the fax's own result is saved
-(``hylafax_records.safely``), so it never changes delivery.
+Nothing here chooses a speed, a compression or error correction for a call,
+and recording runs after the fax's own result is saved
+(``hylafax_records.safely``), so it never changes delivery. What Faxbot learns
+from these records per number, and changes for later calls, is
+``engine_learning.py``.
 
 What each engine reports (checked against the source each engine runs:
 HylaFAX+ 7.0.11, Asterisk 22.11.0 with spandsp 0.0.6):
@@ -48,8 +50,10 @@ COLUMNS = ('negotiation_by', 'rate_first', 'rate_lowest', 'rate_last_page', 'tra
            'resolution_last_page', 'ecm')
 DAYS = (7, 30, 90)
 NOT_REPORTED = 'not reported by this engine'
-MEASURE_ONLY = ('Faxbot only measures these for now; it does not change speed, compression or error correction '
-                'because of them.')
+# What Faxbot does with these measurements (engine_learning.py, per number); the trunk page shows it.
+MEASURE_ONLY = ('For one number at a time, Faxbot starts slower or uses a more robust compression only after its '
+                'own calls to that number fail the same way more than once; it never turns error correction off or '
+                'lowers resolution.')
 
 
 def _rate(value):

@@ -10,7 +10,7 @@ import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-console-key' });
 const JOB = 'a'.repeat(32);
-const MEASURE_ONLY = 'Faxbot only measures these for now; it does not change speed, compression or error correction because of them.';
+const MEASURE_ONLY = 'For one number at a time, Faxbot starts slower or uses a more robust compression only after its own calls to that number fail the same way more than once; it never turns error correction off or lowers resolution.';
 const LAST_PAGE = 'The last page went at 9600 bit/s and had standard resolution; compression and error correction are not '
   + 'reported by this engine; 1 page in a 44 s call.';
 

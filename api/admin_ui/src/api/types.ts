@@ -75,10 +75,11 @@ export interface FaxJob extends DeliveryMetadata {
   // Present when the fax waited, or went, with other faxes to the same number.
   together?: FaxTogetherSummary | null;
   // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
-  // negotiation: what the call negotiated (measurement only), once the call has a result.
+  // negotiation: what the call negotiated, once the call has a result. changes: what Faxbot changed for this
+  // call from what it learned about the number, one sentence each.
   fax_engine?: {
     engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null;
-    negotiation?: CallNegotiation | null;
+    negotiation?: CallNegotiation | null; changes?: string[];
   } | null;
   // Pages Faxbot packed onto long pages, blank space it left out, or standard resolution it kept; one sentence each.
   page_layout?: SentPages | null;

@@ -39,6 +39,8 @@ def test_sent_details_say_how_the_pages_went_or_why_the_built_in_engine_carried_
     assert detail.pop('negotiation')['sentence'] == (
         'The pages went over the internet instead of the phone line; compression, resolution and error correction '
         'are not reported by this engine; 6 pages in 12 s.')
+    # Nothing Faxbot learned about the number changed this call (engine_learning's fax_call_choices).
+    assert detail.pop('changes') == []
     assert detail == {'engine': 'hylafax', 'sslfax': True, 'sentence':
                       'The pages were sent faster during the call: 12 seconds instead of about 48.'}
     other = 'c' * 32

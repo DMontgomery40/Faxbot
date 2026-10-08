@@ -16,9 +16,10 @@ function message(error: unknown, fallback: string) {
   return fallback;
 }
 
-// Recipients → Details, "Their fax machine": what this number's fax machine said on recent calls, what Faxbot
-// learned from them (asking for fax over IP at once, the speed to start at), and Internet Aware Fax between fax
-// servers, which you approve per number.
+// Recipients → Details, "Their fax machine": this number's recent calls on either fax engine (how each went and what
+// its fax machine said), what Faxbot learned from them and changes for the number (audio fax or fax over IP, the
+// speed to start at, compression, error correction), a way to forget what failed, and Internet Aware Fax between
+// fax servers, which you approve per number.
 export default function FaxMachinePanel({ client, number, canWrite }: FaxMachinePanelProps) {
   const [view, setView] = useState<FaxMachineView | null>(null);
   const [server, setServer] = useState<IafServer | null>(null);
@@ -58,18 +59,35 @@ export default function FaxMachinePanel({ client, number, canWrite }: FaxMachine
   };
 
   if (!view) return null;
-  const latest = view.calls[0];
+  const recent = view.calls.slice(0, 5);
+  const notes = [...(view.learned.notes ?? []), ...(view.learned.since ? [view.learned.since] : [])];
   return (
     <Box data-testid="fax-machine" sx={{ mt: 3 }}>
       <Typography variant="subtitle1">Their fax machine</Typography>
       <Typography variant="body2" color="text.secondary">{view.sentence}</Typography>
-      {latest && (
-        <Box sx={{ mt: 1 }}>
-          <Typography variant="body2" color="text.secondary">Last call, {formatServerTime(latest.when)}:</Typography>
-          {latest.sentences.map((text) => <Typography key={text} variant="body2">{text}</Typography>)}
+      {recent.map((call) => (
+        <Box key={`${call.when}-${call.direction}`} sx={{ mt: 1 }} data-testid="fax-machine-call">
+          <Typography variant="body2" color="text.secondary">
+            {[formatServerTime(call.when), call.direction === 'out' ? 'Sent' : 'Received', call.mode_label, call.engine_label]
+              .filter(Boolean).join(' · ')}
+          </Typography>
+          {call.outcome && <Typography variant="body2">{call.outcome}</Typography>}
+          {[...call.sentences, ...(call.changes ?? [])].map((text) => (
+            <Typography key={text} variant="body2">{text}</Typography>
+          ))}
         </Box>
+      ))}
+      {view.learned.sentences.length > 0 && (
+        <Typography variant="subtitle2" sx={{ mt: 2 }}>What Faxbot changes for this number</Typography>
       )}
       {view.learned.sentences.map((text) => <Alert key={text} severity="info" sx={{ mt: 1 }}>{text}</Alert>)}
+      {notes.map((text) => <Typography key={text} variant="body2" color="text.secondary" sx={{ mt: 1 }}>{text}</Typography>)}
+      {view.can_forget && canWrite && (
+        <Button size="small" sx={{ mt: 1 }} disabled={busy}
+          onClick={() => { void run(() => client.forgetFaxMachine(view.number), 'Faxbot forgot what failed with this number; its next calls use the usual settings.'); }}>
+          Forget what failed
+        </Button>
+      )}
       {notice && <Alert severity={notice.severity} sx={{ mt: 1 }}>{notice.text}</Alert>}
 
       <Typography variant="subtitle2" sx={{ mt: 2 }}>Internet Aware Fax (fax between fax servers, faster than a phone line)</Typography>

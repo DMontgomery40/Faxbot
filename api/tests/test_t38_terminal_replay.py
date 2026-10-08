@@ -75,6 +75,12 @@ SUB = bytes([0xFF, 0x03, 0xC3]) + bytes(reversed(b'4021'.ljust(20)))
 DCS = bytes([0xFF, 0x13, 0x83, 0x00, 0xE2, 0x94, 0x04])
 
 
+# The far end's internet address (CSA) as an SSL Fax engine sends it, laid out as T.30 5.3.6.2.12 says: sequence 0,
+# type 2 (URL), the length, the address. 45 octets: 0004 keeps CSA and TSA whole, up to 83 (every other frame 32).
+SSL_ADDRESS = b'ssl://Synthetic1Pass@198.51.100.7:10443'
+CSA = bytes([0xFF, 0x03, 0x24, 0x00, 0x02, len(SSL_ADDRESS)]) + SSL_ADDRESS
+
+
 def lines(packets):
     return ''.join(f'{at:.6f} {seq} {ifp}\n' for seq, (at, ifp) in enumerate(packets))
 
@@ -83,6 +89,13 @@ def answer_sequence():
     csi, moment = hdlc(1.0, CSI, last=False)
     dis, _ = hdlc(moment, DIS)
     return lines([(0.0, NO_SIGNAL)] + csi + dis)
+
+
+def answer_with_address_sequence():
+    csi, moment = hdlc(1.0, CSI, last=False)
+    csa, moment = hdlc(moment, CSA, last=False)
+    dis, _ = hdlc(moment, DIS)
+    return lines([(0.0, NO_SIGNAL)] + csi + csa + dis)
 
 
 def sender_sequence():
@@ -186,6 +199,7 @@ def replay():
         context = Path(folder)
         (context / 'data').mkdir()
         (context / 'data' / 'answer.ifp').write_text(answer_sequence())
+        (context / 'data' / 'answer-address.ifp').write_text(answer_with_address_sequence())
         (context / 'data' / 'sender.ifp').write_text(sender_sequence())
         (context / 'data' / 'proof.tif').write_bytes(tiff)
         for capture in CAPTURES:
@@ -218,6 +232,14 @@ def test_the_far_ends_dis_is_kept_exactly_as_it_sent_it(replay):
     assert found['dis'] == DIS.hex()
     # A sending terminal answers with its own DCS: kept as the session's DCS, sent by this side.
     assert found['dcs_first'].startswith('ff1383') and found['trainings'] == '1'
+
+
+def test_a_long_internet_address_from_the_far_end_is_kept_whole(replay):
+    """An SSL Fax CSA is often longer than 32 octets; 0004 keeps CSA and TSA up to T.30's longest (83)."""
+    found = kept(replay('replay', '/data/answer-address.ifp', 'send'))
+    assert len(CSA) > 32 and found['csa'] == CSA.hex() and found['dis'] == DIS.hex()
+    from app import engine_frames
+    assert engine_frames.far_address({'csa_full': found['csa']})['address'] == SSL_ADDRESS.decode()
 
 
 def test_a_senders_subaddress_and_dcs_are_kept_when_receiving(replay):

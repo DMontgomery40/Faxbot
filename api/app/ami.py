@@ -79,6 +79,7 @@ def prepare_originate_fields(
     ecm: Optional[bool] = None,
     t38_now: bool = False,
     iaf: Optional[str] = None,
+    audio: bool = False,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -140,6 +141,11 @@ def prepare_originate_fields(
         if iaf not in ("peer", "endpoint"):
             raise ValueError("Unsupported AMI fax mode")
         variables["FAXBOT_IAF"] = iaf
+    # Audio fax for this call only: fax over IP (T.38) failed to this number and audio has not (engine_learning).
+    if not isinstance(audio, bool):
+        raise ValueError("Unsupported AMI fax mode")
+    if audio:
+        variables["FAXBOT_AUDIO"] = "yes"
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -189,25 +195,58 @@ def reply_choice(values, *, mailbox_id=None):
         return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
 
 
-def frame_options(values, dest, max_rate=None):
-    """What Faxbot learned or was told about ``dest`` (engine_frames.py), as Originate keyword arguments.
+def sender_identity(job_id):
+    """(header text, station ID) for a fax Faxbot relays for a partner (``direct.relay``), or None for every
+    other fax. Never raises: without the relay, or when nothing can be read, the fax carries its own."""
+    try:
+        from .direct.relay import sender_identity_for
+    except Exception:
+        return None
+    try:
+        found = sender_identity_for(_database(), job_id)
+    except Exception:
+        return None
+    if not isinstance(found, (tuple, list)) or len(found) != 2:
+        return None
+    header, station = found
+    if not isinstance(header, str) or not isinstance(station, str):
+        return None
+    return header, station
 
-    T.38 at once and a learned starting speed come from Faxbot's own calls to the number; a learned speed
-    only ever lowers this call's speed. Internet Aware Fax only for a number you approved or an enrolled
+
+def learned_options(learned):
+    """Originate keyword arguments for what Faxbot learned about the number (engine_learning.Decision):
+    audio fax, T.38 at once and Internet Aware Fax. Speed and error correction come with the call."""
+    found = {}
+    if getattr(learned, "audio", False):
+        found["audio"] = True
+    if getattr(learned, "t38_now", False):
+        found["t38_now"] = True
+    if getattr(learned, "iaf", None):
+        found["iaf"] = learned.iaf
+    return found
+
+
+def frame_options(values, dest, max_rate=None):
+    """What Faxbot learned or was told about ``dest`` (engine_learning.py), as Originate keyword arguments.
+
+    Audio fax, T.38 at once and a learned starting speed come from Faxbot's own calls to the number; a learned
+    speed only ever lowers this call's speed. Internet Aware Fax only for a number you approved or an enrolled
     partner marked IAF capable. Never raises: nothing known changes nothing.
     """
-    from . import engine_frames
+    from . import engine_learning
+    from .hylafax_engine import try_t38
+    database = _database()
+    if database is None:
+        return {}
     try:
-        options = engine_frames.call_options(values, dest, engine=_database())
+        learned = engine_learning.decide(values, dest, engine="builtin", t38=try_t38(values), base_rate=max_rate,
+                                         db=database)
     except Exception:
         return {}
-    found = {}
-    if options.t38_now:
-        found["t38_now"] = True
-    if options.iaf:
-        found["iaf"] = options.iaf
-    if options.max_rate and (max_rate is None or options.max_rate < max_rate):
-        found["max_rate"] = options.max_rate
+    found = learned_options(learned)
+    if learned.max_rate and (max_rate is None or learned.max_rate < max_rate):
+        found["max_rate"] = learned.max_rate
     return found
 
 
@@ -231,14 +270,23 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     from .routing.reply_number import caller_id_for
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
-    limits.update(frame_options(values, dest, limits.get("max_rate")))
+    learned = getattr(call, "learned", None)
+    if learned is not None:
+        limits.update(learned_options(learned))  # the speed and error correction it chose are in the call
+    else:
+        limits.update(frame_options(values, dest, limits.get("max_rate")))
+    # A fax relayed for a partner shows the partner's header text and station ID; caller ID is unchanged.
+    identity = sender_identity(job_id)
+    header = identity[0] if identity is not None else values.fax_header
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
-                                        header=values.fax_header, attempt_id=attempt_id, **limits)
+                                        header=header, attempt_id=attempt_id,
+                                        station_id=identity[1] if identity is not None else None, **limits)
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
-        header=values.fax_header, attempt_id=attempt_id, station_id=choice.number or None,
+        header=header, attempt_id=attempt_id,
+        station_id=identity[1] if identity is not None else (choice.number or None),
         dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
 
 
@@ -611,11 +659,15 @@ class AMIClient:
         the action is written, so an unacknowledged call still leaves a record.
         """
         fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call)
-        self._emit("Submission", {
+        submission = {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
             "CallerID": fields["CallerID"], "Preset": settings.sip_trunk_preset or "",
             "FaxPreference": "yes" if FAX_PREFERENCE_VARIABLE in fields["Variable"] else "no",
-        })
+        }
+        learned = getattr(call, "learned", None)
+        if learned is not None and learned.changed():
+            submission["Learned"] = learned.payload()  # what this call used and why (fax_call_choices)
+        self._emit("Submission", submission)
         await self._send_action(fields)
 
     def on_originate_response(self, cb: Callable[[Dict[str, str]], None]):

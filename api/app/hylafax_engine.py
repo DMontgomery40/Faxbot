@@ -485,6 +485,8 @@ class CallSettings:
     ecm: bool
     fine: bool
     compression: str
+    # What Faxbot learned about this number changed for this call, with one sentence each (engine_learning).
+    learned: object = field(default=None, compare=False, repr=False)
 
 
 # The engine's own T.38 choice ----------------------------------------------------------------------------
@@ -593,17 +595,35 @@ def try_t38(values) -> bool:
         return True
 
 
-def call_settings(values, number, *, recipient=None, engine=False) -> CallSettings:
+def call_settings(values, number, *, recipient=None, engine=False, learn=True) -> CallSettings:
     """The settings for one call to ``number``; ``recipient`` is that number's own limits, when set.
-    ``engine``: the SSL Fax engine places the call, which may be on audio fax on its own."""
+    ``engine``: the SSL Fax engine places the call, which may be on audio fax on its own.
+
+    What Faxbot learned from its own calls to the number (``engine_learning.decide``) may make this call
+    audio fax, start it slower, use a more robust compression or turn error correction on; never off, and
+    never past the number's own limits. ``learned`` says what changed and why. Never raises.
+    """
     from . import sip_trunk
     options = sip_trunk.fax_options(values)
     t38 = try_t38(values) and not (engine and engine_t38_off(values))
     override = (recipient or {}).get('max_rate')
     ecm = (recipient or {}).get('ecm')
-    return CallSettings(t38=t38, max_rate=options.rate_for(t38=t38, override=override),
-                        ecm=options.ecm if ecm is None else bool(ecm), fine=options.fine,
-                        compression=options.compression)
+    base_ecm = options.ecm if ecm is None else bool(ecm)
+    learned = None
+    if learn:
+        from . import engine_learning
+        learned = engine_learning.decide(
+            values, number, engine='hylafax' if engine else 'builtin', t38=t38,
+            rate_for=lambda on: options.rate_for(t38=on, override=override), base_ecm=base_ecm,
+            base_compression=options.compression, recipient=recipient)
+        t38 = t38 and not learned.audio
+    max_rate = options.rate_for(t38=t38, override=override)
+    if learned is not None and learned.max_rate and learned.max_rate < max_rate:
+        max_rate = learned.max_rate
+    return CallSettings(t38=t38, max_rate=max_rate, ecm=base_ecm or bool(learned is not None and learned.ecm_on),
+                        fine=options.fine,
+                        compression=(learned.compression if learned is not None and learned.compression
+                                     else options.compression), learned=learned)
 
 
 def recipient_limits(engine, number):
@@ -829,24 +849,30 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
 async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
-    from .ami import reply_choice
+    from .ami import reply_choice, sender_identity
     settings = settings or call_settings(values, dest, engine=True)
     # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
     choice = await asyncio.to_thread(reply_choice, values)
+    # A fax relayed for a partner carries that partner's header text and station ID (direct.relay).
+    identity = await asyncio.to_thread(sender_identity, job_id)
+    header, station = identity if identity is not None else (values.fax_header or '', choice.number)
     fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice)
     tag = new_tag()
     plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
-                                      tiff_path=tiff_path, header=values.fax_header or '', settings=settings,
-                                      station=choice.number)
+                                      tiff_path=tiff_path, header=header, settings=settings,
+                                      station=station)
     except BaseException:
         await forget_plan(ami, tag)
         raise
     job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
                       'Preset': values.sip_trunk_preset or '',
                       'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    learned = getattr(settings, 'learned', None)
+    if learned is not None and learned.changed():
+        job.submission['Learned'] = learned.payload()  # what this call used and why (fax_call_choices)
     return job
 
 

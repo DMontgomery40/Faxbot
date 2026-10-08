@@ -133,7 +133,7 @@ def _number(value):
 @trunk.command('negotiation')
 def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
                                                help='How many days to count: 7, 30 or 90.')):
-    """Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot only measures these; it changes nothing because of them."""
+    """Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot changes speed or compression for one number only after its own calls to it fail the same way more than once, and never turns error correction off."""
     if days not in (7, 30, 90):
         raise typer.BadParameter('Use 7, 30 or 90.', param_hint='--days')
     result = state.api().get('/admin/sip/negotiation', params={'days': days})

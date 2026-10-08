@@ -6,7 +6,7 @@
  *   t38_terminal_replay replay FILE send|receive
  *     FILE lines: "<seconds> <sequence number> <IFP hex>", the far end's T.38 as captured. A terminal that sends
  *     (send) or receives (receive) a fax hears it, with 0004's frame handler, and prints what it kept:
- *     "dis <hex>", "dcs_first <hex>", "dcs_last <hex>", "rates <codes>", "csa <hex>", "sub <hex>",
+ *     "dis <hex>", "dcs_first <hex>", "dcs_last <hex>", "rates <codes>", "csa <hex>", "tsa <hex>", "sub <hex>",
  *     "trainings N", "ftt N" (empty hex when not seen).
  *   t38_terminal_replay pair TIFF OUT paced|peer
  *     Two terminals joined back to back send TIFF to OUT over T.38, with error correction. "peer" is 0004's
@@ -40,7 +40,7 @@ static int no_tx(t38_core_state_t *s, void *user_data, const uint8_t *buf, int l
 
 static void print_frame(const char *name, const faxbot_frame_t *frame)
 {
-	char hex[2 * FAXBOT_FRAME_MAX + 1];
+	char hex[2 * FAXBOT_ADDRESS_MAX + 1];
 
 	faxbot_hex(frame->frame, frame->len, hex);
 	printf("%s %s\n", name, hex);
@@ -119,6 +119,7 @@ static int replay(const char *path, int calling)
 	faxbot_rates_text(&frames, rates, sizeof(rates));
 	printf("rates %s\n", rates);
 	print_frame("csa", &frames.csa);
+	print_frame("tsa", &frames.tsa);
 	print_frame("sub", &frames.sub);
 	printf("trainings %u\nftt %u\n", frames.dcs, frames.ftt);
 	return 0;
