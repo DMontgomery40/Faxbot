@@ -19,6 +19,7 @@ Faxbot did before (``Pinned`` is None).
 """
 from dataclasses import dataclass
 import json
+from weakref import WeakKeyDictionary
 
 import sqlalchemy as sa
 
@@ -31,12 +32,15 @@ RELAY = 'relay'
 SKIPS = ('turned_off', 'not_ready', 'busy', 'over_cap', 'unknown_cost', 'spending_limit', 'unavailable', 'tried')
 
 
-def _table(connection, name, cache={}):
-    """Reflect one rules table through ``connection``; cached per engine URL and name."""
-    key = (str(connection.engine.url), name)
-    found = cache.get(key)
+_REFLECTED = WeakKeyDictionary()
+
+
+def _table(connection, name):
+    """Reflect one rules table through ``connection``; cached per engine and name."""
+    cache = _REFLECTED.setdefault(connection.engine, {})
+    found = cache.get(name)
     if found is None:
-        found = cache[key] = sa.Table(name, sa.MetaData(), autoload_with=connection)
+        found = cache[name] = sa.Table(name, sa.MetaData(), autoload_with=connection)
     return found
 
 

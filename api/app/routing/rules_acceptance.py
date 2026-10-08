@@ -18,6 +18,7 @@ With no rules published the decision is the automatic choice: exactly the
 routes Faxbot used before rules existed. Nothing here sends a fax.
 """
 from dataclasses import dataclass
+from weakref import WeakKeyDictionary
 
 import sqlalchemy as sa
 
@@ -26,6 +27,18 @@ from ..rules.evaluate import decide
 from ..rules.explain import FactsReader
 from ..rules.store import RuleStore, compile_scopes
 from . import envelope as envelopes, holds as hold_store
+
+
+_STORES = WeakKeyDictionary()
+
+
+def _stores(engine):
+    """``(RuleStore, RouteStore)`` reflected once per engine: every fax accepted reuses them."""
+    found = _STORES.get(engine)
+    if found is None:
+        from .store import RouteStore
+        found = _STORES[engine] = (RuleStore(engine), RouteStore(engine))
+    return found
 
 
 class RulesAcceptanceError(ValueError):
@@ -84,7 +97,7 @@ def check_choices(engine, *, mailbox=None, workflow=None, labels=()):
                 raise RulesAcceptanceError('There is no such mailbox to send from. Choose one of your mailboxes.')
     if not workflow and not labels:
         return
-    document = _organization_document(RuleStore(engine))
+    document = _organization_document(_stores(engine)[0])
     if workflow and workflow not in {item.get('key') for item in document.get('workflows') or ()
                                      if isinstance(item, dict)}:
         raise RulesAcceptanceError(f'There is no workflow called {workflow}. Add it on Providers → Rules → Workflows, '
@@ -149,16 +162,15 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
             urgent=False, by_call=False, case_packet=False, document_sha256=None, direct_ready=None):
     """Read the facts and decide a preview, before the acceptance lock."""
     from ..accounts import default_sending_key, sending_accounts
-    from .store import RouteStore
     values = revision.values
     accounts = sending_accounts(values)
     principal, kind, key_id = sender_of(actor)
-    reader = FactsReader(engine, values, RouteStore(engine), alternates=alternate_lookup(engine),
+    store, routes = _stores(engine)
+    reader = FactsReader(engine, values, routes, alternates=alternate_lookup(engine),
                          direct_ready=direct_ready)
     facts = reader.read(to_number=destination, accounts=accounts, pages=pages, size_bytes=size_bytes,
                         principal_id=principal, sender_kind=kind, key_id=key_id, mailbox_id=mailbox,
                         workflow=workflow, labels=labels, urgent=urgent, by_call=by_call, case_packet=case_packet)
-    store = RuleStore(engine)
     decision = decide(store.compiled_active(), facts, accounts)
     return Prepared(facts, accounts, decision, store, document_sha256, getattr(values, 'time_zone', '') or '',
                     default_sending_key(values))

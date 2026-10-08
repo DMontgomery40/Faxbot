@@ -734,3 +734,21 @@ def test_the_envelope_s_layout_reaches_the_page_hook(ruled):
     publish(ruled, {'format': 1, 'routes': [rule('r-one', {'automatic': True, 'page_layout': 'one_per_sheet'})]})
     one = accept(ruled)
     assert [_layout_rule(ruled.engine, job) for job in (plain, long_pages, one)] == [None, 'allow', 'never']
+
+
+def test_a_later_publish_leaves_a_queued_fax_alone_while_turning_an_account_off_applies_at_once(ruled):
+    publish(ruled, {'format': 1, 'routes': [rule('r-sw', {'use': 'signalwire'})]})
+    job = accept(ruled)
+    publish(ruled, {'format': 1, 'routes': [rule('r-phaxio', {'use': 'phaxio'})]})
+    pinned = envelopes.load(ruled.engine, job)
+    assert pinned.envelope.accounts == ('signalwire',)  # decided under version 1, kept
+    revision, _ = ruled.configuration.outbound_context(job)
+    planner = RoutePlanner(ruled.routes)
+    plan = planner.plan(to_number=TO, bound='phaxio', values=revision.values, pages=3, alternates=True,
+                        pinned=pinned, current=revision.values)
+    assert [choice.route.key for choice in plan.choices] == ['signalwire']
+    from api.app.config_profiles import ConfigurationDocument
+    turned_off = revision.values.with_provider_accounts(ConfigurationDocument({'signalwire': {'enabled': False}}))
+    plan = planner.plan(to_number=TO, bound='phaxio', values=revision.values, pages=3, alternates=True,
+                        pinned=pinned, current=turned_off)
+    assert plan.choices == () and plan.skipped == (('signalwire', 'turned_off'),)
