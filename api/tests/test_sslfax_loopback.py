@@ -1419,7 +1419,7 @@ def shaded_pdf():
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
     buffer = io.BytesIO()
-    page = canvas.Canvas(buffer, pagesize=letter)
+    page = canvas.Canvas(buffer, pagesize=letter, invariant=1)
     for number in range(1, PAGES + 1):
         page.setFont('Helvetica-Bold', 28)
         page.drawString(72, 720, f'SHADED PROOF PAGE {number} OF {PAGES}')

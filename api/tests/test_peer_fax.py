@@ -378,7 +378,7 @@ def _letter():
     from io import BytesIO
     from reportlab.pdfgen import canvas
     output = BytesIO()
-    pdf = canvas.Canvas(output)
+    pdf = canvas.Canvas(output, invariant=1)  # no creation time: the same letter twice is the same document
     for line in range(60):
         pdf.drawString(40, 790 - line * 12, 'Synthetic referral line %02d for the encoded pages and peer image test.'
                        % line)
