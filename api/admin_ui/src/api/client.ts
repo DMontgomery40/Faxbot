@@ -105,7 +105,7 @@ import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
 import type { RecipientSchedule, RecipientScheduleSave } from './types';
-import type { RecipientPolling, RecipientPollingSave } from './types';
+import type { RecipientHold, RecipientHoldSave, RecipientPolling, RecipientPollingSave } from './types';
 import type {
   CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
 } from './certaintyTypes';
@@ -1179,6 +1179,26 @@ class AdminAPIClient {
 
   async collectPolling(number: string): Promise<RecipientPolling & { id: string; sentence: string }> {
     return this.json(`/routing/destinations/${id(number)}/polling/collect`, { method: 'POST' });
+  }
+
+  // Faxes this number collects from Faxbot (polled transmission).
+  async getHold(number: string): Promise<RecipientHold> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold`);
+  }
+
+  async saveHold(number: string, body: RecipientHoldSave): Promise<RecipientHold> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async holdFax(number: string, file: File): Promise<RecipientHold & { id: string; sentence: string }> {
+    const body = new FormData();
+    body.append('file', file);
+    return this.json(`/routing/destinations/${id(number)}/polling/hold/faxes`, { method: 'POST', body });
+  }
+
+  async withdrawHeldFax(number: string, heldId: string): Promise<RecipientHold & { id: string; outcome: string }> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold/faxes/${encodeURIComponent(heldId)}`,
+      { method: 'DELETE' });
   }
 
   // Sending short faxes to the same number together in one call.

@@ -345,16 +345,25 @@ class FakeSession(socketserver.StreamRequestHandler):
                 listener.listen(1)
                 port = listener.getsockname()[1]
                 self.reply(f'227 Entering Passive Mode (127,0,0,1,{port >> 8},{port & 255})')
-            elif verb == 'STOT':
-                self.reply('150 FILE: /tmp/doc7.tif (Opening new data connection).')
+            elif verb in {'STOT', 'STOR'}:
+                # STOT names the temporary document itself; STOR (a held fax in pollq) keeps the client's name.
+                name = command.split(' ', 1)[1] if verb == 'STOR' else '/tmp/doc7.tif'
+                self.reply(f'150 FILE: {name} (Opening new data connection).')
                 connection, _ = listener.accept()
                 data = b''
                 while chunk := connection.recv(65536):
                     data += chunk
                 connection.close()
                 listener.close()
-                server.uploads.append(data)
-                self.reply('226 Transfer complete (FILE: /tmp/doc7.tif).')
+                server.uploads.append(data if verb == 'STOT' else (name, data))
+                self.reply(f'226 Transfer complete (FILE: {name}).')
+            elif verb == 'DELE':
+                name = command.split(' ', 1)[1]
+                if any(isinstance(item, tuple) and item[0] == name for item in server.uploads):
+                    server.uploads = [item for item in server.uploads if not (isinstance(item, tuple) and item[0] == name)]
+                    self.reply(f'250 {name} deleted.')
+                else:
+                    self.reply(f'550 {name}: No such file or directory.')
             elif verb == 'JNEW':
                 self.reply('200 New job created: jobid: 7 groupid: 7.')
             elif verb in {'JPARM', 'JSUBM', 'JDELE'}:

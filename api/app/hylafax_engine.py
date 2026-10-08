@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import ftplib
+import io
 import json
 import logging
 import os
@@ -1074,22 +1075,31 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
 # Collecting a fax by polling (T.30 polling, routing/polling.py) -----------------------------------------------
 # HylaFAX+ 7.0.11 can poll: a job with a poll item and no document (hfaxd ``JPARM POLL "selector" ["password"]``,
 # hfaxd/Parser.c++ line 1255; faxsend's ``sendPoll`` and Class 1 ``pollBegin``, faxd/FaxSend.c++ and
-# faxd/Class1Poll.c++) dials, sends DTC (with SEP when the other machine's DIS lists it) and receives the
-# document the other fax server holds for it. What it receives goes to ``PollRcvdCmd`` (hylafax/bin/pollrcvd)
-# with the job's notify address first, which carries the request (``poll-<request>@faxbot.invalid``). It cannot
-# be polled: faxd never sets DIS bit 9 and ends a call that brings DTC (Class1Recv.c++, E107).
+# faxd/Class1Poll.c++) dials, sends DTC (with SEP and PWD when the other machine's DIS lists them) and receives
+# the document the other fax server holds for it. What it receives goes to ``PollRcvdCmd`` (hylafax/bin/pollrcvd)
+# with the job's notify address first, which carries the request (``poll-<request>@faxbot.invalid``).
+#
+# Stock HylaFAX+ cannot be polled: faxd never sets DIS bit 9 and ends a call that brings DTC (Class1Recv.c++,
+# E107). Faxbot's engine can (hylafax/patches/0002-polled-transmit.patch): a document held in its pollq for a
+# caller's number (``hold_document`` below, a TIFF with a ".poll" sidecar) is offered in the DIS that caller gets
+# and sent when it answers DTC; faxgetty then runs ``PolledCmd`` (hylafax/bin/polled), whose report reaches
+# ``/_internal/hylafax/polled`` (``polled_outcome``).
 
 POLL_ADDRESS = 'poll-{}@faxbot.invalid'
+HELD_PREFIX = 'pollq/faxhold-'
 
 
-def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', settings: CallSettings | None = None,
-                    host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
+def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', password: str = '',
+                    settings: CallSettings | None = None, host=None, port=SUBMIT_PORT,
+                    timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
     """Create (not submit) one job that dials ``tag`` once and polls for a document (blocking). The job's tag
     is ``<request>.<request>``, so its result reaches ``routing.polling``; ``selective`` is the T.30 selective
-    polling address (SEP digits), sent only when the other machine's DIS lists SEP."""
+    polling address (SEP digits) and ``password`` the polling password (PWD), each sent only when the other
+    machine's DIS lists it. The password goes to the engine's job only, never into a log."""
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(request_id):
         raise ValueError('Unsupported fax engine job')
     selective = re.sub(r'[^0-9#*]', '', selective or '')[:20]
+    poll_password = re.sub(r'[^0-9#*]', '', password or '')[:20]
     password = engine_secrets(values)['submit_password']
     session = ftplib.FTP()
     prepared = PreparedJob(session, tag=tag)
@@ -1110,7 +1120,7 @@ def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', s
             'JPARM MAXTRIES 1',
             f'JPARM LASTTIME {LAST_TIME}',
             f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
-            f'JPARM POLL {_quote(selective)}',
+            f'JPARM POLL {_quote(selective)}' + (f' {_quote(poll_password)}' if poll_password else ''),
         ]
         if settings is not None:
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
@@ -1127,7 +1137,7 @@ def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', s
         raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
 
 
-async def prepare_poll(values, ami, *, request_id, number, selective='', trunk=None) -> PreparedJob:
+async def prepare_poll(values, ami, *, request_id, number, selective='', password='', trunk=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine's poll job; nothing is dialed yet. The plan's job
     and attempt are the poll request, so the trunk call is recorded like any other (``sip_call_records``)."""
     from . import sip_trunk
@@ -1143,7 +1153,7 @@ async def prepare_poll(values, ami, *, request_id, number, selective='', trunk=N
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_poll_job, values, tag=tag, request_id=request_id,
-                                      selective=selective, settings=settings)
+                                      selective=selective, password=password, settings=settings)
     except BaseException:
         await forget_plan(ami, tag)
         raise
@@ -1168,9 +1178,135 @@ def poll_outcome(payload: dict) -> tuple[str, str]:
         return 'received', 'The other fax server sent the fax it held for you.'
     if why == 'poll_rejected' or re.search(r'cannot be polled|E220|E266|DIS/DTC', status_text, re.IGNORECASE):
         return 'refused', 'The other fax machine does not let faxes be collected from it.'
+    if re.search(r'got DCN|E103', status_text, re.IGNORECASE) and not _int(payload.get('pages')):
+        # The other server offered a document and then hung up on Faxbot's request for it before any page (DCN
+        # right after DTC, T.30 5.3.6.1.4): it holds nothing for the selective polling address or password given.
+        return 'refused', ('The other fax server refused to send: check the selective polling address and the '
+                           'polling password you set for it.')
     if dials == 0:
         return 'failed', failure_sentence(status_text, 0)
     if not exchanged(payload) and ended_before_fax_data(payload, status_text):
         return 'failed', failure_sentence(status_text, 0)
     return 'uncertain', ('The call ended while the fax was being collected; check with the other site before '
                          'collecting it again.')
+
+
+# Holding a fax for another machine to collect (polled transmission) ------------------------------------------
+# The engine's pollq holds each document as pollq/faxhold-<hold>.tif with a sidecar pollq/faxhold-<hold>.poll
+# (key=value lines read by faxd/polldoc.h in the patch: number, selective, password, job, tsi, tagline, held).
+# hfaxd lets Faxbot's login store and delete files there whose names start with "fax" (hfaxd/FileSystem.c++,
+# the /pollq/ row; RecvQueue.c++ isVisibleRecvQFile), and faxgetty (as uucp) reads them through the group.
+
+HELD_SUFFIX = '.tif'
+HELD_SIDECAR = '.poll'
+
+
+def held_sidecar(*, number: str, selective: str = '', password: str = '', job: str, tsi: str = '', tagline: str = '',
+                 held_at: int | None = None) -> str:
+    """The sidecar text for one held document. Values are limited to what the engine reads: digits for the
+    number, T.30 characters for the selective address and password, one line each. ``held_at`` is the hold's
+    time in seconds since the epoch (the oldest held document goes first); None means now."""
+    import time
+    digits = re.sub(r'[^0-9]', '', number or '')
+    if not digits or not _HEX32.fullmatch(job or ''):
+        raise ValueError('Unsupported held document')
+    values = {
+        'number': digits,
+        'selective': re.sub(r'[^0-9#*]', '', selective or '')[:20],
+        'password': re.sub(r'[^0-9#*]', '', password or '')[:20],
+        'job': job,
+        'tsi': re.sub(r'[^+0-9 ]', '', tsi or '')[:20],
+        'tagline': re.sub(r'[\r\n]', ' ', tagline or '')[:200],
+        'held': int(time.time()) if held_at is None else int(held_at),
+    }
+    return ''.join(f'{key}={value}\n' for key, value in values.items())
+
+
+def hold_document(values, *, hold_id: str, tiff_path: str, sidecar: str, host=None, port=SUBMIT_PORT,
+                  timeout=SUBMIT_TIMEOUT_SECONDS) -> str:
+    """Put a fax image and its sidecar into the engine's pollq, so the number the sidecar names can collect it
+    (blocking). Returns the engine's name for the document. The image goes first and the sidecar last, so a
+    caller that polls in between finds no half-held document."""
+    if not _HEX32.fullmatch(hold_id or ''):
+        raise ValueError('Unsupported held document')
+    password = engine_secrets(values)['submit_password']
+    document = f'{HELD_PREFIX}{hold_id}{HELD_SUFFIX}'
+    session = ftplib.FTP()
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        session.voidcmd('TYPE I')
+        with open(tiff_path, 'rb') as handle:
+            reply = session.storbinary(f'STOR {document}', handle)
+        if not reply.startswith('226'):
+            raise EngineError('The fax engine did not keep the held fax.')
+        reply = session.storbinary(f'STOR {HELD_PREFIX}{hold_id}{HELD_SIDECAR}', io.BytesIO(sidecar.encode()))
+        if not reply.startswith('226'):
+            try:
+                session.delete(document)
+            except ftplib.all_errors:
+                pass
+            raise EngineError('The fax engine did not keep the held fax.')
+        return document
+    except (*ftplib.all_errors, EngineError, ValueError) as error:
+        if isinstance(error, (EngineError, ValueError)):
+            raise
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+    finally:
+        try:
+            session.quit()
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+
+def withdraw_held(values, *, hold_id: str, host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> bool:
+    """Take a held document out of the engine's pollq (blocking): the sidecar first, so no caller gets it while
+    the image goes. True when it was there; False when the engine already had no such document."""
+    if not _HEX32.fullmatch(hold_id or ''):
+        raise ValueError('Unsupported held document')
+    password = engine_secrets(values)['submit_password']
+    session = ftplib.FTP()
+    found = False
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        for name in (f'{HELD_PREFIX}{hold_id}{HELD_SIDECAR}', f'{HELD_PREFIX}{hold_id}{HELD_SUFFIX}'):
+            try:
+                session.delete(name)
+                found = True
+            except ftplib.error_perm:
+                continue
+        return found
+    except ftplib.all_errors:
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+    finally:
+        try:
+            session.quit()
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+
+def polled_outcome(payload: dict) -> tuple[str, str]:
+    """(outcome, one sentence) for the engine's report on a call in which another machine collected, or tried to
+    collect, a held fax (hylafax/bin/polled): 'sent', 'refused' (no document for its selective polling address
+    or password) or 'failed' (the call ended before every page was confirmed; the fax stays held)."""
+    outcome = payload.get('outcome') if isinstance(payload.get('outcome'), str) else ''
+    reason = _text64(payload, 'reason_b64', 200)
+    caller = payload.get('caller') if isinstance(payload.get('caller'), str) and payload.get('caller') else None
+    who = caller or 'the other fax machine'
+    if outcome == 'sent':
+        pages = _int(payload.get('pages'))
+        return 'sent', f'Collected by {who}' + (f' ({pages} page{"s" if pages != 1 else ""}).' if pages else '.')
+    if outcome == 'refused':
+        if 'password' in reason.lower():
+            return 'refused', f'{who} asked for it with the wrong polling password; the fax stays held.'
+        if 'selective' in reason.lower():
+            return 'refused', f'{who} asked for it with a different selective polling address; the fax stays held.'
+        return 'refused', f'{who} asked for a fax Faxbot does not hold for it; the fax stays held.'
+    return 'failed', f'{who} tried to collect it and the call ended before every page was confirmed; the fax stays held.'

@@ -64,6 +64,7 @@ config.attributes["schema_trunks_sites"] = importlib.import_module(package + ".s
 config.attributes["schema_invoices"] = importlib.import_module(package + ".schema_invoices")
 config.attributes["schema_measured_codec"] = importlib.import_module(package + ".schema_measured_codec")
 config.attributes["schema_routing_learning"] = importlib.import_module(package + ".schema_routing_learning")
+config.attributes["schema_polled_transmit"] = importlib.import_module(package + ".schema_polled_transmit")
 
 
 def migrate(connection):

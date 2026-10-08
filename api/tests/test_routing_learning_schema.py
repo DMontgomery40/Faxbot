@@ -42,7 +42,7 @@ def _observation(**changes):
 
 
 def test_routing_learning_follows_measured_codings():
-    assert schema_routing_learning.REVISION == '0059_routing_learning' == schema.HEAD
+    assert schema_routing_learning.REVISION == '0059_routing_learning' == schema.ROUTING_LEARNING
     assert schema.MEASURED_CODEC == PRIOR
     assert schema_routing_learning.TABLES == frozenset({'poll_sources', 'poll_requests', 'poll_results'})
     assert schema_routing_learning.TABLES <= schema.STRICT_TABLES
