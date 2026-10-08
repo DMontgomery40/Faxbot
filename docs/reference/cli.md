@@ -5570,6 +5570,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `fax`: Show what one fax cost (the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
+* `advice`: Show what one missing fact cost you per...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `rate-rows`: Replace the prices by where calls start...
 * `state-prices`: Import a carrier&#x27;s US prices for calls...
@@ -5662,6 +5663,22 @@ $ faxbot costs savings [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+### `faxbot costs advice`
+
+Show what one missing fact cost you per recipient: a partner, a recipient&#x27;s approval, a price or a plan&#x27;s
+allowance, priced against the best route you may use, less what establishing it costs. Advice only.
+
+**Usage**:
+
+```console
+$ faxbot costs advice [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days of sent faxes to price again.  [default: 90; 7&lt;=x&lt;=183]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs rate-cards`

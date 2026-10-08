@@ -42,6 +42,16 @@ async def number_placement(request: Request, days: int = Query(default=30, ge=7,
     return await _call(lambda: placement(store.engine, values, routes=store, days=days))
 
 
+@router.get('/recommendations/facts', dependencies=[Depends(require_permission('settings:read'))])
+async def fact_advice(request: Request, days: int = Query(default=90, ge=7, le=183)):
+    """What one missing fact (a partner, a recipient's approval, a price, a plan's allowance) would have saved, per
+    recipient, over the last ``days`` days. Advice only: nothing is enrolled, approved or entered."""
+    from .fact_advice import advice
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: advice(store.engine, values, routes=store, days=days))
+
+
 @router.get('/recommendations/sites', dependencies=[Depends(require_permission('settings:read'))])
 async def site_recommendations(request: Request, days: int = Query(default=30, ge=7, le=183)):
     """Which site's trunk US calls would cost less from, where a carrier prices calls within a state differently."""
