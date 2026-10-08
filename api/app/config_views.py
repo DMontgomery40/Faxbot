@@ -106,6 +106,15 @@ def _database_view(url: str) -> dict[str, Any]:
     }
 
 
+def _call_records(values):
+    try:
+        from .routing.carrier_records import trunk_records
+        found = trunk_records(values)
+    except Exception:
+        return None
+    return {'published': found['published'], 'readable': found['readable'], 'sentence': found['sentence']}
+
+
 def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iterable[str] = (),
                            env_managed: Iterable[str] = (),
                            environment: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -248,6 +257,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'flowroute_access_key': values.flowroute_access_key,
             'flowroute_secret_key': mask_secret(values.flowroute_secret_key),
             'flowroute_secret_key_set': bool(values.flowroute_secret_key),
+            # Whether the trunk's carrier publishes call records with charges, and whether Faxbot can read them.
+            'call_records': _call_records(values),
         },
         'security': {
             'api_key': mask_secret(values.api_key),

@@ -1032,6 +1032,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     />
                     )}
                     <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} presetChosenElsewhere={Boolean(sections)} /></Box>
+                    {settings.sip.call_records && (settings.sip as { trunk?: { preset?: string } }).trunk?.preset && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} data-testid="trunk-call-records">
+                        {settings.sip.call_records.sentence}
+                      </Typography>
+                    )}
                     {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'telnyx' || settings.sip.telnyx_api_key_set) && (
                       <Box sx={{ mt: 2 }} data-testid="telnyx-key">
                         <ResponsiveSettingItem

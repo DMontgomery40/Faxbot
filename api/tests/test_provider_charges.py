@@ -473,3 +473,13 @@ def test_a_phaxio_listing_pages_by_the_page_size_phaxio_answered_with():
     faxes, complete = PhaxioListing(values(), client_factory=provider.factory()).fetch(datetime(2026, 10, 7),
                                                                                        datetime(2026, 10, 8))
     assert complete and len(faxes) == 30 and len(provider.requests) == 2
+
+
+def test_the_trunk_page_says_whether_its_carrier_publishes_call_records():
+    from api.app.config_views import _call_records
+    assert _call_records(values(SIP_TRUNK_PRESET='gamma')) == {
+        'published': False, 'readable': False, 'sentence': published('gamma').sentence}
+    assert _call_records(values(SIP_TRUNK_PRESET='avaya-ipoffice'))['sentence'] == (
+        'Avaya IP Office is your phone system; the carrier behind it bills these calls, so enter its invoice under '
+        'Costs → Invoices.')
+    assert _call_records(values(SIP_TRUNK_PRESET='telnyx', TELNYX_API_KEY='KEYsynthetic'))['readable'] is True

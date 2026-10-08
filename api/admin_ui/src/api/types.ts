@@ -276,6 +276,8 @@ export interface Settings {
     flowroute_access_key?: string;
     flowroute_secret_key?: string;
     flowroute_secret_key_set?: boolean;
+    // Whether the trunk's carrier publishes call records with charges, and whether Faxbot can read them.
+    call_records?: { published: boolean; readable: boolean; sentence: string } | null;
   };
   fs?: {
     esl_host?: string;
