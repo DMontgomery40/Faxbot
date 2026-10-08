@@ -83,6 +83,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /opt/install/ /
+COPY LICENSE LICENSE-MIT /usr/share/doc/faxbot/
 
 # Asterisk parses the carrier's SIP, audio and T.38 packets, so it runs as its own unprivileged
 # user (runuser and rungroup in asterisk.conf). The IDs are fixed because Faxbot's data volume
