@@ -351,10 +351,11 @@ class DirectStore:
                                                imports.c.operation_id == d.c.message_id,
                                                imports.c.state.in_(('received', 'conflict', 'failed'))))
         # A document a partner sent for relaying is sent on as a fax here, never filed as received (relay.py).
-        # A document held for its notice fax is filed when the notice is paired (notice.py).
+        # A document held for its notice fax is filed when the notice is paired (notice.py). Only a notice still
+        # waiting holds it: a cancelled one never holds a document forever.
         notices = self._notices()
         held = (sa.exists(sa.select(1).where(notices.c.role == 'receiver', notices.c.message_id == d.c.message_id,
-                                             notices.c.peer_id == d.c.peer_id, notices.c.state != 'paired'))
+                                             notices.c.peer_id == d.c.peer_id, notices.c.state == 'waiting'))
                 if notices is not None else sa.false())
         query = (sa.select(d).where(d.c.direction == 'inbound', d.c.state == 'accepted', d.c.manifest != '',
                                     d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d), ~held)

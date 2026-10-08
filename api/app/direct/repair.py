@@ -56,6 +56,9 @@ from .crypto import DirectProtocolError, canonical, check_signed, parse_timestam
 WINDOW = timedelta(minutes=15)  # a call's received fax is looked for this close to the call (clocks differ)
 REPAIR_DAYS = 7  # a broken call older than this is left to a person
 QUESTION_FRESHNESS = timedelta(hours=24)
+# How long the partner's side keeps an offer open for the missing pages. The sender sends them at once after the
+# answer, and a lost answer is settled within minutes, so an older offer will never be completed.
+OFFER_LIFETIME = timedelta(hours=24)
 BACKOFF_FIRST = timedelta(minutes=2)
 BACKOFF_MAX = timedelta(hours=6)
 # Broken calls whose partner could not be reached: when to ask again, and how many tries so far (this process).
@@ -69,6 +72,8 @@ STATE_TEXT = {
     'offered': 'Waiting for the missing pages from {partner}.',
     'expired': '{partner} could not confirm which pages arrived, so the fax waits for you.',
 }
+# The partner's side of an offer that was never completed (the sender sent no pages).
+RECEIVER_EXPIRED = '{partner} did not send the missing pages, so the fax stays as the call brought it.'
 
 
 def _stamp(moment):
@@ -124,6 +129,21 @@ class RepairStore:
         with write_transaction(self.engine) as connection:
             connection.execute(self.repairs.update().where(self.repairs.c.id == row_id).values(
                 **values, updated_at=utcnow()))
+
+    def expire_offers(self, *, now=None, message_id=None, peer_id=None):
+        """Close this side's offers for missing pages that will never come; how many were closed.
+
+        With ``message_id`` and ``peer_id``: that partner's offer whose pages it has said, by asking for that
+        message, it never sent (the question was answered "not received"); a partner closes only its own offers.
+        Without them: every offer older than ``OFFER_LIFETIME``.
+        """
+        now = now or utcnow()
+        r = self.repairs
+        which = (sa.and_(r.c.message_id == message_id, r.c.peer_id == peer_id) if message_id is not None
+                 else r.c.created_at < now - OFFER_LIFETIME)
+        with write_transaction(self.engine) as connection:
+            return connection.execute(r.update().where(r.c.role == 'receiver', r.c.state == 'offered', which)
+                                      .values(state='expired', updated_at=now)).rowcount
 
     def broken_calls(self, *, now=None, limit=20):
         """Sent faxes that failed part way through a call (``partly_sent``) recently, not yet asked about.
@@ -554,7 +574,9 @@ class CallRepair:
         return outcome
 
     async def step(self):
-        """Repair recent broken calls to enrolled partners, and settle repairs whose answer was lost."""
+        """Repair recent broken calls to enrolled partners, settle repairs whose answer was lost, and close the
+        partner's side of offers whose pages never came."""
+        await run_lifecycle_step(self.store.expire_offers)
         for call in await run_lifecycle_step(self.store.broken_calls):
             try:
                 await self.repair(call)
@@ -579,6 +601,8 @@ def repair_view(row, organization=None):
     """One repaired call for the console and the command line, in plain words."""
     partner = organization or 'the partner'
     status = STATE_TEXT[row['state']].format(partner=partner)
+    if row['role'] == 'receiver' and row['state'] == 'expired':
+        status = RECEIVER_EXPIRED.format(partner=partner)
     if row['state'] in ('confirmed', 'sent', 'completed', 'offered') and row['pages_held'] < row['total_pages']:
         first = row['pages_held'] + 1
         pages = (f"page {first}" if first == row['total_pages'] else f"pages {first} to {row['total_pages']}")

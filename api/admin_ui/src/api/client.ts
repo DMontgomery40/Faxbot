@@ -66,6 +66,8 @@ import type {
   RelayedFax,
   RelayGrant,
   RelayRecommendation,
+  SendOnceAgreement,
+  SendOnceList,
   EmailConnector,
   EmailConnectorInput,
   FaxCost,
@@ -1335,6 +1337,23 @@ class AdminAPIClient {
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Send once: a partner's intake files one copy of a fax for each of its numbers, or yours files theirs.
+  async listSendOnce(): Promise<SendOnceList> {
+    return this.json('/direct/send-once');
+  }
+
+  async offerSendOnce(partnerId: string, numbers: string[], intake: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/peers/${id(partnerId)}/send-once`, { method: 'POST', body: JSON.stringify({ numbers, intake }) });
+  }
+
+  async acceptSendOnce(agreementId: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/send-once/${id(agreementId)}/accept`, { method: 'POST', body: '{}' });
+  }
+
+  async endSendOnce(agreementId: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/send-once/${id(agreementId)}/withdraw`, { method: 'POST', body: '{}' });
   }
 
   // Partner relays: a partner sends your faxes as local calls in its country, or you send theirs.

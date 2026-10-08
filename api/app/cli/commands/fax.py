@@ -118,8 +118,9 @@ def _assigned_route(api, job):
 
 
 def _direct_text(api, job):
-    """"Delivered directly as a fax image to ..." for a fax image the partner accepted, or "Completed directly by ..."
-    for a broken call the partner now holds whole; None otherwise or unknown."""
+    """"Delivered directly as a fax image to ..." for a fax image the partner accepted, "Completed directly by ..."
+    for a broken call the partner now holds whole, or the sentence for one sent once to its intake or as a
+    reference or changes; None otherwise or unknown."""
     try:
         attempt = ((api.get('/admin/fax-jobs/' + segment(job['id']) + '/delivery') or {}).get('attempt') or {}).get('id')
         records = api.get('/direct/deliveries').get('deliveries') or []
@@ -132,7 +133,12 @@ def _direct_text(api, job):
         return repaired.get('status')
     record = next((item for item in records if item.get('direction') == 'outbound' and attempt
                    and item.get('message_id') == attempt), None)
-    if record is None or record.get('state') != 'accepted' or record.get('kind') != 'fax_image':
+    if record is None or record.get('state') != 'accepted':
+        return None
+    if record.get('send_once'):
+        # Sent once to a partner's intake, or as a reference or changes to a copy the partner held.
+        return record['send_once']
+    if record.get('kind') != 'fax_image':
         return None
     return record.get('status')
 

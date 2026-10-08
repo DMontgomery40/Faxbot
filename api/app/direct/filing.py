@@ -39,6 +39,10 @@ def received_text(record):
     if isinstance(report.get('call_repair'), dict):
         from .repair import received_repair_text
         return received_repair_text(report)
+    if isinstance(report.get('send_once'), dict):
+        # Filed at this installation's intake for one of its numbers, or sent as a reference or changes.
+        from .distribute import received_sentence
+        return received_sentence(partner, report['send_once'])
     notice = report.get('notice') if isinstance(report.get('notice'), dict) else None
     if notice is not None and notice.get('fax'):
         # The original was never faxed: only its one-page notice was (direct/notice.py).
@@ -114,6 +118,10 @@ class DirectFiling:
             report['fax'] = manifest['fax']
         elif kind == FORM:
             report['form'] = _form_drawn(self.store.engine, row['message_id'])
+        from .distribute import filing_facts
+        send_once = filing_facts(row)
+        if send_once is not None:
+            report['send_once'] = send_once
         paired = _notice_paired(self.store.engine, row['message_id'], row['peer_id'])
         if paired is not None:
             report['notice'] = paired

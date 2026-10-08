@@ -151,7 +151,8 @@ function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliver
   if (forCurrent?.state === 'accepted') {
     // A fax image went directly, with no telephone call; it is never called "faxed". Nor is an original that
     // went with a one-page notice fax: only the notice page was faxed.
-    const text = forCurrent.kind === 'fax_image'
+    // Sent once to a partner's intake, or as a reference or the changes to a copy it held: the server's sentence.
+    const text = forCurrent.send_once ? forCurrent.send_once : forCurrent.kind === 'fax_image'
       ? `Delivered directly as a fax image to ${partner(forCurrent)}; no telephone call.`
       : forCurrent.notice
         ? `Delivered directly to ${partner(forCurrent)}; only a one-page notice went by fax.`

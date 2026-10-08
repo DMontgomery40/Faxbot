@@ -111,7 +111,9 @@ class FactsReader:
         row = self.routes.get_destination(destination, connection=connection)
         direct_on = getattr(self.values, 'direct_delivery_enabled', False) and (
             self.direct_ready() if self.direct_ready is not None else True)
-        partner = bool(direct_on and self.routes.verified_peer(destination, connection=connection) is not None)
+        # A number a partner's intake files under a "send once" agreement is reached directly too (direct/distribute.py).
+        partner = bool(direct_on and self.routes.verified_peer(destination, connection=connection,
+                                                               covered=True) is not None)
         alternate = self.alternates(destination) if self.alternates is not None else None
         groups = self.groups(connection, principal_id)
         seen = self.sslfax_seen(connection, destination)

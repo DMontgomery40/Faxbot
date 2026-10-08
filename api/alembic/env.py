@@ -59,6 +59,7 @@ config.attributes["schema_accounts"] = importlib.import_module(package + ".schem
 config.attributes["schema_rules_delivery"] = importlib.import_module(package + ".schema_rules_delivery")
 config.attributes["schema_notice_repair"] = importlib.import_module(package + ".schema_notice_repair")
 config.attributes["schema_certainty"] = importlib.import_module(package + ".schema_certainty")
+config.attributes["schema_send_once"] = importlib.import_module(package + ".schema_send_once")
 
 
 def migrate(connection):

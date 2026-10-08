@@ -10,6 +10,7 @@ import typer
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import certainty, discovery
+from .commands import send_once
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -126,6 +127,7 @@ partners.command('pair')(notices.notice_pair)
 partners.command('transfers')(notices.transfers_list)
 partners.command('repairs')(notices.repairs_list)
 partners.add_typer(relay.relay, name='relay')
+partners.add_typer(send_once.send_once, name='send-once')
 # Find partners: suggestions from calls, introductions and trusted directories, and publishing your number.
 partners.add_typer(discovery.discover, name='discover')
 partners.command('introduce')(discovery.introduce)

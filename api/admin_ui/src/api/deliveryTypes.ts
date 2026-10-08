@@ -597,6 +597,9 @@ export interface DirectDeliveryRecord {
   // The sent fax this record belongs to, and whether a one-page notice went by fax with the original.
   job_id?: string | null;
   notice?: boolean;
+  // Sent's sentence for a fax that went to a partner's intake, or as a reference or the changes to a copy the
+  // partner held; null otherwise, optional for older servers.
+  send_once?: string | null;
   status: string;
   size_bytes: number;
   created_at: string;
@@ -716,6 +719,48 @@ export interface Savings {
     faxes: number; pages_saved: number; trimmed_pages: number; seconds_saved: number; priced: number;
     in_plan: number; plan_pages: number; unpriced: number;
   };
+  // Bytes partners did not need sent again (a reference or only the changes): counted exactly, never money, and
+  // never part of the money total. Optional for older servers.
+  direct_bytes?: SendOnceBytes;
+}
+
+// GET /direct/send-once: "send once" agreements both ways, and the bytes reuse and changes saved.
+export interface SendOnceBytes {
+  bytes_saved: number;
+  documents: number;
+  references: number;
+  patches: number;
+  sentence: string;
+}
+
+export interface SendOncePlacement {
+  fax_number: string;
+  // The mailbox your receiving rules file this number in, or why they cannot (held in Received).
+  mailbox: string | null;
+  held: string | null;
+}
+
+export interface SendOnceAgreement {
+  id: string;
+  peer_id: string;
+  partner: string | null;
+  // receiver: your intake files the partner's faxes; sender: the partner's intake files yours.
+  role: 'receiver' | 'sender';
+  state: 'offered' | 'accepting' | 'active' | 'withdrawn';
+  numbers: string[];
+  intake: string;
+  summary: string;
+  status: string;
+  told: boolean;
+  placements?: SendOncePlacement[];
+  created_at: string;
+  updated_at: string;
+  detail?: string;
+}
+
+export interface SendOnceList {
+  agreements: SendOnceAgreement[];
+  bytes: SendOnceBytes;
 }
 
 // GET /routing/recommendations/plans: whether each monthly plan is worth its fee. Every figure is an estimate;

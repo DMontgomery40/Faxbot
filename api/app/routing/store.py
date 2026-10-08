@@ -262,14 +262,24 @@ class RouteStore:
                         **changes, version=row['version'] + 1, updated_at=now))
             return self.get_destination(number, connection)
 
-    def verified_peer(self, number, connection=None, *, now=None):
-        """The verified, unexpired direct peer for a number, if exactly one exists."""
+    def verified_peer(self, number, connection=None, *, now=None, covered=False):
+        """The verified, unexpired direct peer for a number, if exactly one exists.
+
+        ``covered=True`` (the route planner) also counts a partner whose active "send once" agreement covers the
+        number (``direct/distribute.py``); a number two partners could take has no direct partner.
+        """
         def read(conn):
             moment = now or utcnow()
-            rows = conn.execute(sa.select(self.peers).where(
+            rows = [dict(row) for row in conn.execute(sa.select(self.peers).where(
                 self.peers.c.phone_number == number, self.peers.c.state == 'verified',
-                sa.or_(self.peers.c.expires_at.is_(None), self.peers.c.expires_at > moment))).mappings().all()
-            return dict(rows[0]) if len(rows) == 1 else None
+                sa.or_(self.peers.c.expires_at.is_(None), self.peers.c.expires_at > moment))).mappings().all()]
+            if covered:
+                from ..direct.distribute import peer_for_number
+                found = {row['id']: row for row in rows}
+                for row in peer_for_number(conn, number, moment, self.peers):
+                    found.setdefault(row['id'], row)
+                rows = list(found.values()) if len(rows) <= 1 else rows
+            return rows[0] if len(rows) == 1 else None
         if connection is not None:
             return read(connection)
         with read_connection(self.engine) as conn:

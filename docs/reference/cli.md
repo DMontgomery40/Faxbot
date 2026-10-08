@@ -2243,6 +2243,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `introduce`: Introduce two of your partners to each other.
 * `may-introduce`: Set whether a partner may be introduced to...
 * `relay`: Partner relays: a partner office sends...
+* `send-once`: Send once: a partner&#x27;s intake files one...
 * `discover`: Recipients that run Faxbot, found from...
 * `publish`: Publish your fax number in a directory you...
 
@@ -2726,6 +2727,98 @@ $ faxbot recipients partners relay faxes [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days back to list.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners send-once`
+
+Send once: a partner&#x27;s intake files one copy of a fax for each of its numbers, so the same document to several of them goes over the internet once.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners send-once [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List send-once agreements both ways, and...
+* `offer`: Let a partner send one copy to your...
+* `accept`: Accept a partner&#x27;s offer: your faxes to...
+* `end`: End a send-once agreement with a partner...
+
+##### `faxbot recipients partners send-once list`
+
+List send-once agreements both ways, and the bytes partners did not need sent again in the last 30 days.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners send-once list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners send-once offer`
+
+Let a partner send one copy to your intake, which files it for each of these numbers by your receiving rules.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners send-once offer [OPTIONS] {partner} {numbers}...
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or ID.  [required]
+* `numbers...`: Your fax numbers that your intake files for, such as +15551234567 +15551234568.  [required]
+
+**Options**:
+
+* `--intake <str>`: The name of your intake, as the partner sees it.  [default: Central intake]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners send-once accept`
+
+Accept a partner&#x27;s offer: your faxes to its numbers then go once to its intake, with no telephone call.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners send-once accept [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners send-once end`
+
+End a send-once agreement with a partner at once; faxes to those numbers go by your usual routes again.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners send-once end [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or ID.  [required]
+
+**Options**:
+
+* `--direction yours|theirs`: Which agreement to end when there are both: &#x27;yours&#x27; (their intake files your faxes) or &#x27;theirs&#x27; (yours files theirs).
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients partners discover`
