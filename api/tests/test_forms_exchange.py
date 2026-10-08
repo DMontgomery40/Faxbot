@@ -17,7 +17,8 @@ from app import main
 from api.app.forms.exchange import FormExchange as AFormExchange
 from api.app.forms import model as a_model, renderer as a_renderer
 from api.tests.forms_fixtures import SVG, VALUES, positions_json
-from api.tests.test_direct_delivery import A_NUMBER, B_NUMBER, b_client, pair  # noqa: F401 - fixtures
+from api.tests.test_direct_delivery import (  # noqa: F401 - fixtures
+    A_NUMBER, B_NUMBER, b_client, direct_databases, pair)
 from api.tests.test_routing_http import ADMIN
 
 

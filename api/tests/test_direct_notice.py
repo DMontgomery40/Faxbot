@@ -19,7 +19,8 @@ from app import main
 from api.app.direct import notice
 from api.app.outbound_worker import OutboundWorker
 from api.tests.test_direct_delivery import (  # noqa: F401 - fixtures
-    A_NUMBER, ADMIN, B_NUMBER, accept, b_client, b_items, pair, pdf_bytes, stored_document, transport)
+    A_NUMBER, ADMIN, B_NUMBER, accept, b_client, b_items, direct_databases, pair, pdf_bytes, stored_document,
+    transport)
 
 
 class ToA:

@@ -17,7 +17,7 @@ from app import main
 from api.app.direct.repair import CallRepair, RepairStore, held_pages
 from api.app.outbound_worker import OutboundWorker
 from api.tests.test_direct_delivery import (  # noqa: F401 - fixtures
-    A_NUMBER, ADMIN, B_NUMBER, accept, b_client, b_items, pair, stored_document, transport)
+    A_NUMBER, ADMIN, B_NUMBER, accept, b_client, b_items, direct_databases, pair, stored_document, transport)
 
 
 def ten_pages():

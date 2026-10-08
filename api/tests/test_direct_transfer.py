@@ -19,7 +19,7 @@ from api.app.direct.service import DirectReconciler
 from api.app.direct.transfer import TransferStore
 from api.app.outbound_worker import OutboundWorker
 from api.tests.test_direct_delivery import (  # noqa: F401 - fixtures
-    accept, b_client, b_items, pair, stored_document, transport)
+    accept, b_client, b_items, direct_databases, pair, stored_document, transport)
 
 
 def big_pdf(seed='transfer'):

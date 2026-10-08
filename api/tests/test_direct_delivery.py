@@ -91,13 +91,22 @@ class Conventional:
         return SubmissionReceipt('PX-' + uuid4().hex[:8], 'in_progress')
 
 
+@pytest.fixture(params=['sqlite', 'postgresql'])
+def direct_databases(request):
+    """The two installations' databases: SQLite files, or PostgreSQL schemas dropped afterwards."""
+    from api.tests.test_peer_fax import _namespaces
+    return _namespaces(request, 2)
+
+
 @pytest.fixture
-def b_client(isolated_installation, monkeypatch, tmp_path):
+def b_client(isolated_installation, monkeypatch, tmp_path, direct_databases):
+    b_url = direct_databases[1].render_as_string(hide_password=False) if direct_databases else None
     for name, value in {'REQUIRE_API_KEY': 'true', 'API_KEY': BOOTSTRAP, 'PUBLIC_API_URL': 'https://testserver',
                         'FAX_BACKEND': 'phaxio', 'MAX_REQUESTS_PER_MINUTE': '0', 'DIRECT_DELIVERY_ENABLED': 'true',
                         'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': B_NUMBER,
                         'DIRECT_ALLOW_PRIVATE_PEERS': 'true',
-                        'FAXBOT_DIRECT_KEY_PATH': str(tmp_path / 'b-direct.key')}.items():
+                        'FAXBOT_DIRECT_KEY_PATH': str(tmp_path / 'b-direct.key'),
+                        **({'DATABASE_URL': b_url} if b_url else {})}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://testserver')
     with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
@@ -106,10 +115,10 @@ def b_client(isolated_installation, monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def pair(b_client, tmp_path):
-    engine = sa.create_engine('sqlite:///' + str(tmp_path / 'a.db'))
+def pair(b_client, tmp_path, direct_databases):
     from api.app.schema import create_database_engine
-    engine = create_database_engine('sqlite:///' + str(tmp_path / 'a.db'))
+    engine = create_database_engine(direct_databases[0].render_as_string(hide_password=False) if direct_databases
+                                    else 'sqlite:///' + str(tmp_path / 'a.db'))
     upgrade_schema(engine)
     data = tmp_path / 'a-data'
     data.mkdir()
