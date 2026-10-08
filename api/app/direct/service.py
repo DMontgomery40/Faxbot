@@ -50,36 +50,104 @@ class PartnerAddressRefused(PartnerUnreachable):
     """Nothing was sent: the partner's address is not a public Internet address."""
 
 
+class CertificateChanged(PartnerUnreachable):
+    """Nothing was sent: the partner's certificate is not the one pinned for it (checked at the handshake)."""
+
+    def __init__(self, seen):
+        super().__init__(CERTIFICATE_CHANGED)
+        self.seen = seen
+
+
+CERTIFICATE_CHANGED = ("This partner's certificate is not the one it had when you enrolled it, so Faxbot sent it "
+                       'nothing. Check with the partner that they replaced it.')
+
+
 class HttpClient:
     """Production transport to partner installations.
 
     Unless private partners are allowed, each request first checks that the
     partner's host resolves only to public addresses, then connects to the
     address it checked (see addresses.py).
+
+    A partner on your own network may use its own certificate instead of one
+    from a trusted authority; Builder AT's discovery keeps its SHA-256 as a pin
+    (``direct_certificate_pins``). ``pins(host)`` returns that pin, or None.
+    A pinned host is accepted with exactly that certificate, compared right
+    after the TLS handshake and before a single byte of the request is
+    written, so a changed certificate means nothing was sent. Every other host
+    is verified normally against trusted authorities; there is never a
+    request without verification. ``changed(host, seen)`` hears about a
+    pinned host whose certificate changed (seen is None when it matched again).
     """
 
-    def __init__(self, *, timeout=60.0, allow_private=lambda: False, resolver=resolve):
+    def __init__(self, *, timeout=60.0, allow_private=lambda: False, resolver=resolve, pins=lambda host: None,
+                 changed=lambda host, seen: None):
         self.timeout = timeout
         self.allow_private = allow_private
         self.resolver = resolver
+        self.pins = pins
+        self.changed = changed
 
     async def request(self, method, url, **kwargs):
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        pin = await asyncio.to_thread(self.pins, parts.hostname) if parts.hostname else None
+        if pin is not None and parts.scheme != 'https':
+            raise PartnerAddressRefused("This partner's certificate is pinned, but its address does not use HTTPS.")
         if not self.allow_private():
             try:
                 address = await asyncio.to_thread(checked_address, url, resolver=self.resolver)
             except PartnerAddressError as error:
                 raise PartnerAddressRefused(str(error)) from None
             url, kwargs = pinned_request(url, address, kwargs)
+        verify = True
+        if pin is not None:
+            verify, kwargs = _pinned_certificate(pin, kwargs)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, verify=verify,
+                                         trust_env=False) as client:
                 response = await client.request(method, url, **kwargs)
+        except CertificateChanged as error:
+            await asyncio.to_thread(self.changed, parts.hostname, error.seen)
+            raise
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.UnsupportedProtocol, httpx.InvalidURL):
             raise PartnerUnreachable() from None
+        if pin is not None:
+            await asyncio.to_thread(self.changed, parts.hostname, None)
         try:
             body = response.json()
         except ValueError:
             body = None
         return response.status_code, body
+
+
+def _pinned_certificate(pin, kwargs):
+    """The TLS settings and request options that accept exactly the certificate whose SHA-256 is ``pin``.
+
+    The chain and name are not checked (a partner's own certificate has no trusted authority); instead the
+    httpcore ``trace`` hook reads the certificate the handshake received and refuses any other one before the
+    request is written.
+    """
+    import ssl
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    async def trace(event, info):
+        if event != 'connection.start_tls.complete':
+            return
+        stream = info.get('return_value')
+        ssl_object = stream.get_extra_info('ssl_object') if stream is not None else None
+        der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+        seen = hashlib.sha256(der).hexdigest() if der else None
+        if seen != pin:
+            try:
+                await stream.aclose()
+            finally:
+                raise CertificateChanged(seen)
+    options = dict(kwargs)
+    options['extensions'] = {**(kwargs.get('extensions') or {}), 'trace': trace}
+    return context, options
 
 
 def _flag(value):
@@ -96,7 +164,8 @@ class DirectService:
         self.values = values
         self.environment = environment or {}
         self.resolver = resolver
-        self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver)
+        self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver,
+                                       pins=self.store.certificate_pin, changed=self.store.note_certificate)
         self.filing = DirectFiling(self.store, resources or (lambda: None), values=values)
 
     def _allow_private(self):
@@ -256,12 +325,19 @@ class DirectService:
             handle.flush()
             os.fsync(handle.fileno())
 
+        # A document whose sender linked a notice fax to it first is held out of Received until that fax
+        # arrives (notice.py); its receipt says so. Stored and accepted is still accepted.
+        from .notice import NoticeReceiver
+        held = NoticeReceiver(self).held(peer, message_id, manifest['document']['sha256'])
+
         def receipt_for(local_id):
             receipt = {'type': 'receipt', 'message_id': message_id, 'status': 'accepted',
                        'document_sha256': manifest['document']['sha256'], 'recipient': manifest['recipient'],
                        'accepted_at': timestamp(), 'capabilities': self.offered(peer)}
             if kind == FAX_IMAGE:
                 receipt['kind'] = FAX_IMAGE
+            if held is not None:
+                receipt['held_for_notice'] = True
             return signed(identity, receipt)
         try:
             row, created_now = self.store.accept_inbound(message_id=message_id, peer=peer, manifest=manifest_bytes,
@@ -275,7 +351,18 @@ class DirectService:
                 return 409, self._withdrawn(identity, message_id, peer)
             if row['manifest'].encode('ascii') != manifest_bytes:
                 return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.', peer)
-        else:
+        elif held is None:
+            if kind == FAX_IMAGE:
+                # The pages missing after a broken call: filed as one fax with the call's pages (repair.py).
+                from .repair import CallRepair
+                repairs = CallRepair(self)
+                offer = repairs.offered(peer, message_id)
+                if offer is not None:
+                    try:
+                        repairs.complete(offer, document, folder)
+                    except Exception:
+                        logging.getLogger(__name__).warning('The pages a partner sent to complete a broken call '
+                                                            'are filed on their own.')
             try:
                 self.filing.file(row)
             except Exception:
@@ -402,7 +489,7 @@ class DirectService:
         try:
             status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/verifications', json={
                 'statement': statement.decode('ascii'), 'signature': identity.sign(statement)})
-        except PartnerAddressRefused as error:
+        except (PartnerAddressRefused, CertificateChanged) as error:
             raise DirectConflict(str(error)) from None
         except PartnerUnreachable:
             raise DirectConflict('Faxbot could not reach the partner; check their address and try again.') from None
@@ -460,17 +547,23 @@ class DirectRoute:
         pdf = Path(values.fax_data_dir) / (claim.job_id + '.pdf')
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None or pdf.is_symlink() or not pdf.is_file():
             raise DirectRefused('The fax document is unavailable for direct delivery.')
+        from . import notice
+        if await run_lifecycle_step(lambda: notice.is_notice_job(service.store.engine, claim.job_id)):
+            # The notice page exists for its fax event: it always goes by telephone.
+            raise DirectRefused('A notice fax always goes by telephone.')
         identity = await run_lifecycle_step(service.identity)
         # The partner's current record: what it last said it accepts decides the fax image.
         peer = await run_lifecycle_step(lambda: service.store.get_peer(plan.peer['id'])) or plan.peer
         route = faximage.peer_route(peer, preference=self.preference)
         if route is None and self.preference == faximage.NEVER_PEER:
             raise DirectRefused('A routing rule keeps this fax off direct delivery.')
+        # A partner whose intake needs a fax event gets the original directly and a one-page notice by fax.
+        with_notice = notice.wants_notice(peer)
         # An attempt prepared again (nothing was sent the first time) sends the same kind of document, and a fax
         # image keeps the time of its first preparation, so its bytes and digest stay those already recorded.
         earlier = await run_lifecycle_step(lambda: service.store.find('outbound', claim.attempt_id))
         wants_image = (earlier['kind'] == FAX_IMAGE if earlier is not None
-                       else route is not None and route.kind == FAX_IMAGE)
+                       else route is not None and route.kind == FAX_IMAGE and not with_notice)
         image, signed_at = None, None
         if wants_image:
             # The header's time is the manifest's signed time, so the image and its digest can be made again.
@@ -493,18 +586,25 @@ class DirectRoute:
         except ValueError:
             sender_number = None
         message_id = claim.attempt_id
-        manifest, signature, ciphertext = seal(
-            identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
-            fax_number=sender_number, recipient_number=peer['phone_number'],
-            recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
-            document=document, pages=image.pages if image is not None else job.get('pages'),
-            fax=image.facts if image is not None else None, created_at=signed_at)
+        from .transfer import TransferSender
+        staged = await run_lifecycle_step(lambda: TransferSender(service).staged(message_id))
+        if staged is not None:
+            # A transfer of this attempt is still open: the partner holds pieces of exactly these bytes.
+            manifest, signature, ciphertext = staged
+        else:
+            manifest, signature, ciphertext = seal(
+                identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
+                fax_number=sender_number, recipient_number=peer['phone_number'],
+                recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
+                document=document, pages=image.pages if image is not None else job.get('pages'),
+                fax=image.facts if image is not None else None, created_at=signed_at)
         await run_lifecycle_step(lambda: service.store.record_outbound(
             message_id=message_id, peer_id=peer['id'], job_id=claim.job_id, attempt_id=claim.attempt_id,
             recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),
             manifest=manifest.decode('ascii'), kind=FAX_IMAGE if image is not None else None))
         yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext,
-                                hashlib.sha256(document).hexdigest())
+                                hashlib.sha256(document).hexdigest(),
+                                notice_job=claim.job_id if with_notice and image is None else None)
 
 
 async def _hear(service, peer, statement):
@@ -518,12 +618,59 @@ async def _hear(service, peer, statement):
 
 
 class _DirectSubmission:
-    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest):
+    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest, *, notice_job=None):
+        """``notice_job``: the original fax's ID when a notice fax goes with this document (notice.py)."""
         self.service, self.peer, self.message_id = service, peer, message_id
         self.manifest, self.signature, self.ciphertext, self.digest = manifest, signature, ciphertext, digest
+        self.notice_job = notice_job
 
     async def submit(self):
+        if self.notice_job is None:
+            return await self._submit()
+        from .notice import NoticeSender
+        notices = NoticeSender(self.service)
+        identity = await run_lifecycle_step(self.service.identity)
+        # The signed link goes first, so the partner holds the document until the notice fax arrives.
+        reason = await notices.announce(identity, self.peer, message_id=self.message_id, digest=self.digest,
+                                        job_id=self.notice_job)
+        if reason is not None:
+            await run_lifecycle_step(lambda: self.service.store.mark_outbound(self.message_id, 'refused'))
+            await run_lifecycle_step(lambda: notices.cancel(self.message_id))
+            raise DirectRefused(reason)
+        try:
+            return await self._submit()
+        except DirectRefused:
+            await run_lifecycle_step(lambda: notices.cancel(self.message_id))
+            raise
+
+    async def _submit(self):
         service, peer = self.service, self.peer
+        from .transfer import TransferSender, TransferUnsupported
+        if TransferSender.wanted(service, self.ciphertext):
+            # A large document goes in pieces: preflight, only the pieces missing after a drop, one commit.
+            try:
+                identity = await run_lifecycle_step(service.identity)
+                outcome, detail = await TransferSender(service).deliver(
+                    identity, peer, self.message_id, self.manifest, self.signature, self.ciphertext, self.digest)
+            except TransferUnsupported:
+                outcome = None  # Nothing was sent; the whole document goes in one request below.
+            except PartnerUnreachable as error:
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+                if isinstance(error, (PartnerAddressRefused, CertificateChanged)):
+                    raise DirectRefused(str(error)) from None
+                raise DirectRefused('The partner could not be reached; nothing was sent.') from None
+            except BaseException:
+                # Pieces may have reached the partner: the reconciler resumes the transfer instead of resending.
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))
+                raise
+            if outcome == 'accepted':
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'accepted',
+                                                                              receipt=detail))
+                await self.accepted()
+                return SubmissionReceipt(None, 'success')
+            if outcome == 'refused':
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+                raise DirectRefused(detail)
         try:
             status, body = await service.http.request('POST', peer['endpoint_url'] + '/direct/deliveries', files={
                 'manifest': (None, self.manifest, 'application/json'),
@@ -531,7 +678,7 @@ class _DirectSubmission:
                 'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
         except PartnerUnreachable as error:
             await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
-            if isinstance(error, PartnerAddressRefused):
+            if isinstance(error, (PartnerAddressRefused, CertificateChanged)):
                 raise DirectRefused(str(error)) from None
             raise DirectRefused('The partner could not be reached; nothing was sent.') from None
         except BaseException:
@@ -546,6 +693,7 @@ class _DirectSubmission:
             if (status == 200 and statement.get('type') == 'receipt' and statement.get('status') == 'accepted'
                     and statement.get('document_sha256') == self.digest):
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'accepted', receipt=body))
+                await self.accepted()
                 return SubmissionReceipt(None, 'success')
             if statement.get('type') == 'refusal' and 400 <= status < 500:
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
@@ -553,6 +701,19 @@ class _DirectSubmission:
         # The partner may have accepted it; ask instead of sending again.
         await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))
         raise RuntimeError('The answer from the partner could not be confirmed.')
+
+    async def accepted(self):
+        """After the partner's signed receipt: what follows an accepted document (a notice fax's queueing)."""
+        await accepted_followups(self.service, self.message_id)
+
+
+async def accepted_followups(service, message_id):
+    """Work that follows a partner's receipt for ``message_id``; it never changes the delivery's outcome."""
+    try:
+        from .notice import NoticeSender
+        await run_lifecycle_step(lambda: NoticeSender(service).original_accepted(message_id))
+    except Exception:
+        logging.getLogger(__name__).warning('The notice fax for a document delivered directly is queued shortly.')
 
 
 class DirectReconciler:
@@ -572,6 +733,20 @@ class DirectReconciler:
         peer = await run_lifecycle_step(lambda: service.store.get_peer(row['peer_id'])) if row['peer_id'] else None
         if peer is None:
             return None
+        # A document sent in pieces is finished first: only what the partner says it lacks, then one commit.
+        from .transfer import TransferSender
+        resumed = await TransferSender(service).resume(row)
+        if resumed == 'waiting':
+            return None  # The partner could not be reached; asked again later.
+        if resumed is not None:
+            receipt = resumed[1]
+            await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'accepted', receipt=receipt))
+            await accepted_followups(service, row['message_id'])
+            _, profile = await run_lifecycle_step(lambda: self.delivery.attempt_context(row['job_id'], row['attempt_id']))
+            await run_lifecycle_step(lambda: self.delivery.observe(
+                row['job_id'], attempt_id=row['attempt_id'], profile_id=profile.id, provider_sid=None,
+                status='success', event_key='direct:' + row['message_id']))
+            return 'accepted'
         identity = await run_lifecycle_step(service.identity)
         moment = timestamp()
         path = f"/direct/deliveries/{row['message_id']}"
@@ -594,6 +769,7 @@ class DirectReconciler:
             if accepted.get('document_sha256') != row['digest'] or accepted.get('message_id') != row['message_id']:
                 return None
             await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'accepted', receipt=receipt))
+            await accepted_followups(service, row['message_id'])
             _, profile = await run_lifecycle_step(lambda: self.delivery.attempt_context(row['job_id'], row['attempt_id']))
             await run_lifecycle_step(lambda: self.delivery.observe(
                 row['job_id'], attempt_id=row['attempt_id'], profile_id=profile.id, provider_sid=None,
@@ -601,6 +777,8 @@ class DirectReconciler:
             return 'accepted'
         if statement.get('status') == 'not_received':
             await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'refused'))
+            from .notice import NoticeSender
+            await run_lifecycle_step(lambda: NoticeSender(service).cancel(row['message_id']))
             await run_lifecycle_step(lambda: self.delivery.requeue_after_failure(
                 row['job_id'], attempt_id=row['attempt_id'], category='partner_not_received'))
             return 'not_received'

@@ -576,10 +576,12 @@ def inbound_get(inbound_id: str = typer.Argument(..., help="A received fax's ID,
     sentence = (negotiation or {}).get('sentence')
     from .codec import received_line
     encoded = received_line(api, item.get('id') or inbound_id)  # decoded, or why it is delivered as received
+    from .notices import received_line as notice_line
+    notice = notice_line(api, item.get('id') or inbound_id)  # a notice fax: the document came directly
 
     def human(out):
         out.fields(_inbound_fields(item) + ([('How the call went', sentence)] if sentence else [])
-                   + ([('Encoded pages', encoded)] if encoded else []))
+                   + ([('Encoded pages', encoded)] if encoded else []) + ([('Notice', notice)] if notice else []))
     state.out().result(item, human)
 
 

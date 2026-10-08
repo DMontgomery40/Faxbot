@@ -36,6 +36,15 @@ def received_text(record):
         if isinstance(name, str) and name and type(number) is int:
             return f'Delivered directly by {partner} as the form {name} (version {number}); no telephone call.'
         return f'Delivered directly by {partner} as a registered form; no telephone call.'
+    if isinstance(report.get('call_repair'), dict):
+        from .repair import received_repair_text
+        return received_repair_text(report)
+    notice = report.get('notice') if isinstance(report.get('notice'), dict) else None
+    if notice is not None and notice.get('fax'):
+        # The original was never faxed: only its one-page notice was (direct/notice.py).
+        return f'Delivered directly by {partner} as the original document; only a one-page notice came by fax.'
+    if notice is not None:
+        return f'Delivered directly by {partner} as the original document; filed by hand without its notice fax.'
     return f'Delivered directly by {partner} as the original document; no telephone call.'
 
 
@@ -50,6 +59,30 @@ def _form_drawn(engine, message_id):
         logging.getLogger(__name__).warning('The form a partner delivered could not be named in Received.')
         return None
     return {'name': version.title, 'version': version.number} if version is not None else None
+
+
+def _notice_paired(engine, message_id, peer_id):
+    """The paired notice of a held original (notice.py), as Received describes it, or None."""
+    try:
+        from .notice import NoticeStore, code_text
+        row = NoticeStore(engine).find('receiver', message_id)
+    except Exception:
+        return None
+    if row is None or row['state'] != 'paired' or row['peer_id'] != peer_id:
+        return None
+    return {'code': code_text(row['notice_id']), 'fax': row['inbound_id'], 'matched_by': row['matched_by']}
+
+
+def _call_repair(engine, message_id, peer_id):
+    """The completed repair whose missing pages arrived as ``message_id`` (repair.py), or None."""
+    try:
+        from .repair import RepairStore
+        row = RepairStore(engine).for_message('receiver', message_id)
+    except Exception:
+        return None
+    if row is None or row['peer_id'] != peer_id or row['state'] != 'completed' or not row['assembled_path']:
+        return None
+    return row
 
 
 def account(peer_id):
@@ -81,11 +114,22 @@ class DirectFiling:
             report['fax'] = manifest['fax']
         elif kind == FORM:
             report['form'] = _form_drawn(self.store.engine, row['message_id'])
+        paired = _notice_paired(self.store.engine, row['message_id'], row['peer_id'])
+        if paired is not None:
+            report['notice'] = paired
+        image_path, pages = row['document_path'], document['pages']
+        whole = _call_repair(self.store.engine, row['message_id'], row['peer_id']) if kind == FAX_IMAGE else None
+        if whole is not None:
+            # The pages missing after a broken call, filed with the call's own pages as one fax (repair.py).
+            image_path, pages = whole['assembled_path'], whole['total_pages']
+            report['pages'] = pages
+            report['call_repair'] = {'pages_from_call': whole['pages_held'], 'total_pages': whole['total_pages'],
+                                     'call_fax': whole['inbound_id']}
         values = self.values()
         return self.store.intake.add_fax_image(
             ImportStore(resources), account=account(row['peer_id']), message_id=row['message_id'],
-            image_path=row['document_path'], from_number=manifest['sender']['fax_number'],
-            to_number=manifest['recipient']['fax_number'], pages=document['pages'],
+            image_path=image_path, from_number=manifest['sender']['fax_number'],
+            to_number=manifest['recipient']['fax_number'], pages=pages,
             received_at=row['accepted_at'] or row['created_at'], report=report,
             country=getattr(values, 'fax_default_country', 'US') or 'US', original=kind != FAX_IMAGE)
 

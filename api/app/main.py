@@ -89,6 +89,8 @@ from .intake.sources.http import router as intake_sources_router
 from .direct.http import router as direct_router
 from .direct.relay_http import router as relay_router
 from .direct.discovery_http import router as discovery_router
+from .direct.transfer_http import router as direct_transfer_router
+from .direct.notice_http import router as direct_notice_router
 from .cases.http import router as cases_router
 from .forms.http import router as forms_router
 from .inbound.http import router as inbound_router
@@ -210,6 +212,8 @@ app.include_router(intake_sources_router)
 app.include_router(direct_router)
 app.include_router(relay_router)
 app.include_router(discovery_router)
+app.include_router(direct_transfer_router)
+app.include_router(direct_notice_router)
 app.include_router(cases_router)
 app.include_router(forms_router)
 app.include_router(inbound_router)

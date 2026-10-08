@@ -304,9 +304,13 @@ class CapturedTransport:
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
             call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
+            # A notice fax to an enrolled partner also carries its notice ID as the T.33 subaddress (direct/notice.py).
+            from .direct.notice import subaddress_for
+            subaddress = await asyncio.to_thread(subaddress_for, engine, claim.job_id) if engine is not None else None
             try:
                 engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
-                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
+                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call,
+                    subaddress=subaddress)
                 return engine_job, choice, call, records
             except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError):
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)

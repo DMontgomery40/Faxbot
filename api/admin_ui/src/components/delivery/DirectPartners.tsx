@@ -10,6 +10,7 @@ import AdminAPIClient from '../../api/client';
 import type { DirectPartner } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, FormDialog, StatusChip, useSmallScreens } from '../access/AccessViews';
 import DirectCardDialog from './DirectCardDialog';
+import PartnerActivity from './PartnerActivity';
 import PartnerRelay from './PartnerRelay';
 import { DeliveryError, Notice } from './shared';
 
@@ -44,6 +45,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       const message = await operation();
       if (message) setNotice(message);
       onChanged();
+      setRefresh((value) => value + 1);
       return true;
     } catch (failure) {
       setError(failure);
@@ -82,6 +84,11 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const setFaxImages = (partner: DirectPartner, accept: boolean) => void run(async () => (
     await client.setDirectFaxImages(partner.id, accept)).detail);
 
+  const setNoticeFax = (partner: DirectPartner, on: boolean) => void run(async () => (
+    await client.setDirectNoticeFax(partner.id, on)).detail);
+  // The partner activity lists reload after every change made here.
+  const [refresh, setRefresh] = useState(0);
+
   const remove = async () => {
     if (!removing) return;
     if (await run(async () => { await client.removeDirectPartner(removing.id); return null; })) setRemoving(null);
@@ -115,6 +122,18 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       )}
       {partner.fax_images_text && (
         <Typography variant="body2" color="text.secondary">{partner.fax_images_text}</Typography>
+      )}
+      {canWrite && (
+        <FormControlLabel
+          control={<Switch size="small" checked={Boolean(partner.notice_fax)} disabled={busy}
+            onChange={(event) => setNoticeFax(partner, event.target.checked)} />}
+          label="Send a notice fax with each document" />
+      )}
+      {partner.notice_fax_text && (
+        <Typography variant="body2" color="text.secondary">{partner.notice_fax_text}</Typography>
+      )}
+      {partner.certificate_text && (
+        <Typography variant="body2" color="error">{partner.certificate_text}</Typography>
       )}
     </Box>
   );
@@ -173,6 +192,8 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
           </Table>
         </TableContainer>
       )}
+
+      <PartnerActivity client={client} canWrite={canWrite} refresh={refresh} />
 
       {relaying && (
         <PartnerRelay client={client} partner={relaying} canWrite={canWrite} open onClose={() => setRelaying(null)} />

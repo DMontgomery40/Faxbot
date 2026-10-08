@@ -732,6 +732,10 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // Notice faxes, documents sent in pieces and repaired calls: none until a test adds them.
+  http.get('/direct/notices', () => json({ notices: [], notice_text: null })),
+  http.get('/direct/transfers', () => json({ transfers: [] })),
+  http.get('/direct/repairs', () => json({ repairs: [] })),
   // Partner relays: none until a test offers one.
   http.get('/direct/relay/agreements', () => json({ agreements: [] })),
   http.get('/direct/relay/costs', () => json({ days: 30, agreements: [] })),

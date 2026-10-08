@@ -2128,6 +2128,12 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `revoke`: Remove a partner.
 * `fax-images`: Accept faxes from a partner as the exact...
 * `deliveries`: List recent faxes sent to and received...
+* `notice-fax`: Send each document to a partner directly...
+* `notices`: List notice faxes sent and received, and...
+* `notice-faxes`: List the received faxes of one or two...
+* `pair`: Pair a document a partner delivered...
+* `transfers`: List documents sent to and received from...
+* `repairs`: List fax calls with partners that broke...
 * `introduce`: Introduce two of your partners to each other.
 * `may-introduce`: Set whether a partner may be introduced to...
 * `relay`: Partner relays: a partner office sends...
@@ -2263,6 +2269,107 @@ List recent faxes sent to and received from partners over the internet.
 
 ```console
 $ faxbot recipients partners deliveries [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners notice-fax`
+
+Send each document to a partner directly with a one-page notice by fax (on), or with no fax (off).
+
+**Usage**:
+
+```console
+$ faxbot recipients partners notice-fax [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or ID.  [required]
+* `on|off`: on sends each document to the partner directly with a one-page notice by fax, for a fax intake that needs a fax event; off (the default) sends documents directly with no fax.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners notices`
+
+List notice faxes sent and received, and whether each was paired with its document.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners notices [OPTIONS]
+```
+
+**Options**:
+
+* `--ids`: Also show the ID to pair a notice with.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners notice-faxes`
+
+List the received faxes of one or two pages that may be a held document&#x27;s notice page, newest first.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners notice-faxes [OPTIONS] {notice}
+```
+
+**Arguments**:
+
+* `notice`: The notice&#x27;s ID, from &#x27;faxbot recipients partners notices --ids&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners pair`
+
+Pair a document a partner delivered directly with its notice fax, or file it without one.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners pair [OPTIONS] {notice}
+```
+
+**Arguments**:
+
+* `notice`: The notice&#x27;s ID, from &#x27;faxbot recipients partners notices --ids&#x27;.  [required]
+
+**Options**:
+
+* `--code <str>`: The 20-digit code printed on the notice page.
+* `--fax <str>`: The received fax that is the notice, from &#x27;faxbot received list --ids&#x27;.
+* `--without-notice`: File the document in Received without its notice fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners transfers`
+
+List documents sent to and received from partners in pieces, and how many pieces each side holds.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners transfers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners repairs`
+
+List fax calls with partners that broke part way, and how each was completed directly.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners repairs [OPTIONS]
 ```
 
 **Options**:
