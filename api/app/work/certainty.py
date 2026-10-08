@@ -367,26 +367,33 @@ class CertaintyStore:
         return changed
 
     def record_checks(self, *, now=None, limit=50):
-        """Keep each new finding of the automatic checks on open items, once; return how many were new."""
+        """Keep each new finding of the automatic checks on open items, once; return how many were new.
+
+        The findings are worked out on a read connection; a write happens only for one not kept yet.
+        """
         now = now or utcnow()
+        new = []
         with read_connection(self.engine) as connection:
             rows = connection.execute(sa.select(self.items).where(self.items.c.state == 'open')
                                       .order_by(self.items.c.created_at).limit(limit)).mappings().all()
+            for row in rows:
+                item = dict(row)
+                job = self.job_on(connection, item['job_id']) or {}
+                answer, _ = self.partner_answer_on(connection, item['id'])
+                for found in (checks.partner_check(self.sources, connection, item, job, answer),
+                              checks.call_record_check(self.sources, connection, item, job, now=now)):
+                    if found['result'] in ('unavailable', 'not_done', 'asking', 'unknown'):
+                        continue
+                    key = 'found:' + hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
+                                                    ).hexdigest()[:48]
+                    if connection.execute(sa.select(self.events.c.id).where(
+                            self.events.c.item_id == item['id'], self.events.c.dedupe_key == key)).first() is None:
+                        new.append((item['id'], found, key))
         recorded = 0
-        for row in rows:
-            item = dict(row)
+        for item_id, found, key in new:
             try:
                 with write_transaction(self.engine) as connection:
-                    job = self.job_on(connection, item['job_id']) or {}
-                    answer, _ = self.partner_answer_on(connection, item['id'])
-                    for found in (checks.partner_check(self.sources, connection, item, job, answer),
-                                  checks.call_record_check(self.sources, connection, item, job, now=now)):
-                        if found['result'] in ('unavailable', 'not_done', 'asking', 'unknown'):
-                            continue
-                        key = hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
-                                             ).hexdigest()[:48]
-                        recorded += self.probe_on(connection, item['id'], found, now=now,
-                                                  dedupe_key=f"found:{key}")
+                    recorded += self.probe_on(connection, item_id, found, now=now, dedupe_key=key)
             except (DeliveryStoreError, ValueError):
                 continue
         return recorded

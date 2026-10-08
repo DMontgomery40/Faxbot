@@ -192,6 +192,15 @@ class CertaintyService:
     def _visible(self, connection, actor, now):
         return self.control.visible_resource_ids_on(connection, actor, 'fax:read', 'outbound', now=now)
 
+    def _among(self, connection, actor, resource_ids, now):
+        """Which of these faxes the person may settle for anyone (``fax:reconcile``), in one query."""
+        if not resource_ids:
+            return set()
+        allowed = self.control.visible_resource_ids_on(connection, actor, SETTLE_PERMISSION, 'outbound',
+                                                       now=now).subquery()
+        return set(connection.execute(sa.select(allowed.c.id).where(allowed.c.id.in_(sorted(resource_ids))))
+                   .scalars())
+
     def _allowed(self, connection, actor, permission, resource_id, now):
         return self.control.authorize_on(connection, actor, permission, ResourceRef(resource_id), now=now).allowed
 
@@ -247,8 +256,7 @@ class CertaintyService:
         rows = [dict(row) for row in rows]
         names = self.store.names_on(connection, [row[field] for row in rows for field in
                                                  ('owner_principal_id', 'settled_by')])
-        manage = {row['resource_id'] for row in rows
-                  if self._allowed(connection, actor, SETTLE_PERMISSION, row['resource_id'], now)}
+        manage = self._among(connection, actor, {row['resource_id'] for row in rows}, now)
         views = []
         for row in rows:
             mine = row['owner_principal_id'] == actor.principal_id

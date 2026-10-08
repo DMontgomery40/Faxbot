@@ -48,7 +48,7 @@ def _tables(engine):
     if not set(DIRECT_TABLES) <= names:
         return None  # not cached: the tables appear when the installation is upgraded
     tables = reflect(engine, DIRECT_TABLES + ('direct_deliveries', 'direct_peers', 'inbound_imports',
-                                              'inbound_faxes', 'work_items', 'intake_items'))
+                                              'inbound_faxes', 'work_items', 'work_events', 'intake_items'))
     try:
         engine._faxbot_duplicate_tables = tables
     except AttributeError:
@@ -110,12 +110,27 @@ def repair_note(organization, pages_held):
     return f'{_first_pages(pages_held)} completed directly by {organization}; the whole document is emailed instead.'
 
 
+def _outstanding(tables, inbound_id):
+    """Its Work item is not done (and was never folded, so a person's reopening stands), or its email waits."""
+    items, events, intake = tables['work_items'], tables['work_events'], tables['intake_items']
+    folded_before = sa.exists(sa.select(1).where(events.c.work_item_id == items.c.id, events.c.dedupe_key == 'folded'))
+    return sa.or_(
+        sa.exists(sa.select(1).where(items.c.inbound_fax_id == inbound_id, items.c.state != 'done', ~folded_before)),
+        sa.exists(sa.select(1).where(intake.c.inbound_fax_id == inbound_id, intake.c.state == 'received',
+                                     intake.c.next_attempt_at.is_not(None))))
+
+
 def folded(connection, tables):
-    """[(received fax to fold, the document's received fax, reason, email note)] that are ready to fold."""
+    """[(received fax to fold, the document's received fax, reason, email note)] still to fold.
+
+    Only rows whose own Work item or email is still outstanding are read, so a quiet installation pays for two
+    indexed lookups.
+    """
     notices, repairs = tables['direct_notices'], tables['direct_call_repairs']
     found = []
     for row in connection.execute(sa.select(notices.c.inbound_id, notices.c.peer_id, notices.c.message_id).where(
-            notices.c.role == 'receiver', notices.c.state == 'paired', notices.c.inbound_id.is_not(None))).all():
+            notices.c.role == 'receiver', notices.c.state == 'paired', notices.c.inbound_id.is_not(None),
+            _outstanding(tables, notices.c.inbound_id))).all():
         document = _filed(connection, tables, row.peer_id, row.message_id)
         if document and document != row.inbound_id:
             organization = _organization(connection, tables, row.peer_id)
@@ -125,7 +140,7 @@ def folded(connection, tables):
     for row in connection.execute(sa.select(repairs.c.inbound_id, repairs.c.peer_id, repairs.c.message_id,
                                             repairs.c.pages_held).where(
             repairs.c.role == 'receiver', repairs.c.state == 'completed', repairs.c.inbound_id.is_not(None),
-            repairs.c.message_id.is_not(None))).all():
+            repairs.c.message_id.is_not(None), _outstanding(tables, repairs.c.inbound_id))).all():
         document = _filed(connection, tables, row.peer_id, row.message_id)
         if document and document != row.inbound_id:
             organization = _organization(connection, tables, row.peer_id)
@@ -156,12 +171,7 @@ def fold(store, control, *, now=None):
     from .store import WorkChanged, may_own_on
     items, intake = tables['work_items'], tables['intake_items']
     with read_connection(store.engine) as connection:
-        pending = [entry for entry in folded(connection, tables)
-                   if connection.execute(sa.select(items.c.id).where(
-                       items.c.inbound_fax_id == entry[0], items.c.state != 'done')).first() is not None
-                   or connection.execute(sa.select(intake.c.id).where(
-                       intake.c.inbound_fax_id == entry[0], intake.c.state == 'received',
-                       intake.c.next_attempt_at.is_not(None))).first() is not None]
+        pending = folded(connection, tables)
     changed = 0
     for duplicate, document, reason, note in pending:
         try:
@@ -175,8 +185,11 @@ def fold(store, control, *, now=None):
                                          ).mappings().one_or_none()
                 whole = connection.execute(sa.select(items).where(items.c.inbound_fax_id == document)
                                            ).mappings().one_or_none()
-                if row is None or row['state'] == 'done' or whole is None:
-                    continue  # the document's item comes with the next feed
+                events = tables['work_events']
+                if row is None or row['state'] == 'done' or whole is None or connection.execute(
+                        sa.select(events.c.id).where(events.c.work_item_id == row['id'],
+                                                     events.c.dedupe_key == 'folded')).first() is not None:
+                    continue  # the document's item comes with the next feed; a person's reopening stands
                 item, whole = dict(row), dict(whole)
                 store.change_on(connection, item, {'state': 'done', 'done_at': now, 'done_by': None,
                                                    'done_note': reason[:200]},
