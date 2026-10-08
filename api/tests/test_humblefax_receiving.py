@@ -543,7 +543,9 @@ def test_each_account_is_checked_and_fetched_with_its_own_keys_and_recorded_with
     assert records['700111']['account'] == f'humblefax:{OTHER_USER_ID}'
     assert json.loads(records['700111']['report'])['account_key'] == 'humblefax-2'
     backends = {row['provider_sid']: row['inbound_backend'] for row in rows(isolated_installation, 'inbound_faxes')}
-    assert backends == {'700110': 'humblefax', '700111': 'humblefax-2'}
+    # The provider that received each fax; which HumbleFax account is on the import (account_key).
+    assert backends == {'700110': 'humblefax', '700111': 'humblefax'}
+    assert records['700111']['account_key'] == 'humblefax-2' and records['700110']['account_key'] == 'humblefax'
     other_basic = 'Basic ' + base64.b64encode((OTHER_ACCESS + ':' + OTHER_SECRET).encode()).decode()
     download = next(request for request in humblefax.requests if request['path'] == '/incomingFax/700111/download')
     assert download['headers']['authorization'] == other_basic

@@ -22,7 +22,7 @@ Every function here reads an immutable revision (``revision.values`` carries the
 read-only view) and never contacts a provider. Health comes from records Faxbot already keeps.
 """
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import re
 
 import sqlalchemy as sa
@@ -407,17 +407,32 @@ def _patch_for(provider, doc):
 def account_values(values, key):
     """Configuration values as this account sees them: its provider's settings replaced by its own.
 
-    A primary account's are the values themselves. Raises AccountsError when there is no such account."""
+    A primary account's (a provider id, listed or not) are the values themselves. Raises AccountsError when an
+    extra account's settings can't be read."""
     docs = documents(values)
     doc = docs.get(key)
     if not _is_extra(key, doc):
-        if account_named(values, key) is None:
-            raise AccountsError('Faxbot has no account with this key.', 404)
         return values
     try:
         return values.with_patch(_patch_for(doc['provider'], doc))
     except ValueError as error:
         raise AccountsError(_value_sentence(doc['provider'], error)) from None
+
+
+def values_from_configuration(values, configuration):
+    """Configuration values with one provider's fields taken from a captured ProviderConfiguration (a provider
+    profile), for fetching a received fax with the account it was bound to. None when they can't be read."""
+    from .config_plugin_fields import PLUGIN_FIELDS
+    mapping = PLUGIN_FIELDS.get(configuration.provider_id)
+    if not mapping:
+        return None
+    captured = {**configuration.settings, **configuration.credentials}
+    patch = {field_name: captured[name] for name, field_name in mapping.items()
+             if name in captured and isinstance(captured[name], (str, int, bool))}
+    try:
+        return values.with_patch(patch)
+    except ValueError:
+        return None
 
 
 def _value_sentence(provider, error):

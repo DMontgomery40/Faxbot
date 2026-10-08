@@ -39,6 +39,7 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+import sqlalchemy as sa
 
 from ..access.http import private_operation, runtime as access_runtime
 from ..access.route_policy import require_permission
@@ -73,6 +74,9 @@ class InboundAcquisition:
         self.wake = None
         self.efax = None
         self.humblefax = None
+        # Every poller by (provider, account key), and the tasks of the extra accounts' pollers.
+        self.receivers = {}
+        self.extra = {}
 
     def recover(self):
         """Bring in received SIP images that were never handed over (see sip_handover)."""
@@ -98,18 +102,81 @@ def _frame(runtime):
     return frame
 
 
+def _binder(runtime):
+    """(revision id, profile id) of a receiving account under the active revision, for pollers' faxes."""
+    def bind(key):
+        store = runtime.manager.store
+        return account_binding(store, store.read().active, key)
+    return bind
+
+
+def polling_receiver(service, provider, key):
+    """A new poller for one extra eFax or HumbleFax account."""
+    if provider == 'efax':
+        from .efax import EfaxReceiver
+        return EfaxReceiver(service.store, _frame(service.runtime), kick=service.kick, account_key=key,
+                            binder=_binder(service.runtime))
+    from .humblefax import HumbleFaxReceiver
+    return HumbleFaxReceiver(service.store, _frame(service.runtime), kick=service.kick, account_key=key,
+                             binder=_binder(service.runtime))
+
+
+def reconcile_receivers(service, values, *, start=None):
+    """Start a poller for each extra eFax and HumbleFax account and stop the pollers of accounts that left.
+
+    ``start(receiver)`` runs one (it returns its task); without it nothing runs (tests). Returns the keys
+    started and stopped. Turning an account off needs no stop: its poller checks nothing while it is off.
+    """
+    from .. import accounts
+    wanted = {(account.provider, account.key) for account in accounts.all_accounts(values)
+              if not account.primary and account.provider in accounts.POLLING}
+    started, stopped = [], []
+    for identity in sorted(wanted - set(service.extra)):
+        receiver = polling_receiver(service, *identity)
+        service.receivers[identity] = receiver
+        service.extra[identity] = start(receiver) if start is not None else None
+        started.append(identity[1])
+    for identity in sorted(set(service.extra) - wanted):
+        task = service.extra.pop(identity)
+        service.receivers.pop(identity, None)
+        if task is not None:
+            task.cancel()
+        stopped.append(identity[1])
+    return started, stopped
+
+
+RECONCILE_SECONDS = 30
+
+
+async def _reconcile_forever(service):
+    """Every 30 seconds, follow the extra polling accounts in the active configuration."""
+    def start(receiver):
+        return asyncio.create_task(receiver.run(), name=f'faxbot-inbound-{receiver.account_key}')
+    while True:
+        try:
+            values, _ = await run_lifecycle_step(_frame(service.runtime))
+            reconcile_receivers(service, values, start=start)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).warning('Faxbot could not check which accounts it receives through.')
+        await asyncio.sleep(RECONCILE_SECONDS)
+
+
 @asynccontextmanager
 async def _lifespan(app):
     tasks = []
+    service = None
     try:
         runtime = app.state.configuration_runtime
         store = ImportStore(app.state.access_runtime.inbound)
-        acquirer = Acquirer(store, frame=_frame(runtime))
+        acquirer = Acquirer(store, frame=_frame(runtime), bindings=runtime.manager.store.inbound_context)
         service = InboundAcquisition(store, acquirer, runtime)
         from .efax import EfaxReceiver
-        service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick)
+        service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick, binder=_binder(runtime))
         from .humblefax import HumbleFaxReceiver
-        service.humblefax = HumbleFaxReceiver(store, _frame(runtime), kick=service.kick)
+        service.humblefax = HumbleFaxReceiver(store, _frame(runtime), kick=service.kick, binder=_binder(runtime))
+        service.receivers = {('efax', 'efax'): service.efax, ('humblefax', 'humblefax'): service.humblefax}
         app.state.inbound_acquisition = service
         if AUTOMATIC:
             service.loop, service.wake = asyncio.get_running_loop(), asyncio.Event()
@@ -119,6 +186,8 @@ async def _lifespan(app):
             tasks.append(asyncio.create_task(service.efax.run(), name='faxbot-inbound-efax'))
             # Received HumbleFax faxes are found the same way; it does nothing unless HumbleFax receives.
             tasks.append(asyncio.create_task(service.humblefax.run(), name='faxbot-inbound-humblefax'))
+            # One more poller for each extra eFax or HumbleFax account.
+            tasks.append(asyncio.create_task(_reconcile_forever(service), name='faxbot-inbound-accounts'))
     except Exception:
         logging.getLogger(__name__).warning('Received-fax fetching could not start; the API is still available.')
     try:
@@ -132,9 +201,10 @@ async def _lifespan(app):
     try:
         yield
     finally:
-        for task in tasks:
+        extra = [task for task in (service.extra.values() if service is not None else ()) if task is not None]
+        for task in tasks + extra:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, *extra, return_exceptions=True)
         app.state.inbound_acquisition = None
 
 
@@ -161,14 +231,97 @@ def _acquisition(request):
     return service
 
 
-def _require_route(provider, path):
+def _blocked(path, path_key=None):
+    audit_event('inbound_route_blocked', route=path, active_inbound=active_inbound(),
+                inbound_enabled=settings.inbound_enabled, **({'account': path_key} if path_key else {}))
+    raise HTTPException(404, detail='Inbound route not active for current backend')
+
+
+def receiving_account(provider, path, path_key=None):
+    """The provider account a receiving address serves (``accounts.receiving_account``); 404 with an audit row
+    when it serves none.
+
+    Until an extra account receives, a provider's original address keeps exactly the old gate: with
+    ``FAX_INBOUND_BACKEND`` set (or no receiving provider at all) only that provider's address is open;
+    otherwise every provider's address is open and checks its own secret. After that, each address serves one
+    account: ``/<provider>-inbound/<key>`` that account, ``/<provider>-inbound`` the default receiving account
+    of that provider, else its first account, else its only receiving account.
+    """
+    from .. import accounts
+    from ..config import configuration_values
     if not settings.inbound_enabled:
         raise HTTPException(404, detail='Inbound not enabled')
-    # With no inbound provider set up yet, no provider's receiving route is active.
-    if (os.getenv('FAX_INBOUND_BACKEND') or not active_inbound()) and active_inbound() != provider:
-        audit_event('inbound_route_blocked', route=path, active_inbound=active_inbound(),
-                    inbound_enabled=settings.inbound_enabled)
-        raise HTTPException(404, detail='Inbound route not active for current backend')
+    values = configuration_values()
+    if path_key is None and not accounts.extra_receiving(values):
+        # With no inbound provider set up yet, no provider's receiving route is active.
+        if (os.getenv('FAX_INBOUND_BACKEND') or not active_inbound()) and active_inbound() != provider:
+            _blocked(path)
+        account = accounts.original_path_account(values, provider)
+        if not account.enabled:
+            _blocked(path)
+        return account
+    account = accounts.receiving_account(values, provider, path_key)
+    if account is None:
+        _blocked(path, path_key)
+    return account
+
+
+def _require_route(provider, path):
+    """The original-address gate (the SSL Fax engine's hand-over uses it too)."""
+    return receiving_account(provider, path)
+
+
+def _own_values(account):
+    """The configuration as one account sees it: its provider's settings replaced by its own."""
+    from .. import accounts
+    from ..config import configuration_values
+    return accounts.account_values(configuration_values(), account.key)
+
+
+async def _binding(request, account):
+    """(revision id, profile id) of the account receiving a fax, for its provider binding; None when the
+    configuration is not ready or the account cannot be built. Resolved before the fax's own transaction."""
+    snapshot = request.scope.get('faxbot.configuration')
+    runtime = getattr(request.app.state, 'configuration_runtime', None)
+    if snapshot is None or runtime is None:
+        return None
+    return await run_lifecycle_step(lambda: account_binding(runtime.manager.store, snapshot.active, account.key))
+
+
+_BINDINGS = {}
+
+
+def account_binding(store, revision, key):
+    """(revision id, profile id) for an account under a revision: its role profile when the revision built one
+    from it, else a stored profile of exactly its configuration (found or created). None when it can't be built."""
+    from .. import accounts
+    cached = _BINDINGS.get((revision.id, key))
+    if cached is not None:
+        return cached
+    try:
+        configuration = accounts.account_configuration(revision.values, key, plugin_state=revision.plugins.as_dict())
+    except accounts.AccountsError:
+        return None
+    profile_id = None
+    for role in ('inbound', 'outbound'):
+        identity = revision.profile_id(role)
+        if identity is not None:
+            try:
+                if store.read_profile(identity).configuration == configuration:
+                    profile_id = identity
+                    break
+            except Exception:
+                continue
+    if profile_id is None:
+        try:
+            profile_id = store.account_profile(configuration)
+        except Exception:
+            logging.getLogger(__name__).warning('Faxbot could not record which account received a fax.')
+            return None
+    if len(_BINDINGS) > 256:
+        _BINDINGS.clear()
+    _BINDINGS[(revision.id, key)] = (revision.id, profile_id)
+    return revision.id, profile_id
 
 
 def _limit_unverified(request, path):
@@ -262,21 +415,33 @@ def _phaxio_notification(fields):
 
 @router.post('/phaxio-inbound')
 async def phaxio_inbound(request: Request):
-    _require_route('phaxio', '/phaxio-inbound')
+    return await _phaxio_inbound(request, None)
+
+
+@router.post('/phaxio-inbound/{key}')
+async def phaxio_account_inbound(key: str, request: Request):
+    """A received-fax notification for one Phaxio account; its signature covers this exact address."""
+    return await _phaxio_inbound(request, key)
+
+
+async def _phaxio_inbound(request, path_key):
+    path = '/phaxio-inbound' + (f'/{path_key}' if path_key else '')
+    account = receiving_account('phaxio', path, path_key)
+    own = _own_values(account)
     service = _acquisition(request)
-    verify = settings.phaxio_inbound_verify_signature is True
+    verify = own.phaxio_inbound_verify_signature is True
     if not verify:
-        _limit_unverified(request, '/phaxio-inbound')
+        _limit_unverified(request, path)
     try:
         fields, files = await read_callback_form(request, max_body_bytes=FORM_BODY_BYTES,
                                                  max_file_bytes=MAX_DOCUMENT_BYTES)
     except CallbackFormError as error:
         raise HTTPException(error.status_code, detail=str(error)) from None
     if verify:
-        token = settings.phaxio_callback_token
+        token = own.phaxio_callback_token
         if not token:
             raise HTTPException(401, detail='Set the Phaxio callback token in settings to accept received faxes.')
-        url = settings.public_api_url.rstrip('/') + '/phaxio-inbound'
+        url = settings.public_api_url.rstrip('/') + path
         if not verify_phaxio_signature(token, url, fields, files, request.headers.get('X-Phaxio-Signature', '')):
             raise HTTPException(401, detail='Invalid Phaxio signature')
     notification, report = _phaxio_notification(fields)
@@ -291,7 +456,7 @@ async def phaxio_inbound(request: Request):
     verified_by = 'signature'
     if not verify:
         verified_by = 'lookup'
-        api, _ = provider_service('phaxio', settings)
+        api, _ = provider_service('phaxio', own)
         if not api.is_configured():
             raise HTTPException(401, detail='Faxbot cannot confirm this fax with Phaxio; add the Phaxio API key or '
                                             'turn signature checks on.')
@@ -306,14 +471,15 @@ async def phaxio_inbound(request: Request):
     # Unauthenticated, the notification was only a hint: keep the provider's confirmed record instead of it.
     report = report if verify else _confirmed_report(fax_id, confirmed)
     source_time = parse_source_time(confirmed.get('completed_at'))
-    begun = await _begin(service, source='phaxio', account=account_identity('phaxio', settings.phaxio_api_key),
-                         operation_id=fax_id, backend='phaxio', inbound_backend=active_inbound(),
+    begun = await _begin(service, source='phaxio', account=account_identity('phaxio', own.phaxio_api_key),
+                         operation_id=fax_id, backend='phaxio', inbound_backend='phaxio',
                          to_number=confirmed.get('to_number'), from_number=confirmed.get('from_number'),
                          reported_pages=confirmed.get('pages'),
                          report={'verified_by': verified_by, 'notification': report},
                          source_received_at=source_time,
                          artifact_digest=hashlib.sha256(attached).hexdigest() if attached else None,
-                         schedule=attached is None)
+                         schedule=attached is None, account_key=account.key,
+                         binding=await _binding(request, account))
     if begun.state == 'pending':
         if attached:
             await _store_inline(service, begun, attached, 'Phaxio', source_time)
@@ -356,17 +522,19 @@ def sinch_webhook_notes(values):
             'with your password in place of PASSWORD; Sinch then shows the password as ***.')
 
 
-def _sinch_basic_configured():
+def _sinch_basic_configured(own=None):
     """Basic auth is in force only with both a user name and a password: the one rule, in ConfigurationValues."""
-    return settings.sinch_inbound_basic_configured
+    return (own or settings).sinch_inbound_basic_configured
 
 
-def _sinch_authenticated(request):
+def _sinch_authenticated(request, own=None):
     """True when basic auth is configured and correct; None when it is not configured.
 
-    Basic auth is the only webhook security Sinch's Fax API (v3) offers: it signs no webhooks.
+    Basic auth is the only webhook security Sinch's Fax API (v3) offers: it signs no webhooks. ``own`` is the
+    receiving account's configuration; each account checks its own user name and password.
     """
-    if not _sinch_basic_configured():
+    own = own or settings
+    if not _sinch_basic_configured(own):
         return None
     header = request.headers.get('Authorization', '')
     try:
@@ -374,8 +542,8 @@ def _sinch_authenticated(request):
             if header.startswith('Basic ') else ('', '', '')
     except (ValueError, UnicodeError, binascii.Error):
         user, password = '', ''
-    if not (hmac.compare_digest(user.encode(), settings.sinch_inbound_basic_user.encode())
-            and hmac.compare_digest(password.encode(), settings.sinch_inbound_basic_pass.encode())):
+    if not (hmac.compare_digest(user.encode(), own.sinch_inbound_basic_user.encode())
+            and hmac.compare_digest(password.encode(), own.sinch_inbound_basic_pass.encode())):
         raise HTTPException(401, detail='Invalid basic auth')
     return True
 
@@ -428,12 +596,24 @@ async def _sinch_payload(request, raw):
 
 @router.post('/sinch-inbound')
 async def sinch_inbound(request: Request):
-    _require_route('sinch', '/sinch-inbound')
+    return await _sinch_inbound(request, None)
+
+
+@router.post('/sinch-inbound/{key}')
+async def sinch_account_inbound(key: str, request: Request):
+    """A received-fax notification for one Sinch account, checked with that account's basic auth."""
+    return await _sinch_inbound(request, key)
+
+
+async def _sinch_inbound(request, path_key):
+    path = '/sinch-inbound' + (f'/{path_key}' if path_key else '')
+    account = receiving_account('sinch', path, path_key)
+    own = _own_values(account)
     service = _acquisition(request)
-    if not _sinch_basic_configured():
-        _limit_unverified(request, '/sinch-inbound')
+    if not _sinch_basic_configured(own):
+        _limit_unverified(request, path)
     raw = await _bounded_body(request, JSON_BODY_BYTES)
-    authenticated = _sinch_authenticated(request)
+    authenticated = _sinch_authenticated(request, own)
     data, attached = await _sinch_payload(request, raw)
     if data.get('event') not in (None, 'INCOMING_FAX'):
         return {'status': 'ignored'}
@@ -452,7 +632,7 @@ async def sinch_inbound(request: Request):
     confirmed, verified_by = notification, 'basic auth'
     if not authenticated:
         attached, verified_by = None, 'lookup'
-        api, _ = provider_service('sinch', settings)
+        api, _ = provider_service('sinch', own)
         if not api.is_configured():
             raise HTTPException(401, detail='Faxbot cannot confirm this fax with Sinch; add the Sinch project and '
                                             'key, or set up basic auth for the webhook.')
@@ -467,14 +647,14 @@ async def sinch_inbound(request: Request):
     # Unauthenticated, the notification was only a hint: keep the provider's confirmed record instead of it.
     report = ({key: value for key, value in data.items() if key != 'file'} if authenticated
               else _confirmed_report(fax_id, confirmed))
-    begun = await _begin(service, source='sinch', account=account_identity('sinch', settings.sinch_project_id),
-                         operation_id=fax_id, backend='sinch', inbound_backend=active_inbound(),
+    begun = await _begin(service, source='sinch', account=account_identity('sinch', own.sinch_project_id),
+                         operation_id=fax_id, backend='sinch', inbound_backend='sinch',
                          to_number=confirmed.get('to_number'), from_number=confirmed.get('from_number'),
                          reported_pages=confirmed.get('pages'),
                          report={'verified_by': verified_by, 'notification': report},
                          source_received_at=source_time,
                          artifact_digest=hashlib.sha256(attached).hexdigest() if attached else None,
-                         schedule=not attached)
+                         schedule=not attached, account_key=account.key, binding=await _binding(request, account))
     if begun.state == 'pending':
         if attached:
             await _store_inline(service, begun, attached, 'Sinch', source_time)
@@ -487,7 +667,8 @@ async def sinch_inbound(request: Request):
 @router.post('/_internal/asterisk/inbound')
 def asterisk_inbound(request: Request, payload: dict = Body(...),
                      x_internal_secret: Optional[str] = Header(default=None)):
-    _require_route('sip', '/_internal/asterisk/inbound')
+    trunk = _trunk_key(payload)
+    receiving_account('sip', '/_internal/asterisk/inbound', trunk)
     if not settings.asterisk_inbound_secret:
         raise HTTPException(401, detail='Internal secret not configured')
     if not hmac.compare_digest((x_internal_secret or '').encode(), settings.asterisk_inbound_secret.encode()):
@@ -513,13 +694,59 @@ def received_number(value, country=None):
     return text
 
 
+def _trunk_key(payload):
+    """The trunk account a hand-over names (``trunk``, once each trunk says which it is), or None."""
+    from ..accounts import KEY
+    value = payload.get('trunk') if isinstance(payload, dict) else None
+    return value if isinstance(value, str) and KEY.fullmatch(value) else None
+
+
+def stated_subaddress(payload, engine=None):
+    """The subaddress the sender stated (T.33 SUB), or None.
+
+    The SSL Fax engine reports it as text (HylaFAX's SubAddr); the built-in engine as the SUB frame in hex
+    (patch 0004's ``FAXBOT_FAR_SUB``). Without either, the call's FaxFrames row is read once: that event can
+    arrive after the hand-over, so this is best effort, and a fax is never placed again later. A subaddress is
+    the sender's statement, never proof of identity.
+    """
+    from .. import engine_frames
+    from ..access.receiving_rules import normalize_subaddress
+    text = payload.get('subaddress')
+    if isinstance(text, str) and normalize_subaddress(text):
+        return normalize_subaddress(text)
+    frame = payload.get('sub_hex')
+    if isinstance(frame, str) and frame:
+        decoded = engine_frames.decode_sub(frame)
+        if normalize_subaddress(decoded):
+            return normalize_subaddress(decoded)
+    uniqueid = payload.get('uniqueid')
+    if engine is not None and isinstance(uniqueid, str) and re.fullmatch(r'[0-9.]{1,40}', uniqueid):
+        try:
+            frames = sa.Table('fax_call_frames', sa.MetaData(), autoload_with=engine)
+            with engine.connect() as connection:
+                row = connection.execute(sa.select(frames.c.sub).where(frames.c.id == 'in:' + uniqueid)).first()
+        except sa.exc.SQLAlchemyError:
+            row = None
+        if row is not None and row.sub:
+            return normalize_subaddress(engine_frames.decode_sub(row.sub))
+    return None
+
+
 def receive_handover(request: Request, payload: dict, root: str):
     """Store one received fax a fax engine handed over; its image must sit inside ``root``.
 
     Asterisk may name any image in Faxbot's data folder; the SSL Fax engine
-    (hylafax_http.py) only images in its own out folder.
+    (hylafax_http.py) only images in its own out folder. The caller has checked
+    that receiving over the trunk is on. The fax is recorded on the trunk account
+    the hand-over names, else the trunk the original address serves.
     """
+    from .. import accounts
+    from ..config import configuration_values
     service = _acquisition(request)
+    trunk = _trunk_key(payload)
+    account = (accounts.receiving_account(configuration_values(), 'sip', trunk) if trunk
+               else accounts.original_path_account(configuration_values(), 'sip'))
+    account_key = account.key if account is not None else 'sip'
     try:
         tiff_path = inside_directory(str(payload.get('tiff_path') or ''), root)
     except UnsafeSourcePath:
@@ -545,12 +772,20 @@ def receive_handover(request: Request, payload: dict, root: str):
     report = {'faxstatus': faxstatus, 'faxpages': payload.get('faxpages'), 'uniqueid': payload.get('uniqueid'),
               **({'call': call} if call else {})}
     store = service.store
+    own = accounts.account_values(configuration_values(), account_key) if account is not None else settings
+    subaddress = stated_subaddress(payload, store.engine)
+    if subaddress:
+        report['subaddress'] = subaddress
+    snapshot = request.scope.get('faxbot.configuration')
+    runtime = getattr(request.app.state, 'configuration_runtime', None)
+    binding = (account_binding(runtime.manager.store, snapshot.active, account_key)
+               if snapshot is not None and runtime is not None and account is not None else None)
     begun = private_operation(lambda: store.begin(
-        source='sip', account=account_identity('sip', settings.sip_trunk_username), operation_id=uniqueid,
-        backend='sip', inbound_backend=active_inbound(), to_number=text('to_number'),
+        source='sip', account=account_identity('sip', own.sip_trunk_username), operation_id=uniqueid,
+        backend='sip', inbound_backend='sip', to_number=text('to_number'),
         from_number=text('from_number'), reported_pages=_int(payload.get('faxpages')), report=report,
         source_received_at=source_time, tiff_path=tiff_path, schedule=False,
-        country=settings.fax_default_country))()
+        country=settings.fax_default_country, account_key=account_key, subaddress=subaddress, binding=binding))()
     if begun.state == 'pending':
         try:
             artifact = convert_tiff(tiff_path, begun.inbound_fax_id, engine=store.engine)
@@ -603,22 +838,35 @@ EFAX_NOTIFICATION_BYTES = 64 * 1024
 @router.post('/efax-inbound')
 async def efax_inbound(request: Request):
     """eFax's notification that a fax arrived: with a valid signature, check eFax now."""
+    return await _efax_inbound(request, None)
+
+
+@router.post('/efax-inbound/{key}')
+async def efax_account_inbound(key: str, request: Request):
+    """eFax's notification for one eFax account, signed with that account's notification secret."""
+    return await _efax_inbound(request, key)
+
+
+async def _efax_inbound(request, path_key):
     from .efax import signature_valid
-    _require_route('efax', '/efax-inbound')
+    path = '/efax-inbound' + (f'/{path_key}' if path_key else '')
+    account = receiving_account('efax', path, path_key)
+    own = _own_values(account)
     service = _acquisition(request)
-    if not settings.efax_webhook_secret:
+    if not own.efax_webhook_secret:
         raise HTTPException(404, detail='eFax notifications are not set up; Faxbot checks eFax on its own.')
-    _limit_unverified(request, '/efax-inbound')
+    _limit_unverified(request, path)
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > EFAX_NOTIFICATION_BYTES:
             raise HTTPException(413, detail='The notification is larger than Faxbot accepts.')
-    if not signature_valid(settings.efax_webhook_secret, bytes(body), request.headers.get('x-hmac-signature')):
+    if not signature_valid(own.efax_webhook_secret, bytes(body), request.headers.get('x-hmac-signature')):
         audit_event('inbound_notification_refused', backend='efax')
         raise HTTPException(401, detail='The notification signature is not valid.')
-    if service.efax is not None:
-        service.efax.nudge()
+    receiver = service.receivers.get(('efax', account.key)) or (service.efax if account.primary else None)
+    if receiver is not None:
+        receiver.nudge()
     audit_event('inbound_notification', backend='efax')
     return {'status': 'SUCCESS'}
 

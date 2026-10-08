@@ -97,8 +97,25 @@ def settings_account(values):
 
 
 def accounts(values):
-    """Every HumbleFax account in settings; one today (provider accounts add more later)."""
-    return (settings_account(values),)
+    """Every HumbleFax account in settings: the first, from the HumbleFax page, and each extra HumbleFax
+    provider account (``accounts.py``), with its own keys and receiving switch."""
+    from .. import accounts as provider_accounts
+    found = [settings_account(values)]
+    try:
+        listed = provider_accounts.all_accounts(values)
+    except Exception:
+        return tuple(found)
+    for item in listed:
+        if item.provider == SOURCE and item.primary and not item.enabled:
+            found[0] = HumbleFaxAccount(SOURCE, found[0].access_key, found[0].secret_key, receives=False,
+                                        poll_seconds=found[0].poll_seconds)
+        if item.provider != SOURCE or item.primary:
+            continue
+        own = provider_accounts.account_values(values, item.key)
+        found.append(HumbleFaxAccount(item.key, own.humblefax_access_key, own.humblefax_secret_key,
+                                      receives=bool(item.receives and item.enabled),
+                                      poll_seconds=own.humblefax_poll_seconds))
+    return tuple(found)
 
 
 def account_named(values, key):
@@ -190,7 +207,10 @@ def _report(item, account):
 
 
 def account_key_of(record):
-    """The key of the HumbleFax account an import arrived on (its report); ``humblefax`` when it names none."""
+    """The key of the HumbleFax account an import arrived on (its account key, else its report); ``humblefax``
+    when it names none."""
+    if isinstance(record.get('account_key'), str) and record['account_key']:
+        return record['account_key']
     try:
         report = json.loads(record.get('report') or '{}')
     except (TypeError, ValueError):
@@ -199,8 +219,11 @@ def account_key_of(record):
     return key if isinstance(key, str) and key else SOURCE
 
 
-async def check_once(store, values, account=None, *, service=None, kick=None):
-    """List the faxes one HumbleFax account received in the window; begin one import for each new one."""
+async def check_once(store, values, account=None, *, service=None, kick=None, binding=None):
+    """List the faxes one HumbleFax account received in the window; begin one import for each new one.
+
+    ``binding`` is the account's (revision id, profile id), written as each new fax's provider binding.
+    """
     account = settings_account(values) if account is None else account
     service = service or service_for(account)
     identity = await account_for(account, service)
@@ -220,10 +243,11 @@ async def check_once(store, values, account=None, *, service=None, kick=None):
             except HumbleFaxNotFound:
                 continue
         await run_lifecycle_step(lambda: store.begin(
-            source=SOURCE, account=identity, operation_id=item['id'], backend=SOURCE, inbound_backend=account.key,
+            source=SOURCE, account=identity, operation_id=item['id'], backend=SOURCE, inbound_backend=SOURCE,
             to_number=item.get('to_number'), from_number=item.get('from_number'),
             reported_pages=item.get('pages'), report=_report(item, account),
-            source_received_at=parse_source_time(item.get('time')), country=values.fax_default_country))
+            source_received_at=parse_source_time(item.get('time')), country=values.fax_default_country,
+            account_key=account.key, binding=binding))
         result.added += 1
     if result.added and kick is not None:
         kick()
@@ -274,11 +298,12 @@ def partial_note(report):
 class HumbleFaxReceiver:
     """Checks one HumbleFax account for received faxes while receiving through it is on."""
 
-    def __init__(self, store, frame, *, account_key=SOURCE, kick=None, sleep=asyncio.sleep):
+    def __init__(self, store, frame, *, account_key=SOURCE, kick=None, sleep=asyncio.sleep, binder=None):
         """``frame()`` returns ``(values, profiles)`` for the active configuration revision; ``account_key``
-        names the HumbleFax account (``accounts(values)``) this receiver checks."""
+        names the HumbleFax account (``accounts(values)``) this receiver checks; ``binder(key)`` gives the
+        account's (revision id, profile id) for each new fax's provider binding."""
         self.store, self.frame, self.kick, self.sleep = store, frame, kick, sleep
-        self.account_key = account_key
+        self.account_key, self.binder = account_key, binder
         self.failures = 0
         self.last_checked = None
         self.last_found = None
@@ -313,7 +338,8 @@ class HumbleFaxReceiver:
             try:
                 if account is None:
                     raise HumbleFaxError('This HumbleFax account is no longer in settings.')
-                result = await check_once(self.store, values, account, kick=self.kick)
+                binding = await run_lifecycle_step(lambda: self.binder(self.account_key)) if self.binder else None
+                result = await check_once(self.store, values, account, kick=self.kick, binding=binding)
             except HumbleFaxBusy as busy:
                 self.failures += 1
                 self.last_problem = str(busy)

@@ -7,13 +7,14 @@ container. Human reads apply visibility before filters and limits, and an
 individual fax is hidden (404) unless the actor may independently read it.
 """
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import hmac
 import json
 import uuid
 
 import sqlalchemy as sa
 
-from ..routing.numbers import DEFAULT_COUNTRY, is_canonical, stored_number
+from ..routing.numbers import DEFAULT_COUNTRY, stored_number
 from .catalog import INBOUND_PERMISSIONS
 from .fax_resources import FaxAccessError
 from .types import AccessUnavailableError, ResourceRef
@@ -46,33 +47,42 @@ class InboundResources:
         if type(permission) is not str or permission not in INBOUND_PERMISSIONS:
             raise FaxAccessError('invalid_input')
 
-    def _route_on(self, connection, to_number, country=DEFAULT_COUNTRY):
-        """The oldest rule for this number whose bound mailbox is enabled, else None.
+    def receiving_tables(self):
+        """The receiving-rule tables (0030), or None before that migration."""
+        from .receiving_rules import tables
+        return tables(self.store.engine)
 
-        Rules and received numbers match in E.164, reading numbers without a
-        country code for the installation country, so a rule saved as
-        "01782 684953" in the UK routes "+441782684953". Rows saved before
-        numbers were stored in E.164 also match on their digits.
+    def _rule_on(self, connection, facts, country=DEFAULT_COUNTRY):
+        """The number rule that places a fax with these facts, or None (``receiving_rules.choose``).
+
+        With no rule options this is exactly the old match: the oldest rule for the number whose mailbox is
+        enabled, in E.164 (a rule saved as "01782 684953" in the UK routes "+441782684953"), then on digits for
+        rows saved before numbers were stored in E.164.
         """
-        number = _number(to_number)
-        if number is None:
+        from .receiving_rules import choose, ordered_rules
+        return choose(ordered_rules(connection, self.tables, self.receiving_tables()), facts, country)
+
+    def _route_on(self, connection, to_number, country=DEFAULT_COUNTRY):
+        """The place a fax to this number is filed in, knowing only the number: (resource id, label) or None."""
+        from .receiving_rules import ReceivedFacts
+        rule = self._rule_on(connection, ReceivedFacts(to_number=to_number), country)
+        if rule is None:
             return None
-        canonical = stored_number(number, country=country)
-        digits = _digits(number) or number
-        rules, routes = self.tables['inbound_rules'], self.tables['access_mailbox_routes']
+        return SimpleNamespace(id=rule['resource_id'], label=rule['mailbox_label'], to_number=rule['to_number'])
+
+    def _mailbox_on(self, connection, mailbox_id, actor, now):
+        """A mailbox an import names directly: (resource id, label). The importer must be able to read it."""
         resources, mailboxes = self.tables['access_resources'], self.tables['mailboxes']
-        rows = connection.execute(sa.select(rules.c.to_number, resources.c.id, mailboxes.c.label)
-            .select_from(rules.join(routes, routes.c.id == rules.c.id)
-                .join(mailboxes, mailboxes.c.id == routes.c.mailbox_id)
-                .join(resources, sa.and_(resources.c.kind == 'mailbox', resources.c.mailbox_id == mailboxes.c.id)))
-            .where(resources.c.enabled == 1)
-            .order_by(rules.c.created_at, rules.c.id)).all()
-        if is_canonical(canonical):
-            match = next((row for row in rows
-                          if stored_number(row.to_number.strip(), country=country) == canonical), None)
-            if match is not None:
-                return match
-        return next((row for row in rows if (_digits(row.to_number) or row.to_number.strip()) == digits), None)
+        row = connection.execute(sa.select(resources.c.id, resources.c.enabled, mailboxes.c.label)
+            .select_from(mailboxes.join(resources, sa.and_(resources.c.kind == 'mailbox',
+                                                           resources.c.mailbox_id == mailboxes.c.id)))
+            .where(mailboxes.c.id == mailbox_id)).first() if _identity(mailbox_id) else None
+        if row is None or row.enabled != 1:
+            raise FaxAccessError('invalid_target')
+        if actor is None or not self.control.authorize_child_on(connection, actor, 'inbound:read',
+                                                                 ResourceRef(row.id), now=now):
+            raise FaxAccessError('forbidden')
+        return SimpleNamespace(id=row.id, label=row.label)
 
     def _audit_on(self, connection, operation, target_kind, target_id, details, now):
         version = self.store.require_lock_on(connection)
@@ -83,8 +93,17 @@ class InboundResources:
             details=json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True),
             created_at=now))
 
-    def record_inbound_on(self, connection, inbound_id, to_number, now, *, country=DEFAULT_COUNTRY):
-        """Place a just-inserted inbound row; the caller owns and rolls back the transaction."""
+    def record_inbound_on(self, connection, inbound_id, to_number, now, *, country=DEFAULT_COUNTRY, facts=None,
+                          mailbox_id=None, actor=None):
+        """Place a just-inserted inbound row; the caller owns and rolls back the transaction.
+
+        ``facts`` (``receiving_rules.ReceivedFacts``) are what the receiving rules read; without them only the
+        number is known. ``mailbox_id`` files the fax straight into that mailbox, for an import that names one
+        (a document with no fax number); ``actor``, the importer, must be able to read that mailbox. How the fax
+        was placed is recorded once (``inbound_fax_routing``). A rule chooses where a fax is filed; it never
+        grants anyone access.
+        """
+        from .receiving_rules import ReceivedFacts, record_on
         self.store.require_lock_on(connection)
         if not _identity(inbound_id) or type(now) is not datetime or now.tzinfo is not None:
             raise FaxAccessError('invalid_input')
@@ -92,7 +111,13 @@ class InboundResources:
         if (connection.execute(sa.select(faxes.c.id).where(faxes.c.id == inbound_id)).first() is None
                 or connection.execute(sa.select(resources.c.id).where(resources.c.inbound_fax_id == inbound_id)).first() is not None):
             raise FaxAccessError('invalid_target')
-        route = self._route_on(connection, to_number, country)
+        facts = facts or ReceivedFacts(to_number=to_number, received_at=now)
+        rule = None
+        if mailbox_id is not None:
+            route = self._mailbox_on(connection, mailbox_id, actor, now)
+        else:
+            rule = self._rule_on(connection, facts, country)
+            route = None if rule is None else SimpleNamespace(id=rule['resource_id'], label=rule['mailbox_label'])
         parent_id, parent_kind = (route.id, 'mailbox') if route is not None else ('legacy', 'legacy')
         if route is not None:
             connection.execute(faxes.update().where(faxes.c.id == inbound_id).values(mailbox_label=route.label))
@@ -100,11 +125,16 @@ class InboundResources:
         connection.execute(resources.insert().values(id=identity, kind='inbound', parent_id=parent_id,
             parent_kind=parent_kind, principal_id=None, mailbox_id=None, fax_job_id=None,
             inbound_fax_id=inbound_id, enabled=1, version=1, created_at=now, updated_at=now))
-        self._audit_on(connection, 'inbound.receive', 'resource', identity,
-            {'source': 'provider', 'placement': 'mailbox' if route is not None else 'unassigned'}, now)
+        details = {'source': 'provider', 'placement': 'mailbox' if route is not None else 'unassigned'}
+        if rule is not None and rule['options']:
+            details['rule'] = rule['id']
+        self._audit_on(connection, 'inbound.receive', 'resource', identity, details, now)
+        record_on(connection, self.receiving_tables(), inbound_id, rule, facts, now,
+                  mailbox_id=mailbox_id)
         return ResourceRef(identity)
 
-    def insert_on(self, connection, values, now, *, country=DEFAULT_COUNTRY):
+    def insert_on(self, connection, values, now, *, country=DEFAULT_COUNTRY, facts=None, mailbox_id=None,
+                  actor=None):
         """Insert one inbound row and place it; the caller owns the access transaction.
 
         Received numbers are stored in E.164 when they can be read for the
@@ -119,7 +149,14 @@ class InboundResources:
                 values[field] = stored_number(values[field].strip(), country=country)
         self.store.require_lock_on(connection)
         connection.execute(faxes.insert().values(**values))
-        return self.record_inbound_on(connection, values['id'], values.get('to_number'), now, country=country)
+        from dataclasses import replace
+        from .receiving_rules import ReceivedFacts
+        if facts is None:
+            from ..people_time import installation_zone_name
+            facts = ReceivedFacts(to_number=None, received_at=now, time_zone=installation_zone_name())
+        facts = replace(facts, to_number=values.get('to_number'), from_number=values.get('from_number'))
+        return self.record_inbound_on(connection, values['id'], values.get('to_number'), now, country=country,
+                                      facts=facts, mailbox_id=mailbox_id, actor=actor)
 
     def accept(self, values, *, now=None, country=DEFAULT_COUNTRY):
         """Insert one provider inbound row with its resource and audit, atomically."""
@@ -208,6 +245,23 @@ class InboundResources:
         raise FaxAccessError('forbidden' if visible else 'not_found')
 
 
+def _received_on(record, placed):
+    """The account a fax arrived on, by key and name, the subaddress its sender stated and whether a receiving
+    rule marked it urgent. Faxes from before accounts existed name no account."""
+    key = (record or {}).get('account_key') or (placed or {}).get('account_key')
+    label = None
+    if key:
+        try:
+            from ..accounts import account_named
+            from ..config import configuration_values
+            account = account_named(configuration_values(), key)
+            label = account.label if account is not None else None
+        except Exception:
+            label = None
+    return {'account_key': key, 'account_label': label, 'subaddress': (placed or {}).get('subaddress'),
+            'urgent': bool((placed or {}).get('urgent'))}
+
+
 class AuthorizedInboundQueries:
     """Inbound projections in the shape of the existing /inbound API (InboundFaxOut)."""
 
@@ -278,6 +332,7 @@ class AuthorizedInboundQueries:
                 found.setdefault(record['inbound_fax_id'], dict(record))
         failures = failures_on(connection, self.store.engine, identities) if imports is not None else {}
         copies = provider_copies_on(connection, self.store.engine, identities) if imports is not None else {}
+        placements = self._placements_on(connection, identities)
         now = self._clock()
         result = []
         for row in rows:
@@ -285,10 +340,20 @@ class AuthorizedInboundQueries:
             record = found.get(row['id'])
             row.update(describe(row, record, now=now, failures=failures.get(row['id'], ()),
                                 provider_copy=copies.get(row['id'])))
+            row.update(_received_on(record, placements.get(row['id'])))
             for private in ('pdf_path', 'provider_sid'):
                 row.pop(private, None)
             result.append(row)
         return result
+
+    def _placements_on(self, connection, identities):
+        """{fax id: how the receiving rules placed it} in one query."""
+        receiving = self.resources.receiving_tables()
+        if receiving is None or not identities:
+            return {}
+        routing = receiving['routing']
+        return {row['id']: dict(row) for row in connection.execute(
+            sa.select(routing).where(routing.c.id.in_(identities))).mappings()}
 
     def document(self, actor, inbound_id):
         faxes = self.tables['inbound_faxes']

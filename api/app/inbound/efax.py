@@ -74,10 +74,36 @@ def account_for(values):
     return account_identity(SOURCE, account_key(values.efax_app_id, values.efax_user_id))
 
 
-def receiving_active(values):
-    """Receiving is on, eFax is the receiving provider and its credentials are set."""
-    return bool(values.inbound_enabled and values.effective_inbound == SOURCE and values.efax_app_id
-                and values.efax_api_key and values.efax_user_id)
+def receiving_active(values, account=None):
+    """Receiving is on, this eFax account receives (the first one: eFax is the receiving provider) and its
+    credentials are set. ``account`` is a provider account (``accounts.py``) whose own values ``values`` are."""
+    receives = values.effective_inbound == SOURCE if account is None or account.primary else (
+        account.receives and account.enabled)
+    if account is not None and account.primary and not account.enabled:
+        receives = False
+    return bool(values.inbound_enabled and receives and values.efax_app_id and values.efax_api_key
+                and values.efax_user_id)
+
+
+def own_values(values, key=SOURCE):
+    """The configuration as one eFax account sees it, or None when settings no longer have that account."""
+    from .. import accounts
+    try:
+        return accounts.account_values(values, key)
+    except accounts.AccountsError:
+        return None
+
+
+def account_identities(values):
+    """The eFax account identities of every eFax account in settings."""
+    from .. import accounts
+    found = set()
+    for item in accounts.all_accounts(values):
+        if item.provider == SOURCE:
+            own = own_values(values, item.key)
+            if own is not None and own.efax_app_id and own.efax_user_id:
+                found.add(account_for(own))
+    return found
 
 
 def _number(value):
@@ -129,8 +155,12 @@ def _report(item):
         'fax_id', 'completed_timestamp', 'pages', 'size', 'duration', 'originating_fax_tsid')}}
 
 
-async def check_once(store, values, *, service=None, kick=None):
-    """List received faxes not downloaded yet; begin an import for each new one."""
+async def check_once(store, values, *, service=None, kick=None, account_key=SOURCE, binding=None):
+    """List received faxes not downloaded yet; begin an import for each new one.
+
+    ``values`` are the eFax account's own (``own_values``); ``account_key`` is its key, recorded on each fax,
+    and ``binding`` its (revision id, profile id), so a later fetch uses that account.
+    """
     service = service or service_for(values)
     account = account_for(values)
     result = CheckResult()
@@ -147,7 +177,7 @@ async def check_once(store, values, *, service=None, kick=None):
                     from_number=_number(item.get('originating_fax_number')),
                     reported_pages=_int(item.get('pages')), report=_report(item),
                     source_received_at=parse_source_time(item.get('completed_timestamp')),
-                    country=values.fax_default_country))
+                    country=values.fax_default_country, account_key=account_key, binding=binding))
                 result.added += 1
             elif found['state'] in ('received', 'conflict'):
                 # Stored earlier, but eFax still lists it as not downloaded: say so again.
@@ -236,21 +266,26 @@ def _marked_rows(store, account=None):
     return [(row['id'], row['operation_id'], row['account'], _mark(row)) for row in rows]
 
 
-async def retry_deletions(store, values, *, service=None, limit=50):
-    """Retry the due deletions for the eFax account in settings; returns how many were deleted.
+async def retry_deletions(store, values, *, service=None, limit=50, owned=None):
+    """Retry the due deletions for one eFax account (``values`` are its own); returns how many were deleted.
 
-    A pending deletion of a fax that arrived on another eFax account (the app
-    ID or user ID changed since) can never be retried with these settings, so
-    it is marked stopped and reads "delete it in your eFax account".
+    A pending deletion of a fax that arrived on another eFax account is that
+    account's to retry. One that no eFax account in settings owns any more (the
+    app ID or user ID changed since) can never be retried, so it is marked
+    stopped and reads "delete it in your eFax account". ``owned`` is the set of
+    account identities in settings; by default only this account's.
     """
     service = service or service_for(values)
     account = account_for(values)
+    owned = {account} if owned is None else set(owned) | {account}
     now = store.clock()
     rows = await run_lifecycle_step(lambda: _marked_rows(store))
     deleted = attempted = 0
     for import_id, fax_id, row_account, mark in rows:
         if mark['state'] != 'pending':
             continue
+        if row_account != account and row_account in owned:
+            continue  # another eFax account's receiver retries it
         if row_account != account:
             stopped = {key: value for key, value in mark.items() if key != 'next_at'}
             stopped['state'] = 'stopped'
@@ -336,11 +371,14 @@ async def acquire(store, claim, values, *, service=None):
 
 
 class EfaxReceiver:
-    """Checks eFax for received faxes while eFax is the receiving provider."""
+    """Checks one eFax account for received faxes while it receives (the first account: while eFax is the
+    receiving provider; an extra account: while its receiving switch is on)."""
 
-    def __init__(self, store, frame, *, kick=None, sleep=asyncio.sleep):
-        """``frame()`` returns ``(values, profiles)`` for the active configuration revision."""
+    def __init__(self, store, frame, *, kick=None, sleep=asyncio.sleep, account_key=SOURCE, binder=None):
+        """``frame()`` returns ``(values, profiles)`` for the active configuration revision; ``account_key``
+        names the eFax account; ``binder(key)`` gives its (revision id, profile id) for each fax's binding."""
         self.store, self.frame, self.kick, self.sleep = store, frame, kick, sleep
+        self.account_key, self.binder = account_key, binder
         self.failures = 0
         self.last_checked = None
         self.last_problem = None
@@ -352,17 +390,21 @@ class EfaxReceiver:
 
     async def step(self):
         """One check; returns the seconds to wait before the next one."""
-        values, _ = await run_lifecycle_step(self.frame)
-        interval = values.efax_poll_seconds
+        from .. import accounts
+        settings_values, _ = await run_lifecycle_step(self.frame)
+        values = own_values(settings_values, self.account_key)
+        account = accounts.account_named(settings_values, self.account_key)
+        interval = (values or settings_values).efax_poll_seconds
         held = self.hold_until - _monotonic()
         if held > 0:
             return held
-        if not receiving_active(values):
+        if values is None or account is None or not receiving_active(values, account):
             self.failures = 0
             return interval
         try:
-            await check_once(self.store, values, kick=self.kick)
-            await retry_deletions(self.store, values)
+            binding = await run_lifecycle_step(lambda: self.binder(self.account_key)) if self.binder else None
+            await check_once(self.store, values, kick=self.kick, account_key=self.account_key, binding=binding)
+            await retry_deletions(self.store, values, owned=account_identities(settings_values))
         except EfaxBusy as busy:
             self.failures += 1
             self.last_problem = str(busy)

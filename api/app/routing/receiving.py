@@ -740,7 +740,14 @@ def connections(values, routes, prices, engine, since, now):
     """The fax connections in use with their monthly fees, and what keeping one would cost."""
     preset = (getattr(values, 'sip_trunk_preset', '') or '').strip()
     sending = [getattr(values, 'effective_outbound', '') or '', *getattr(values, 'outbound_route_providers', ())]
+    # Every provider with an account that receives (accounts.receiving_accounts), the receiving provider first.
     receiving = [getattr(values, 'effective_inbound', '') or ''] if getattr(values, 'inbound_enabled', False) else []
+    if receiving:
+        from ..accounts import receiving_accounts
+        try:
+            receiving += [account.provider for account in receiving_accounts(values)]
+        except Exception:
+            pass  # values without provider accounts (a fixture): the receiving provider alone, as before
     in_use = [provider for provider in dict.fromkeys(sending + receiving) if provider]
     # A provider's monthly fee is the one on its rate cards; a provider with cards but no fee charges none.
     fees = {}
