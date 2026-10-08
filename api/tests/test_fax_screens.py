@@ -117,7 +117,8 @@ def corpus(tmp_path_factory):
     text.write_text('\n'.join(['Four score and seven years ago our fathers brought forth on this continent,'] * 40))
     conversion.txt_to_pdf(str(text), str(folder / 'text.pdf'))
     pages = {name: FIXTURES / f'{name}.pdf' for name in ('shaded_table', 'tinted_form', 'pale_text')}
-    pages.update(scan=folder / 'scan.pdf', photo=folder / 'photo.pdf', text=folder / 'text.pdf')
+    pages.update(scan=folder / 'scan.pdf', photo=folder / 'photo.pdf', text=folder / 'text.pdf',
+                 gradient=FIXTURES / 'gradient_title.pdf')
     return {name: render(pdf, folder) for name, pdf in pages.items()}
 
 
@@ -172,8 +173,9 @@ def test_the_pale_text_bands_stay_pixel_for_pixel_and_whitening_erases_them(corp
     assert not found.kept and 'pale_marks' in found.losses
 
 
-@pytest.mark.parametrize('name', ['scan', 'photo', 'text'])
-def test_a_noisy_scan_a_photograph_and_black_text_do_not_change(corpus, name):
+@pytest.mark.parametrize('name', ['scan', 'photo', 'text', 'gradient'])
+def test_a_noisy_scan_a_photograph_black_text_and_a_gradient_do_not_change(corpus, name):
+    # AR's title band shaded from 40% gray to white: each step of the gradient is too narrow for a pattern.
     gray, today = corpus[name]
     shipped = screens.screen_page(gray, today)
     assert shipped.changed == 0 and shipped.page.tobytes() == friendly.bits(today).tobytes()
@@ -450,6 +452,24 @@ def test_text_objects_are_frozen_whole(tmp_path):
     kept = screens.screen_page(gray, today, objects=masks[0])
     assert plain.screened > 0 and kept.changed == 0  # the strokes' interiors stay as today with the text mask
     assert not list(tmp_path.glob('.faxbot-screens-*'))
+
+
+@needs_gs
+def test_the_text_mask_holds_only_text_so_a_ghostscript_that_ignored_the_filters_would_fail_here(tmp_path):
+    # Ghostscript accepts unknown -d options silently. If a version ignored -dFILTERVECTOR, every vector fill would
+    # count as text, everything would freeze and the saving would quietly drop to nothing.
+    def text_on_shading(pdf):
+        _shaded_box(pdf, 20, 40, 248, 140)
+        pdf.setFont('Helvetica', 11)
+        pdf.drawString(40, 100, 'Black text on a shaded panel')
+    pdf = _page(tmp_path / 'panel.pdf', text_on_shading, (288, 216))
+    gray, today = render(pdf, tmp_path)
+    mask = screens.object_masks(pdf, [gray], shutil.which('gs'), tmp_path)[0]
+    panel = (round(30 * 204 / 72), round((216 - 170) * 196 / 72), round(260 * 204 / 72), round((216 - 120) * 196 / 72))
+    text = (round(38 * 204 / 72), round((216 - 112) * 196 / 72), round(200 * 204 / 72), round((216 - 96) * 196 / 72))
+    assert screens.count(mask.crop(panel)) == 0  # the panel's fill is not text
+    assert screens.count(mask.crop(text)) > 500  # the words are
+    assert screens.screen_page(gray, today, objects=mask).screened > 0
 
 
 @needs_gs

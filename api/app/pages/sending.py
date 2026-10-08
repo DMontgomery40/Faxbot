@@ -280,8 +280,10 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         if encoded:
             _record_codec(engine, job_id, choice['codec'], now)
         if lightened:
+            # What the rendering saved, in the bits the call sends (the chooser's priced coding), apart from the
+            # layout's own saving recorded above.
             fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=rendered[rendering][1],
-                                     now=now)
+                                     bits=choice['rendering_bits'], now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
                              len(frames), len(pages), trimmed_pages, coded)
     except BaseException:

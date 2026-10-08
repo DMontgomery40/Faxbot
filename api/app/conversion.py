@@ -693,7 +693,9 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
     {layout: Prediction} of the pages as they are, ``codec``: what ``codec()`` returned when the codec was kept,
     else None, ``coding``: the chosen candidate's ``pages.coding.CodingChoice`` (None without ``usable``),
-    ``rendering``: None or the rendering kept, and ``faster``: the named reason when it decided.
+    ``rendering``: None or the rendering kept, ``rendering_bits``: (bits of the pages as they are, bits of the kept
+    rendering), both as the call codes them, and ``faster``: the named reason when it decided. ``seconds_saved`` is
+    the layout's own saving, against the same rendering's normal pages.
     """
     from .pages import coding as codings
     from .pages import decision, fidelity, packing
@@ -740,13 +742,21 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
                                      decision.bill(priced[key], card=card, route=route)) for key in keys]
     chosen, quicker = decision.choose(candidates, faster=faster)
     key = (chosen.rendering, chosen.layout)
-    normal, picked = priced[("as_is", "normal")], priced[key]
+    # The layout's saving is against the same rendering's normal pages, and the rendering's against the pages as they
+    # are: each change is said once, in the coding the call is priced with.
+    normal, picked = priced[(chosen.rendering, "normal")], priced[key]
     seconds = (math.floor(normal.seconds - picked.seconds)
                if normal.seconds is not None and picked.seconds is not None else None)
+    rendered = None
+    if chosen.rendering != "as_is":
+        before = decision._bits(shapes[("as_is", "normal")])
+        after = decision._bits(shapes[(chosen.rendering, "normal")])
+        if before is not None and after is not None:
+            rendered = (sum(before), sum(after))
     pages, reason, details, _ = pieces[key]
     return {"layout": chosen.layout, "pages": pages, "reason": reason,
             "seconds_saved": max(0, seconds) if seconds is not None else None,
             "predictions": {layout: prediction for (name, layout), prediction in priced.items() if name == "as_is"},
             "codec": details, "coding": choices.get(key),
-            "rendering": None if chosen.rendering == "as_is" else chosen.rendering,
+            "rendering": None if chosen.rendering == "as_is" else chosen.rendering, "rendering_bits": rendered,
             "faster": faster if quicker else None}

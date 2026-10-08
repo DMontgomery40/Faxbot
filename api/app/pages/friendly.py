@@ -554,7 +554,9 @@ def named_reason(engine, values, job, route, why, *, now=None):
 
     'administrator': the setting for your documents, or this recipient, is Always (``why``). 'deadline': the fax
     has a send-by time within ``schedule.DEADLINE_FIRST`` (the hour in which the scheduler sends it first).
-    'capacity': it goes over your phone line while other faxes wait for a line (``capacity.waiting_for_line``)."""
+    'capacity': it goes over your phone line while that line is full (its calls at once or new calls a second,
+    ``capacity.Room``) and other faxes wait for room (``capacity.waiting_for_line``); a fax that waits only for its
+    recipient's busy number is not a reason."""
     if why in ('always', 'recipient'):
         return 'administrator'
     now = now or utcnow()
@@ -565,7 +567,10 @@ def named_reason(engine, values, job, route, why, *, now=None):
     if route in PHONE_ROUTES and engine is not None:
         from ..capacity import for_engine
         try:
-            if for_engine(engine).waiting_for_line(values, now) > 0:
+            capacity = for_engine(engine)
+            with engine.connect() as connection:
+                room = capacity.room(connection, values, now)
+            if (room.trunk_full or room.rate_full) and capacity.waiting_for_line(values, now) > 0:
                 return 'capacity'
         except sa.exc.SQLAlchemyError:
             logging.getLogger(__name__).warning('Faxes waiting for a line could not be counted.')
@@ -602,11 +607,17 @@ def _table(connection, name=TABLE):
     return sa.Table(name, sa.MetaData(), autoload_with=connection)
 
 
-def record_send(engine, *, job_id, attempt_id, request, now=None):
-    """Record the changed pages one attempt sent, and how; once per attempt. Returns the row's ID, or None."""
+def record_send(engine, *, job_id, attempt_id, request, bits=None, now=None):
+    """Record the changed pages one attempt sent, and how; once per attempt. Returns the row's ID, or None.
+
+    ``bits``: (before, after) as the call codes the pages (the layout chooser's priced coding); without it, the
+    MMR bits the pages were made with (``Result``)."""
     result = getattr(request, 'result', None)
     if engine is None or result is None or result.pages_changed < 1:
         return None
+    if bits is not None:
+        from dataclasses import replace
+        result = replace(result, bits_before=int(bits[0]), bits_after=int(bits[1]))
     row = _row(job_id, attempt_id, request.scope, result)
     with engine.begin() as connection:
         table = _table(connection)
@@ -756,10 +767,11 @@ RATES = range(2400, 33601)
 def call_rate(engine, job_id):
     """The speed the fax's newest trunk call negotiated, in bit/s, when its engine reported one (the call's first
     speed; the built-in engine reports only its last page's); None for cloud providers and unreported calls."""
+    from ..hylafax_records import records_for
     try:
-        from ..hylafax_records import records_for
         negotiation = (records_for(engine).sent_detail(job_id) or {}).get('negotiation') or {}
-    except Exception:
+    except sa.exc.SQLAlchemyError:
+        logging.getLogger(__name__).warning('The call speed could not be read for this fax.')
         return None
     for name in ('rate_first', 'rate_last_page'):
         value = negotiation.get(name)
@@ -824,9 +836,12 @@ def _measured(job_id, pdf_path, measure):
         if job_id in _MEASURED:
             _MEASURED.move_to_end(job_id)
             return _MEASURED[job_id]
+    from ..conversion import DocumentConversionError
     try:
         result = measure(pdf_path)
-    except Exception:
+    except (DocumentConversionError, OSError, ValueError):
+        # Ghostscript or the document refused: this fax is left out of the recommendation, said once in the log.
+        logging.getLogger(__name__).warning('A recent fax could not be measured for the shading recommendation.')
         result = None
     with _LOCK:
         _MEASURED[job_id] = result
@@ -855,14 +870,16 @@ def where_it_saves(engine):
         if route not in cards:
             try:
                 cards[route] = billed_by_time(RouteStore(engine).card_for(route), route) if route else False
-            except Exception:
+            except (sa.exc.SQLAlchemyError, ValueError):  # ValueError: costs.InvalidRateCard
+                logging.getLogger(__name__).warning('A route rate card could not be read for the recommendation.')
                 cards[route] = False
         if cards[route]:
             return True
         if number not in machines:
             try:
                 machines[number] = records_for(engine).capability(number).ecm
-            except Exception:
+            except sa.exc.SQLAlchemyError:
+                logging.getLogger(__name__).warning('A fax machine record could not be read for the recommendation.')
                 machines[number] = None
         return machines[number] is False
     return saves

@@ -151,7 +151,9 @@ def test_with_the_real_predictor_screened_pages_win_a_billed_minute_and_beat_whi
     trunk = facts('sip', card('sip', minute='0.007'))
     chosen = choose(frames, renderings, 'sip', trunk)
     # As they are about 95 seconds (2 minutes); screened about 50 and whitened about 25: both 1 minute.
-    assert chosen['rendering'] == 'screened' and chosen['faster'] is None and chosen['seconds_saved'] >= 30
+    assert chosen['rendering'] == 'screened' and chosen['faster'] is None and chosen['seconds_saved'] == 0
+    before, after = chosen['rendering_bits']
+    assert (before - after) // 14400 >= 30  # the screen's own saving; the normal layout saves nothing more
     assert choose(frames, {'screened': renderings['screened']}, 'sip', trunk)['rendering'] == 'screened'
     # The administrator's choice (or a send-by time, or a busy line) takes the faster pages at that bill.
     assert choose(frames, renderings, 'sip', trunk, faster='administrator')['rendering'] == 'whitened'
@@ -169,6 +171,36 @@ def test_with_the_real_predictor_a_per_page_route_keeps_the_pages_as_they_are(ta
     timed = choose(frames, renderings, 'faxplus', facts('faxplus', card('faxplus', page='0.10'), page_time=60,
                                                         rate=7200))
     assert timed['rendering'] in ('screened', 'whitened')
+
+
+def test_each_saving_is_counted_once_in_the_coding_the_call_is_priced_with(table):
+    # Two pages of the table on a machine that takes long pages: the screened pages, packed, go. The long pages'
+    # own saving is against the screened pages as they are, and the screen's against the pages as they are.
+    frames, renderings = table
+    two = {'screened': (renderings['screened'][0] * 2, renderings['screened'][1])}
+    trunk = facts('sip', card('sip', minute='0.007'))
+    with predict.facts_source(lambda route_key, destination, now=None: trunk):
+        chosen = conversion.choose_layout(frames * 2, route='sip', destination=PEER, limit='unlimited',
+                                          dense_allowed=True, renderings=two)
+    assert (chosen['rendering'], chosen['layout']) == ('screened', 'dense')
+    before, after = chosen['rendering_bits']
+    assert before == 2 * sum(conversion.frame_bits(frames))
+    assert after == 2 * sum(conversion.frame_bits(two['screened'][0][:1]))
+    screen_seconds = (before - after) / 14400
+    assert screen_seconds > 40 and 0 <= chosen['seconds_saved'] <= 10  # a page boundary, not the screen again
+    normal = chosen['predictions']['normal']
+    assert chosen['seconds_saved'] + screen_seconds * 1.35 <= normal.seconds  # never more than the whole call
+
+
+@needs_gs
+def test_the_sent_record_keeps_the_bits_the_call_codes(installation, tmp_path, billed):
+    from app.pages import coding
+    attempt(installation, tmp_path, TRUNK)
+    run = friendly.run_for(installation, JOB)
+    own = conversion.read_fax_frames(str(tmp_path / f'{JOB}.tiff'))
+    measured = coding.measure(own)
+    assert run['bits_before'] in {sum(bits) for name, bits in measured.items() if name != 'JBIG'}
+    assert run['bits_before'] - run['bits_after'] > 0
 
 
 # The opt-in, the named reasons and the attempt -------------------------------------------------------------------
@@ -212,10 +244,17 @@ def test_the_named_reasons(installation, monkeypatch):
     assert friendly.named_reason(installation, values, soon, 'sinch', 'time', now=NOW) == 'deadline'
     later = {'send_by': NOW + timedelta(hours=3)}
     assert friendly.named_reason(installation, values, later, 'sinch', 'time', now=NOW) is None
+    # Nothing waits on this installation's real records: no reason.
+    assert friendly.named_reason(installation, values, later, 'sip', 'time', now=NOW) is None
     from app import capacity
-    waiting = SimpleNamespace(waiting_for_line=lambda values, now: 2)
-    monkeypatch.setattr(capacity, 'for_engine', lambda engine: waiting)
-    assert friendly.named_reason(installation, values, later, 'sip', 'time', now=NOW) == 'capacity'
+    full = capacity.Room(trunk_calls=2, trunk_limit=2, recent_starts=0, rate_limit=None)
+    room = capacity.Room(trunk_calls=1, trunk_limit=2, recent_starts=0, rate_limit=None)
+    for now_room, waiting, expected in ((full, 2, 'capacity'), (room, 2, None), (full, 0, None)):
+        # A fax waiting only for its recipient's busy number, while your line has room, is not a reason.
+        stand_in = SimpleNamespace(room=lambda connection, values, now, room=now_room: room,
+                                   waiting_for_line=lambda values, now, waiting=waiting: waiting)
+        monkeypatch.setattr(capacity, 'for_engine', lambda engine, stand_in=stand_in: stand_in)
+        assert friendly.named_reason(installation, values, later, 'sip', 'time', now=NOW) == expected
     assert friendly.named_reason(installation, values, later, 'sinch', 'ecm', now=NOW) is None  # not a phone line
 
 
