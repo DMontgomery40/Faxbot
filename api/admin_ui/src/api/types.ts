@@ -121,7 +121,29 @@ export interface RecipientSchedule {
   hours_sentence: string;
   busy_hours: { label: string; sentence: string }[];
   busy_sentence: string;
+  // Learned call hours (M26): time a page and failed calls by hour, the typical hour, and what Faxbot does with them.
+  call_hours?: { label: string; sentence: string }[];
+  typical_hour?: string | null;
+  call_hours_sentence?: string;
   failed_try: { route: string | null; label: string; sentence: string; sources: string[]; read_on: string };
+}
+
+// Recipients, Details: collecting faxes this number's fax server holds for you (M21, routing/polling.py).
+export interface RecipientPolling {
+  number: string;
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  advice: string | null;
+  note: string;
+  requests: { id: string; requested_at: string; requested: string; requested_by: string | null; state: string;
+    sentence: string; pages: number | null; inbound_fax_id: string | null }[];
+}
+
+export interface RecipientPollingSave {
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
 }
 
 export interface RecipientScheduleSave {

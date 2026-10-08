@@ -107,7 +107,7 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     assert negotiation == {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': None,
                            'compression': None, 'resolution': None, 'ecm': None, 'session': None,
                            'page_length': None, 'page_width': None, 'fine': None, 'remote_ecm': None,
-                           'scan_ms': None, 'boundary_ms': None, 'boundaries': None}
+                           'scan_ms': None, 'remote_codings': None, 'boundary_ms': None, 'boundaries': None}
     # The secret went in a header from standard input, never on the command line.
     headers = ''.join(path.read_text() for path in tmp_path.glob('header.*'))
     assert 'X-Internal-Secret: synthetic-secret-value' in headers

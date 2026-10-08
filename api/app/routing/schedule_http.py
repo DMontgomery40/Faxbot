@@ -67,6 +67,26 @@ def _clock_text(minute):
     return None if minute is None else f'{minute // 60:02d}:{minute % 60:02d}'
 
 
+def call_hours(timing, settings):
+    """The learned call hours for Recipients details and the CLI (M26): each hour with enough calls, the typical
+    hour, and one sentence on what Faxbot does with them."""
+    own = timing is not None and timing.scope == 'number'
+    facts = timing.facts() if own else []
+    if not settings.learn_busy:
+        sentence = "Faxbot does not learn this number's hours."
+    elif not facts:
+        sentence = 'Faxbot has too few calls to this number to compare its hours yet.'
+    else:
+        hours = round(schedule.HOUR_WAIT.total_seconds() / 3600)
+        sentence = (f'An ordinary fax may wait up to {hours} hours for an hour in which calls to this number take '
+                    'much less time a page or fail less often after the fax machine answers. Urgent faxes always go '
+                    'at once.')
+    typical = timing.typical if own and timing.typical is not None else None
+    return {'call_hours': [{'label': fact.label(), 'sentence': fact.summary()} for fact in facts],
+            'typical_hour': typical.summary() if typical is not None and (typical.timed or typical.judged) else None,
+            'call_hours_sentence': sentence}
+
+
 def view(engine, number, values, route, now):
     """What Recipients, Details and ``faxbot recipients schedule show`` display."""
     from ..provider_labels import provider_label
@@ -74,6 +94,7 @@ def view(engine, number, values, route, now):
     with engine.connect() as connection:
         settings = scheduler.settings(connection, number, values)
         busy = scheduler.busy_hours(connection, number, settings, now)
+        timing = scheduler.timing(connection, number, settings, now) if settings.learn_busy else None
     hours = settings.hours
     zone = f' in their time zone ({settings.zone_name})' if settings.zone_set else ''
     hours_sentence = ('Faxbot sends to this recipient at any time.' if hours.always
@@ -104,6 +125,7 @@ def view(engine, number, values, route, now):
         'busy_hours': [{'label': slot.label(), 'sentence': slot.summary()} for slot in slots]
         if settings.learn_busy else [],
         'busy_sentence': busy_sentence,
+        **call_hours(timing, settings),
         'failed_try': {'route': route or None, 'label': label, 'sentence': tries.note,
                        'sources': list(tries.sources), 'read_on': tries.read_on},
     }

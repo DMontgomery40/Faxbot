@@ -290,6 +290,8 @@ EOF
     # name for the call (in the caller name); the receive script gets them in this order.
     printf 'CallIDPattern:\t\t"NMBR="\nCallIDPattern:\t\t"NAME="\nCallIDPattern:\t\t"DNIS="\n'
     printf 'FaxRcvdCmd:\t\t/usr/local/lib/faxbot-engine/received\n'
+    # A fax Faxbot collected by polling (faxsend reads PollRcvdCmd from the line's own config).
+    printf 'PollRcvdCmd:\t\t/usr/local/lib/faxbot-engine/pollrcvd\n'
     printf 'Class1SSLFaxSupport:\t%s\nClass1SSLFaxCert:\tetc/ssl.pem\n' "$ssl_support"
     if [ "$sslfax" = yes ] && [ -n "$listener" ]; then
       printf 'Class1SSLFaxInfo:\t"%s"\n' "$listener"

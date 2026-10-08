@@ -68,6 +68,9 @@ class Capability:
     ecm: bool | None = None  # whether the machine offers error correction; None: not known
     scan_ms: int | None = None  # its minimum time per scan line at fine resolution
     boundary_seconds: float | None = None  # measured time between pages, when the engine reported it
+    # The codings it takes ('MH', 'MR', 'MMR', 'JBIG'), as the SSL Fax engine logged its DIS; None: not reported
+    # (before migration 0059, or a call on the built-in engine, whose frames hold its DIS instead).
+    codings: frozenset | None = None
 
     @property
     def learned(self):
@@ -155,6 +158,9 @@ class PageRecords:
                'job_id': job_id if _ID.fullmatch(str(job_id or '')) else None, 'observed_at': now}
         if row['boundary_ms'] is None or not row['boundaries']:
             row['boundary_ms'] = row['boundaries'] = None
+        if 'codings' in table.c:
+            from ..fax_negotiation import codings_text
+            row['codings'] = codings_text(values.get('codings'))
 
         def apply(connection):
             found = connection.execute(sa.select(table.c.id).where(
@@ -184,9 +190,11 @@ class PageRecords:
         boundary = round(median(timed) / 1000, 2) if timed else None
         if newest is None:
             return Capability(DEFAULT_LIMIT, None, boundary_seconds=boundary)
+        codings = newest.get('codings')
         return Capability(newest['max_length'], newest['observed_at'], newest['max_width'],
                           None if newest['fine'] is None else bool(newest['fine']),
-                          None if newest['ecm'] is None else bool(newest['ecm']), newest['scan_ms'], boundary)
+                          None if newest['ecm'] is None else bool(newest['ecm']), newest['scan_ms'], boundary,
+                          frozenset(codings.split(',')) if codings else None)
 
     # Settings -----------------------------------------------------------------------------------------------
 

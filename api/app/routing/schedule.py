@@ -39,6 +39,25 @@ The rules, in order:
    hour that is neither busy nor closed; when a failed call is free, the fax
    does not wait and only goes after other faxes that could use the same room.
 
+5. **Learned call hours** (M26, ``learn_timing``). From earlier trunk calls to
+   the number (both engines: ``sip_call_records`` with the SSL Fax engine's
+   ``fax_engine_calls``), per hour as busy hours count them: the time a page
+   took on delivered calls, and how many answered calls failed after the fax
+   machine answered (``remote_fax_failed``; busy, unanswered and no fax
+   machine stay busy-hour evidence). An hour says something only with
+   ``HOUR_MIN_CALLS`` calls on ``MIN_DAYS`` days and ``MIN_WEIGHT``; the
+   number's own calls decide, else every number's on the route. An ordinary
+   fax that may start now waits for a later hour, within ``HOUR_WAIT`` and its
+   send-by time, only when this hour is worse than the number's typical hour
+   by a margin and the later hour is not (the number's own calls only; every
+   number's on the route only price it): ``SLOWER`` and ``GAIN`` for time a
+   page (on routes billed by the minute only, where it costs less), and
+   ``FAILING_SHARE`` and ``FAILING_GAP`` for failures after answer. At the
+   later hour the condition is false, so the fax goes then and is never held
+   twice for the same reason. Urgent faxes never wait, and nothing is resent:
+   only a new attempt's start moves. The predictor uses the hour's time a page
+   the same way (``HourTiming.factor_at``).
+
 Every hold has one sentence for Sent details (``Decision.reason``). Learned
 hours are worked out from the delivery records each time and never stored.
 Which number: the recipient's (``fax_jobs.to_number``), also when Faxbot dials
@@ -433,6 +452,7 @@ class Decision:
     charge: str | None = None            # whether a failed try there is charged: 'bills', 'free', 'unknown'
     later: bool = False                  # may start now but goes after faxes that could use the same room
     latest_start: datetime | None = None
+    better: object = None                # the ``BetterHour`` a fax waits for ('faster' or 'reliable'), when it does
 
 
 def call_time(pages):
@@ -449,8 +469,9 @@ def latest_start(fax):
     return fax.send_by - 2 * call_time(fax.pages) - SAFETY
 
 
-def decide(fax, settings, busy, now):
-    """Whether ``fax`` should start now; never holds an urgent fax or holds one past its latest start."""
+def decide(fax, settings, busy, now, timing=None):
+    """Whether ``fax`` should start now; never holds an urgent fax or holds one past its latest start.
+    ``timing`` is the number's learned call hours (``HourTiming``), when Faxbot learns them."""
     latest = latest_start(fax)
     if fax.urgent:
         return Decision(latest_start=latest)
@@ -462,6 +483,10 @@ def decide(fax, settings, busy, now):
             start, why = opens, 'hours'
     slot = busy.busy_at(start) if (busy is not None and settings.learn_busy) else None
     if slot is None:
+        if start <= now:
+            better = better_hour(fax, settings, timing, busy if settings.learn_busy else None, now, latest)
+            if better is not None:
+                return Decision(better.at, better.why, latest_start=latest, better=better)
         return Decision(start if start > now else None, why, latest_start=latest)
     charge = failed_tries(fax.route, fax.preset).charge(slot.kind if slot.kind in UNREACHABLE else 'busy')
     if charge == 'free':
@@ -486,6 +511,240 @@ def decide(fax, settings, busy, now):
         # Busy for a week, or past what its send-by time allows: the busy hour does not hold it.
         return Decision(start if start > now else None, why, latest_start=latest)
     return Decision(clear, 'busy', slot, charge, latest_start=latest)
+
+
+# Learned call hours: time a page and failures after answer, by hour (M26) ---------------------------------
+
+# Calls an hour needs (on MIN_DAYS distinct days, with MIN_WEIGHT) before it says anything about time a page or
+# failures after answer. The same window and decay as busy hours.
+HOUR_MIN_CALLS = 3
+# Waiting for a faster hour: this hour takes at least SLOWER more time a page than the number's typical hour, the
+# later hour at least GAIN less than this one and under typical + SLOWER, and the fax saves at least
+# MIN_SAVED_SECONDS on the line. Defaults to tune once installations have data; the research rated the saving
+# small (research M26; Dialogic links packet loss to retraining, CTR N07).
+SLOWER = 0.25
+GAIN = 0.25
+MIN_SAVED_SECONDS = 15
+# Waiting for a more reliable hour: at least FAILING_SHARE of this hour's answered calls failed after the fax
+# machine answered, FAILING_GAP above the number's typical share, and the later hour is at or under typical.
+FAILING_SHARE = 0.4
+FAILING_GAP = 0.25
+# The longest an ordinary fax waits for a better hour (recipient hours and busy hours look further, LOOKAHEAD).
+HOUR_WAIT = timedelta(hours=12)
+# Routes whose calls these facts come from (the trunk, both engines), and those billed by the minute on the line,
+# where a faster hour costs less (Telnyx "$0.005/min", SignalWire fax by the minute: FAILED_TRIES sources).
+TRUNK_ROUTES = ('sip', 'freeswitch')
+TIME_BILLED = ('sip', 'freeswitch', 'signalwire')
+
+
+@dataclass(frozen=True)
+class CallTiming:
+    """One finished trunk call to the number: when it started (naive UTC), the time a page took when it was
+    delivered, and whether it failed after the fax machine answered (True), was delivered (False) or neither."""
+    at: datetime
+    seconds_per_page: float | None
+    failed_after_answer: bool | None
+
+
+@dataclass(frozen=True)
+class HourFact:
+    """What earlier calls showed for one hour (``key`` as busy hours: ('day', 0-6, hour) or ('weekdays', hour)),
+    or for every hour (('typical',)): time a page on delivered calls and failures after answer."""
+    key: tuple
+    days: int
+    weight: float
+    page_calls: int
+    seconds_per_page: float | None
+    answered: int
+    failed: int
+
+    @property
+    def timed(self):
+        return (self.page_calls >= HOUR_MIN_CALLS and self.seconds_per_page is not None
+                and self.days >= MIN_DAYS and self.weight >= MIN_WEIGHT)
+
+    @property
+    def judged(self):
+        return self.answered >= HOUR_MIN_CALLS and self.days >= MIN_DAYS and self.weight >= MIN_WEIGHT
+
+    @property
+    def failure_share(self):
+        return self.failed / self.answered if self.answered else 0.0
+
+    def label(self):
+        """'Weekdays, 9:00 AM to 10:00 AM' or 'Mondays, 9:00 AM to 10:00 AM'; 'Any hour' for the typical one."""
+        if self.key[0] == 'typical':
+            return 'Any hour'
+        span = 'Weekdays' if self.key[0] == 'weekdays' else f'{DAY_NAMES[self.key[1]]}s'
+        return f'{span}, {_hour_text(self.key[-1])} to {_hour_text((self.key[-1] + 1) % 24)}'
+
+    def summary(self):
+        """'About 24 seconds a page on 4 delivered calls; 1 of 5 answered calls failed.'"""
+        parts = []
+        if self.timed:
+            parts.append(f'about {round(self.seconds_per_page)} seconds a page on {self.page_calls} delivered calls')
+        if self.judged:
+            parts.append(f'{self.failed} of {self.answered} answered calls failed')
+        if not parts:
+            return 'Too few calls to tell yet.'
+        text = '; '.join(parts)
+        return text[:1].upper() + text[1:] + '.'
+
+
+def _hour_fact(key, items, now):
+    """An ``HourFact`` from (day, CallTiming) items within the window, weighted by age at ``now``."""
+    kept = [(day, item) for day, item in items if now - WINDOW < item.at <= now]
+    weight = sum(max(0.0, 1 - (now - item.at) / WINDOW) for _, item in kept)
+    pages = sorted(item.seconds_per_page for _, item in kept if item.seconds_per_page is not None)
+    middle = None
+    if pages:
+        half = len(pages) // 2
+        middle = pages[half] if len(pages) % 2 else (pages[half - 1] + pages[half]) / 2
+    answered = [item for _, item in kept if item.failed_after_answer is not None]
+    return HourFact(key, len({day for day, _ in kept}), weight, len(pages), middle, len(answered),
+                    sum(1 for item in answered if item.failed_after_answer))
+
+
+@dataclass(frozen=True)
+class HourTiming:
+    """Learned call hours for one number (or a route as a whole), judged at ``now``, in the recipient's zone."""
+    slots: dict = field(default_factory=dict)
+    typical: HourFact | None = None
+    zone_name: str = ''
+    scope: str = 'number'                # 'number': calls to this number; 'route': every number on the route
+
+    def fact_at(self, moment, need='timed'):
+        """The deciding ``HourFact`` for the hour holding ``moment`` that has enough calls for ``need`` ('timed' or
+        'judged'): its own day of the week, else weekdays pooled; None when neither does."""
+        local = _local(moment, _zone(self.zone_name))
+        own = self.slots.get(('day', local.weekday(), local.hour))
+        if own is not None and getattr(own, need):
+            return own
+        if local.weekday() < 5:
+            pooled = self.slots.get(('weekdays', local.hour))
+            if pooled is not None and getattr(pooled, need):
+                return pooled
+        return None
+
+    def facts(self):
+        """Every hour with enough calls to say something, pooled weekdays first (Recipients details, the CLI)."""
+        return sorted((fact for fact in self.slots.values() if fact.timed or fact.judged),
+                      key=lambda fact: (fact.key[0] != 'weekdays', fact.key[1:]))
+
+    def factor_at(self, moment):
+        """The hour's time a page against the typical hour (1.25: a quarter longer), when both have enough
+        delivered calls; None otherwise. The predictor's ``Link.hour_factor``."""
+        fact = self.fact_at(moment, 'timed')
+        if fact is None or self.typical is None or not self.typical.timed or not self.typical.seconds_per_page:
+            return None
+        return fact.seconds_per_page / self.typical.seconds_per_page
+
+
+def learn_timing(observations, now, zone_name='', scope='number'):
+    """``HourTiming`` from finished trunk calls (``CallTiming``, any order), judged at ``now``: per hour as busy
+    hours key them (each day of the week, and weekdays pooled), and every hour together (the typical hour)."""
+    zone = _zone(zone_name)
+    slots, every = {}, []
+    for item in observations:
+        if item.at > now or item.at <= now - WINDOW:
+            continue
+        if item.seconds_per_page is None and item.failed_after_answer is None:
+            continue
+        local = _local(item.at, zone)
+        day = local.date()
+        keys = [('day', day.weekday(), local.hour)] + ([('weekdays', local.hour)] if day.weekday() < 5 else [])
+        for key in keys:
+            slots.setdefault(key, []).append((day, item))
+        every.append((day, item))
+    return HourTiming({key: _hour_fact(key, items, now) for key, items in slots.items()},
+                      _hour_fact(('typical',), every, now) if every else None, zone_name, scope)
+
+
+@dataclass(frozen=True)
+class BetterHour:
+    """The later hour an ordinary fax waits for, and why: 'faster' (less time a page, on a route billed by the
+    minute) or 'reliable' (fewer failures after the fax machine answered)."""
+    at: datetime                         # naive UTC, the start of that hour
+    why: str
+    now_fact: HourFact
+    then_fact: HourFact
+    percent: int | None = None           # less time a page, for 'faster'
+    scope: str = 'number'
+
+    def sentence(self):
+        """'calls to this number take about 40% less time a page before 8:00 AM MDT.'"""
+        until = _clock(self.at + timedelta(hours=1))
+        whose = 'calls to this number' if self.scope == 'number' else 'calls on this phone line'
+        if self.why == 'faster':
+            return f'{whose} take about {self.percent}% less time a page before {until}.'
+        return (f'fewer {whose} fail after the fax machine answers before {until} ({self.then_fact.failed} of '
+                f'{self.then_fact.answered}, against {self.now_fact.failed} of {self.now_fact.answered} at this '
+                'hour).')
+
+
+def better_hour(fax, settings, timing, busy, now, latest):
+    """The first later hour, within ``HOUR_WAIT`` and the fax's latest start, that is open, not busy, and better
+    than this one by the rules above; None when the fax should go now. Never for an urgent fax."""
+    route = str(fax.route or '').lower()
+    if fax.urgent or timing is None or not settings.learn_busy or route not in TRUNK_ROUTES:
+        return None
+    # Only the number's own calls hold a fax: time a page differs mostly by receiving machine, so every number's
+    # calls on the line together could hold a fax to a new number for the wrong reason. They only price it.
+    if timing.scope != 'number':
+        return None
+    typical = timing.typical
+    if typical is None:
+        return None
+    slow = failing = None
+    if route in TIME_BILLED and typical.timed:
+        current = timing.fact_at(now, 'timed')
+        if current is not None and current.seconds_per_page >= typical.seconds_per_page * (1 + SLOWER):
+            slow = current
+    if typical.judged:
+        current = timing.fact_at(now, 'judged')
+        if (current is not None and current.failure_share >= FAILING_SHARE
+                and current.failure_share >= typical.failure_share + FAILING_GAP):
+            failing = current
+    if slow is None and failing is None:
+        return None
+    limit = now + HOUR_WAIT if latest is None else min(now + HOUR_WAIT, latest)
+    zone = _zone(timing.zone_name)
+    moment = _next_hour(now, zone)
+    while moment <= limit:
+        usable = settings.hours.open_at(moment) and (busy is None or busy.busy_at(moment) is None)
+        if usable and failing is not None:
+            then = timing.fact_at(moment, 'judged')
+            if (then is not None and then.failure_share <= typical.failure_share
+                    and then.failure_share <= failing.failure_share - FAILING_GAP):
+                return BetterHour(moment, 'reliable', failing, then, scope=timing.scope)
+        if usable and slow is not None:
+            then = timing.fact_at(moment, 'timed')
+            if (then is not None and then.seconds_per_page <= slow.seconds_per_page * (1 - GAIN)
+                    and then.seconds_per_page < typical.seconds_per_page * (1 + SLOWER)
+                    and (slow.seconds_per_page - then.seconds_per_page) * max(1, fax.pages) >= MIN_SAVED_SECONDS):
+                percent = round((slow.seconds_per_page - then.seconds_per_page) * 100 / slow.seconds_per_page)
+                return BetterHour(moment, 'faster', slow, then, percent, timing.scope)
+        moment = _next_hour(moment, zone)
+    return None
+
+
+def call_timing(row):
+    """A ``CallTiming`` from one joined trunk call row (``Scheduler.call_timings``), or None when it says nothing:
+    the time a page from the SSL Fax engine's transfer time, else the connected time less the predictor's setup."""
+    from ..sip_calls import stored_verdict
+    from .predict import SETUP_SECONDS
+    verdict = stored_verdict(row)
+    pages = row.get('pages') or 0
+    per_page = None
+    if verdict == 'sent' and pages > 0:
+        if row.get('transfer_seconds'):
+            per_page = row['transfer_seconds'] / pages
+        elif row.get('connected_seconds') is not None:
+            per_page = max(0.0, row['connected_seconds'] - SETUP_SECONDS) / pages
+    failed = True if verdict == 'remote_fax_failed' else False if verdict == 'sent' else None
+    if per_page is None and failed is None:
+        return None
+    return CallTiming(row['started_at'], per_page, failed)
 
 
 # Sentences ---------------------------------------------------------------------------------
@@ -561,6 +820,8 @@ def reason(decision, settings, *, route_label='this route', price_text=None, now
     if decision.why == 'busy' and decision.slot is not None:
         return (f'Waiting until {until}: {decision.slot.sentence()}'
                 f'{charge_clause(decision.charge, route_label, price_text)}.')
+    if decision.why in ('faster', 'reliable') and decision.better is not None:
+        return f'Waiting until {until}: {decision.better.sentence()}'
     return None
 
 
@@ -692,7 +953,7 @@ class Scheduler:
         present = set(inspector.get_table_names())
         metadata = sa.MetaData()
         wanted = [name for name in ('outbound_attempts', 'fax_jobs', 'outbound_deliveries', 'sip_call_records',
-                                    'outbound_events', TABLE) if name in present]
+                                    'outbound_events', 'fax_engine_calls', TABLE) if name in present]
         metadata.reflect(bind, only=wanted)
         self.engine = engine
         self.t = {name: metadata.tables[name] for name in wanted}
@@ -780,6 +1041,34 @@ class Scheduler:
             return BusyHours({}, settings.zone_name)
         return learn(self.observations(connection, number, now), now, settings.zone_name)
 
+    def call_timings(self, connection, now, number=None):
+        """``CallTiming`` for finished trunk calls Faxbot placed in the window (both engines), newest first: to
+        ``number`` (by the fax's own recipient), or to every number when None."""
+        a, j, s = self.t.get('outbound_attempts'), self.t.get('fax_jobs'), self.t.get('sip_call_records')
+        if a is None or j is None or s is None:
+            return []
+        e = self.t.get('fax_engine_calls')
+        columns = [s.c.started_at, s.c.disposition, s.c.fax_status, s.c.pages, s.c.connected_seconds,
+                   s.c.error_cause, s.c.direction, s.c.job_id]
+        source = s.join(a, a.c.id == s.c.attempt_id).join(j, j.c.id == a.c.job_id)
+        if e is not None and 'transfer_seconds' in e.c:
+            columns.append(e.c.transfer_seconds)
+            source = source.outerjoin(e, sa.and_(e.c.direction == 'outbound', e.c.call_key == s.c.call_id))
+        query = sa.select(*columns).select_from(source).where(
+            s.c.direction == 'outbound', s.c.started_at > now - WINDOW, s.c.started_at <= now)
+        if number is not None:
+            query = query.where(j.c.to_number == number)
+        rows = connection.execute(query.order_by(s.c.started_at.desc()).limit(HISTORY_READ)).mappings().all()
+        return [found for found in (call_timing(dict(row)) for row in rows) if found is not None]
+
+    def timing(self, connection, number, settings, now, *, fallback=True):
+        """The number's learned call hours, or (``fallback``) the route's as a whole when the number has too few
+        calls; the claim asks without it, since only a number's own calls hold a fax."""
+        own = learn_timing(self.call_timings(connection, now, number), now, settings.zone_name)
+        if not fallback or (own.typical is not None and (own.typical.timed or own.typical.judged)):
+            return own
+        return learn_timing(self.call_timings(connection, now), now, settings.zone_name, scope='route')
+
     # Decisions ----------------------------------------------------------------------------
     def fax_on(self, connection, job_ids, values):
         """A ``Fax`` for one fax or for faxes sent together in one call (any urgent: urgent; earliest send-by)."""
@@ -805,7 +1094,12 @@ class Scheduler:
             return decide(fax, settings, None, now), settings
         if settings.learn_busy and memo[fax.number][1] is None:
             memo[fax.number][1] = self.busy_hours(connection, fax.number, settings, now)
-        return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now), settings
+        timing = None
+        if settings.learn_busy and str(fax.route or '').lower() in TRUNK_ROUTES:
+            if len(memo[fax.number]) < 3:
+                memo[fax.number].append(self.timing(connection, fax.number, settings, now, fallback=False))
+            timing = memo[fax.number][2]
+        return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now, timing), settings
 
 
 _CACHE = {}

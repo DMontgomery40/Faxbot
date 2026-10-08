@@ -145,7 +145,8 @@ PAGE_WIDTHS = {'A4': 'a4', 'B4': 'b4', 'A3': 'a3'}
 def page_capability(encoded):
     """What the other machine said it accepts on a sent call (its DIS, from the session log) and the call's
     measured time between pages: {'max_length', 'max_width', 'fine', 'ecm', 'scan_ms', 'boundary_ms',
-    'boundaries'} with only what was reported; {} when the log named no page length (``pages.capability``)."""
+    'boundaries', 'codings'} with only what was reported ('codings': the codings it takes, such as
+    'MH,MR,MMR,JBIG'); {} when the log named no page length (``pages.capability``)."""
     data = _report(encoded)
     length = PAGE_LENGTHS.get(data.get('page_length')) if isinstance(data.get('page_length'), str) else None
     if length is None:
@@ -160,7 +161,21 @@ def page_capability(encoded):
               'boundary_ms': _count(data.get('boundary_ms'), 600000), 'boundaries': _count(data.get('boundaries'), 999)}
     if not values['boundaries'] or values['boundary_ms'] is None:
         values['boundary_ms'] = values['boundaries'] = None
+    values['codings'] = codings_text(data.get('remote_codings'))
     return {name: value for name, value in values.items() if value is not None}
+
+
+REMOTE_CODINGS = ('MH', 'MR', 'MMR', 'JBIG')
+
+
+def codings_text(value):
+    """'MH,MR,MMR,JBIG' (in that order) from a receiving machine's reported codings, or None when not usable."""
+    if not isinstance(value, str) or len(value) > 32:
+        return None
+    found = {part.strip() for part in value.split(',')}
+    if 'MH' not in found or not found <= set(REMOTE_CODINGS):
+        return None
+    return ','.join(name for name in REMOTE_CODINGS if name in found)
 
 
 # Reading ---------------------------------------------------------------------------

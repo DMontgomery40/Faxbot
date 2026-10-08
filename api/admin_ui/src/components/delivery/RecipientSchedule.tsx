@@ -131,7 +131,7 @@ export default function RecipientSchedulePanel({ client, number, canWrite }: {
       <Typography variant="subtitle2" sx={{ mt: 2 }}>Busy hours</Typography>
       <FormControlLabel
         control={<Switch checked={learn} disabled={!canWrite || busy} onChange={(event) => setLearn(event.target.checked)} />}
-        label="Learn the hours this number is usually busy" />
+        label="Learn the hours this number is usually busy, slow or failing" />
       {view.busy_hours.length > 0 && (
         <Box component="ul" sx={{ my: 0.5, pl: 3 }} data-testid="schedule-busy-hours">
           {view.busy_hours.map((item) => (
@@ -140,6 +140,24 @@ export default function RecipientSchedulePanel({ client, number, canWrite }: {
         </Box>
       )}
       <Typography variant="body2" color="text.secondary" data-testid="schedule-busy-sentence">{view.busy_sentence}</Typography>
+      {view.call_hours_sentence && (
+        <>
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>Call hours</Typography>
+          {(view.call_hours ?? []).length > 0 && (
+            <Box component="ul" sx={{ my: 0.5, pl: 3 }} data-testid="schedule-call-hours">
+              {(view.call_hours ?? []).map((item) => (
+                <li key={item.label}><Typography variant="body2">{`${item.label}: ${item.sentence}`}</Typography></li>
+              ))}
+            </Box>
+          )}
+          {view.typical_hour && (
+            <Typography variant="body2" data-testid="schedule-typical-hour">{`Any hour: ${view.typical_hour}`}</Typography>
+          )}
+          <Typography variant="body2" color="text.secondary" data-testid="schedule-call-hours-sentence">
+            {view.call_hours_sentence}
+          </Typography>
+        </>
+      )}
       <Typography variant="caption" color="text.secondary" display="block" data-testid="schedule-failed-try">
         {view.failed_try.sentence}
       </Typography>

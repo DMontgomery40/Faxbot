@@ -335,6 +335,25 @@ def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
         return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
+def _hour_facts(engine, number, link, moment, values):
+    """``link`` with this hour's time a page against the number's typical hour (routing/schedule.py, M26), when the
+    learned call hours have enough calls; unchanged otherwise. Unreadable records leave it unchanged (logged)."""
+    from . import schedule
+    try:
+        scheduler = schedule.for_engine(engine)
+        with engine.connect() as connection:
+            settings = scheduler.settings(connection, number, values)
+            if not settings.learn_busy:
+                return link
+            timing = scheduler.timing(connection, number, settings, moment)
+    except sa.exc.SQLAlchemyError:
+        import logging
+        logging.getLogger(__name__).warning('The learned call hours could not be read for the prediction.')
+        return link
+    factor = timing.factor_at(moment)
+    return replace(link, hour_factor=factor, hour_scope=timing.scope) if factor else link
+
+
 def plan_terms(route_key, terms, card, values):
     """A monthly plan's allowance and extra-page price from its budget (``plan_budget``) first.
 
@@ -458,6 +477,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
             if cap and link.rate and link.rate > cap:
                 # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
                 link = replace(link, rate=cap)
+            link = _hour_facts(engine, number, link, moment, values)
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, route_key, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
