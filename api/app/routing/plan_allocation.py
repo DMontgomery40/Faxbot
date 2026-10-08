@@ -938,13 +938,24 @@ class Allocation:
         if not any(units):
             return None
         given = self.solution.assigned.get(job_id) == key
-        kind = 'reserve' if reserve and not others else 'both' if reserve else 'queue'
-        return Hold(key, units, tuple(dim.name for dim in plan.room.dims), max(0, plan.room.dims[0].room), given,
-                    len(others), reserve, kind, None if given else self.saving(job_id, key), plan.currency,
-                    plan.left.period.next_day, plan.left.budget.label)
+        # Faxes that take the plan whatever it costs fill it like faxes on their way: only the room left after
+        # them was shared, and only the faxes chosen for it count as "faxes they save more on".
+        chosen = [item for item in others if item.forced is None]
+        room = max(0, plan.room.dims[0].room - sum(item.weights[key][0] for item in others if item.forced))
+        kind = 'reserve' if reserve and not chosen else 'both' if reserve else 'queue'
+        return Hold(key, units, tuple(dim.name for dim in plan.room.dims), room, given, len(chosen), reserve, kind,
+                    None if given else self.saving(job_id, key), plan.currency, plan.left.period.next_day,
+                    plan.left.budget.label)
 
 
 EMPTY = Allocation()
+
+
+def reserve_allowed(plan):
+    """Whether a plan may keep a reserve: an allowance (published or yours), or a normal-use budget you set. Faxbot's
+    own cautious start for an unlimited plan is no promise from the plan, so no money is spent keeping it."""
+    budget = plan.left.budget
+    return bool(budget.included_pages or budget.included_minutes or budget.source == 'set')
 
 
 def allocate(routes, values, now=None, *, include=None, dial=None):
@@ -959,7 +970,7 @@ def allocate(routes, values, now=None, *, include=None, dial=None):
         return EMPTY
     keys = [plan.key for plan in plans]
     others = [key for key in _sending_keys(values) if key not in keys]
-    curves = {plan.key: curve_for(routes, values, plan, others, now) for plan in plans}
+    curves = {plan.key: curve_for(routes, values, plan, others, now) for plan in plans if reserve_allowed(plan)}
     queue = waiting(routes.engine, include=include, now=now)
     reserve_possible = any(any(curve.lower) for curve in curves.values())
     if not reserve_possible and _fits(routes, values, plans, queue, now):
@@ -1166,6 +1177,9 @@ def _unit_word(unit, count):
 def _reserve_sentence(plan, size, curve):
     from .delivered import short_money_text
     renews = _day(plan.left.period.next_day)
+    if not reserve_allowed(plan):
+        return ("Faxbot keeps nothing back for faxes not sent yet, because this is Faxbot's starting budget for "
+                f'{plan.left.budget.label}, not one you set.')
     if size:
         days = max(1, round(curve.days))
         return (f'Faxbot keeps {size:,} {_unit_word(plan.unit, size)} for faxes like the ones you usually send before '

@@ -469,6 +469,56 @@ def test_a_fax_whose_rule_uses_the_plan_takes_its_pages_first(allowance):  # noq
     found = allocation.allocate(env.routes, values_of(env))
     assert found.features[small].group == 'forced' and found.features[large].group == 'candidate'
     assert found.solution.assigned == {small: 'phaxio', large: None}
+    # The forced fax fills the plan like a fax on its way: the 100-page fax goes by SignalWire because Phaxio is
+    # full, not because its pages went to a fax they save more on.
+    hold = found.hold(large, 'phaxio')
+    assert (hold.others, hold.room, hold.kind) == (0, 40, 'queue')
+    from api.app.routing.plan import RoutePlanner
+    from api.app.routing.pricing import prices_for
+    pinned = envelopes.load(env.engine, large)
+    prices = prices_for(env.routes, values_of(env), LARGE, 100, pinned=pinned, bound='phaxio', job_id=large)
+    plan = RoutePlanner(env.routes).plan(to_number=LARGE, bound='phaxio', values=values_of(env), pages=100,
+                                         alternates=True, pinned=pinned, prices=prices, job_id=large)
+    assert plan.first.route.key == 'signalwire' and plan.first.reason != 'plan_reserved' and plan.held is None
+
+
+def test_sent_details_show_the_kept_sentence_over_the_reason_code():
+    from api.app.routing.http import _cost_view
+    sentence = 'Sent by SignalWire for about $0.12 so your last 100 Phaxio pages this month go to the waiting fax ' \
+               'they save more on, saving about $0.076 in all (estimate).'
+    kept = _cost_view({'route': 'signalwire', 'route_reason': 'plan_reserved', 'reported_cost': {},
+                       'plan_allocation': sentence})
+    assert kept['route_explanation'] == sentence and 'plan_allocation' not in kept
+    plain = _cost_view({'route': 'signalwire', 'route_reason': 'plan_reserved', 'reported_cost': {},
+                        'plan_allocation': None})
+    assert plain['route_explanation'] == ("Your plan's last included pages or minutes went to faxes they saved more "
+                                          'on, so Faxbot sent this one by the next cheapest route.')
+
+
+def test_faxbots_starting_budget_for_an_unlimited_plan_keeps_no_reserve():
+    from types import SimpleNamespace
+    start = Budget(route='humblefax', label='HumbleFax', pages=200, faxes=50, day=1, flat=True, source='default')
+    assert not allocation.reserve_allowed(SimpleNamespace(left=SimpleNamespace(budget=start)))
+    from dataclasses import replace
+    assert allocation.reserve_allowed(SimpleNamespace(left=SimpleNamespace(budget=replace(start, source='set'))))
+    assert allocation.reserve_allowed(SimpleNamespace(left=SimpleNamespace(budget=efax())))
+
+
+@pytest.fixture
+def allocation_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for served in _serve(monkeypatch, tmp_path, FAX_OUTBOUND_ROUTES='humblefax'):
+        yield Cli(served)
+
+
+def test_faxbot_costs_plans_allocation_is_its_own_command(allocation_cli):
+    cli = allocation_cli
+    shown = cli('costs', 'plans', 'allocation')
+    assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    view = cli.json('costs', 'plans', 'allocation')
+    assert view['estimate'] is True and 'plans' in view
+    for plan in view['plans']:
+        assert plan['sentence'] in shown.stdout.replace('\n', ' ') or plan['name'] in shown.stdout
 
 
 def test_the_screen_and_the_reserve_read_only_earlier_faxes(allowance):  # noqa: F811

@@ -5,7 +5,9 @@ card for the number's class, the time on the line) and, for a monthly plan,
 from that plan's budget (``plan_budget``: what this one fax adds while the
 plan has room, its overage past an allowance, "over your normal-use budget"
 past a fair-use budget). So the route a fax takes, the cap it is checked
-against and the quote a person reads always agree.
+against and the quote a person reads agree, except where a scarce plan's room
+is held for other waiting faxes (below): a quote prices the plan against its
+whole room.
 
 - An unknown price stays unknown (``micros`` None), never $0.
 - A fax a monthly plan carries reads "In your plan" (or "In your plan; over
