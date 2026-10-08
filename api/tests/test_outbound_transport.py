@@ -306,3 +306,48 @@ async def test_an_engine_that_refuses_the_job_leaves_no_plan_and_the_built_in_en
     assert [call[0] for call in ami.originated] == [job]
     assert list(ami.plans) == ami.removed and len(ami.removed) == 1
     assert store.get(job)['state'] == 'in_progress'
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_recipient_gets_encoded_pages_sealed_with_its_shared_key_at_the_fetch_link(installation, tmp_path,
+                                                                                                   monkeypatch):
+    """The transport opens the shared key with the installation key (codec.store.KeySeal) for the attempt's
+    encoded pages; Phaxio fetches them at the attempt's link, and only that key turns them back into the PDF."""
+    import shutil
+    import sqlalchemy as sa
+    from api.app import codec, conversion
+    from api.app.codec.store import CodecSettings, KeySeal
+    from api.app.pages.sending import fetched_pdf
+    from api.tests.test_dense_pages import card, priced
+    if shutil.which('gs') is None:
+        pytest.skip('Ghostscript draws the PDF Phaxio fetches')
+    configuration, store, _ = installation
+    job, _ = prepared_job(installation, tmp_path)
+    (tmp_path / 'letter.txt').write_text('\n'.join(f'Synthetic line {index} of a long letter.' for index in range(400)))
+    conversion.txt_to_pdf(str(tmp_path / 'letter.txt'), str(tmp_path / (job + '.pdf')))
+    original = (tmp_path / (job + '.pdf')).read_bytes()
+    CodecSettings(configuration.engine, KeySeal(configuration)).save(
+        '+12025550123', enabled=True, recipient_agreed=True, actor='principal:synthetic',
+        secret='synthetic partner key')
+    calls = []
+
+    class Service:
+        def is_configured(self): return True
+
+        async def send_fax(self, to, url, job_id, *, attempt_id):
+            calls.append(url)
+            return {'provider_sid': 'remote-keyed', 'status': 'queued'}
+    monkeypatch.setattr('api.app.outbound_transport.service_from_profile', lambda profile: Service())
+    with priced(phaxio=card('phaxio', per_page='0.07')):
+        await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
+    with configuration.engine.connect() as connection:
+        stored = connection.execute(sa.select(configuration.jobs.c.pdf_url).where(
+            configuration.jobs.c.id == job)).scalar_one()
+    assert calls == [stored]
+    served = fetched_pdf(tmp_path / (job + '.pdf'), job, stored)
+    assert served.name.startswith(f'packed-{job}-')
+    images = codec.read_images(served.read_bytes())
+    with pytest.raises(codec.CodecError):
+        codec.decode_images(images)  # sealed: no key, no document
+    document, _ = codec.decode_images(images, secrets=['synthetic partner key'])
+    assert document.data == original

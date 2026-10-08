@@ -266,6 +266,36 @@ def test_acceptance_changes_nothing_and_a_fetching_provider_gets_its_attempts_en
     assert client.get(f'/fax/{job}/pdf', params={'token': grant(other)}).content == original
 
 
+def test_an_attempt_is_priced_from_the_installations_own_rate_card_as_in_production(client, caplog):
+    """No synthetic facts: the shared predictor finds this installation's database and its stored Phaxio card
+    (routing/predict_facts.py), as an attempt does in production, and both the chooser and the codec get money."""
+    import logging
+    from types import SimpleNamespace
+    from api.tests.test_dense_pages import card
+    from app.codec.store import send_for
+    from app.pages import sending
+    from app.routing.background import installation_engine
+    from app.routing.store import RouteStore
+    engine, _ = installation_engine(main.app)
+    RouteStore(engine).replace_cards([card('phaxio', per_page='0.09')])  # not Phaxio's published price
+    assert client.put(f'/codec/numbers/{NUMBER}', headers=ADMIN,
+                      json={'enabled': True, 'recipient_agreed': True}).status_code == 200
+    body = '\n'.join(f'Synthetic line {index} of a long letter.' for index in range(400)).encode()
+    sent = client.post('/fax', headers=ADMIN, data={'to': NUMBER}, files={'file': ('letter.txt', body, 'text/plain')})
+    job, pages = sent.json()['id'], sent.json()['pages']
+    root = Path(main.settings.fax_data_dir)
+    with caplog.at_level(logging.WARNING):
+        changed = sending.prepare(engine, SimpleNamespace(sip_fax_fine=True), SimpleNamespace(
+            provider_id='phaxio', manifest=None, traits={}), SimpleNamespace(job_id=job, attempt_id='c' * 32,
+                                                                              members=()),
+            {'to_number': NUMBER}, root / f'{job}.pdf', None)
+    assert changed is not None and changed.sent_pages < pages
+    details = send_for(engine, job)
+    assert details['cost_original_micros'] == pages * 90_000
+    assert details['cost_encoded_micros'] == changed.sent_pages * 90_000
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
 def test_codec_routes_need_their_permissions(client):
     response = client.post('/admin/api-keys', headers=ADMIN, json={'name': 'synthetic', 'scopes': ['fax:send']})
     sender = {'X-API-Key': response.json()['token']}
