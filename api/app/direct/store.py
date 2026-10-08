@@ -85,6 +85,13 @@ class DirectStore:
         with read_connection(self.engine) as conn:
             return read(conn)
 
+    def verified_peer_for(self, number):
+        """The verified partner that owns a fax number, or None."""
+        with read_connection(self.engine) as connection:
+            row = connection.execute(sa.select(self.peers).where(
+                self.peers.c.phone_number == number, self.peers.c.state == 'verified')).mappings().first()
+        return dict(row) if row is not None else None
+
     def add_peer(self, card, *, own_signing_key):
         if card['signing_key'] == own_signing_key:
             raise DirectConflict("This card belongs to this installation.")

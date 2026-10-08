@@ -232,10 +232,22 @@ async def revoke_peer(peer_id: str, request: Request):
 async def list_deliveries(request: Request):
     service = service_for(request.app)
     rows = await _call(service.store.recent)
+
+    def noticed():
+        # Originals that went with a one-page notice fax (notice.py): they are still never called faxed.
+        from .notice import NoticeStore
+        try:
+            return {row['message_id'] for row in NoticeStore(service.store.engine).recent(limit=500)
+                    if row['state'] != 'cancelled'}
+        except Exception:
+            return set()
+    notices = await run_lifecycle_step(noticed)
     return {'deliveries': [{'message_id': row['message_id'], 'direction': row['direction'],
                             'partner': row['organization'], 'fax_number': row['recipient_number'],
-                            'kind': row.get('kind') or 'original',
-                            'state': row['state'], 'status': delivery_text(row), 'size_bytes': row['size_bytes'],
+                            'kind': row.get('kind') or 'original', 'job_id': row.get('job_id'),
+                            'notice': row['message_id'] in notices,
+                            'state': row['state'], 'status': delivery_text(row, notice=row['message_id'] in notices),
+                            'size_bytes': row['size_bytes'],
                             'created_at': row['created_at'], 'accepted_at': row['accepted_at']} for row in rows]}
 
 
@@ -243,11 +255,18 @@ DELIVERY_TEXT = {'sending': 'Sending.', 'accepted': 'Accepted by the recipient.'
                  'uncertain': 'Waiting for the partner to confirm.'}
 
 
-def delivery_text(row):
+def delivery_text(row, *, notice=False):
     """One sentence for a direct delivery record. A fax image is never called "faxed": no telephone call was made."""
     if row.get('kind') == 'relay' and row['state'] == 'accepted':
         # Accepted for relaying as a local call (relay.py), which is not yet delivered.
         return 'Accepted for relaying as a local call.'
+    if row.get('kind') == 'repair' and row['state'] == 'accepted':
+        name = row.get('organization') or 'the partner'
+        return f'The pages missing after a broken call went directly to {name}, who now holds the whole fax.'
+    if notice and row['state'] == 'accepted' and row.get('kind') != 'fax_image':
+        name = row.get('organization') or 'the partner'
+        verb = 'to' if row['direction'] == 'outbound' else 'by'
+        return f'Delivered directly {verb} {name}; only a one-page notice went by fax.'
     if row.get('kind') != 'fax_image' or row['state'] != 'accepted':
         return DELIVERY_TEXT[row['state']]
     name = row.get('organization')

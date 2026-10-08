@@ -352,6 +352,17 @@ class DirectService:
             if row['manifest'].encode('ascii') != manifest_bytes:
                 return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.', peer)
         elif held is None:
+            if kind == FAX_IMAGE:
+                # The pages missing after a broken call: filed as one fax with the call's pages (repair.py).
+                from .repair import CallRepair
+                repairs = CallRepair(self)
+                offer = repairs.offered(peer, message_id)
+                if offer is not None:
+                    try:
+                        repairs.complete(offer, document, folder)
+                    except Exception:
+                        logging.getLogger(__name__).warning('The pages a partner sent to complete a broken call '
+                                                            'are filed on their own.')
             try:
                 self.filing.file(row)
             except Exception:

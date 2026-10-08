@@ -36,6 +36,9 @@ def received_text(record):
         if isinstance(name, str) and name and type(number) is int:
             return f'Delivered directly by {partner} as the form {name} (version {number}); no telephone call.'
         return f'Delivered directly by {partner} as a registered form; no telephone call.'
+    if isinstance(report.get('call_repair'), dict):
+        from .repair import received_repair_text
+        return received_repair_text(report)
     notice = report.get('notice') if isinstance(report.get('notice'), dict) else None
     if notice is not None and notice.get('fax'):
         # The original was never faxed: only its one-page notice was (direct/notice.py).
@@ -70,6 +73,18 @@ def _notice_paired(engine, message_id, peer_id):
     return {'code': code_text(row['notice_id']), 'fax': row['inbound_id'], 'matched_by': row['matched_by']}
 
 
+def _call_repair(engine, message_id, peer_id):
+    """The completed repair whose missing pages arrived as ``message_id`` (repair.py), or None."""
+    try:
+        from .repair import RepairStore
+        row = RepairStore(engine).for_message('receiver', message_id)
+    except Exception:
+        return None
+    if row is None or row['peer_id'] != peer_id or row['state'] != 'completed' or not row['assembled_path']:
+        return None
+    return row
+
+
 def account(peer_id):
     return FILING_ACCOUNT + (peer_id or 'unknown')
 
@@ -102,11 +117,19 @@ class DirectFiling:
         paired = _notice_paired(self.store.engine, row['message_id'], row['peer_id'])
         if paired is not None:
             report['notice'] = paired
+        image_path, pages = row['document_path'], document['pages']
+        whole = _call_repair(self.store.engine, row['message_id'], row['peer_id']) if kind == FAX_IMAGE else None
+        if whole is not None:
+            # The pages missing after a broken call, filed with the call's own pages as one fax (repair.py).
+            image_path, pages = whole['assembled_path'], whole['total_pages']
+            report['pages'] = pages
+            report['call_repair'] = {'pages_from_call': whole['pages_held'], 'total_pages': whole['total_pages'],
+                                     'call_fax': whole['inbound_id']}
         values = self.values()
         return self.store.intake.add_fax_image(
             ImportStore(resources), account=account(row['peer_id']), message_id=row['message_id'],
-            image_path=row['document_path'], from_number=manifest['sender']['fax_number'],
-            to_number=manifest['recipient']['fax_number'], pages=document['pages'],
+            image_path=image_path, from_number=manifest['sender']['fax_number'],
+            to_number=manifest['recipient']['fax_number'], pages=pages,
             received_at=row['accepted_at'] or row['created_at'], report=report,
             country=getattr(values, 'fax_default_country', 'US') or 'US', original=kind != FAX_IMAGE)
 

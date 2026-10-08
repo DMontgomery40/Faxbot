@@ -40,7 +40,7 @@ Three records are kept on each side: the notice fax (the sender's fax job, the
 receiver's received fax), the original (``direct_deliveries``) and the signed
 link (``direct_notices``, with both signed statements).
 """
-from datetime import timedelta
+from datetime import timedelta, timezone
 import hashlib
 import io
 import json
@@ -748,7 +748,7 @@ class NoticeReceiver:
         _, identity = self.service._enabled_identity()
         statement = canonical({'type': 'notice_paired', 'message_id': row['message_id'], 'notice_id': row['notice_id'],
                                'document_sha256': row['document_sha256'], 'matched_by': matched_by,
-                               'notice_fax': bool(inbound_id), 'paired_at': timestamp(now),
+                               'notice_fax': bool(inbound_id), 'paired_at': timestamp(now.replace(tzinfo=timezone.utc)),
                                'signer': identity.signing_key,
                                'recipient': self.service.store.get_peer(row['peer_id'])['signing_key']})
         with write_transaction(self.store.engine) as connection:

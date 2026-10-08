@@ -14,6 +14,7 @@ from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine, lifespan_tasks, repeat_async
 from ..routing.database import DeliveryStoreError
 from .http import service_for
+from .repair import CallRepair, RepairStore, repair_view
 from .service import DirectUnavailable
 from .transfer import MAX_PIECE_SIZE, MAX_PIECES, TransferReceiver, TransferStore, background_step, transfer_view
 
@@ -27,8 +28,13 @@ def _background(app):
 
     async def expire():
         return await run_lifecycle_step(step)
+
+    async def repair():
+        return await CallRepair(service).step()
     return [('faxbot-direct-transfers', repeat_async(expire, interval=900.0, initial_delay=45.0,
-                                                     warning='Unfinished direct transfers are cleaned up later.'))]
+                                                     warning='Unfinished direct transfers are cleaned up later.')),
+            ('faxbot-direct-call-repair', repeat_async(repair, interval=120.0, initial_delay=50.0,
+                                                       warning='Broken fax calls to partners are repaired later.'))]
 
 
 router = APIRouter(prefix='/direct', tags=['Direct delivery'], lifespan=lifespan_tasks(_background))
@@ -126,6 +132,13 @@ async def commit_transfer(message_id: str, payload: SignedIn, request: Request):
                                                                         payload.signature))
 
 
+@router.post('/calls/pages')
+async def call_pages(payload: SignedIn, request: Request):
+    """A partner asks, signed, which pages of a broken fax call from it arrived here intact."""
+    service = service_for(request.app)
+    return await _partner_call(lambda: CallRepair(service).answer(payload.statement, payload.signature))
+
+
 # Operator routes --------------------------------------------------------------------------------
 
 @router.get('/transfers', dependencies=[Depends(require_permission('settings:read'))])
@@ -138,5 +151,19 @@ async def list_transfers(request: Request):
         return [transfer_view(row, peers.get(row['peer_id'])) for row in TransferStore(service.store.engine).recent()]
     try:
         return {'transfers': await run_lifecycle_step(read)}
+    except DeliveryStoreError:
+        raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
+
+
+@router.get('/repairs', dependencies=[Depends(require_permission('settings:read'))])
+async def list_repairs(request: Request):
+    """Fax calls to and from partners that broke part way, and how each was completed directly."""
+    service = service_for(request.app)
+
+    def read():
+        peers = {peer['id']: peer['organization'] for peer in service.store.list_peers()}
+        return [repair_view(row, peers.get(row['peer_id'])) for row in RepairStore(service.store.engine).recent()]
+    try:
+        return {'repairs': await run_lifecycle_step(read)}
     except DeliveryStoreError:
         raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
