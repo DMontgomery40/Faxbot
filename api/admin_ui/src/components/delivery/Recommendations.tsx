@@ -15,13 +15,15 @@ import RelayRecommendations from './RelayRecommendations';
 import SendingRecommendations from './SendingRecommendations';
 import FaxFriendlyRecommendation from './FaxFriendlyRecommendation';
 import TrunkAdvice from './TrunkAdvice';
+import NumberPlacement from './NumberPlacement';
+import SiteAdvice from './SiteAdvice';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays' | 'trunks';
+  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays', 'trunks'];
+  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites'];
 
 export default function Recommendations({ client, canWrite = false, onNavigate }: {
   client: AdminAPIClient;
@@ -58,6 +60,8 @@ export default function Recommendations({ client, canWrite = false, onNavigate }
         <FaxMarkerSection client={client} onCount={callbacks.marker} />
         <FaxFriendlyRecommendation client={client} onCount={callbacks.pages} />
         <TrunkAdvice client={client} onCount={callbacks.trunks} />
+        <NumberPlacement client={client} canWrite={canWrite} onCount={callbacks.numbers} />
+        <SiteAdvice client={client} canWrite={canWrite} onCount={callbacks.sites} />
       </Stack>
     </Box>
   );

@@ -96,6 +96,7 @@ import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
 import type { RecipientSchedule, RecipientScheduleSave } from './types';
+import type { RecipientCheck, StatePrices } from './numberAdviceTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1045,6 +1046,23 @@ class AdminAPIClient {
   // The route order for the next fax to a number; with `pages`, each estimate is for a fax that long.
   async getDestination(number: string, pages?: number): Promise<DestinationDetail> {
     return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
+  }
+
+  // Before a first fax: whether the NPI registry lists `to` for the provider `name`. A warning at most; never a block.
+  async recipientCheck(to: string, name?: string): Promise<RecipientCheck> {
+    return this.json(`/routing/recipient-check${query({ to: normalizeFaxDestination(to), name: name || undefined })}`);
+  }
+
+  // A carrier's US prices for calls within one state and between states, from its published price file (CSV).
+  async importStatePrices(carrier: string, file: File, options: { sourceUrl?: string; readOn?: string } = {}):
+    Promise<{ prices: StatePrices[] }> {
+    const form = new FormData();
+    form.append('carrier', carrier);
+    form.append('file', file);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    if (options.readOn) form.append('read_on', options.readOn);
+    const res = await this.fetch('/routing/jurisdiction-rates', { method: 'POST', body: form });
+    return res.json();
   }
 
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.

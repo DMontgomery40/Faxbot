@@ -179,6 +179,13 @@ export function SitesAndRegions({ document, choices, editable, onSave }: {
           <TextField size="small" label="Country code" value={site.value.country ?? ''} placeholder="GB"
             helperText={site.value.country ? countryName(site.value.country.toUpperCase()) : 'Two letters, such as GB.'}
             onChange={(event) => setSite({ ...site, value: { ...site.value, country: event.target.value } })} />
+          {(site.value.country ?? '').toUpperCase() === 'US' && (
+            <TextField size="small" label="State" value={site.value.state ?? ''} placeholder="CO"
+              helperText="Two letters. Some carriers charge differently for calls within one state, so Faxbot prices each call from its site's state."
+              inputProps={{ maxLength: 2 }}
+              onChange={(event) => setSite({ ...site, value: { ...site.value,
+                state: event.target.value.toUpperCase() || undefined } })} />
+          )}
           <Autocomplete options={zones} value={site.value.time_zone || null}
             onChange={(_, zone) => setSite({ ...site, value: { ...site.value, time_zone: zone ?? undefined } })}
             renderInput={(params) => <TextField {...params} size="small" label="Time zone"

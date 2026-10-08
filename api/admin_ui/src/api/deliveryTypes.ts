@@ -767,7 +767,9 @@ export interface ReceivingRecommendations {
     state: 'quiet' | 'none_quiet' | 'too_little_history' | 'no_trunk';
     sentence: string;
     // question: "Is … still printed …?", asked before giving any number up.
-    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[]; question?: string | null }>;
+    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[]; question?: string | null;
+      // What your NPI record says (routing/nppes.py): null when you set no NPI or Faxbot has not read it.
+      npi_record?: { state: 'listed' | 'not_listed'; read_at: string | null; sentence: string | null } | null }>;
     monthly_total: Money[];
   };
   connections: { sentence: string; items: Array<{ name: string; kind: 'trunk' | 'provider'; monthly_fee: Money[] }> };
@@ -786,6 +788,7 @@ export interface ProviderNumber {
   quiet: boolean;
   plan_fee: Money[];
   question: string | null;
+  npi_record?: { state: 'listed' | 'not_listed'; read_at: string | null; sentence: string | null } | null;
   sentence: string;
 }
 

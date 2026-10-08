@@ -31,6 +31,7 @@ import {
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 import type { BatchingCheck } from '../api/batchingTypes';
+import type { RecipientCheck } from '../api/numberAdviceTypes';
 import type { RecommendedRoute, RoutePrediction } from '../api/deliveryTypes';
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
@@ -102,6 +103,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const [toNumber, setToNumber] = useState('');
+  // Who the fax is for (optional): before a first fax, NPPES may list the number for someone else.
+  const [recipientName, setRecipientName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -132,6 +135,20 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber]);
+
+  // Before a first fax to a number: a warning when NPPES lists it for another provider. It never stops the fax.
+  const [recipientCheck, setRecipientCheck] = useState<RecipientCheck | null>(null);
+  useEffect(() => {
+    setRecipientCheck(null);
+    if (!/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.recipientCheck(toNumber, recipientName.trim() || undefined)
+        .then((answer) => { if (live) setRecipientCheck(answer); })
+        .catch(() => undefined);
+    }, 600);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber, recipientName]);
 
   // How many pages the chosen PDF has, so the estimate is for this document.
   const [pages, setPages] = useState<number | null>(null);
@@ -338,6 +355,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   errorMessage="Enter the fax number to send to."
                   icon={<PhoneIcon />}
                 />
+
+                <TextField size="small" label="Recipient name (optional)" value={recipientName}
+                  onChange={(event) => setRecipientName(event.target.value)} disabled={!configReady || loading}
+                  inputProps={{ maxLength: 200, 'data-testid': 'send-recipient-name' }}
+                  helperText="Before a first fax, Faxbot checks the number against the NPI registry (NPPES)." />
+                {recipientCheck?.sentence && (
+                  <Alert severity={recipientCheck.warning ? 'warning' : 'info'} data-testid="send-recipient-check">
+                    {recipientCheck.sentence}
+                  </Alert>
+                )}
 
                 <ResponsiveFileUpload
                   key={uploadPickerVersion}

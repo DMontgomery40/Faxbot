@@ -672,6 +672,17 @@ const consoleHandlers = [
     accounts: [], providers: [], sites: [] })),
   // Several trunks (WP-T): send-only numbers on the trunk page, and trunk advice under Recommendations.
   http.get('/admin/sip/send-only', () => json({ numbers: [], advice: [], quiet_days: 90 })),
+  // Number advice (BG): placement, site advice, your NPI record and the check before a first fax.
+  http.get('/routing/recommendations/numbers', () => json({ days: 30, estimate: true, state: 'no_numbers',
+    sentence: 'Faxbot knows none of your fax numbers yet, so there is nothing to place.', numbers: [], accounts: [],
+    note: 'Faxbot only advises: it never moves, releases or cancels a number or an account.' })),
+  http.get('/routing/recommendations/sites', () => json({ days: 30, estimate: true, sentence: '', carriers: [],
+    items: [], prices: [], caller_id: '' })),
+  http.get('/routing/npi', () => json({ npis: [], sentence: 'Add your NPI so Faxbot can tell you when a number you '
+    + 'might give up is still printed on your NPI record.', source_url: 'https://npiregistry.cms.hhs.gov/api-page' })),
+  http.get('/routing/recipient-check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
+    first_send: true, checked: false, state: 'no_name', warning: false, sentence: null, name: null, listed: [],
+    source_url: 'https://npiregistry.cms.hhs.gov/api-page' })),
   http.get('/routing/recommendations/trunks', () => json({ window_days: 30, trunks: [], items: [],
     sentence: 'Trunk advice needs two or more trunks; with one, there is nothing to move.' })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
