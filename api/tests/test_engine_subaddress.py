@@ -237,3 +237,27 @@ def test_the_rule_subaddress_reaches_the_call_and_a_notice_id_comes_first(monkey
         raise envelopes.UnreadableDecision('The stored routing decision for this fax cannot be read.')
     monkeypatch.setattr(envelopes, 'load', unreadable)
     assert ami.rule_subaddress('job1') is None
+
+
+def test_a_routing_decision_the_database_cannot_read_asks_for_no_subaddress_and_a_bug_raises(monkeypatch, engine,
+                                                                                               caplog):
+    """A call never fails because its rules' subaddress cannot be read (an Originate that raises here was never
+    written, and the fax waited for it); a bug in reading the decision still raises."""
+    from app.routing import envelope as envelopes
+    monkeypatch.setattr(ami, '_database', lambda: engine)
+
+    def missing(database, job_id):
+        raise sa.exc.ProgrammingError('SELECT', {}, Exception('relation "fax_job_rule_decisions" does not exist'))
+    monkeypatch.setattr(envelopes, 'load', missing)
+    with caplog.at_level(logging.WARNING, logger=ami.__name__):
+        assert ami.rule_subaddress('job1') is None
+    assert 'its routing decision could not be read' in caplog.text
+    trunk = values()
+    fields = ami.originate_fields_for(trunk, 'job1', NUMBER, '/faxdata/job1.tiff', choice=ami.reply_choice(trunk))
+    assert ami.requested_subaddress(fields) is None
+
+    def broken(database, job_id):
+        raise TypeError('a bug in reading decisions')
+    monkeypatch.setattr(envelopes, 'load', broken)
+    with pytest.raises(TypeError, match='a bug in reading decisions'):
+        ami.rule_subaddress('job1')
