@@ -64,6 +64,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--workflow KEY`: The workflow this fax is part of, such as referrals.
 * `--label <str>`: A label for this fax, such as legal (repeat it).
 * `--by TIME`: The time the fax must be sent by, such as 17:00 or &#x27;2026-10-08 17:00&#x27;, in your installation&#x27;s time zone. Faxbot never holds the fax past it for the recipient&#x27;s hours or a busy hour.
+* `--recipient NAME`: The provider or person the fax is for. Before a first fax to a number, Faxbot warns when the NPI registry lists that number for someone else; it still sends.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -973,6 +974,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `reply`: The number printed on the faxes you send,...
 * `blocked`: Junk senders whose calls are turned away...
 * `connectors`: Email mailboxes and folders that bring...
+* `npi`: Your NPI numbers, so Faxbot can tell you...
 
 ### `faxbot numbers list`
 
@@ -1702,6 +1704,92 @@ $ faxbot numbers connectors choices [OPTIONS]
 
 * `--help`: Show this message and exit.
 
+### `faxbot numbers npi`
+
+Your NPI numbers, so Faxbot can tell you when a number you might give up is still printed on your NPI record.
+
+**Usage**:
+
+```console
+$ faxbot numbers npi [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show your NPIs and the numbers the NPI...
+* `add`: Add one of your NPIs (one per location if...
+* `remove`: Stop treating an NPI as yours.
+* `check`: Read each of your NPIs from NPPES now.
+
+#### `faxbot numbers npi list`
+
+Show your NPIs and the numbers the NPI registry (NPPES) lists for each.
+
+**Usage**:
+
+```console
+$ faxbot numbers npi list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers npi add`
+
+Add one of your NPIs (one per location if you have several) and read its record from NPPES.
+
+**Usage**:
+
+```console
+$ faxbot numbers npi add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Your ten-digit NPI.  [required]
+
+**Options**:
+
+* `--label <str>`: A name for this location, such as Denver office.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers npi remove`
+
+Stop treating an NPI as yours. What Faxbot read for it stays as history.
+
+**Usage**:
+
+```console
+$ faxbot numbers npi remove [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The NPI to remove.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers npi check`
+
+Read each of your NPIs from NPPES now.
+
+**Usage**:
+
+```console
+$ faxbot numbers npi check [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `faxbot recipients`
 
 Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and case packets.
@@ -1724,6 +1812,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or set the highest speed and error...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
 * `schedule`: Show or set when Faxbot sends to one...
+* `check`: Before a first fax: check whether the NPI...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `encoded`: Encoded pages (experimental): send a...
@@ -1854,6 +1943,26 @@ $ faxbot recipients schedule [OPTIONS] {number}
 * `--any-time`: The recipient takes faxes at any time (clears the days and hours).
 * `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
 * `--learn / --no-learn`: Whether Faxbot learns the hours this number is usually busy and holds ordinary faxes out of them.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients check`
+
+Before a first fax: check whether the NPI registry (NPPES) lists this number for the provider you name. It
+only warns; it never stops a fax.
+
+**Usage**:
+
+```console
+$ faxbot recipients check [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The fax number you are about to send to.  [required]
+
+**Options**:
+
+* `--name <str>`: The provider or person the fax is for.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients iaf`
@@ -4813,6 +4922,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `rate-rows`: Replace the prices by where calls start...
+* `state-prices`: Import a carrier&#x27;s US prices for calls...
 * `predict`: Show what a fax to a number would take and...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
@@ -4936,6 +5046,28 @@ $ faxbot costs rate-rows [OPTIONS] {ROUTE}
 * `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).  [required]
 * `--help`: Show this message and exit.
 
+### `faxbot costs state-prices`
+
+Import a carrier&#x27;s US prices for calls within one state and between states. Faxbot prices each call from the
+state of its trunk&#x27;s site, and never changes caller ID to lower a charge.
+
+**Usage**:
+
+```console
+$ faxbot costs state-prices [OPTIONS] {carrier} {file}
+```
+
+**Arguments**:
+
+* `carrier`: The carrier, such as anveo.  [required]
+* `file`: The carrier&#x27;s price file (CSV) with a price for calls between states and within one state.  [required]
+
+**Options**:
+
+* `--source <str>`: Where you got the file, such as its web address.
+* `--read-on DATE`: The date you downloaded it, such as 2026-10-08.
+* `--help`: Show this message and exit.
+
 ### `faxbot costs predict`
 
 Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent.
@@ -4981,6 +5113,8 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `carriers`: Show what your last 30 days of faxing...
 * `shading`: Show how much time lightening shaded areas...
 * `trunks`: Compare your trunks&#x27; monthly fees, busiest...
+* `numbers`: Show where each of your fax numbers costs...
+* `sites`: Show whether your carriers price US calls...
 
 #### `faxbot costs recommendations sending`
 
@@ -5130,6 +5264,34 @@ Compare your trunks&#x27; monthly fees, busiest times and cost per fax, and show
 
 ```console
 $ faxbot costs recommendations trunks [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations numbers`
+
+Show where each of your fax numbers costs least to receive on, and the steps to move one. Advice only: Faxbot never moves a number.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations numbers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations sites`
+
+Show whether your carriers price US calls by state, and when another site&#x27;s trunk would send faxes to a state for less. Advice only.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations sites [OPTIONS]
 ```
 
 **Options**:

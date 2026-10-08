@@ -748,7 +748,16 @@ RECOMMENDATION_SECTIONS = [
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
     ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
     ('trunks', 'Your trunks', lambda api: _read_trunks(api), lambda out, result: show_trunks(out, result)),
+    ('numbers', 'Where each number should live', lambda api: _number_advice().read_numbers(api),
+     lambda out, result: _number_advice().show_numbers(out, result)),
+    ('sites', 'Which site calls cost less from', lambda api: _number_advice().read_sites(api),
+     lambda out, result: _number_advice().show_sites(out, result)),
 ]
+
+
+def _number_advice():
+    from . import number_advice
+    return number_advice
 
 
 def _read_trunks(api):
@@ -777,7 +786,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time lightening shaded areas would save, and whether one trunk's faxes fit on another. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time lightening shaded areas would save, whether one trunk's faxes fit on another, where each number should live, and which site's trunk costs less. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -825,7 +834,15 @@ for _name, _read, _show, _help in (
          'faxes.'),
         ('trunks', _read_trunks, show_trunks,
          "Compare your trunks' monthly fees, busiest times and cost per fax, and show when one trunk's faxes fit on "
-         'another and what that would save. Advice only.')):
+         'another and what that would save. Advice only.'),
+        ('numbers', lambda api: _number_advice().read_numbers(api),
+         lambda out, result: _number_advice().show_numbers(out, result),
+         'Show where each of your fax numbers costs least to receive on, and the steps to move one. Advice only: '
+         'Faxbot never moves a number.'),
+        ('sites', lambda api: _number_advice().read_sites(api),
+         lambda out, result: _number_advice().show_sites(out, result),
+         "Show whether your carriers price US calls by state, and when another site's trunk would send faxes to a "
+         'state for less. Advice only.')):
     recommendations.command(_name, help=_help)(_section(_read, _show))
 
 

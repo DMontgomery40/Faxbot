@@ -10,6 +10,7 @@ import typer
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import discovery
+from .commands import number_advice
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -89,6 +90,7 @@ numbers.add_typer(email, name='email')
 numbers.add_typer(reply.reply, name='reply')
 numbers.add_typer(blocked.blocked, name='blocked')
 numbers.add_typer(connectors.connectors, name='connectors')
+numbers.add_typer(number_advice.npi, name='npi')
 
 # -- recipients ----------------------------------------------------------------------
 
@@ -123,6 +125,7 @@ recipients.add_typer(partners, name='partners')
 # The case group, with the commands case_commands adds (accept, repair, checklists ...).
 recipients.add_typer(case_commands.cases, name='cases')
 recipients.add_typer(delivery.toll_free, name='toll-free')
+recipients.command('check')(number_advice.recipient_check)
 
 # -- providers -----------------------------------------------------------------------
 
@@ -160,6 +163,7 @@ costs.add_typer(delivery.recommendations, name='recommendations')
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('rate-rows')(delivery.routing_rate_rows)
 costs.add_typer(delivery.plans, name='plans')
+costs.command('state-prices')(number_advice.state_prices)
 costs.command('predict')(delivery.routing_predict)
 
 # -- access --------------------------------------------------------------------------
