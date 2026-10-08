@@ -153,6 +153,8 @@ READS = {
     ("GET", "/routing/recommendations/plans"): ("settings:read", False),
     # The dry run: what a fax would cost on each route, before sending; nothing is sent or recorded.
     ("GET", "/routing/predict"): ("settings:read", False),
+    # The savings map: every way Faxbot saves money and how each stands here, never money (like /routing/savings).
+    ("GET", "/routing/savings/mechanisms"): ("settings:read", False),
 }
 
 

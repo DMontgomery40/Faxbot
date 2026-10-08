@@ -249,7 +249,8 @@ def case_packets(routes, engine, *, since, days):
     return result
 
 
-def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
+def savings(routes, engine, *, now=None, days=WINDOW_DAYS, home=None):
+    """Every part of Costs → Savings over ``days``; ``home`` is the installation country, for relay sentences."""
     now = now or utcnow()
     since = now - timedelta(days=days)
     # Separator pages shared calls left out (index page or page marks): counted apart from the calls saved.
@@ -271,14 +272,24 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     packing = page_savings(routes, engine, since=since, days=days)
     # Pages saved by the experimental encoded pages, each attempt's choice (pages/sending.py).
     encoding = page_savings(routes, engine, since=since, days=days, layout='codec')
+    # The parts the savings map added for mechanisms that had none: counts, except the relay's own priced records.
+    from . import mechanism_parts as more
+    added = {'fax_friendly': more.fax_friendly(engine, since=since, days=days),
+             'cheapest_route': more.cheapest_route(engine, since=since, days=days),
+             'plan_first': more.plan_first(engine, since=since, days=days),
+             'relay': more.relay(engine, since=since, days=days, home=home),
+             'continuation': more.continuation(engine, since=since, days=days),
+             'partner_repair': more.partner_repair(engine, since=since, days=days),
+             'blocked_calls': more.blocked_calls(engine, since=since, days=days)}
     total = {}
-    for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing, encoding):
+    for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing, encoding,
+                 *added.values()):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'separator_pages': index, 'direct_delivery': direct,
             'direct_fax_images': fax_images,
             'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'packing': packing,
-            'encoding': encoding, 'total': total,
+            'encoding': encoding, **added, 'total': total,
             'total_sentence': total_sentence(total, days)}
 
 

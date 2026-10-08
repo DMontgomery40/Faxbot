@@ -84,6 +84,7 @@ import type {
   CasePacket,
   CaseSummary,
   Savings,
+  SavingsMechanisms,
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
@@ -1605,6 +1606,11 @@ class AdminAPIClient {
   // What sending together, direct delivery and case packets saved in the last `days` (estimates).
   async getSavings(days?: number): Promise<Savings> {
     return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // Every way Faxbot saves money: whether each is on, works here and has been tested (Overview's savings map).
+  async getSavingsMechanisms(): Promise<SavingsMechanisms> {
+    return this.json('/routing/savings/mechanisms');
   }
 
   // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →

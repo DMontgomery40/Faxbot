@@ -1,0 +1,668 @@
+{
+  "about": "The savings map in words. The console (SavingsMap.tsx on Overview) and the faxbot command (faxbot costs mechanisms, cli/commands/delivery.py mechanism_lines) both show exactly what the server says. The response is GET /routing/savings/mechanisms evaluated on a real synthetic installation (api/tests/test_savings_mechanisms.py scenario); its catalogue fields must match app/routing/mechanisms.py.",
+  "response": {
+    "days": 30,
+    "title": "How Faxbot saves money",
+    "sentence": "Every way Faxbot saves money, in the order a fax meets them.",
+    "legend": [
+      {
+        "label": "On or Off",
+        "sentence": "Whether it is switched on for your faxes."
+      },
+      {
+        "label": "Works here or Not here",
+        "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+      },
+      {
+        "label": "Tested",
+        "sentence": "How far Faxbot has proven it, and whether it has worked on your faxes in the last 30 days."
+      }
+    ],
+    "stages": [
+      {
+        "key": "document",
+        "title": "Preparing the document",
+        "mechanisms": [
+          {
+            "key": "case_packets",
+            "name": "Case packets",
+            "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient accepts a list of the documents they already have yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "case_packets",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": true
+          },
+          {
+            "key": "dense_pages",
+            "name": "Dense pages",
+            "sentence": "Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "packing",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "turn_on": false
+          },
+          {
+            "key": "encoded_pages",
+            "name": "Encoded pages (experimental)",
+            "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has agreed to encoded pages yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "encoding",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": true
+          },
+          {
+            "key": "fax_friendly",
+            "name": "Lighter shading",
+            "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "fax_friendly",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "turn_on": true
+          }
+        ]
+      },
+      {
+        "key": "route",
+        "title": "Choosing the route",
+        "mechanisms": [
+          {
+            "key": "own_numbers",
+            "name": "Faxes to your own numbers",
+            "sentence": "Delivers a fax to one of your own numbers straight into Received, with no phone call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "own_numbers",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "turn_on": false
+          },
+          {
+            "key": "direct_delivery",
+            "name": "Direct delivery",
+            "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "direct_delivery",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "turn_on": false
+          },
+          {
+            "key": "fax_images",
+            "name": "Fax images to partners",
+            "sentence": "Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "direct_fax_images",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "turn_on": false
+          },
+          {
+            "key": "reuse",
+            "name": "Send once and reuse",
+            "sentence": "Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "direct_bytes",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "turn_on": false
+          },
+          {
+            "key": "relay",
+            "name": "Partner relays",
+            "sentence": "Sends faxes abroad through a partner that places them as local calls in its own country.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off until you and a partner both sign a relay agreement."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "relay",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "turn_on": false
+          },
+          {
+            "key": "toll_free",
+            "name": "Approved toll-free numbers",
+            "sentence": "Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 recipient who approved a toll-free number."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "toll_free",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": false
+          },
+          {
+            "key": "cheapest_route",
+            "name": "Cheapest route per delivered fax",
+            "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; a preferred route for a number still comes first."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 2,
+              "sentence": "Worked on 2 faxes in the last 30 days."
+            },
+            "part": "cheapest_route",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": false
+          },
+          {
+            "key": "plan_first",
+            "name": "Your plan's faxes first",
+            "sentence": "Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "plan_first",
+            "page": "costs/prices",
+            "page_label": "Costs → Prices & plans",
+            "turn_on": false
+          },
+          {
+            "key": "busy_hours",
+            "name": "Calls at the right hour",
+            "sentence": "Waits out a number's usual busy hours when a failed call there could be charged.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; urgent faxes still go at once."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Faxbot works these hours out afresh each time and keeps no count of the faxes that waited."
+            },
+            "part": null,
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "call",
+        "title": "On the call",
+        "mechanisms": [
+          {
+            "key": "sending_together",
+            "name": "Sending together",
+            "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 recipient who agreed."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Proven in the test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "sending_together",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": false
+          },
+          {
+            "key": "separator_pages",
+            "name": "Fewer separator pages",
+            "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has agreed to an index page or page marks yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "separator_pages",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "turn_on": true
+          },
+          {
+            "key": "sslfax",
+            "name": "Faster pages",
+            "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Faxbot's fast fax service starts when you select Apply and connect."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Proven in the test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "sslfax",
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "after",
+        "title": "After the call",
+        "mechanisms": [
+          {
+            "key": "continuation",
+            "name": "Only the missing pages",
+            "sentence": "Finishes a fax whose call broke by sending only the pages the call did not confirm.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; you choose it for each fax whose call broke."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "continuation",
+            "page": "faxes/sent",
+            "page_label": "Faxes → Sent",
+            "turn_on": false
+          },
+          {
+            "key": "partner_repair",
+            "name": "Missing pages to partners",
+            "sentence": "After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used here in the last 30 days."
+            },
+            "part": "partner_repair",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "receiving",
+        "title": "Receiving",
+        "mechanisms": [
+          {
+            "key": "blocked_senders",
+            "name": "Junk callers turned away",
+            "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 number on your blocked list."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Built and tested; not yet run on a live call"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Turned away 1 call in the last 30 days."
+            },
+            "part": "blocked_calls",
+            "page": "numbers/blocked",
+            "page_label": "Numbers → Blocked senders",
+            "turn_on": false
+          }
+        ]
+      }
+    ]
+  },
+  "cli": [
+    "How Faxbot saves money",
+    "Every way Faxbot saves money, in the order a fax meets them.",
+    "",
+    "Preparing the document",
+    "  Case packets: Off · Works here · Built and tested; not yet run on a live call",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    No recipient accepts a list of the documents they already have yet.",
+    "    Not used here in the last 30 days.",
+    "    Turn it on in Recipients → Details.",
+    "  Dense pages: On · Works here · Built and tested; not yet run on a live call",
+    "    Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
+    "    Not used here in the last 30 days.",
+    "  Encoded pages (experimental): Off · Works here · Built and tested; not yet run on a live call",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    No recipient has agreed to encoded pages yet.",
+    "    Not used here in the last 30 days.",
+    "    Turn it on in Recipients → Details.",
+    "  Lighter shading: Off · Works here · Built and tested; not yet run on a live call",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    Not used here in the last 30 days.",
+    "    Turn it on in Providers → In use → Delivery routes.",
+    "",
+    "Choosing the route",
+    "  Faxes to your own numbers: On · Works here · Built and tested; not yet run on a live call",
+    "    Delivers a fax to one of your own numbers straight into Received, with no phone call.",
+    "    Not used here in the last 30 days.",
+    "  Direct delivery: Off · Not here · Built and tested; not yet run on a live call",
+    "    Sends documents to verified partners over the internet instead of placing a fax call.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used here in the last 30 days.",
+    "  Fax images to partners: Off · Not here · Built and tested; not yet run on a live call",
+    "    Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used here in the last 30 days.",
+    "  Send once and reuse: Off · Not here · Built and tested; not yet run on a live call",
+    "    Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used here in the last 30 days.",
+    "  Partner relays: Off · Not here · Built and tested; not yet run on a live call",
+    "    Sends faxes abroad through a partner that places them as local calls in its own country.",
+    "    Off until you and a partner both sign a relay agreement.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used here in the last 30 days.",
+    "  Approved toll-free numbers: On · Works here · Built and tested; not yet run on a live call",
+    "    Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
+    "    On for 1 recipient who approved a toll-free number.",
+    "    Not used here in the last 30 days.",
+    "  Cheapest route per delivered fax: On · Not here · Built and tested; not yet run on a live call",
+    "    Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+    "    On; a preferred route for a number still comes first.",
+    "    Needs a second sending route to compare with; you send through Telnyx only.",
+    "    Worked on 2 faxes in the last 30 days.",
+    "  Your plan's faxes first: On · Not here · Built and tested; not yet run on a live call",
+    "    Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
+    "    Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan.",
+    "    Not used here in the last 30 days.",
+    "  Calls at the right hour: On · Works here · Built and tested; not yet run on a live call",
+    "    Waits out a number's usual busy hours when a failed call there could be charged.",
+    "    On; urgent faxes still go at once.",
+    "    Faxbot works these hours out afresh each time and keeps no count of the faxes that waited.",
+    "",
+    "On the call",
+    "  Sending together: On · Works here · Proven in the test lab",
+    "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
+    "    On for 1 recipient who agreed.",
+    "    Not used here in the last 30 days.",
+    "  Fewer separator pages: Off · Works here · Built and tested; not yet run on a live call",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    No recipient has agreed to an index page or page marks yet.",
+    "    Not used here in the last 30 days.",
+    "    Turn it on in Recipients → Details.",
+    "  Faster pages: On · Not here · Proven in the test lab",
+    "    Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+    "    Faxbot's fast fax service starts when you select Apply and connect.",
+    "    Not used here in the last 30 days.",
+    "",
+    "After the call",
+    "  Only the missing pages: On · Works here · Built and tested; not yet run on a live call",
+    "    Finishes a fax whose call broke by sending only the pages the call did not confirm.",
+    "    On; you choose it for each fax whose call broke.",
+    "    Not used here in the last 30 days.",
+    "  Missing pages to partners: Off · Not here · Built and tested; not yet run on a live call",
+    "    After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used here in the last 30 days.",
+    "",
+    "Receiving",
+    "  Junk callers turned away: On · Works here · Built and tested; not yet run on a live call",
+    "    Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+    "    On for 1 number on your blocked list.",
+    "    Turned away 1 call in the last 30 days.",
+    "",
+    "On or Off: Whether it is switched on for your faxes.",
+    "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
+    "Tested: How far Faxbot has proven it, and whether it has worked on your faxes in the last 30 days.",
+    "What each one saved: faxbot costs savings"
+  ]
+}

@@ -5570,6 +5570,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `fax`: Show what one fax cost (the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
+* `mechanisms`: List every way Faxbot saves money, grouped...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `rate-rows`: Replace the prices by where calls start...
 * `state-prices`: Import a carrier&#x27;s US prices for calls...
@@ -5662,6 +5663,20 @@ $ faxbot costs savings [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+### `faxbot costs mechanisms`
+
+List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot costs savings.
+
+**Usage**:
+
+```console
+$ faxbot costs mechanisms [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot costs rate-cards`

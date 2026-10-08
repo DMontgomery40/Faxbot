@@ -749,6 +749,49 @@ export interface Savings {
   // Bytes partners did not need sent again (a reference or only the changes): counted exactly, never money, and
   // never part of the money total. Optional for older servers.
   direct_bytes?: SendOnceBytes;
+  // The parts the savings map added (routing/mechanism_parts.py); optional for older servers. Lightened pages are
+  // an estimate of time and the relay is priced from its own records; the rest are exact counts with no money.
+  fax_friendly?: SavingPart & { faxes: number; pages: number; seconds_saved: number };
+  relay?: SavingPart & { faxes: number; priced: number; unpriced: number };
+  cheapest_route?: CountedPart & { faxes: number };
+  plan_first?: CountedPart & { faxes: number; plans: number };
+  continuation?: CountedPart & { faxes: number; pages_not_resent: number };
+  partner_repair?: CountedPart & { faxes: number; pages_not_resent: number };
+  blocked_calls?: CountedPart & { calls: number };
+}
+
+// A Savings part that counts exactly and carries no money.
+interface CountedPart {
+  estimate: false;
+  saved: Money[];
+  sentence: string;
+}
+
+// GET /routing/savings/mechanisms: every way Faxbot saves money and how each stands on this installation, for the
+// Overview's map and `faxbot costs mechanisms`. Every sentence comes from the server; never any money.
+export interface SavingsMechanism {
+  key: string;
+  name: string;
+  sentence: string;
+  enabled: { on: boolean; label: string; sentence: string | null };
+  works: { here: boolean; label: string; sentence: string | null };
+  evidence: { level: 'live' | 'lab' | 'built'; label: string };
+  here: { used: number; sentence: string };
+  // Its part on Costs → Savings (the address costs/savings?part=…), or null when it has none.
+  part: string | null;
+  // The console page that holds its setting ('recipients/list'), and that page's name.
+  page: string;
+  page_label: string;
+  // Off and works here: the map offers to turn it on at its page.
+  turn_on: boolean;
+}
+
+export interface SavingsMechanisms {
+  days: number;
+  title: string;
+  sentence: string;
+  legend: Array<{ label: string; sentence: string }>;
+  stages: Array<{ key: string; title: string; mechanisms: SavingsMechanism[] }>;
 }
 
 // GET /direct/send-once: "send once" agreements both ways, and the bytes reuse and changes saved.
