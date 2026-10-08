@@ -133,6 +133,30 @@ def event_text(kind, details):
     return kind.replace('_', ' ').capitalize() + '.'
 
 
+def moved_on(delivery, item):
+    """What the fax's own delivery record has said since the item was made, when that changes what to do; or None.
+
+    The item stays open for a person either way; this only stops "send it again" from doubling a fax that is
+    already delivered or on its way again.
+    """
+    if delivery is None or item['state'] != 'open':
+        return None
+    state, same = delivery['state'], delivery['attempt_id'] == item['attempt_id']
+    if state == 'success':
+        return {'kind': 'delivered', 'text': 'The fax service has since reported this fax delivered.'}
+    if state == 'cancelled':
+        return {'kind': 'cancelled', 'text': 'This fax was cancelled since.'}
+    if same and state in ('reconciliation_required', 'failed'):
+        return None
+    if same and state == 'in_progress':
+        return {'kind': 'following', 'text': "The fax service's fax ID is recorded, and Faxbot is following this "
+                                             'fax with the fax service.'}
+    if state == 'failed':
+        return {'kind': 'failed', 'text': 'A later attempt to send this fax failed; see its delivery attempts.'}
+    return {'kind': 'resent', 'text': 'Faxbot is already sending this fax again by another route, so it is not '
+                                      'sent again from here.'}
+
+
 def receipt_query_page(*, organization, sent_on, pages, reference, reply_number):
     """The one-page receipt query: no part of the document, only the date, page count and reference."""
     from reportlab.lib.pagesizes import letter
@@ -227,6 +251,11 @@ class CertaintyService:
         if version != row['version']:
             raise CertaintyConflict(CHANGED)
 
+    def _delivery(self, connection, job_id):
+        row = connection.execute(sa.select(self.store.deliveries.c.state, self.store.deliveries.c.attempt_id).where(
+            self.store.deliveries.c.id == job_id)).mappings().one_or_none()
+        return dict(row) if row is not None else None
+
     def _organization(self):
         return (getattr(self.values(), 'direct_organization', '') or '').strip()
 
@@ -283,11 +312,15 @@ class CertaintyService:
                 'resend_fax_id': row['resend_job_id'], 'query_fax_id': row['query_job_id'],
                 'is_mine': mine, 'version': row['version'], 'actions': actions,
             }
+            moved = moved_on(self._delivery(connection, row['job_id']), row)
+            view['moved_on'] = moved
             if detail:
                 # The full number only for people who may act on the item: they need it to phone the recipient.
                 found = self._checks(connection, row, now, number=row['to_number'] if may_act else None)
                 view['checks'] = found
-                view['suggestion'] = checks.suggestion(found) if row['state'] == 'open' else None
+                view['suggestion'] = None if row['state'] != 'open' else (
+                    checks.suggestion(found) if moved is None else ('delivered' if moved['kind'] == 'delivered'
+                                                                     else None))
                 if may_act:
                     view['number'] = row['to_number']
             views.append(view)
@@ -359,7 +392,9 @@ class CertaintyService:
                 sa.or_(items.c.resend_job_id == fax_id, items.c.query_job_id == fax_id))).first()
             views = self._views(connection, actor, rows, now, detail=True)
             linked = None
-            if origin is not None:
+            # Only a fax this person may read is named.
+            if origin is not None and self._allowed(connection, actor, 'fax:read',
+                                                    self.store.resource_of(connection, origin.job_id), now):
                 linked = {'fax_id': origin.job_id,
                           'kind': 'resend' if origin.resend_job_id == fax_id else 'receipt_query'}
             return {'items': views, 'about': linked}
@@ -490,6 +525,10 @@ class CertaintyService:
         if send_again:
             if accept is None:
                 raise CertaintyConflict('Sending again is not available here.')
+            with self.access_store.transaction() as connection:
+                moved = moved_on(self._delivery(connection, row['job_id']), row)
+            if moved is not None:
+                raise CertaintyConflict(moved['text'])
             folder = Path(getattr(self.values(), 'fax_data_dir', '') or '.')
             source = folder / f"{row['job_id']}.pdf"
             if source.is_symlink() or not source.is_file():

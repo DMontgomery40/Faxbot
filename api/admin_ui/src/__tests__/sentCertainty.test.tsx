@@ -19,7 +19,7 @@ const item = (overrides: Partial<CertaintyItem> = {}): CertaintyItem => ({
   owner: { id: 'dana', name: 'Dana' }, owner_source_text: 'the person who sent it', due_at: '2026-10-08T09:00:00',
   due_hours: 24, escalated_at: null, overdue: false, outcome: null, settled_by: null, settled_at: null,
   settled_reason: null, resend_fax_id: null, query_fax_id: null, is_mine: true, version: 1,
-  actions: ['settle', 'send_query'], suggestion: null, number: '+12025550123',
+  actions: ['settle', 'send_query'], suggestion: null, number: '+12025550123', moved_on: null,
   checks: [
     { kind: 'partner', title: 'Ask the partner', cost: 'Free', automatic: true, result: 'unavailable', strength: null,
       text: 'This number is not one of your partners, so there is no partner to ask.', meaning: null, action: null },
@@ -89,6 +89,16 @@ describe('sent faxes to settle', () => {
     expect(await screen.findByText('Settled. The fax is on its way again as a new fax.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open the new fax' }));
     expect(opened).toEqual(['fax-2']);
+  });
+
+  it('says when the fax is already on its way again, and offers no second send', async () => {
+    server.use(http.get('/certainty/faxes/fax-1', () => HttpResponse.json({ items: [item({ moved_on: { kind: 'resent',
+      text: 'Faxbot is already sending this fax again by another route, so it is not sent again from here.' } })],
+    about: null })));
+    render(<FaxCertaintyItem client={client()} jobId="fax-1" />);
+    expect(await screen.findByText('Faxbot is already sending this fax again by another route, so it is not sent again from here.')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Not delivered'));
+    expect(screen.queryByLabelText('Send it again now, as a new fax linked to this one')).toBeNull();
   });
 
   it('says a fax sent again points back to the earlier one', async () => {

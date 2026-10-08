@@ -113,6 +113,8 @@ def uncertain_probe(fax_id: str = typer.Argument(..., help=FAX_ID_HELP),
             out.line('Phone script:')
             for line in phone['script']:
                 out.line('  ' + line)
+        if (item.get('moved_on') or {}).get('text'):
+            out.line(item['moved_on']['text'])
         if item.get('suggestion'):
             out.line(f"The checks point to {OUTCOME_WORDS[item['suggestion']]}; you decide with: "
                      f"faxbot sent settle {item['fax_id']}")

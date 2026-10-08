@@ -309,6 +309,10 @@ def call_record_check(sources, connection, item, job, *, now=None):
         confirmed = record['pages']
         if type(confirmed) is int and confirmed > 0:
             reading['text'] += f' The receiving machine confirmed {confirmed} of {pages} pages.'
+        # How the call ended, from the fax engine's record (its hang-up cause), unless it says the fax went.
+        ending = call_summary(record)
+        if ending and not ending.startswith('Sent:'):
+            reading['text'] += ' ' + ending
         return reading
     seconds = _provider_seconds(sources, connection, item['attempt_id'])
     if seconds is not None and pages is not None:

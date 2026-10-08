@@ -48,6 +48,8 @@ export interface CertaintyItem {
   is_mine: boolean;
   version: number;
   actions: Array<'assign' | 'settle' | 'send_query'>;
+  // What the fax's own delivery record has said since (delivered, or already on its way again): never sent again here.
+  moved_on: { kind: 'delivered' | 'cancelled' | 'following' | 'failed' | 'resent'; text: string } | null;
   // Detail only: the checks, cheapest first, what they point to, and the full number for people who may act.
   checks?: CertaintyCheck[];
   suggestion?: CertaintyOutcome | null;

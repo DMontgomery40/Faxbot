@@ -97,7 +97,7 @@ function SettleForm({ item, busy, onSettle }: {
           <FormControlLabel key={value} value={value} control={<Radio />} label={OUTCOME_LABELS[value]} disabled={busy} />
         ))}
       </RadioGroup>
-      {outcome === 'not_delivered' && (
+      {outcome === 'not_delivered' && !item.moved_on && (
         <FormControlLabel control={<Checkbox checked={sendAgain} onChange={(event) => setSendAgain(event.target.checked)} disabled={busy} />}
           label="Send it again now, as a new fax linked to this one" />
       )}
@@ -172,6 +172,7 @@ function ItemPanel({ client, initial, onOpenFax }: { client: AdminAPIClient; ini
         <Typography variant="body2">{item.why}</Typography>
         {settled && item.settled_reason && <Typography variant="body2">“{item.settled_reason}”{item.settled_at ? `, ${formatServerTime(item.settled_at)}` : ''}</Typography>}
       </Alert>
+      {item.moved_on && <Alert severity="info" sx={{ mb: 2 }}>{item.moved_on.text}</Alert>}
       {notice && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice}</Alert>}
       {error ? <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{deliveryErrorMessage(error)}</Alert> : null}
       <Typography variant="body2" sx={{ mb: 1 }}>

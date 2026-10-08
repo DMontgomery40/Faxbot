@@ -250,6 +250,11 @@ def test_the_call_record_check_reads_the_carriers_seconds_against_the_prediction
               match_method='call_id', effective_at=NOW, observed_at=NOW, applied=1, is_final=1)
     record = cw.service.detail(dana, item['id'])['checks'][1]
     assert record['result'] == 'consistent' and record['text'].startswith("Telnyx's record of the call shows")
+    # How the call ended comes with the reading: the fax engine's record of the hang-up.
+    cw.update('sip_call_records', 'call-1', fax_status='FAILED',
+              error_cause='remote_fax_failed: The call dropped prematurely (cause 16)')
+    record = cw.service.detail(dana, item['id'])['checks'][1]
+    assert record['text'].endswith('The other fax machine answered but the fax failed: The call dropped prematurely.')
     unanswered = dict(disposition='no_answer', answered_at=None, connected_seconds=None)
     cw.update('sip_call_records', 'call-1', **unanswered)
     record = cw.service.detail(dana, item['id'])['checks'][1]
@@ -368,3 +373,59 @@ def test_a_partner_is_asked_once_about_an_uncertain_call_and_its_signed_count_is
     assert partner['text'] == 'Lakeside Hospital signed that it holds all 4 pages of this call.'
     kept = [json.loads(event['details']) for event in cw.events(item['id']) if event['kind'] == 'probe']
     assert kept[0]['statement'] == '{"type":"call_pages"}'
+
+
+def test_send_again_is_refused_once_the_fax_is_already_on_its_way_again(cw):
+    dana = cw.operator('dana')
+    cw.insert('direct_peers', id='peer-1', organization='Lakeside Hospital', phone_number=NUMBER,
+              endpoint_url='https://lakeside.example', signing_key='a' * 64, exchange_key='b' * 64,
+              state='verified', challenge_failures=0)
+    cw.sent('fax-1', sender='dana')
+    cw.insert('direct_deliveries', direction='outbound', message_id='m' * 32, peer_id='peer-1', job_id='fax-1',
+              attempt_id='attempt-fax-1', recipient_number=NUMBER, digest='d' * 64, size_bytes=10, manifest='{}',
+              state='uncertain')
+    cw.feed()
+    item = cw.item_for('fax-1')
+    # The partner signs "not received", and the direct path puts the fax back for its next route by itself.
+    with cw.engine.begin() as connection:
+        connection.execute(cw.tables['direct_deliveries'].update().values(state='refused'))
+        connection.execute(cw.certainty.deliveries.update().values(state='ready', attempt_id=None))
+    view = cw.service.detail(dana, item['id'])
+    assert view['checks'][0]['result'] == 'not_delivered'
+    assert view['moved_on'] == {'kind': 'resent', 'text': 'Faxbot is already sending this fax again by another '
+                                                          'route, so it is not sent again from here.'}
+    assert view['suggestion'] is None
+    with pytest.raises(CertaintyConflict, match='already sending this fax again'):
+        cw.service.settle(dana, item['id'], outcome='not_delivered', reason='Partner said no', version=1,
+                          send_again=True, accept=cw.accept('dana'))
+    assert cw.accepted == []
+    settled = cw.service.settle(dana, item['id'], outcome='not_delivered', reason='Partner said no; resent by Faxbot',
+                                version=1)
+    assert settled['state'] == 'settled' and settled['moved_on'] is None
+    # Later the fax service reports another fax delivered: said plainly, and it is never sent again from here.
+    cw.sent('fax-2', sender='dana')
+    cw.feed()
+    with cw.engine.begin() as connection:
+        connection.execute(cw.certainty.deliveries.update().where(cw.certainty.deliveries.c.id == 'fax-2').values(
+            state='success'))
+    other = cw.service.detail(dana, cw.item_for('fax-2')['id'])
+    assert other['moved_on']['text'] == 'The fax service has since reported this fax delivered.'
+    assert other['suggestion'] == 'delivered'
+
+
+def test_a_fax_sent_again_names_the_earlier_fax_only_to_people_who_may_read_it(cw):
+    dana = cw.operator('dana')
+    cw.sent('fax-1', sender='dana')
+    cw.feed()
+    item = cw.item_for('fax-1')
+    cw.service.settle(dana, item['id'], outcome='not_delivered', reason='No fax came', version=1, send_again=True,
+                      accept=cw.accept('dana'))
+    new_id = resend_id(item['id'])
+    # Someone who may read only the new fax (its own resource) learns nothing about the earlier one.
+    cw.user('ola')
+    cw.role('one-fax', ['fax:read'])
+    cw.assignment('ola', 'one-fax', 'r-' + new_id)
+    from api.app.access.types import PasswordSessionEvidence, PrincipalContext
+    ola = PrincipalContext('ola', 1, PasswordSessionEvidence('session-ola', 1), 'principal:ola')
+    assert cw.service.for_fax(ola, new_id) == {'items': [], 'about': None}
+    assert cw.service.for_fax(dana, new_id)['about'] == {'fax_id': 'fax-1', 'kind': 'resend'}
