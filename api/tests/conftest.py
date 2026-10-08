@@ -11,6 +11,27 @@ if ROOT not in sys.path:
 os.environ.setdefault("FAXBOT_TEST_MODE", "true")
 
 
+@pytest.fixture(autouse=True)
+def _restore_installation_database():
+    """The process's installation database binding, back after every test.
+
+    An app lifespan whose DATABASE_URL differs moves ``db.engine`` and ``db.SessionLocal`` to that database
+    (``db.init_db``) and never moves them back. A test on a scoped PostgreSQL schema then left every later test
+    reading a schema it dropped, so a trunk call later in the run failed before its Originate was written. The
+    module is loaded both as ``app.db`` and as ``api.app.db``; each loaded copy is restored.
+    """
+    saved = {name: sys.modules[name].engine for name in ('app.db', 'api.app.db') if name in sys.modules}
+    yield
+    for name, engine in saved.items():
+        module = sys.modules.get(name)
+        if module is None or module.engine is engine:
+            continue
+        moved = module.engine
+        module.SessionLocal.configure(bind=engine)
+        module.engine = engine
+        moved.dispose()
+
+
 @pytest.fixture
 def isolated_installation(monkeypatch, tmp_path):
     """Opt-in real installation boundary for legacy lifespan/HTTP fixtures.
