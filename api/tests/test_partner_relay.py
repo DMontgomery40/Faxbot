@@ -722,3 +722,24 @@ async def test_a_premium_rate_number_is_never_relayed(relay_trio):
     (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE state = 'refused'")
     assert refused['detail'] == 'Sydney office does not relay faxes to premium-rate numbers, so nothing was accepted.'
     assert a.delivery.get(job)['state'] == 'in_progress'
+
+
+def test_signed_relay_times_are_utc_whatever_the_servers_time_zone(monkeypatch, tmp_path):
+    """A naive UTC time (utcnow) is signed as that UTC time, also on a server whose TZ is not UTC."""
+    import time
+    from datetime import datetime
+    from app.direct.relay import price_body, signed_time
+    from app.schema import create_database_engine, upgrade_schema
+    engine = create_database_engine('sqlite:///' + str(tmp_path / 'relay.db'))
+    upgrade_schema(engine)
+    monkeypatch.setenv('TZ', 'America/Denver')
+    time.tzset()
+    try:
+        moment = datetime(2026, 10, 7, 18, 30, 5)
+        assert signed_time(moment) == '2026-10-07T18:30:05Z'
+        body = price_body(engine, SimpleNamespace(fax_default_country='US'), None, [], now=moment)
+        assert (body['priced_at'], body['valid_until']) == ('2026-10-07T18:30:05Z', '2026-11-07T18:30:05Z')
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+        engine.dispose()
