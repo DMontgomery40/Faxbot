@@ -1,6 +1,8 @@
 # Client SDKs
 
-Thin, official clients for the Faxbot API. They call the unified Faxbot REST API (no direct Phaxio/Asterisk calls). Current version alignment: Python 1.0.2, Node 1.0.2.
+Thin, official clients for the Faxbot API. They call the unified Faxbot REST API (no direct Phaxio/Asterisk calls). Current source package versions: Python 1.1.0, Node 1.1.0.
+
+Current SDK source packages are proprietary and require prior written permission from David Montgomery for use. Previously released MIT versions retain their existing permissions. See the [license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
 
 <div class="grid cards" markdown>
 
