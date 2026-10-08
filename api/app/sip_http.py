@@ -394,6 +394,14 @@ def _applied(values):
     return hashlib.sha256(current).digest() == hashlib.sha256(expected).digest()
 
 
+def _carrier_notes(values):
+    from .capacity import carrier_groups
+    try:
+        return carrier_groups(values)[1]
+    except Exception:
+        return []
+
+
 def _trunk_values(values, account):
     """(settings as the trunk sees them, its key or None) for ``?account=``; None or ``sip`` is the first trunk."""
     if not account or account == sip_trunk.PRIMARY:
@@ -564,6 +572,8 @@ async def status(request: Request, account: str | None = Query(default=None, max
         'trunks': [{'key': trunk.key, 'label': trunk.label, 'endpoint_loaded': trunk.endpoint in loaded}
                    for trunk in sip_trunk.trunk_accounts(everything)],
         'trunk_problems': sip_trunk.trunk_problems(everything),
+        # Trunks Faxbot can't tell apart as one carrier account (capacity.carrier_groups), one sentence each.
+        'carrier_notes': _carrier_notes(everything),
         'applied': applied, 'asterisk_connected': asterisk['connected'],
         'registration': asterisk['registration'], 'registration_transport': transport,
         'registration_text': _registration_text(asterisk['registration'], transport, summary.get('preset')),

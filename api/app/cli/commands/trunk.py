@@ -29,6 +29,8 @@ def _status_lines(out, result):
     out.line(result.get('message') or '')
     for problem in (result.get('trunk_problems') or {}).values():
         out.line(problem)
+    for note in result.get('carrier_notes') or []:
+        out.line(note)
     if not result.get('configured'):
         return
     trunks = result.get('trunks') or []

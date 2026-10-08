@@ -136,6 +136,69 @@ class Limited:
     calls_per_second: int | None
     # The key fax_jobs.backend holds for a fax accepted with this account (the provider id of a first account).
     backend: str | None = None
+    # A carrier account several trunks share (``carrier_groups``): the trunk keys whose calls add up against the
+    # carrier's account-wide limits. Empty for an account's own room.
+    members: tuple = ()
+
+
+# -- trunks on one carrier account ----------------------------------------------------------------------------------
+#
+# A carrier's published limits (``CARRIERS``) hold for the whole carrier account, whatever its connections: two
+# Telnyx trunk accounts on one Telnyx account share its 2 calls at once. Faxbot knows two trunks are one carrier
+# account when they read it with the same API key, or sign in as the same user at the same server; it knows they
+# are two when their API keys differ. Otherwise it keeps them apart and says so beside the trunks.
+
+def _carrier_identity(trunk):
+    """What identifies a trunk's carrier account, or None when Faxbot cannot tell (never the secret itself)."""
+    import hashlib
+    own = trunk.values
+    preset = getattr(own, 'sip_trunk_preset', '') or ''
+    key = getattr(own, 'telnyx_api_key', '') or '' if preset == 'telnyx' else ''
+    if key:
+        return 'key:' + hashlib.sha256(key.encode()).hexdigest()[:16]
+    if getattr(own, 'sip_trunk_auth', '') == 'registration' and getattr(own, 'sip_trunk_username', ''):
+        from .sip_trunk import PRESETS
+        host = getattr(own, 'sip_trunk_host', '') or getattr(PRESETS.get(preset), 'host', '')
+        return 'user:' + hashlib.sha256(f'{own.sip_trunk_username}@{host}'.encode()).hexdigest()[:16]
+    return None
+
+
+def carrier_groups(values):
+    """([Limited for each carrier account two or more trunks share], [one sentence per pair Faxbot can't tell])."""
+    from itertools import combinations
+    from . import sip_trunk
+    from .provider_labels import trunk_name
+    by_preset = {}
+    for trunk in sip_trunk.trunk_accounts(values):
+        preset = getattr(trunk.values, 'sip_trunk_preset', '') or ''
+        if preset in CARRIERS:
+            by_preset.setdefault(preset, []).append((trunk, _carrier_identity(trunk)))
+    groups, notes = [], []
+    for preset, items in by_preset.items():
+        if len(items) < 2:
+            continue
+        limits, carrier = CARRIERS[preset], trunk_name(preset)
+        shared = {}
+        for trunk, identity in items:
+            if identity:
+                shared.setdefault(identity, []).append(trunk)
+        for identity, trunks in shared.items():
+            if len(trunks) < 2:
+                continue
+            # The carrier's published limit, unless you set more lines at once on one of these trunks (an account
+            # verified to a higher level): then that is the account's limit.
+            chosen = [getattr(trunk.values, 'sip_trunk_max_calls', 0) or 0 for trunk in trunks]
+            at_once = max(chosen) if any(chosen) else limits.calls_at_once
+            groups.append(Limited(f'carrier:{preset}:{identity.split(":", 1)[1]}', f'your {carrier} account', True,
+                                  at_once, limits.calls_per_second, None, tuple(trunk.key for trunk in trunks)))
+        for (first, one), (second, other) in combinations(items, 2):
+            if one is not None and one == other:
+                continue
+            if one and other and one.startswith('key:') and other.startswith('key:'):
+                continue  # two API keys: two carrier accounts, each with its own limits
+            notes.append(f"Faxbot can't tell whether {first.label} and {second.label} are one {carrier} account. If "
+                         f"they are, their calls at once add up against {carrier}'s limit of {limits.calls_at_once}.")
+    return groups, notes
 
 
 def limited_accounts(values):
@@ -171,6 +234,12 @@ def limited_accounts(values):
             continue
         found[account.key] = Limited(account.key, account.label, False, account.at_once, None,
                                      account.key if account.primary else None)
+    try:
+        groups, _ = carrier_groups(values)
+    except Exception:
+        groups = []
+    for group in groups:
+        found[group.key] = group
     return found
 
 
@@ -278,10 +347,27 @@ class Capacity:
         ``limited_accounts(values)`` when the caller already has it.
         """
         key = trunk or TRUNK
-        found = (limited if limited is not None else limited_accounts(values)).get(key)
+        limited = limited if limited is not None else limited_accounts(values)
+        found = limited.get(key)
         if found is None:
             return Room(0, None, 0, None, key=key, label=key, trunk=False)
-        routes = sorted({key, found.backend} - {None})
+        mine = self._room(connection, now, found, exclude)
+        if mine.full or found.members:
+            return mine
+        # A trunk on a carrier account it shares with other trunks: that account's limits hold for all of them.
+        for group in limited.values():
+            if key in group.members:
+                shared = self._room(connection, now, group, exclude)
+                if shared.full:
+                    return shared
+        return mine
+
+    def _room(self, connection, now, found, exclude=()):
+        """The calls (or faxes) one Limited holds now, against its own limits."""
+        key = found.key
+        routes = sorted(set(found.members) | ({key, found.backend} - {None})) if found.members else \
+            sorted({key, found.backend} - {None})
+        trunks = list(found.members) if found.members else [key]
         holds = self.holds(now, exclude=exclude).subquery()
         outgoing = connection.scalar(sa.select(sa.func.count(sa.distinct(holds.c.call))).where(
             holds.c.route.in_(routes)))
@@ -289,8 +375,8 @@ class Capacity:
         if found.trunk:
             records = self.t['sip_call_records']
             # A call coming in holds its trunk; one that names no trunk came in on the first trunk.
-            on_trunk = (sa.func.coalesce(records.c.trunk_key, TRUNK) == key if 'trunk_key' in records.c
-                        else sa.true() if key == TRUNK else sa.false())
+            on_trunk = (sa.func.coalesce(records.c.trunk_key, TRUNK).in_(trunks) if 'trunk_key' in records.c
+                        else sa.true() if TRUNK in trunks else sa.false())
             incoming = connection.scalar(sa.select(sa.func.count()).select_from(records).where(
                 records.c.direction == 'inbound', records.c.ended_at.is_(None), records.c.started_at >= now - HOLD,
                 on_trunk))
@@ -305,10 +391,11 @@ class Capacity:
                     found.calls_per_second, key=key, label=found.label, trunk=found.trunk)
 
     def rooms(self, connection, values, now, *, exclude=(), limited=None):
-        """{account key: Room} for every account whose calls or faxes at once are limited."""
+        """{account key: Room} for every account whose calls or faxes at once are limited: its own room, or the
+        carrier account it shares with other trunks when that is the one that is full."""
         limited = limited if limited is not None else limited_accounts(values)
         return {key: self.room(connection, values, now, exclude=exclude, trunk=key, limited=limited)
-                for key in limited}
+                for key, item in limited.items() if not item.members}
 
     def _busy(self, now):
         holds = self.holds(now).subquery()

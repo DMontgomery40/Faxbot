@@ -12,6 +12,7 @@ export interface TrunkAccountStatus {
   reachability_text?: string | null;
   preset_label?: string | null;
   trunk_problems?: Record<string, string>;
+  carrier_notes?: string[];
   telnyx_t38?: { text: string | null; numbers: Array<{ number: string; display: string; state: string; text: string }> } | null;
 }
 
@@ -83,6 +84,7 @@ export default function TrunkAccountPanel({ api, call, accountKey }: { api: Rule
             label={account.enabled ? account.health.sentence : 'Turned off'} />
         </Stack>
         {notLoaded && <Alert severity="warning">{notLoaded}</Alert>}
+        {(status?.carrier_notes ?? []).map((note) => <Alert key={note} severity="info">{note}</Alert>)}
         {problem && <Alert severity="warning">{problem}</Alert>}
         {status && <Typography>{status.message}</Typography>}
         {status?.registration_text && <Typography color="text.secondary">{status.registration_text}</Typography>}

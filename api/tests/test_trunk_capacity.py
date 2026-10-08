@@ -120,6 +120,65 @@ def test_a_fax_waits_only_when_every_trunk_its_rule_allows_is_full(trunked):
     assert Capacity(trunked.engine).waiting_for_line(values(trunked), datetime.utcnow(), waiting=[first]) == 1
 
 
+TELNYX = {**BASE, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': '', 'SIP_TRUNK_PRESET': 'telnyx',
+          'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_CALLER_ID': '+13035550100', 'SIP_TRUNK_DIDS': '+13035550100',
+          'TELNYX_API_KEY': 'KEY-synthetic-one'}
+
+
+def _second_telnyx(key):
+    return {'provider': 'sip', 'label': 'Denver trunk', 'receives': True, 'numbers': ['+13035550122'],
+            'settings': {'preset': 'telnyx', 'auth': 'ip', 'caller_id': '+13035550122'},
+            'credentials': {'api_key': key} if key else {}}
+
+
+def _telnyx_install(database, tmp_path, key):
+    env = installation(database, tmp_path, TELNYX, outbound=ProviderConfiguration('sip', traits={'requires_tiff': True}))
+    env.snapshot = env.configuration.apply(env.snapshot, env.snapshot.active.values, restart_required=False,
+                                           actor='test', accounts=ConfigurationDocument({'telnyx-2': _second_telnyx(key)}))
+    return env
+
+
+@pytest.mark.parametrize('second_key, together', [('KEY-synthetic-one', 2), ('KEY-synthetic-two', 4)])
+def test_two_telnyx_trunks_on_one_account_share_its_two_calls_at_once(database, tmp_path, second_key,  # noqa: F811
+                                                                      together):
+    """Telnyx allows 2 calls at once across the whole account. Two trunk accounts read with one API key are one
+    Telnyx account and never exceed 2 together; with two keys they are two accounts and get 2 each."""
+    env = _telnyx_install(database, tmp_path, second_key)
+    from api.app.capacity import carrier_groups
+    groups, notes = carrier_groups(values(env))
+    assert notes == []
+    assert [(group.members, group.at_once) for group in groups] == (
+        [(('sip', 'telnyx-2'), 2)] if together == 2 else [])
+    capacity = Capacity(env.engine)
+    for index in range(4):
+        call_in(env, None if index % 2 == 0 else 'telnyx-2')
+        with env.engine.connect() as connection:
+            rooms = capacity.rooms(connection, values(env), datetime.utcnow())
+        busy = index + 1
+        full = {key for key, room in rooms.items() if room.full}
+        if together == 2:
+            # Both trunks are full once the account's 2 lines are in use, whichever trunk the calls came in on.
+            assert full == ({'sip', 'telnyx-2'} if busy >= 2 else set())
+            if busy == 2:
+                # One call on each trunk: neither trunk is full by itself; the account is.
+                assert room_sentence(rooms['telnyx-2'], several=True) == \
+                    'Waiting for a free line on your Telnyx account: all 2 lines are in use.'
+        else:
+            # Each trunk has its own 2 lines (the fax engine's lines): full only when its own two calls are up.
+            mine = (busy + 1) // 2
+            theirs = busy // 2
+            assert full == {key for key, count in (('sip', mine), ('telnyx-2', theirs)) if count >= 2}
+
+
+def test_trunks_faxbot_cannot_tell_apart_are_kept_separate_and_it_says_so(database, tmp_path):  # noqa: F811
+    env = _telnyx_install(database, tmp_path, None)
+    from api.app.capacity import carrier_groups
+    groups, notes = carrier_groups(values(env))
+    assert groups == []
+    assert notes == ["Faxbot can't tell whether Telnyx and Denver trunk are one Telnyx account. If they are, their "
+                     "calls at once add up against Telnyx's limit of 2."]
+
+
 def test_an_account_with_a_faxes_at_once_limit_holds_that_many_faxes(database, tmp_path):  # noqa: F811
     env = installation(database, tmp_path, {**BASE, 'FAX_OUTBOUND_ROUTES': ''})
     env.snapshot = env.configuration.apply(env.snapshot, env.snapshot.active.values, restart_required=False,

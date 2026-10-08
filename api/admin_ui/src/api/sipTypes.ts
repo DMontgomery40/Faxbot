@@ -126,6 +126,10 @@ export type SipReachability = 'reachable' | 'unreachable' | 'unknown';
 
 export interface SipTrunkStatus {
   configured: boolean;
+  // Several trunks: trunk accounts on one carrier that Faxbot can't tell apart as one account, one sentence each.
+  carrier_notes?: string[];
+  // Trunk accounts that are on but not in Asterisk's file yet, and why.
+  trunk_problems?: Record<string, string>;
   preset?: string;
   preset_label?: string;
   kind?: 'carrier' | 'phone_system';

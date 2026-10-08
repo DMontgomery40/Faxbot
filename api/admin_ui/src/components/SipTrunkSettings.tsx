@@ -501,6 +501,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   return (
     <Stack spacing={2} data-testid="sip-trunk-settings">
       <TrunkPicker api={rules} value={trunkKey} onChange={setTrunkKey} />
+      {Object.values(status?.trunk_problems ?? {}).map((problem) => <Alert key={problem} severity="warning">{problem}</Alert>)}
+      {(status?.carrier_notes ?? []).map((note) => <Alert key={note} severity="info">{note}</Alert>)}
       <Typography variant="h6">{phone ? 'SIP trunk to your phone system' : 'Carrier SIP trunk'}</Typography>
       <Typography variant="body2" color="text.secondary">
         {phone ? `${PHONE_INTRO[directions]} The carrier behind your phone system bills these calls.`
