@@ -709,6 +709,10 @@ def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it
         assert _send(database, tmp_path, route='sinch', attempt=first).sent_pages == 1  # encoded, on Sinch
         # One sentence for each state of the attempt.
         assert views.sent_view(database, JOB)['sentences'] == ['Going as 1 encoded page instead of 5 (experimental).']
+        # The call ended without an answer: sent, and not yet known to have arrived (never "Going as").
+        _phase(database, first, 'uncertain')
+        assert views.sent_view(database, JOB)['sentences'] == [
+            'Sent as 1 encoded page instead of 5 (experimental); whether it arrived is not confirmed yet.']
         _phase(database, first, 'failed')
         assert views.sent_view(database, JOB)['sentences'] == [
             'Tried as 1 encoded page instead of 5; the call failed.']
@@ -720,6 +724,9 @@ def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it
     assert send_for(database, JOB)['provider_id'] == 'sinch'
     assert views.sent_view(database, JOB)['sentences'] == [
         'Going as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
+    _phase(database, second, 'uncertain')
+    assert views.sent_view(database, JOB)['sentences'] == [
+        'Sent as 2 long pages instead of 5; whether it arrived is not confirmed yet.']
     _phase(database, second, 'success')
     assert views.sent_view(database, JOB)['sentences'] == [
         'Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
@@ -1026,3 +1033,17 @@ def test_a_fax_encoded_at_acceptance_by_an_earlier_build_gets_its_original_image
     assert said == [f'Fax {JOB}: its fax image held encoded pages written when it was accepted by an earlier build; '
                     'it was made again from the original document before this attempt.',
                     f'Fax {JOB}: an unused encoded-pages PDF from an earlier build was removed.']
+
+
+@pytest.mark.parametrize('change, expected', [
+    ({'layout': 'dense', 'sent_pages': 2, 'original_pages': 5, 'page_limit': 'unlimited', 'limit_learned_at': NOW},
+     'Sent as 2 long pages instead of 5; whether it arrived is not confirmed yet.'),
+    ({'layout': 'codec', 'sent_pages': 1, 'original_pages': 5},
+     'Sent as 1 encoded page instead of 5 (experimental); whether it arrived is not confirmed yet.'),
+    ({'layout': 'dense', 'sent_pages': 5, 'original_pages': 5, 'page_limit': 'unlimited', 'limit_learned_at': None},
+     'Sent as 5 pages instead of 5; whether it arrived is not confirmed yet.'),
+])
+def test_an_uncertain_attempt_says_the_pages_went_and_arrival_is_not_confirmed(change, expected):
+    """An attempt whose outcome is uncertain has ended: its pages went, and nobody knows yet whether they arrived."""
+    assert views.packed_sentence(change, 'uncertain') == expected
+    assert views.packed_sentence(change, 'in_progress').startswith('Going as ')

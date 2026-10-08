@@ -25,7 +25,10 @@ def packed_sentence(change, phase=None):
       accepts unlimited length." / "Sent as 1 encoded page instead of 5 (experimental).";
     - failed: "Tried as 2 long pages instead of 5; the call failed.";
     - cancelled: "Prepared as 2 long pages instead of 5; the fax was cancelled.";
-    - any other state (on its way, or its outcome not known yet): "Going as …", worded as when delivered.
+    - uncertain (the call ended and nobody knows whether the fax arrived): "Sent as 2 long pages instead of 5;
+      whether it arrived is not confirmed yet." / "Sent as 1 encoded page instead of 5 (experimental); whether
+      it arrived is not confirmed yet.";
+    - any other state (on its way): "Going as …", worded as when delivered.
     """
     if not change or change.get('layout') not in ('dense', 'codec'):
         return None
@@ -46,6 +49,10 @@ def packed_sentence(change, phase=None):
         return f'Tried as {what} instead of {original}; the call failed.'
     if phase == 'cancelled':
         return f'Prepared as {what} instead of {original}; the fax was cancelled.'
+    if phase == 'uncertain':
+        # The pages left Faxbot, but no answer says whether they arrived (never "Going as": the call is over).
+        marker = ' (experimental)' if change['layout'] == 'codec' else ''
+        return f'Sent as {what} instead of {original}{marker}; whether it arrived is not confirmed yet.'
     verb = 'Sent as' if phase in (None, 'success') else 'Going as'
     return f'{verb} {what} instead of {original}{tail}'
 

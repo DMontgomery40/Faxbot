@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Button, Card, CardContent, FormControlLabel, Stack, Switch, TextField, Typography } from '@mui/material';
 import MailIcon from '@mui/icons-material/Mail';
-import AdminAPIClient, { isForbidden, isNotAvailable } from '../../api/client';
+import AdminAPIClient, { isForbidden } from '../../api/client';
 import type { EmailConnector, EmailConnectorInput } from '../../api/deliveryTypes';
 import SecretInput from '../common/SecretInput';
 import { ResponsiveFormSection } from '../common/ResponsiveFormFields';
@@ -60,7 +60,7 @@ function ConnectorDialog({ connector, busy, error, onSave, onClose }: {
   );
 }
 
-// The list of email deliveries. Hidden entirely for accounts that cannot read them.
+// The list of email deliveries. Hidden only for accounts that may not read them (403).
 export default function EmailDelivery({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
   const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
   const [hidden, setHidden] = useState(false);
@@ -74,7 +74,8 @@ export default function EmailDelivery({ client, canWrite }: { client: AdminAPICl
     try {
       setConnectors((await client.listEmailConnectors()).connectors);
     } catch (failure) {
-      if (isForbidden(failure) || isNotAvailable(failure)) setHidden(true);
+      // Someone who may not read email deliveries doesn't see this section; any other failure is said.
+      if (isForbidden(failure)) setHidden(true);
       else setError(failure);
     }
   }, [client]);
