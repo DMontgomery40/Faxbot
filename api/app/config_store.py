@@ -79,6 +79,9 @@ class ConfigurationRevision:
     values: ConfigurationValues = field(repr=False)
     profiles: tuple[tuple[str, str], ...] = ()
     plugins: ConfigurationDocument = field(default_factory=lambda: ConfigurationDocument({}), repr=False)
+    # Extra provider accounts, {key: document} (accounts.py); empty, and absent from the stored payload, until
+    # the first one is added, so a revision without them reads and digests exactly as before.
+    accounts: ConfigurationDocument = field(default_factory=lambda: ConfigurationDocument({}), repr=False)
 
     def profile_id(self, role):
         return dict(self.profiles).get(role)
@@ -122,6 +125,7 @@ class ConfigurationStore:
         self.profiles = metadata.tables['provider_profiles']
         self.jobs = metadata.tables['fax_jobs']
         self.job_bindings = metadata.tables['fax_job_bindings']
+        self.inbound_bindings = metadata.tables['inbound_fax_bindings']
         self.delivery_tables = {name: metadata.tables[name] for name in
                                 ('outbound_deliveries', 'outbound_attempts', 'outbound_events')}
         # Every canonical writer owns this invariant, including stopped startup
@@ -251,13 +255,20 @@ class ConfigurationStore:
 
     def _open_revision(self, row, cipher, installation_id, identity):
         payload = cipher.open(row['envelope'], installation_id=installation_id, kind='revision', record_id=identity)
-        if (set(payload) != {'environment', 'profiles', 'plugins'} or not isinstance(payload['environment'], dict)
+        # ``accounts`` is written only when at least one extra provider account exists (accounts.py).
+        if (set(payload) - {'accounts'} != {'environment', 'profiles', 'plugins'}
+                or not isinstance(payload['environment'], dict)
                 or not isinstance(payload['profiles'], dict)
                 or set(payload['profiles']) - {'outbound', 'inbound'}
-                or any(not isinstance(value, str) or not value for value in payload['profiles'].values())):
+                or any(not isinstance(value, str) or not value for value in payload['profiles'].values())
+                or ('accounts' in payload and (not isinstance(payload['accounts'], dict) or not payload['accounts']))):
             raise ConfigurationStoreError('Invalid stored configuration revision.')
-        return ConfigurationRevision(identity, ConfigurationValues.from_environment(payload['environment']),
-            tuple(sorted(payload['profiles'].items())), ConfigurationDocument(payload['plugins']))
+        accounts = ConfigurationDocument(payload.get('accounts') or {})
+        values = ConfigurationValues.from_environment(payload['environment'])
+        if 'accounts' in payload:
+            values = values.with_provider_accounts(accounts)
+        return ConfigurationRevision(identity, values, tuple(sorted(payload['profiles'].items())),
+                                     ConfigurationDocument(payload['plugins']), accounts)
 
     def _snapshot(self, connection, cipher, head):
         installation = head['installation_id']
@@ -266,12 +277,16 @@ class ConfigurationStore:
             self._revision(connection, cipher, installation, head['pending_revision_id'])
             if head['pending_revision_id'] else None)
 
-    def _insert(self, connection, cipher, installation, values, *, parent, actor, profiles, plugins):
+    def _insert(self, connection, cipher, installation, values, *, parent, actor, profiles, plugins, accounts=None):
         if not isinstance(actor, str) or not actor or len(actor) > 100:
             raise ConfigurationStoreError('Invalid configuration actor.')
         identity = str(uuid4())
-        envelope = cipher.seal({'environment': values.to_environment(), 'profiles': dict(profiles), 'plugins': plugins.as_dict()},
-                               installation_id=installation, kind='revision', record_id=identity)
+        payload = {'environment': values.to_environment(), 'profiles': dict(profiles), 'plugins': plugins.as_dict()}
+        extra = accounts.as_dict() if accounts is not None else {}
+        if extra:
+            # Only with an extra account: the previous release can still read every other revision.
+            payload['accounts'] = extra
+        envelope = cipher.seal(payload, installation_id=installation, kind='revision', record_id=identity)
         connection.execute(self.revisions.insert().values(id=identity, parent_id=parent,
             format_version=1, key_id=cipher.key_id, envelope=envelope, actor=actor, created_at=datetime.utcnow()))
         return identity
@@ -427,6 +442,50 @@ class ConfigurationStore:
     def outbound_profile(self, job_id):
         return self.outbound_context(job_id)[1]
 
+    def account_profile(self, configuration):
+        """The stored provider profile of exactly this account configuration, created when there is none yet.
+
+        Received faxes bind to the profile of the account that received them (``inbound_fax_bindings``).
+        Called on its own, before the received fax's access transaction: the configuration lock always comes
+        first. Profiles are append-only, so a profile made for a fax that then failed to record is harmless.
+        """
+        if not isinstance(configuration, ProviderConfiguration):
+            raise ConfigurationStoreError('Invalid provider account.')
+        from .config_profiles import ConfigurationRecordError
+        with self._locked() as connection:
+            head = self._head(connection)
+            if head is None:
+                raise ConfigurationStoreError('Configuration has not been initialized.')
+            installation, cipher = head['installation_id'], self._cipher()
+            candidates = connection.execute(sa.select(self.profiles.c.id).where(
+                self.profiles.c.provider_id == configuration.provider_id).order_by(
+                self.profiles.c.created_at.desc()).limit(50)).scalars().all()
+            for identity in candidates:
+                try:
+                    if self._profile(connection, cipher, installation, identity).configuration == configuration:
+                        return identity
+                except (ConfigurationSecretError, ConfigurationRecordError):
+                    continue
+            return self._select_profiles(connection, cipher, installation, {'inbound': configuration}, ())[0][1]
+
+    def inbound_context(self, inbound_fax_id):
+        """(revision, profile) a received fax is bound to, or None for a fax received before bindings existed."""
+        bindings = self.inbound_bindings
+        try:
+            with self.engine.connect() as connection:
+                binding = connection.execute(sa.select(bindings).where(
+                    bindings.c.id == inbound_fax_id)).mappings().one_or_none()
+                if binding is None:
+                    return None
+                head = self._head(connection)
+                if head is None:
+                    return None
+                cipher = self._cipher()
+                return (self._revision(connection, cipher, head['installation_id'], binding['revision_id']),
+                        self._profile(connection, cipher, head['installation_id'], binding['profile_id']))
+        except sa.exc.SQLAlchemyError:
+            raise ConfigurationStoreError('Cannot read received fax provider binding.') from None
+
     def initialize(self, values: ConfigurationValues, *, actor: str, providers=None, plugins=None):
         candidates = self._provider_candidates(providers)
         plugin_document = ConfigurationDocument(plugins if plugins is not None else {})
@@ -460,15 +519,18 @@ class ConfigurationStore:
             raise ConfigurationStoreError('Cannot read installation configuration.') from None
 
     def apply(self, expected: ConfigurationSnapshot, values: ConfigurationValues, *, restart_required: bool, actor: str,
-              providers=None, plugins=None):
-        """Trusted internal write; human adapters must use apply_authorized."""
+              providers=None, plugins=None, accounts=None):
+        """Trusted internal write; human adapters must use apply_authorized.
+
+        ``accounts`` (a ConfigurationDocument) replaces the extra provider accounts; None keeps the current ones.
+        """
         candidates = self._provider_candidates(providers)
         plugin_document = ConfigurationDocument(plugins) if plugins is not None else None
         with self._locked() as connection:
             current, cipher = self._checked_current_on(connection, expected)
             return self._write_candidate_on(connection, current, cipher, values, restart_required=restart_required,
                 actor=actor, candidates=candidates, plugin_document=plugin_document or current.desired.plugins,
-                now=_utc_now())
+                now=_utc_now(), accounts=accounts)
 
     def _checked_current_on(self, connection, expected):
         self._require_lock_on(connection)
@@ -481,16 +543,23 @@ class ConfigurationStore:
         return self._snapshot(connection, cipher, head), cipher
 
     def _write_candidate_on(self, connection, current, cipher, values, *, restart_required,
-                            actor, candidates, plugin_document, now):
+                            actor, candidates, plugin_document, now, accounts=None):
         self._require_lock_on(connection)
+        # Extra provider accounts are never taken from candidate values: a write that does not name them keeps
+        # the desired revision's, so a settings save can never drop an account.
+        accounts = current.desired.accounts if accounts is None else accounts
+        if type(accounts) is not ConfigurationDocument:
+            raise ConfigurationStoreError('Invalid provider accounts.')
         profiles = self._select_profiles(connection, cipher, current.installation_id, candidates, current.desired.profiles)
         if (values.to_environment() == current.desired.values.to_environment()
-                and profiles == current.desired.profiles and plugin_document == current.desired.plugins):
+                and profiles == current.desired.profiles and plugin_document == current.desired.plugins
+                and accounts == current.desired.accounts):
             return current
         self._activate_bootstrap_on(connection, current.active.values.api_key,
             current.active.values.api_key if restart_required else values.api_key, now)
         identity = self._insert(connection, cipher, current.installation_id, values,
-                                parent=current.desired.id, actor=actor, profiles=profiles, plugins=plugin_document)
+                                parent=current.desired.id, actor=actor, profiles=profiles, plugins=plugin_document,
+                                accounts=accounts)
         connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
             generation=current.generation + 1,
             active_revision_id=current.active.id if restart_required else identity,
@@ -498,7 +567,7 @@ class ConfigurationStore:
         return self._snapshot(connection, cipher, self._head(connection))
 
     def apply_authorized(self, expected, values, *, principal, control, operation,
-                         restart_required, providers, plugins, baseline_providers):
+                         restart_required, providers, plugins, baseline_providers, accounts=None):
         """Commit one closed human operation and its audit before returning.
 
         Prepared candidates carry no authority. Config then access locks share
@@ -518,13 +587,13 @@ class ConfigurationStore:
             self.access_store.lock_on(connection)
             result, error = self._apply_authorized_on(connection, expected, values, principal=principal,
                 control=control, operation=operation, restart_required=restart_required,
-                providers=candidates, plugins=document, baseline_providers=baseline)
+                providers=candidates, plugins=document, baseline_providers=baseline, accounts=accounts)
         if error is not None:
             raise error
         return result
 
     def _apply_authorized_on(self, connection, expected, values, *, principal, control, operation,
-                             restart_required, providers, plugins, baseline_providers):
+                             restart_required, providers, plugins, baseline_providers, accounts=None):
         self._require_lock_on(connection)
         before = self.access_store.require_lock_on(connection)
         if getattr(control, 'store', None) is not self.access_store:
@@ -547,7 +616,11 @@ class ConfigurationStore:
                     for role, identity in current.desired.profiles}
                 requirements = configuration_candidate_requirements(current.desired.values, values,
                     current.desired.plugins, plugins, profile_drift=captured != baseline_providers)
-                for permission in sorted(requirements.permissions):
+                permissions = set(requirements.permissions)
+                if accounts is not None and accounts != current.desired.accounts:
+                    # Provider accounts carry provider credentials: the same permission as a provider page.
+                    permissions.add('providers:write')
+                for permission in sorted(permissions):
                     decision = control.authorize_on(connection, principal, permission, ResourceRef('installation'), now=now)
                     if not decision.allowed:
                         reason, error = MutationReason.FORBIDDEN, MutationDeniedError(MutationReason.FORBIDDEN)
@@ -564,7 +637,7 @@ class ConfigurationStore:
         if error is None:
             result = self._write_candidate_on(connection, current, cipher, values,
                 restart_required=restart_required, actor='principal:' + principal.principal_id,
-                candidates=providers, plugin_document=plugins, now=now)
+                candidates=providers, plugin_document=plugins, now=now, accounts=accounts)
         after = self.access_store.require_lock_on(connection)
         details = {'reason': reason.value if isinstance(reason, MutationReason) else reason} if error else {
             'changed': result.generation != current.generation,
@@ -575,6 +648,11 @@ class ConfigurationStore:
             'plugin_categories': list(requirements.plugin_categories),
             'profile_drift': requirements.profile_drift,
         }
+        if error is None and accounts is not None and accounts != current.desired.accounts:
+            # Which accounts changed, by key; never a setting or a secret.
+            from .accounts import changed_keys
+            details['accounts'] = changed_keys(current.desired.accounts.as_dict(), accounts.as_dict())[:32]
+            details['plugin_categories'] = sorted(set(details['plugin_categories']) | {'providers'})
         self._audit_configuration_on(connection, attribution, operation, before, after, error is not None, details, now)
         return result, error
 

@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import type { AdminDestination } from '../navigation';
-import { isForbidden, isNotAvailable } from '../api/client';
+import { isForbidden } from '../api/client';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
 import { providerPage } from './ProvidersInUse';
 import type {
@@ -53,11 +53,11 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
   const [saving, setSaving] = useState(false);
   const [health, setHealth] = useState<{ account: ProviderAccount; result: AccountHealth } | null>(null);
 
-  // A server without accounts (an older release), or someone who may not see them, shows no list.
+  // Someone who may not see provider accounts sees no list.
   const [hidden, setHidden] = useState(false);
   const load = useCallback(() => {
     api.accounts().then(setState).catch((failure) => {
-      if (isNotAvailable(failure) || isForbidden(failure)) setHidden(true);
+      if (isForbidden(failure)) setHidden(true);
       else setError(failure);
     });
   }, [api]);

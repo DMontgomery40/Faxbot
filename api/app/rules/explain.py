@@ -13,11 +13,18 @@ from .evaluate import decide
 
 
 def accounts_from_values(values):
-    """The sending accounts of a configuration, until provider accounts (WP-B) supply ``sending_accounts``.
+    """The sending accounts of a configuration: provider accounts' ``sending_accounts`` (WP-B).
 
     The default sending provider and ``FAX_OUTBOUND_ROUTES`` are the automatic accounts, keyed by provider
-    id, in configured order, exactly as the route planner builds its candidates today.
+    id, in configured order, exactly as the route planner builds its candidates today; every other sending
+    account follows, for rules to name.
     """
+    from ..accounts import sending_accounts
+    return sending_accounts(values)
+
+
+def _accounts_before_provider_accounts(values):
+    """The list this module built before provider accounts existed; kept for the parity test."""
     from ..routing.plan import extra_routes, route_label
     bound = getattr(values, 'effective_outbound', None)
     bound = bound() if callable(bound) else bound

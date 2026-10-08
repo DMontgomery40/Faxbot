@@ -432,6 +432,11 @@ export interface ReceivingOptions {
   any_number: boolean;
   // Only faxes that arrive on this account.
   account_key: string | null;
+  // Only faxes that arrive on an account of this site (Providers → Rules → Sites).
+  site_key: string | null;
+  // Only faxes whose sender stated this subaddress (T.33 SUB), such as a department's extension. It is what the
+  // sender's machine says, never proof of who sent the fax, so it chooses the mailbox but never grants access.
+  subaddress: string | null;
   // Only faxes from these numbers; an entry ending in * matches numbers that start with it.
   from_numbers: string[];
   days: Day[];
@@ -447,14 +452,17 @@ export interface ReceivingOptions {
 }
 
 export const NO_RECEIVING_OPTIONS: ReceivingOptions = {
-  position: null, enabled: true, any_number: false, account_key: null, from_numbers: [], days: [], start_minute: null,
-  end_minute: null, email_connector_id: null, email_off: false, urgent: false, keep_days: null,
+  position: null, enabled: true, any_number: false, account_key: null, site_key: null, subaddress: null,
+  from_numbers: [], days: [], start_minute: null, end_minute: null, email_connector_id: null, email_off: false,
+  urgent: false, keep_days: null,
 };
 
 export interface ReceivedExplainRequest {
   to_number: string;
   from_number: string | null;
   account_key: string | null;
+  // The subaddress the sender's machine stated, if any.
+  subaddress?: string | null;
   // A local time to try ("2026-10-07T18:30"), or now.
   at: string | null;
 }
