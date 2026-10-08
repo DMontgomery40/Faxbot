@@ -1,6 +1,7 @@
 {
   "name": "faxbot-documentation-toolchain",
   "private": true,
+  "license": "UNLICENSED",
   "devDependencies": {
     "@redocly/cli": "1.34.5",
     "react": "18.3.1",
