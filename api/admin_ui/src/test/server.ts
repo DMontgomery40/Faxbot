@@ -764,6 +764,8 @@ const consoleHandlers = [
   http.get('/certainty/items', () => json({ items: [] })),
   http.get('/certainty/counts', () => json({ open: 0, mine: 0, unassigned: 0, overdue: 0, settled: 0 })),
   http.get('/certainty/faxes/:faxId', () => json({ items: [], about: null })),
+  http.get('/continuations/faxes/:faxId', ({ params }) => json({ fax_id: params.faxId, offer: null, continued_by: null,
+    continues: null })),
   http.get('/certainty/settings', () => json({ settle_hours: 24, version: 0, fallback: null, people: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
   http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),

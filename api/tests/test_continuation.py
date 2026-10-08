@@ -241,14 +241,14 @@ def table(name):
     return sa.Table(name, sa.MetaData(), autoload_with=engine())
 
 
-def broken(client, *, pages=20, confirmed=7, dcs=DCS_ECM, trainings=1, category='partly_sent', route='sip',
-           state='failed'):
+def broken(client, *, headers=ADMIN, pages=20, confirmed=7, dcs=DCS_ECM, trainings=1, category='partly_sent',
+           route='sip', state='failed'):
     """A fax of ``pages`` pages through POST /fax whose only call broke after ``confirmed`` confirmed pages.
 
     Test mode holds every fax; this one is made an ordinary fax whose call went out on the built-in engine (or
     ``route``) and failed part way, with the call record and T.30 frames that engine keeps.
     """
-    sent = client.post('/fax', headers=ADMIN, data={'to': NUMBER},
+    sent = client.post('/fax', headers=headers, data={'to': NUMBER},
                        files={'file': ('referral.pdf', synthetic_document(pages), 'application/pdf')})
     assert sent.status_code == 202, sent.text
     job = sent.json()['id']

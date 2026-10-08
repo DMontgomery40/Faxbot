@@ -1,4 +1,6 @@
 // Sent faxes whose outcome Faxbot could not confirm (/certainty/*): an owner, checks ranked by cost, and settling.
+import type { CertaintyContinuation } from './continuationTypes';
+
 
 export type CertaintyCheckKind = 'partner' | 'call_record' | 'receipt_query' | 'phone_call';
 
@@ -47,13 +49,15 @@ export interface CertaintyItem {
   query_fax_id: string | null;
   is_mine: boolean;
   version: number;
-  actions: Array<'assign' | 'settle' | 'send_query'>;
+  actions: Array<'assign' | 'settle' | 'send_query' | 'continue'>;
   // What the fax's own delivery record has said since (delivered, or already on its way again): never sent again here.
   moved_on: { kind: 'delivered' | 'cancelled' | 'following' | 'failed' | 'resent'; text: string } | null;
   // Detail only: the checks, cheapest first, what they point to, and the full number for people who may act.
   checks?: CertaintyCheck[];
   suggestion?: CertaintyOutcome | null;
   number?: string;
+  // A call that broke part way: only its remaining pages may go as a new fax (routing/continuation.py).
+  continuation?: CertaintyContinuation | null;
 }
 
 export interface CertaintyForFax {

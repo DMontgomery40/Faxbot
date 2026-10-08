@@ -9,7 +9,7 @@ import typer
 
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
-from .commands import certainty, discovery
+from .commands import certainty, continuation, discovery
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -74,6 +74,8 @@ sent.command('probe')(certainty.uncertain_probe)
 sent.command('settle')(certainty.uncertain_settle)
 sent.command('assign')(certainty.uncertain_assign)
 sent.command('uncertain-settings')(certainty.uncertain_settings)
+# A fax whose call broke part way: send only the pages the receiving machine did not confirm.
+sent.command('continue')(continuation.continue_fax)
 
 # -- numbers -------------------------------------------------------------------------
 

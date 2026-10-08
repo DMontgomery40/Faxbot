@@ -744,7 +744,7 @@ def cost(engine, values, actor, *, to_number, pages, total):
 def _link_view(link):
     return {'fax_id': link['continuation_job_id'], 'first_page': link['first_page'], 'last_page': link['last_page'],
             'pages_text': pages_text(link['first_page'], link['last_page']), 'sent_at': link['created_at'],
-            'requested_by': link.get('requested_by_name')}
+            'requested_by': link.get('requested_by_name'), 'from_item': bool(link.get('item_id'))}
 
 
 class ContinuationService:

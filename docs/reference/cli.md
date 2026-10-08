@@ -503,6 +503,7 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 * `settle`: Settle what happened to a sent fax Faxbot...
 * `assign`: Give a sent fax Faxbot is unsure of to the...
 * `uncertain-settings`: Show or change how soon uncertain sent...
+* `continue`: Show which pages of a broken fax are left...
 
 ### `faxbot sent list`
 
@@ -809,6 +810,26 @@ $ faxbot sent uncertain-settings [OPTIONS]
 * `--hours <int range>`: Hours to settle an uncertain fax, from when Faxbot finds it (0 for no deadline).  [0&lt;=x&lt;=720]
 * `--fallback <str>`: The person who settles uncertain faxes when the sender cannot: their login or name.
 * `--no-fallback`: Remove the fallback person.
+* `--help`: Show this message and exit.
+
+### `faxbot sent continue`
+
+Show which pages of a broken fax are left to send and what they cost; send only those with --send.
+
+**Usage**:
+
+```console
+$ faxbot sent continue [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of the sent fax whose call broke part way, from &#x27;faxbot sent list --ids&#x27;.  [required]
+
+**Options**:
+
+* `--send`: Send the remaining pages now, as a new fax linked to this one.
+* `--reason <str>`: How you know the rest did not arrive (up to 400 characters). Needed when the fax is waiting to be settled.
 * `--help`: Show this message and exit.
 
 ## `faxbot forms`
