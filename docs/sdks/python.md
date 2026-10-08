@@ -3,6 +3,8 @@
 
 Thin Python client for the Faxbot API. Sends faxes and checks status via the unified Faxbot REST API (independent of the server's backend: Phaxio or SIP/Asterisk).
 
+The current source package is proprietary and requires prior written permission from David Montgomery for use. Previously released MIT versions retain their existing permissions. See the [license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
+
 - Package name: `faxbot`
 - Requires: Python 3.7+
 
@@ -35,8 +37,7 @@ print("Status:", status["status"])
 - Optional helper: `check_health()` pings `/health`.
 
 ## Publishing (maintainers)
-- Configure GitHub secret `PYPI_API_TOKEN`.
-- Create a GitHub Release to trigger publish via CI.
+The package metadata says not to upload this package to PyPI. Distribution requires prior written permission under the [Faxbot license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
 
 ## MCP Note
 - MCP (Model Context Protocol) is not part of this SDK. It is a separate integration layer for AI assistants.
