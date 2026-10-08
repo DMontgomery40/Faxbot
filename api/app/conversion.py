@@ -672,7 +672,8 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
 
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
-                  boundary_seconds=None, predict=None, describe_dense=None, renderings=None, faster=None):
+                  boundary_seconds=None, predict=None, describe_dense=None, usable=None, measure_cache=None,
+                  renderings=None, faster=None):
     """Price every way these pages may go and keep exactly one (``pages.decision.choose``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
@@ -684,10 +685,17 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     resolution. The cheapest expected bill wins; among candidates with the same expected bill the most faithful
     does (the pages as they are first), then fewer pages billed, less time, the simpler layout. ``faster``: a
     named reason ('administrator', 'deadline', 'capacity') that puts less time before fidelity at the same bill.
+
+    ``usable`` (``pages.coding.Usable``, Faxbot's own engines only): each candidate's codings are measured on its
+    own pages (kept in ``measure_cache`` with the attempt's files) and it is priced with the smallest coding the
+    call may use, so the layout, the rendering and the coding are chosen together.
+
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
     {layout: Prediction} of the pages as they are, ``codec``: what ``codec()`` returned when the codec was kept,
-    else None, ``rendering``: None or the rendering kept, and ``faster``: the named reason when it decided.
+    else None, ``coding``: the chosen candidate's ``pages.coding.CodingChoice`` (None without ``usable``),
+    ``rendering``: None or the rendering kept, and ``faster``: the named reason when it decided.
     """
+    from .pages import coding as codings
     from .pages import decision, fidelity, packing
     pieces = {("as_is", "normal"): (list(frames), None, None, fidelity.UNCHANGED.rank)}
     sources = [("as_is", list(frames), fidelity.UNCHANGED.rank)]
@@ -711,8 +719,21 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
         if encoded and encoded[0]:
             pieces[("as_is", "codec")] = (list(encoded[0]), encoded[1], encoded, fidelity.UNCHANGED.rank)
     keys = list(pieces)
-    shapes = {key: decision.Shape(len(pieces[key][0]), frame_bits(pieces[key][0]), frames_resolution(pieces[key][0]),
-                                  key[1], boundary_seconds) for key in keys}
+    choices, shapes = {}, {}
+    for key in keys:
+        pages = pieces[key][0]
+        if usable is None:
+            shapes[key] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), key[1],
+                                         boundary_seconds)
+            continue
+        measured = (codings.measure_cached(pages, measure_cache) if measure_cache is not None
+                    else codings.measure(pages))
+        choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured)
+        choices[key] = choice
+        # A JBIG request that could not be measured is priced at MMR's measured size (codings.best_coding).
+        shapes[key] = decision.Shape(len(pages), tuple(measured["MMR"]), frames_resolution(pages), key[1],
+                                     boundary_seconds, measured=measured,
+                                     coding=choice.coding if choice.measured else "MMR")
     priced = dict(zip(keys, decision.price_all(route, destination, [shapes[key] for key in keys], card=card,
                                                predict=predict)))
     candidates = [decision.Candidate(key[0], key[1], priced[key], shapes[key], pieces[key][3],
@@ -726,5 +747,6 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     return {"layout": chosen.layout, "pages": pages, "reason": reason,
             "seconds_saved": max(0, seconds) if seconds is not None else None,
             "predictions": {layout: prediction for (name, layout), prediction in priced.items() if name == "as_is"},
-            "codec": details, "rendering": None if chosen.rendering == "as_is" else chosen.rendering,
+            "codec": details, "coding": choices.get(key),
+            "rendering": None if chosen.rendering == "as_is" else chosen.rendering,
             "faster": faster if quicker else None}

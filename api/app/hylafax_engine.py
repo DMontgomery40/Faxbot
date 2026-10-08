@@ -487,6 +487,32 @@ class CallSettings:
     compression: str
     # What Faxbot learned about this number changed for this call, with one sentence each (engine_learning).
     learned: object = field(default=None, compare=False, repr=False)
+    # The coding measured smallest for this attempt's pages ('MH', 'MR', 'MMR' or 'JBIG', pages/coding.py), when
+    # Faxbot chose one; ``compression`` then holds it as the setting's value.
+    coding: str | None = None
+
+
+# The coding Faxbot measured, as the setting's value (``sip_trunk.COMPRESSIONS``) and as HylaFAX's job data format.
+_CODING_SETTING = {'MH': 'mh', 'MR': 'mr', 'MMR': 'mmr', 'JBIG': 'jbig'}
+
+
+def with_coding(settings: CallSettings, coding) -> CallSettings:
+    """``settings`` with the coding measured smallest for the pages (pages/coding.py) as the most compact one the
+    call may use: the SSL Fax engine's job data format (``JPARM DATAFORMAT``) and the built-in engine's
+    FAXBOT_COMPRESSION. Both engines still fall back to what the receiving machine takes (HylaFAX+ 7.0.11
+    faxd/FaxSend.c++ ``fxmin``; spandsp 0.0.6 t30.c). MMR and JBIG need error correction, and error correction
+    is never turned on or off for a coding: on a call without it they become MR (logged; the chooser reads the
+    same error correction, so this only happens when the settings changed in between). None keeps ``settings``."""
+    if coding is None:
+        return settings
+    if coding not in _CODING_SETTING:
+        raise ValueError('Unsupported fax coding')
+    if coding in ('MMR', 'JBIG') and not settings.ecm:
+        logging.getLogger(__name__).warning('%s needs error correction, which is off for this call; it asks for MR.',
+                                            coding)
+        coding = 'MR'
+    from dataclasses import replace
+    return replace(settings, compression=_CODING_SETTING[coding], coding=coding)
 
 
 # The engine's own T.38 choice ----------------------------------------------------------------------------

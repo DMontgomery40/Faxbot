@@ -433,7 +433,7 @@ def test_a_trunk_attempt_is_screened_when_it_saves_a_billed_minute_and_a_per_pag
 def test_pages_that_stay_in_the_same_billed_minute_go_as_they_are_unless_you_chose_always(installation, tmp_path,
                                                                                         billed):
     # AR's small table takes under a minute as it is and screened: the same bill, so the most faithful pages go.
-    assert attempt(installation, tmp_path, TRUNK, small=True) is None
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, small=True))
     assert friendly.run_for(installation, JOB) is None
     made = friendly.Request('documents')
     assert friendly.lightened_pages(tmp_path, JOB, tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff', made)
@@ -518,7 +518,8 @@ def test_a_machine_without_error_correction_gets_candidates_and_the_bill_decides
 def test_the_recipients_never_beats_always_and_its_always_beats_never(installation, tmp_path, billed):
     friendly.set_recipient_choice(installation, PEER, 'never', actor='synthetic')
     assert friendly.recipient_choice(installation, PEER) == 'never'
-    assert attempt(installation, tmp_path, TRUNK, choice='always') is None
+    # The pages go as they are (the coding measured for them may still go with the call: pages/coding.py).
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always'))
     friendly.set_recipient_choice(installation, PEER, 'always')
     assert attempt(installation, tmp_path, SINCH, choice='never', attempt_id='f' * 32).pdf.endswith('.pdf')
     assert friendly.set_recipient_choice(installation, PEER, None) is None
@@ -533,12 +534,15 @@ def test_never_for_the_chosen_recipient_holds_when_an_approved_toll_free_number_
                                                                                            billed):
     toll_free = '+18005550199'
     friendly.set_recipient_choice(installation, PEER, 'never')
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is None
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                     recipient=PEER))
     friendly.set_recipient_choice(installation, PEER, None)
     friendly.set_recipient_choice(installation, toll_free, 'never')
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is None
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                     recipient=PEER))
     friendly.set_recipient_choice(installation, toll_free, None)
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is not None
+    assert not sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                         recipient=PEER))
 
 
 @needs_gs
@@ -625,7 +629,8 @@ def test_a_case_packet_is_screened_on_the_trunk_and_its_index_page_stays_as_it_i
     with open(tmp_path / f'{JOB}.pdf', 'wb') as handle:
         writer.write(handle)
     conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
-    sent = conversion.read_fax_frames(attempt(installation, tmp_path, TRUNK).tiff)
+    # Always (the administrator's choice): the screened pages go whether or not they save a billed minute.
+    sent = conversion.read_fax_frames(attempt(installation, tmp_path, TRUNK, choice='always').tiff)
     own = conversion.read_fax_frames(str(tmp_path / f'{JOB}.tiff'))
     assert pixels(sent[0]) == pixels(own[0]) and pixels(sent[1]) != pixels(own[1])
     assert views.sent_view(installation, JOB)['sentences'][0].startswith(

@@ -42,6 +42,14 @@ class PreparedPages:
     original_pages: int
     sent_pages: int
     trimmed_pages: int
+    # The coding measured smallest for these pages (pages/coding.py), for Faxbot's own engines on the trunk; with
+    # no page change, ``pdf`` and ``tiff`` are None and only the coding goes with the call.
+    coding: object = None
+
+
+def unchanged(prepared):
+    """Whether an attempt's pages go as they are: no PreparedPages, or one that only carries the coding."""
+    return prepared is None or (prepared.pdf is None and prepared.tiff is None)
 
 
 def how_sent(configuration):
@@ -204,9 +212,12 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         renderings = {method: (trimmed[method][0], fax_friendly.fidelity_of(rendered[method][1].result))
                       for method in others}
         faster = fax_friendly.named_reason(engine, values, job, route, why, now=now) if renderings else None
+        # The codings this call may use, measured on each candidate's pages (pages/coding.py): Faxbot's own
+        # engines on the trunk only, since a fax service codes the pages itself.
+        usable = _usable_codings(engine, values, route, mode, number, cap)
         # Exactly one way to send: the pages as they are, packed onto long pages, the experimental encoded pages,
-        # or a fax-friendly rendering of them; the cheapest expected bill, and the most faithful at that bill
-        # (conversion.choose_layout).
+        # or a fax-friendly rendering of them, each with its smallest coding; the cheapest expected bill, and the
+        # most faithful at that bill (conversion.choose_layout).
         from .views import packed_sentence
 
         def describe_dense(original, sent):
@@ -222,9 +233,16 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
                                           dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                           card=route_card, boundary_seconds=cap.boundary_seconds,
-                                          describe_dense=describe_dense, renderings=renderings, faster=faster)
+                                          describe_dense=describe_dense, usable=usable,
+                                          measure_cache=_coding_cache(out_tiff) if usable is not None else None,
+                                          renderings=renderings, faster=faster)
         layout = None if choice['layout'] == 'normal' else choice['layout']
         rendering = choice['rendering']
+        coded = choice.get('coding')
+        if coded is not None:
+            _record_coding(engine, job_id, attempt_id, number, route, coded, usable, now)
+            if not usable.needs_request(coded.coding):
+                coded = None  # what the engines would take anyway: the call goes with its usual settings
         encoded = layout == 'codec'
         if encoded:
             # Encoded pages go exactly as the codec made them: nothing trimmed, kept at standard or screened.
@@ -234,7 +252,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             _, trimmed_pages, trimmed_rows = trimmed[rendering]
         lightened = rendering is not None
         if layout is None and not trimmed_pages and matched is None and not lightened:
-            return None
+            # The pages go as they are; the coding measured for them still goes with the call.
+            return (PreparedPages(None, None, len(frames), len(frames), 0, coded) if coded is not None else None)
         pages = choice['pages']
         conversion.write_fax_tiff(pages, str(out_tiff))
         if mode != 'image':
@@ -264,7 +283,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=rendered[rendering][1],
                                      now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
-                             len(frames), len(pages), trimmed_pages)
+                             len(frames), len(pages), trimmed_pages, coded)
     except BaseException:
         for path in (out_tiff, out_pdf):
             try:
@@ -278,6 +297,41 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                 raster.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def _usable_codings(engine, values, route, mode, number, cap):
+    """The codings a call to ``number`` may request (``pages.coding.usable_for``), or None when Faxbot's own engines
+    do not place it or the records it reads cannot be read (logged; the engines then code as they always did)."""
+    if route != 'sip' or mode != 'image':
+        return None
+    import sqlalchemy as sa
+    from .. import hylafax_engine
+    from ..routing.database import DeliveryStoreError
+    from . import coding
+    try:
+        recipient = hylafax_engine.recipient_limits(engine, number)
+        return coding.usable_for(engine, values, number, recipient=recipient, capability=cap)
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        logging.getLogger(__name__).warning('The fax codings this number takes could not be read; the call codes its '
+                                            'pages as usual.', exc_info=True)
+        return None
+
+
+def _coding_cache(out_tiff):
+    from .coding import cache_path
+    return cache_path(out_tiff)
+
+
+def _record_coding(engine, job_id, attempt_id, number, route, choice, usable, now):
+    """The coding this attempt requests and what was measured (``fax_coding_choices``), once."""
+    import sqlalchemy as sa
+    from ..routing.database import DeliveryStoreError
+    from .coding import record_choice
+    try:
+        record_choice(engine, job_id=job_id, attempt_id=attempt_id, number=number, route=route, choice=choice,
+                      receiver_known=usable.receiver is not None, now=now)
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        logging.getLogger(__name__).warning('The fax coding chosen for this attempt could not be recorded.')
 
 
 def _record_codec(engine, job_id, details, now):

@@ -241,22 +241,44 @@ def learn(rows, number, *, typical_rate=TYPICAL_RATE):
             scope, rate, rate_calls = 'route', statistics.median_low(route_rates), len(route_rates)
     newest = sorted(mine, key=lambda row: row.get('created_at') or datetime.min)
     coding = next((row['compression'] for row in reversed(newest) if row.get('compression') in CODINGS), None)
-    per_page, setups = [], []
+    per_page, setups, samples = [], [], {}
     for row in mine:
         pages, connected, transfer = row['pages'], row.get('connected_seconds'), row.get('transfer_seconds')
+        sample = None
         if transfer is not None:
             per_page.append(transfer / pages)
+            setup = None
             if connected is not None and connected >= transfer:
-                setups.append(float(connected - transfer))
+                setup = float(connected - transfer)
+                setups.append(setup)
+            sample = (setup, transfer / pages)
         elif connected is not None:
             from .predict import SETUP_SECONDS
             per_page.append(max(0.0, connected - SETUP_SECONDS) / pages)
+            sample = (None, per_page[-1])
+        if sample is not None:
+            samples.setdefault(_engine_of(row), []).append(sample)
     jbig = any(row.get('compression') == 'JBIG' and (row.get('engine') == 'hylafax' or row.get('engine_ref'))
                for row in mine)
     return Link(rate=rate, rate_calls=rate_calls, rate_scope=scope, coding=coding,
                 seconds_per_page=statistics.median(per_page) if per_page else None, page_calls=len(per_page),
                 setup_seconds=statistics.median(setups) if setups else None, setup_calls=len(setups),
-                typical_rate=typical_rate, jbig=jbig)
+                typical_rate=typical_rate, jbig=jbig,
+                samples=_spread_samples(samples, _engine_of(newest[-1]) if newest else None))
+
+
+def _engine_of(row):
+    """'hylafax' for a call the SSL Fax engine placed, else 'builtin'."""
+    return 'hylafax' if row.get('engine') == 'hylafax' else 'builtin'
+
+
+def _spread_samples(samples, newest_engine):
+    """The calls the spread of a new call's time is read from: those of the engine that placed the newest call to
+    the number when it made at least ``MIN_CALLS``, else every engine's (``predict.spread_for``)."""
+    own = samples.get(newest_engine) or []
+    if len(own) >= MIN_CALLS:
+        return tuple(own)
+    return tuple(sample for found in samples.values() for sample in found)
 
 
 _TABLES = weakref.WeakKeyDictionary()
