@@ -958,7 +958,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet or blank space.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space or shading.
 
 **Usage**:
 
@@ -979,6 +979,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
 * `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
+* `--shading ON|OFF|DEFAULT`: Lighten shaded areas and remove specks on documents sent to this recipient: on (always), off (never), or default for the setting all faxes use.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`

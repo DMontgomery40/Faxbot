@@ -1022,7 +1022,9 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/pages`);
   }
 
-  async saveRecipientPages(number: string, body: { packing?: 'allow' | 'never'; trim_blank?: boolean | null }): Promise<RecipientPages> {
+  async saveRecipientPages(number: string, body: {
+    packing?: 'allow' | 'never'; trim_blank?: boolean | null; shading?: 'always' | 'never' | null;
+  }): Promise<RecipientPages> {
     return this.json(`/routing/destinations/${id(number)}/pages`, { method: 'PUT', body: JSON.stringify(body) });
   }
 

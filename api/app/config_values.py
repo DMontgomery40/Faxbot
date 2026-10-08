@@ -276,9 +276,11 @@ class ConfigurationValues(BaseModel):
     route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
     # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
     local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
-    # Lighten shaded areas and remove specks on documents you send (pages/friendly.py). Off by default because it
-    # changes what the reader sees.
-    fax_friendly_documents: bool = Field(False, validation_alias='FAX_FRIENDLY_DOCUMENTS')
+    # Lighten shaded areas and remove specks on documents you send (pages/friendly.py): 'where_it_saves' (the
+    # default: only on calls billed by time and for machines without error correction), 'always' or 'never'.
+    # The earlier on and off values read as always and never.
+    fax_friendly_documents: str = Field('where_it_saves', validation_alias='FAX_FRIENDLY_DOCUMENTS',
+                                        pattern=r'^(where_it_saves|always|never)$')
     # Default intake email connector; more connectors are managed in the console.
     intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
     intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')
@@ -322,6 +324,18 @@ class ConfigurationValues(BaseModel):
             value = value.strip().upper()
             if value not in SUPPORTED_COUNTRIES:
                 raise ValueError("unsupported country")
+        return value
+
+    @field_validator("fax_friendly_documents", mode="before")
+    @classmethod
+    def normalize_friendly_documents(cls, value):
+        # On and off (a switch before the three choices) are always and never.
+        if isinstance(value, bool):
+            return 'always' if value else 'never'
+        if isinstance(value, str):
+            value = value.strip().lower()
+            return {'true': 'always', 'on': 'always', 'yes': 'always', '1': 'always',
+                    'false': 'never', 'off': 'never', 'no': 'never', '0': 'never'}.get(value, value)
         return value
 
     @field_validator("sip_fax_max_rate")

@@ -113,18 +113,23 @@ describe('Settings delivery routes', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
   });
 
-  it('keeps lightening shaded areas off by default, shows its measured saving and saves turning it on', async () => {
-    const writes = settingsHandlers(settingsFixture());
+  it('lightens shaded areas where it saves time by default, explains the choices and saves another', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves' };
+    }));
     render(<Settings client={client()} />);
     const routes = await section('Delivery routes');
-    const toggle = within(routes).getByRole('checkbox', {
-      name: 'Lighten shaded areas and remove specks on documents you send' }) as HTMLInputElement;
-    expect(toggle.checked).toBe(false);
+    const choice = within(routes).getByLabelText(
+      'Lighten shaded areas and remove specks on documents you send') as HTMLSelectElement;
+    expect(choice.value).toBe('where_it_saves');
+    expect([...choice.querySelectorAll('option')].map((option) => option.textContent)).toEqual(
+      ['Where it saves time', 'Always', 'Never']);
+    expect(routes.textContent).toContain('changes pages only on calls billed by time');
     expect(routes.textContent).toContain('a page with a shaded table went from 61 to 12 seconds');
-    fireEvent.click(toggle);
+    fireEvent.change(choice, { target: { value: 'never' } });
     apply();
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
-    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: true });
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: 'never' });
   });
 });
 

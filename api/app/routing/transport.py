@@ -114,8 +114,7 @@ class RoutedTransport:
                 if not route_ready(configuration, ami=getattr(self.inner, 'ami', None)):
                     continue
                 # Prepare what this route needs (a fax TIFF for SIP) before binding it.
-                ensure_route_artifact(revision, configuration, claim.job_id,
-                                      engine=getattr(getattr(self.store, 'configuration', None), 'engine', None))
+                ensure_route_artifact(revision, configuration, claim.job_id)
                 return choice, self.store.assign_route(claim, configuration)
             except RouteUnavailable:
                 continue

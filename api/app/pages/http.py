@@ -41,6 +41,17 @@ class RecipientPages(BaseModel):
     # Leave out blank page bottoms for a machine without error correction: on, off, or None for the
     # installation's setting. Left out keeps the current choice.
     trim_blank: Optional[StrictBool] = None
+    # Lighten shaded areas for this recipient (pages/friendly.py): always, never, or None for the setting all
+    # faxes use. Left out keeps the current choice.
+    shading: Optional[Literal['always', 'never']] = None
+
+
+def _recipient(engine, target, request):
+    """Recipients, Details: dense pages' view and this recipient's choice for lightening shaded areas."""
+    from . import friendly
+    from .views import recipient_view
+    values = request.scope['faxbot.configuration'].active.values
+    return {**recipient_view(engine, target), **friendly.recipient_view(engine, target, values)}
 
 
 class RoutePages(BaseModel):
@@ -53,10 +64,9 @@ class RoutePages(BaseModel):
 async def get_recipient_pages(number: str, request: Request):
     """Recipients, Details: how long a page this number's machine takes, and its page settings."""
     from .capability import PageRecordError
-    from .views import recipient_view
     target = _number(number, request)
     try:
-        return await run_lifecycle_step(lambda: recipient_view(_engine(request), target))
+        return await run_lifecycle_step(lambda: _recipient(_engine(request), target, request))
     except PageRecordError:
         raise HTTPException(503, detail='Page settings are unavailable. Try again.') from None
 
@@ -64,8 +74,8 @@ async def get_recipient_pages(number: str, request: Request):
 @router.put('/routing/destinations/{number}/pages')
 async def put_recipient_pages(number: str, payload: RecipientPages, request: Request,
                               identity=Depends(require_permission('settings:write'))):
+    from . import friendly
     from .capability import PageRecordError, records_for
-    from .views import recipient_view
     target = _number(number, request)
     changes = {name: getattr(payload, name) for name in payload.model_fields_set}
     if 'packing' in changes and changes['packing'] is None:
@@ -73,12 +83,18 @@ async def put_recipient_pages(number: str, payload: RecipientPages, request: Req
 
     def save():
         engine = _engine(request)
-        records_for(engine).set_recipient_settings(target, actor=_actor(identity), **changes)
-        return recipient_view(engine, target)
+        pages = {name: value for name, value in changes.items() if name != 'shading'}
+        if pages:
+            records_for(engine).set_recipient_settings(target, actor=_actor(identity), **pages)
+        if 'shading' in changes:
+            friendly.set_recipient_choice(engine, target, changes['shading'], actor=_actor(identity))
+        return _recipient(engine, target, request)
     try:
         result = await run_lifecycle_step(save)
     except ValueError as error:
         raise HTTPException(400, detail=str(error)) from None
+    except sa.exc.SQLAlchemyError:
+        raise HTTPException(503, detail='Page settings could not be saved. Try again.') from None
     except PageRecordError:
         raise HTTPException(503, detail='Page settings could not be saved. Try again.') from None
     from ..audit import audit_event
@@ -142,7 +158,7 @@ async def fax_friendly_recommendation(request: Request):
                 mode = how_sent(runtime.manager.store.read_profile(profile_id).configuration)
         except Exception:
             mode = None
-        return friendly.recommendation(engine, values.fax_data_dir, enabled=friendly.documents_on(values),
+        return friendly.recommendation(engine, values.fax_data_dir, choice=friendly.documents_choice(values),
                                        how_sent=mode)
     try:
         return await run_lifecycle_step(build)

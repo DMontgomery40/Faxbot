@@ -19,9 +19,6 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
     job_id = uuid4().hex
     pdf = os.path.join(root, job_id + '.pdf')
     tiff = ''
-    # The documents in a case packet are yours: the setting for your documents applies (pages/friendly.py).
-    from ..pages import friendly
-    request = friendly.for_documents(revision.values)
     try:
         with open(pdf, 'xb') as handle:
             handle.write(document)
@@ -29,12 +26,11 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
                 or configuration.traits.get('requires_tiff') is True):
             from ..conversion import pdf_to_tiff
             tiff = os.path.join(root, job_id + '.tiff')
-            pdf_to_tiff(pdf, tiff, friendly=request)
+            pdf_to_tiff(pdf, tiff)
         now = datetime.utcnow()
         access.outbound.accept(actor, revision, {
             'id': job_id, 'to_number': to_number, 'file_name': file_name, 'tiff_path': tiff, 'status': 'queued',
-            'pages': pages, 'created_at': now, 'updated_at': now},
-            also=friendly.acceptance_step(job_id, request if tiff else None))
+            'pages': pages, 'created_at': now, 'updated_at': now})
     except BaseException:
         for path in (pdf, tiff):
             if path:

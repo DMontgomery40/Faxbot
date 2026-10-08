@@ -1,4 +1,4 @@
-"""Fax-friendly pages: one row each time light shading was left out of a fax's pages and specks removed."""
+"""Fax-friendly pages: one row for each attempt whose shaded areas were lightened, and each recipient's choice."""
 from alembic import op
 
 revision = '0042_fax_friendly_pages'

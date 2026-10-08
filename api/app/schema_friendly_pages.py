@@ -2,21 +2,25 @@
 
 Faxbot can leave light shading out of a page and remove specks before the page
 goes on the line (``pages/friendly.py``): a pixel whose gray is 25% gray or
-lighter becomes white and every darker pixel stays as it was. This revision
-adds one table:
+lighter becomes white and every darker pixel stays as it was. Whether it runs
+is decided for each attempt (the setting for your documents, the recipient's
+own choice, the route's billing and the receiving machine). This revision adds
+two tables:
 
-- ``fax_friendly_pages``: append-only, one row for each time the change ran
-  on a fax's pages: when the fax was accepted (``attempt_id`` NULL: the fax
-  image every attempt sends) or for one send (``attempt_id`` set: the pages a
-  cloud provider was given). ``scope`` is 'documents' (the setting for your
-  documents) or 'drawn' (a page Faxbot drew itself). ``pages`` is the pages
-  in the document and ``pages_changed`` how many of them changed;
-  ``bits_before`` and ``bits_after`` are the measured MMR (Group 4) bits of
-  every page before and after, and ``seconds_saved`` the estimate of the time
-  saved on the line at 14,400 bit/s (NULL when not estimated).
+- ``fax_friendly_pages``: append-only, one row for each attempt whose pages
+  were lightened (``attempt_id``; NULL only for an image made outside an
+  attempt). ``scope`` is 'documents' (your documents) or 'drawn' (a page
+  Faxbot drew itself). ``pages`` is the pages in the document and
+  ``pages_changed`` how many of them changed; ``bits_before`` and
+  ``bits_after`` are the measured MMR (Group 4) bits of every page before and
+  after, and ``seconds_saved`` the estimate of the time saved on the line at
+  14,400 bit/s (NULL when not estimated).
+- ``fax_friendly_recipients``: one row per number a person chose for:
+  ``shading`` 'always' or 'never'. No row follows the setting for all faxes.
 
-Rows are never rewritten. The downgrade drops the table. Runtime code reflects
-it; it never imports this metadata.
+Rows of ``fax_friendly_pages`` are never rewritten; the recipients table holds
+a person's current choice. The downgrade drops both tables. Runtime code
+reflects them; it never imports this metadata.
 """
 import sqlalchemy as sa
 
@@ -24,12 +28,15 @@ from .schema_dense_pages import frozen_metadata as previous_metadata
 
 
 REVISION = '0042_fax_friendly_pages'
-ORDER = ('fax_friendly_pages',)
+ORDER = ('fax_friendly_pages', 'fax_friendly_recipients')
 TABLES = frozenset(ORDER)
 SCOPES = ('drawn', 'documents')
+SHADING = ('always', 'never')
 INDEXES = (
     ('ix_fax_friendly_pages_job', 'fax_friendly_pages', ('job_id', 'created_at'), False),
     ('ix_fax_friendly_pages_created_at', 'fax_friendly_pages', ('created_at', 'id'), False),
+    ('ix_fax_friendly_pages_attempt', 'fax_friendly_pages', ('attempt_id',), False),
+    ('uq_fax_friendly_recipients_number', 'fax_friendly_recipients', ('number',), True),
 )
 
 
@@ -55,6 +62,15 @@ def _definitions():
             sa.CheckConstraint(_choice('scope', SCOPES), name='ck_fax_friendly_pages_scope'),
             sa.CheckConstraint('pages >= 1 AND pages_changed >= 1 AND pages_changed <= pages AND bits_before >= 0 '
                                'AND bits_after >= 0 AND seconds_saved >= 0', name='ck_fax_friendly_pages_counts'),
+        ),
+        'fax_friendly_recipients': (
+            sa.Column('id', sa.String(40), nullable=False),
+            sa.Column('number', sa.String(32), nullable=False),
+            sa.Column('shading', sa.String(16), nullable=False),
+            sa.Column('updated_at', sa.DateTime(), nullable=False),
+            sa.Column('updated_by', sa.String(100), nullable=True),
+            sa.PrimaryKeyConstraint('id', name='pk_fax_friendly_recipients'),
+            sa.CheckConstraint(_choice('shading', SHADING), name='ck_fax_friendly_recipients_shading'),
         ),
     }
 

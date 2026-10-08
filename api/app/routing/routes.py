@@ -55,13 +55,11 @@ def route_needs_tiff(configuration):
             or configuration.traits.get('requires_tiff') is True)
 
 
-def ensure_route_artifact(revision, configuration, job_id, *, engine=None):
+def ensure_route_artifact(revision, configuration, job_id):
     """Rasterize the accepted PDF when this route needs a fax TIFF the fax does not have yet.
 
     The original PDF is never changed; the TIFF is written atomically beside it,
-    where the captured transport and artifact cleanup already expect it. With the
-    setting for your documents on, its shaded areas are lightened (pages/friendly.py)
-    and ``engine`` records that.
+    where the captured transport and artifact cleanup already expect it.
     """
     if not route_needs_tiff(configuration):
         return None
@@ -76,13 +74,10 @@ def ensure_route_artifact(revision, configuration, job_id, *, engine=None):
     if not pdf.is_file():
         raise RouteUnavailable('This fax has no usable document.')
     from ..conversion import DocumentConversionError, pdf_to_tiff
-    from ..pages import friendly
-    request = friendly.for_documents(revision.values)
     try:
-        pdf_to_tiff(str(pdf), str(tiff), friendly=request)
+        pdf_to_tiff(str(pdf), str(tiff))
     except DocumentConversionError:
         raise RouteUnavailable('This route needs a fax image that could not be prepared.') from None
-    friendly.record_image(engine, job_id, request)
     return tiff
 
 

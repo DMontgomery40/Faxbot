@@ -168,11 +168,15 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         'or never.'),
                                blank_space: str = typer.Option(None, '--blank-space', metavar='ON|OFF|DEFAULT',
                                    help='Leave out the blank bottom of pages when this machine has no error '
-                                        'correction: on, off, or default for the setting all faxes use.')):
-    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet or blank space."""
+                                        'correction: on, off, or default for the setting all faxes use.'),
+                               shading: str = typer.Option(None, '--shading', metavar='ON|OFF|DEFAULT',
+                                   help='Lighten shaded areas and remove specks on documents sent to this '
+                                        'recipient: on (always), off (never), or default for the setting all '
+                                        'faxes use.')):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space or shading."""
     api = state.api()
     from .pages import recipient_page_body
-    page_body = recipient_page_body(pages_per_sheet, blank_space)
+    page_body = recipient_page_body(pages_per_sheet, blank_space, shading)
     body = {}
     if name is not None:
         body['display_name'] = name
@@ -521,10 +525,17 @@ def _read_friendly(api):
 
 
 def show_friendly(out, result):
-    """Lightening shaded areas and removing specks: what it would save on your recent faxes, or what it saved."""
-    out.line(result.get('sentence') or 'Faxbot has no recent faxes to check yet.')
+    """Lightening shaded areas and removing specks: with the setting at never, what it would have saved."""
+    choice = result.get('choice')
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    elif choice in ('where_it_saves', 'always'):
+        out.line('Nothing to suggest: shaded areas are lightened '
+                 + ('where it saves time.' if choice == 'where_it_saves' else 'on every document.'))
+    else:
+        out.line('Faxbot has no recent faxes to check yet.')
     if result.get('action'):
-        out.line(result['action'] + " Or run: faxbot system settings set fax_friendly_documents=on")
+        out.line(result['action'] + ' Or run: faxbot system settings set fax_friendly_documents=where_it_saves')
 
 
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).

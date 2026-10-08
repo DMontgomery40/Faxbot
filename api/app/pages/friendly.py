@@ -162,7 +162,7 @@ class Request:
     """Asks ``conversion.pdf_to_tiff`` for fax-friendly pages; it fills in ``result``.
 
     ``scope``: 'drawn' (pages Faxbot drew itself, from text and shapes; on by default) or 'documents' (your
-    documents, when the setting is on). ``despeckle``: also remove specks; on for your documents, off for
+    documents, when ``decide`` says so for an attempt). ``despeckle``: also remove specks; on for your documents, off for
     drawn pages (they have none, and a scan someone attached stays exactly as it is)."""
     scope: str = 'documents'
     despeckle: bool | None = None
@@ -275,10 +275,70 @@ def _apply(pdf_path, tiff_path, request, gs):
             Path(path).unlink(missing_ok=True)
 
 
-# The record (migration 0042): one row each time the pages changed ------------------------------------------------
+
+
+def lighten_image(pdf_path, tiff_path, out_path, request):
+    """A lightened copy of a fax image Faxbot made from ``pdf_path`` (``tiff_path``) at ``out_path``, for one
+    send; sets ``request.result``. The fax's own image is never changed; on any problem the copy is unchanged."""
+    import shutil
+    shutil.copyfile(tiff_path, out_path)
+    gs = shutil.which('gs')
+    if gs is None:
+        request.result = None
+        return None
+    return apply(pdf_path, out_path, request, gs=gs)
+
+
+# When: the setting for your documents, each recipient's choice, and each attempt's route -------------------------
+
+CHOICES = ('where_it_saves', 'always', 'never')
+RECIPIENT_CHOICES = ('always', 'never')
+_LEGACY = {'true': 'always', 'on': 'always', 'yes': 'always', '1': 'always',
+           'false': 'never', 'off': 'never', 'no': 'never', '0': 'never'}
+
+
+def documents_choice(values):
+    """'where_it_saves' (the default), 'always' or 'never'; the earlier on and off read as always and never."""
+    value = getattr(values, 'fax_friendly_documents', 'where_it_saves')
+    if isinstance(value, bool):
+        return 'always' if value else 'never'
+    value = _LEGACY.get(str(value).strip().lower(), str(value).strip().lower())
+    return value if value in CHOICES else 'where_it_saves'
+
+
+def billed_by_time(card):
+    """Whether a route's rate card bills a call by its time (per minute or per second), from the card itself; a
+    flat plan, a per-page price or no card at all is not."""
+    if card is None or getattr(card, 'flat_plan', None):
+        return False
+    return bool(getattr(card, 'per_minute_micros', 0))
+
+
+def decide(choice, recipient, *, by_time, ecm):
+    """Whether one attempt's pages are lightened, and why: (True, 'recipient' | 'always' | 'time' | 'ecm') or
+    (False, None). A recipient's never always wins and its always beats the setting; "where it saves time"
+    lightens on a call billed by time or for a machine without error correction (``ecm`` False)."""
+    if recipient == 'never':
+        return False, None
+    if recipient == 'always':
+        return True, 'recipient'
+    if choice == 'never':
+        return False, None
+    if choice == 'always':
+        return True, 'always'
+    if by_time:
+        return True, 'time'
+    if ecm is False:
+        return True, 'ecm'
+    return False, None
+
+
+# The record (migration 0042): one row for each attempt whose pages were lightened, and recipients' choices -------
 
 TABLE = 'fax_friendly_pages'
+RECIPIENTS = 'fax_friendly_recipients'
 _ID = re.compile(r'[A-Za-z0-9_-]{1,40}', re.ASCII)
+_NUMBER = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
 
 
 def utcnow():
@@ -297,39 +357,12 @@ def _row(job_id, attempt_id, scope, result):
             'bits_after': result.bits_after, 'seconds_saved': seconds_saved(result)}
 
 
-def _table(connection):
-    return sa.Table(TABLE, sa.MetaData(), autoload_with=connection)
-
-
-def acceptance_step(job_id, request, then=None):
-    """The step ``access.outbound.accept(also=...)`` runs in the fax's own acceptance transaction: it records
-    the fax-friendly pages made for this fax, after ``then`` (another step, such as sending together's).
-    Returns ``then`` itself when nothing changed."""
-    result = getattr(request, 'result', None)
-    if result is None or result.pages_changed < 1:
-        return then
-    try:
-        row = _row(job_id, None, request.scope, result)
-    except ValueError:
-        # Never refuse a fax over its record: it is accepted with its lightened pages, unrecorded.
-        logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
-        return then
-
-    def step(connection, now):
-        if then is not None:
-            then(connection, now)
-        try:
-            table = _table(connection)
-        except sa.exc.NoSuchTableError:
-            # Reflection only reads the catalog, so the fax is still accepted; only this record is missing.
-            logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
-            return
-        connection.execute(table.insert().values(**row, created_at=now))
-    return step
+def _table(connection, name=TABLE):
+    return sa.Table(name, sa.MetaData(), autoload_with=connection)
 
 
 def record_send(engine, *, job_id, attempt_id, request, now=None):
-    """Record the fax-friendly pages one send gave a cloud provider; once per attempt. Returns the row's ID."""
+    """Record the lightened pages one attempt sent; once per attempt. Returns the row's ID, or None."""
     result = getattr(request, 'result', None)
     if engine is None or result is None or result.pages_changed < 1:
         return None
@@ -344,28 +377,82 @@ def record_send(engine, *, job_id, attempt_id, request, now=None):
     return row['id']
 
 
+def _newest_attempt(connection, job_id):
+    try:
+        attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+    except sa.exc.NoSuchTableError:
+        return None
+    return connection.execute(sa.select(attempts.c.id).where(attempts.c.job_id == job_id).order_by(
+        attempts.c.sequence.desc()).limit(1)).scalar()
+
+
 def run_for(engine, job_id):
-    """The newest time the pages of this fax were changed, or None."""
+    """What the fax's newest attempt sent: its row when that attempt's pages were lightened, else None (the Sent
+    detail follows the attempt). Without attempt records, the newest row."""
     if engine is None or not _ID.fullmatch(str(job_id or '')):
         return None
     try:
         with engine.connect() as connection:
             table = _table(connection)
-            row = connection.execute(sa.select(table).where(table.c.job_id == job_id).order_by(
-                table.c.created_at.desc(), table.c.id.desc()).limit(1)).mappings().first()
+            query = sa.select(table).where(table.c.job_id == job_id)
+            newest = _newest_attempt(connection, job_id)
+            if newest is not None:
+                query = query.where(table.c.attempt_id == newest)
+            row = connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)
+                                     ).mappings().first()
     except sa.exc.SQLAlchemyError:
         return None
     return dict(row) if row is not None else None
 
 
+def recipient_choice(engine, number):
+    """This recipient's own choice, 'always' or 'never', or None (as set for all faxes). Never raises."""
+    if engine is None or not _NUMBER.fullmatch(str(number or '')):
+        return None
+    try:
+        with engine.connect() as connection:
+            table = _table(connection, RECIPIENTS)
+            value = connection.execute(sa.select(table.c.shading).where(table.c.number == number)).scalar()
+    except sa.exc.SQLAlchemyError:
+        return None
+    return value if value in RECIPIENT_CHOICES else None
+
+
+def set_recipient_choice(engine, number, shading, *, actor=None, now=None):
+    """Set this recipient's choice: 'always', 'never', or None to follow the setting for all faxes."""
+    if not _NUMBER.fullmatch(str(number or '')):
+        raise ValueError('Enter the fax number with its country code.')
+    if shading is not None and shading not in RECIPIENT_CHOICES:
+        raise ValueError("Choose 'As set for all faxes', 'Always' or 'Never'.")
+    with engine.begin() as connection:
+        table = _table(connection, RECIPIENTS)
+        connection.execute(table.delete().where(table.c.number == number))
+        if shading is not None:
+            connection.execute(table.insert().values(id=uuid4().hex, number=number, shading=shading,
+                                                     updated_at=now or utcnow(),
+                                                     updated_by=str(actor or '')[:100] or None))
+    return recipient_choice(engine, number)
+
+
 # What people read ----------------------------------------------------------------------------------------------
 
 SETTING_LABEL = 'Lighten shaded areas and remove specks on documents you send'
-SETTING_SENTENCE = ('Shaded table rows, tinted form fields and gray scan backgrounds take most of a page\'s time on '
-                    'the line: in Faxbot\'s tests a page with a shaded table went from 61 to 12 seconds, and a gray '
-                    'scanned page from over 3 minutes to 37 seconds. Shaded areas then print white and '
-                    'photographs lose their lightest parts; black text and anything darker stay exactly as they were.')
+CHOICE_LABELS = {'where_it_saves': 'Where it saves time', 'always': 'Always', 'never': 'Never'}
+SETTING_SENTENCE = (
+    '"Where it saves time" changes pages only on calls billed by time, such as your phone line, and for fax '
+    'machines without error correction; providers that charge per page save nothing, so their pages go as they '
+    'are. "Always" changes every document whose pages Faxbot makes, and "Never" changes none. Shaded table rows, '
+    'tinted form fields and gray scan backgrounds take most of a page\'s time on the line: in Faxbot\'s tests a '
+    'page with a shaded table went from 61 to 12 seconds, and a gray scanned page from over 3 minutes to 37 '
+    'seconds. Shaded areas then print white and photographs lose their lightest parts; black text and anything '
+    'darker stay exactly as they were.')
+RECIPIENT_LABEL = 'Lighten shaded areas for this recipient'
 WHERE = 'under Providers, In use, Delivery routes'
+
+
+def recipient_view(engine, number, values):
+    """Recipients, Details: this recipient's choice and the setting for all faxes."""
+    return {'shading': recipient_choice(engine, number), 'shading_default': documents_choice(values)}
 
 
 def duration(seconds):
@@ -425,7 +512,7 @@ def sent_sentence(run, rate=None):
     return f'{head}: an estimated {duration(seconds)} less on the line {speed}.'
 
 
-# The recommendation (Costs, Recommendations) -------------------------------------------------------------------
+# The recommendation (Costs, Recommendations): only while the setting is Never -----------------------------------
 
 DAYS = 30
 FAXES = 10  # recent faxes measured at most
@@ -436,7 +523,7 @@ _LOCK = threading.Lock()
 
 
 def measure_document(pdf_path):
-    """What the setting would do to a fax's PDF, drawn as Faxbot draws it today: a Result, or None."""
+    """What lightening would do to a fax's PDF, drawn as Faxbot draws it today: a Result, or None."""
     from .. import conversion
     request = Request('documents')
     with tempfile.TemporaryDirectory(prefix='.faxbot-friendly-check-', dir=str(Path(pdf_path).parent)) as folder:
@@ -463,45 +550,53 @@ def _measured(job_id, pdf_path, measure):
 def _recent_faxes(engine, since):
     with engine.connect() as connection:
         jobs = sa.Table('fax_jobs', sa.MetaData(), autoload_with=connection)
-        return connection.execute(sa.select(jobs.c.id, jobs.c.pages).where(jobs.c.created_at >= since).order_by(
-            jobs.c.created_at.desc(), jobs.c.id.desc()).limit(FAXES * 5)).all()
+        backend = jobs.c.backend if 'backend' in jobs.c else sa.null()
+        return connection.execute(sa.select(jobs.c.id, jobs.c.pages, backend, jobs.c.to_number).where(
+            jobs.c.created_at >= since).order_by(jobs.c.created_at.desc(), jobs.c.id.desc()).limit(FAXES * 5)).all()
 
 
-def _saved_on(engine, since):
-    with engine.connect() as connection:
-        table = _table(connection)
-        rows = connection.execute(sa.select(table.c.job_id, table.c.seconds_saved).where(
-            table.c.created_at >= since)).all()
-    faxes = {row.job_id for row in rows}
-    return len(faxes), sum(row.seconds_saved or 0 for row in rows)
+def where_it_saves(engine):
+    """``saves(route, number)``: whether "Where it saves time" would lighten a fax by that route to that number
+    (a rate card that bills by time, or a machine without error correction). Answers are kept per call."""
+    from ..routing.store import RouteStore
+    from .capability import records_for
+    cards, machines = {}, {}
+
+    def saves(route, number):
+        if route not in cards:
+            try:
+                cards[route] = billed_by_time(RouteStore(engine).card_for(route)) if route else False
+            except Exception:
+                cards[route] = False
+        if cards[route]:
+            return True
+        if number not in machines:
+            try:
+                machines[number] = records_for(engine).capability(number).ecm
+            except Exception:
+                machines[number] = None
+        return machines[number] is False
+    return saves
 
 
-def recommendation(engine, data_dir, *, enabled, how_sent, now=None, measure=None):
-    """Costs, Recommendations: whether lightening shaded areas would have saved time on your recent faxes.
-
-    With the setting off, Faxbot draws the newest faxes it still has (at most FAXES faxes and PAGE_BUDGET
-    pages, each measured once) and adds up the time they would have saved. With it on, it says what it saved."""
+def recommendation(engine, data_dir, *, choice, how_sent, now=None, measure=None, saves=None):
+    """Costs, Recommendations: with the setting at Never, whether "Where it saves time" would have saved time on
+    your recent faxes (at most FAXES faxes and PAGE_BUDGET pages, each drawn again once). Faxes that went by a
+    provider charging per page save nothing and are not counted. With any other choice there is nothing to say."""
     now = now or utcnow()
-    since = now - timedelta(days=DAYS)
-    view = {'enabled': bool(enabled), 'label': SETTING_LABEL, 'measured_sentence': SETTING_SENTENCE, 'days': DAYS,
+    view = {'choice': choice, 'label': SETTING_LABEL, 'measured_sentence': SETTING_SENTENCE, 'days': DAYS,
             'recommend': False, 'faxes_checked': 0, 'faxes_changed': 0, 'seconds_saved': 0, 'sentence': None,
             'action': None}
+    if choice != 'never':
+        return view
     if how_sent == 'pdf_url':
         view['sentence'] = ('Your fax provider fetches each document from Faxbot and draws its pages itself, so '
                             'Faxbot cannot lighten them.')
         return view
-    if enabled:
-        faxes, seconds = _saved_on(engine, since)
-        view.update(faxes_changed=faxes, seconds_saved=seconds)
-        view['sentence'] = (
-            f'Shaded areas were lightened and specks removed on {faxes} {"fax" if faxes == 1 else "faxes"} in the '
-            f'last {DAYS} days: an estimated {duration(seconds)} less on the line.' if faxes else
-            f'Shaded areas are lightened and specks removed on documents you send; none of your faxes in the last '
-            f'{DAYS} days had any.')
-        return view
     measure = measure or measure_document
-    budget, checked, changed, seconds = PAGE_BUDGET, 0, 0, 0
-    for job_id, pages in _recent_faxes(engine, since):
+    saves = saves or where_it_saves(engine)
+    budget, checked, shaded, changed, seconds = PAGE_BUDGET, 0, 0, 0, 0
+    for job_id, pages, route, number in _recent_faxes(engine, now - timedelta(days=DAYS)):
         if checked >= FAXES:
             break
         pdf = Path(data_dir) / f'{job_id}.pdf'
@@ -515,41 +610,29 @@ def recommendation(engine, data_dir, *, enabled, how_sent, now=None, measure=Non
         budget -= pages
         checked += 1
         if result.pages_changed:
-            changed += 1
-            seconds += seconds_saved(result)
+            shaded += 1
+            if saves(route, number):
+                changed += 1
+                seconds += seconds_saved(result)
     view.update(faxes_checked=checked, faxes_changed=changed, seconds_saved=seconds)
     if not checked:
         return view
-    faxes = 'Your last fax' if checked == 1 else f'Your last {checked} faxes'
-    if seconds < MIN_SECONDS:
-        view['sentence'] = (f'{faxes} {"has" if checked == 1 else "have"} no shaded areas or specks that slow '
-                            f'{"it" if checked == 1 else "them"} down.')
-        return view
-    view['recommend'] = True
-    which = ('it has shaded areas or specks' if checked == 1 else
-             f'{changed} of them {"has" if changed == 1 else "have"} shaded areas or specks')
-    view['sentence'] = (f'{faxes} would have taken an estimated {duration(seconds)} less on the line with shaded areas '
-                        f'lightened and specks removed; {which}.')
-    view['action'] = (f'Turn on "{SETTING_LABEL}" {WHERE}. Shaded areas then print white and photographs lose '
-                      'their lightest parts.')
+    one = checked == 1
+    faxes = 'Your last fax' if one else f'Your last {checked} faxes'
+    if seconds >= MIN_SECONDS:
+        view['recommend'] = True
+        which = ('it has shaded areas or specks' if one else
+                 f'{changed} of them {"has" if changed == 1 else "have"} shaded areas or specks')
+        view['sentence'] = (f'{faxes} would have taken an estimated {duration(seconds)} less on the line with shaded '
+                            f'areas lightened and specks removed on calls billed by time; {which}.')
+        view['action'] = (f'Choose "{CHOICE_LABELS["where_it_saves"]}" for "{SETTING_LABEL}" {WHERE}. Shaded areas '
+                          'then print white on those calls, and photographs lose their lightest parts.')
+    elif shaded:
+        view['sentence'] = (f'{faxes} went by providers that charge per page, to machines with error correction, so '
+                            'lightening shaded areas would have saved nothing.' if not one else
+                            'Your last fax went by a provider that charges per page, to a machine with error '
+                            'correction, so lightening shaded areas would have saved nothing.')
+    else:
+        view['sentence'] = (f'{faxes} {"has" if one else "have"} no shaded areas or specks that slow '
+                            f'{"it" if one else "them"} down.')
     return view
-
-
-def documents_on(values):
-    """Whether the setting for your documents is on (off unless a person turned it on)."""
-    return bool(getattr(values, 'fax_friendly_documents', False))
-
-
-def for_documents(values):
-    """A Request for a fax image made from your documents when the setting is on, else None."""
-    return Request('documents') if documents_on(values) else None
-
-
-def record_image(engine, job_id, request, *, now=None):
-    """Record a lightened fax image made after acceptance (a route that needs one), for every attempt that sends
-    it; returns the row's ID or None. Never raises: the fax goes either way."""
-    try:
-        return record_send(engine, job_id=job_id, attempt_id=None, request=request, now=now)
-    except Exception:
-        logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
-        return None

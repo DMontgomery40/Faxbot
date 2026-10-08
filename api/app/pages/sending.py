@@ -112,10 +112,15 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     trim_ok = mode == 'image' and cap.ecm is False and records.trim_allowed(number)
     # A document that is really standard resolution goes at standard (lossless; Faxbot's own engines only).
     match_ok = mode == 'image'
-    # Lighten shaded areas and remove specks (pages/friendly.py), when that setting is on: a cloud provider that
-    # takes a PDF gets the lightened pages; Faxbot's own engines send the fax image lightened at acceptance.
+    # Lighten shaded areas and remove specks (pages/friendly.py), decided for this attempt: the setting for your
+    # documents, the recipient's own choice, whether this route's rate card bills by time, and whether the
+    # receiving machine has error correction.
     from . import friendly as fax_friendly
-    friendly = fax_friendly.Request('documents') if mode != 'image' and fax_friendly.documents_on(values) else None
+    route_card = _card(engine, route)
+    lighten, _ = fax_friendly.decide(fax_friendly.documents_choice(values),
+                                     fax_friendly.recipient_choice(engine, number),
+                                     by_time=fax_friendly.billed_by_time(route_card), ecm=cap.ecm)
+    friendly = fax_friendly.Request('documents') if lighten else None
     if not packing_ok and not trim_ok and not match_ok and friendly is None:
         return None
     root = Path(str(pdf)).parent
@@ -127,6 +132,11 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             # A cloud provider takes a PDF: rasterize the fax's PDF to pack its pages, then send them as a PDF.
             raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
             conversion.pdf_to_tiff(str(pdf), str(raster), friendly=friendly)
+            source = raster
+        elif friendly is not None:
+            # Faxbot's own engines: a lightened copy of the fax image for this send; the fax's own image stays.
+            raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
+            fax_friendly.lighten_image(str(pdf), str(source), str(raster), friendly)
             source = raster
         frames = conversion.read_fax_frames(str(source))
         if not frames:
@@ -145,7 +155,6 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                 frames, trimmed_pages, trimmed_rows = trim_frames(frames, flags)
         # Exactly one layout: the pages as they are, packed onto long pages, or the experimental codec,
         # whichever the route's billing makes cheapest (conversion.choose_layout).
-        route_card = _card(engine, route)
         from .views import packed_sentence
 
         def describe_dense(original, sent):
