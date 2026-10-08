@@ -329,12 +329,14 @@ class WellKnownFetcher:
         # Resolve once, check every address, and connect to the one checked (a later answer cannot redirect it).
         try:
             addresses = await asyncio.to_thread(self.resolver, host, self.port)
-            private = not addresses or not all(public(address) for address in addresses)
+            if not addresses:
+                raise LookupRefused('unreachable')
+            any_private = not all(public(address) for address in addresses)
+            # Whether the answer comes from your own network is decided by the address actually connected to.
+            private = not public(addresses[0])
         except (OSError, UnicodeError, ValueError):
             raise LookupRefused('unreachable') from None
-        if not addresses:
-            raise LookupRefused('unreachable')
-        if private and not allow_private:
+        if any_private and not allow_private:
             raise LookupRefused('private')
         if not literal:
             url, options = pinned_request(url, addresses[0], options)
@@ -1011,13 +1013,22 @@ class DiscoveryService:
 
     # Directories (D13) --------------------------------------------------------------------------
     def publishable(self):
-        """(the card's number, whether this Faxbot receives on it); raises DirectConflict without a card."""
+        """(the partner card's number, whether this Faxbot receives on it); never creates keys.
+
+        Raises DirectConflict, with the sentence to show, while there is no card to publish.
+        """
         from ..routing.own_numbers import receiving_numbers
         values = self.values()
         if not getattr(values, 'direct_delivery_enabled', False):
-            raise DirectConflict('Turn on direct delivery first; senders reach this Faxbot through it.')
-        card = self.direct.own_card()
-        return card, card['fax_number'] in receiving_numbers(_WithoutDirect(values))
+            raise DirectConflict('Turn on "Use direct delivery" under Recipients → Partners → Direct delivery first; '
+                                 'senders reach this Faxbot through it.')
+        if not str(getattr(values, 'direct_organization', '') or '').strip():
+            raise DirectConflict('Add your organization name for direct delivery to the installation settings first.')
+        number = _e164(getattr(values, 'direct_fax_number', ''), values)
+        if number is None:
+            raise DirectConflict('Add the fax number partners send to for direct delivery to the installation '
+                                 'settings first.')
+        return number, number in receiving_numbers(_WithoutDirect(values))
 
     def publish(self, number, directory, *, actor_id=None, actor_name=None, now=None):
         """The signed record for a number in a directory; Faxbot never writes DNS itself."""
@@ -1031,14 +1042,14 @@ class DiscoveryService:
             raise DirectConflict('Enter the fax number with its country code, such as +13035550100.')
         if not self.store.settings().well_known:
             raise DirectConflict('Turn on "Answer Faxbot lookups" first: senders read your partner card there.')
-        card, receives = self.publishable()
-        if wanted != card['fax_number']:
-            raise DirectConflict(f"Partners deliver directly to {card['fax_number']}, the number on your partner "
-                                 'card, so publish that number.')
+        number, receives = self.publishable()
+        if wanted != number:
+            raise DirectConflict(f'Partners deliver directly to {number}, the number on your partner card, so '
+                                 'publish that number.')
         if not receives:
             raise DirectConflict(f'Faxbot does not receive faxes on {wanted}, so it cannot be published. Only a '
                                  'number your trunk or receiving account delivers to this Faxbot can be published.')
-        endpoint = card['endpoint']
+        endpoint = self.direct.own_card()['endpoint']  # Publishing creates this Faxbot's keys if it has none yet.
         if not _ENDPOINT.fullmatch(endpoint):
             raise DirectConflict("Your Faxbot's public address cannot be written in a directory record.")
         identity = self.direct.identity(create=True)

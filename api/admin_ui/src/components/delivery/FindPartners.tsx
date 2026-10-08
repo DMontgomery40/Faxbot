@@ -137,7 +137,8 @@ export default function FindPartners({ client, canWrite, onChanged }: {
             <FormControlLabel label="Answer Faxbot lookups" control={
               <Switch checked={data.settings.well_known} disabled={!canWrite || busy}
                 onChange={(event) => saveSettings({ well_known: event.target.checked })} />} />
-            <Typography variant="body2" color="text.secondary">{data.texts.well_known}</Typography>
+            {/* With direct delivery off, the sentence is already shown once above. */}
+            {data.direct_delivery && <Typography variant="body2" color="text.secondary">{data.texts.well_known}</Typography>}
           </Box>
           <Box>
             <FormControlLabel label="Look for Faxbot on calls" control={

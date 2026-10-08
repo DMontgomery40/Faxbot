@@ -181,6 +181,10 @@ def test_the_well_known_card_needs_direct_delivery_its_setting_and_existing_keys
     # No keys yet: an anonymous request never creates them.
     assert client.get('/.well-known/faxbot-direct').status_code == 404
     assert not key.exists()
+    # Reading Find partners (Partners, Recipients and Recommendations do) creates no keys either.
+    view = client.get('/direct/discovery', headers=ADMIN).json()
+    assert view['publishable']['number'] == B_NUMBER and view['publishable']['receives'] is False
+    assert not key.exists() and client.get('/.well-known/faxbot-direct').status_code == 404
     card = b_card(client)
     answer = client.get('/.well-known/faxbot-direct')
     assert answer.status_code == 200 and answer.json() == {'faxbot_direct': 1, 'card': card}
@@ -624,3 +628,25 @@ def test_a_whole_frame_is_read_through_engine_frames_when_it_offers_far_address(
     received = {'direction': 'in', 'tsa_full': t30_hex('ssl://k@c.example:10443', fcf=0x62)}
     monkeypatch.setattr(engine_frames, 'far_address', lambda frames_row: None, raising=False)
     assert discovery.call_address(received) == ('c.example', 10443)
+
+
+@pytest.mark.asyncio
+async def test_a_host_with_public_and_private_addresses_is_judged_by_the_address_connected_to():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={'faxbot_direct': 1})
+    mixed = WellKnownFetcher(resolver=lambda host, port: ['93.184.215.14', '10.0.0.7'],
+                             transport=httpx.MockTransport(handler))
+    # Any private address refuses the host unless private partners are allowed.
+    with pytest.raises(LookupRefused) as refused:
+        await mixed.get('mixed.example', allow_private=False)
+    assert refused.value.outcome == 'private' and seen == []
+    # Allowed: connected to the first address, a public one, so it is not "on your own network" and needs a
+    # trusted authority like any internet host.
+    answer = await mixed.get('mixed.example', allow_private=True)
+    assert answer.private is False and seen == ['https://93.184.215.14/.well-known/faxbot-direct']
+    inside = WellKnownFetcher(resolver=lambda host, port: ['10.0.0.7', '93.184.215.14'],
+                              transport=httpx.MockTransport(handler))
+    assert (await inside.get('mixed.example', allow_private=True)).private is True

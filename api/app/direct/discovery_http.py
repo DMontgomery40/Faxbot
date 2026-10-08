@@ -135,7 +135,8 @@ def settings_texts(values, settings):
     direct_on = bool(getattr(values, 'direct_delivery_enabled', False))
     url = (getattr(values, 'public_api_url', '') or '').rstrip('/') + discovery.WELL_KNOWN_PATH
     if not direct_on:
-        well_known = 'Turn on direct delivery to answer lookups and to find partners.'
+        well_known = ('Turn on "Use direct delivery" under Recipients → Partners → Direct delivery to answer lookups '
+                      'and to find partners.')
     elif settings.well_known:
         well_known = 'Faxbots that fax you can read your partner card and suggest enrolling you as a partner.'
     else:
@@ -147,8 +148,8 @@ def settings_texts(values, settings):
                    if settings.directories else
                    'Faxbot looks numbers up only in directories you trust. None is listed, so nothing is looked up.')
     private = (None if getattr(values, 'direct_allow_private_peers', False) else
-               'Addresses on private networks are not looked up. Turn on "Allow partners on private networks" to '
-               'look them up.')
+               'Addresses on private networks are not looked up. Turn on "Allow partners on private networks '
+               '(advanced)" under Recipients → Partners → Direct delivery to look them up.')
     return {'well_known': well_known, 'from_calls': from_calls, 'directories': directories, 'private': private,
             'well_known_url': url}
 
@@ -196,15 +197,12 @@ def _view(service):
         return discovery.OUTCOME_TEXT['certificate_changed'] if last and last['outcome'] == 'certificate_changed' \
             else None
     try:
-        card, receives = service.publishable()
-        number = card['fax_number']
+        number, receives = service.publishable()
         publishable = {'number': number, 'receives': receives, 'sentence': (
             f'You can publish {number}, the number on your partner card.' if receives else
             f'Faxbot does not receive faxes on {number}, the number on your partner card, so it cannot be published.')}
-    except (DirectConflict, IdentityUnavailable) as error:
-        publishable = {'number': None, 'receives': False,
-                       'sentence': str(error) if isinstance(error, DirectConflict) else
-                       'Direct delivery keys are unavailable on this installation.'}
+    except DirectConflict as error:
+        publishable = {'number': None, 'receives': False, 'sentence': str(error)}
     introductions = []
     for row in service.store.recent_introductions(10):
         first = organizations.get(row['first_peer_id'], 'A removed partner')

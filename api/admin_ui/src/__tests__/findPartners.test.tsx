@@ -153,7 +153,8 @@ describe('Find partners', () => {
 
   it('says to turn on direct delivery when it is off, and shows no suggestion yet', async () => {
     render(<FindPartners client={client()} canWrite={false} />);
-    expect(await screen.findAllByText('Turn on direct delivery to answer lookups and to find partners.')).toHaveLength(2);
+    expect(await screen.findAllByText('Turn on "Use direct delivery" under Recipients → Partners → Direct delivery to '
+      + 'answer lookups and to find partners.')).toHaveLength(1);
     expect(screen.getByText(NO_SUGGESTIONS)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save directories' })).toBeNull();
   });

@@ -764,13 +764,15 @@ export function emptyDiscovery(): Json {
   return {
     direct_delivery: false,
     settings: { well_known: true, from_calls: true, directories: [], private_allowed: false },
-    texts: { well_known: 'Turn on direct delivery to answer lookups and to find partners.',
+    texts: { well_known: 'Turn on "Use direct delivery" under Recipients → Partners → Direct delivery to answer '
+      + 'lookups and to find partners.',
       from_calls: 'When a fax call shows the other side runs Faxbot, Faxbot asks that address once whether it takes '
         + 'faxes directly. This never places a call.',
       directories: 'Faxbot looks numbers up only in directories you trust. None is listed, so nothing is looked up.',
       private: null, well_known_url: 'https://fax.example.test/.well-known/faxbot-direct' },
     suggestions: [], partners: [], introductions: [], publications: [], lookups: [],
-    publishable: { number: null, receives: false, sentence: 'Turn on direct delivery first; senders reach this Faxbot through it.' },
+    publishable: { number: null, receives: false, sentence: 'Turn on "Use direct delivery" under Recipients → Partners → '
+      + 'Direct delivery first; senders reach this Faxbot through it.' },
   };
 }
 
