@@ -64,7 +64,12 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         status = {'processing': 'in_progress', 'success': 'success', 'failed': 'failed'}.get(wire_status)
         if status is None:
             raise ValueError
-    return {'provider_sid': provider_sid, 'status': status}
+    receipt = {'provider_sid': provider_sid, 'status': status}
+    if status == 'failed':
+        # Whether the call ended before any fax data, by Documo's result code (routing/predata.py).
+        from .routing.predata import documo as before_fax_data
+        receipt['before_fax_data'] = before_fax_data(payload.get('resultCode'))
+    return receipt
 
 
 @dataclass(frozen=True, slots=True)

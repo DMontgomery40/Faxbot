@@ -88,10 +88,23 @@ export interface SendingRecommendation {
   sentence: string;
 }
 
+// One rule for a whole country, where the same account was cheaper for several of its numbers.
+export interface CountryRuleSuggestion {
+  country: string;
+  route: string;
+  numbers: number;
+  delivered: number;
+  saving_per_fax: Money;
+  sentence: string;
+  rule_suggestion: RuleSuggestion;
+}
+
 export interface SendingRecommendations {
   window_days: number;
   min_delivered: number;
   items: SendingRecommendation[];
+  // Rules for a whole country ("Faxes to +44 numbers cost about $0.031 less each through Sinch …").
+  country_rules?: CountryRuleSuggestion[];
   empty_sentence: string;
 }
 

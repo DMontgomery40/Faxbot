@@ -91,6 +91,19 @@ class ConsoleContext:
                     ('mailbox', 'legacy', 'inbound'))
 
             values = active.values
+            send_choices = {}
+            if send:
+                # What sending rules can match on Send a fax: mailboxes this person may send from, and the
+                # organization's workflows and labels (routing/rules_acceptance.py). Offered only when there are some.
+                try:
+                    from ..routing import rules_acceptance
+                    send_choices = {'mailboxes': rules_acceptance.sendable_mailboxes(connection, control, actor,
+                                                                                     now=now),
+                                    **rules_acceptance.send_choices(connection=connection)}
+                except Exception:
+                    send_choices = {}
+                # Offered only when the organization uses them, so the context is unchanged until then.
+                send_choices = {name: value for name, value in send_choices.items() if value}
             return {
                 'policy_version': policy_version,
                 'active_revision_id': active.id,
@@ -101,6 +114,7 @@ class ConsoleContext:
                          'max_file_size_mb': values.max_file_size_mb,
                          'default_country': values.fax_default_country,
                          'number_example': number_example(values.fax_default_country)['national'],
+                         **send_choices,
                          } if send else None,
                 'inbound_enabled': values.inbound_enabled if inbox else None,
                 'branding': {'docs_base': values.docs_base_url, 'logo_path': '/admin/ui/faxbot_full_logo.png'},

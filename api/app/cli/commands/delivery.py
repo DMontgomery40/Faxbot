@@ -471,6 +471,12 @@ def _show_sending(out, result):
         out.line(item['sentence'])
         out.line(f"To send by {item['suggested']['label']}: faxbot recipients set {item['number']} "
                  f"--preferred-route {item['suggested']['route']}")
+    # A rule for a whole country, where one account was cheaper for several of its numbers.
+    for country in result.get('country_rules') or []:
+        out.line(country['sentence'])
+        rule = country['rule_suggestion']
+        out.line(f"To add it to your draft rules: faxbot providers rules add '{rule['name']}' "
+                 f"--when to-country={country['country']} --use {country['route']}")
 
 
 def _line_advice(row):

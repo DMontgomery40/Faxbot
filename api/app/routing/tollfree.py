@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import phonenumbers
-from phonenumbers import PhoneNumberType
 import sqlalchemy as sa
 
 from .costs import format_amount
@@ -45,12 +44,13 @@ def day_text(moment):
     return f'{moment.day} {moment:%B %Y}'
 
 
-def is_toll_free(number):
-    try:
-        parsed = phonenumbers.parse(number, None)
-    except phonenumbers.NumberParseException:
-        return False
-    return phonenumbers.is_valid_number(parsed) and phonenumbers.number_type(parsed) == PhoneNumberType.TOLL_FREE
+def is_toll_free(number, home_country='US'):
+    """Whether ``number`` is a toll-free number from ``home_country`` (``destinations.classify``, the one classifier).
+
+    A toll-free number of another country is an international call from here, so it is not toll-free.
+    """
+    from .destinations import TOLL_FREE, classify
+    return isinstance(number, str) and classify(number, home_country).kind == TOLL_FREE
 
 
 class TollFreeApprovals:
@@ -113,7 +113,7 @@ class TollFreeApprovals:
                 alternate = normalize_number(alternate_number or '', country=country)
             except InvalidNumber:
                 raise RoutingInputError('Enter the toll-free fax number with its area code.') from None
-            if not is_toll_free(alternate):
+            if not is_toll_free(alternate, country):
                 raise RoutingInputError(f'{shown(alternate)} is not a toll-free number.')
             if alternate == number:
                 raise RoutingInputError('The toll-free number must differ from the recipient\'s own number.')

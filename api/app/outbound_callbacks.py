@@ -92,5 +92,8 @@ class CapturedCallbacks:
             key = 'callback:' + hashlib.sha256(event.encode()).hexdigest()
         except (TypeError, ValueError):
             raise CallbackRejected() from None
+        # Whether a failed call ended before any fax data, by the provider's documented codes (routing/predata.py).
+        from .routing.predata import callback as before_fax_data
+        ended = before_fax_data(provider, fields) if status == 'failed' else None
         return self.store.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
-                                  provider_sid=sid, status=status, event_key=key)
+                                  provider_sid=sid, status=status, event_key=key, before_data=ended)

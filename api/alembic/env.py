@@ -56,6 +56,7 @@ config.attributes["schema_partner_relay"] = importlib.import_module(package + ".
 config.attributes["schema_engine_learning"] = importlib.import_module(package + ".schema_engine_learning")
 config.attributes["schema_discovery"] = importlib.import_module(package + ".schema_discovery")
 config.attributes["schema_accounts"] = importlib.import_module(package + ".schema_accounts")
+config.attributes["schema_rules_delivery"] = importlib.import_module(package + ".schema_rules_delivery")
 
 
 def migrate(connection):

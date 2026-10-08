@@ -348,6 +348,9 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
     receipt = {'provider_sid': provider_sid, 'status': _status(fax.get('status'))}
     if receipt['status'] == 'failed':
         receipt['failure'] = _failure_sentence(fax)
+        # Whether the call ended before any fax data, by HumbleFax's documented fields (routing/predata.py).
+        from .routing.predata import humblefax as before_fax_data
+        receipt['before_fax_data'] = before_fax_data(fax)
     sender = _account_number(fax.get('fromNumber'))
     if sender:
         receipt['from_number'] = sender

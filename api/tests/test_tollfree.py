@@ -44,10 +44,13 @@ def test_0026_follows_the_shared_manifest_and_adds_one_empty_table(database):  #
     after = snapshot(database)
     assert after['alembic_version'] == [{'version_num': schema.HEAD}]
     assert after['toll_free_approvals'] == []
+    from api.tests.test_work_schema import without_later_access_changes
     for name, rows in before.items():
         if name != 'alembic_version':
-            # Later migrations add tables and nullable columns; compare what existed before, on its own columns.
-            assert ([{k: row[k] for k in rows[0]} for row in after[name]] == rows) if rows else after[name] == [], name
+            # Later migrations add tables and nullable columns, and 0032 gives two built-in roles Approve faxes;
+            # compare what existed before, on its own columns.
+            rows, kept = without_later_access_changes(name, rows), without_later_access_changes(name, after[name])
+            assert ([{k: row[k] for k in rows[0]} for row in kept] == rows) if rows else kept == [], name
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
     _downgrade(database, '0025_shared_manifest')

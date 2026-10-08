@@ -162,17 +162,17 @@ def test_turning_an_account_off_and_its_primary_overlay(database, tmp_path):
         accounts.patched(values, 'sinch', {'credentials': {'api_key': 'x'}}, provider_ids=Catalog.provider_ids)
 
 
-def test_an_extra_default_for_sending_is_refused_while_the_first_account_of_its_provider_is_set_up(database,
-                                                                                                    tmp_path):
-    """Temporary (WP-C removes it): routes and cost records are keyed by provider id, so the two would mix."""
+def test_an_extra_account_may_be_the_default_for_sending_beside_its_providers_first_account(database, tmp_path):
+    """Routes and cost records are keyed by account (WP-C), so the two never mix (WP-B's earlier 409 is gone)."""
     control = manager(database, tmp_path)
     first = control.initialize(environment(tmp_path))
     added = with_accounts(control, first, {'sinch-uk': UK})
-    with pytest.raises(accounts.AccountsError) as refused:
-        accounts.patched(added.active.values, 'sinch-uk', {'default_sending': True}, provider_ids=Catalog.provider_ids)
-    assert refused.value.status == 409
-    assert str(refused.value) == ("Sinch (UK) can't be the default for sending while your first Sinch account is set "
-                                  'up. Make the first Sinch account the default, or turn it off first.')
+    documents, changes = accounts.patched(added.active.values, 'sinch-uk', {'default_sending': True},
+                                          provider_ids=Catalog.provider_ids)
+    assert changes == {'outbound_backend': 'sinch'} and documents['sinch-uk']['default_sending'] is True
+    switched = with_accounts(control, added, documents, changes)
+    assert accounts.default_sending_key(switched.active.values) == 'sinch-uk'
+    assert [account.key for account in accounts.sending_accounts(switched.active.values)][:2] == ['sinch-uk', 'sinch']
     # A provider whose first account is not set up: the extra account becomes the default and builds the profile.
     current = control.store.read()
     documents = {'humble-2': {'provider': 'humblefax', 'label': 'HumbleFax (second)', 'sends': True,

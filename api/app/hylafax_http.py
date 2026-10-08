@@ -490,7 +490,10 @@ async def engine_result(request: Request, payload: dict = Body(...),
     try:
         await run_lifecycle_step(lambda: store.observe(
             job_id, attempt_id=attempt_id, profile_id=profile.id, provider_sid=job_id, status=status,
-            event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category))
+            event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category,
+            # The engine fails a call plainly only when it never dialed or ended before any fax data
+            # (hylafax_engine.result_outcome); every other ending waits for a person.
+            before_data=True if status == 'failed' and category is None else None))
     except DeliveryConflict:
         raise HTTPException(409, detail='The fax engine result does not match the fax.') from None
     except UnboundProviderProfile:

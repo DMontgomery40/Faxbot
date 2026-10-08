@@ -12,6 +12,8 @@ PERMISSIONS = frozenset({
     "tunnels:pair", "host:restart", "host:terminal", "owner:recover",
     "mailboxes:read", "mailboxes:manage",
     "work:read", "work:manage", "work:export", "work:import",
+    # Approve, refuse or send anyway a fax held by sending rules (revision 0032).
+    "fax:approve",
 })
 OUTBOUND_PERMISSIONS = frozenset({"fax:read", "fax:document", "fax:refresh", "fax:reconcile"})
 # Work on a received document is scoped like the document itself: at the

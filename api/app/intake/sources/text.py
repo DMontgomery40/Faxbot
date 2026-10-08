@@ -39,8 +39,6 @@ OWN_MAIL = 'Not brought in: Faxbot sent this email itself, so it was skipped to 
 AUTOMATIC = 'Not brought in: the message was sent automatically, such as an out-of-office reply or a bounce.'
 NO_MAILBOX = ('Not filed: this connector names no mailbox, and no sidecar file gave a fax number. Choose a '
               'mailbox for the connector.')
-MAILBOX_HAS_NO_NUMBER = ('Not filed: the mailbox {mailbox} has no fax number, so Faxbot cannot place documents in '
-                         'it. Add a number to it under Numbers, or choose another mailbox.')
 MAILBOX_GONE = 'Not filed: the mailbox this connector names no longer exists. Choose another mailbox.'
 BAD_SIDECAR = 'Not done: the sidecar file could not be used. {detail}'
 NO_SIDECAR_SEND = ('Not sent: no sidecar file with the fax number, such as {name}, arrived beside it within '

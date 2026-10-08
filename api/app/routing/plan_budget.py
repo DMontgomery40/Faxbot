@@ -28,8 +28,11 @@ The budgets are one configuration value, ``plan_budgets``
 - ``commitment``: a committed monthly spend, in the route's currency.
 
 An entry overrides the shipped default key by key. Routes are the keys
-delivery records use: ``sip`` for the carrier trunk, else the provider
-(``humblefax``, ``efax``).
+delivery records use: an extra provider account's own key first (``sinch-uk``,
+``sip-leeds``), then ``sip`` for the carrier trunk (``sip-<carrier>`` reads as
+the trunk), else the provider (``humblefax``, ``efax``). An extra account has a
+budget only when it has its own plan card or entry; it never shares its
+provider's first account's budget.
 
 What counts: faxes sent through the route that were delivered or whose outcome
 is uncertain (they may have gone), and faxes received through it, since the
@@ -88,9 +91,33 @@ class InvalidBudget(ValueError):
 
 # The configuration value ---------------------------------------------------------------
 
-def _route_key(route):
+def _presets():
+    try:
+        from ..sip_trunk import PRESETS
+        return frozenset(PRESETS)
+    except Exception:
+        return frozenset({'telnyx'})
+
+
+def account_keys(values):
+    """Keys of the extra provider accounts (``accounts.extra_accounts``): each is its own route."""
+    if values is None:
+        return frozenset()
+    try:
+        from ..accounts import extra_accounts
+        return frozenset(account.key for account in extra_accounts(values))
+    except Exception:
+        return frozenset()
+
+
+def _route_key(route, accounts=frozenset()):
+    """The route a budget belongs to: an extra account's own key, else ``sip`` for the trunk by any carrier."""
     route = route.strip().lower()
-    return 'sip' if route == 'sip' or route.startswith('sip-') else route
+    if route in accounts:
+        return route
+    if route == 'sip' or (route.startswith('sip-') and route[4:] in _presets()):
+        return 'sip'
+    return route
 
 
 def _count(value):
@@ -109,15 +136,18 @@ def _money_value(value):
         raise InvalidBudget('Enter amounts as numbers, such as 0.10 or 50.') from None
 
 
-def parse_budgets(text):
-    """``{route: {key: value}}`` from the configuration value; counts are ints (None: no limit), money is micros."""
+def parse_budgets(text, accounts=frozenset()):
+    """``{route: {key: value}}`` from the configuration value; counts are ints (None: no limit), money is micros.
+
+    ``accounts`` are extra account keys, kept as their own routes (``account_keys``).
+    """
     found = {}
     for part in (text or '').split(';'):
         part = part.strip()
         if not part:
             continue
         route, colon, rest = part.partition(':')
-        route = _route_key(route)
+        route = _route_key(route, accounts)
         if not colon or not _ROUTE.fullmatch(route):
             raise InvalidBudget('Write each plan budget as the route, a colon and its values, such as '
                                 'humblefax:pages=200,faxes=50,day=1.')
@@ -331,9 +361,10 @@ def budget_for(route, card, values=None, *, path=None, inbound=None):
 
     ``inbound``: the route's receiving card, when it has one, for a plan priced only on receiving.
     """
-    route = _route_key(route)
+    accounts = account_keys(values)
+    route = _route_key(route, accounts)
     try:
-        entry = parse_budgets(getattr(values, 'plan_budgets', '') or '').get(route)
+        entry = parse_budgets(getattr(values, 'plan_budgets', '') or '', accounts).get(route)
     except InvalidBudget:
         entry = None
     shipped = shipped_budgets(path).get(route) or {}
@@ -764,7 +795,7 @@ def budget_left(plan, now=None, *, engine=None, values=None, path=None):
     from .database import utcnow
     values = _values() if values is None else values
     engine = _engine() if engine is None else engine
-    route = _route_key(plan if isinstance(plan, str) else plan.provider_id)
+    route = _route_key(plan if isinstance(plan, str) else plan.provider_id, account_keys(values))
     card, inbound = _cards(engine, route, values)
     if not isinstance(plan, str):
         card = plan if plan.direction == 'outbound' else card
@@ -784,7 +815,8 @@ def plan_use(engine, route_key, *, now, values=None):
     left = budget_left(route_key, now, engine=engine, values=values)
     if left is None:
         return None
-    return PlanUse(pages=left.used.pages, faxes=left.used.faxes, page_budget=left.budget.pages)
+    return PlanUse(pages=left.used.pages, faxes=left.used.faxes, page_budget=left.budget.pages,
+                   minutes=left.used.minutes if left.budget.included_minutes else None)
 
 
 # One more fax ---------------------------------------------------------------------------------------

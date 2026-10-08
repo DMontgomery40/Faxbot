@@ -1027,14 +1027,8 @@ def _make_default(values, docs, account, current, role):
     if account.primary:
         current.pop(flag, None)
         return {field_name: account.provider}
-    if role == 'sending':
-        # WP-C removes this refusal once routes and cost records are keyed by account, not provider: today the
-        # default route and its costs are keyed by the provider id, so they could not tell the two apart.
-        set_up, _ = _primary_set_up(values, account.provider)
-        if set_up:
-            first = provider_name(account.provider, values)
-            raise AccountsError(f"{account.label} can't be the default for sending while your first {first} account "
-                                f'is set up. Make the first {first} account the default, or turn it off first.', 409)
+    # Routes, route choices and cost records are keyed by account (WP-C), so an extra account may be the default for
+    # sending beside its provider's first account: each keeps its own route, rate card and costs.
     current[flag] = True
     return {field_name: account.provider}
 
