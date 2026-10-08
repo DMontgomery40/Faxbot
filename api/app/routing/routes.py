@@ -104,6 +104,16 @@ def route_ready(configuration, *, ami=None):
         except (ProviderExecutionError, ValueError, TypeError):
             return False
     if pid == 'sip':
+        trunk = (configuration.settings or {}).get('trunk')
+        if trunk:
+            # A trunk after the first is ready only once Asterisk has it (several trunks, sip_trunk.trunk_loaded).
+            from .. import sip_trunk
+            from ..config import configuration_values
+            try:
+                if not sip_trunk.trunk_loaded(configuration_values(), trunk):
+                    return False
+            except Exception:
+                return False
         return ami is not None and ami._connected.is_set()
     from ..freeswitch_service import fs_cli_available
     return bool(fs_cli_available())

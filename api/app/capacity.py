@@ -117,13 +117,143 @@ def _own_numbers(values):
         return set()
 
 
+# -- several trunks and accounts (provider-rules design §3.6) ---------------------------------------------------
+#
+# Each trunk account has its own lines and calls a second: its account limits (``limits.at_once`` and
+# ``limits.calls_per_second``), else its carrier's published limits, else the fax engine's lines. Another
+# account with a "faxes at once" limit (a second Sinch account, say) holds that many faxes in progress. A fax's
+# delivery holds the account its attempt was given (``delivery_attempt_costs.route``, an account key), else the
+# account the fax was accepted with; a call coming in holds its trunk (``sip_call_records.trunk_key``; none is
+# the first trunk). The limit per number is unchanged and counts every route that calls.
+
+@dataclass(frozen=True)
+class Limited:
+    """One account whose room the claim gate watches: a trunk, or an account with a "faxes at once" limit."""
+    key: str
+    label: str
+    trunk: bool
+    at_once: int | None
+    calls_per_second: int | None
+    # The key fax_jobs.backend holds for a fax accepted with this account (the provider id of a first account).
+    backend: str | None = None
+    # A carrier account several trunks share (``carrier_groups``): the trunk keys whose calls add up against the
+    # carrier's account-wide limits. Empty for an account's own room.
+    members: tuple = ()
+
+
+# -- trunks on one carrier account ----------------------------------------------------------------------------------
+#
+# A carrier's published limits (``CARRIERS``) hold for the whole carrier account, whatever its connections: two
+# Telnyx trunk accounts on one Telnyx account share its 2 calls at once. Faxbot knows two trunks are one carrier
+# account when they read it with the same API key, or sign in as the same user at the same server; it knows they
+# are two when their API keys differ. Otherwise it keeps them apart and says so beside the trunks.
+
+def _carrier_identity(trunk):
+    """What identifies a trunk's carrier account, or None when Faxbot cannot tell (never the secret itself)."""
+    import hashlib
+    own = trunk.values
+    preset = getattr(own, 'sip_trunk_preset', '') or ''
+    key = getattr(own, 'telnyx_api_key', '') or '' if preset == 'telnyx' else ''
+    if key:
+        return 'key:' + hashlib.sha256(key.encode()).hexdigest()[:16]
+    if getattr(own, 'sip_trunk_auth', '') == 'registration' and getattr(own, 'sip_trunk_username', ''):
+        from .sip_trunk import PRESETS
+        host = getattr(own, 'sip_trunk_host', '') or getattr(PRESETS.get(preset), 'host', '')
+        return 'user:' + hashlib.sha256(f'{own.sip_trunk_username}@{host}'.encode()).hexdigest()[:16]
+    return None
+
+
+def carrier_groups(values):
+    """([Limited for each carrier account two or more trunks share], [one sentence per pair Faxbot can't tell])."""
+    from itertools import combinations
+    from . import sip_trunk
+    from .provider_labels import trunk_name
+    by_preset = {}
+    for trunk in sip_trunk.trunk_accounts(values):
+        preset = getattr(trunk.values, 'sip_trunk_preset', '') or ''
+        if preset in CARRIERS:
+            by_preset.setdefault(preset, []).append((trunk, _carrier_identity(trunk)))
+    groups, notes = [], []
+    for preset, items in by_preset.items():
+        if len(items) < 2:
+            continue
+        limits, carrier = CARRIERS[preset], trunk_name(preset)
+        shared = {}
+        for trunk, identity in items:
+            if identity:
+                shared.setdefault(identity, []).append(trunk)
+        for identity, trunks in shared.items():
+            if len(trunks) < 2:
+                continue
+            # The carrier's published limit, unless you set more lines at once on one of these trunks (an account
+            # verified to a higher level): then that is the account's limit.
+            chosen = [getattr(trunk.values, 'sip_trunk_max_calls', 0) or 0 for trunk in trunks]
+            at_once = max(chosen) if any(chosen) else limits.calls_at_once
+            groups.append(Limited(f'carrier:{preset}:{identity.split(":", 1)[1]}', f'your {carrier} account', True,
+                                  at_once, limits.calls_per_second, None, tuple(trunk.key for trunk in trunks)))
+        for (first, one), (second, other) in combinations(items, 2):
+            if one is not None and one == other:
+                continue
+            if one and other and one.startswith('key:') and other.startswith('key:'):
+                continue  # two API keys: two carrier accounts, each with its own limits
+            notes.append(f"Faxbot can't tell whether {first.label} and {second.label} are one {carrier} account. If "
+                         f"they are, their calls at once add up against {carrier}'s limit of {limits.calls_at_once}.")
+    return groups, notes
+
+
+def limited_accounts(values):
+    """{key: Limited} for every account whose calls or faxes at once are limited, the first trunk first."""
+    from . import sip_trunk
+    found = {}
+    default_trunk = None
+    try:
+        from .accounts import default_sending_key
+        default_trunk = default_sending_key(values)
+    except Exception:
+        default_trunk = None
+    if trunk_in_use(values):
+        # Named only when there are several trunks (room_sentence); the first trunk's account name.
+        try:
+            from .accounts import account_named
+            label = getattr(account_named(values, TRUNK), 'label', None) or 'your phone line'
+        except Exception:
+            label = 'your phone line'
+        found[TRUNK] = Limited(TRUNK, label, True, trunk_calls_at_once(values), calls_per_second(values), TRUNK)
+    for trunk in sip_trunk.extra_trunks(values):
+        # A fax accepted while this trunk was the default sending account is stored with backend 'sip'.
+        backend = TRUNK if default_trunk == trunk.key and TRUNK not in found else None
+        found[trunk.key] = Limited(trunk.key, trunk.label, True, trunk_calls_at_once(trunk.values),
+                                   calls_per_second(trunk.values), backend)
+    try:
+        from .accounts import all_accounts
+        listed = all_accounts(values)
+    except Exception:
+        listed = ()
+    for account in listed:
+        if account.provider == 'sip' or not account.at_once or account.key in found:
+            continue
+        found[account.key] = Limited(account.key, account.label, False, account.at_once, None,
+                                     account.key if account.primary else None)
+    try:
+        groups, _ = carrier_groups(values)
+    except Exception:
+        groups = []
+    for group in groups:
+        found[group.key] = group
+    return found
+
+
 @dataclass(frozen=True)
 class Room:
-    """What is full right now; ``trunk_full`` and ``rate_full`` apply only to faxes going over the trunk."""
+    """What is full right now on one account; ``trunk_full`` and ``rate_full`` apply only to faxes using it."""
     trunk_calls: int
     trunk_limit: int | None
     recent_starts: int
     rate_limit: int | None
+    # The account (a trunk, or another account with a limit) and its name for the waiting sentence.
+    key: str = TRUNK
+    label: str = 'your phone line'
+    trunk: bool = True
 
     @property
     def trunk_full(self):
@@ -132,6 +262,10 @@ class Room:
     @property
     def rate_full(self):
         return self.rate_limit is not None and self.recent_starts >= self.rate_limit
+
+    @property
+    def full(self):
+        return self.trunk_full or self.rate_full
 
 
 class Capacity:
@@ -205,35 +339,156 @@ class Capacity:
             query = query.where(d.c.id.not_in(list(exclude)))
         return query
 
-    def room(self, connection, values, now, *, exclude=()):
-        """The trunk's calls in progress and new calls in the last second, against their limits."""
-        if not trunk_in_use(values):
-            return Room(0, None, 0, None)
+    def room(self, connection, values, now, *, exclude=(), trunk=None, limited=None):
+        """One account's calls (or faxes) in progress and new calls in the last second, against its limits.
+
+        ``trunk`` is the account's key: a trunk (``sip``, the default, is the first trunk), or another account
+        with a "faxes at once" limit. An account with no limit has unlimited room. ``limited`` is
+        ``limited_accounts(values)`` when the caller already has it.
+        """
+        key = trunk or TRUNK
+        limited = limited if limited is not None else limited_accounts(values)
+        found = limited.get(key)
+        if found is None:
+            return Room(0, None, 0, None, key=key, label=key, trunk=False)
+        mine = self._room(connection, now, found, exclude)
+        if mine.full or found.members:
+            return mine
+        # A trunk on a carrier account it shares with other trunks: that account's limits hold for all of them.
+        for group in limited.values():
+            if key in group.members:
+                shared = self._room(connection, now, group, exclude)
+                if shared.full:
+                    return shared
+        return mine
+
+    def _room(self, connection, now, found, exclude=()):
+        """The calls (or faxes) one Limited holds now, against its own limits."""
+        key = found.key
+        routes = sorted(set(found.members) | ({key, found.backend} - {None})) if found.members else \
+            sorted({key, found.backend} - {None})
+        trunks = list(found.members) if found.members else [key]
         holds = self.holds(now, exclude=exclude).subquery()
-        outgoing = connection.scalar(sa.select(sa.func.count(sa.distinct(holds.c.call))).where(holds.c.route == TRUNK))
-        records = self.t['sip_call_records']
-        incoming = connection.scalar(sa.select(sa.func.count()).select_from(records).where(
-            records.c.direction == 'inbound', records.c.ended_at.is_(None), records.c.started_at >= now - HOLD))
-        a, c, j = self.t['outbound_attempts'], self.t['delivery_attempt_costs'], self.t['fax_jobs']
-        starts = connection.scalar(sa.select(sa.func.count()).select_from(
-            a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id)).where(
-            a.c.submitted_at > now - timedelta(seconds=1), a.c.submitted_at <= now,
-            sa.func.coalesce(c.c.route, j.c.backend) == TRUNK))
-        return Room(int(outgoing or 0) + int(incoming or 0), trunk_calls_at_once(values), int(starts or 0),
-                    calls_per_second(values))
+        outgoing = connection.scalar(sa.select(sa.func.count(sa.distinct(holds.c.call))).where(
+            holds.c.route.in_(routes)))
+        incoming = 0
+        if found.trunk:
+            records = self.t['sip_call_records']
+            # A call coming in holds its trunk; one that names no trunk came in on the first trunk.
+            on_trunk = (sa.func.coalesce(records.c.trunk_key, TRUNK).in_(trunks) if 'trunk_key' in records.c
+                        else sa.true() if TRUNK in trunks else sa.false())
+            incoming = connection.scalar(sa.select(sa.func.count()).select_from(records).where(
+                records.c.direction == 'inbound', records.c.ended_at.is_(None), records.c.started_at >= now - HOLD,
+                on_trunk))
+        starts = 0
+        if found.calls_per_second:
+            a, c, j = self.t['outbound_attempts'], self.t['delivery_attempt_costs'], self.t['fax_jobs']
+            starts = connection.scalar(sa.select(sa.func.count()).select_from(
+                a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id)).where(
+                a.c.submitted_at > now - timedelta(seconds=1), a.c.submitted_at <= now,
+                sa.func.coalesce(c.c.route, j.c.backend).in_(routes)))
+        return Room(int(outgoing or 0) + int(incoming or 0), found.at_once, int(starts or 0),
+                    found.calls_per_second, key=key, label=found.label, trunk=found.trunk)
+
+    def rooms(self, connection, values, now, *, exclude=(), limited=None):
+        """{account key: Room} for every account whose calls or faxes at once are limited: its own room, or the
+        carrier account it shares with other trunks when that is the one that is full."""
+        limited = limited if limited is not None else limited_accounts(values)
+        return {key: self.room(connection, values, now, exclude=exclude, trunk=key, limited=limited)
+                for key, item in limited.items() if not item.members}
 
     def _busy(self, now):
         holds = self.holds(now).subquery()
         return (sa.select(holds.c.number, sa.func.count(sa.distinct(holds.c.call)).label('calls'))
                 .group_by(holds.c.number).subquery())
 
+    def _not_local(self, jobs, values, condition):
+        """``condition``, for faxes that are not delivered inside Faxbot (an own number places no call)."""
+        own = sorted(_own_numbers(values))
+        if not own:
+            return condition
+        return sa.and_(condition, sa.or_(jobs.c.to_number.not_in(own),
+                                         sa.func.coalesce(jobs.c.send_by_call, 0) == 1))
+
     def _over_trunk(self, jobs, values):
         """Faxes the claim gate treats as going over the trunk: bound to it, and not delivered inside Faxbot."""
-        own = sorted(_own_numbers(values))
-        bound = jobs.c.backend == TRUNK
-        if not own:
-            return bound
-        return sa.and_(bound, sa.or_(jobs.c.to_number.not_in(own), sa.func.coalesce(jobs.c.send_by_call, 0) == 1))
+        return self._not_local(jobs, values, jobs.c.backend == TRUNK)
+
+    def _decisions(self, connection):
+        """The sending rules' decisions table (fax_job_rule_decisions), or None before it exists."""
+        found = getattr(self, '_decision_table', False)
+        if found is False:
+            try:
+                found = sa.Table('fax_job_rule_decisions', sa.MetaData(), autoload_with=connection)
+            except sa.exc.SQLAlchemyError:
+                found = None
+            self._decision_table = found
+        return found
+
+    def _bound_to_full(self, connection, jobs, values, full, limited):
+        """Faxes without a rule decision whose own account is full: they wait at the claim gate, as before rules."""
+        backends = sorted({limited[key].backend for key in full if limited[key].backend})
+        if not backends:
+            return sa.false()
+        condition = self._not_local(jobs, values, jobs.c.backend.in_(backends))
+        decisions = self._decisions(connection)
+        if decisions is not None:
+            # A fax with a rule decision is checked against its envelope instead (``_waits_for_room``).
+            condition = sa.and_(condition, ~sa.exists().where(decisions.c.job_id == jobs.c.id))
+        return condition
+
+    def _pinned(self, connection, job_id):
+        """(Decision, Facts) of the fax's current rule decision, None without one, 'unreadable' when it can't be read."""
+        decisions = self._decisions(connection)
+        if decisions is None:
+            return None
+        row = connection.execute(sa.select(decisions.c.decision, decisions.c.facts).where(
+            decisions.c.job_id == job_id).order_by(decisions.c.sequence.desc()).limit(1)).first()
+        if row is None:
+            return None
+        from .rules import model
+        try:
+            return model.Decision.from_json(row.decision), model.Facts.from_json(row.facts)
+        except (TypeError, ValueError, KeyError):
+            return 'unreadable'
+
+    def _waits_for_room(self, connection, job_id, values, full, limited):
+        """The full account a fax with a rule decision waits for, or None when it may be offered now.
+
+        ``when_busy: next``: it waits only when every calling account its envelope allows is full, so a full
+        first account never holds it while the next one has room. ``wait`` (the default): it waits when its
+        envelope's first account is full and the rule keeps that order (``use``, ``try_in_order``, a site's
+        accounts in order), or when every allowed calling account is full. A fax its rules send inside Faxbot
+        or straight to a verified partner places no call and never waits here. Faxes stay ``ready``.
+        """
+        pinned = self._pinned(connection, job_id)
+        if not isinstance(pinned, tuple):
+            return None  # no decision (the query already checked it) or unreadable (dispatch holds it in Sent)
+        decision, facts = pinned
+        if decision.outcome == 'blocked':
+            return None
+        envelope = decision.envelope
+        jobs = self.t['fax_jobs']
+        job = connection.execute(sa.select(jobs.c.backend, jobs.c.to_number, jobs.c.send_by_call).where(
+            jobs.c.id == job_id)).first()
+        if job is None:
+            return None
+        local = envelope.local and not job.send_by_call and job.to_number in _own_numbers(values)
+        if local or (envelope.direct and facts.partner):
+            return None
+        from .rules import model
+        if envelope.mode == 'automatic':
+            bound = next((key for key, item in limited.items() if item.backend == job.backend), None)
+            calling = [bound] if bound else []
+        else:
+            calling = [key for key in envelope.accounts if not model.is_relay(key)]
+        if not calling:
+            return None
+        if all(key in full for key in calling):
+            return calling[0]
+        if envelope.when_busy != 'next' and envelope.mode in ('one', 'ordered', 'automatic') and calling[0] in full:
+            return calling[0]
+        return None
 
     # Admission --------------------------------------------------------------
     def next_ready(self, connection, values, now, *, waiting=None, exclude=()):
@@ -250,7 +505,8 @@ class Capacity:
         d, j, dest = self.t['outbound_deliveries'], self.t['fax_jobs'], self.t['delivery_destinations']
         busy = self._busy(now)
         limit = sa.func.coalesce(dest.c.max_calls, DEFAULT_CALLS_TO_A_NUMBER)
-        room = self.room(connection, values, now)
+        limited = limited_accounts(values)
+        full = {key for key, room in self.rooms(connection, values, now, limited=limited).items() if room.full}
         resources, attempts, jobs2 = self.t['access_resources'], self.t['outbound_attempts'].alias(), j.alias()
         sender_of = (sa.select(resources.c.fax_job_id, resources.c.parent_id)
                      .where(resources.c.kind == 'outbound').subquery())
@@ -274,27 +530,35 @@ class Capacity:
             query = query.where(d.c.id.not_in(waiting))
         if exclude:
             query = query.where(d.c.id.not_in(list(exclude)))
-        if room.trunk_full or room.rate_full:
-            query = query.where(sa.not_(self._over_trunk(j, values)))
+        if full:
+            # A fax accepted without a rule decision waits for its own account, as before rules existed.
+            query = query.where(sa.not_(self._bound_to_full(connection, j, values, full, limited)))
         order = [sa.func.coalesce(j.c.urgent, 0).desc()]
         if 'send_by' in j.c:
             from .routing.schedule import DEADLINE_FIRST
             soon = sa.and_(j.c.send_by.is_not(None), j.c.send_by <= now + DEADLINE_FIRST)
             order += [sa.case((soon, 0), else_=1), sa.case((soon, j.c.send_by), else_=None)]
         query = query.order_by(*order, served.c.last.is_not(None), served.c.last, d.c.created_at, d.c.id)
-        return self._first_due(connection, values, now, query, d)
+        return self._first_due(connection, values, now, query, d, full=full, limited=limited)
 
     # At most this many offered faxes are looked at per page, and this many pages per claim.
     CANDIDATES, PAGES = 25, 4
 
-    def _first_due(self, connection, values, now, query, deliveries):
-        """The first offered delivery its recipient's schedule lets start now (see ``next_ready``)."""
+    def _first_due(self, connection, values, now, query, deliveries, *, full=(), limited=None):
+        """The first offered delivery its recipient's schedule lets start now (see ``next_ready``).
+
+        While an account is full, a fax with a rule decision is offered only when its envelope lets it go
+        another way (``_waits_for_room``); one that must wait stays ``ready`` and is looked at again next claim.
+        """
         from .routing.schedule import RECHECK
         skip, later, memo = self._held(now), None, {}
         for _ in range(self.PAGES):
             page = query.where(deliveries.c.id.not_in(skip)) if skip else query
             ids = connection.execute(page.limit(self.CANDIDATES)).scalars().all()
             for job_id in ids:
+                if full and self._waits_for_room(connection, job_id, values, full, limited) is not None:
+                    skip.append(job_id)
+                    continue
                 decision, _ = self.decision(connection, values, [job_id], now, memo)
                 if decision is not None and decision.hold_until is not None:
                     self.held[job_id] = min(decision.hold_until, now + RECHECK)
@@ -324,13 +588,8 @@ class Capacity:
             return False
         if not self.number_has_room(connection, rows[0]['phone_number'], now):
             return False
-        j = self.t['fax_jobs']
-        over = connection.scalar(sa.select(sa.func.count()).select_from(j).where(
-            j.c.id == rows[0]['id'], self._over_trunk(j, values)))
-        if over:
-            room = self.room(connection, values, now)
-            if room.trunk_full or room.rate_full:
-                return False
+        if self.waits_for(connection, values, rows[0]['id'], now) is not None:
+            return False
         # The recipient's schedule holds the whole call, which waits still together.
         ids = [row['id'] for row in rows]
         if set(ids) & set(self._held(now)):
@@ -379,17 +638,29 @@ class Capacity:
                     return ('Waiting: an earlier fax to this number has an unknown result. Faxbot waits until it is '
                             f'known or until {clock(min(unknown) + HOLD)}.')
                 return 'Waiting: another fax is calling this number.'
-            over = connection.scalar(sa.select(sa.func.count()).select_from(j).where(
-                j.c.id == job_id, self._over_trunk(j, values)))
-            if over:
-                room = self.room(connection, values, now)
-                if room.trunk_full:
-                    lines = room.trunk_limit
-                    return f"Waiting for a free line: all {lines} {'line is' if lines == 1 else 'lines are'} in use."
-                if room.rate_full:
-                    return (f'Waiting a moment: Faxbot starts at most {room.rate_limit} new '
-                            f"{'call' if room.rate_limit == 1 else 'calls'} each second on your phone line.")
+            room = self.waits_for(connection, values, job_id, now)
+            if room is not None:
+                return room_sentence(room, several=sum(item.trunk for item in limited_accounts(values).values()) > 1)
         return None
+
+    def waits_for(self, connection, values, job_id, now):
+        """The ``Room`` of the full account this fax waits for at the claim gate, or None."""
+        limited = limited_accounts(values)
+        if not limited:
+            return None
+        rooms = self.rooms(connection, values, now, limited=limited)
+        full = {key for key, room in rooms.items() if room.full}
+        if not full:
+            return None
+        j = self.t['fax_jobs']
+        bound = connection.execute(sa.select(j.c.id).where(
+            j.c.id == job_id, self._bound_to_full(connection, j, values, full, limited))).first()
+        if bound is not None:
+            backend = connection.scalar(sa.select(j.c.backend).where(j.c.id == job_id))
+            key = next(key for key in full if limited[key].backend == backend)
+            return rooms[key]
+        key = self._waits_for_room(connection, job_id, values, full, limited)
+        return rooms[key] if key is not None else None
 
     def schedule_sentence(self, connection, values, job_id, row, now):
         """Why the recipient's schedule holds this fax, in one sentence with what a failed try may cost; or None."""
@@ -411,17 +682,50 @@ class Capacity:
         busy = self._busy(now)
         limit = sa.func.coalesce(dest.c.max_calls, DEFAULT_CALLS_TO_A_NUMBER)
         with self.engine.connect() as connection:
-            room = self.room(connection, values, now)
+            limited = limited_accounts(values)
+            full = {key for key, room in self.rooms(connection, values, now, limited=limited).items() if room.full}
             blocked = sa.and_(limit != 0, sa.func.coalesce(busy.c.calls, 0) >= limit)
-            if room.trunk_full or room.rate_full:
-                blocked = sa.or_(blocked, self._over_trunk(j, values))
+            if full:
+                blocked = sa.or_(blocked, self._bound_to_full(connection, j, values, full, limited))
             query = (sa.select(sa.func.count()).select_from(
                 d.join(j, j.c.id == d.c.id).outerjoin(dest, dest.c.phone_number == j.c.to_number)
                 .outerjoin(busy, busy.c.number == j.c.to_number))
                 .where(d.c.state == 'ready', d.c.dispatch_mode == 'normal', blocked))
             if waiting is not None:
                 query = query.where(d.c.id.not_in(waiting))
-            return int(connection.scalar(query) or 0)
+            count = int(connection.scalar(query) or 0)
+            decisions = self._decisions(connection) if full else None
+            if decisions is not None:
+                # Faxes with a rule decision wait only when their envelope allows nothing with room.
+                decided = (sa.select(d.c.id).select_from(d.join(j, j.c.id == d.c.id)).where(
+                    d.c.state == 'ready', d.c.dispatch_mode == 'normal',
+                    sa.exists().where(decisions.c.job_id == d.c.id)).limit(200))
+                if waiting is not None:
+                    decided = decided.where(d.c.id.not_in(waiting))
+                count += sum(self._waits_for_room(connection, job_id, values, full, limited) is not None
+                             for job_id in connection.execute(decided).scalars())
+            return count
+
+
+def room_sentence(room, *, several=False):
+    """One sentence for a fax waiting for room on ``room``'s account.
+
+    With one trunk the sentences are the ones Faxbot always showed; with several, they name the trunk.
+    """
+    if room.trunk_full:
+        lines = room.trunk_limit
+        if room.trunk and not several and room.key == TRUNK:
+            return f"Waiting for a free line: all {lines} {'line is' if lines == 1 else 'lines are'} in use."
+        if room.trunk:
+            return (f"Waiting for a free line on {room.label}: all {lines} "
+                    f"{'line is' if lines == 1 else 'lines are'} in use.")
+        return (f"Waiting: {room.label} already has {lines} {'fax' if lines == 1 else 'faxes'} in progress, its "
+                'limit at once.')
+    if room.rate_full:
+        calls = 'call' if room.rate_limit == 1 else 'calls'
+        where = 'your phone line' if not several and room.key == TRUNK else room.label
+        return f'Waiting a moment: Faxbot starts at most {room.rate_limit} new {calls} each second on {where}.'
+    return None
 
 
 _CACHE = {}

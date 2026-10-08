@@ -20,7 +20,7 @@ set -u
 
 data=${FAXBOT_DATA_DIR:-/faxdata}
 file='' did='' caller='' status='' pages='' mode='' started='' answered='' ended='' uniqueid='' station64=''
-callid64='' rate='' resolution='' sub=''
+callid64='' rate='' resolution='' sub='' trunk=''
 
 fail() {
   printf '%s\n' "$1"
@@ -49,6 +49,8 @@ for word in "$@"; do
     resolution) resolution=$(printf '%s' "$value" | tr -cd '0-9x') ;;
     # The subaddress frame (SUB) the sender's machine sent, in hex (patch 0004), for Faxbot's number rules.
     sub) sub=$(printf '%s' "$value" | tr -cd '0-9a-f' | cut -c1-64) ;;
+    # The trunk account the call came in on (its endpoint's FAXBOT_TRUNK); empty on the first trunk.
+    trunk) trunk=$(printf '%s' "$value" | tr -cd 'a-z0-9_-' | cut -c1-32) ;;
   esac
 done
 case $file in
@@ -74,10 +76,10 @@ case $mode in
   *) t38=null ;;
 esac
 
-body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"sub_hex":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s,"sip_call_id_b64":%s,"rate":%s,"resolution":%s}}' \
+body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"sub_hex":%s,"trunk":%s,"call":{"did":%s,"trunk":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s,"sip_call_id_b64":%s,"rate":%s,"resolution":%s}}' \
   "$file" "$(text "$did")" "$(text "$caller")" "$(text "$status")" "$(number "$pages")" "$(text "$uniqueid")" \
-  "$(text "$sub")" \
-  "$(text "$did")" "$(text "$caller")" "$(number "$started")" "$(number "$answered")" "$(number "$ended")" \
+  "$(text "$sub")" "$(text "$trunk")" \
+  "$(text "$did")" "$(text "$trunk")" "$(text "$caller")" "$(number "$started")" "$(number "$answered")" "$(number "$ended")" \
   "$(number "$pages")" "$t38" "$(text "$station64")" "$(text "$callid64")" "$(number "$rate")" \
   "$(text "$resolution")")
 

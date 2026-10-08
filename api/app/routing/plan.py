@@ -145,6 +145,22 @@ def _trunk_numbers(values):
     return {destination_key(number, country) for number in getattr(values, 'sip_trunk_did_list', ())}
 
 
+def _own_trunks(values, destination):
+    """The trunk accounts that receive on ``destination`` (sip_trunk.trunk_numbers): over any of them, a fax to it
+    only calls itself back. The first trunk's numbers count whether or not it is set up, as before."""
+    country = getattr(values, 'fax_default_country', 'US')
+    found = {'sip'} if destination in _trunk_numbers(values) else set()
+    try:
+        from ..sip_trunk import trunk_numbers
+        listed = trunk_numbers(values)
+    except Exception:
+        listed = {}
+    for key, numbers in listed.items():
+        if destination in {destination_key(number, country) for number in numbers}:
+            found.add(key)
+    return found
+
+
 @dataclass(frozen=True)
 class RoutePlan:
     destination: str
@@ -295,10 +311,13 @@ class RoutePlanner:
                     continue
                 kept.append(candidate)
             candidates = kept
-        if destination in _trunk_numbers(values):
-            # One of the trunk's own numbers: an extra route over that trunk only calls itself back
+        own_trunks = _own_trunks(values, destination)
+        if own_trunks:
+            # One of a trunk's own numbers: an extra route over that trunk only calls itself back
             # (seen live on 2026-10-04 when a fallback faxed the Telnyx number over the Telnyx trunk).
-            candidates = [candidate for candidate in candidates if candidate.bound or candidate.key != 'sip']
+            # With several trunks each trunk is kept off its own numbers; another account may still call them.
+            candidates = [candidate for candidate in candidates
+                          if candidate.bound or candidate.key not in own_trunks]
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
         stats = self.store.route_stats(destination)

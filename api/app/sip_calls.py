@@ -354,6 +354,16 @@ def _received(value, country=None):
         return number
 
 
+_TRUNK = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
+
+
+def _trunk(value):
+    """The trunk account a call went over, for ``trunk_key``: a trunk after the first by its key; the first
+    trunk (``sip``), and a call that names none, as NULL, which every reader takes as the first trunk."""
+    value = str(value or '').strip()
+    return value if _TRUNK.fullmatch(value) and value != 'sip' else None
+
+
 def _identity(value):
     text = str(value or '').strip()
     return text if _ID.fullmatch(text) else None
@@ -470,6 +480,8 @@ class SipCallRecords:
         preset = str(event.get('Preset') or '')[:32] or None
         values = {'trunk_preset': preset, 'did': caller, 'caller': caller, 'called': _number(event.get('Called')),
                   'fax_preference': 1 if event.get('FaxPreference') == 'yes' else 0}
+        if _trunk(event.get('Trunk')):
+            values['trunk_key'] = _trunk(event.get('Trunk'))
         return self._write(lambda connection, table: self._outbound_row(
             connection, table, job_id, attempt_id, now, **values)['id'])
 
@@ -601,7 +613,7 @@ class SipCallRecords:
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': t38, 'pages': None, 'fax_status': None, 'remote_station_id': None,
             'error_cause': None if answered else 'caller hung up before answer', 'fax_preference': 0,
-            'sip_call_id': sip_call_id, 'created_at': now, 'updated_at': now}
+            'sip_call_id': sip_call_id, 'trunk_key': _trunk(event.get('Trunk')), 'created_at': now, 'updated_at': now}
 
         def apply(connection, table):
             row = self._find(connection, table, 'inbound', call_id)
@@ -609,7 +621,8 @@ class SipCallRecords:
                 connection.execute(table.insert().values(**record))
                 return record['id']
             changes = {name: record[name] for name in ('sip_call_id', 'answered_at', 'connected_seconds', 'did',
-                                                       'caller', 'called') if row[name] is None and record[name]}
+                                                       'caller', 'called', 'trunk_key')
+                       if row[name] is None and record[name]}
             if row['t38'] == 'unknown' and t38 != 'unknown':
                 changes['t38'] = t38
             # Asterisk's own times win over the engine's report time.
@@ -668,7 +681,7 @@ class SipCallRecords:
         return self._write(apply)
 
     def record_engine_receive(self, call_id, *, success, pages=None, station=None, reason=None, did=None,
-                              caller=None, inbound_fax_id=None, preset=None, now=None):
+                              caller=None, inbound_fax_id=None, preset=None, trunk=None, now=None):
         """What the SSL Fax engine reported for one received call, fax or not: its result decides the
         call's verdict, whether Asterisk's event for the call came first or not."""
         call_id = str(call_id or '').strip()
@@ -691,7 +704,7 @@ class SipCallRecords:
                     # The engine reports once its session is over; Asterisk's event brings the exact times.
                     'started_at': now, 'answered_at': None, 'ended_at': now, 'disposition': 'answered',
                     'connected_seconds': None, 't38': 'unknown', 'fax_preference': 0, 'sip_call_id': None,
-                    'created_at': now, 'updated_at': now, **values}
+                    'trunk_key': _trunk(trunk), 'created_at': now, 'updated_at': now, **values}
                 connection.execute(table.insert().values(**record))
                 self._settle_engine(connection, table, record['id'], None, now)
                 return record['id']
@@ -702,7 +715,7 @@ class SipCallRecords:
             changes['disposition'] = 'answered'
             if row['ended_at'] is None:
                 changes['ended_at'] = now
-            for name, value in (('did', did), ('caller', caller), ('called', did)):
+            for name, value in (('did', did), ('caller', caller), ('called', did), ('trunk_key', _trunk(trunk))):
                 if row[name] is None and value:
                     changes[name] = value
             if row['job_id'] is None and _identity(inbound_fax_id):
@@ -775,7 +788,7 @@ class SipCallRecords:
             'pages': _pages(call.get('pages')), 'fax_status': status,
             'remote_station_id': _station(call.get('remote_station_id_b64')), 'error_cause': None,
             'fax_preference': 0, 'sip_call_id': _sip_call_id(call.get('sip_call_id_b64')),
-            'created_at': now, 'updated_at': now}
+            'trunk_key': _trunk(call.get('trunk')), 'created_at': now, 'updated_at': now}
 
         return self._insert_inbound(record)
 
@@ -801,8 +814,8 @@ class SipCallRecords:
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': _t38(event.get('Mode')), 'pages': _pages(event.get('Pages')), 'fax_status': status,
             'remote_station_id': _station(event.get('Station64')), 'error_cause': error_cause,
-            'fax_preference': 0, 'sip_call_id': _sip_call_id(event.get('CallID64')), 'created_at': now,
-            'updated_at': now}
+            'fax_preference': 0, 'sip_call_id': _sip_call_id(event.get('CallID64')),
+            'trunk_key': _trunk(event.get('Trunk')), 'created_at': now, 'updated_at': now}
         return self._insert_inbound(record)
 
     def link_inbound(self, call_id, inbound_fax_id):
@@ -828,7 +841,12 @@ class SipCallRecords:
                 row = self._find(connection, self.table, 'inbound', str(call_id))
         except (sa.exc.SQLAlchemyError, SipCallRecordError):
             return None
-        return {'did': row['did'], 'caller': row['caller'], 'pages': row['pages']} if row is not None else None
+        if row is None:
+            return None
+        found = {'did': row['did'], 'caller': row['caller'], 'pages': row['pages']}
+        if row.get('trunk_key'):
+            found['trunk'] = row['trunk_key']  # a trunk after the first; none is the first trunk
+        return found
 
     def unclaimed_inbound_calls(self):
         """Calls whose image Asterisk stored but could not hand over, not linked to a fax yet."""

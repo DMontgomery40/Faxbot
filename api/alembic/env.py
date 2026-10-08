@@ -60,6 +60,7 @@ config.attributes["schema_rules_delivery"] = importlib.import_module(package + "
 config.attributes["schema_notice_repair"] = importlib.import_module(package + ".schema_notice_repair")
 config.attributes["schema_certainty"] = importlib.import_module(package + ".schema_certainty")
 config.attributes["schema_send_once"] = importlib.import_module(package + ".schema_send_once")
+config.attributes["schema_trunks_sites"] = importlib.import_module(package + ".schema_trunks_sites")
 
 
 def migrate(connection):

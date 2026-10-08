@@ -604,7 +604,7 @@ async def test_when_the_trunk_is_busy_a_rule_may_use_the_next_allowed_account(ru
                               RouteChoice(RouteCandidate('signalwire', 'provider', 'signalwire', None), 'alternative',
                                           None)), None, pinned=pinned)
         transport = RoutedTransport(Inner(ruled.delivery), direct=None)
-        transport._trunk_has_room = lambda claim, revision: False
+        transport._trunk_has_room = lambda claim, revision, key='sip': False
         if expect is None:
             with pytest.raises(CapacityWait):
                 transport._assign(claim, plan, revision)

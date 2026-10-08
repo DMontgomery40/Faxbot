@@ -349,11 +349,32 @@ def plan_use(engine, route_key, *, now, values=None):
 
 # Putting them together -------------------------------------------------------------------
 
-def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None):
-    """The ``RouteFacts`` for one route and number, from the installation when it has a database."""
+def _extra_trunk(values, account):
+    """Settings as an extra trunk account sees them (its own carrier and numbers), or None for anything else."""
+    if not account or account == 'sip' or values is None:
+        return None
+    try:
+        from ..sip_trunk import trunk_for
+        found = trunk_for(values, account)
+    except Exception:
+        return None
+    return found.values if found is not None else None
+
+
+def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None):
+    """The ``RouteFacts`` for one route and number, from the installation when it has a database.
+
+    ``account`` is the account the call would use (its key; ``route_key`` when not given): an extra trunk is
+    priced by its own carrier's card, and an origin-rated row for where its calls start (``origin_rates``)
+    prices the call when one matches. ``site`` prices it as if it started from that site instead.
+    """
     values = _values() if values is None else values
     engine = _engine() if engine is None else engine
     data = shipped() if data is None else data
+    account = account or route_key
+    own = _extra_trunk(values, account)
+    if own is not None:
+        values, route_key = own, 'sip'
     country = getattr(values, 'fax_default_country', 'US') or 'US'
     where = classify(destination, country)
     preset = getattr(values, 'sip_trunk_preset', '') or ''
@@ -372,6 +393,18 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     if card is None and not saved:
         card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)
     terms, refusal = terms_for(identity, where, card, data, label=label)
+    origin = None
+    if refusal is None and (card is None or not card.flat_plan):
+        # Prices by where the call starts (design §3.7): the account's site or country, the longest prefix.
+        try:
+            from .origin_rates import rated_terms
+            rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
+                                     account_key=account, engine=engine, site=site)
+        except Exception:
+            rated, row = None, None
+        if rated is not None:
+            terms, origin = rated, row.origin
+            card = card or rated.card
     terms = plan_terms(route_key, terms, card, values)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
@@ -396,4 +429,5 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, route_key, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
-    return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None)
+    return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
+                      origin=origin)

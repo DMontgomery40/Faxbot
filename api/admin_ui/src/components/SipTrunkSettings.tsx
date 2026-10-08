@@ -47,6 +47,10 @@ import TelnyxT38 from './TelnyxT38';
 import TelnyxNames from './TelnyxNames';
 import FaxSettings from './FaxSettings';
 import { formatServerTime } from '../api/time';
+import { TrunkPicker } from './ProviderAccountsTrunks';
+import { rulesApiFor } from './ProviderRulesApi';
+import TrunkAccountPanel from './TrunkAccountPanel';
+import SendOnlyNumbers from './SendOnlyNumbers';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -202,6 +206,11 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const [reach, setReach] = useState<Reach | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+  // Several trunks: the trunk account this page shows; null and 'sip' are the first trunk (full page below).
+  const [trunkKey, setTrunkKey] = useState<string | null>(null);
+  const rules = useMemo(() => rulesApiFor(client), [client]);
+  const call = useCallback(<T,>(request: { method: string; path: string; body?: unknown }) => client.call<T>(request),
+    [client]);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
   const expectedRevision = sharedRevision ?? revision;
@@ -481,8 +490,19 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   // The vendor names the checklist: "What you set in Avaya".
   const vendor = preset?.label.split(' ')[0] ?? '';
 
+  if (trunkKey && trunkKey !== 'sip') {
+    return (
+      <Stack spacing={2} data-testid="sip-trunk-settings">
+        <TrunkPicker api={rules} value={trunkKey} onChange={setTrunkKey} />
+        <TrunkAccountPanel api={rules} call={call} accountKey={trunkKey} />
+      </Stack>
+    );
+  }
   return (
     <Stack spacing={2} data-testid="sip-trunk-settings">
+      <TrunkPicker api={rules} value={trunkKey} onChange={setTrunkKey} />
+      {Object.values(status?.trunk_problems ?? {}).map((problem) => <Alert key={problem} severity="warning">{problem}</Alert>)}
+      {(status?.carrier_notes ?? []).map((note) => <Alert key={note} severity="info">{note}</Alert>)}
       <Typography variant="h6">{phone ? 'SIP trunk to your phone system' : 'Carrier SIP trunk'}</Typography>
       <Typography variant="body2" color="text.secondary">
         {phone ? `${PHONE_INTRO[directions]} The carrier behind your phone system bills these calls.`
@@ -843,6 +863,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           <NegotiationSummary client={client} />
         </Box>
       )}
+      {showCalls && <SendOnlyNumbers call={call} />}
     </Stack>
   );
 }

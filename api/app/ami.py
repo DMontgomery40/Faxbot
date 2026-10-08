@@ -80,6 +80,7 @@ def prepare_originate_fields(
     t38_now: bool = False,
     iaf: Optional[str] = None,
     audio: bool = False,
+    endpoint: str = "trunk-endpoint",
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -91,6 +92,8 @@ def prepare_originate_fields(
     ``station_id`` is the fax station identifier (defaults to ``caller_id``).
     ``fax_preference`` adds the RFC 6913 Accept-Contact header to this call's
     initial INVITE: a property of the route, never a reason to call again.
+    ``endpoint`` is the trunk the call goes over (``sip_trunk.endpoint_name``);
+    the caller checks it is one Faxbot rendered.
     Async Originate ignores PreDialGoSub in Asterisk 22, so the header is set
     as an Originate variable, which Asterisk applies to the new channel before
     the INVITE is sent.
@@ -108,6 +111,8 @@ def prepare_originate_fields(
         raise ValueError("Unsupported AMI destination")
     if station_id is None:
         station_id = caller_id
+    if not isinstance(endpoint, str) or not re.fullmatch(r"trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint", endpoint):
+        raise ValueError("Unsupported AMI trunk")
     if not isinstance(fax_preference, bool):
         raise ValueError("Unsupported AMI fax preference")
     if not isinstance(tiff_path, str) or not re.fullmatch(
@@ -154,7 +159,7 @@ def prepare_originate_fields(
         "ActionID": (
             f"faxbot:{job_id}:{attempt_id}" if attempt_id is not None else str(uuid4())
         ),
-        "Channel": f"PJSIP/{dial}@trunk-endpoint",
+        "Channel": f"PJSIP/{dial}@{endpoint}",
         "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
@@ -250,9 +255,31 @@ def frame_options(values, dest, max_rate=None):
     return found
 
 
+class UnknownTrunk(ValueError):
+    """The fax was given a trunk account that is not in Asterisk's file (not set up, turned off or removed)."""
+
+
+def trunk_values(values, trunk=None):
+    """(settings as the trunk sees them, its endpoint) for trunk account ``trunk``; None is the first trunk.
+
+    Only a trunk Faxbot rendered into Asterisk's file is dialed (``sip_trunk.rendered_endpoints``); any other
+    raises UnknownTrunk before anything is sent.
+    """
+    from . import sip_trunk
+    if not trunk or trunk == sip_trunk.PRIMARY:
+        return values, sip_trunk.ENDPOINT
+    found = sip_trunk.trunk_for(values, trunk)
+    if found is None or found.endpoint not in sip_trunk.rendered_endpoints(values):
+        raise UnknownTrunk("This fax's trunk is not set up in the fax engine.")
+    return found.values, found.endpoint
+
+
 def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
-                         choice=None):
+                         choice=None, trunk=None):
     """The exact Originate fields for these settings; preflight and submission share it.
+
+    ``trunk`` is the trunk account the fax goes over (its key); None or ``sip`` is the first trunk. The call
+    then uses that trunk's caller ID, number format and endpoint.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
@@ -268,6 +295,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     """
     from . import sip_trunk
     from .routing.reply_number import caller_id_for
+    values, endpoint = trunk_values(values, trunk)
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
     learned = getattr(call, "learned", None)
@@ -287,7 +315,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
         header=header, attempt_id=attempt_id,
         station_id=identity[1] if identity is not None else (choice.number or None),
-        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
+        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, endpoint=endpoint, **limits)
 
 
 async def _login(
@@ -652,18 +680,24 @@ class AMIClient:
         *,
         attempt_id: Optional[str] = None,
         call=None,
+        trunk: Optional[str] = None,
     ):
         """Await acceptance of one Originate action; acceptance is not delivery.
 
         Submission listeners hear about the call after validation and before
         the action is written, so an unacknowledged call still leaves a record.
+        ``trunk`` is the trunk account the fax goes over (None: the first trunk).
         """
-        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call)
+        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call,
+                                      trunk=trunk)
+        own, _ = trunk_values(settings, trunk)
         submission = {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
-            "CallerID": fields["CallerID"], "Preset": settings.sip_trunk_preset or "",
+            "CallerID": fields["CallerID"], "Preset": own.sip_trunk_preset or "",
             "FaxPreference": "yes" if FAX_PREFERENCE_VARIABLE in fields["Variable"] else "no",
         }
+        if trunk and trunk != "sip":
+            submission["Trunk"] = trunk
         learned = getattr(call, "learned", None)
         if learned is not None and learned.changed():
             submission["Learned"] = learned.payload()  # what this call used and why (fax_call_choices)

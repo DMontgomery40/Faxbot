@@ -65,6 +65,8 @@ NO_MAILBOX = ('No rule under Numbers sends faxes for {number} to a mailbox. Add 
               'then choose it again.')
 OTHER_MAILBOX = ('Faxes for {number} go to the {other} mailbox, not {mailbox}. Choose a number that reaches '
                  '{mailbox}, or change its rule under Numbers.')
+SEND_ONLY = ('{number} is a send-only number: it shows on faxes you send but never receives faxes here. Choose a '
+             'number Faxbot receives on.')
 NOT_A_NUMBER = '{number} is not a fax number Faxbot can read. Enter it with its country code, such as +13035550100.'
 
 
@@ -176,12 +178,14 @@ def receiving_numbers(values) -> set:
         name = _RECEIVES_ON_CONFIGURED.get(provider)
         if name and getattr(values, name, ''):
             numbers.add(stored_number(getattr(values, name), country=_country(values)))
-    return numbers
+    from .send_only import without
+    return without(values, numbers)  # a send-only number never receives here (routing/send_only.py)
 
 
 def account_numbers(values) -> set:
     from .own_numbers import account_numbers as own_accounts
-    return set(own_accounts(values)) | {number for number, _ in _provider_numbers(values)}
+    from .send_only import without
+    return without(values, set(own_accounts(values)) | {number for number, _ in _provider_numbers(values)})
 
 
 def mailbox_routes(engine, values) -> list:
@@ -284,6 +288,9 @@ def candidates(values, *, engine=None, store=None, routes=None) -> list:
 
 def refusal(values, number, *, routes, mailbox_id=None, labels=None) -> str | None:
     """Why ``number`` cannot be the reply number (for ``mailbox_id``, or the whole organization); None when it can."""
+    from .send_only import numbers as send_only_numbers
+    if number in send_only_numbers(values):
+        return SEND_ONLY.format(number=number)
     if number not in account_numbers(values):
         return NOT_YOURS.format(number=number)
     if number not in receiving_numbers(values):

@@ -620,7 +620,7 @@ def test_a_received_call_that_left_no_fax_is_reported_once_with_the_engines_reas
     assert [path.name for path in reports] == ['1791180000-recv000000003-failed.report']
     report = json.loads(reports[0].read_text())
     assert report == {'engine_id': '0123456789abcdef', 'commid': '000000003', 'key': '000000003-1791180000',
-                      'token': '17911994223', 'caller': '3034265097', 'called': '17208565062',
+                      'token': '17911994223', 'caller': '3034265097', 'called': '17208565062', 'trunk': '',
                       'reason_b64': base64.b64encode(b'No sender protocol (T.30 T1 timeout) {E102}').decode()}
     # Reported once; the session still in progress is reported when it ends.
     assert run('sessions', environment).returncode == 0

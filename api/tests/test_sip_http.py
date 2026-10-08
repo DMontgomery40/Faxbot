@@ -83,6 +83,7 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
     body = bare_client.get('/admin/sip/status', headers=ADMIN).json()
     assert body == {'configured': False, 'applied': False, 'asterisk_connected': False,
+                    'account': 'sip', 'trunks': [], 'trunk_problems': {}, 'carrier_notes': [],
                     'registration': 'unknown', 'registration_transport': None,
                     'registration_text': 'Registration status is not available.',
                     'reachability': 'unknown',
@@ -302,7 +303,10 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)],
                         # Caller-name lookup at Telnyx (Costs advice): read it, and turn it off per number.
                         ('GET', '/admin/sip/telnyx/names'): [('providers:read', False)],
-                        ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): [('providers:write', True)]}
+                        ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): [('providers:write', True)],
+                        # Send-only numbers (WP-T): read with the trunk, saved like the reply number.
+                        ('GET', '/admin/sip/send-only'): [('providers:read', False)],
+                        ('PUT', '/admin/sip/send-only'): [('settings:write', False)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):

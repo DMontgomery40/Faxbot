@@ -670,6 +670,10 @@ const consoleHandlers = [
     hold: null, trace: [] })),
   http.get('/admin/providers/accounts', () => json({ generation: 1, default_sending: null, default_receiving: null,
     accounts: [], providers: [], sites: [] })),
+  // Several trunks (WP-T): send-only numbers on the trunk page, and trunk advice under Recommendations.
+  http.get('/admin/sip/send-only', () => json({ numbers: [], advice: [], quiet_days: 90 })),
+  http.get('/routing/recommendations/trunks', () => json({ window_days: 30, trunks: [], items: [],
+    sentence: 'Trunk advice needs two or more trunks; with one, there is nothing to move.' })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.

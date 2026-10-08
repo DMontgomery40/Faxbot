@@ -667,7 +667,9 @@ async def _sinch_inbound(request, path_key):
 @router.post('/_internal/asterisk/inbound')
 def asterisk_inbound(request: Request, payload: dict = Body(...),
                      x_internal_secret: Optional[str] = Header(default=None)):
-    trunk = _trunk_key(payload)
+    from .sip_handover import receiving_trunk
+    from ..config import configuration_values
+    trunk = receiving_trunk(configuration_values(), payload)
     receiving_account('sip', '/_internal/asterisk/inbound', trunk)
     if not settings.asterisk_inbound_secret:
         raise HTTPException(401, detail='Internal secret not configured')
@@ -757,8 +759,10 @@ def receive_handover(request: Request, payload: dict, root: str):
     """
     from .. import accounts
     from ..config import configuration_values
+    from .sip_handover import receiving_trunk
     service = _acquisition(request)
-    trunk = _trunk_key(payload)
+    # The trunk the call came in on (several trunks: design §3.6); by the called number when two share addresses.
+    trunk = receiving_trunk(configuration_values(), payload)
     account = (accounts.receiving_account(configuration_values(), 'sip', trunk) if trunk
                else accounts.original_path_account(configuration_values(), 'sip'))
     account_key = account.key if account is not None else 'sip'
@@ -778,7 +782,7 @@ def receive_handover(request: Request, payload: dict, root: str):
                'from_number': received_number(text('from_number'))}
     if isinstance(payload.get('call'), dict):
         payload['call'] = {**payload['call'], 'did': received_number(payload['call'].get('did')),
-                           'caller': received_number(payload['call'].get('caller'))}
+                           'caller': received_number(payload['call'].get('caller')), 'trunk': trunk}
     uniqueid = text('uniqueid', 100)
     if uniqueid is None or re.fullmatch(r'[A-Za-z0-9._:-]{1,100}', uniqueid) is None:
         uniqueid = 'file:' + hashlib.sha256(tiff_path.encode()).hexdigest()[:32]
@@ -822,7 +826,7 @@ def receive_handover(request: Request, payload: dict, root: str):
         from ..routing.background import installation_engine
         engine, _ = installation_engine(request.app)
         sip_calls.record_inbound_call(engine, call, call_id=uniqueid, inbound_fax_id=begun.inbound_fax_id,
-                                      preset=settings.sip_trunk_preset, fax_status=faxstatus)
+                                      preset=own.sip_trunk_preset, fax_status=faxstatus)
         # Received by the SSL Fax engine: what SSL Fax did on this call.
         from ..hylafax_engine import record_inbound_engine
         record_inbound_engine(engine, payload, call_key=uniqueid, inbound_fax_id=begun.inbound_fax_id,

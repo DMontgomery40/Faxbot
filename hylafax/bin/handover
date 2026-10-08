@@ -51,6 +51,8 @@ for ticket in "$state"/received/*.ticket; do
   subaddr=$(field subaddr "$ticket" | tr -cd '0-9#*+' | cut -c1-20)
   # The far end's internet fax address (host:port), base64; none on an older ticket or when it offered none.
   remote_address64=$(field remote_address64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
+  # The trunk account the call came in on; none on the first trunk or on a ticket from before it was kept.
+  trunk=$(field trunk "$ticket" | tr -cd 'a-z0-9_-' | cut -c1-32)
   sslfax=$(field sslfax "$ticket")
   offered=$(field offered "$ticket")
   case $sslfax in true|false) ;; *) sslfax=null ;; esac  # unknown (a call without its session log)
@@ -70,9 +72,9 @@ for ticket in "$state"/received/*.ticket; do
   else
     status=SUCCESS
   fi
-  body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":"%s","faxpages":%s,"uniqueid":"%s","subaddress":%s,"call":{"did":%s,"caller":%s,"pages":%s,"t38":null,"remote_station_id_b64":%s},"engine":{"engine":"hylafax","engine_ref":"%s:%s","sslfax":%s,"sslfax_offered":%s,"transfer_seconds":%s,"signal_rate_b64":%s,"data_format_b64":%s,"negotiation_b64":%s,"remote_address_b64":%s}}' \
-    "$target" "$(text "$called")" "$(text "$caller")" "$status" "$(number "$pages")" "$uniqueid" "$(text "$subaddr")" \
-    "$(text "$called")" "$(text "$caller")" "$(number "$pages")" "$(text "$station64")" \
+  body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":"%s","faxpages":%s,"uniqueid":"%s","subaddress":%s,"trunk":%s,"call":{"did":%s,"trunk":%s,"caller":%s,"pages":%s,"t38":null,"remote_station_id_b64":%s},"engine":{"engine":"hylafax","engine_ref":"%s:%s","sslfax":%s,"sslfax_offered":%s,"transfer_seconds":%s,"signal_rate_b64":%s,"data_format_b64":%s,"negotiation_b64":%s,"remote_address_b64":%s}}' \
+    "$target" "$(text "$called")" "$(text "$caller")" "$status" "$(number "$pages")" "$uniqueid" "$(text "$subaddr")" "$(text "$trunk")" \
+    "$(text "$called")" "$(text "$trunk")" "$(text "$caller")" "$(number "$pages")" "$(text "$station64")" \
     "$engine" "$key" "$sslfax" "$offered" "$(number "$recv")" "$(text "$rate64")" "$(text "$format64")" \
     "$(text "$negotiation64")" "$(text "$remote_address64")")
   code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \

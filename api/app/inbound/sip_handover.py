@@ -63,8 +63,41 @@ def ensure_inbound_secret(manager) -> str:
 
 def receives_over_trunk(values) -> bool:
     """Whether Asterisk may hand received faxes to Faxbot under these settings."""
+    from .. import accounts, sip_trunk
+    if values.effective_inbound == 'sip' or sip_trunk.configured(values):
+        return True
+    # A trunk after the first, read from the stored accounts only: the account list itself asks this question.
+    return any(isinstance(doc, dict) and doc.get('provider') == 'sip' and doc.get('enabled', True) is not False
+               for key, doc in accounts.documents(values).items() if key != sip_trunk.PRIMARY)
+
+
+def _named_trunk(payload):
     from .. import sip_trunk
-    return bool(values.effective_inbound == 'sip' or sip_trunk.configured(values))
+    value = payload.get('trunk') if isinstance(payload, dict) else None
+    return value if isinstance(value, str) and sip_trunk.TRUNK_KEY.fullmatch(value) else None
+
+
+def receiving_trunk(values, payload, *, country=None):
+    """The trunk account a received call came in on, or None for the first trunk.
+
+    The hand-over names the trunk whose endpoint took the call (``FAXBOT_TRUNK``; nothing on the first trunk).
+    A carrier's addresses can belong to two trunks, and Asterisk then matches every such call to the first of
+    them, so for those trunks the number the call came in on decides: each number belongs to one trunk account.
+    A call whose number belongs to none of them stays on the trunk Asterisk chose.
+    """
+    from .. import sip_trunk
+    named = _named_trunk(payload) or sip_trunk.PRIMARY
+    groups = [group for group in sip_trunk.shared_addresses(values) if named in group]
+    if groups:
+        from .http import received_number
+        call = payload.get('call') if isinstance(payload.get('call'), dict) else {}
+        raw = payload.get('to_number') or call.get('did')
+        number = received_number(raw if isinstance(raw, str) else None, country) if raw else None
+        numbers = sip_trunk.trunk_numbers(values)
+        owners = [key for key in groups[0] if number and number in numbers.get(key, ())]
+        if len(owners) == 1:
+            named = owners[0]
+    return None if named == sip_trunk.PRIMARY else named
 
 
 def prepare_handover(manager, values) -> bool:
@@ -134,17 +167,23 @@ def recover(store, engine, values, *, now=None) -> Recovered:
         call = records.inbound_call(uniqueid) or {}
         report = {'recovered': True, 'source_time': 'image file modified time', 'uniqueid': uniqueid}
         to_number = call.get('did')
-        dids = list(values.sip_trunk_did_list)
-        if not to_number and len(dids) == 1:
-            # The trunk has one fax number, so the fax arrived on it.
+        # The trunk the call record names (or the one its number belongs to); none recorded: the first trunk.
+        from .. import sip_trunk
+        trunk = receiving_trunk(values, {'trunk': call.get('trunk'), 'to_number': to_number})
+        owner = sip_trunk.trunk_for(values, trunk) if trunk else None
+        own = owner.values if owner is not None else values
+        trunk = trunk if owner is not None else None
+        dids = list(own.sip_trunk_did_list)
+        if not to_number and len(dids) == 1 and len(sip_trunk.trunk_accounts(values)) <= 1:
+            # The installation's one trunk has one fax number, so the fax arrived on it.
             to_number = dids[0]
             report['to_number'] = 'inferred from the only fax number on the trunk'
         begun = store.begin(
-            source='sip', account=account_identity('sip', values.sip_trunk_username), operation_id=uniqueid,
+            source='sip', account=account_identity('sip', own.sip_trunk_username), operation_id=uniqueid,
             backend='sip', inbound_backend=values.effective_inbound or 'sip', to_number=to_number,
             from_number=call.get('caller'), reported_pages=call.get('pages'), report=report,
             source_received_at=modified, tiff_path=str(path), schedule=False,
-            country=values.fax_default_country or DEFAULT_COUNTRY)
+            country=values.fax_default_country or DEFAULT_COUNTRY, **({'account_key': trunk} if trunk else {}))
         if begun.state == 'pending':
             try:
                 artifact = convert_tiff(str(path), begun.inbound_fax_id, engine=engine)

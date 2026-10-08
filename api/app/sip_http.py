@@ -6,6 +6,7 @@ import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from .access.http import require_identity
 from .access.route_policy import RoutePermission, require_permission
@@ -393,8 +394,29 @@ def _applied(values):
     return hashlib.sha256(current).digest() == hashlib.sha256(expected).digest()
 
 
-async def _asterisk_status(values):
+def _carrier_notes(values):
+    from .capacity import carrier_groups
+    try:
+        return carrier_groups(values)[1]
+    except Exception:
+        return []
+
+
+def _trunk_values(values, account):
+    """(settings as the trunk sees them, its key or None) for ``?account=``; None or ``sip`` is the first trunk."""
+    if not account or account == sip_trunk.PRIMARY:
+        return values, None
+    if sip_trunk.TRUNK_KEY.fullmatch(account) is None:
+        raise HTTPException(404, detail='Faxbot has no trunk with this key.')
+    found = sip_trunk.trunk_for(values, account)
+    if found is None:
+        raise HTTPException(404, detail='Faxbot has no trunk with this key that is turned on and filled in.')
+    return found.values, found.key
+
+
+async def _asterisk_status(values, key=None):
     from .ami import ami_client
+    names = sip_trunk._section_names(key)
     result = {'connected': bool(ami_client._connected.is_set()), 'registration': 'unknown',
               'reachability': 'unknown', 'permission': True, 'transport': None}
     if not result['connected']:
@@ -405,7 +427,7 @@ async def _asterisk_status(values):
             response, events = await ami_client.status_query(
                 {'Action': 'PJSIPShowRegistrationsOutbound'}, collect=True)
             if response['response'].lower() == 'success':
-                details = [event for event in events if event.get('ObjectName') == 'trunk-registration']
+                details = [event for event in events if event.get('ObjectName') == names['registration']]
                 status = (details[0].get('Status', '') if details else '').strip().lower()
                 result['registration'] = _REGISTRATION_STATES.get(status, 'unknown')
                 # The transport Asterisk itself registers over, not the one in settings.
@@ -415,7 +437,7 @@ async def _asterisk_status(values):
         else:
             result['registration'] = 'not_used'
         response, _ = await ami_client.status_query(
-            {'Action': 'Getvar', 'Variable': f'DEVICE_STATE(PJSIP/{sip_trunk.ENDPOINT})'})
+            {'Action': 'Getvar', 'Variable': f'DEVICE_STATE(PJSIP/{names["endpoint"]})'})
         if response['response'].lower() == 'success':
             result['reachability'] = _DEVICE_STATES.get(response['value'].strip().lower(), 'unknown')
         elif 'permission' in response['message'].lower():
@@ -424,7 +446,7 @@ async def _asterisk_status(values):
         # contact is fixed in its AOR, which PJSIPShowContacts does not list ("No Contacts found"); the
         # endpoint's ContactStatusDetail does.
         response, events = await ami_client.status_query(
-            {'Action': 'PJSIPShowEndpoint', 'Endpoint': sip_trunk.ENDPOINT}, collect=True)
+            {'Action': 'PJSIPShowEndpoint', 'Endpoint': names['endpoint']}, collect=True)
         if response['response'].lower() == 'success':
             for event in events:
                 microseconds = str(event.get('RoundtripUsec', '')).strip()
@@ -489,13 +511,18 @@ def presets(identity=Depends(require_permission('providers:read'))):
 
 
 @router.get('/status')
-async def status(request: Request, identity=Depends(require_permission('providers:read'))):
-    """Trunk registration and carrier reachability as Asterisk reports them; never includes secrets."""
-    values = configuration_values()
+async def status(request: Request, account: str | None = Query(default=None, max_length=32),
+                 identity=Depends(require_permission('providers:read'))):
+    """Trunk registration and carrier reachability as Asterisk reports them; never includes secrets.
+
+    ``account`` names one trunk account (``faxbot providers trunk status --account``); none is the first trunk.
+    """
+    everything = configuration_values()
+    values, key = _trunk_values(everything, account)
     summary = _summary(values)
     configured = summary.get('configured')
-    applied = await run_lifecycle_step(lambda: _applied(values)) if configured else False
-    asterisk = (await _asterisk_status(values) if configured
+    applied = await run_lifecycle_step(lambda: _applied(everything)) if configured else False
+    asterisk = (await _asterisk_status(values, key) if configured
                 else {'connected': False, 'registration': 'unknown', 'reachability': 'unknown', 'permission': True,
                       'transport': None})
     phone = configured and summary.get('kind') == sip_trunk.PHONE_SYSTEM
@@ -520,7 +547,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     if configured and not phone:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     network_report = await run_lifecycle_step(lambda: sip_network.report(values)) if configured else None
-    telnyx_report = await run_lifecycle_step(lambda: telnyx_t38.report(values)) if configured else None
+    telnyx_report = await run_lifecycle_step(lambda: telnyx_t38.report(values, key)) if configured else None
     # The fast fax service (SSL Fax engine): its state and one sentence.
     from . import hylafax_engine
     from .ami import ami_client
@@ -528,6 +555,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
                                  if configured and managed else (None, None))
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
+    loaded = sip_trunk.rendered_endpoints(everything)
     reload_waiting = bool(configured and managed and sip_fax_mode.reload_waiting())
     if reload_waiting and not restarting:
         # A switched fax setting is saved; Asterisk loads it once the calls in progress end.
@@ -539,7 +567,14 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # A received fax waits outside Faxbot; that matters more than any trunk detail.
         message = last['summary']
     return {
-        **summary, 'applied': applied, 'asterisk_connected': asterisk['connected'],
+        **summary, 'account': key or sip_trunk.PRIMARY,
+        # Several trunks: every trunk account, and why one that is on is not in Asterisk's file yet.
+        'trunks': [{'key': trunk.key, 'label': trunk.label, 'endpoint_loaded': trunk.endpoint in loaded}
+                   for trunk in sip_trunk.trunk_accounts(everything)],
+        'trunk_problems': sip_trunk.trunk_problems(everything),
+        # Trunks Faxbot can't tell apart as one carrier account (capacity.carrier_groups), one sentence each.
+        'carrier_notes': _carrier_notes(everything),
+        'applied': applied, 'asterisk_connected': asterisk['connected'],
         'registration': asterisk['registration'], 'registration_transport': transport,
         'registration_text': _registration_text(asterisk['registration'], transport, summary.get('preset')),
         'reachability': asterisk['reachability'],
@@ -672,7 +707,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
 async def _check_telnyx(values):
     """Read Telnyx's T.38 settings for the trunk numbers (GETs only); a failure never stops the caller."""
     try:
-        await run_lifecycle_step(lambda: telnyx_t38.check(values))
+        await run_lifecycle_step(lambda: telnyx_t38.check_all(values))
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not check fax over IP (T.38) at Telnyx.')
 
@@ -781,6 +816,50 @@ async def restart_engine(request: Request, identity=Depends(require_permission('
     return {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
 
 
+@router.get('/send-only')
+async def send_only_numbers(request: Request, identity=Depends(require_permission('providers:read'))):
+    """Send-only numbers (shown on faxes you send, never received on here) and numbers rented only to send from."""
+    from .routing import send_only
+    values = configuration_values()
+
+    def read():
+        engine = None
+        try:
+            engine = _engine(request)
+        except HTTPException:
+            engine = None
+        return {'numbers': send_only.view(values), 'advice': send_only.advice(values, engine),
+                'quiet_days': send_only.QUIET_DAYS}
+    return await run_lifecycle_step(read)
+
+
+class SendOnlyBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    numbers: list[str] = Field(max_length=50)
+
+
+@router.put('/send-only')
+async def set_send_only_numbers(body: SendOnlyBody, request: Request,
+                                identity=Depends(require_permission('settings:write'))):
+    """Save the send-only numbers; a number one of your accounts receives on is refused with the reason."""
+    from .routing import send_only
+
+    def save():
+        snapshot = request.scope['faxbot.configuration']
+        try:
+            numbers = send_only.checked(snapshot.desired.values, body.numbers)
+        except send_only.SendOnlyRefused as refused:
+            raise HTTPException(409, detail=str(refused)) from None
+        from .access.http import runtime as access_runtime
+        runtime = _runtime(request)
+        access = access_runtime(request)
+        access.configuration_access.prepare_settings_write(identity.actor, snapshot, snapshot.desired.id)
+        runtime.manager.patch_authorized(snapshot, {send_only.SETTING: send_only.encode(numbers)},
+                                         principal=identity.actor, control=access.control)
+        return {'ok': True, 'numbers': numbers}
+    return await run_lifecycle_step(save)
+
+
 @router.get('/network')
 async def network_check(identity=Depends(require_permission('providers:read'))):
     """Whether T.38 fax data can come back through this network, where Faxbot runs, and what to do about it."""
@@ -804,10 +883,11 @@ async def check_network_again(request: Request, identity=Depends(require_permiss
 
 
 @router.get('/telnyx')
-async def telnyx_check(identity=Depends(require_permission('providers:read'))):
-    """Whether Telnyx accepts fax over IP (T.38) on the trunk's numbers, from the last check."""
-    values = configuration_values()
-    return await run_lifecycle_step(lambda: telnyx_t38.report(values))
+async def telnyx_check(account: str | None = Query(default=None, max_length=32),
+                       identity=Depends(require_permission('providers:read'))):
+    """Whether Telnyx accepts fax over IP (T.38) on the trunk's numbers, from the last check (one trunk account)."""
+    values, key = _trunk_values(configuration_values(), account)
+    return await run_lifecycle_step(lambda: telnyx_t38.report(values, key))
 
 
 # The Audit log's operation for a change to Telnyx's T.38 gateway; details hold the number and the result.
@@ -856,22 +936,23 @@ _telnyx_change_permission.route_permission = RoutePermission('providers:write', 
 
 
 @router.post('/telnyx/numbers/{number}/t38')
-async def telnyx_turn_on_t38(request: Request, number: str, identity=Depends(_telnyx_change_permission)):
+async def telnyx_turn_on_t38(request: Request, number: str, account: str | None = Query(default=None, max_length=32),
+                             identity=Depends(_telnyx_change_permission)):
     """Turn on Telnyx's T.38 fax gateway for one trunk number, then read it back; changes nothing else.
 
     A number that is not one of the trunk's is refused before anything else. Every other request leaves one
     audit row naming the number and the result (turned_on, still_off, refused, not_found or unreachable).
     """
-    values = configuration_values()
+    values, key = _trunk_values(configuration_values(), account)
     if not telnyx_t38.applies(values):
         raise HTTPException(400, detail='Add a Telnyx API key to the Telnyx trunk before changing Telnyx settings.')
     if number not in values.sip_trunk_did_list:
         raise HTTPException(404, detail='That number is not one of this trunk\'s fax numbers.')
-    outcome, _ = await run_lifecycle_step(lambda: telnyx_t38.enable(values, number))
+    outcome, _ = await run_lifecycle_step(lambda: telnyx_t38.enable(values, number, key=key))
     from .access.http import runtime as access_runtime
     service = access_runtime(request)
     await run_lifecycle_step(lambda: _telnyx_audit_row(service, identity.actor, number, TELNYX_RESULTS[outcome]))
-    body = await run_lifecycle_step(lambda: telnyx_t38.report(values))
+    body = await run_lifecycle_step(lambda: telnyx_t38.report(values, key))
     return {**body, 'outcome': outcome, 'message': telnyx_t38.outcome_sentence(outcome, number)}
 
 

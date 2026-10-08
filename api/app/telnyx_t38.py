@@ -33,6 +33,11 @@ read 2026-10-05), are given whenever the key cannot read or change a number.
 
 The key is sent only to api.telnyx.com and never logged; response bodies are
 never logged. The last check is kept in ``<FAX_DATA_DIR>/asterisk/telnyx-t38``.
+
+With several trunks (provider-rules design §3.6) the check runs once per Telnyx
+trunk account, with that account's own API key and numbers (``check_all``); a
+trunk after the first keeps its check in ``telnyx-t38-<key>``. Every function
+takes ``key``, the trunk account; None is the first trunk.
 """
 from __future__ import annotations
 
@@ -155,21 +160,24 @@ class Telnyx:
 
 # -- the check, kept between runs ----------------------------------------------------------------------------
 
-def record_path(values) -> Path:
-    return Path(values.fax_data_dir) / 'asterisk' / 'telnyx-t38'
+def record_path(values, key=None) -> Path:
+    name = 'telnyx-t38' if not key or key == sip_trunk.PRIMARY else f'telnyx-t38-{key}'
+    if key and sip_trunk.TRUNK_KEY.fullmatch(key) is None:
+        raise ValueError('Unsupported trunk key')
+    return Path(values.fax_data_dir) / 'asterisk' / name
 
 
-def read(values):
+def read(values, key=None):
     """The last check, or None."""
     try:
-        record = json.loads(record_path(values).read_text(encoding='utf-8'))
+        record = json.loads(record_path(values, key).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return None
     return record if isinstance(record, dict) and isinstance(record.get('numbers'), list) else None
 
 
-def _write(values, record):
-    path = record_path(values)
+def _write(values, record, key=None):
+    path = record_path(values, key)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     sip_trunk._write_private(path, json.dumps(record) + '\n')
     return record
@@ -179,14 +187,23 @@ def _client(values):
     return Telnyx(values.telnyx_api_key, transport=TRANSPORT)
 
 
-def check(values, *, now=time.time):
+def check_all(values, *, now=time.time):
+    """Check every Telnyx trunk account with its own key and numbers: {trunk key: record or None}."""
+    found = {}
+    for trunk in sip_trunk.trunk_accounts(values):
+        found[trunk.key] = check(trunk.values, now=now, key=None if trunk.primary else trunk.key)
+    return found
+
+
+def check(values, *, now=time.time, key=None):
     """Read each trunk number's T.38 gateway and its connection's re-invite source, store and return it.
 
+    ``values`` are the trunk's own (``sip_trunk.trunk_for``); ``key`` names a trunk after the first.
     Returns None (and keeps no record) when it does not apply, or in a test run without a fake Telnyx.
     """
     if not applies(values):
         try:
-            record_path(values).unlink()
+            record_path(values, key).unlink()
         except OSError:
             pass
         return None
@@ -229,17 +246,17 @@ def check(values, *, now=time.time):
                 connections[connection_id] = {'state': UNREADABLE}
             except (Missing, Unavailable):
                 connections[connection_id] = {'state': UNAVAILABLE}
-    return _write(values, {'checked_at': round(now(), 3), 'numbers': numbers, 'connections': connections})
+    return _write(values, {'checked_at': round(now(), 3), 'numbers': numbers, 'connections': connections}, key)
 
 
-def enable(values, number, *, now=time.time):
+def enable(values, number, *, now=time.time, key=None):
     """Turn on the T.38 gateway for one trunk number; returns (outcome, record).
 
     outcome is 'on' (read back as on), 'not_on' (Telnyx accepted the change but reads back off),
     'refused' (the key may not change it), 'not_found' or 'unavailable'.
     """
     if TRANSPORT is None and _test_mode():
-        return 'unavailable', read(values)
+        return 'unavailable', read(values, key)
     outcome = 'unavailable'
     with _client(values) as telnyx:
         try:
@@ -252,12 +269,12 @@ def enable(values, number, *, now=time.time):
             outcome = 'refused'
         except (Missing, Unavailable):
             outcome = 'unavailable'
-    record = read(values) or {'checked_at': None, 'numbers': [], 'connections': {}}
+    record = read(values, key) or {'checked_at': None, 'numbers': [], 'connections': {}}
     for entry in record['numbers']:
         if entry.get('number') == number and outcome in ('on', 'not_on'):
             entry['state'] = ON if outcome == 'on' else OFF
     record['checked_at'] = round(now(), 3) if outcome in ('on', 'not_on') else record.get('checked_at')
-    return outcome, _write(values, record)
+    return outcome, _write(values, record, key)
 
 
 # -- sentences ------------------------------------------------------------------------------------------------
@@ -326,11 +343,11 @@ def _iso(epoch):
     return datetime.fromtimestamp(float(epoch), timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds') + 'Z'
 
 
-def report(values):
+def report(values, key=None):
     """What the trunk page, Diagnostics and the command line show; ``applies`` False when there is nothing to say."""
     if not applies(values):
         return {'applies': False, 'numbers': [], 'connection_texts': [], 'text': None}
-    record = read(values)
+    record = read(values, key)
     if record is None:
         return {'applies': True, 'checked_at': None, 'numbers': [], 'connection_texts': [],
                 'text': 'Faxbot has not checked fax over IP (T.38) on your Telnyx numbers yet.'}

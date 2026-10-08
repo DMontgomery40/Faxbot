@@ -3776,6 +3776,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `use`: Choose a carrier or phone system preset...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
+* `send-only`: Numbers you show on faxes you send but...
 
 #### `faxbot providers trunk status`
 
@@ -3789,6 +3790,7 @@ $ faxbot providers trunk status [OPTIONS]
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk apply`
@@ -4028,6 +4030,7 @@ $ faxbot providers trunk telnyx status [OPTIONS]
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 ##### `faxbot providers trunk telnyx t38-on`
@@ -4046,6 +4049,7 @@ $ faxbot providers trunk telnyx t38-on [OPTIONS] {NUMBER}
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 ##### `faxbot providers trunk telnyx names`
@@ -4075,6 +4079,76 @@ $ faxbot providers trunk telnyx name-lookup-off [OPTIONS] {NUMBER}
 **Arguments**:
 
 * `NUMBER`: The trunk number, for example +17208565062.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk send-only`
+
+Numbers you show on faxes you send but never receive on here, such as your main office number.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk send-only [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show your send-only numbers, where each...
+* `add`: Add a send-only number.
+* `remove`: Remove a send-only number; it counts as...
+
+##### `faxbot providers trunk send-only list`
+
+Show your send-only numbers, where each shows, and numbers you rent only to send from.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk send-only list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk send-only add`
+
+Add a send-only number. To show it, set it as a trunk&#x27;s caller ID or as the station ID too.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk send-only add [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The number with its country code, such as +13035550100.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk send-only remove`
+
+Remove a send-only number; it counts as one of your numbers again only if an account receives on it.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk send-only remove [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The send-only number to remove.  [required]
 
 **Options**:
 
@@ -5044,6 +5118,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
+* `rate-rows`: Replace the prices by where calls start...
 * `predict`: Show what a fax to a number would take and...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
@@ -5148,6 +5223,25 @@ $ faxbot costs rate-cards [OPTIONS]
 * `--replace FILE`: Replace all rate cards with the cards in this JSON file ({&quot;cards&quot;: [...]}, or &#x27;-&#x27; for standard input).
 * `--help`: Show this message and exit.
 
+### `faxbot costs rate-rows`
+
+Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history.
+
+**Usage**:
+
+```console
+$ faxbot costs rate-rows [OPTIONS] {ROUTE}
+```
+
+**Arguments**:
+
+* `ROUTE`: The sending card&#x27;s route, as &#x27;faxbot costs rate-cards&#x27; lists it, such as sip-gamma or sinch-uk.  [required]
+
+**Options**:
+
+* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).  [required]
+* `--help`: Show this message and exit.
+
 ### `faxbot costs predict`
 
 Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent.
@@ -5192,6 +5286,7 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `toll-free`: Show recipients with a toll-free fax...
 * `carriers`: Show what your last 30 days of faxing...
 * `shading`: Show how much time lightening shaded areas...
+* `trunks`: Compare your trunks&#x27; monthly fees, busiest...
 
 #### `faxbot costs recommendations sending`
 
@@ -5327,6 +5422,20 @@ Show how much time lightening shaded areas and removing specks saved, or would s
 
 ```console
 $ faxbot costs recommendations shading [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations trunks`
+
+Compare your trunks&#x27; monthly fees, busiest times and cost per fax, and show when one trunk&#x27;s faxes fit on another and what that would save. Advice only.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations trunks [OPTIONS]
 ```
 
 **Options**:

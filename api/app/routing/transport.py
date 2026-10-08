@@ -181,16 +181,28 @@ class RoutedTransport:
         approvals = (dial or {}).get('approvals') if number != plan.destination else None
         record(claim, number, approvals or None)
 
-    def _trunk_has_room(self, claim, revision):
-        """Whether the trunk can take this call now (the claim gate covers faxes bound to it; this covers the rest)."""
+    def _trunk_has_room(self, claim, revision, key='sip'):
+        """Whether the account ``key`` (a trunk, or an account with a "faxes at once" limit) can take this fax now.
+
+        The claim gate covers faxes bound to it and faxes whose rules allow nothing else; this covers the rest.
+        """
         capacity = getattr(self.store, 'capacity', lambda: None)()
         if capacity is None:
             return True
         from datetime import datetime
         with self.store.configuration.engine.connect() as connection:
             room = capacity.room(connection, revision.values, datetime.utcnow(),
-                                 exclude=[member.job_id for member in claim.everyone])
+                                 exclude=[member.job_id for member in claim.everyone], trunk=key)
         return not (room.trunk_full or room.rate_full)
+
+    @staticmethod
+    def _limited(revision, key):
+        """Whether ``key`` is an account whose calls or faxes at once are limited (capacity.limited_accounts)."""
+        from ..capacity import limited_accounts
+        try:
+            return key in limited_accounts(revision.values)
+        except Exception:
+            return False
 
     def _assign(self, claim, plan, revision):
         """Bind the first usable provider route; the fax's own provider needs no change.
@@ -207,7 +219,9 @@ class RoutedTransport:
             route = choice.route
             if route.kind in ('direct', 'local', 'relay'):
                 return self._chosen(plan, choice, skipped), claim
-            if route.provider_id == 'sip' and not self._trunk_has_room(claim, revision):
+            # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).
+            if (route.provider_id == 'sip' or self._limited(revision, route.key)) and not self._trunk_has_room(
+                    claim, revision, route.key):
                 if pinned is not None and pinned.envelope.when_busy == 'next':
                     skipped.append((route.key, 'busy'))
                     continue
@@ -234,6 +248,10 @@ class RoutedTransport:
                 skipped.append((route.key, 'unavailable'))
                 continue
         self._skipped = tuple(skipped)
+        if any(why == 'busy' for _, why in skipped):
+            # Every allowed account that could take the fax is busy for now: it waits for room (it stays ready),
+            # never held in Sent for a person; a line frees up by itself.
+            raise CapacityWait()
         return None, claim
 
     def _bound_ready(self, claim):

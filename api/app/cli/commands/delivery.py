@@ -751,7 +751,29 @@ RECOMMENDATION_SECTIONS = [
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
     ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
+    ('trunks', 'Your trunks', lambda api: _read_trunks(api), lambda out, result: show_trunks(out, result)),
 ]
+
+
+def _read_trunks(api):
+    return api.get('/routing/recommendations/trunks')
+
+
+def show_trunks(out, result):
+    """Each trunk's fee, lines, faxes and cost per delivered fax, then whether one's traffic fits on another."""
+    trunks = result.get('trunks') or []
+    if trunks:
+        out.table(['Trunk', 'A month', 'Lines', 'Most at once', 'Faxes sent', 'Faxes received', 'Each sent fax'],
+                  [[row['label'], row.get('monthly') or 'Not known', row['lines'], row['peak_lines'], row['sent'],
+                    row['received'], row.get('cost_per_delivered') or '-'] for row in trunks],
+                  empty='')
+    for item in result.get('items') or []:
+        out.line(item['sentence'])
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    if result.get('items'):
+        out.line('This is advice only: Faxbot never cancels a trunk. To keep faxes off a trunk, add a sending limit '
+                 "with 'faxbot providers rules add'.")
 
 recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
                                    'every section.', invoke_without_command=True)
@@ -759,7 +781,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, and how much time lightening shaded areas would save. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time lightening shaded areas would save, and whether one trunk's faxes fit on another. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -804,7 +826,10 @@ for _name, _read, _show, _help in (
          'switching carriers means moving your numbers, and Faxbot never switches anything.'),
         ('shading', _read_friendly, show_friendly,
          'Show how much time lightening shaded areas and removing specks saved, or would save, on your recent '
-         'faxes.')):
+         'faxes.'),
+        ('trunks', _read_trunks, show_trunks,
+         "Compare your trunks' monthly fees, busiest times and cost per fax, and show when one trunk's faxes fit on "
+         'another and what that would save. Advice only.')):
     recommendations.command(_name, help=_help)(_section(_read, _show))
 
 
@@ -962,6 +987,12 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
                else _monthly(card) if card.get('monthly_fee') else '-'),
               _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
              for card in result.get('cards', [])], empty='No rate cards.')
+        # Each sending card's prices by where calls start (origin-rated rows), with source and date.
+        from .accounts import origin_rows
+        for card in result.get('cards', []):
+            if card.get('rows'):
+                out.line()
+                origin_rows(out, card)
         # What each sending route publishes about calling a recipient's approved toll-free number.
         if result.get('toll_free'):
             out.line()
@@ -970,6 +1001,27 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
                         item.get('caller_id_text') or '-', local_date(item['advertised_on'])]
                        for item in result['toll_free']], title='Calls to toll-free numbers')
     state.out().result(result, human)
+
+
+@routing.command('rate-rows')
+def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
+                                                  help="The sending card's route, as 'faxbot costs rate-cards' lists "
+                                                       'it, such as sip-gamma or sinch-uk.'),
+                      replace: str = typer.Option(..., '--replace', metavar='FILE',
+                                                  help='Your prices by where calls start for that card, from this JSON '
+                                                       'file ({"rows": [...]}, or \'-\' for standard input).')):
+    """Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history."""
+    try:
+        document = json.loads(_read_document(replace))
+    except ValueError:
+        raise CliError('The file is not valid JSON.') from None
+    if isinstance(document, list):
+        document = {'rows': document}
+    from urllib.parse import quote
+    result = state.api().put(f'/routing/rate-cards/{quote(route.strip(), safe="")}/rows', json=document)
+    from .accounts import origin_rows
+    state.out().result(result, lambda out: origin_rows(out, {'label': route.strip(), 'rows': result.get('rows') or []})
+                       if result.get('rows') else out.line('No prices by where calls start for this card.'))
 
 
 # -- routing batching --------------------------------------------------------------------

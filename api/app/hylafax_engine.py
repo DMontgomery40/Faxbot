@@ -704,21 +704,27 @@ def new_tag() -> str:
     return str(secrets.randbelow(9 * 10 ** 15) + 10 ** 15)
 
 
-def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True) -> str:
+def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, endpoints=('trunk-endpoint',)) -> str:
     """The plan Asterisk reads for a tag, from the same Originate fields the built-in engine uses.
 
-    The sixth field says whether this call may use T.38 (1) or stays audio (0).
+    The sixth field says whether this call may use T.38 (1) or stays audio (0). A call over a trunk other than
+    the first adds a seventh: the trunk's endpoint, which must be one of ``endpoints``, the trunks Faxbot
+    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``).
     """
     from .ami import FAX_PREFERENCE_VARIABLE
     channel = fields['Channel']
-    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@trunk-endpoint', channel)
+    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
+                         channel)
     caller = fields.get('CallerID', '')
     if match is None or not re.fullmatch(r'\+?[0-9]{0,20}', caller or ''):
+        raise ValueError('Unsupported engine call plan')
+    if match.group(2) not in tuple(endpoints or ()):
         raise ValueError('Unsupported engine call plan')
     if not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported engine call plan')
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
-    return f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    plan = f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    return plan if match.group(2) == 'trunk-endpoint' else f'{plan}/{match.group(2)}'
 
 
 # Job submission (hfaxd's client protocol, FTP-like) -------------------------------------------------
@@ -850,19 +856,28 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
         raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
 
 
-async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None, subaddress=None) -> PreparedJob:
-    """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
-    from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
+async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None, subaddress=None,
+                      trunk=None) -> PreparedJob:
+    """Store the call plan in Asterisk and create the engine job; nothing is dialed yet.
+
+    ``trunk`` is the trunk account the fax goes over (None: the first trunk); its endpoint goes in the plan.
+    """
+    from . import sip_trunk
+    from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for, trunk_values
     from .ami import reply_choice, sender_identity
+    endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
+    full_values = values
+    values, _ = trunk_values(values, trunk)
     settings = settings or call_settings(values, dest, engine=True)
     # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
     choice = await asyncio.to_thread(reply_choice, values)
     # A fax relayed for a partner carries that partner's header text and station ID (direct.relay).
     identity = await asyncio.to_thread(sender_identity, job_id)
     header, station = identity if identity is not None else (values.fax_header or '', choice.number)
-    fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice)
+    fields = originate_fields_for(full_values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice,
+                                  trunk=trunk)
     tag = new_tag()
-    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)
+    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38, endpoints=endpoints)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
@@ -874,6 +889,8 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
                       'Preset': values.sip_trunk_preset or '',
                       'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    if trunk and trunk != sip_trunk.PRIMARY:
+        job.submission['Trunk'] = trunk
     learned = getattr(settings, 'learned', None)
     if learned is not None and learned.changed():
         job.submission['Learned'] = learned.payload()  # what this call used and why (fax_call_choices)

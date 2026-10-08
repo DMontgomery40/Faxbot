@@ -54,7 +54,9 @@ def receiving_numbers(values):
     # numbers are left out, as above: a fax to one still places a real call.
     for number in _account_receiving_numbers(values):
         numbers.add(destination_key(number, country))
-    return {number for number in numbers if number.startswith('+')}
+    # A send-only number (routing/send_only.py) is never one of yours for receiving: a fax to it places a call.
+    from .send_only import without
+    return without(values, {number for number in numbers if number.startswith('+')})
 
 
 def _account_receiving_numbers(values):
@@ -79,4 +81,6 @@ def account_numbers(values, accounts=None):
         found += [number for account in all_accounts(values) for number in account.numbers]
     except Exception:
         pass  # values without provider accounts (a fixture)
-    return {stored_number(number, country=country) for number in found if number} | receiving_numbers(values)
+    from .send_only import without
+    return without(values, {stored_number(number, country=country) for number in found if number}
+                   | receiving_numbers(values))

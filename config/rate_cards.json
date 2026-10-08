@@ -1254,5 +1254,236 @@
       "advertised_on": "2026-10-07",
       "notes": "eFax Corporate's FAQ says \"Outbound send rates are 10 cents per page to U.S. numbers.\" with no exception for toll-free numbers, and \"Inbound faxes to a toll free number are an additional 2 cents per page.\" for the receiver. eFax has no rate card in Faxbot, so the cost stays unknown until you add one."
     }
+  ],
+  "origin_rates_description": "Prices by where calls start and the number called (provider-rules design §3.7): route (a card identity), origin (any, a site key, or country:XX), destination_prefix (E.164 digits without the plus; the longest match wins within the most specific origin), prices and billing as on cards (billing \"60-60\" is minimum seconds, then increment), source and date. pricing not_published records a carrier we looked up that publishes none: its price stays unknown, never zero.",
+  "origin_rates": [
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to UK landlines (Standard route)",
+      "origin": "any",
+      "destination_prefix": "44",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00241",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"United Kingdom\", prefix 44, 0.00241 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to London landlines (Standard route)",
+      "origin": "any",
+      "destination_prefix": "4420",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00241",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"U.K.-London-Fixed\", prefix 4420, 0.00241 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to UK mobiles (Standard route)",
+      "origin": "any",
+      "destination_prefix": "447",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.12211",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"United Kingdom Cellular\", prefix 447, 0.12211 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to Ireland (Standard route)",
+      "origin": "any",
+      "destination_prefix": "353",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00588",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"Ireland\", prefix 353, 0.00588 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to Irish mobiles (Standard route)",
+      "origin": "any",
+      "destination_prefix": "3538",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00943",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"Ireland Cellular\", prefix 3538, 0.00943 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to Germany (Standard route)",
+      "origin": "any",
+      "destination_prefix": "49",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.00192",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"Germany\", prefix 49, 0.00192 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to France (Standard route)",
+      "origin": "any",
+      "destination_prefix": "33",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.01022",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"France\", prefix 33, 0.01022 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to French mobiles (Standard route)",
+      "origin": "any",
+      "destination_prefix": "336",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.03179",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"France Cellular\", prefix 336, 0.03179 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to Australia (Standard route)",
+      "origin": "any",
+      "destination_prefix": "61",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.0056",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"Australia\", prefix 61, 0.0056 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-anveo",
+      "label": "AnveoDirect, calls to Australian mobiles (Standard route)",
+      "origin": "any",
+      "destination_prefix": "614",
+      "pricing": "own",
+      "currency": "USD",
+      "per_minute": "0.01232",
+      "per_page": "0",
+      "per_call": "0",
+      "billing": "1-1",
+      "source_url": "https://www.anveo.com/anveodirect.standard.csv",
+      "sources": [
+        "https://www.anveo.com/anveodirect.standard.csv"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "AnveoDirect's Standard route rate file, read 2026-10-08: \"Australia Cellular\", prefix 614, 0.01232 USD a minute, billed \"1-1\" (minimum seconds, then increment). AnveoDirect prices by the number called, wherever the call starts, so the row is for anywhere."
+    },
+    {
+      "route": "sip-telnyx",
+      "label": "Telnyx SIP trunk, calls by destination",
+      "origin": "any",
+      "pricing": "not_published",
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "The Elastic SIP price page, read 2026-10-08, shows US prices only and links a downloadable global price sheet Faxbot could not read, so calls abroad have no row."
+    },
+    {
+      "route": "sip-gamma",
+      "label": "Gamma SIP trunk, calls by destination",
+      "origin": "any",
+      "pricing": "not_published",
+      "source_url": "https://gammagroup.co/products/sip-trunking/",
+      "sources": [
+        "https://gammagroup.co/products/sip-trunking/"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "Gamma sells through resellers and publishes no per-destination prices; enter your reseller's rates as rows on the card."
+    },
+    {
+      "route": "sip-bt-one-voice",
+      "label": "BT One Voice, calls by destination",
+      "origin": "any",
+      "pricing": "not_published",
+      "source_url": "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+      "sources": [
+        "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "BT publishes no per-destination prices for One Voice SIP; enter your contract rates as rows on the card."
+    },
+    {
+      "route": "sip-telstra-sip-connect",
+      "label": "Telstra SIP Connect, calls by destination",
+      "origin": "any",
+      "pricing": "not_published",
+      "source_url": "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf",
+      "sources": [
+        "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf"
+      ],
+      "advertised_on": "2026-10-08",
+      "notes": "Telstra publishes no per-destination prices Faxbot could read; enter your plan's rates as rows on the card."
+    }
   ]
 }

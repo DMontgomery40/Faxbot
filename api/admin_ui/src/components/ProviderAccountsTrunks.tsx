@@ -45,6 +45,9 @@ export function TrunkPicker({ api, value, onChange }: {
 export interface OriginRateRow {
   // Where calls start, in words: "Leeds office", "United Kingdom" or "Anywhere".
   origin_label: string;
+  // The row's origin as stored ('any', a site key, 'country:GB') and whether it is a carrier's published price.
+  origin?: string;
+  published?: boolean;
   destination_prefix: string;
   currency: string;
   per_minute: string;

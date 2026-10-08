@@ -12,6 +12,7 @@ import { DeliveryError, formatMoney, formatRate } from './shared';
 import { providerLabel } from '../../providerLabels';
 import { formatLocalDate } from '../../api/time';
 import { OriginRates } from '../ProviderAccountsTrunks';
+import OriginRateRows from './OriginRateRows';
 
 const BILLING = [
   { value: 1, label: 'Per second' },
@@ -242,6 +243,14 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
       {cards.filter((card) => card.rows?.length).map((card) => (
         <OriginRates key={`${card.provider_id}-${card.label}`} cardLabel={card.label} rows={card.rows ?? []} />
       ))}
+      {canWrite && cards.some((card) => card.direction === 'outbound' && card.id) && (
+        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+          {cards.filter((card) => card.direction === 'outbound' && card.id).map((card) => (
+            <OriginRateRows key={`rows-${card.provider_id}`} client={client} route={card.provider_id} label={card.label}
+              existing={card.rows ?? []} onSaved={() => onChanged?.()} />
+          ))}
+        </Stack>
+      )}
       {editing && <CardDialog card={editing} busy={busy} error={error} onClose={() => setEditing(null)} onSave={save} />}
       <ConfirmDialog open={removing !== null} title="Remove this rate card?" danger busy={busy} error={error}
         text="Faxbot stops estimating costs for this provider until you add a new card."
