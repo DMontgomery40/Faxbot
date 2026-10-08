@@ -7,7 +7,12 @@ Each caller here gets one call through ``predict.facts_source`` (or
 ``predict_from`` on synthetic facts), with no stand-in. All prices are synthetic.
 """
 from datetime import datetime
+import logging
+from types import SimpleNamespace
 
+import pytest
+
+from api.tests.test_schema import database  # noqa: F401 - fixture
 from app.direct import relay
 from app.pages import decision as pages_decision
 from app.routing import plan_budget, predict, schedule
@@ -64,3 +69,70 @@ def test_relays_and_plan_budgets_order_real_predictions_by_their_money():
     assert [item.peer_id for item in sorted(candidates, key=relay.rank)] == ['cheap', 'dear', 'unknown']
     found = plan_budget.marginal(None, 3, cheap)
     assert found.cost == Money(60_000, 'USD') and plan_budget.order_key(found)[2] == 60_000
+
+
+def test_a_relays_signed_price_is_priced_by_the_real_predictor():
+    """direct.relay.predicted: a partner's signed price body becomes the predictor's facts."""
+    from api.tests.test_partner_relay_terms import DEST, NOW, _price
+    prediction = relay.predicted(_price(20_000), DEST, 3, 'Valley Hospital', now=NOW)
+    assert prediction.cost == Money(60_000, 'USD') and prediction.billed_pages == 3
+    assert relay.predicted(_price(None), DEST, 3, 'Valley Hospital', now=NOW) is None  # no price: unknown
+
+
+def _own(database, tmp_path):
+    from api.tests.test_rules_delivery import TO, UNLISTED, installation
+    env = installation(database, tmp_path, UNLISTED)  # Phaxio is the only route the automatic choice may use
+    return env, env.snapshot.active.values, TO
+
+
+def test_this_installations_own_route_is_priced_from_its_card(database, tmp_path):
+    """direct.relay.own_prediction: the planner's first provider route, priced from the stored card."""
+    env, values, to = _own(database, tmp_path)
+    prediction, label = relay.own_prediction(env.engine, values, 'phaxio', to, 2)
+    assert prediction.cost == Money(140_000, 'USD') and label == 'Phaxio'
+
+
+def test_only_the_predictors_refusal_or_unreadable_records_make_a_price_unknown(database, tmp_path, monkeypatch,
+                                                                                caplog):
+    """The quiet ``except Exception`` blocks are narrowed: a refusal is logged with its cause; a bug is raised."""
+    env, values, to = _own(database, tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise ValueError('A fax has from 1 to 10,000 pages.')
+
+    def bug(*args, **kwargs):
+        raise KeyError('a programming error')
+    monkeypatch.setattr(predict, 'predict_from', refuse)
+    monkeypatch.setattr(predict, 'predict', refuse)
+    with caplog.at_level(logging.WARNING):
+        assert relay.own_prediction(env.engine, values, 'phaxio', to, 2) == (None, None)
+        assert schedule.attempt_price('phaxio', to, 2) is None
+    ours = [record for record in caplog.records if record.getMessage() in (
+        "This installation's own route could not be priced.", 'The price of a try could not be predicted.')]
+    assert len(ours) == 2 and all(record.exc_info[0] is ValueError for record in ours)
+    monkeypatch.setattr(predict, 'predict_from', bug)
+    monkeypatch.setattr(predict, 'predict', bug)
+    with pytest.raises(KeyError):
+        relay.own_prediction(env.engine, values, 'phaxio', to, 2)
+    with pytest.raises(KeyError):
+        schedule.attempt_price('phaxio', to, 2)
+
+
+def test_relays_are_left_out_only_when_their_records_or_prices_cannot_be_read(monkeypatch, caplog):
+    """routing.plan's relay offer: unreadable records leave the fax its own routes, logged; a bug is raised."""
+    from app.routing.database import DeliveryStoreError
+    from app.routing.plan import RoutePlanner
+    planner = RoutePlanner(SimpleNamespace(engine=None))
+
+    def unreadable(*args, **kwargs):
+        raise DeliveryStoreError('Relay records are unavailable.')
+
+    def bug(*args, **kwargs):
+        raise KeyError('a programming error')
+    monkeypatch.setattr(relay, 'relay_candidates', unreadable)
+    with caplog.at_level(logging.WARNING):
+        assert planner._relays(NUMBER, 2, None, None, DAY) == ([], {})
+    assert [record.getMessage() for record in caplog.records] == ['Relays could not be offered for this fax.']
+    monkeypatch.setattr(relay, 'relay_candidates', bug)
+    with pytest.raises(KeyError):
+        planner._relays(NUMBER, 2, None, None, DAY)
