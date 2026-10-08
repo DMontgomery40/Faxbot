@@ -176,7 +176,8 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
 
 // Certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs). A forwarding is verified only when the
 // carrier's signing certificate chains to one; the "Only calls forwarded from" condition takes only verified ones
-// unless its box says otherwise.
+// unless its box says otherwise. Saved as the stir_trust_anchors setting through /admin/forwarded-trust, which
+// audits each change.
 export function ForwardedTrustPanel({ client, canWrite, onChange }: {
   client: AdminAPIClient; canWrite: boolean;
   // Told the trusted certificate authorities whenever they are read or changed (the rule fields' help follows them).
