@@ -52,6 +52,8 @@ NOT_OPERATOR = {
     ('GET', '/forms/partner/forms/{address}'): 'partner protocol: a signed fetch of one form by address',
     ('POST', '/direct/relay/statements'): 'partner protocol: a signed relay offer, acceptance, withdrawal, price or receipt',
     ('GET', '/direct/relay/outcomes/{message_id}'): 'partner protocol: a signed question about a relayed fax',
+    ('POST', '/direct/introductions'): 'partner protocol: a signed introduction of another partner (a hint only)',
+    ('GET', '/.well-known/faxbot-direct'): 'partner protocol: the public partner card that partners and directories read',
     ('POST', '/mobile/pair'): 'device: the phone exchanges its pairing code',
     ('POST', '/fax'): 'public fax API for SDKs and integrations',
     ('GET', '/fax/{job_id}'): 'public fax API for SDKs and integrations',
