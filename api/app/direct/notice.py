@@ -806,7 +806,7 @@ class NoticeReceiver:
 
 # -- what people read ----------------------------------------------------------------------------------
 
-def notice_view(row, *, organization=None, fax=None, now=None, original_fax_id=None):
+def notice_view(row, *, organization=None, fax=None, now=None, original_fax_id=None, arrived=True):
     """One notice for the console and the command line, in plain words."""
     now = now or utcnow()
     partner = organization or 'the partner'
@@ -819,7 +819,9 @@ def notice_view(row, *, organization=None, fax=None, now=None, original_fax_id=N
             'cancelled': 'The document went by fax, so no notice was needed.',
         }[row['state']]
     else:
-        if row['state'] == 'waiting':
+        if row['state'] == 'waiting' and not arrived:
+            status = f'{partner} announced a document with a notice fax, but the document has not arrived.'
+        elif row['state'] == 'waiting':
             status = (f'The document from {partner} arrived directly and waits for its notice fax.'
                       if now - row['created_at'] < WAITING_LONG else
                       f'The document from {partner} has waited more than a day for its notice fax. Pair it by hand.')

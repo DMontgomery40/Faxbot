@@ -284,3 +284,26 @@ def test_the_ssl_fax_engine_requests_the_notice_id_as_the_subaddress(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.asyncio
+async def test_the_built_in_engines_sub_frame_pairs_it(noticed, tmp_path):
+    """A fax over the SIP trunk on the built-in engine: the SUB comes from its call's frames (patch 0004)."""
+    _, _, attempt, sent, _, _ = await send_with_notice(noticed, 'Fourth referral')
+    blank = fax_image(pdf_bytes(' '), tmp_path)  # no barcode on the image: only the frame can pair it
+    fax_id = received_fax(blank)
+    key = '1760000000.42'
+    now = datetime.utcnow()
+    imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=b_engine())
+    frames = sa.Table('fax_call_frames', sa.MetaData(), autoload_with=b_engine())
+    # T.30 SUB: address, control, FCF 0xC2, then the 20 digits sent last first.
+    sub = 'ff13c2' + ''.join(f'{ord(digit):02x}' for digit in reversed(sent['notice_id']))
+    with b_engine().begin() as connection:
+        connection.execute(imports.insert().values(
+            id=uuid4().hex, source='sip', account='sip:trunk', operation_id=key, revision='r1', state='pending',
+            attempts=1, imported_at=now, inbound_fax_id=fax_id, created_at=now, updated_at=now))
+        connection.execute(frames.insert().values(id=f'in:{key}', direction='in', call_key=key, sub=sub,
+                                                  created_at=now))
+    notice.NoticeReceiver(b_service()).step()
+    row = notice.NoticeStore(b_engine()).find('receiver', attempt)
+    assert row['state'] == 'paired' and row['matched_by'] == 'sub' and row['inbound_id'] == fax_id

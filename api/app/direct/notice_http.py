@@ -102,7 +102,12 @@ def _views(service, rows):
     views = []
     for row in rows:
         original = store.filed_original(row) if row['role'] == 'receiver' and row['state'] == 'paired' else None
-        views.append(notice_view(row, organization=names.get(row['peer_id']), original_fax_id=original))
+        arrived = True
+        if row['role'] == 'receiver' and row['state'] == 'waiting':
+            delivery = service.store.find('inbound', row['message_id'])
+            arrived = delivery is not None and delivery['state'] == 'accepted'
+        views.append(notice_view(row, organization=names.get(row['peer_id']), original_fax_id=original,
+                                 arrived=arrived))
     return views
 
 
