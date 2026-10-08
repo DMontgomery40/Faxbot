@@ -12,6 +12,7 @@ from .commands import (access, accounts, admin, blocked, codec, connectors, deli
 from .commands import certainty, continuation, discovery
 from .commands import send_once
 from .commands import charges as charge_commands
+from .commands import setup_plan
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -204,6 +205,8 @@ people.add_typer(access.owner, name='owner')
 # -- system --------------------------------------------------------------------------
 
 system = _group('Look after the installation: settings, checks, logs, the security log, backups and restarts.')
+# Suggested packs from what Faxbot knows: the Setup page's Suggested packs.
+system.add_typer(setup_plan.setup, name='setup')
 system.add_typer(settings.settings, name='settings')
 checks = _copy(settings.diagnostics)
 checks.command('test-fax')(fax.inbound_simulate)

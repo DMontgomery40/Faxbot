@@ -63,6 +63,7 @@ config.attributes["schema_send_once"] = importlib.import_module(package + ".sche
 config.attributes["schema_trunks_sites"] = importlib.import_module(package + ".schema_trunks_sites")
 config.attributes["schema_invoices"] = importlib.import_module(package + ".schema_invoices")
 config.attributes["schema_continuation"] = importlib.import_module(package + ".schema_continuation")
+config.attributes["schema_setup_plans"] = importlib.import_module(package + ".schema_setup_plans")
 
 
 def migrate(connection):

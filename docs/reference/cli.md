@@ -6555,6 +6555,7 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 * `recover-owner`: Recover owner access when no owner can...
 * `backup`: Copy everything Faxbot needs to a new...
 * `restore`: Restore a backup after checking every file...
+* `setup`: Suggested packs of rules and settings from...
 * `settings`: Every Faxbot setting: show, change, check...
 * `diagnostics`: Check the installation without sending a fax.
 * `logs`: The activity log: sign-ins, faxes, phone...
@@ -6710,6 +6711,80 @@ $ faxbot system restore [OPTIONS] {folder}
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
 * `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
 * `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--help`: Show this message and exit.
+
+### `faxbot system setup`
+
+Suggested packs of rules and settings from what Faxbot already knows: preview a plan, see it, and apply it in one step.
+
+**Usage**:
+
+```console
+$ faxbot system setup [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `plan`: Preview a plan from what Faxbot already...
+* `show`: Show a plan: its suggestions, what&#x27;s...
+* `apply`: Apply a plan&#x27;s chosen suggestions in one...
+
+#### `faxbot system setup plan`
+
+Preview a plan from what Faxbot already knows. Changes nothing and sends nothing.
+
+**Usage**:
+
+```console
+$ faxbot system setup plan [OPTIONS]
+```
+
+**Options**:
+
+* `--name <str>`: Your business name, printed at the top of each page.
+* `--country <str>`: The country your organization works in, such as US or GB. Leave out if you are not sure.
+* `--mailbox-country <str>`: A mailbox and the country it works in, as &#x27;NAME=COUNTRY&#x27;. Repeat for each mailbox.
+* `--help`: Show this message and exit.
+
+#### `faxbot system setup show`
+
+Show a plan: its suggestions, what&#x27;s missing and each mailbox&#x27;s settings.
+
+**Usage**:
+
+```console
+$ faxbot system setup show [OPTIONS] [number]
+```
+
+**Arguments**:
+
+* `number`: The plan number. Default: the newest plan.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system setup apply`
+
+Apply a plan&#x27;s chosen suggestions in one step; refused if your settings or rules changed since.
+
+**Usage**:
+
+```console
+$ faxbot system setup apply [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: The plan number, from faxbot system setup plan.  [required]
+
+**Options**:
+
+* `--only <str>`: The suggestions to apply, by number, such as &#x27;1,4&#x27;. Default: every suggestion the plan chose.
 * `--help`: Show this message and exit.
 
 ### `faxbot system settings`
