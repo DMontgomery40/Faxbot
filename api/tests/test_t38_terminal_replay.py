@@ -288,6 +288,65 @@ def test_internet_aware_fax_between_two_faxbots_is_faster_with_the_same_pages(re
     assert peer < paced / 2, results
 
 
+def _pair_with_subaddress(replay, mode, *extra):
+    from PIL import Image
+    script = (f'/replay pair /data/proof.tif /tmp/{mode}.tif {mode} {" ".join(extra)} && echo image '
+              f'&& base64 -w0 /tmp/{mode}.tif && echo')
+    summary, image = replay(script=script).split('image\n', 1)
+    found = kept(summary)
+    received = Image.open(io.BytesIO(base64.b64decode(image.strip())))
+    _, pages = proof_tiff()
+    for number, page in enumerate(pages):
+        received.seek(number)
+        assert received.convert('1').tobytes() == page.tobytes(), (mode, extra, number)
+    return found
+
+
+@pytest.mark.parametrize('mode', ['paced', 'peer'])
+def test_a_subaddress_the_built_in_engine_asks_for_reaches_a_receiver_that_takes_one(replay, mode):
+    """0005: the sender asks for subaddress 4021; the receiver's DIS sets bit 49, so spandsp sends SUB and the
+    receiving engine reads it (the frame 0004 keeps and spandsp's own reading), with the same three pages."""
+    from app import engine_frames
+    found = _pair_with_subaddress(replay, mode, '4021')
+    assert found['status'] == '0 0' and found['pages'] == '3', found
+    assert found['sub_asked'] == '4021'
+    assert engine_frames.decode_dis(found['far_dis'])['subaddress'] is True, found
+    assert engine_frames.decode_sub(found['sub']) == '4021' and found['rx_sub'] == '4021', found
+    # The longest a subaddress may be: a 20-digit notice ID (direct/notice.py).
+    notice = '73019265018273640192'
+    found = _pair_with_subaddress(replay, mode, notice)
+    assert found['status'] == '0 0' and found['rx_sub'] == notice
+    assert engine_frames.decode_sub(found['sub']) == notice
+
+
+def test_a_receiver_that_takes_no_subaddress_gets_none_and_the_fax_still_goes(replay):
+    """Requested is not carried: without DIS bit 49 spandsp 0.0.6 withholds SUB (what Faxbot records as asked but
+    not carried), and the pages still arrive."""
+    from app import engine_frames
+    found = _pair_with_subaddress(replay, 'paced', '4021', 'nosub')
+    assert found['status'] == '0 0' and found['pages'] == '3', found
+    assert found['sub_asked'] == '4021'
+    assert engine_frames.decode_dis(found['far_dis'])['subaddress'] is False
+    assert found['sub'] == '' and found['rx_sub'] == '', found
+
+
+def test_a_fax_without_a_subaddress_sends_none(replay):
+    found = _pair_with_subaddress(replay, 'paced')
+    assert found['status'] == '0 0' and found['sub_asked'] == '' and found['sub'] == '' and found['rx_sub'] == ''
+
+
+@pytest.mark.parametrize('value, expected', [
+    ('4021', '4021'), (' 40 21 ', '4021'), ('+#*1', '+#*1'), ('12345678901234567890', '12345678901234567890'),
+    ('123456789012345678901', ''), ('40a1', ''), ('40;21', ''), ('', ''), ('$(id)', ''),
+])
+def test_the_subaddress_check_keeps_only_what_a_subaddress_may_hold(replay, value, expected):
+    """0005's faxbot_sub_clean, as compiled into Asterisk: anything else sends nothing rather than part of it."""
+    from app.access.receiving_rules import normalize_subaddress
+    assert replay('clean', value).strip() == f'[{expected}]'
+    # The same characters a receiving rule accepts (at most 20), so what Faxbot sends a rule can match.
+    assert (normalize_subaddress(value) or '') == expected
+
+
 def test_a_spandsp_other_than_the_pinned_one_still_stops_the_build(replay):
     probe = ('set -e; mkdir -p /tmp/other/spandsp; sed "s/^#define SPANDSP_RELEASE_DATE .*/#define '
              'SPANDSP_RELEASE_DATE 20140101/" /usr/include/spandsp/version.h > /tmp/other/spandsp/version.h; '

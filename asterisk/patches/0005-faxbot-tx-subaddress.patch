@@ -1,0 +1,58 @@
+Faxbot: the built-in engine sends the subaddress (SUB) a fax asks for (spandsp 0.0.6).
+
+T.33 routing names a department or mailbox behind one fax number by the
+subaddress the sender states, and a notice fax to an enrolled partner carries
+its 20-digit notice ID the same way (direct/notice.py). The SSL Fax engine
+already sends one (hfaxd's JPARM SUBADDR); the built-in engine could not.
+
+With FAXBOT_TX_SUB on the channel (ami.py sets it on the Originate), SendFAX
+hands it to spandsp (t30_set_tx_sub_address), on audio and T.38 calls alike,
+after faxbot_sub_clean in faxbot_t38_gateway.h keeps only what a subaddress
+may hold: digits and +, # and *, at most 20. Anything else sends nothing and
+logs one WARNING. spandsp sends SUB with its DCS only when the far end's DIS
+says it takes subaddresses (DIS bit 49), so Faxbot records the subaddress as
+requested, and as carried only when that bit was set (engine_frames.py). One
+NOTICE line per session names the subaddress. A sent fax without FAXBOT_TX_SUB
+is unchanged.
+
+Receiving: spandsp 0.0.6's own DIS leaves bit 49 clear (its default T.30
+features have no subaddressing), so a sending machine that honours the DIS
+never sent the built-in engine a SUB, and receiving rules by subaddress and
+notice pairing by SUB could not work there. A fax this engine receives now
+says it takes one (faxbot_receive_subaddress). The replay proof in
+asterisk/tests shows SUB carried with the bit and withheld without it.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -1203,6 +1203,31 @@
+ 	t30_set_phase_e_handler(p->t30_state, t30_phase_e_handler, s);
+ 	/* Faxbot (0004): keep the frames both sides send, for the channel variables at the end of the session. */
+ 	t30_set_real_time_frame_handler(p->t30_state, faxbot_frame_handler, p);
++	/* Faxbot (0005): the T.33 subaddress (SUB) this fax asks for (FAXBOT_TX_SUB), on audio and T.38 alike. spandsp
++	 * sends it only when the far end's DIS says it takes one, so Faxbot records it as requested, not as carried. */
++	if (s->chan && (s->details->caps & AST_FAX_TECH_SEND)) {
++		const char *asked;
++		char sub[FAXBOT_SUB_MAX + 1];
++		int given;
++
++		ast_channel_lock(s->chan);
++		asked = pbx_builtin_getvar_helper(s->chan, "FAXBOT_TX_SUB");
++		given = asked && *asked;
++		faxbot_sub_clean(asked, sub, sizeof(sub));
++		ast_channel_unlock(s->chan);
++		if (sub[0]) {
++			t30_set_tx_sub_address(p->t30_state, sub);
++			ast_log(LOG_NOTICE, "Faxbot: subaddress %s requested on %s\n", sub, ast_channel_name(s->chan));
++		} else if (given) {
++			ast_log(LOG_WARNING, "Faxbot: the subaddress for %s is not one a fax can carry; none is sent\n",
++				ast_channel_name(s->chan));
++		}
++	}
++	/* Faxbot (0005): a fax this engine receives says it takes a subaddress (DIS bit 49), which spandsp leaves out by
++	 * default, so a sending machine that honours the DIS sends its SUB (receiving rules by subaddress). */
++	if (s->details->caps & AST_FAX_TECH_RECEIVE) {
++		faxbot_receive_subaddress(p->t30_state);
++	}
+ 
+ 	/* set T.38 parameters */
+ 	if (p->ist38) {

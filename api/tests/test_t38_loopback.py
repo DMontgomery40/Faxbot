@@ -1078,6 +1078,33 @@ def test_internet_aware_fax_between_two_faxbots_is_shorter_with_the_same_pages(t
     print(json.dumps({'iaf': report}, indent=2))
 
 
+def test_a_subaddress_the_built_in_engine_asks_for_reaches_the_receiving_engine_on_t38_and_audio(tmp_path,
+                                                                                                    monkeypatch):
+    """Patch 0005 (M17): the fax asks for subaddress 4021 through the production Originate fields (as a notice
+    fax's notice ID or a sending rule's subaddress would). The receiving Asterisk, also 0005, says in its DIS that it
+    takes a subaddress, so the sender's spandsp sends SUB, and the receiver hands it to Faxbot with the fax
+    (sub_hex). Over T.38 and over audio alike; the sender's frames show the far end took it (carried)."""
+    from app import engine_frames
+    monkeypatch.setattr(ami, 'fax_subaddress', lambda job_id: '4021')
+    (tmp_path / 't38').mkdir()
+    (tmp_path / 'audio').mkdir()
+    report = {}
+    for name, extra in (('t38', None), ('audio', {'FAXBOT_AUDIO': 'yes'})):
+        outcome = exchange(tmp_path / name, wait_frames=True, extra_variables=extra)
+        result, captured = outcome['result'], outcome['captured']
+        assert 'FAXBOT_TX_SUB=4021' in outcome['fields']['Variable'].split(','), outcome['fields']
+        assert result['Status'] == 'SUCCESS' and result['Pages'] == '2', (name, result)
+        assert result['Mode'] == ('audio' if name == 'audio' else 'T38'), (name, result)
+        assert 'Faxbot: subaddress 4021 requested on' in outcome['sender_log'], name
+        row = engine_frames.parse_event(outcome['frames'] or {})
+        assert engine_frames.subaddress_carried('4021', row) is True, (name, row)
+        assert captured is not None, name
+        assert engine_frames.decode_sub(captured['body']['sub_hex']) == '4021', (name, captured['body'])
+        report[name] = {'mode': result['Mode'], 'far_dis': row['dis'], 'received_sub': captured['body']['sub_hex'],
+                        'seconds': outcome['submit_to_result_seconds'], 'image': outcome['image']}
+    print(json.dumps({'subaddress_sent': report}, indent=2))
+
+
 def test_a_second_trunk_carries_the_fax_and_the_receiver_hands_over_which_trunk_it_came_in_on(tmp_path):
     """Several trunks over loopback: Faxbot's file has two trunks on each side; the fax goes out over the second
     trunk's endpoint (carrier B, the other container), and the receiver, which identifies the caller by address on

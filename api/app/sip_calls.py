@@ -369,6 +369,22 @@ def _identity(value):
     return text if _ID.fullmatch(text) else None
 
 
+_SUBADDRESS = re.compile(r'[0-9#*+]{1,20}')
+_PEER = re.compile(r'[a-f0-9]{32}')
+
+
+def _subaddress(value):
+    """The subaddress a call asked for (patch 0005), for ``subaddress``; None when absent or malformed."""
+    text = str(value or '').strip()
+    return text if _SUBADDRESS.fullmatch(text) else None
+
+
+def _peer(value):
+    """The enrolled partner (its enrollment ID) a peer fax call went to or came from, for ``peer_id``."""
+    text = str(value or '').strip()
+    return text if _PEER.fullmatch(text) else None
+
+
 def _sip_call_id(encoded):
     """The SIP Call-ID the dialplan captured (base64), the carrier's key for its bill; None when absent."""
     if not encoded:
@@ -482,8 +498,16 @@ class SipCallRecords:
                   'fax_preference': 1 if event.get('FaxPreference') == 'yes' else 0}
         if _trunk(event.get('Trunk')):
             values['trunk_key'] = _trunk(event.get('Trunk'))
-        return self._write(lambda connection, table: self._outbound_row(
-            connection, table, job_id, attempt_id, now, **values)['id'])
+        # The subaddress this call asked for (patch 0005): requested; carried only if the far end takes one.
+        subaddress = _subaddress(event.get('Subaddress'))
+        # A peer fax call to an enrolled partner inside its tunnel, with no carrier (direct/peer_call.py).
+        peer = _peer(event.get('Peer'))
+
+        def write(connection, table):
+            extra = {name: value for name, value in (('subaddress', subaddress), ('peer_id', peer))
+                     if value and name in table.c}
+            return self._outbound_row(connection, table, job_id, attempt_id, now, **values, **extra)['id']
+        return self._write(write)
 
     def record_originate_response(self, event, *, now=None):
         parts = str(event.get('ActionID') or '').split(':')

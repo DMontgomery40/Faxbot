@@ -63,6 +63,25 @@ def _validate_headers(fields: Dict[str, str]):
 # escaped form arrives as the literal header value *;+sip.fax="t38".
 FAX_PREFERENCE_VARIABLE = 'PJSIP_HEADER(add,Accept-Contact)=*;+sip.fax=\\"t38\\"'
 
+# A T.33 subaddress as the built-in engine sends it (patch 0005's faxbot_sub_clean): digits and +, # and *, at
+# most 20, spaces dropped. The same characters a receiving rule accepts (access/receiving_rules.py).
+SUBADDRESS = re.compile(r"[0-9#*+]{1,20}")
+SUBADDRESS_VARIABLE = re.compile(r"(?:^|,)FAXBOT_TX_SUB=([0-9#*+]{1,20})(?=,|$)")
+
+
+def subaddress_text(value) -> Optional[str]:
+    """``value`` as the engine sends it, or None when a fax subaddress cannot hold it."""
+    if not isinstance(value, str):
+        return None
+    text = value.replace(" ", "")
+    return text if SUBADDRESS.fullmatch(text) else None
+
+
+def requested_subaddress(fields: Dict[str, str]) -> Optional[str]:
+    """The subaddress an Originate's fields ask for, or None."""
+    found = SUBADDRESS_VARIABLE.search(fields.get("Variable", ""))
+    return found.group(1) if found else None
+
 
 def prepare_originate_fields(
     job_id: str,
@@ -81,6 +100,7 @@ def prepare_originate_fields(
     iaf: Optional[str] = None,
     audio: bool = False,
     endpoint: str = "trunk-endpoint",
+    subaddress: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -94,6 +114,10 @@ def prepare_originate_fields(
     initial INVITE: a property of the route, never a reason to call again.
     ``endpoint`` is the trunk the call goes over (``sip_trunk.endpoint_name``);
     the caller checks it is one Faxbot rendered.
+    ``subaddress`` is the T.33 subaddress (SUB) this fax asks the far end's
+    machine for (patch 0005, ``FAXBOT_TX_SUB``): digits and +, # and *, at most
+    20. It is requested, never promised: the engine sends it only when the far
+    end's machine says it takes one.
     Async Originate ignores PreDialGoSub in Asterisk 22, so the header is set
     as an Originate variable, which Asterisk applies to the new channel before
     the INVITE is sent.
@@ -151,6 +175,12 @@ def prepare_originate_fields(
         raise ValueError("Unsupported AMI fax mode")
     if audio:
         variables["FAXBOT_AUDIO"] = "yes"
+    # Patch 0005: the subaddress this fax asks for (a notice fax's notice ID, or one your sending rules chose).
+    if subaddress is not None:
+        clean = subaddress_text(subaddress)
+        if clean is None:
+            raise ValueError("Unsupported AMI subaddress")
+        variables["FAXBOT_TX_SUB"] = clean
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -217,6 +247,52 @@ def sender_identity(job_id):
     if not isinstance(header, str) or not isinstance(station, str):
         return None
     return header, station
+
+
+_NOTICE_MODULE = f"{__package__}.direct.notice"
+_notice_missing_logged = False
+
+
+def notice_subaddress(job_id) -> Optional[str]:
+    """The 20-digit notice ID a notice fax to an enrolled partner asks for as its subaddress (``direct/notice.py``,
+    ``subaddress_for``), or None for every other fax.
+
+    Notice faxes come with the notice work (builder AU, ent/notice-repair). Until that module is part of this
+    installation there is no notice fax, so its absence alone means None, logged once; any other import failure,
+    and anything ``subaddress_for`` raises, is not hidden here.
+    """
+    global _notice_missing_logged
+    try:
+        from .direct.notice import subaddress_for
+    except ModuleNotFoundError as error:
+        if error.name != _NOTICE_MODULE:
+            raise
+        if not _notice_missing_logged:
+            _notice_missing_logged = True
+            logging.getLogger(__name__).info("No notice faxes on this installation (%s); none asks for a subaddress.",
+                                             error)
+        return None
+    engine = _database()
+    return subaddress_for(engine, job_id) if engine is not None else None
+
+
+def rule_subaddress(job_id) -> Optional[str]:
+    """The subaddress the fax's sending rules chose (``routing/envelope.py``, the envelope's ``subaddress``), or
+    None. A fax accepted before rules, or whose decision can no longer be read, asks for none."""
+    engine = _database()
+    if engine is None:
+        return None
+    from .routing import envelope as envelopes
+    try:
+        pinned = envelopes.load(engine, job_id)
+    except envelopes.UnreadableDecision:
+        return None
+    return getattr(pinned.envelope, "subaddress", None) if pinned is not None else None
+
+
+def fax_subaddress(job_id) -> Optional[str]:
+    """The subaddress this fax asks for: a notice fax's notice ID first, then one its sending rules chose."""
+    return notice_subaddress(job_id) or rule_subaddress(job_id)
 
 
 def learned_options(learned):
@@ -306,6 +382,10 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     # A fax relayed for a partner shows the partner's header text and station ID; caller ID is unchanged.
     identity = sender_identity(job_id)
     header = identity[0] if identity is not None else values.fax_header
+    # The subaddress this fax asks for (patch 0005): a notice fax's notice ID, or one its sending rules chose.
+    subaddress = fax_subaddress(job_id)
+    if subaddress:
+        limits["subaddress"] = subaddress
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=header, attempt_id=attempt_id,
@@ -696,6 +776,10 @@ class AMIClient:
             "CallerID": fields["CallerID"], "Preset": own.sip_trunk_preset or "",
             "FaxPreference": "yes" if FAX_PREFERENCE_VARIABLE in fields["Variable"] else "no",
         }
+        # The subaddress this call asks for, recorded as requested (carried only if the far end takes one).
+        subaddress = requested_subaddress(fields)
+        if subaddress:
+            submission["Subaddress"] = subaddress
         if trunk and trunk != "sip":
             submission["Trunk"] = trunk
         learned = getattr(call, "learned", None)

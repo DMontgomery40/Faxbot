@@ -1,5 +1,5 @@
 /*
- * Proof for asterisk/patches/0004: spandsp 0.0.6's T.38 terminal (Asterisk's built-in fax engine on T.38) with the
+ * Proof for asterisk/patches/0004 and 0005: spandsp 0.0.6's T.38 terminal (Asterisk's built-in fax engine on T.38) with the
  * steps 0004 adds, from asterisk/patches/faxbot_t38_gateway.h, the file the image build compiles into Asterisk.
  *
  * Usage:
@@ -8,11 +8,18 @@
  *     (send) or receives (receive) a fax hears it, with 0004's frame handler, and prints what it kept:
  *     "dis <hex>", "dcs_first <hex>", "dcs_last <hex>", "rates <codes>", "csa <hex>", "tsa <hex>", "sub <hex>",
  *     "trainings N", "ftt N" (empty hex when not seen).
- *   t38_terminal_replay pair TIFF OUT paced|peer
+ *   t38_terminal_replay pair TIFF OUT paced|peer [SUB [nosub]]
  *     Two terminals joined back to back send TIFF to OUT over T.38, with error correction. "peer" is 0004's
  *     Internet Aware Fax between two Faxbots (both ends: IAF mode, chunks sent ahead);
  *     "paced" is spandsp as Asterisk runs it. Prints "seconds S" (simulated time from start to the end of both
  *     sessions, in 20 ms ticks as Asterisk's timer runs), "pages N", "status SEND RECEIVE" and "packets N".
+ *     With SUB, the sender asks for that subaddress as 0005 does (faxbot_sub_clean, then t30_set_tx_sub_address);
+ *     The receiver says it takes a subaddress as 0005 makes Asterisk's receiver do (faxbot_receive_subaddress);
+ *     "nosub" leaves it as spandsp 0.0.6 is by default (no DIS bit 49). Also prints "sub_asked TEXT",
+ *     "far_dis <hex>" (the receiver's DIS as the sender kept it), "sub <hex>" (the SUB frame the receiver kept) and
+ *     "rx_sub TEXT" (the subaddress spandsp's receiver read).
+ *   t38_terminal_replay clean VALUE
+ *     Prints "[TEXT]": what 0005's faxbot_sub_clean keeps of VALUE.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,6 +134,7 @@ static int replay(const char *path, int calling)
 
 /* Two terminals back to back: what one sends, the other receives at once. */
 static t38_terminal_state_t sender, receiver;
+static faxbot_frames_t sender_frames, receiver_frames;
 static int done_sender, done_receiver, status_sender = -1, status_receiver = -1, pages, packets_sent;
 
 static int to_receiver(t38_core_state_t *s, void *user_data, const uint8_t *buf, int len, int count)
@@ -162,9 +170,10 @@ static void ended(t30_state_t *s, void *user_data, int result)
 	}
 }
 
-static int pair(const char *tiff, const char *out, int iaf)
+static int pair(const char *tiff, const char *out, int iaf, const char *sub, int no_sub)
 {
 	t30_state_t *a, *b;
+	char clean[FAXBOT_SUB_MAX + 1], hex[2 * FAXBOT_ADDRESS_MAX + 1];
 	int tick, i;
 
 	t38_terminal_init(&sender, TRUE, to_receiver, NULL);
@@ -185,6 +194,17 @@ static int pair(const char *tiff, const char *out, int iaf)
 		t30_set_iaf_mode(a, faxbot_iaf_t30_mode(FAXBOT_IAF_PEER));
 		t30_set_iaf_mode(b, faxbot_iaf_t30_mode(FAXBOT_IAF_PEER));
 	}
+	t30_set_real_time_frame_handler(a, frame_handler, &sender_frames);
+	t30_set_real_time_frame_handler(b, frame_handler, &receiver_frames);
+	/* What 0005 does in spandsp_fax_start for a fax that asks for a subaddress. */
+	faxbot_sub_clean(sub, clean, sizeof(clean));
+	if (clean[0]) {
+		t30_set_tx_sub_address(a, clean);
+	}
+	/* The receiver as 0005 runs it (it says it takes a subaddress), or ("nosub") as spandsp 0.0.6 is by default. */
+	if (!no_sub) {
+		faxbot_receive_subaddress(b);
+	}
 	for (tick = 0; tick < 50 * 900 && !(done_sender && done_receiver); tick++) {
 		t38_terminal_send_timeout(&sender, SAMPLES);
 		t38_terminal_send_timeout(&receiver, SAMPLES);
@@ -198,6 +218,12 @@ static int pair(const char *tiff, const char *out, int iaf)
 	}
 	printf("seconds %.2f\npages %d\nstatus %d %d\npackets %d\n", tick * 0.020, pages, status_sender, status_receiver,
 		packets_sent);
+	printf("sub_asked %s\n", clean);
+	faxbot_hex(sender_frames.dis.frame, sender_frames.dis.len, hex);
+	printf("far_dis %s\n", hex);
+	faxbot_hex(receiver_frames.sub.frame, receiver_frames.sub.len, hex);
+	printf("sub %s\n", hex);
+	printf("rx_sub %s\n", t30_get_rx_sub_address(b) ? t30_get_rx_sub_address(b) : "");
 	return 0;
 }
 
@@ -206,9 +232,18 @@ int main(int argc, char *argv[])
 	if (argc == 4 && !strcmp(argv[1], "replay")) {
 		return replay(argv[2], !strcmp(argv[3], "send"));
 	}
-	if (argc == 5 && !strcmp(argv[1], "pair")) {
-		return pair(argv[2], argv[3], !strcmp(argv[4], "peer"));
+	if (argc >= 5 && argc <= 7 && !strcmp(argv[1], "pair")) {
+		return pair(argv[2], argv[3], !strcmp(argv[4], "peer"), argc >= 6 ? argv[5] : NULL,
+			argc == 7 && !strcmp(argv[6], "nosub"));
 	}
-	fprintf(stderr, "usage: %s replay FILE send|receive | pair TIFF OUT paced|peer\n", argv[0]);
+	if (argc == 3 && !strcmp(argv[1], "clean")) {
+		char clean[FAXBOT_SUB_MAX + 1];
+
+		faxbot_sub_clean(argv[2], clean, sizeof(clean));
+		printf("[%s]\n", clean);
+		return 0;
+	}
+	fprintf(stderr, "usage: %s replay FILE send|receive | pair TIFF OUT paced|peer [SUB [nosub]] | clean VALUE\n",
+		argv[0]);
 	return 2;
 }
