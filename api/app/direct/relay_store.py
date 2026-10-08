@@ -196,12 +196,12 @@ class RelayStore:
             return dict(row) if row is not None else None
 
     def add_fax_on(self, connection, *, role, message_id, agreement_id, peer_id, job_id, destination, pages,
-                   state, attempt_id=None, shared=False, cost=None, own_route=None, now=None):
+                   state, attempt_id=None, shared=False, cost=None, own_route=None, detail=None, now=None):
         now = now or utcnow()
         identity = uuid4().hex
         connection.execute(self.faxes.insert().values(
             id=identity, role=role, message_id=message_id, agreement_id=agreement_id, peer_id=peer_id,
-            job_id=job_id, attempt_id=attempt_id, destination=destination, pages=pages, state=state,
+            job_id=job_id, attempt_id=attempt_id, destination=destination, pages=pages, state=state, detail=detail,
             shared=int(bool(shared)), cost_micros=cost[0] if cost else None, cost_currency=cost[1] if cost else None,
             own_route_micros=own_route[0] if own_route else None,
             own_route_currency=own_route[1] if own_route else None, created_at=now, updated_at=now))

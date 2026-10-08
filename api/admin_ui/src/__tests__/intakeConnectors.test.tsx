@@ -162,4 +162,10 @@ describe('Email and folders', () => {
     const other = render(<FaxRequestedByItem client={client()} jobId="job-2" />);
     await waitFor(() => expect(other.container.innerHTML).toBe(""));
   });
+
+  it('says when the connectors could not load instead of hiding the page', async () => {
+    server.use(http.get('/intake/sources', () => HttpResponse.json({ detail: 'Not Found' }, { status: 404 })));
+    render(<Connectors client={client()} canWrite />);
+    expect(await screen.findByText('This item no longer exists. Reload and try again.')).toBeTruthy();
+  });
 });

@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import AllInboxIcon from '@mui/icons-material/AllInbox';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AdminAPIClient, { AdminAPIError, isForbidden, isNotAvailable } from '../../api/client';
+import AdminAPIClient, { AdminAPIError, isForbidden } from '../../api/client';
 import type {
   Connector, ConnectorChoices, ConnectorDirection, ConnectorItem, ConnectorKind, ConnectorSettings,
 } from '../../api/connectorTypes';
@@ -282,7 +282,8 @@ export default function Connectors({ client, canWrite }: { client: AdminAPIClien
     try {
       setConnectors((await client.listConnectors()).connectors);
     } catch (failure) {
-      if (isForbidden(failure) || isNotAvailable(failure)) setHidden(true);
+      // Someone who may not read settings sees no page; any other failure is said.
+      if (isForbidden(failure)) setHidden(true);
       else setError(failure);
     }
   }, [client]);
