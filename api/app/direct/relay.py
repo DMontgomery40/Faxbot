@@ -93,10 +93,12 @@ PRIVACY = ('{relay} will see what these faxes contain. If they are another organ
            'agreement with them covers this; Faxbot does not make relaying exempt from any privacy rules.')
 RELAY_PRIVACY = ("You will see what {partner}'s faxes contain. If they are another organization, check that your "
                  'agreement with them covers this; Faxbot does not make relaying exempt from any privacy rules.')
-# Telnyx's terms (s. 11.19) bar handing off, relaying or transiting voice traffic; a relay receives the document
-# over the internet and places its own fax call, so it passes no call through. For another organization the
-# carrier's terms still make the relay responsible for its end users and their content (Telnyx s. 10.1, 11.2,
-# 11.9; read 2026-10-07). SignalWire's, Sinch's and Phaxio's terms were not checked.
+# Telnyx's terms (telnyx.com/terms-and-conditions-of-service, read 2026-10-07; the page shows no date): s. 11.19,
+# "Customer may use the Services solely to originate voice traffic through Telnyx", bars handing off, relaying or
+# transiting voice traffic; a relay receives the document over the internet and originates its own fax call, so it
+# passes no call through. For another organization the relay is still responsible for its end users (s. 10.1:
+# "shall cause its customers and end users to comply with the AUP") and for the content sent (s. 11.2).
+# SignalWire's, Sinch's and Phaxio's terms were not checked.
 OWN_CALL = ('{relay} receives each document over the internet and places its own fax call; no call is passed '
             'through.')
 RESALE = ("Because {partner} is another organization, your carrier may count it as your customer: Telnyx's terms "
