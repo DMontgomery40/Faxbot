@@ -21,7 +21,7 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { FaxRefusedError, normalizeFaxDestination, type FaxPatient } from '../api/client';
+import AdminAPIClient, { FaxRefusedError, isForbidden, normalizeFaxDestination, type FaxPatient } from '../api/client';
 import type { AdminConfig, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
@@ -101,9 +101,10 @@ function acceptanceMessage(response: FaxSendResult, to?: string): string {
 const NO_PATIENT: FaxPatient = { recordNumber: '', recordSystem: '', familyName: '', givenName: '', birthDate: '' };
 
 // The patient a fax is about, for a recipient whose health record system files documents under a patient (FHIR).
-// Shown only when such a system is among this number's routes; the details go with the fax and nowhere else.
+// Shown when such a system is among this number's routes, or on request for someone who may not see the routes;
+// the details go with the fax and nowhere else.
 function PatientFields({ routeLabel, value, onChange, disabled }: {
-  routeLabel: string; value: FaxPatient; onChange: (value: FaxPatient) => void; disabled: boolean;
+  routeLabel: string | null; value: FaxPatient; onChange: (value: FaxPatient) => void; disabled: boolean;
 }) {
   const set = (key: keyof FaxPatient) => (event: React.ChangeEvent<HTMLInputElement>) =>
     onChange({ ...value, [key]: event.target.value });
@@ -111,8 +112,10 @@ function PatientFields({ routeLabel, value, onChange, disabled }: {
     <Box data-testid="send-patient">
       <Typography variant="subtitle2">Patient (optional)</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        {routeLabel} files this document in its health records. Give the patient so it lands in the right chart.
-        If that system needs the patient and these are empty, Faxbot sends it as a fax instead.
+        {routeLabel ? `${routeLabel} files this document in its health records.`
+          : "Only for a recipient whose health record system takes your documents."}
+        {' '}Give the patient so it lands in the right chart. If that system needs the patient and these are empty,
+        Faxbot sends it as a fax instead.
       </Typography>
       <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr' }} gap={2}>
         <TextField size="small" label="Medical record number" value={value.recordNumber} onChange={set('recordNumber')}
@@ -200,22 +203,27 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   // The route Faxbot would use for this number and what this fax costs there, before sending.
   // People who may not read routing settings see the form without it.
   const [routes, setRoutes] = useState<RecommendedRoute[]>([]);
+  // Someone who may not read routes (a fax operator) cannot see whether the number has a health record system.
+  const [routesHidden, setRoutesHidden] = useState(false);
   useEffect(() => {
     setRoutes([]);
     if (!/\d{3}/.test(toNumber)) return undefined;
     let live = true;
     const timer = window.setTimeout(() => {
       client.getDestination(normalizeFaxDestination(toNumber), pages ?? undefined)
-        .then((detail) => { if (live) setRoutes(detail.recommended_routes); })
-        .catch(() => undefined);
+        .then((detail) => { if (live) { setRoutes(detail.recommended_routes); setRoutesHidden(false); } })
+        .catch((failure) => { if (live && isForbidden(failure)) setRoutesHidden(true); });
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber, pages]);
   const route = routes[0] ?? null;
-  // A recipient's health record system (a FHIR route) among this number's routes asks for the patient.
+  // A recipient's health record system (a FHIR route) among this number's routes asks for the patient; someone
+  // who may not see the routes can add the patient on request.
   const recordsRoute = routes.find((item) => item.route.startsWith('fhir:')) ?? null;
   const [patient, setPatient] = useState<FaxPatient>(NO_PATIENT);
-  const givenPatient = recordsRoute && Object.values(patient).some((value) => (value ?? '').trim()) ? patient : undefined;
+  const [patientAsked, setPatientAsked] = useState(false);
+  const patientShown = recordsRoute !== null || (routesHidden && patientAsked);
+  const givenPatient = patientShown && Object.values(patient).some((value) => (value ?? '').trim()) ? patient : undefined;
 
   // What would this cost? Once the document's pages are known, the shared predictor prices this fax on
   // that route; until then (or if it can't answer) the route's price in its own unit.
@@ -325,6 +333,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       setToNumber('');
       setFile(null);
       setPatient(NO_PATIENT);
+      setPatientAsked(false);
       setUploadPickerVersion(version => version + 1);
       
     } catch (err) {
@@ -410,8 +419,19 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   </Alert>
                 )}
 
-                {recordsRoute && (
-                  <PatientFields routeLabel={recordsRoute.label} value={patient} disabled={!configReady || loading}
+                {!recordsRoute && routesHidden && !patientAsked && (
+                  <Box>
+                    <Button size="small" sx={{ px: 0, textTransform: 'none' }} onClick={() => setPatientAsked(true)}
+                      disabled={!configReady || loading} data-testid="send-patient-add">
+                      Add the patient's details
+                    </Button>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Only for a recipient whose health record system takes your documents.
+                    </Typography>
+                  </Box>
+                )}
+                {patientShown && (
+                  <PatientFields routeLabel={recordsRoute?.label ?? null} value={patient} disabled={!configReady || loading}
                     onChange={(value) => { if (!submittingRef.current) setPatient(value); }} />
                 )}
 
@@ -519,6 +539,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         setToNumber('');
                         setFile(null);
                         setPatient(NO_PATIENT);
+                        setPatientAsked(false);
                         setUploadPickerVersion(version => version + 1);
                         setResult(null);
                         setToNumberError(false);

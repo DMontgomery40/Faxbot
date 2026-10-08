@@ -374,6 +374,25 @@ describe("The patient, for a recipient's health record system", () => {
     expect((screen.getByTestId('send-patient-number') as HTMLInputElement).value).toBe('');
   });
 
+  it('lets someone who may not read routes add the patient on request', async () => {
+    server.use(http.get('/routing/destinations/:number', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    faxServer(['accepted']);
+    const appended = vi.spyOn(FormData.prototype, 'append');
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const add = await screen.findByTestId('send-patient-add', {}, { timeout: 2000 });
+    expect(screen.queryByTestId('send-patient')).toBeNull();
+    fireEvent.click(add);
+    expect(screen.getByTestId('send-patient').textContent)
+      .toContain('Only for a recipient whose health record system takes your documents.');
+    fireEvent.change(screen.getByTestId('send-patient-number'), { target: { value: 'MRN-5550199' } });
+    await send('+12025550123', document());
+    await screen.findByText(/Fax queued/);
+    expect(appended.mock.calls.filter(([name]) => String(name).startsWith('patient_'))
+      .map(([name, value]) => `${name}=${value}`)).toEqual(['patient_record_number=MRN-5550199']);
+    appended.mockRestore();
+  });
+
   it('leaves the patient out for a number without a health record system', async () => {
     server.use(routes([['phaxio', 'Phaxio']]));
     faxServer(['accepted']);
