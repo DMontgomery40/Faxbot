@@ -143,12 +143,16 @@ ORDER = {'normal': 0, 'dense': 1, 'codec': 2}
 
 
 def rank(prediction, shape):
-    """Sort key: the cheapest first; when the cost is the same (or unknown), fewer billed pages, then less time
-    on the line in whole seconds; only a full tie keeps the simpler layout (normal, then dense, then codec)."""
+    """Sort key: the cheapest expected bill first (the shared predictor prices a call over its time's spread);
+    when that is the same (or unknown), fewer expected billing steps (minutes inside an allowance), then fewer
+    billed pages, then less expected time on the line, unrounded, so a measured coding's seconds count; only a
+    full tie keeps the simpler layout (normal, then dense, then codec)."""
     cost = prediction.cost
     billed = prediction.billed_pages if prediction.billed_pages is not None else shape.pages
-    seconds = math.floor(prediction.seconds) if prediction.seconds is not None else 0
-    return (cost is None, cost.micros if cost is not None else 0, billed, seconds, ORDER[shape.layout])
+    steps = getattr(prediction, 'expected_billed_seconds', None)
+    seconds = prediction.seconds if prediction.seconds is not None else 0.0
+    return (cost is None, cost.micros if cost is not None else 0, steps if steps is not None else 0.0, billed,
+            seconds, ORDER[shape.layout])
 
 
 def decide(route_key, destination, normal, dense, *, card=None, predict=None):

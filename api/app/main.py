@@ -1659,8 +1659,12 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             root = None
         return safely(sent_view, _configuration_manager().store.engine, job_id, root)
     page_view = await run_lifecycle_step(pages_view)
+    # The coding the newest attempt asked for, measured on its pages, and what the call took (pages/coding.py).
+    from .pages import coding as page_coding
+    coding_view = await run_lifecycle_step(lambda: page_coding.sent_view(_configuration_manager().store.engine, job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
+            'coding': coding_view,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
