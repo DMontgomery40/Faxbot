@@ -48,7 +48,7 @@ def _seed_item(engine):
 
 def test_certainty_follows_notice_repair():
     assert schema_certainty.REVISION == '0047_certainty'
-    assert schema.HEAD == schema_certainty.REVISION
+    assert schema.CERTAINTY == schema_certainty.REVISION
     assert schema.NOTICE_REPAIR == PRIOR
     assert schema_certainty.TABLES == {'certainty_items', 'certainty_events', 'certainty_settings'}
 
