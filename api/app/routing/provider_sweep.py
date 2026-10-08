@@ -7,8 +7,9 @@ received-fax notification that never arrived). For each provider account
 whose provider publishes a list of faxes, Faxbot lists the account's faxes in
 a time window and keeps every fax it has no record of:
 
-- a sent fax is Faxbot's when an attempt carries the provider's fax ID
-  (``outbound_attempts.provider_sid``);
+- a sent fax is Faxbot's when an attempt or its cost record carries the
+  provider's fax ID (``outbound_attempts.provider_sid``,
+  ``delivery_attempt_costs.provider_sid``);
 - a received fax is Faxbot's when an import carries it
   (``inbound_imports.operation_id`` from the same provider).
 
@@ -381,16 +382,18 @@ def listing_for(account, values, *, client_factory=None):
 
 class SweepStore:
     TABLES = ('provider_fax_sweeps', 'provider_unrecorded_faxes', 'outbound_attempts', 'inbound_imports',
-              'fax_jobs')
+              'fax_jobs', 'delivery_attempt_costs')
 
     def __init__(self, engine):
         self.engine = engine
         tables = reflect(engine, self.TABLES)
         self.sweeps, self.faxes = tables['provider_fax_sweeps'], tables['provider_unrecorded_faxes']
         self.attempts, self.imports, self.jobs = tables['outbound_attempts'], tables['inbound_imports'], tables['fax_jobs']
+        self.costs = tables['delivery_attempt_costs']
 
     def known(self, provider_id, faxes):
-        """The listed fax IDs Faxbot has a record of: an attempt carrying a sent one, an import a received one."""
+        """The listed fax IDs Faxbot has a record of: an attempt or its cost record carrying a sent one, an import a
+        received one."""
         sent = [fax.id for fax in faxes if fax.direction == 'sent']
         received = [fax.id for fax in faxes if fax.direction == 'received']
         found = set()
@@ -398,6 +401,9 @@ class SweepStore:
             for chunk in _chunks(sent):
                 found.update(connection.execute(sa.select(self.attempts.c.provider_sid).where(
                     self.attempts.c.provider_sid.in_(chunk))).scalars())
+                # The fax ID a cost record kept for an attempt (a route decided before submission keeps it there).
+                found.update(connection.execute(sa.select(self.costs.c.provider_sid).where(
+                    self.costs.c.provider_sid.in_(chunk))).scalars())
             for chunk in _chunks(received):
                 found.update(connection.execute(sa.select(self.imports.c.operation_id).where(
                     self.imports.c.source == provider_id, self.imports.c.operation_id.in_(chunk))).scalars())
