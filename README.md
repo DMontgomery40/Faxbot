@@ -20,9 +20,15 @@
 </p>
 
 
-Faxbot is an open-source, self-hosted fax platform with a web Admin Console, a REST API, cloud and SIP providers, and integrations for AI assistants. It helps organizations send and receive documents, choose delivery routes, track costs, and deliver incoming documents to the inboxes staff already use.
+Faxbot is a proprietary, self-hosted fax platform with a web Admin Console, a REST API, cloud and SIP providers, and integrations for AI assistants. It helps organizations send and receive documents, choose delivery routes, track costs, and deliver incoming documents to the inboxes staff already use.
 
 This README describes the current source checkout. Published packages and deployed installations may have fewer features; the [roadmap](#roadmap) distinguishes implemented capabilities from planned work and experiments.
+
+## License
+
+New Faxbot-owned work requires prior written permission from David Montgomery for use, modification, distribution, resale, or hosting. Contact [dmontg@gmail.com](mailto:dmontg@gmail.com) for permission. The setup instructions below are for authorized users. See [LICENSE](LICENSE) for the terms.
+
+Earlier MIT releases retain their existing permissions, including material already released on public development branches. [LICENSE-MIT](LICENSE-MIT) preserves that notice; it does not license new proprietary additions. Third-party components keep their own licenses.
 
 ## What Faxbot does
 
