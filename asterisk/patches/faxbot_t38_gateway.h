@@ -339,4 +339,29 @@ static inline void faxbot_sub_clean(const char *value, char *out, size_t size)
 	out[used] = '\0';
 }
 
+/*
+ * Patch 0006 (builder CA): the most compact coding a sent fax may use, from FAXBOT_COMPRESSION ("mh", "mr" or
+ * "mmr"), measured on the fax's own pages (api/app/pages/coding.py). It is a ceiling on what the sender offers:
+ * spandsp still takes the best coding the receiving machine also has, and T.6 (MMR) only with error correction
+ * (t30.c, process_rx_dis_dtc), so a machine never gets a coding it lacks. Error correction is not changed.
+ */
+
+/*! \brief The T.30 compressions a sent fax offers for \p coding; 0 (keep Asterisk's own set) for anything else. */
+static inline int faxbot_compressions(const char *coding)
+{
+	if (!coding) {
+		return 0;
+	}
+	if (!strcmp(coding, "mh")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mmr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION | T30_SUPPORT_T6_COMPRESSION;
+	}
+	return 0;
+}
+
 #endif /* FAXBOT_T38_GATEWAY_H */

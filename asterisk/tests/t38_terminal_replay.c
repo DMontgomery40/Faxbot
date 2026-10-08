@@ -1,5 +1,5 @@
 /*
- * Proof for asterisk/patches/0004 and 0005: spandsp 0.0.6's T.38 terminal (Asterisk's built-in fax engine on T.38) with the
+ * Proof for asterisk/patches/0004, 0005 and 0006: spandsp 0.0.6's T.38 terminal (Asterisk's built-in fax engine on T.38) with the
  * steps 0004 adds, from asterisk/patches/faxbot_t38_gateway.h, the file the image build compiles into Asterisk.
  *
  * Usage:
@@ -20,6 +20,10 @@
  *     "rx_sub TEXT" (the subaddress spandsp's receiver read).
  *   t38_terminal_replay clean VALUE
  *     Prints "[TEXT]": what 0005's faxbot_sub_clean keeps of VALUE.
+ *   t38_terminal_replay coded TIFF OUT CODING ecm|noecm
+ *     A paced pair as above, with error correction on both ends or neither, where the sender offers the codings
+ *     0006 allows for CODING (faxbot_compressions; "-" for Asterisk's own set). Also prints "dcs <hex>", the last DCS
+ *     the sender sent (the coding the pages went with).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -170,7 +174,7 @@ static void ended(t30_state_t *s, void *user_data, int result)
 	}
 }
 
-static int pair(const char *tiff, const char *out, int iaf, const char *sub, int no_sub)
+static int pair(const char *tiff, const char *out, int iaf, const char *sub, int no_sub, const char *coding, int ecm)
 {
 	t30_state_t *a, *b;
 	char clean[FAXBOT_SUB_MAX + 1], hex[2 * FAXBOT_ADDRESS_MAX + 1];
@@ -182,12 +186,16 @@ static int pair(const char *tiff, const char *out, int iaf, const char *sub, int
 	b = t38_terminal_get_t30_state(&receiver);
 	t30_set_tx_file(a, tiff, -1, -1);
 	t30_set_rx_file(b, out, -1);
-	t30_set_ecm_capability(a, TRUE);
-	t30_set_ecm_capability(b, TRUE);
+	t30_set_ecm_capability(a, ecm);
+	t30_set_ecm_capability(b, ecm);
+	/* Asterisk's own set (set_ecm), then what 0006's faxbot_set_compressions does for a sent fax. */
 	t30_set_supported_compressions(a, T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION
 		| T30_SUPPORT_T6_COMPRESSION);
 	t30_set_supported_compressions(b, T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION
 		| T30_SUPPORT_T6_COMPRESSION);
+	if (faxbot_compressions(coding)) {
+		t30_set_supported_compressions(a, faxbot_compressions(coding));
+	}
 	t30_set_phase_e_handler(a, ended, &sender);
 	t30_set_phase_e_handler(b, ended, &receiver);
 	if (iaf) {
@@ -223,6 +231,8 @@ static int pair(const char *tiff, const char *out, int iaf, const char *sub, int
 	printf("far_dis %s\n", hex);
 	faxbot_hex(receiver_frames.sub.frame, receiver_frames.sub.len, hex);
 	printf("sub %s\n", hex);
+	faxbot_hex(sender_frames.dcs_last.frame, sender_frames.dcs_last.len, hex);
+	printf("dcs %s\n", hex);
 	printf("rx_sub %s\n", t30_get_rx_sub_address(b) ? t30_get_rx_sub_address(b) : "");
 	return 0;
 }
@@ -234,7 +244,10 @@ int main(int argc, char *argv[])
 	}
 	if (argc >= 5 && argc <= 7 && !strcmp(argv[1], "pair")) {
 		return pair(argv[2], argv[3], !strcmp(argv[4], "peer"), argc >= 6 ? argv[5] : NULL,
-			argc == 7 && !strcmp(argv[6], "nosub"));
+			argc == 7 && !strcmp(argv[6], "nosub"), NULL, TRUE);
+	}
+	if (argc == 6 && !strcmp(argv[1], "coded")) {
+		return pair(argv[2], argv[3], 0, NULL, 0, argv[4], !strcmp(argv[5], "ecm"));
 	}
 	if (argc == 3 && !strcmp(argv[1], "clean")) {
 		char clean[FAXBOT_SUB_MAX + 1];
@@ -243,7 +256,7 @@ int main(int argc, char *argv[])
 		printf("[%s]\n", clean);
 		return 0;
 	}
-	fprintf(stderr, "usage: %s replay FILE send|receive | pair TIFF OUT paced|peer [SUB [nosub]] | clean VALUE\n",
-		argv[0]);
+	fprintf(stderr, "usage: %s replay FILE send|receive | pair TIFF OUT paced|peer [SUB [nosub]] | clean VALUE"
+		" | coded TIFF OUT CODING ecm|noecm\n", argv[0]);
 	return 2;
 }

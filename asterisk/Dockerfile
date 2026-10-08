@@ -33,9 +33,9 @@ RUN curl --fail --location --retry 3 --output asterisk.tar.gz \
 WORKDIR /usr/src/asterisk-22.11.0
 # Faxbot's own changes to Asterisk, each explained at the top of its file. Every hunk must apply
 # exactly (--fuzz=0): a patch that no longer fits a new Asterisk stops the build instead of landing
-# in the wrong place. faxbot_t38_gateway.h holds the spandsp steps 0002 to 0005 call (T.38 gateway
-# fixes, far-end frames, Internet Aware Fax, the subaddress), with the spandsp version guard; the replay
-# proofs in tests/ compile the same file.
+# in the wrong place. faxbot_t38_gateway.h holds the spandsp steps 0002 to 0006 call (T.38 gateway
+# fixes, far-end frames, Internet Aware Fax, the subaddress, the measured coding), with the spandsp
+# version guard; the replay proofs in tests/ compile the same file.
 COPY patches/ /usr/src/patches/
 RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward --fuzz=0 < "$change" || exit 1; done \
     && cp /usr/src/patches/faxbot_t38_gateway.h res/

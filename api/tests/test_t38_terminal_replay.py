@@ -347,6 +347,33 @@ def test_the_subaddress_check_keeps_only_what_a_subaddress_may_hold(replay, valu
     assert (normalize_subaddress(value) or '') == expected
 
 
+@pytest.mark.parametrize('coding, ecm, expected', [
+    ('-', 'ecm', 'MMR'),      # unset: Asterisk's own set, and spandsp takes the best the receiver has
+    ('mh', 'ecm', 'MH'),      # 0006: the measured ceiling, even with error correction
+    ('mr', 'ecm', 'MR'),
+    ('mmr', 'ecm', 'MMR'),    # MMR when the receiver has error correction
+    ('mmr', 'noecm', 'MR'),   # ...and never without it: the ceiling never forces a coding
+    ('-', 'noecm', 'MR'),
+])
+def test_the_measured_coding_is_the_one_the_call_uses(replay, coding, ecm, expected):
+    """Patch 0006 (builder CA): FAXBOT_COMPRESSION is a ceiling on what a sent fax offers; the sender's DCS shows the
+    coding the pages went with, and the receiver gets the same three pages, pixel for pixel."""
+    from PIL import Image
+    from app import engine_frames
+    script = (f'/replay coded /data/proof.tif /tmp/coded.tif {coding} {ecm} && echo image '
+              f'&& base64 -w0 /tmp/coded.tif && echo')
+    summary, image = replay(script=script).split('image\n', 1)
+    found = kept(summary)
+    assert found['status'] == '0 0' and found['pages'] == '3', found
+    dcs = engine_frames.decode_dcs(found['dcs'])
+    assert dcs['compression'] == expected and dcs['ecm'] is (ecm == 'ecm'), (coding, ecm, dcs)
+    received = Image.open(io.BytesIO(base64.b64decode(image.strip())))
+    _, pages = proof_tiff()
+    for number, page in enumerate(pages):
+        received.seek(number)
+        assert received.convert('1').tobytes() == page.tobytes(), (coding, ecm, number)
+
+
 def test_a_spandsp_other_than_the_pinned_one_still_stops_the_build(replay):
     probe = ('set -e; mkdir -p /tmp/other/spandsp; sed "s/^#define SPANDSP_RELEASE_DATE .*/#define '
              'SPANDSP_RELEASE_DATE 20140101/" /usr/include/spandsp/version.h > /tmp/other/spandsp/version.h; '

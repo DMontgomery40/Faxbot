@@ -1108,6 +1108,23 @@ def test_a_subaddress_the_built_in_engine_asks_for_reaches_the_receiving_engine_
     print(json.dumps({'subaddress_sent': report}, indent=2))
 
 
+def test_the_measured_coding_reaches_the_call_and_unset_keeps_asterisks_own(tmp_path):
+    """Patch 0006 (builder CA) on two Asterisks: FAXBOT_COMPRESSION=mh on the Originate makes the sender's DCS MH
+    although both sides take MMR with error correction; unset, the call goes MMR as before. Same two pages."""
+    from app import engine_frames
+    report = {}
+    for name, extra in (('mh', {'FAXBOT_COMPRESSION': 'mh'}), ('unset', None)):
+        (tmp_path / name).mkdir()
+        outcome = exchange(tmp_path / name, wait_frames=True, extra_variables=extra)
+        assert outcome['result']['Status'] == 'SUCCESS' and outcome['result']['Pages'] == '2', (name, outcome['result'])
+        dcs = engine_frames.decode_dcs(engine_frames.parse_event(outcome['frames'] or {})['dcs_last'])
+        report[name] = {'compression': dcs['compression'], 'ecm': dcs['ecm'],
+                        'notice': 'offers codings up to mh' in outcome['sender_log']}
+    assert report['mh'] == {'compression': 'MH', 'ecm': True, 'notice': True}, report
+    assert report['unset'] == {'compression': 'MMR', 'ecm': True, 'notice': False}, report
+    print(json.dumps({'measured_coding': report}, indent=2))
+
+
 def test_a_forwarded_calls_headers_reach_faxbot_unchanged_and_its_signature_still_checks(tmp_path):
     """X4 over loopback: the sender stands in for a carrier that forwarded the call, adding a Diversion header, two
     History-Info entries and a diversion PASSporT (RFC 8946) signed with a synthetic key. The receiving dialplan keeps
