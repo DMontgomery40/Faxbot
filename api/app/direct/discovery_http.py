@@ -157,7 +157,9 @@ def _suggestion_view(row, organizations):
     return {'id': row['id'], 'number': row['number'], 'organization': row['organization'], 'source': row['source'],
             'endpoint': row['endpoint'], 'directory': row['directory'], 'created_at': _when(row['created_at']),
             'sentence': discovery.FINDING,
-            'source_text': discovery.suggestion_source_text(row, organizations.get(row['introduced_by']))}
+            'source_text': discovery.suggestion_source_text(row, organizations.get(row['introduced_by'])),
+            'certificate': discovery.fingerprint_text(row['certificate_sha256']),
+            'network_text': discovery.OWN_NETWORK if row['certificate_sha256'] else None}
 
 
 def _publication_view(row, now):
@@ -175,6 +177,7 @@ def _publication_view(row, now):
 def _lookup_view(row):
     return {'when': _when(row['started_at']), 'kind': row['kind'], 'host': row['host'], 'number': row['number'],
             'outcome': row['outcome'], 'organization': row['organization'],
+            'certificate': discovery.fingerprint_text(row['certificate_sha256']),
             'sentence': discovery.OUTCOME_TEXT.get(row['outcome'], '')}
 
 
@@ -185,6 +188,13 @@ def _view(service):
     settings = service.store.settings()
     peers = service.store.peer_list()
     organizations = {peer['id']: peer['organization'] for peer in peers}
+    pins = service.store.pinned()
+
+    def certificate_text(peer):
+        pin = pins.get(peer['id'])
+        last = service.store.last_lookup(host=pin['host'], kind='certificate') if pin else None
+        return discovery.OUTCOME_TEXT['certificate_changed'] if last and last['outcome'] == 'certificate_changed' \
+            else None
     try:
         card, receives = service.publishable()
         number = card['fax_number']
@@ -210,7 +220,9 @@ def _view(service):
         'texts': settings_texts(values, settings),
         'suggestions': [_suggestion_view(row, organizations) for row in service.store.open_suggestions()],
         'partners': [{'id': peer['id'], 'organization': peer['organization'], 'fax_number': peer['phone_number'],
-                      'verified': peer['state'] == 'verified', 'may_introduce': service.store.consent(peer)}
+                      'verified': peer['state'] == 'verified', 'may_introduce': service.store.consent(peer),
+                      'certificate': discovery.fingerprint_text((pins.get(peer['id']) or {}).get('certificate_sha256')),
+                      'certificate_text': certificate_text(peer)}
                      for peer in peers],
         'introductions': introductions,
         'publications': [_publication_view(row, now) for row in service.store.active_publications(now)],

@@ -364,7 +364,9 @@ async def test_a_private_address_is_not_contacted_unless_private_partners_are_al
         await fetcher.get('127.0.0.1', allow_private=False)
     assert refused.value.outcome == 'private' and requests == []
     answer = await fetcher.get('partner.lan.example', allow_private=True)
-    assert answer.status == 200 and requests == ['https://partner.lan.example/.well-known/faxbot-direct']
+    # Allowed: connected to the address that was resolved and checked, and marked as on a private network.
+    assert answer.status == 200 and answer.private is True
+    assert requests == ['https://192.168.68.230/.well-known/faxbot-direct']
     # The service passes the administrator's choice, and records a refused address for a day.
     engine, service = pair['engine'], pair['discovery']
     pair['fetcher'].serve('lan.example', LookupRefused('private'))
@@ -469,3 +471,156 @@ def test_notify_reports_the_far_ends_address_without_its_passcode(tmp_path):
         address = base64.b64decode(report['remote_address_b64']).decode()
         assert address == ['fax.b.example:10443', '203.0.113.9:10443', ''][index]
         assert PASSCODE not in json.dumps(report)
+
+
+# -- certificates: a trusted authority on the internet, a Faxbot's own certificate on your network --------------
+
+def self_signed(tmp_path, name):
+    """A synthetic self-signed certificate and key for ``name``; returns (cert path, key path, DER bytes)."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    now = datetime.utcnow()
+    certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
+                   .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(days=1))
+                   .not_valid_after(now + timedelta(days=30))
+                   .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+                   .sign(key, hashes.SHA256()))
+    cert_path, key_path = tmp_path / f'{name}-{uuid4().hex}.crt', tmp_path / f'{name}-{uuid4().hex}.key'
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                           serialization.NoEncryption()))
+    return cert_path, key_path, certificate.public_bytes(serialization.Encoding.DER)
+
+
+class OwnNetworkFaxbot:
+    """A synthetic Faxbot on 127.0.0.1 with its own certificate, answering its well-known address."""
+
+    def __init__(self, tmp_path, body):
+        import http.server
+        import ssl
+        import threading
+        self.cert, self.key, self.der = self_signed(tmp_path, 'lan.example')
+        payload = json.dumps(body).encode()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - the standard library's name
+                self.send_response(200 if self.path == discovery.WELL_KNOWN_PATH else 404)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+        self.server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.cert, self.key)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_faxbot_on_your_network_may_use_its_own_certificate_only_when_private_partners_are_allowed(pair,
+                                                                                                           monkeypatch):
+    import hashlib
+    spoof = Identity.generate()
+    card = make_card(spoof, organization='Lab Clinic', fax_number=B_NUMBER, endpoint='https://lan.example')
+    server = OwnNetworkFaxbot(pair['tmp'], {'faxbot_direct': 1, 'card': card})
+    try:
+        fetcher = WellKnownFetcher(resolver=lambda host, port: ['127.0.0.1'], port=server.port)
+        # Not allowed: never contacted.
+        with pytest.raises(LookupRefused) as refused:
+            await fetcher.get('lan.example', allow_private=False)
+        assert refused.value.outcome == 'private'
+        # Allowed: its own certificate is accepted, and its fingerprint is kept.
+        answer = await fetcher.get('lan.example', allow_private=True)
+        assert answer.status == 200 and answer.private is True and answer.names is None
+        assert answer.fingerprint == hashlib.sha256(server.der).hexdigest()
+        # The same certificate on an address treated as a public one needs a trusted authority, so it is refused.
+        monkeypatch.setattr(discovery, 'public', lambda address: True)
+        with pytest.raises(LookupRefused) as refused:
+            await fetcher.get('lan.example', allow_private=True)
+        assert refused.value.outcome == 'unreachable'
+        monkeypatch.undo()
+        # Through the service: the suggestion carries the fingerprint and says what it means.
+        pair['holder']['values'] = a_values(pair['data'], DIRECT_ALLOW_PRIVATE_PEERS='true')
+        service = DiscoveryService(pair['a'], fetcher=fetcher)
+        frame(pair['engine'], csa=csa_hex('ssl://k@lan.example:10443'))
+        await service.step()
+        suggestion = rows(pair['engine'], 'direct_discovery_suggestions')[0]
+        assert suggestion['certificate_sha256'] == answer.fingerprint
+        assert discovery.OWN_NETWORK == ('This Faxbot is on your own network and uses its own certificate, not one '
+                                         'from a trusted authority. The challenge fax still confirms who it is before '
+                                         'anything is sent.')
+        assert discovery.fingerprint_text(answer.fingerprint).count(':') == 31
+        # Enrolling keeps the fingerprint with the partner.
+        peer, _ = await service.enroll(suggestion['id'])
+        pins = rows(pair['engine'], 'direct_certificate_pins')
+        assert [(pin['peer_id'], pin['host'], pin['certificate_sha256']) for pin in pins] == [
+            (peer['id'], 'lan.example', answer.fingerprint)]
+    finally:
+        server.close()
+    # A week later the host presents another certificate: Faxbot notices and says so.
+    replaced = OwnNetworkFaxbot(pair['tmp'], {'faxbot_direct': 1, 'card': card})
+    try:
+        service = DiscoveryService(pair['a'], fetcher=WellKnownFetcher(resolver=lambda host, port: ['127.0.0.1'],
+                                                                       port=replaced.port))
+        await service.check_pins(now=datetime.utcnow() + timedelta(days=8))
+        checks = [row for row in rows(pair['engine'], 'direct_discovery_lookups') if row['kind'] == 'certificate']
+        assert [row['outcome'] for row in checks] == ['certificate_changed']
+        assert discovery.OUTCOME_TEXT['certificate_changed'] == (
+            'Its certificate is not the one it had when you enrolled it. Check with the partner that they replaced '
+            'it.')
+        # Checked about once a week, not on every step.
+        await service.check_pins(now=datetime.utcnow() + timedelta(days=9))
+        assert len([row for row in rows(pair['engine'], 'direct_discovery_lookups')
+                    if row['kind'] == 'certificate']) == 1
+    finally:
+        replaced.close()
+
+
+# -- whole frames (Builder AW's 0048) and T.30's own layout -------------------------------------------------
+
+def t30_hex(address, *, fcf=0x24, sequence=0x00, kind=0x02):
+    """A CSA in T.30's layout: address, control, FCF, then sequence, type, length and the address."""
+    text = address.encode('ascii')
+    return (bytes([0xFF, 0x03, fcf, sequence, kind, len(text)]) + text).hex()
+
+
+def test_t30s_layout_is_read_even_when_its_length_octet_is_printable():
+    address = 'ssl://' + 'P' * 11 + '@fax.b.example:10443'  # 37 characters: a length octet of 0x25, "%"
+    assert len(address) == 0x25
+    assert discovery.frame_address(t30_hex(address), cap=discovery.FULL_FRAME_OCTETS) == ('fax.b.example', 10443)
+
+
+def test_a_whole_frame_is_read_through_engine_frames_when_it_offers_far_address(monkeypatch):
+    from api.app import engine_frames
+    long_address = f'ssl://{PASSCODE}{PASSCODE}@fax.b.example:10443'
+    row = {'direction': 'out', 'csa': t30_hex(long_address)[:64], 'csa_full': t30_hex(long_address)}
+    # Without AW's decoder: the whole frame's bytes; the 32-octet copy alone was cut before the "@".
+    monkeypatch.delattr(engine_frames, 'far_address', raising=False)
+    assert discovery.call_address(row) == ('fax.b.example', 10443)
+    assert discovery.call_address({'direction': 'out', 'csa': row['csa']}) is None
+    # With it: its decoded address, passcode dropped.
+    seen = []
+
+    def far_address(frames_row):
+        seen.append(frames_row)
+        return {'type': 2, 'address': long_address}
+    monkeypatch.setattr(engine_frames, 'far_address', far_address, raising=False)
+    assert discovery.call_address(row) == ('fax.b.example', 10443) and seen == [row]
+    # A received call's TSA is read the same way.
+    received = {'direction': 'in', 'tsa_full': t30_hex('ssl://k@c.example:10443', fcf=0x62)}
+    monkeypatch.setattr(engine_frames, 'far_address', lambda frames_row: None, raising=False)
+    assert discovery.call_address(received) == ('c.example', 10443)

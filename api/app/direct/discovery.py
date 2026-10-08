@@ -24,7 +24,14 @@ up after ``FETCH_TIMEOUT`` seconds. A host name is checked with full TLS
 verification. A bare IP address (Faxbot's SSL Fax engine advertises its public
 IP) cannot be named by an ordinary certificate, so for one the certificate
 must still chain to a trusted authority and must name the host of the card's
-own endpoint.
+own endpoint. On a private network, and only when the administrator allows
+private partners, a Faxbot's own (self-signed) certificate is accepted: the
+answer is only a hint, the challenge fax is the authentication, and
+enrollment keeps the partner's key. The certificate's SHA-256 fingerprint is
+kept with the lookup and the suggestion and, when the partner is enrolled,
+as a pin (``direct_certificate_pins``); a later lookup of that host that sees
+another certificate is recorded as ``certificate_changed``, and Faxbot checks
+each pinned host about once a week.
 
 **Introductions.** An enrolled partner B can introduce two of its verified
 partners A and C to each other, only when both of their records at B say
@@ -64,7 +71,7 @@ import sqlalchemy as sa
 from ..config_runtime import run_lifecycle_step
 from ..routing.database import read_connection, reflect, utcnow, write_transaction
 from . import dnstxt
-from .addresses import PRIVATE_REFUSED, PartnerAddressError, checked_address, pinned_request, resolve
+from .addresses import pinned_request, public, resolve
 from .crypto import PROTOCOL, DirectProtocolError, canonical, check_card, check_signed, parse_timestamp, signed, \
     timestamp, unb64, verify
 from .identity import IdentityUnavailable
@@ -80,12 +87,18 @@ FOUND_FOR = timedelta(days=30)
 NOT_FOUND_FOR = timedelta(days=7)
 FAILED_FOR = timedelta(days=1)
 HINT_DAYS = 30
+PIN_CHECK_EVERY = timedelta(days=7)
+OWN_NETWORK = ('This Faxbot is on your own network and uses its own certificate, not one from a trusted authority. '
+               'The challenge fax still confirms who it is before anything is sent.')
 SCAN_DAYS = 2
 INTRODUCTIONS_PER_DAY = 20
 INTRODUCTION_FRESHNESS = timedelta(hours=24)
 PUBLISHED_FOR = timedelta(days=365)
 RECENT_DAYS = 30
-FRAME_OCTETS = 32  # Asterisk patch 0004 keeps at most 32 octets of each frame.
+FRAME_OCTETS = 32  # Asterisk patch 0004 first kept at most 32 octets of each frame (``csa``, ``tsa``).
+# Builder AW's 0048 keeps the whole frame (``csa_full``, ``tsa_full``): T.30's 83 FIF octets after the
+# address, control and FCF octets.
+FULL_FRAME_OCTETS = 3 + 83
 DIRECTORY_PREFIX = '_faxbot'
 SKIPPED = 'skipped'  # A hint's lookup_id when no lookup was needed: its number is already a partner's, or unreadable.
 RECORD_VERSION = 'faxbot1'
@@ -102,6 +115,8 @@ OUTCOME_TEXT = {
     'unverified': "Its certificate does not name the address on its card, so Faxbot did not trust its answer.",
     'key_mismatch': "Its card does not carry the key it was introduced or listed with.",
     'other_number': 'Its card names a different fax number.',
+    'certificate_changed': ('Its certificate is not the one it had when you enrolled it. Check with the partner that '
+                            'they replaced it.'),
     'listed': 'Listed with a valid signature.',
     'not_listed': 'Not listed.',
     'bad_record': 'Listed, but the record is not signed correctly or has expired, so it was ignored.',
@@ -165,14 +180,17 @@ def _bit_reversed(octet):
     return int(f'{octet:08b}'[::-1], 2)
 
 
-def frame_address(hex_frame):
+def frame_address(hex_frame, *, cap=FRAME_OCTETS):
     """(host, port) from a CSA or TSA frame as patch 0004 keeps it (hex: address, control, FCF, FIF), or None.
 
+    The FIF is T.30's layout (sequence, type, length, then the address) or
+    the older one (type, then the address); octets that are not printable,
+    and a length octet that happens to be (``%``), sit outside ``ssl://``.
     T.30 sends the characters of some fields last first, and Class 1 modems
     hand over bits in transmission order, so the FIF is read as kept, reversed,
     bit-reversed and both, and the first that holds an SSL Fax address wins.
-    A frame cut at the 32-octet limit is used only when the passcode's end
-    (its ``@``) is inside it.
+    A frame as long as ``cap`` may have been cut, so it is used only when the
+    passcode's end (its ``@``) is inside it.
     """
     text = str(hex_frame or '').strip().lower()
     if not text or len(text) % 2 or not re.fullmatch(r'[0-9a-f]+', text):
@@ -186,10 +204,36 @@ def frame_address(hex_frame):
         shown = ''.join(chr(o) if 33 <= o < 127 else ' ' for o in candidate)
         if 'ssl://' not in shown:
             continue
-        if len(frame) >= FRAME_OCTETS and '@' not in shown[shown.find('ssl://'):]:
+        if len(frame) >= cap and '@' not in shown[shown.find('ssl://'):]:
             return None
         return ssl_address(shown)
     return None
+
+
+def call_address(row):
+    """(host, port) from one ``fax_call_frames`` row: its CSA on a sent call, its TSA on a received one.
+
+    A whole frame (``csa_full``/``tsa_full``, Builder AW's 0048) is read with
+    ``engine_frames.far_address`` when that exists, else from its bytes; an
+    older row's frame, which patch 0004 cut at 32 octets, only from its bytes.
+    """
+    column = 'csa' if row.get('direction') == 'out' else 'tsa'
+    full = row.get(f'{column}_full')
+    if full:
+        try:
+            from .. import engine_frames
+            reader = getattr(engine_frames, 'far_address', None)
+            found = reader(row) if reader is not None else None
+        except Exception:
+            found = None
+        if isinstance(found, dict) and isinstance(found.get('address'), str):
+            address = ssl_address(found['address'])
+            if address is not None:
+                return address
+        address = frame_address(full, cap=FULL_FRAME_OCTETS)
+        if address is not None:
+            return address
+    return frame_address(row.get(column))
 
 
 def record_name(number, directory):
@@ -238,49 +282,79 @@ def _names_cover(names, host):
 class Fetched(NamedTuple):
     status: int
     body: bytes | None  # None: larger than MAX_DOCUMENT_BYTES
-    names: tuple | None  # the certificate's names, read only for a bare IP address
+    names: tuple | None  # the certificate's names, read only for a bare public IP address
+    fingerprint: str | None = None  # SHA-256 of the certificate, read only on a private network
+    private: bool = False  # the host is on a private network (looked up because private partners are allowed)
+
+
+def _ssl_object(response):
+    stream = response.extensions.get('network_stream')
+    return stream.get_extra_info('ssl_object') if stream is not None else None
 
 
 def _certificate_names(response):
-    stream = response.extensions.get('network_stream')
-    ssl_object = stream.get_extra_info('ssl_object') if stream is not None else None
+    ssl_object = _ssl_object(response)
     certificate = ssl_object.getpeercert() if ssl_object is not None else None
     if not certificate:
         return ()
     return tuple(value for kind, value in certificate.get('subjectAltName', ()) if kind in ('DNS', 'IP Address'))
 
 
+def _fingerprint(response):
+    import hashlib
+    ssl_object = _ssl_object(response)
+    der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+    return hashlib.sha256(der).hexdigest() if der else None
+
+
+def fingerprint_text(value):
+    """A SHA-256 fingerprint as people compare it: upper-case hex pairs, colon-separated."""
+    return ':'.join(value[at:at + 2] for at in range(0, len(value), 2)).upper() if value else None
+
+
 class WellKnownFetcher:
     """One bounded HTTPS GET of a host's well-known document; never follows a redirect."""
 
-    def __init__(self, *, resolver=resolve, timeout=FETCH_TIMEOUT, transport=None):
-        self.resolver, self.timeout, self.transport = resolver, timeout, transport
+    def __init__(self, *, resolver=resolve, timeout=FETCH_TIMEOUT, transport=None, port=443):
+        """``port`` is 443 (the well-known address of a host); only tests use another."""
+        self.resolver, self.timeout, self.transport, self.port = resolver, timeout, transport, port
 
     async def get(self, host, *, allow_private):
         literal = _is_ip(host)
-        url = f"https://{f'[{host}]' if ':' in host else host}{WELL_KNOWN_PATH}"
+        url = (f"https://{f'[{host}]' if ':' in host else host}{'' if self.port == 443 else f':{self.port}'}"
+               f'{WELL_KNOWN_PATH}')
         options = {'headers': {'Accept': 'application/json'}}
-        if not allow_private:
-            try:
-                address = await asyncio.to_thread(checked_address, url, resolver=self.resolver)
-            except PartnerAddressError as error:
-                raise LookupRefused('private' if str(error) == PRIVATE_REFUSED else 'unreachable') from None
-            if not literal:
-                url, options = pinned_request(url, address, options)
+        # Resolve once, check every address, and connect to the one checked (a later answer cannot redirect it).
+        try:
+            addresses = await asyncio.to_thread(self.resolver, host, self.port)
+            private = not addresses or not all(public(address) for address in addresses)
+        except (OSError, UnicodeError, ValueError):
+            raise LookupRefused('unreachable') from None
+        if not addresses:
+            raise LookupRefused('unreachable')
+        if private and not allow_private:
+            raise LookupRefused('private')
+        if not literal:
+            url, options = pinned_request(url, addresses[0], options)
         context = httpx.create_ssl_context()
-        if literal:
-            context.check_hostname = False  # The chain is still verified; the card's host is checked below.
+        if private:
+            # A Faxbot on your own network may use its own certificate; its fingerprint is kept instead.
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        elif literal:
+            context.check_hostname = False  # The chain is still verified; the card's host is checked after.
         try:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, verify=context,
                                          transport=self.transport, trust_env=False) as client:
                 async with client.stream('GET', url, **options) as response:
-                    names = _certificate_names(response) if literal else None
+                    names = _certificate_names(response) if literal and not private else None
+                    fingerprint = _fingerprint(response) if private else None
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body += chunk
                         if len(body) > MAX_DOCUMENT_BYTES:
-                            return Fetched(response.status_code, None, names)
-                    return Fetched(response.status_code, bytes(body), names)
+                            return Fetched(response.status_code, None, names, fingerprint, private)
+                    return Fetched(response.status_code, bytes(body), names, fingerprint, private)
         except (httpx.HTTPError, ssl.SSLError, OSError):
             raise LookupRefused('unreachable') from None
 
@@ -329,7 +403,7 @@ def _e164(number, values):
 
 class DiscoveryStore:
     TABLES = ('direct_discovery_settings', 'direct_discovery_hints', 'direct_discovery_lookups',
-              'direct_discovery_suggestions', 'direct_introduction_consents', 'direct_introductions',
+              'direct_discovery_suggestions', 'direct_certificate_pins', 'direct_introduction_consents', 'direct_introductions',
               'direct_dns_publications', 'direct_peers', 'fax_call_frames', 'fax_jobs')
 
     def __init__(self, engine):
@@ -339,6 +413,7 @@ class DiscoveryStore:
         self.hints = tables['direct_discovery_hints']
         self.lookups = tables['direct_discovery_lookups']
         self.suggestions = tables['direct_discovery_suggestions']
+        self.pins = tables['direct_certificate_pins']
         self.consents = tables['direct_introduction_consents']
         self.introductions = tables['direct_introductions']
         self.publications = tables['direct_dns_publications']
@@ -451,11 +526,12 @@ class DiscoveryStore:
             return connection.execute(sa.select(sa.func.count()).select_from(self.lookups).where(
                 self.lookups.c.started_at >= since)).scalar()
 
-    def record_lookup(self, *, kind, host, url, outcome, number=None, card=None, record=None, now=None):
+    def record_lookup(self, *, kind, host, url, outcome, number=None, card=None, record=None, certificate=None,
+                      now=None):
         now = now or utcnow()
         row = {'id': uuid4().hex, 'kind': kind, 'host': host[:253], 'url': url[:600], 'number': number,
                'outcome': outcome, 'signing_key': None, 'organization': None, 'fax_number': None, 'endpoint': None,
-               'card': None, 'record': record, 'started_at': now,
+               'card': None, 'record': record, 'certificate_sha256': certificate, 'started_at': now,
                'expires_at': now + EXPIRY.get(outcome, NOT_FOUND_FOR)}
         if card is not None:
             row.update(signing_key=card['signing_key'], organization=card['organization'][:200],
@@ -465,6 +541,34 @@ class DiscoveryStore:
             connection.execute(self.lookups.insert().values(**row))
         return row
 
+    def last_lookup(self, *, host, kind):
+        with read_connection(self.engine) as connection:
+            row = connection.execute(sa.select(self.lookups).where(
+                self.lookups.c.host == host, self.lookups.c.kind == kind).order_by(
+                self.lookups.c.started_at.desc()).limit(1)).mappings().first()
+        return dict(row) if row else None
+
+    # Certificate pins
+    def pins_for(self, host):
+        with read_connection(self.engine) as connection:
+            return set(connection.execute(sa.select(self.pins.c.certificate_sha256).where(
+                self.pins.c.host == host)).scalars())
+
+    def pin(self, *, peer_id, host, certificate, suggestion_id=None):
+        with write_transaction(self.engine) as connection:
+            connection.execute(self.pins.insert().values(
+                id=uuid4().hex, peer_id=peer_id, host=host[:253], certificate_sha256=certificate,
+                suggestion_id=suggestion_id, created_at=utcnow()))
+
+    def pinned(self):
+        """The newest pin of each partner that is not removed: {peer_id: pin row}."""
+        with read_connection(self.engine) as connection:
+            found = {}
+            for row in connection.execute(sa.select(self.pins).order_by(self.pins.c.created_at)).mappings():
+                found[row['peer_id']] = dict(row)
+            live = set(connection.execute(sa.select(self.peers.c.id).where(self.peers.c.state != 'revoked')).scalars())
+        return {peer_id: row for peer_id, row in found.items() if peer_id in live}
+
     def recent_lookups(self, limit=20):
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(sa.select(self.lookups).order_by(
@@ -472,7 +576,7 @@ class DiscoveryStore:
 
     # Suggestions
     def suggest(self, *, number, source, organization, signing_key, endpoint, card=None, lookup_id=None,
-                introduced_by=None, introduction=None, directory=None, now=None):
+                introduced_by=None, introduction=None, directory=None, certificate=None, now=None):
         """A new suggestion, or None when the recipient is already a partner or was already suggested."""
         now = now or utcnow()
         with write_transaction(self.engine) as connection:
@@ -484,7 +588,8 @@ class DiscoveryStore:
             row = {'id': uuid4().hex, 'number': number, 'source': source, 'lookup_id': lookup_id,
                    'introduced_by': introduced_by, 'introduction': introduction, 'directory': directory,
                    'organization': organization[:200], 'signing_key': signing_key, 'endpoint': endpoint[:512],
-                   'card': canonical(card).decode('ascii') if card is not None else None, 'created_at': now}
+                   'card': canonical(card).decode('ascii') if card is not None else None,
+                   'certificate_sha256': certificate, 'created_at': now}
             connection.execute(self.suggestions.insert().values(**row))
             return row
 
@@ -581,9 +686,14 @@ class DiscoveryStore:
     # Calls
     def frame_hints(self, since):
         f = self.frames
-        query = sa.select(f.c.id, f.c.direction, f.c.number, f.c.csa, f.c.tsa, f.c.created_at).where(
-            f.c.created_at >= since, sa.or_(sa.and_(f.c.direction == 'out', f.c.csa.is_not(None)),
-                                            sa.and_(f.c.direction == 'in', f.c.tsa.is_not(None))))
+        # The whole frames (csa_full, tsa_full) exist once Builder AW's 0048 is in; older rows keep 32 octets.
+        full = [name for name in ('csa_full', 'tsa_full') if name in f.c]
+        out = [f.c.csa.is_not(None)] + ([f.c.csa_full.is_not(None)] if 'csa_full' in f.c else [])
+        received = [f.c.tsa.is_not(None)] + ([f.c.tsa_full.is_not(None)] if 'tsa_full' in f.c else [])
+        query = sa.select(f.c.id, f.c.direction, f.c.number, f.c.csa, f.c.tsa, *(f.c[name] for name in full),
+                          f.c.created_at).where(
+            f.c.created_at >= since, sa.or_(sa.and_(f.c.direction == 'out', sa.or_(*out)),
+                                            sa.and_(f.c.direction == 'in', sa.or_(*received))))
         with read_connection(self.engine) as connection:
             rows = [dict(row) for row in connection.execute(query.order_by(f.c.created_at).limit(500)).mappings()]
             known = set(connection.execute(sa.select(self.hints.c.source_ref).where(
@@ -664,18 +774,26 @@ class DiscoveryService:
             return 'key_mismatch', None
         if fetched.names is not None and not _names_cover(fetched.names, _host_of(card['endpoint'])):
             return 'unverified', None
+        if fetched.private and not fetched.fingerprint:
+            return 'unverified', None
         return 'faxbot', card
 
-    async def fetch_card(self, host, *, kind, number=None, expect_key=None):
+    async def fetch_card(self, host, *, kind, number=None, expect_key=None, now=None):
         """One GET of a host's well-known document, recorded in the lookup log; returns the lookup row."""
         url = f'https://{host}{WELL_KNOWN_PATH}'
+        certificate = None
         try:
             fetched = await self.fetcher.get(host, allow_private=await run_lifecycle_step(self._allow_private))
             outcome, card = await run_lifecycle_step(lambda: self.judge(fetched, expect_key=expect_key))
+            certificate = fetched.fingerprint if fetched.private else None
+            pins = await run_lifecycle_step(lambda: self.store.pins_for(host)) if certificate else set()
+            if pins and certificate not in pins:
+                outcome, card = 'certificate_changed', None
         except LookupRefused as refused:
             outcome, card = refused.outcome, None
         return await run_lifecycle_step(lambda: self.store.record_lookup(
-            kind=kind, host=host, url=url, outcome=outcome, number=number, card=card))
+            kind=kind, host=host, url=url, outcome=outcome, number=number, card=card, certificate=certificate,
+            now=now))
 
     # From calls --------------------------------------------------------------------------------
     def collect_from_frames(self, *, now=None):
@@ -683,7 +801,7 @@ class DiscoveryService:
         now = now or utcnow()
         added = 0
         for row in self.store.frame_hints(now - timedelta(days=SCAN_DAYS)):
-            address = frame_address(row['csa'] if row['direction'] == 'out' else row['tsa'])
+            address = call_address(row)
             if address is None or not row['number']:
                 continue
             added += self.store.add_hint(source='frames', source_ref=row['id'], direction=row['direction'],
@@ -700,7 +818,7 @@ class DiscoveryService:
         card = json.loads(lookup['card'])
         return self.store.suggest(number=wanted, source='call', organization=lookup['organization'],
                                   signing_key=lookup['signing_key'], endpoint=lookup['endpoint'], card=card,
-                                  lookup_id=lookup['id'])
+                                  lookup_id=lookup['id'], certificate=lookup.get('certificate_sha256'))
 
     def _may_ask(self, host, now):
         return (not self.store.host_asked_since(host, now - HOST_EVERY)
@@ -737,6 +855,22 @@ class DiscoveryService:
             await self.answer_hints()
         if settings.directories:
             await self.look_up_recent()
+        await self.check_pins()
+        return False
+
+    async def check_pins(self, *, now=None):
+        """About once a week, ask each pinned partner's host again whether its certificate is the same."""
+        now = now or utcnow()
+        for peer_id, pin in (await run_lifecycle_step(self.store.pinned)).items():
+            last = await run_lifecycle_step(lambda: self.store.last_lookup(host=pin['host'], kind='certificate'))
+            recent = pin['created_at'] > now - PIN_CHECK_EVERY
+            if recent or (last is not None and last['started_at'] > now - PIN_CHECK_EVERY):
+                continue
+            used = await run_lifecycle_step(lambda: self.store.lookups_since(now - timedelta(hours=1)))
+            if used >= LOOKUPS_PER_HOUR:
+                return False
+            peer = await run_lifecycle_step(lambda: self.store.peer(peer_id))
+            await self.fetch_card(pin['host'], kind='certificate', expect_key=peer['signing_key'], now=now)
         return False
 
     # Introductions ------------------------------------------------------------------------------
@@ -847,6 +981,7 @@ class DiscoveryService:
         if suggestion is None or suggestion['dismissed_at'] or suggestion['enrolled_at']:
             raise DirectConflict('This suggestion is no longer open.')
         card = json.loads(suggestion['card']) if suggestion['card'] else None
+        certificate = suggestion.get('certificate_sha256')
         if card is None:
             host = _host_of(suggestion['endpoint'])
             lookup = await self.fetch_card(host, kind='introduction', number=suggestion['number'],
@@ -854,13 +989,17 @@ class DiscoveryService:
             if lookup['outcome'] != 'faxbot':
                 raise DirectConflict(f"Faxbot could not read {suggestion['organization']}'s card from their "
                                      'Faxbot. Exchange cards with them instead.')
-            card = json.loads(lookup['card'])
+            card, certificate = json.loads(lookup['card']), lookup['certificate_sha256']
         values = await run_lifecycle_step(self.values)
         if _e164(card['fax_number'], values) != suggestion['number']:
             raise DirectConflict(f"{card['organization']}'s card names another fax number, so it was not added.")
         peer = await run_lifecycle_step(lambda: self.direct.enroll(card))
         await run_lifecycle_step(lambda: self.store.close_suggestion(
             suggestion_id, enrolled_peer_id=peer['id'], actor_id=actor_id, actor_name=actor_name))
+        if certificate:
+            # Its own certificate on your network: kept with the enrollment, so a later change is noticed.
+            await run_lifecycle_step(lambda: self.store.pin(peer_id=peer['id'], host=_host_of(card['endpoint']),
+                                                            certificate=certificate, suggestion_id=suggestion_id))
         return peer, f"{peer['organization']} added. Send them a code by fax to confirm their number."
 
     def dismiss(self, suggestion_id, *, actor_id=None, actor_name=None):
@@ -957,7 +1096,8 @@ class DiscoveryService:
                 found = await run_lifecycle_step(lambda: self.store.suggest(
                     number=wanted, source='directory', organization=lookup['organization'],
                     signing_key=lookup['signing_key'], endpoint=lookup['endpoint'], card=json.loads(lookup['card']),
-                    lookup_id=lookup['id'], directory=domain, now=now)) or found
+                    lookup_id=lookup['id'], directory=domain, certificate=lookup.get('certificate_sha256'),
+                    now=now)) or found
                 return found, f"{lookup['organization']} runs Faxbot at {wanted}, listed in {domain}."
             if lookup['outcome'] in ('bad_record', 'invalid', 'key_mismatch', 'other_number', 'own', 'unverified'):
                 flawed = domain
@@ -991,7 +1131,8 @@ class DiscoveryService:
         # The directory's answer is kept under the directory's name, with the card read from its endpoint.
         return await run_lifecycle_step(lambda: self.store.record_lookup(
             kind='directory', host=domain, url=name, outcome=lookup['outcome'], number=number,
-            card=json.loads(lookup['card']) if lookup['outcome'] == 'faxbot' else None, record=text, now=now))
+            card=json.loads(lookup['card']) if lookup['outcome'] == 'faxbot' else None, record=text,
+            certificate=lookup.get('certificate_sha256'), now=now))
 
     async def look_up_recent(self, *, now=None):
         """Recently faxed numbers that are not partners, in trusted directories, within the hour's lookups."""

@@ -39,7 +39,7 @@ def test_discovery_follows_the_destination_schedule():
     assert schema.DESTINATION_SCHEDULE == PRIOR
     assert schema.HEAD == schema_discovery.REVISION
     assert schema_discovery.TABLES <= schema.STRICT_TABLES
-    assert len(schema_discovery.TABLES) == 7
+    assert len(schema_discovery.TABLES) == 8
 
 
 def test_0045_adds_empty_tables_keeps_every_row_and_downgrades(database):  # noqa: F811

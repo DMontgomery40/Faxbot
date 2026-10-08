@@ -3,7 +3,7 @@
 Faxbot finds recipients that run Faxbot from calls it already makes, from a
 partner's introduction and from directories the administrator trusts
 (``direct/discovery.py``, M16 and D13). The challenge fax stays the only
-authentication. This revision adds seven tables and changes no stored row:
+authentication. This revision adds eight tables and changes no stored row:
 
 - ``direct_discovery_settings``: append-only; the newest row is the current
   setting. ``well_known`` (answer ``/.well-known/faxbot-direct``) and
@@ -22,11 +22,19 @@ authentication. This revision adds seven tables and changes no stored row:
   (``call``), a partner's introduction (``introduction``) or a directory
   record (``directory``): what was asked, the outcome, the verified card when
   there was one, and until when the answer is reused (``expires_at``).
-  Rate limits and the cache are read from these rows.
+  Rate limits and the cache are read from these rows. ``certificate_sha256``
+  is the SHA-256 of the certificate a host on a private network presented
+  (accepted without a trusted authority only there, and only when the
+  administrator allows private partners); NULL for every other host.
 - ``direct_discovery_suggestions``: a recipient that runs Faxbot, offered to
   the administrator for enrollment. ``dismissed_*`` and ``enrolled_*`` are each
   set once. ``introduction`` keeps an introducing partner's signed statement
-  exactly as received.
+  exactly as received. ``certificate_sha256`` carries the lookup's
+  certificate fingerprint for a recipient on a private network.
+- ``direct_certificate_pins``: append-only; the certificate fingerprint a
+  partner enrolled from a suggestion on a private network presented then, by
+  partner and host. A later lookup of that host that sees another certificate
+  is recorded as ``certificate_changed``.
 - ``direct_introduction_consents``: append-only; whether a partner may be
   introduced to this installation's other partners. The newest row for a
   partner is current; no row means no. A consent counts only while the
@@ -51,13 +59,13 @@ from .schema_destination_schedule import frozen_metadata as previous_metadata
 
 REVISION = '0045_discovery'
 ORDER = ('direct_discovery_settings', 'direct_discovery_hints', 'direct_discovery_lookups',
-         'direct_discovery_suggestions', 'direct_introduction_consents', 'direct_introductions',
-         'direct_dns_publications')
+         'direct_discovery_suggestions', 'direct_certificate_pins', 'direct_introduction_consents',
+         'direct_introductions', 'direct_dns_publications')
 TABLES = frozenset(ORDER)
 # Rows people decided; the downgrade refuses while any is kept.
 DECIDED = ('direct_introduction_consents', 'direct_introductions', 'direct_dns_publications')
 HINT_SOURCES = ('frames', 'engine')
-LOOKUP_KINDS = ('call', 'introduction', 'directory')
+LOOKUP_KINDS = ('call', 'introduction', 'directory', 'certificate')
 SUGGESTION_SOURCES = ('call', 'introduction', 'directory')
 INDEXES = (
     ('ix_direct_discovery_settings_created', 'direct_discovery_settings', ('created_at',), False),
@@ -67,6 +75,7 @@ INDEXES = (
     ('ix_direct_discovery_lookups_number', 'direct_discovery_lookups', ('number', 'started_at'), False),
     ('ix_direct_discovery_suggestions_number', 'direct_discovery_suggestions', ('number', 'created_at'), False),
     ('ix_direct_discovery_suggestions_key', 'direct_discovery_suggestions', ('signing_key',), False),
+    ('ix_direct_certificate_pins_host', 'direct_certificate_pins', ('host', 'created_at'), False),
     ('ix_direct_introduction_consents_peer', 'direct_introduction_consents', ('peer_id', 'created_at'), False),
     ('ix_direct_introductions_created', 'direct_introductions', ('created_at',), False),
     ('ix_direct_dns_publications_number', 'direct_dns_publications', ('number', 'created_at'), False),
@@ -120,6 +129,7 @@ def _definitions():
             sa.Column('endpoint', sa.String(512), nullable=True),
             sa.Column('card', sa.Text(), nullable=True),
             sa.Column('record', sa.Text(), nullable=True),
+            sa.Column('certificate_sha256', sa.String(64), nullable=True),
             sa.Column('started_at', sa.DateTime(), nullable=False),
             sa.Column('expires_at', sa.DateTime(), nullable=False),
             sa.PrimaryKeyConstraint('id', name='pk_direct_discovery_lookups'),
@@ -137,6 +147,7 @@ def _definitions():
             sa.Column('signing_key', sa.String(64), nullable=False),
             sa.Column('endpoint', sa.String(512), nullable=False),
             sa.Column('card', sa.Text(), nullable=True),
+            sa.Column('certificate_sha256', sa.String(64), nullable=True),
             sa.Column('created_at', sa.DateTime(), nullable=False),
             sa.Column('dismissed_at', sa.DateTime(), nullable=True),
             sa.Column('dismissed_by', sa.String(40), nullable=True),
@@ -151,6 +162,15 @@ def _definitions():
                                name='ck_direct_discovery_suggestions_dismissed'),
             sa.CheckConstraint('enrolled_peer_id IS NULL OR enrolled_at IS NOT NULL',
                                name='ck_direct_discovery_suggestions_enrolled'),
+        ),
+        'direct_certificate_pins': (
+            sa.Column('id', sa.String(40), nullable=False),
+            sa.Column('peer_id', sa.String(40), nullable=False),
+            sa.Column('host', sa.String(253), nullable=False),
+            sa.Column('certificate_sha256', sa.String(64), nullable=False),
+            sa.Column('suggestion_id', sa.String(40), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_direct_certificate_pins'),
         ),
         'direct_introduction_consents': (
             sa.Column('id', sa.String(40), nullable=False),
