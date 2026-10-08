@@ -2836,6 +2836,10 @@ class FSOutboundResultIn(BaseModel):
     fax_document_transferred_pages: Optional[int] = None
     fax_document_total_pages: Optional[int] = None
     uuid: Optional[str] = None
+    # Optional, from the hook: the other fax machine's ID (``fax_remote_station_id``) and the audio packets that
+    # came back (FreeSWITCH's ``rtp_audio_in_packet_count``), so a person who answered is never called again.
+    fax_remote_station_id: Optional[str] = None
+    rtp_audio_in_packet_count: Optional[int] = None
 
 
 @app.post("/_internal/freeswitch/outbound_result", deprecated=True,
@@ -2854,6 +2858,12 @@ def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: O
             applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
                 event_key='fs-result:' + status, secret=x_internal_secret, error=failure_sentence('', pages),
                 before_data=False, error_category='partly_sent')
+        elif sip_calls.freeswitch_verdict(status, pages, payload.fax_remote_station_id, payload.fax_result_text,
+                                          payload.rtp_audio_in_packet_count) == sip_calls.PERSON_ANSWERED:
+            # A person or a voice line answered: the fax fails and takes no other route by itself.
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret, error=sip_calls.PERSON,
+                before_data=True, error_category=sip_calls.PERSON_ANSWERED)
         else:
             applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
                 event_key='fs-result:' + status, secret=x_internal_secret)

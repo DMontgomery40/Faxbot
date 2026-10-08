@@ -195,6 +195,19 @@ def engine_verdict(record, heard=None):
     return NO_FAX_SIGNAL
 
 
+def freeswitch_verdict(status, pages, station, text, audio_in):
+    """``person_answered`` for a FreeSWITCH send (mod_spandsp's channel variables) that a person or a voice line
+    answered: failed, no page and no remote station, spandsp's "The call dropped prematurely" (the far end hung up
+    before any fax message), and sound came back (the hook's ``rtp_audio_in_packet_count`` above zero). Without
+    that count Faxbot cannot tell a person from a silent line, so the fax may still take another route; None then,
+    and for a timeout or any other ending."""
+    if status != 'failed' or (type(pages) is int and pages > 0) or (station or '').strip():
+        return None
+    if ' '.join(str(text or '').split()).lower().rstrip('.') not in _HUNG_UP:
+        return None
+    return PERSON_ANSWERED if type(audio_in) is int and audio_in > 0 else None
+
+
 def category_for(found):
     """The attempt's error category for a call verdict: ``person_answered`` (never another route), else None."""
     return PERSON_ANSWERED if found == PERSON_ANSWERED else None

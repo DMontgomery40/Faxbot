@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import pytest
 import sqlalchemy as sa
 
 from api.app import sip_calls
@@ -169,3 +170,50 @@ def test_the_work_item_checks_the_number_and_offers_the_npi_registry_for_a_provi
     call = checks.number_check(item, organization='County Clinic', number='+1 202-555-0150', when_text='Oct 8')
     assert call['script'][0] == 'Call the recipient. The number Faxbot faxed, +1 202-555-0150, may be a voice line.'
     assert checks.suggestion([checks.person_answered_check(), call, found]) == 'not_delivered'
+
+
+def freeswitch_installation(installation, monkeypatch):  # noqa: F811
+    from api.app import main
+    from api.app.config_profiles import ProviderConfiguration
+    configuration, store, snapshot = installation
+    snapshot = configuration.apply(snapshot, snapshot.active.values.with_patch({'asterisk_inbound_secret': 'sekret'}),
+                                   actor='test', restart_required=False,
+                                   providers={'outbound': ProviderConfiguration('freeswitch')})
+    monkeypatch.setattr(main, '_deliveries', lambda: store)
+    return (configuration, store, snapshot)
+
+
+def freeswitch_result(job, attempt, text, audio_in):
+    """mod_spandsp's channel variables after txfax, plus FreeSWITCH's own count of audio packets back."""
+    from api.app import main
+    return main.freeswitch_outbound_result(main.FSOutboundResultIn(
+        job_id=job, attempt_id=attempt, fax_status='0', fax_result_code='49', fax_result_text=text,
+        fax_document_transferred_pages=0, fax_document_total_pages=3, uuid='synthetic-channel',
+        rtp_audio_in_packet_count=audio_in), x_internal_secret='sekret')
+
+
+def test_a_person_on_freeswitch_is_never_called_again_when_the_hook_says_sound_came_back(  # noqa: F811
+        installation, another_route, monkeypatch):
+    """A call dropped by the far end before any fax message, with sound back, is a person."""
+    from api.app.config_profiles import ProviderConfiguration
+    installation = freeswitch_installation(installation, monkeypatch)
+    configuration, store, _ = installation
+    installation, job, claim = on_the_line(installation, ProviderConfiguration('freeswitch'), str(uuid4()))
+    assert freeswitch_result(job, claim.attempt_id, HUNG_UP, 512)['applied'] is True
+    assert store.get(job)['state'] == 'failed' and not fell_back(store, job)
+    assert attempt_of(store, claim.attempt_id) == {'phase': 'failed', 'error_category': 'person_answered'}
+    assert error_of(configuration, job) == sip_calls.PERSON
+    assert item_category(store, job) == 'person_answered'
+
+
+@pytest.mark.parametrize('text, audio_in', [(OPEN_LINE, 512), (HUNG_UP, 0), (HUNG_UP, None)])
+def test_a_silent_or_timed_out_freeswitch_call_still_takes_the_next_route(  # noqa: F811
+        installation, another_route, monkeypatch, text, audio_in):
+    """A timeout, or a drop with no sound (or no count from the hook), may be the route."""
+    from api.app.config_profiles import ProviderConfiguration
+    installation = freeswitch_installation(installation, monkeypatch)
+    _, store, _ = installation
+    installation, plain, claim = on_the_line(installation, ProviderConfiguration('freeswitch'), str(uuid4()))
+    freeswitch_result(plain, claim.attempt_id, text, audio_in)
+    assert store.get(plain)['state'] == 'ready' and fell_back(store, plain)
+    assert attempt_of(store, claim.attempt_id)['error_category'] is None
