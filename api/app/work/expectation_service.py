@@ -1077,15 +1077,15 @@ class ExpectationService:
             if outage is None:
                 raise ExpectedNotFound('That outage was not found.')
             if outage['ended_at'] is None:
-                raise ExpectedConflict('End the outage first; Faxbot reconciles the first export imported after the '
-                                       'source system is back.')
+                raise ExpectedConflict('End the outage first; Faxbot sorts the first export imported after the '
+                                       'system is back.')
             source = self._source_row(connection, outage['source_id'])
             run = connection.execute(sa.select(runs).where(
                 runs.c.source_id == outage['source_id'], runs.c.state == 'complete',
                 runs.c.completed_at >= outage['ended_at']).order_by(runs.c.completed_at.desc())).mappings().first()
             if run is None or source is None:
-                raise ExpectedConflict(f"Import an export from {source['name'] if source else 'the source'} made "
-                                       'after the outage ended, then reconcile.')
+                raise ExpectedConflict(f"First import an export from {source['name'] if source else 'the system'} "
+                                       'made after the outage ended.')
             importing.reconcile_on(connection, self.store, outage, dict(run), source, now=now,
                                    actor_id=actor.principal_id, actor_name=self._name(connection, actor))
             return self._outage_view(connection, actor, outage, now, detail=True)
