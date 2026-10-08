@@ -56,7 +56,7 @@ def test_number_rule_options_are_saved_listed_placed_and_explained(http, isolate
     assert (sub['position'], sub['subaddress'], sub['urgent'], sub['keep_days']) == (1, '2001', True, 30)
     duplicate = http.post('/access/inbound-rules', headers=ADMIN, json={
         'to_number': TO, 'mailbox_id': billing, 'expected_policy_version': version(http)})
-    assert (duplicate.status_code, duplicate.json()['detail']) == (409, f'{TO} already has a rule that takes all its faxes. Give this rule a condition, such as a subaddress or a sender, or change that rule.')
+    assert (duplicate.status_code, duplicate.json()['detail']) == (400, f'A rule already takes every fax to {TO}. Give this rule a condition, such as a subaddress or a sender, or change that rule.')
     refused = http.post('/access/inbound-rules', headers=ADMIN, json={
         'to_number': TO, 'mailbox_id': billing, 'start_minute': 60, 'expected_policy_version': version(http)})
     assert (refused.status_code, refused.json()['detail']) == (400, 'Give both a start and an end time, or neither.')

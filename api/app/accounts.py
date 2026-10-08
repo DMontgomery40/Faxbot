@@ -744,7 +744,7 @@ def _clean_limits(values, limits, provider, current=None):
     if limits is None:
         return current
     if not isinstance(limits, dict):
-        raise AccountsError('Limits must be at_once, calls_per_second and daily_limit.')
+        raise AccountsError('Give the limits as faxes at once, calls a second and a daily spending limit.')
     result = {}
     for name, top in (('at_once', 200), ('calls_per_second', 100)):
         value = limits.get(name, current.get(name))

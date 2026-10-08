@@ -286,6 +286,76 @@ def test_fetching_uses_the_account_as_it_was_bound_when_its_settings_changed(iso
     assert [(project, document) for project, user, document in sinch.requests if document] == [(UK[0], True)]
 
 
+class TwoEfax:
+    """eFax's API for two accounts, each with its own app ID, key, user and received faxes."""
+
+    def __init__(self, accounts):
+        self.accounts = accounts  # {(app id, api key): user id}
+        self.faxes = {}           # {user id: {fax id: document}}
+        self.requests = []
+
+    def handler(self, request):
+        path = request.url.path
+        if path == '/tokens':
+            credentials = base64.b64decode(request.headers.get('authorization', 'Basic ').split(' ', 1)[1]).decode()
+            user = self.accounts.get(tuple(credentials.split(':', 1)))
+            if user is None:
+                return httpx.Response(401, json={})
+            return httpx.Response(200, json={'access_token': 'token-' + user, 'expires_in': 86399})
+        user = request.headers.get('user-id')
+        if request.headers.get('authorization') != f'Bearer token-{user}':
+            return httpx.Response(403, json={'errors': [{'error_code': 'FORBIDDEN'}]})
+        self.requests.append((user, request.method, path))
+        faxes = self.faxes.get(user, {})
+        if path == '/faxes/received':
+            return httpx.Response(200, json={'first_record': 1, 'last_record': len(faxes), 'faxes': [
+                {'fax_id': fax_id, 'pages': 1, 'completed_timestamp': '2026-10-07T14:00:00.000+0000',
+                 'originating_fax_number': '18005551212', 'destination_fax_number': '442071234567'}
+                for fax_id in faxes]})
+        parts = path.strip('/').split('/')
+        if len(parts) < 2 or parts[1] not in faxes:
+            return httpx.Response(404, json={'errors': [{'error_code': 'NOT_FOUND'}]})
+        if parts[2:] == ['metadata']:
+            return httpx.Response(200, json={'fax_id': parts[1], 'direction': 'INBOUND', 'fax_status': 'STORED',
+                                             'completed_timestamp': '2026-10-07T14:00:00.000+0000'})
+        if parts[2:] == ['image']:
+            return httpx.Response(200, json={'fax_id': parts[1], 'file_name': parts[1] + '.pdf',
+                                             'image': base64.b64encode(faxes[parts[1]]).decode()})
+        return httpx.Response(404, json={})
+
+
+def test_an_extra_efax_account_is_checked_and_fetched_with_its_own_keys(isolated_installation, monkeypatch,
+                                                                        providers):  # noqa: F811
+    import asyncio
+    from app import efax_service, main
+    from app.inbound.http import polling_receiver
+    fake = TwoEfax({('app-main', 'key-main'): 'user-main', ('app-uk', 'key-uk'): 'user-uk'})
+    fake.faxes = {'user-main': {'11111111-2222-4333-8444-555555555555': pdf_bytes('main account')},
+                  'user-uk': {'9def20cc-fe85-43bc-babe-23c26c2a115c': pdf_bytes('uk account')}}
+    efax_service.clear_tokens()
+    monkeypatch.setattr(efax_service, '_TRANSPORT', httpx.MockTransport(fake.handler))
+    # The first eFax account is set up but does not receive (the trunk receives); the extra one does.
+    environment(monkeypatch, FAX_BACKEND='sip', EFAX_APP_ID='app-main', EFAX_API_KEY='key-main',
+                EFAX_USER_ID='user-main')
+    try:
+        with client() as http:
+            add_account(http, key='efax-uk', provider='efax', label='eFax (UK)', sends=False,
+                        credentials={'app_id': 'app-uk', 'api_key': 'key-uk', 'user_id': 'user-uk'})
+            receiver = polling_receiver(main.app.state.inbound_acquisition, 'efax', 'efax-uk')
+            assert asyncio.run(receiver.step()) == 60 and receiver.last_problem is None, fake.requests
+            assert receiver.last_checked is not None, (fake.requests, receiver.account_key)
+            assert step() is True, (fake.requests, rows(isolated_installation, 'inbound_imports'))
+            [fax] = http.get('/inbound', headers=ADMIN).json()
+            assert (fax['account_key'], fax['status'], fax['provider_fax_id']) == ('efax-uk', 'received', '9def20cc-fe85-43bc-babe-23c26c2a115c')
+    finally:
+        efax_service.clear_tokens()
+    # Listed, looked up and downloaded with the extra account's own keys; the first account was never asked.
+    assert {user for user, method, path in fake.requests} == {'user-uk'}
+    assert ('user-uk', 'GET', '/faxes/9def20cc-fe85-43bc-babe-23c26c2a115c/image') in fake.requests
+    [record] = rows(isolated_installation, 'inbound_imports')
+    assert record['account_key'] == 'efax-uk' and len(rows(isolated_installation, 'inbound_fax_bindings')) == 1
+
+
 # -- own numbers, pollers ------------------------------------------------------------------------------------------
 
 def values_with(documents, **environment):

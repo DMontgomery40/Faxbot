@@ -655,8 +655,8 @@ async def _rule_mutation(mutate, view, number):
     except MutationDeniedError as denied:
         if denied.code != 'duplicate':
             raise
-    raise HTTPException(409, detail=f'{number or "This number"} already has a rule that takes all its faxes. Give '
-                                    'this rule a condition, such as a subaddress or a sender, or change that rule.')
+    raise HTTPException(400, detail=f'A rule already takes every fax to {number or "this number"}. Give this rule a '
+                                    'condition, such as a subaddress or a sender, or change that rule.')
 
 
 async def _clean_rule_options(request, service, body, rule_id=None):
