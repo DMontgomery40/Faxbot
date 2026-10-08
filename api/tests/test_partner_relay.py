@@ -724,6 +724,125 @@ async def test_a_premium_rate_number_is_never_relayed(relay_trio):
     assert a.delivery.get(job)['state'] == 'in_progress'
 
 
+# The relay's own sending rules -------------------------------------------------------------------------------------
+
+def b_rules(trio, document):
+    """Publish B's organization rules (Providers → Rules)."""
+    from api.app.rules.store import RuleStore
+    store = RuleStore(trio.b_engine)
+    current = store.draft('organization', '')
+    draft = store.save_draft('organization', '', document, expected_version=current['version'] if current else 0)
+    active = store.active('organization', '')
+    store.publish('organization', '', expected_active_revision=active['number'] if active else None,
+                  expected_draft_version=draft['version'])
+
+
+def b_decision(trio, job_id):
+    (decision,) = rows(trio.b_engine, 'SELECT outcome, actor_principal_id, facts FROM fax_job_rule_decisions '
+                                      'WHERE job_id = :id', id=job_id)
+    return decision
+
+
+def b_relays_through(trio, organization, number):
+    """B itself sends through a partner relay to Australia, as cheap as can be: an active agreement where B is the
+    sender, with a signed price (``direct.relay.relay_candidates`` offers it for any of B's own faxes)."""
+    from api.app.direct.relay import RelayStore, parse_terms
+    from api.tests.test_partner_relay_terms import _price
+    now = datetime.utcnow()
+    peer_id = uuid4().hex
+    peers = sa.Table('direct_peers', sa.MetaData(), autoload_with=trio.b_engine)
+    with trio.b_engine.begin() as connection:
+        connection.execute(peers.insert().values(
+            id=peer_id, organization=organization, phone_number=number, endpoint_url=f'https://{peer_id[:6]}.example',
+            signing_key=peer_id[:43].ljust(43, 'a'), exchange_key='e' * 43, state='verified', challenge_failures=0,
+            version=1, created_at=now, updated_at=now))
+    offer = {'statement': json.dumps({'type': 'relay_offer', 'price': _price(1_000, now=now)}), 'signature': 's'}
+    RelayStore(trio.b_engine).create(agreement_id=uuid4().hex, peer_id=peer_id, role='sender', state='active',
+                                     terms=parse_terms({'countries': ['AU']}, zone_name='Australia/Sydney'),
+                                     statement=offer, direction='received', now=now)
+    assert [c.peer_id for c in relay_candidates(DEST, Shape(1, None, 'fine', 'normal'), engine=trio.b_engine)] == [
+        peer_id]
+    return peer_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('limit, reason', [
+    ({'never': ['phaxio']}, 'No account is allowed for this fax: the rule ‘Relayed faxes’ removes every one it could '
+                            'use. It waits for you in Sent.'),
+    ({'cap_cost': {'currency': 'AUD', 'amount': '0.01'}}, None),
+])
+async def test_the_relays_own_sending_rules_decide_each_relayed_fax_in_its_acceptance(relay_trio, limit, reason):
+    """B's limits apply to the faxes it relays, like any fax it sends: one its rules allow no route for is accepted
+    and held in B's Sent with its sentence, never sent outside them."""
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    b_rules(trio, {'format': 1, 'limits': [{'id': 'l-relayed', 'name': 'Relayed faxes', 'on': True, 'when': {},
+                                            'then': limit}]})
+    queue(a)
+    await send(a)
+    relayed = relayed_job(trio, a)
+    assert relayed['state'] == 'accepted'
+    decision = b_decision(trio, relayed['job_id'])
+    (agreement,) = trio.client.get('/direct/relay/agreements', headers=ADMIN).json()['agreements']
+    sender = rows(trio.b_engine, 'SELECT principal_id FROM relay_agreements WHERE id = :id',
+                  id=agreement['id'])[0]['principal_id']
+    assert decision['outcome'] == 'blocked' and decision['actor_principal_id'] == sender
+    assert json.loads(decision['facts'])['sender'] == {'principal_id': sender, 'kind': 'system', 'key_id': None,
+                                                       'groups': []}
+    (hold,) = rows(trio.b_engine, 'SELECT kind, state, reason FROM outbound_holds WHERE job_id = :id',
+                   id=relayed['job_id'])
+    assert (hold['kind'], hold['state']) == ('no_route', 'open')
+    assert hold['reason'] == reason if reason else hold['reason'].startswith('No account is estimated to cost less')
+    assert trio.b_delivery.get(relayed['job_id'])['state'] == 'ready'
+    assert await asyncio.to_thread(trio.b_delivery.claim, 'test-worker') is None
+    assert trio.provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_refusing_a_relayed_fax_the_relays_rules_hold_lets_the_sender_take_its_own_next_route(
+        relay_trio, monkeypatch):
+    """While B's rules hold a relayed fax it waits in B's Sent and A's fax reads accepted for relaying. When B's
+    administrator refuses it, nothing was sent: A hears failed before any page and its own next route sends it."""
+    from api.app.outbound_store import OutboundStore as SenderStore
+    from api.app.routing.holds import HoldStore
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    b_rules(trio, {'format': 1, 'limits': [{'id': 'l-relayed', 'name': 'Relayed faxes', 'on': True, 'when': {},
+                                            'then': {'never': ['phaxio']}}]})
+    job = queue(a)
+    monkeypatch.setattr(SenderStore, 'fallback_policy', lambda job_id, attempt_id: job_id == job)
+    await send(a)
+    assert a.delivery.get(job)['state'] == 'in_progress'
+    relayed = relayed_job(trio, a)
+    (hold,) = HoldStore(trio.b_delivery).holds(job_id=relayed['job_id'])
+    await asyncio.to_thread(lambda: HoldStore(trio.b_delivery).refuse(
+        hold['id'], version=hold['version'], actor=None, actor_name='Ada Admin', reason='We do not send these'))
+    assert await asyncio.to_thread(b_report) == 1
+    (mine,) = rows(a.engine, "SELECT state, detail FROM relay_faxes WHERE role = 'sender'")
+    assert mine['state'] == 'failed_before_data'
+    assert mine['detail'] == ("Sydney office's call failed before any page was sent: Refused by Ada Admin: We do not "
+                              'send these')
+    assert a.delivery.get(job)['state'] == 'ready'  # A's own next route takes it
+    assert trio.provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_relayed_fax_is_never_relayed_again_even_when_the_relays_rules_name_a_relay_first(relay_trio):
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    onward = await asyncio.to_thread(b_relays_through, trio, 'Perth office', '+61855501234')
+    b_rules(trio, {'format': 1, 'routes': [{'id': 'r-onward', 'name': 'Relay to Australia', 'on': True,
+                                            'when': {}, 'then': {'try_in_order': ['relay:' + onward, 'phaxio']}}]})
+    queue(a)
+    await send(a)
+    relayed = relayed_job(trio, a)
+    assert b_decision(trio, relayed['job_id'])['outcome'] == 'route'
+    b_sent(trio, relayed['job_id'])
+    assert trio.provider.sent == [(relayed['job_id'], DEST)]  # by B's own account, never through Perth
+    assert rows(trio.b_engine, "SELECT id FROM direct_deliveries WHERE direction = 'outbound'") == []
+    assert rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'sender'") == []
+
+
 def test_signed_relay_times_are_utc_whatever_the_servers_time_zone(monkeypatch, tmp_path):
     """A naive UTC time (utcnow) is signed as that UTC time, also on a server whose TZ is not UTC."""
     import time

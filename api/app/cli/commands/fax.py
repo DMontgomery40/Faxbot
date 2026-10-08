@@ -36,7 +36,10 @@ EVENT_LABELS = {
     'preparation_expired': 'Preparation timed out', 'provider_observation_refused': 'Provider update ignored',
     'terminal_conflict': 'Conflicting provider update ignored', 'late_observation': 'Late provider update',
     'provider_observed': 'Provider status update', 'operator_identity_bound': 'Receipt confirmed with the provider fax ID',
-    'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route'}
+    'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route',
+    'repair_started': 'Sending only the missing pages directly to the partner',
+    'repair_completed': 'Completed directly by the partner after the call broke',
+    'repair_failed': 'The partner did not receive the missing pages'}
 RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot received list --ids.'
 
 
@@ -115,12 +118,18 @@ def _assigned_route(api, job):
 
 
 def _direct_text(api, job):
-    """"Delivered directly as a fax image to ..." for a fax image the partner accepted; None otherwise or unknown."""
+    """"Delivered directly as a fax image to ..." for a fax image the partner accepted, or "Completed directly by ..."
+    for a broken call the partner now holds whole; None otherwise or unknown."""
     try:
         attempt = ((api.get('/admin/fax-jobs/' + segment(job['id']) + '/delivery') or {}).get('attempt') or {}).get('id')
         records = api.get('/direct/deliveries').get('deliveries') or []
     except (CliError, KeyError, AttributeError):
         return None
+    # A call that broke part way and was completed directly through the partner (direct/repair.py).
+    repaired = next((item for item in records if item.get('direction') == 'outbound' and item.get('kind') == 'repair'
+                     and item.get('state') == 'accepted' and item.get('job_id') == job.get('id')), None)
+    if repaired is not None:
+        return repaired.get('status')
     record = next((item for item in records if item.get('direction') == 'outbound' and attempt
                    and item.get('message_id') == attempt), None)
     if record is None or record.get('state') != 'accepted' or record.get('kind') != 'fax_image':

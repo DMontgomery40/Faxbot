@@ -15,8 +15,16 @@ agreement is the authority instead of a live credential:
 - an outbound resource under the principal's own personal container, so the
   fax shows in Sent under "Relayed for …" for anyone who may read it;
 - an audit row naming the principal, with ``source: partner_relay``;
+- the installation's own sending rules: the decision is read before the lock
+  and decided again in the transaction (``routing.rules_acceptance``), exactly
+  as for a fax a person sends, so this organization's limits (a cost cap,
+  "never use" an account, an approval) apply to every fax it relays. A relayed
+  fax is never relayed again: the planner leaves out every partner relay for
+  it (``direct.relay.relay_candidates`` with its ``job_id``);
 - the caller's own step (``also``), which records the relay ledger row in the
   same transaction, so a fax is never queued without its record or the reverse.
+  A fax the rules hold, or send first by another account than the trunk, never
+  waits to go with others, as ``POST /fax`` decides it.
 
 When the agreement ends, ``retire`` turns the principal off (a new security
 version, so nothing it held stays valid) and audits it. Faxes it already queued
@@ -24,6 +32,7 @@ are not touched: they finish, or the relay reports why they did not.
 """
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import uuid
 
 import sqlalchemy as sa
@@ -85,13 +94,57 @@ def _personal(connection, tables, principal_id):
     return resource
 
 
+class _SystemSender:
+    """The dedicated sender as the sending rules read it: its own principal, accepted by Faxbot itself."""
+    credential = None
+    system_sender = True
+
+    def __init__(self, principal_id):
+        self.principal_id = principal_id
+
+
+def _rules(configuration, revision, principal_id, job):
+    """The sending rules' facts and preview for ``job``, read before the lock, and the step that decides in it.
+
+    Raises when the rules cannot be read, so nothing is accepted outside them.
+    """
+    from ..routing import rules_acceptance
+    from ..routing.holds import document_sha256
+    document = Path(revision.values.fax_data_dir) / f"{job['id']}.pdf"
+    present = document.is_file()
+    plan = rules_acceptance.prepare(
+        configuration.engine, revision, actor=_SystemSender(principal_id), destination=job['to_number'],
+        pages=job.get('pages'), size_bytes=document.stat().st_size if present else 0,
+        document_sha256=document_sha256(document) if present else None)
+    return plan, rules_acceptance.recorder(plan, job['id'], _SystemSender(principal_id))
+
+
+def _follow_envelope(connection, job_id, bound_key, now):
+    """Take the fax out of a sending-together group unless its decision sends it first by the bound trunk."""
+    from ..routing import envelope as envelopes
+    from ..routing.rules_acceptance import first_route_is_bound
+    try:
+        pinned = envelopes.load_on(connection, job_id)
+    except envelopes.UnreadableDecision:
+        pinned = None
+    if pinned is not None and first_route_is_bound(pinned.decision, bound_key):
+        return
+    members = sa.table('outbound_batch_members', sa.column('id'))
+    if connection.execute(sa.select(members.c.id).where(members.c.id == job_id)).first() is None:
+        return
+    from ..batching.store import separate_on, tables as batching_tables
+    separate_on(connection, batching_tables(connection.engine, connection), job_id, now)
+
+
 def accept(configuration, access_store, principal_id, revision, job, *, also=None, source='partner_relay'):
     """Accept ``job`` as an outbound fax of ``principal_id`` in one transaction; returns the bound profile.
 
-    ``also(connection, now)`` runs last in the same transaction; anything it
-    raises rolls the whole acceptance back.
+    The installation's sending rules decide its route envelope in the same
+    transaction. ``also(connection, now)`` runs last in the same transaction;
+    anything it raises rolls the whole acceptance back.
     """
     tables = access_store.tables
+    plan, decide = _rules(configuration, revision, principal_id, job)
     with configuration._locked() as connection:
         version = access_store.lock_on(connection)
         now = _now()
@@ -105,8 +158,10 @@ def accept(configuration, access_store, principal_id, revision, job, *, also=Non
             updated_at=now))
         _audit(connection, tables, actor=principal_id, operation='fax.accept', target_kind='resource',
                target_id=identity, before=version, after=version, details={'source': source}, now=now)
+        decide(connection, now)
         if also is not None:
             also(connection, now)
+        _follow_envelope(connection, job['id'], plan.bound_key, now)
         return profile
 
 

@@ -233,6 +233,33 @@ def _require_key_right(access, actor):
         raise HTTPException(403, detail=KEY_RIGHT) from None
 
 
+def _require_mailbox(access, actor, mailbox_id):
+    """A connector files into its mailbox as Faxbot itself, so whoever sets one up must see faxes in that mailbox.
+
+    Raises SourceInputError for a mailbox that is gone or turned off, and 403 when this person can't read faxes in
+    it (``inbound:read`` there, as a person importing into it needs).
+    """
+    if not mailbox_id:
+        return
+    from ...access.types import ResourceRef
+    from ...routing.database import utcnow
+    tables = access.store.tables
+    resources, mailboxes = tables['access_resources'], tables['mailboxes']
+    with access.store.transaction() as connection:
+        row = connection.execute(sa.select(resources.c.id, resources.c.enabled, mailboxes.c.label).select_from(
+            mailboxes.join(resources, sa.and_(resources.c.kind == 'mailbox', resources.c.mailbox_id == mailboxes.c.id)))
+            .where(mailboxes.c.id == mailbox_id)).first()
+        if row is None or int(row.enabled) != 1:
+            raise SourceInputError(text.MAILBOX_UNKNOWN)
+        try:
+            allowed = access.control.authorize_child_on(connection, actor, 'inbound:read', ResourceRef(row.id),
+                                                        now=utcnow())
+        except AccessError:
+            allowed = False
+    if not allowed:
+        raise HTTPException(403, detail=text.MAILBOX_NOT_YOURS.format(mailbox=row.label))
+
+
 def _actor_name(store, actor):
     return (store.people({actor.principal_id}).get(actor.principal_id) or {}).get('name') or 'an administrator'
 
@@ -335,6 +362,8 @@ async def create_source(body: SourceIn, request: Request, identity=Depends(requi
             raise SourceInputError('Add at least one person who may send faxes by email, with their address.')
         if body.kind == 'folder':
             folder_check(settings['path'], _values(request))
+        if not sending:
+            _require_mailbox(access, identity.actor, settings.get('mailbox_id'))
         key = None
         if sending:
             if store.find(body.name) is not None:
@@ -381,8 +410,8 @@ def folder_check(path, values=None):
 
 @router.put('/{source_id}', summary='Change a connector; settings you leave out stay as they are',
             dependencies=[Depends(require_permission('settings:write'))])
-async def update_source(source_id: str, body: SourceUpdate, request: Request):
-    store, poller, _ = _context(request)
+async def update_source(source_id: str, body: SourceUpdate, request: Request, identity=Depends(require_identity)):
+    store, poller, access = _context(request)
 
     def change():
         current = store.get(source_id)
@@ -393,6 +422,8 @@ async def update_source(source_id: str, body: SourceUpdate, request: Request):
             settings = settings_module.validate(current.kind, current.direction, {**current.settings, **body.settings})
             if current.kind == 'folder':
                 folder_check(settings['path'], _values(request))
+            if settings.get('mailbox_id') and settings.get('mailbox_id') != current.settings.get('mailbox_id'):
+                _require_mailbox(access, identity.actor, settings['mailbox_id'])
         secret = None
         effective = settings or current.settings
         if current.kind == 'email' and (body.secret is not None or settings is not None):

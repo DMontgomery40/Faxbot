@@ -99,6 +99,33 @@ describe('Email and folders', () => {
     expect(await screen.findByText('Connector saved. Use Test to check it.')).toBeTruthy();
   });
 
+  it('files a folder straight into any mailbox, with or without a fax number, and says when you cannot', async () => {
+    let created: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/intake/sources', () => HttpResponse.json({ connectors: [] })),
+      http.get('/intake/sources/choices', () => HttpResponse.json(choices)),
+      http.post('/intake/sources', async ({ request }) => {
+        created = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ detail: "You can’t see faxes in Billing, so a connector you set up can’t file into "
+          + 'it. Choose a mailbox whose faxes you can see.' }, { status: 403 });
+      }),
+    );
+    render(<Connectors client={client()} canWrite />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a connector' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Scanner share' } });
+    fireEvent.change(within(dialog).getByLabelText('What it does'), { target: { value: 'folder-in' } });
+    fireEvent.change(within(dialog).getByLabelText('Folder'), { target: { value: '/scans' } });
+    const box = within(dialog).getByLabelText('Mailbox') as HTMLSelectElement;
+    expect(Array.from(box.options).map((option) => option.textContent)).toEqual([
+      'None: every document needs a sidecar file', 'Front Desk (+15550100001)', 'Billing']);
+    fireEvent.change(box, { target: { value: 'm2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(created).not.toBeNull());
+    expect(created).toMatchObject({ kind: 'folder', direction: 'receive', settings: { path: '/scans', mailbox_id: 'm2' } });
+    expect(await within(dialog).findByText(/You can’t see faxes in Billing/)).toBeTruthy();
+  });
+
   it('tests, pauses and removes a connector, and says why a test failed', async () => {
     const calls: string[] = [];
     server.use(

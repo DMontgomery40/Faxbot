@@ -145,6 +145,39 @@ def no_route_sentence(label_by_key, skipped):
     return f'No account your rules allow can send this fax now: {joined}. It waits for you in Sent; nothing was sent.'
 
 
+def tried_sentence(labels):
+    """Why a fax whose rules chose its route waits after its last allowed try ended before any page, in one
+    sentence (strict fallback: at most ``routing.fallback.MAX_FALLBACKS`` more tries, each before any fax data)."""
+    labels = [label for index, label in enumerate(labels) if label not in labels[:index]]
+    if not labels:
+        return 'The call ended before any page was sent. It waits for you in Sent; nothing was sent.'
+    if len(labels) == 1:
+        return f'Faxbot tried {labels[0]}, and the call ended before any page was sent. It waits for you in Sent; ' \
+               'nothing was sent.'
+    joined = ', '.join(labels[:-1]) + ' and ' + labels[-1]
+    return f'Faxbot tried {joined}, and each call ended before any page was sent. It waits for you in Sent; ' \
+           'nothing was sent.'
+
+
+def hold_after_predata_on(connection, t, *, job_id, pinned, accounts, now):
+    """Hold a fax whose last allowed try ended before any page (no fallback is left) instead of failing it.
+
+    The caller has detached the attempt and kept the fax ``ready``; the claim then never offers it until someone
+    checks again (its next try never repeats an account already tried), sends it anyway, or refuses it.
+    """
+    choices = t['delivery_rule_choices']
+    attempts = sa.table('outbound_attempts', sa.column('id'), sa.column('sequence'), sa.column('submitted_at'))
+    keys = connection.execute(sa.select(choices.c.account_key).select_from(
+        choices.join(attempts, attempts.c.id == choices.c.id)).where(
+        choices.c.job_id == job_id, attempts.c.submitted_at.is_not(None)).order_by(attempts.c.sequence)
+    ).scalars().all()
+    reason = tried_sentence([text.account_label(key, accounts) for key in keys])
+    if open_on(connection, t, job_id):
+        return None
+    return create_on(connection, t, job_id=job_id, kind='no_route', decision_id=pinned.decision_id, now=now,
+                     reason=reason)
+
+
 class HoldStore:
     """Read and decide holds. ``delivery`` is the OutboundStore; ``access_store`` writes the audit rows."""
 

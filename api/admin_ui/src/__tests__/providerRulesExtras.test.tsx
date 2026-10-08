@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { AdminAPIError } from '../api/client';
 import { ReceivedTry, ReceivingOptionsFields } from '../components/ProviderRulesReceiving';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendOptions } from '../components/ProviderRulesSendFields';
 import { AddAsRuleButton } from '../components/ProviderRulesSuggest';
-import { WaitingForYouCard } from '../components/ProviderRulesHeld';
+import { FaxRouteItems, WaitingForYouCard } from '../components/ProviderRulesHeld';
+import { ReceivingSummary } from '../components/ProviderRules';
+import { MailboxSendingRulesPicker } from '../components/MailboxSendingRules';
 import { OriginRates, TrunkPicker } from '../components/ProviderAccountsTrunks';
-import { ExplainAnswer } from '../components/ProviderRulesTry';
+import ProviderRulesTry, { ExplainAnswer } from '../components/ProviderRulesTry';
 import { CheckPanel } from '../components/ProviderRulesDraft';
-import { NO_RECEIVING_OPTIONS, type ReceivingOptions } from '../components/ProviderRulesApi';
+import { NO_RECEIVING_OPTIONS, ORGANIZATION, type ReceivingOptions, type RulesApi } from '../components/ProviderRulesApi';
 import { FakeRules } from './providerRulesFake';
 
 function choose(name: string, option: string) {
@@ -153,5 +156,55 @@ describe('Overview: faxes waiting for you', () => {
     expect(screen.getByText('1 waiting for approval, 1 with no route your rules allow. Nothing has been sent for them.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open Sent' }));
     expect(opened).toBe(true);
+  });
+});
+
+// Every endpoint these views read exists now: a failure is said in one sentence, and only someone without
+// permission sees the view left out.
+describe('rules views say when they cannot load', () => {
+  const GONE = 'This item no longer exists. Reload and try again.';
+  const refused = (status: number) => new AdminAPIError(status, 'Error', status === 403 ? 'Forbidden' : 'Not Found');
+  const failing = (status: number): RulesApi => ({ ...new FakeRules().api(),
+    faxRoute: () => Promise.reject(refused(status)), holds: () => Promise.reject(refused(status)),
+    accounts: () => Promise.reject(refused(status)), revisions: () => Promise.reject(refused(status)) });
+
+  it('says why a fax route, the held faxes or the trunks could not load, and hides them without permission', async () => {
+    const views = (status: number) => (
+      <>
+        <ul><FaxRouteItems api={failing(status)} jobId="job-1" /></ul>
+        <WaitingForYouCard api={failing(status)} onOpen={() => undefined} />
+        <TrunkPicker api={failing(status)} value={null} onChange={() => undefined} />
+      </>
+    );
+    const { unmount } = render(views(404));
+    await waitFor(() => expect(screen.getAllByText(GONE)).toHaveLength(3));
+    unmount();
+    const hidden = render(views(403));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(hidden.queryAllByRole('alert')).toHaveLength(0));
+    expect(hidden.container.textContent).toBe('');
+  });
+
+  it('says why the mailboxes, the number rules or the rule history could not load', async () => {
+    const fake = new FakeRules();
+    const state = fake.state('organization', fake.scopes.get('organization')!);
+    render(
+      <>
+        <MailboxSendingRulesPicker api={fake.api()} loadMailboxes={() => Promise.reject(refused(404))} canWrite />
+        <ReceivingSummary load={() => Promise.reject(refused(404))} />
+        <ProviderRulesTry api={failing(404)} scope={ORGANIZATION} state={state} document={state.active!.document} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByText(GONE)).toHaveLength(3));
+  });
+
+  it('leaves the mailbox picker and the number rules out for someone who may not see them', async () => {
+    const { container } = render(
+      <MailboxSendingRulesPicker api={new FakeRules().api()} loadMailboxes={() => Promise.reject(refused(403))} canWrite />,
+    );
+    const summary = render(<ReceivingSummary load={() => Promise.reject(refused(403))} />);
+    expect(await summary.findByText('Which mailbox each of your numbers delivers to is set on Numbers.')).toBeTruthy();
+    await waitFor(() => expect(summary.queryAllByRole('alert')).toHaveLength(0));
+    expect(container.textContent).toBe('');
   });
 });

@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import AllInboxIcon from '@mui/icons-material/AllInbox';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AdminAPIClient, { isForbidden, isNotAvailable } from '../../api/client';
+import AdminAPIClient, { AdminAPIError, isForbidden, isNotAvailable } from '../../api/client';
 import type {
   Connector, ConnectorChoices, ConnectorDirection, ConnectorItem, ConnectorKind, ConnectorSettings,
 } from '../../api/connectorTypes';
@@ -64,6 +64,13 @@ function Select({ label, value, onChange, options, helperText }: {
   );
 }
 
+// A refusal the server explains in a sentence (a mailbox you can't see, a key you may not manage) is shown as said.
+function refusalSentence(error: unknown): string | null {
+  return error instanceof AdminAPIError && error.status === 403 && typeof error.detail === 'string'
+    && error.detail !== 'This operation is not permitted.' && /^[A-Z][^<>{}]{3,240}[.!?]$/.test(error.detail)
+    ? error.detail : null;
+}
+
 function ConnectorDialog({ connector, choices, busy, error, onSave, onClose }: {
   connector: Connector | 'new';
   choices: ConnectorChoices | null;
@@ -100,7 +107,9 @@ function ConnectorDialog({ connector, choices, busy, error, onSave, onClose }: {
     <FormDialog open title={existing ? `Change ${existing.name}` : 'Add a connector'} submitLabel="Save" busy={busy}
       error={null} canSubmit={ready} onSubmit={() => onSave({ ...draft, settings: { ...draft.settings, sign_in: purpose.kind === 'email' ? signIn : null } })}
       onClose={onClose}>
-      <DeliveryError error={error} />
+      {refusalSentence(error)
+        ? <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>{refusalSentence(error)}</Alert>
+        : <DeliveryError error={error} />}
       <Field label="Name" value={draft.name} onChange={(next) => setDraft((current) => ({ ...current, name: next }))}
         helperText="For example, Scanner share or Email to fax." />
       {!existing && (
@@ -125,7 +134,7 @@ function ConnectorDialog({ connector, choices, busy, error, onSave, onClose }: {
         <Select label="Mailbox" value={value('mailbox_id')} onChange={(next) => set('mailbox_id', next || null)}
           helperText="Where documents go unless a sidecar file next to them gives a fax number."
           options={[{ id: '', label: 'None: every document needs a sidecar file' },
-            ...(choices?.mailboxes ?? []).map((box) => ({ id: box.id, label: box.number ? `${box.label} (${box.number})` : `${box.label} (no fax number yet)` }))]} />
+            ...(choices?.mailboxes ?? []).map((box) => ({ id: box.id, label: box.number ? `${box.label} (${box.number})` : box.label }))]} />
       )}
       {purpose.kind === 'email' && (
         <>

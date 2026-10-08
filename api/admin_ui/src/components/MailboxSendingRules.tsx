@@ -2,6 +2,8 @@
 // can only narrow the organization's rules, which are shown above them, read-only.
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Box, Button, FormControl, InputLabel, MenuItem, Select, Typography } from '@mui/material';
+import { isForbidden } from '../api/client';
+import { DeliveryError } from './delivery/shared';
 import type { RulesApi, Scope } from './ProviderRulesApi';
 import { DraftBar, useRulesDraft } from './ProviderRulesDraft';
 import { RulesList } from './ProviderRulesSending';
@@ -74,11 +76,18 @@ export function MailboxSendingRulesPicker({ api, loadMailboxes, canWrite, curren
 }) {
   const [mailboxes, setMailboxes] = useState<Array<{ id: string; label: string }> | null>(null);
   const [chosen, setChosen] = useState('');
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let live = true;
-    loadMailboxes().then((items) => { if (live) setMailboxes(items); }).catch(() => { if (live) setMailboxes([]); });
+    loadMailboxes().then((items) => { if (live) setMailboxes(items); }).catch((failure) => {
+      if (!live) return;
+      setMailboxes([]);
+      // Someone who may not see mailboxes has none to choose; any other failure is said.
+      if (!isForbidden(failure)) setError(failure);
+    });
     return () => { live = false; };
   }, [loadMailboxes]);
+  if (error) return <DeliveryError error={error} onClose={() => setError(null)} />;
   if (!mailboxes || mailboxes.length === 0) return null;
   const mailbox = mailboxes.find((item) => item.id === chosen);
   return (
