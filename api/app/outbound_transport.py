@@ -127,7 +127,7 @@ class PreparedSubmission:
         if pid == 'sip':
             await asyncio.to_thread(self._record_engine)
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
-                attempt_id=self.claim.attempt_id, call=self.call, trunk=self.trunk)
+                attempt_id=self.claim.attempt_id, call=self.call, **({'trunk': self.trunk} if self.trunk else {}))
             return SubmissionReceipt(self.claim.job_id, 'in_progress')
         if pid == 'freeswitch':
             from .freeswitch_service import originate_txfax
