@@ -36,9 +36,11 @@ find something out. Every value comes from records the engines already keep:
   off. Resolution is never changed. Nothing changes before a number has
   ``MIN_CALLS`` answered calls, and a person's own limits for a number win.
 
-``decide`` returns the changes for one new call with one sentence each, and
-each sent call's changes are written once (``fax_call_choices``) when it is
-placed, so a fax's details say what its call used and why.
+``decide`` returns the changes for one new call with one sentence each and
+only reads; ``learn_recent`` (the background work, on the settings in force)
+keeps epochs and memory. Each sent call's changes are written once
+(``fax_call_choices``) when it is placed, so a fax's details say what its call
+used and why.
 """
 from __future__ import annotations
 
@@ -571,32 +573,32 @@ def _allowed(rate):
 
 
 def decide(values, number, *, engine='builtin', t38=True, base_rate=None, rate_for=None, base_ecm=True,
-           base_compression=None, recipient=None, db=None, now=None, write=True) -> Decision:
+           base_compression=None, recipient=None, db=None, now=None) -> Decision:
     """The changes for one new call to ``number`` on ``engine`` ('builtin' or 'hylafax'), each with a
     sentence. ``t38``: whether this call would try T.38 without them; ``rate_for(t38)`` the starting speed it
     would use (a person's limit for the number included); ``base_ecm`` and ``base_compression`` its error
     correction and compression. A person's own limits for the number (``recipient``) always win.
-    ``write``: keep a new epoch and what recent calls taught (placing a call); a screen only reads. Never
-    raises: anything unreadable changes nothing."""
+
+    Reads only. A fax keeps the settings it was accepted with, so a call placed after a trunk change may
+    carry older ones: a decision must never start an epoch or keep memory from them. The background work
+    (``learn_recent``, on the settings in force) keeps both; a decision on other settings than the newest
+    epoch's simply finds nothing learned yet. Never raises: anything unreadable changes nothing."""
     db = db if db is not None else _database()
     if db is None or not number:
         return Decision(engine=engine)
     try:
         return _decide(values, number, engine=engine, t38=t38, base_rate=base_rate, rate_for=rate_for,
                        base_ecm=base_ecm, base_compression=base_compression, recipient=recipient or {}, db=db,
-                       now=now or utcnow(), write=write)
+                       now=now or utcnow())
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not read what it learned about a fax number; this call '
                                             'uses the usual settings.')
         return Decision(engine=engine)
 
 
-def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_compression, recipient, db, now,
-            write):
-    epoch = current_epoch(db, values, now=now, write=write)
+def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_compression, recipient, db, now):
+    epoch = current_epoch(db, values, now=now, write=False)
     views = joined_calls(db, number, since=evidence_since(epoch, now, max(LEARN_DAYS, MEMORY_DAYS)), limit=50)
-    if write:
-        learn_memories(db, values, number, epoch=epoch, now=now, views=views)
     rows = memories(db, number, epoch=epoch, now=now, views=views, direction='outbound')
     sent = [view for view in on_trunk(views, values) if view['direction'] == 'outbound'
             and view['when'] >= evidence_since(epoch, now, LEARN_DAYS)]

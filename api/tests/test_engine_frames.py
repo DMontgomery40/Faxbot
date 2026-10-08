@@ -162,6 +162,10 @@ def test_call_options_ask_for_t38_at_once_lower_the_speed_and_use_iaf_only_where
     # learning epochs): only calls made since count, so three new ones teach it again.
     other = values(SIP_TRUNK_PRESET='signalwire', SIP_TRUNK_HOST='example.signalwire.com')
     assert engine_frames.call_options(other, NUMBER, engine=engine) == engine_frames.CallOptions()
+    # The background work keeps an epoch for the trunk in force: this one, then the other, then this one again.
+    from app import engine_learning
+    for trunk_values in (settings, other, settings):
+        engine_learning.current_epoch(engine, trunk_values)
     assert engine_frames.call_options(settings, NUMBER, engine=engine) == engine_frames.CallOptions()
     later = datetime.utcnow() + timedelta(seconds=1)
     for number in range(3):

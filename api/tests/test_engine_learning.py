@@ -115,6 +115,12 @@ def frames(db, key, *, direction='outbound', number=NUMBER, when=None, **fields)
     engine_frames.FrameStore(db).record(row, now=when or ago(hours=2))
 
 
+def learned(db, settings=None):
+    """The background work's step (FramesWork, on the settings in force): keep what recent calls taught. A
+    decision only reads."""
+    engine_learning.learn_recent(db, settings or values())
+
+
 def memory_rows(db):
     table = sa.Table('fax_destination_memory', sa.MetaData(), autoload_with=db)
     with db.connect() as connection:
@@ -135,6 +141,8 @@ def test_a_t38_failure_after_the_far_machine_answered_makes_only_that_numbers_ne
     db = installation
     record(db)
     settings = values()
+    assert not engine_learning.decide(settings, NUMBER, db=db).changed()  # deciding learns nothing by itself
+    learned(db, settings)
     decision = engine_learning.decide(settings, NUMBER, db=db)
     assert decision.audio and not decision.t38_now
     assert re.fullmatch(r'Fax over IP \(T\.38\) to this number failed on [0-9]{1,2} [A-Z][a-z]+, so Faxbot uses audio '
@@ -168,6 +176,7 @@ def test_failures_that_moved_the_whole_trunk_or_engine_to_audio_teach_nothing_ab
     record(db, verdict='no_t38_data_back', reason='Timed out waiting for initial communication')
     record(db, verdict='no_fax_signal', reason='E126 No receiver protocol (T.30 T1 timeout)')
     record(db, mode='audio', verdict='no_fax_answer')
+    learned(db)
     decision = engine_learning.decide(values(), NUMBER, db=db)
     assert not decision.changed() and memory_rows(db) == []
     # So when the network is fixed and Faxbot turns T.38 back on by itself, every number gets T.38 again.
@@ -177,14 +186,16 @@ def test_failures_that_moved_the_whole_trunk_or_engine_to_audio_teach_nothing_ab
 def test_audio_failing_asks_for_t38_at_the_answer_and_both_failing_keeps_the_usual_settings(installation):
     db = installation
     record(db, mode='audio')
+    learned(db)
     builtin = engine_learning.decide(values(), NUMBER, db=db)
     assert builtin.t38_now and not builtin.audio
     assert builtin.reasons[0].startswith('Audio fax to this number failed on ')
     # The SSL Fax engine cannot ask at the answer: nothing changes there.
     assert not engine_learning.decide(values(), NUMBER, engine='hylafax', db=db).changed()
     # With T.38 off on the trunk, there is nothing to ask for (read only: no new epoch is kept).
-    assert not engine_learning.decide(values(SIP_T38_ENABLED='false'), NUMBER, t38=False, db=db, write=False).t38_now
+    assert not engine_learning.decide(values(SIP_T38_ENABLED='false'), NUMBER, t38=False, db=db).t38_now
     record(db, mode='t38')
+    learned(db)
     both = engine_learning.decide(values(), NUMBER, db=db)
     assert not both.audio and not both.t38_now
     assert any(note.startswith('Both fax over IP (T.38) and audio fax to this number failed recently') for note in
@@ -194,16 +205,19 @@ def test_audio_failing_asks_for_t38_at_the_answer_and_both_failing_keeps_the_usu
 def test_a_memory_expires_ends_when_the_same_mode_goes_through_and_a_person_can_forget_it(db):
     # Older than the memory lasts: nothing.
     record(db, when=ago(days=engine_learning.MEMORY_DAYS + 1))
+    learned(db)
     assert not engine_learning.decide(values(), NUMBER, db=db).audio
     # A later fax over IP that went through ends it (the row stays, as evidence).
     record(db, number=OTHER, when=ago(hours=3))
     record(db, number=OTHER, status='SUCCESS', when=ago(hours=1), pages=2)
+    learned(db)
     assert not engine_learning.decide(values(), OTHER, db=db).audio
     epoch = engine_learning.current_epoch(db, values())
     [ended] = engine_learning.memories(db, OTHER, epoch=epoch, views=engine_learning.joined_calls(db, OTHER))
     assert ended['ended'] == 'went_through' and not ended['active']
     # A person tells Faxbot to forget: once, with who, and the next call uses the usual settings.
     record(db, when=ago(hours=1))
+    learned(db)
     assert engine_learning.decide(values(), NUMBER, db=db).audio
     assert engine_learning.forget(db, '303-555-0150'.replace('-', ''), actor_id='u-1', actor_name='Dana Admin') == 1
     assert not engine_learning.decide(values(), NUMBER, db=db).audio
@@ -219,11 +233,15 @@ def test_a_trunk_or_engine_change_starts_learning_again_and_changing_back_does_n
     settings = values(tmp_path)
     record(db)
     first = engine_learning.current_epoch(db, settings)
+    learned(db, settings)
     assert engine_learning.decide(settings, NUMBER, db=db).audio
     # A changed patch (the image's digest of patches/) starts a new epoch; going back does not revive the old one.
     version.write_text('Asterisk 22.11.0 patches bbbbbbbbbbbbbbbb\n')
+    assert not engine_learning.decide(settings, NUMBER, db=db).audio  # read only: nothing learned on it yet
+    learned(db, settings)
     assert not engine_learning.decide(settings, NUMBER, db=db).audio
     version.write_text('Asterisk 22.11.0 patches aaaaaaaaaaaaaaaa\n')
+    learned(db, settings)
     assert not engine_learning.decide(settings, NUMBER, db=db).audio
     current = engine_learning.current_epoch(db, settings)
     assert current['id'] != first['id'] and not current['first']
@@ -238,12 +256,34 @@ def test_a_trunk_or_engine_change_starts_learning_again_and_changing_back_does_n
     # A trunk setting that changes how calls negotiate starts again too; a new failure is learned again.
     changed = values(tmp_path, SIP_T38_ERROR_CORRECTION='fec')
     assert engine_learning.config_key(changed) != engine_learning.config_key(settings)
+    learned(db, changed)
     assert not engine_learning.decide(changed, NUMBER, db=db).audio
     record(db, when=datetime.utcnow() + timedelta(seconds=1))
+    learned(db, changed)
     assert engine_learning.decide(changed, NUMBER, db=db).audio
     # The caller ID is not one of them: the same trunk keeps what it learned.
     assert engine_learning.config_key(values(tmp_path, SIP_T38_ERROR_CORRECTION='fec',
                                              SIP_TRUNK_CALLER_ID=LINE)) == engine_learning.config_key(changed)
+
+
+def test_a_call_placed_with_settings_other_than_those_in_force_never_resets_what_faxbot_learned(installation):
+    """A fax keeps the settings it was accepted with: one accepted before a trunk change and sent after it decides
+    on older settings. That decision finds nothing learned for them, and starts no epoch of its own."""
+    db = installation
+    epochs = sa.Table('fax_learning_epochs', sa.MetaData(), autoload_with=db)
+
+    def count():
+        with db.connect() as connection:
+            return connection.execute(sa.select(sa.func.count()).select_from(epochs)).scalar()
+    record(db)
+    learned(db)
+    assert engine_learning.decide(values(), NUMBER, db=db).audio
+    before = count()
+    older = values(SIP_TRUNK_HOST='old.example.test')
+    assert not engine_learning.decide(older, NUMBER, db=db).audio
+    hylafax_engine.call_settings(older, NUMBER)
+    assert count() == before
+    assert engine_learning.decide(values(), NUMBER, db=db).audio
 
 
 def test_received_calls_from_a_caller_whose_t38_failed_are_answered_with_audio(db):
@@ -333,10 +373,8 @@ def test_error_correction_is_turned_on_where_pages_failed_without_it_and_never_o
         key = record(db, mode='t38', pages=1, when=ago(hours=hours))
         frames(db, key, when=ago(hours=hours), Dis=DIS_ECM, DcsFirst=DCS_MR_NO_ECM, DcsLast=DCS_MR_NO_ECM,
                Status='FAILED')
-    # Each failed after the far machine answered with pages lost: only the ECM rule may react (no T.38 memory
-    # here is wanted, so forget it first).
-    engine_learning.decide(values(SIP_FAX_ECM='false'), NUMBER, db=db)
-    engine_learning.forget(db, NUMBER)
+    # Each failed after the far machine answered with pages lost; the background work has not kept what they
+    # taught about T.38, so only the error correction rule reacts here.
     off = values(SIP_FAX_ECM='false')
     call = hylafax_engine.call_settings(off, NUMBER)
     assert call.ecm is True and call.learned.ecm_on
@@ -373,6 +411,7 @@ def test_error_correction_is_never_turned_off_and_resolution_never_changes(sqlit
                 frames(sqlite, key, number=number, when=ago(hours=hour + 1), Dis=generator.choice((DIS_ECM, DIS_NO_ECM)),
                        DcsFirst=dcs, DcsLast=dcs, Status=status, Ftt=str(generator.randint(0, 2)),
                        Rates=generator.choice(('20', '20.24', '24.2c', '2c.08')))
+        engine_learning.learn_recent(sqlite, values())
         for ecm_setting in ('true', 'false'):
             settings = values(SIP_FAX_ECM=ecm_setting, SIP_FAX_FINE=generator.choice(('true', 'false')))
             for recipient in (None, {'ecm': True}, {'ecm': False}):
@@ -415,6 +454,7 @@ def test_one_view_per_call_joins_the_call_record_the_engine_report_and_the_frame
 def test_each_placed_call_keeps_what_it_used_and_the_fax_detail_says_why(installation, monkeypatch):
     db = installation
     record(db)
+    learned(db)
     client = ami.AMIClient()
     heard = []
     client.on_submission(heard.append)

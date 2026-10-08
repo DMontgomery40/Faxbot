@@ -205,8 +205,8 @@ def fax_machine_view(engine, values, number, *, now=None):
     learned = engine_frames.learned_for(store, values, number, now=now)
     t38 = try_t38(values)
     decisions = [engine_learning.decide(values, number, engine=kind, t38=t38, base_ecm=getattr(values, 'sip_fax_ecm', True),
-                                        base_compression=getattr(values, 'sip_fax_compression', None), db=engine, now=now,
-                                        write=False) for kind in ('builtin', 'hylafax')]
+                                        base_compression=getattr(values, 'sip_fax_compression', None), db=engine,
+                                        now=now) for kind in ('builtin', 'hylafax')]
     rows = engine_learning.memories(engine, number, epoch=epoch, now=now, views=recent)
     sentences, notes = [], []
     for decision in decisions:
