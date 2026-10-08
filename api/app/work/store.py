@@ -193,9 +193,11 @@ class WorkStore:
         """Create one open item per received document that has none; return how many."""
         now = now or utcnow()
         inbound, items = self.inbound, self.items
+        # A fax that may be a partner's notice waits until the notice matcher has examined it (duplicates.py).
+        from .duplicates import held
         query = (sa.select(inbound.c.id, inbound.c.sha256, self.available_at().label('available_at'))
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
-                 .where(items.c.id.is_(None), self.received())
+                 .where(items.c.id.is_(None), self.received(), ~held(self.engine, inbound, now=now))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).all()
