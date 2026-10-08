@@ -98,6 +98,7 @@ from .inbound.http import router as inbound_router
 from .accounts_http import router as accounts_router
 from .work.http import imports_router, router as work_router
 from .work.certainty_http import router as certainty_router
+from .setup_plan.http import router as setup_plan_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
 from .codec.http import router as codec_router
@@ -224,6 +225,7 @@ app.include_router(accounts_router)
 app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(certainty_router)
+app.include_router(setup_plan_router)
 app.include_router(hylafax_router)
 app.include_router(pages_router)
 app.include_router(batching_router)
