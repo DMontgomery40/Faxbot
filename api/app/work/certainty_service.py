@@ -80,6 +80,8 @@ def state_text(item, names, now):
     key = state_key(item, now)
     owner = names.get(item['owner_principal_id']) or 'someone who is no longer listed'
     if key == 'settled':
+        if item['settled_by'] is None and not item['settled_by_name'] and item['settled_reason']:
+            return item['settled_reason']  # closed by itself when the fax was delivered: the sentence says how
         who = item['settled_by_name'] or names.get(item['settled_by']) or 'a person'
         text = f"Settled as {OUTCOME_TEXT.get(item['outcome'], 'settled')} by {who}."
         return text + (' The fax was sent again as a new fax.' if item['resend_job_id'] else '')
@@ -119,6 +121,8 @@ def event_text(kind, details):
         return f'{actor} opened the receipt query page.'
     if kind == 'query_sent':
         return f'{actor} sent the one-page receipt query.'
+    if kind == 'settled' and details.get('automatic'):
+        return details.get('reason') or 'Closed: the fax was delivered.'
     if kind == 'settled':
         outcome = OUTCOME_TEXT.get(details.get('outcome'), 'settled')
         reason = (details.get('reason') or '').strip()

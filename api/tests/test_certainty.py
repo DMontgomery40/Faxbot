@@ -29,7 +29,7 @@ class CertaintyWorld(World):
         self.service = self.service_at(NOW)
         names = ('work_mailbox_settings', 'fax_job_rule_decisions', 'direct_peers', 'direct_deliveries',
                  'sip_call_records', 'carrier_charges', 'outbound_attempts', 'outbound_deliveries', 'fax_jobs',
-                 'mailboxes')
+                 'mailboxes', 'direct_call_repairs')
         metadata = sa.MetaData()
         self.tables = {**self.tables, **{name: sa.Table(name, metadata, autoload_with=engine) for name in names}}
         self.insert('mailboxes', id='front', label='Front Desk')
@@ -429,3 +429,48 @@ def test_a_fax_sent_again_names_the_earlier_fax_only_to_people_who_may_read_it(c
     ola = PrincipalContext('ola', 1, PasswordSessionEvidence('session-ola', 1), 'principal:ola')
     assert cw.service.for_fax(ola, new_id) == {'items': [], 'about': None}
     assert cw.service.for_fax(dana, new_id)['about'] == {'fax_id': 'fax-1', 'kind': 'resend'}
+
+
+def test_an_open_item_closes_by_itself_once_the_fax_is_delivered_by_any_path(cw):
+    dana = cw.operator('dana')
+    cw.insert('direct_peers', id='peer-1', organization='Lakeside Hospital', phone_number=NUMBER,
+              endpoint_url='https://lakeside.example', signing_key='a' * 64, exchange_key='b' * 64,
+              state='verified', challenge_failures=0)
+    cw.sent('fax-repaired', sender='dana', state='failed', phase='failed', category='partly_sent', pages=10)
+    cw.sent('fax-late', sender='dana')
+    cw.sent('fax-person', sender='dana')
+    cw.sent('fax-open', sender='dana', state='failed', phase='failed', category='partly_sent')
+    worker = CertaintyWorker(cw.certainty, control=lambda: cw.control)
+    worker.step(now=NOW)
+    person = cw.item_for('fax-person')
+    cw.service.settle(dana, person['id'], outcome='unknown', reason='Could not reach them', version=1)
+    # The partner completes the broken call with only its missing pages: the repair's own attempt (named by the
+    # repair's ID) succeeds and the fax is delivered, as OutboundStore.complete_repair records it.
+    repair = 'r' * 32
+    cw.insert('direct_call_repairs', role='sender', repair_id=repair, peer_id='peer-1', job_id='fax-repaired',
+              attempt_id='attempt-fax-repaired', total_pages=10, pages_held=6, state='completed', statement='{}',
+              signature='s' * 86)
+    cw.insert('outbound_attempts', id=repair, job_id='fax-repaired', sequence=2, phase='success',
+              created_at=NOW, submitted_at=NOW, completed_at=NOW)
+    with cw.engine.begin() as connection:
+        deliveries = cw.certainty.deliveries
+        connection.execute(deliveries.update().where(deliveries.c.id == 'fax-repaired').values(
+            state='success', attempt_id=repair))
+        # A late result from the fax service for the uncertain attempt itself.
+        connection.execute(deliveries.update().where(deliveries.c.id.in_(['fax-late', 'fax-person'])).values(
+            state='success'))
+    later = NOW + timedelta(minutes=1)
+    assert cw.certainty.close_delivered(now=later) == 2
+    worker.step(now=later + timedelta(minutes=1))  # a restart or a second worker: nothing more happens
+    repaired, late = cw.item_for('fax-repaired'), cw.item_for('fax-late')
+    assert (repaired['state'], repaired['outcome'], repaired['settled_by']) == ('settled', 'delivered', None)
+    assert repaired['settled_reason'] == 'Closed: the fax was completed directly by Lakeside Hospital.'
+    assert late['settled_reason'] == 'Closed: the fax was delivered.'
+    view = cw.service.detail(dana, repaired['id'])
+    assert view['state_text'] == 'Closed: the fax was completed directly by Lakeside Hospital.'
+    assert view['actions'] == [] and view['suggestion'] is None
+    assert [event['kind'] for event in cw.events(repaired['id'])].count('settled') == 1
+    assert cw.service.history(dana, late['id'])[-1]['text'] == 'Closed: the fax was delivered.'
+    # A person's decision stands, and a fax that is still not delivered stays open for a person.
+    assert cw.item_for('fax-person')['settled_by'] == 'dana' and cw.item_for('fax-person')['outcome'] == 'unknown'
+    assert cw.item_for('fax-open')['state'] == 'open'

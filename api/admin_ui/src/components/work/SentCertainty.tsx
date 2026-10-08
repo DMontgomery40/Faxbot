@@ -170,7 +170,7 @@ function ItemPanel({ client, initial, onOpenFax }: { client: AdminAPIClient; ini
       <Alert severity={settled ? (item.outcome === 'delivered' ? 'success' : 'info') : (item.overdue ? 'error' : 'warning')} sx={{ mb: 2 }}>
         <Typography variant="body2" fontWeight={600}>{certaintyStateSentence(item)}</Typography>
         <Typography variant="body2">{item.why}</Typography>
-        {settled && item.settled_reason && <Typography variant="body2">“{item.settled_reason}”{item.settled_at ? `, ${formatServerTime(item.settled_at)}` : ''}</Typography>}
+        {settled && item.settled_by && item.settled_reason && <Typography variant="body2">“{item.settled_reason}”{item.settled_at ? `, ${formatServerTime(item.settled_at)}` : ''}</Typography>}
       </Alert>
       {item.moved_on && <Alert severity="info" sx={{ mb: 2 }}>{item.moved_on.text}</Alert>}
       {notice && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice}</Alert>}

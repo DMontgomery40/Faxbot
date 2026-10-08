@@ -18,7 +18,11 @@ Rules this module keeps:
   item, so faxes that were uncertain before this update do not all arrive
   overdue. An open item past its deadline is escalated once, to the fallback
   person when they can see the fax.
-- **Only a person settles it**: delivered, not delivered (optionally sending
+- **Only a person settles it**, unless the fax's own delivery record comes to
+  say delivered by any path (a partner completing a broken call, a late result
+  from the fax service, a confirmed receipt): then the item closes by itself
+  with that sentence ("Closed: the fax was delivered."). Otherwise a person
+  decides: delivered, not delivered (optionally sending
   the same document again as a new fax, linked both ways), or can't tell, with
   who decided, why, and what the checks showed then. The fax's own delivery
   record is never changed here; confirming receipt with the provider's fax ID
@@ -366,6 +370,51 @@ class CertaintyStore:
                 continue
         return changed
 
+    def delivered_sentence_on(self, connection, attempt_id):
+        """Why a fax counts as delivered now, in one sentence: completed directly by its partner, or delivered."""
+        repairs = self.sources.table('direct_call_repairs')
+        if repairs is not None and attempt_id:
+            # A repair's attempt carries the repair's ID (direct/repair.py, OutboundStore.complete_repair).
+            peer = connection.execute(sa.select(repairs.c.peer_id).where(
+                repairs.c.role == 'sender', repairs.c.repair_id == attempt_id)).scalar()
+            if peer:
+                partner = checks._organization(self.sources, connection, peer)
+                return f'Closed: the fax was completed directly by {partner}.'
+        return 'Closed: the fax was delivered.'
+
+    def close_delivered(self, *, now=None, limit=100):
+        """Close each open item whose fax is now delivered, by any path; return how many.
+
+        A partner's repair, a late result from the fax service, or a confirmed receipt all end in the fax's own
+        delivery record saying ``success``; that record is read here, so a restart misses nothing and a repeat
+        changes nothing. The item records why, with no person's name.
+        """
+        now = now or utcnow()
+        items, deliveries = self.items, self.deliveries
+        due = (sa.select(items.c.id).select_from(items.join(deliveries, deliveries.c.id == items.c.job_id))
+               .where(items.c.state == 'open', deliveries.c.state == 'success')
+               .order_by(items.c.created_at, items.c.id).limit(limit))
+        with read_connection(self.engine) as connection:
+            identities = connection.execute(due).scalars().all()
+        closed = 0
+        for identity in identities:
+            try:
+                with write_transaction(self.engine) as connection:
+                    item = self.item_on(connection, identity)
+                    delivery = connection.execute(sa.select(deliveries.c.state, deliveries.c.attempt_id).where(
+                        deliveries.c.id == (item or {}).get('job_id'))).first()
+                    if item is None or item['state'] != 'open' or delivery is None or delivery.state != 'success':
+                        continue
+                    sentence = self.delivered_sentence_on(connection, delivery.attempt_id)
+                    self.change_on(connection, item, {'state': 'settled', 'outcome': 'delivered', 'settled_at': now,
+                                                      'settled_reason': sentence},
+                                   kind='settled', actor_id=None, now=now, dedupe_key='closed:delivered',
+                                   details={'outcome': 'delivered', 'reason': sentence, 'automatic': True})
+                    closed += 1
+            except (_Changed, DeliveryStoreError):
+                continue  # a person settled it first, or another worker closed it
+        return closed
+
     def record_checks(self, *, now=None, limit=50):
         """Keep each new finding of the automatic checks on open items, once; return how many were new.
 
@@ -400,7 +449,7 @@ class CertaintyStore:
 
 
 class CertaintyWorker:
-    """Make items for new uncertain faxes, keep what the automatic checks find, and escalate missed deadlines."""
+    """Make items for new uncertain faxes, close those delivered since, keep what the checks find, escalate."""
 
     def __init__(self, store, *, control):
         self.store, self.control = store, control
@@ -409,6 +458,8 @@ class CertaintyWorker:
         now = now or utcnow()
         control = self.control()
         created = self.store.feed(control, now=now)
+        # A fax delivered since, by any path (a partner's repair, a late result, a confirmed receipt), closes.
+        self.store.close_delivered(now=now)
         self.store.record_checks(now=now)
         escalated = self.store.escalate(control, now=now)
         return created >= 100 or escalated >= 100
