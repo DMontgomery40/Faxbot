@@ -792,7 +792,10 @@ def test_the_planner_ranks_partner_relays_with_its_own_routes_by_cost(sender):
 
 @pytest.mark.parametrize('mode, accounts', [('one', ('relay:{cheap}',)),
                                             ('ordered', ('relay:{cheap}', 'phaxio')),
-                                            ('ordered', ('phaxio', 'relay:{cheap}'))])
+                                            ('ordered', ('phaxio', 'relay:{cheap}')),
+                                            # Ranked by cost: the relay's 4 cents beat Phaxio's 20. Before the fix the
+                                            # relay was listed twice and the policy refused to rank.
+                                            ('cheapest', ('relay:{cheap}', 'phaxio'))])
 def test_a_rule_naming_a_relay_puts_the_relay_itself_where_the_rule_lists_it(sender, mode, accounts):
     """``use: relay:<partner>`` and ``try_in_order: [relay:<partner>, ...]``: the relay is the route at its place in
     the rule's order, never a provider account that the transport then skips as unavailable."""
@@ -813,7 +816,7 @@ def test_a_rule_naming_a_relay_puts_the_relay_itself_where_the_rule_lists_it(sen
                                      now=NOW, pinned=pinned)
     assert [(choice.route.key, choice.route.kind) for choice in plan.choices] == [
         (key, 'relay' if key.startswith('relay:') else 'provider') for key in accounts]
-    assert plan.choices[0].reason == 'rule' and plan.skipped == ()
+    assert plan.choices[0].reason == ('cheapest' if mode == 'cheapest' else 'rule') and plan.skipped == ()
 
 
 # The trunk's engine down ----------------------------------------------------------------------------------------------

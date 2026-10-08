@@ -24,9 +24,35 @@ def idle(*args, **kwargs):
     return asyncio.sleep(3600)
 
 
+@pytest.fixture(params=['sqlite', 'postgresql'])
+def database_url(request):
+    if request.param == 'sqlite':
+        yield None
+        return
+    import os
+    import uuid
+    url = os.environ.get('FAXBOT_SCHEMA_TEST_POSTGRES_URL')
+    if not url:
+        pytest.skip('Set FAXBOT_SCHEMA_TEST_POSTGRES_URL to run the PostgreSQL digital route tests')
+    from app.db import create_database_engine
+    admin = create_database_engine(url)
+    namespace = 'faxbot_digital_' + uuid.uuid4().hex
+    with admin.begin() as connection:
+        connection.exec_driver_sql(f'CREATE SCHEMA {namespace}')
+    scoped = sa.engine.make_url(url).update_query_dict({'options': '-csearch_path=' + namespace})
+    try:
+        yield scoped.render_as_string(hide_password=False)
+    finally:
+        with admin.begin() as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA {namespace} CASCADE')
+        admin.dispose()
+
+
 @pytest.fixture
-def client(monkeypatch, tmp_path):
+def client(monkeypatch, tmp_path, database_url):
     _environment(monkeypatch, tmp_path)
+    if database_url:
+        monkeypatch.setenv('DATABASE_URL', database_url)
     monkeypatch.setenv('INBOUND_ENABLED', 'true')
     monkeypatch.setenv('FAX_DEFAULT_COUNTRY', 'US')
     # The lifespan's own digital work waits; each test runs the worker itself.
@@ -92,13 +118,14 @@ def test_a_fhir_client_gets_a_signing_key_and_serves_its_public_keys_without_a_k
         'expected_generation': generation(client)})
     assert added.status_code == 200, added.text
     assert added.json()['accounts'][0]['health']['state'] == 'not_set_up'
-    assert added.json()['accounts'][0]['plan'] == 'No charge for each message.'
+    assert added.json()['accounts'][0]['plan'] == 'No charge for each document.'
     made = client.post('/digital/accounts/fhir-hospital/signing-key', headers=B, json={
         'algorithm': 'ES384', 'expected_generation': generation(client)})
     view = made.json()['accounts'][0]
     assert view['health']['state'] == 'ready' and view['secrets_set'] == ['signing_key']
     (jwk,) = view['public_keys']['keys']
     assert jwk['kty'] == 'EC' and jwk['alg'] == 'ES384' and 'd' not in jwk
+    assert view['public_keys_url'] == f'{ORIGIN}/digital/jwks/fhir-hospital'
     public = TestClient(app, base_url=ORIGIN).get('/digital/jwks/fhir-hospital')
     assert public.status_code == 200 and public.json()['keys'][0]['kid'] == jwk['kid']
     assert TestClient(app, base_url=ORIGIN).get('/digital/jwks/nobody').status_code == 404
@@ -160,7 +187,8 @@ def test_a_received_direct_message_is_filed_once_and_answered_processed_then_dis
         imap.add(raw)
         runtime = app.state.configuration_runtime
         engine = runtime.manager.store.engine
-        transport = direct_message.Transport(ssl_context=client_context(imap.cert), crl_fetch=_no_crl)
+        transport = direct_message.Transport(ssl_context=client_context(imap.cert), crl_fetch=_no_crl,
+                                             dns_lookup=lambda name: [], ldap_lookup=lambda address: [])
         worker = DigitalWorker(engine, values=lambda: runtime.manager.store.read().active.values,
                                access=lambda: app.state.access_runtime, transport=transport)
         worker.step()

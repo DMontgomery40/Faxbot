@@ -33,6 +33,8 @@ export interface DigitalAccount {
   certificate?: { sentence: string; fingerprint: string | null } | null;
   trust_bundle?: { anchors: number; loaded_at: string; source_url: string | null; loaded_by: string | null } | null;
   public_keys?: { keys: Array<Record<string, string | string[]>> } | null;
+  // Where the recipient's system reads the public key set (this Faxbot's public address); null until it is set.
+  public_keys_url?: string | null;
 }
 
 export interface DigitalPlanPreset {

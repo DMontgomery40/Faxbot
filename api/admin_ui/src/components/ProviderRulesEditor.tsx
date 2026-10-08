@@ -18,7 +18,7 @@ import type {
 } from './ProviderRulesApi';
 import { DAYS, documentLabels, recipientLists } from './ProviderRulesApi';
 import type { Names } from './ProviderRulesText';
-import { ALTERNATE_NOTE, ENCRYPTION_NOTE, LAYOUT_NOTE, ruleSentence } from './ProviderRulesText';
+import { ALTERNATE_NOTE, DIGITAL_LABEL, ENCRYPTION_NOTE, LAYOUT_NOTE, ruleSentence } from './ProviderRulesText';
 
 type Option = { value: string; label: string };
 type FieldKind = 'text-list' | 'choice-list' | 'flag' | 'count' | 'megabytes' | 'time';
@@ -444,6 +444,7 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
   const accounts: Option[] = [
     ...choices.accounts.filter((account) => account.sends).map((account) => ({ value: account.key, label: account.label })),
     { value: 'direct', label: 'Direct delivery' },
+    { value: 'digital', label: DIGITAL_LABEL },
   ];
   const siteOptions: Option[] = [{ value: 'sender', label: "The sender's own site" },
     ...(named.sites ?? []).map((site) => ({ value: site.key, label: site.name }))];

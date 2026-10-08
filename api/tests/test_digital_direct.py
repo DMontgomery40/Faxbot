@@ -269,6 +269,57 @@ def test_a_refused_recipient_address_falls_back_and_a_lost_answer_is_uncertain(w
     assert delivery_state(world, second)[:2] == ('reconciliation_required', 'uncertain')
 
 
+def bounce(message_id, *, action='failed'):
+    """A mail server's delivery status report (RFC 3464) about a message Faxbot sent; plain, as servers send them."""
+    lines = [
+        'From: MAILER-DAEMON@smtp.hisp.example.org', f'To: {SENDER}', 'Subject: Undelivered Mail Returned to Sender',
+        'Message-ID: <bounce.1@smtp.hisp.example.org>', 'MIME-Version: 1.0',
+        'Content-Type: multipart/report; report-type=delivery-status; boundary="b1"', '',
+        '--b1', 'Content-Type: text/plain', '', 'Your message could not be delivered.',
+        '--b1', 'Content-Type: message/delivery-status', '', 'Reporting-MTA: dns; smtp.hisp.example.org', '',
+        f'Final-Recipient: rfc822; {RECIPIENT}', f'Action: {action}', 'Status: 5.1.1', '',
+        '--b1', 'Content-Type: text/rfc822-headers', '', f'Message-ID: {message_id}', f'To: {RECIPIENT}', '',
+        '--b1--', '']
+    return '\r\n'.join(lines).encode()
+
+
+def test_a_plain_bounce_fails_a_waiting_message_and_reports_are_never_received_messages(world):
+    job = queue(world)
+    asyncio.run(send(world))
+    (message,) = world.store.for_job(job)
+    report = bounce(message['message_id'])
+    headers, body = smime.split_headers(report)
+    parsed = direct_message.read_notice(report)
+    assert (parsed.kind, parsed.original_message_id, parsed.detail['status']) == ('failed', message['message_id'],
+                                                                                   '5.1.1')
+    # An unencrypted delivery notice is never trusted when Faxbot is the security agent.
+    party = Party(RECIPIENT, world.pki.recipient, world.pki.recipient_key)
+    from api.app.digital.direct_message import notice_message, plain_message
+    plain_mdn = plain_message(*notice_message(account=party, original_message_id=message['message_id'],
+                                              recipient=SENDER, disposition='dispatched'))
+    world.imap.add(plain_mdn)
+    world.imap.add(report)
+    worker(world).step()
+    assert world.store.message(message['id'])['state'] == 'failed'
+    assert world.store.recent(direction='in') == []
+    assert world.imap.count('INBOX') == 0
+
+
+def test_with_receiving_off_only_notices_are_read_and_other_messages_stay_in_the_mailbox(world):
+    from api.tests.digital_fixtures import direct_message_from
+    job = queue(world)
+    asyncio.run(send(world))
+    (message,) = world.store.for_job(job)
+    party = Party(RECIPIENT, world.pki.recipient, world.pki.recipient_key, chain=(world.pki.intermediate,))
+    world.imap.add(direct_message_from(party, world.pki.sender, synthetic_pdf()))
+    world.imap.add(notice(party, message['message_id'], world.pki.sender, 'processed'))
+    for _ in range(2):
+        worker(world).step()
+    assert world.store.message(message['id'])['state'] == 'processed'
+    assert world.store.recent(direction='in') == [] and len(world.hisp.messages) == 1
+    assert world.imap.count('INBOX') == 1 and world.imap.count('Faxbot filed') == 1
+
+
 def test_hisp_security_hands_over_the_plain_message_for_the_hisp_to_sign(world):
     snapshot = world.configuration.read()
     documents = digital_accounts.patched(snapshot.desired.values, 'hisp', {'settings': {'security': 'hisp'}})

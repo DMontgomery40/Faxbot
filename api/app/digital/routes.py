@@ -85,20 +85,22 @@ def plan_sentence(account, store=None, now=None):
     if terms is None:
         return 'No price is on file, so Faxbot treats its cost as unknown.'
     card = terms.card
+    unit = 'message' if account.kind == 'hisp' else 'document'
     parts = []
     if card.monthly_fee_micros:
         parts.append(f'{plan_fee_text(card.monthly_fee_micros, card.currency)} a month')
         if terms.included_pages:
-            parts.append(f'{terms.included_pages} messages included')
+            parts.append(f'{terms.included_pages} {unit}s included')
     if card.per_call_micros:
-        parts.append(f'{money_text(card.per_call_micros, card.currency)} a message'
+        parts.append(f'{money_text(card.per_call_micros, card.currency)} a {unit}'
                      + (' past those' if terms.included_pages else ''))
     elif not card.monthly_fee_micros:
-        parts.append('no charge for each message')
+        parts.append(f'no charge for each {unit}')
     sentence = ', '.join(parts)
     sentence = sentence[0].upper() + sentence[1:] + '.'
     if card.source_url:
-        sentence += f' Source: {card.source_url}, read {card.captured_on:%d %B %Y}.'
+        day = card.captured_on
+        sentence += f' Source: {card.source_url}, read {day.day} {day:%B %Y}.'
     return sentence
 
 
@@ -208,12 +210,13 @@ class DigitalRoute:
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None or pdf.is_symlink() or not pdf.is_file():
             raise DirectRefused('The fax document is unavailable; nothing was sent.')
         document = await run_lifecycle_step(pdf.read_bytes)
+        private = lambda: bool(getattr(current, 'direct_allow_private_peers', False))  # noqa: E731
         if kind == 'direct':
-            from .direct_message import DirectSender
-            sender = DirectSender(store, account, transport=self.transport)
+            from .direct_message import DirectSender, Transport
+            sender = DirectSender(store, account, transport=self.transport or Transport(allow_private=private))
         else:
-            from .fhir import FhirSender
-            sender = FhirSender(store, account, transport=self.fhir_transport)
+            from .fhir import FhirSender, Transport
+            sender = FhirSender(store, account, transport=self.fhir_transport or Transport(allow_private=private))
         from . import certificates, smime
         try:
             submission = await run_lifecycle_step(lambda: sender.prepare(

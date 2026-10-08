@@ -117,7 +117,7 @@ def accounts_state(snapshot, engine):
             except certificates.CertificateRefused:
                 public = None
         views.append(digital_accounts.account_view(account, bundle=bundle, plan_sentence=plan_sentence(account),
-                                                   jwks=public))
+                                                   jwks=public, public_base=values.public_api_url))
     return {'generation': snapshot.generation, 'accounts': views, 'kinds': digital_accounts.kinds_view(),
             'presets': [{'id': key, **preset} for key, preset in digital_accounts.PLAN_PRESETS.items()]}
 
@@ -226,7 +226,7 @@ async def load_trust_bundle(key: str, body: TrustBundleInput, request: Request,
             if not body.url.startswith('https://'):
                 raise DigitalInputError('The trust bundle address must start with https://.')
             try:
-                data = https_fetch(body.url)
+                data = https_fetch(body.url, allow_private=bool(snapshot.active.values.direct_allow_private_peers))
             except LookupError as error:
                 raise DigitalInputError(f'Faxbot could not read the trust bundle: {error}') from None
         else:

@@ -59,8 +59,9 @@ def route_label(key):
     # The trunk is named after the carrier or phone system it connects to.
     if key == 'sip':
         return trunk_name()
-    if _is_digital(key):
-        from ..digital.text import route_label as digital_label
+    from ..digital.text import parse_key, route_label as digital_label
+    if parse_key(key) is not None:
+        # A digital route in its rule form (dsm:<id>) or the ledger's (dsm.<id>): named by the address it goes to.
         return digital_label(key)
     return LABELS.get(key, key)
 

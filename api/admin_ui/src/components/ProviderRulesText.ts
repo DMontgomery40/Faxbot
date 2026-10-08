@@ -61,13 +61,19 @@ export function namesFrom(maps: NameMaps): Names {
   };
 }
 
+export const DIGITAL_LABEL = "Direct message or FHIR, when the recipient has one";
+
 // The names a rules page knows: its accounts and the document's own lists, regions, sites and workflows.
 export function namesFor(document: RulesDocument | null, choices: Choices | null): Names {
   const byKey = <T>(entries: Array<[string, T]>, name: (value: T) => string) =>
     Object.fromEntries(entries.map(([key, value]) => [key, name(value)]));
   const lists = recipientLists(document ?? { format: 1 });
   return namesFrom({
-    accounts: Object.fromEntries((choices?.accounts ?? []).map((account) => [account.key, account.label])),
+    accounts: {
+      // Every recipient's confirmed Direct address or FHIR server, as one choice (digital/).
+      digital: DIGITAL_LABEL,
+      ...Object.fromEntries((choices?.accounts ?? []).map((account) => [account.key, account.label])),
+    },
     lists: byKey(Object.entries(lists), (list: RecipientList) => list.name),
     regions: byKey(Object.entries(document?.regions ?? {}), (region: Region) => region.name),
     sites: Object.fromEntries((document?.sites ?? []).map((site) => [site.key, site.name])),

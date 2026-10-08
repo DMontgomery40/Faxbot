@@ -22,6 +22,9 @@ recipients = typer.Typer(help="A recipient's Direct address or FHIR endpoint: pu
                               'it, or look one up in the NPI registry.', no_args_is_help=True)
 
 KINDS = {'hisp': 'Direct messages (HISP)', 'fhir': 'FHIR client'}
+NO_PUBLIC_ADDRESS = ("Set this Faxbot's public web address (faxbot system settings set public_api_url=...) so the "
+                     "recipient's system can read its public key set, or give it the key set from "
+                     "'faxbot providers digital public-keys'.")
 HEALTH = {'ready': 'Ready', 'not_set_up': 'Not set up', 'off': 'Turned off'}
 STATES = {'suggested': 'Suggested', 'confirmed': 'Confirmed', 'withdrawn': 'Withdrawn', 'dismissed': 'Dismissed'}
 SOURCES = {'entered': 'You entered it', 'nppes': 'NPI registry'}
@@ -121,7 +124,7 @@ def account_fields(account, current):
             value = account['settings'].get(field['name'])
             pairs.append((field['label'], {True: 'yes', False: 'no'}.get(value, value) if value is not None else '-'))
     if account['provider'] == 'fhir' and account.get('public_keys'):
-        pairs.append(('Public key set', f"{state.api().url}/digital/jwks/{segment(account['key'])}"))
+        pairs.append(('Public key set', account.get('public_keys_url') or NO_PUBLIC_ADDRESS))
     return pairs
 
 
@@ -221,9 +224,14 @@ def accounts_signing_key(key: str = typer.Argument(..., metavar='KEY', help="The
     result = api.post(f"/digital/accounts/{segment(account['key'])}/signing-key",
                       json={'algorithm': algorithm, 'expected_generation': current['generation']})
 
+    made = find(result, account['key'])
+
     def human(out):
-        out.line('Faxbot made a new signing key. Give the recipient\'s system this public key set address:')
-        out.line(f"{api.url}/digital/jwks/{segment(account['key'])}")
+        if made.get('public_keys_url'):
+            out.line('Faxbot made a new signing key. Give the recipient\'s system this public key set address:')
+            out.line(made['public_keys_url'])
+        else:
+            out.line(f'Faxbot made a new signing key. {NO_PUBLIC_ADDRESS}')
     state.out().result(result, human)
 
 

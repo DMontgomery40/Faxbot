@@ -86,6 +86,31 @@ def test_the_group_key_digital_puts_the_recipients_route_first_and_sends_it(rule
     assert recorded['account_key'] == ruled.key and recorded['rule_id'] == 'r-digital'
 
 
+def test_a_refused_digital_route_moves_a_strict_rule_on_to_its_next_account_not_the_default(ruled):
+    """``try_in_order: [digital, signalwire]`` with Phaxio as the default: the FHIR server refuses (nothing stored),
+    so the rule's next account sends it, never the default the rule left out, and never as a failure."""
+    from api.app.outbound_store import OutboundStore
+    from api.app.routing.fallback import FallbackPolicy, FallbackScheduler
+    publish(ruled, {'format': 1, 'routes': [rule('r-digital', {'try_in_order': ['digital', 'signalwire']})]})
+    ruled.server.mode = 'refuse'
+    job = queued(ruled)
+    assert envelopes.load(ruled.engine, job).strict
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(ruled.delivery, ruled.routes))
+    try:
+        first = asyncio.run(dispatch(ruled))
+        assert first.used == [] and len(ruled.server.posts) == 1
+        assert ruled.delivery.get(job)['state'] == 'ready'           # back in the queue for the next route
+        second = asyncio.run(dispatch(ruled))
+    finally:
+        OutboundStore.fallback_policy = None
+    assert second.used == ['signalwire'] and len(ruled.server.posts) == 1
+    from api.app.routing.route_view import fax_route
+    view = fax_route(ruled.engine, ruled.configuration, job, rules=ruled.rules)
+    labels = [attempt['account_label'] for attempt in view['attempts']]
+    assert labels[0].startswith('FHIR') and ruled.address['id'] not in ' '.join(labels)
+    assert labels[1] == 'SignalWire'
+
+
 def test_use_digital_alone_passes_the_submission_marker_though_the_rules_exclude_the_fax_account(ruled):
     publish(ruled, {'format': 1, 'routes': [rule('r-only', {'use': 'digital'})]})
     job = queued(ruled)

@@ -402,7 +402,7 @@ def health(account, *, bundle=None):
     if not account.enabled:
         return 'off', 'It is off, so no fax goes this way.'
     if account.missing:
-        return 'not_set_up', f'Fill in {", ".join(account.missing).lower()} before Faxbot can use it.'
+        return 'not_set_up', f'Still needed before Faxbot can use it: {", ".join(account.missing)}.'
     if account.kind == 'hisp' and account.setting('security') == 'faxbot' and bundle is None:
         return 'not_set_up', 'Load a trust bundle before Faxbot can check recipients\' certificates.'
     if account.receives and not (account.setting('imap_host') and account.setting('mailbox_id')):
@@ -411,7 +411,7 @@ def health(account, *, bundle=None):
     return 'ready', 'Ready to send.' if not account.receives else 'Ready to send and receive.'
 
 
-def account_view(account, *, bundle=None, plan_sentence=None, jwks=None):
+def account_view(account, *, bundle=None, plan_sentence=None, jwks=None, public_base=None):
     state, sentence = health(account, bundle=bundle)
     settings = {item.name: account.setting(item.name) for item in FIELDS[account.kind] if not item.secret}
     view = {'key': account.key, 'provider': account.kind, 'label': account.label, 'enabled': account.enabled,
@@ -424,6 +424,8 @@ def account_view(account, *, bundle=None, plan_sentence=None, jwks=None):
             'loaded_by': bundle['created_by_name']}
     if account.kind == 'fhir':
         view['public_keys'] = jwks
+        view['public_keys_url'] = (f'{public_base.rstrip("/")}/digital/jwks/{account.key}'
+                                   if jwks and public_base else None)
     return view
 
 

@@ -89,6 +89,18 @@ class Transport:
     crl_fetch: object = None         # url -> bytes; raises LookupError
     imap_connect: object = None      # (host, port, context, timeout) -> imaplib-like
     timeout: float = 60.0
+    # () -> bool: private and local addresses may be reached (DIRECT_ALLOW_PRIVATE_PEERS). Addresses found in
+    # certificates and DNS records (issuers, revocation lists, directories) are public-only otherwise.
+    allow_private: object = None
+
+    def private_allowed(self):
+        return bool(self.allow_private()) if self.allow_private is not None else False
+
+    def fetch(self, url):
+        """A revocation list or an issuer's certificate; raises LookupError."""
+        if self.crl_fetch is not None:
+            return self.crl_fetch(url)
+        return lookup.http_fetch(url, allow_private=self.private_allowed())
 
     def smtp(self, host, port):
         if self.smtp_connect is not None:
@@ -101,11 +113,14 @@ class Transport:
         return self.ssl_context or ssl.create_default_context()
 
     def certificates_for(self, address, *, anchors, intermediates=()):
+        private = self.private_allowed()
         return certificates.discover(
             address, anchors=anchors, intermediates=intermediates,
-            dns_lookup=self.dns_lookup or (lambda name: lookup.dns_certificates(name, fetch=lookup.https_fetch)),
-            ldap_lookup=self.ldap_lookup or lookup.ldap_certificates,
-            crl_fetch=self.crl_fetch or lookup.http_fetch)
+            dns_lookup=self.dns_lookup or (lambda name: lookup.dns_certificates(
+                name, fetch=lambda url: lookup.https_fetch(url, allow_private=private))),
+            ldap_lookup=self.ldap_lookup or (lambda found: lookup.ldap_certificates(
+                found, connect=lookup.public_connect(private))),
+            crl_fetch=self.fetch)
 
 
 def anchors_for(store, account):
@@ -513,6 +528,12 @@ class Received:
     wants_dispatched: bool = False
     sender_certificate: object = None
     received_at: datetime | None = None
+    report: bool = False         # a delivery notice or bounce: never recorded or filed as a received message
+
+
+def _is_bounce(notice):
+    """A delivery status report (RFC 3464) rather than a security agent's delivery notice."""
+    return 'action' in notice.detail
 
 
 def _documents_in(entity, depth=0):
@@ -560,6 +581,12 @@ def open_message(raw, account, *, store, transport, now=None):
     kind = smime.media_type(headers.get('content-type'))
     if account.setting('security') == 'faxbot':
         if kind not in ('application/pkcs7-mime', 'application/x-pkcs7-mime'):
+            report = read_notice(raw)
+            if report is not None:
+                # An unencrypted report: a mail server's bounce may count (``Receiver.handle`` decides); an
+                # unencrypted delivery notice from a security agent is never trusted. Neither is a received message.
+                return Received(message_id, sender, [], notice=report if _is_bounce(report) else None,
+                                received_at=received_at, report=True)
             return Received(message_id, sender, [], refused='It was not encrypted, so Faxbot did not trust it.',
                             received_at=received_at)
         own, _, key = own_identity(account)
@@ -572,7 +599,7 @@ def open_message(raw, account, *, store, transport, now=None):
         try:
             certificates.check(signed.certificate, anchors=anchors_for(store, account),
                                intermediates=signed.certificates, address=sender, purpose='sign',
-                               crl_fetch=transport.crl_fetch or lookup.http_fetch)
+                               crl_fetch=transport.fetch)
         except certificates.CertificateRefused as refusal:
             return Received(message_id, sender, [], refused=f'The sender is not trusted: {refusal}',
                             received_at=received_at)
@@ -585,7 +612,8 @@ def open_message(raw, account, *, store, transport, now=None):
             headers = {**headers, **wrapped_headers}
     notice = read_notice(entity)
     if notice is not None:
-        return Received(message_id, sender, [], notice=notice, sender_certificate=signer, received_at=received_at)
+        return Received(message_id, sender, [], notice=notice, sender_certificate=signer, received_at=received_at,
+                        report=True)
     options = (headers.get('disposition-notification-options') or '').lower()
     wants = bool(headers.get('disposition-notification-to')) and FINAL in options
     try:
@@ -623,13 +651,16 @@ def notice_message(*, account, original_message_id, recipient, disposition, now=
 class Receiver:
     """Reads one HISP account's mailbox: settles sent messages and files received documents, once each."""
 
-    def __init__(self, store, account, *, transport=None, file_document=None, delivery=None, mailbox_factory=None):
+    def __init__(self, store, account, *, transport=None, file_document=None, delivery=None, mailbox_factory=None,
+                 left=None):
         self.store, self.account = store, account
         self.transport = transport or Transport()
         self.file_document = file_document      # (account, received, index, name, media type, bytes) -> outcome
         self.delivery = delivery
         self.mailbox_factory = mailbox_factory  # () -> intake/sources/imap.Mailbox-like (tests: a fake HISP)
         self.last_problem = None
+        # UIDs of messages left in the mailbox while receiving is off, so newer notices are still reached.
+        self.left = left if left is not None else set()
 
     def _mailbox(self):
         if self.mailbox_factory is not None:
@@ -656,14 +687,20 @@ class Receiver:
             mailbox.select(account.setting('imap_folder') or 'INBOX')
             done_folder = account.setting('processed_folder') or 'Faxbot filed'
             mailbox.ensure_folder(done_folder)
-            for uid in mailbox.waiting(limit):
+            waiting = [uid for uid in mailbox.waiting(limit + len(self.left)) if uid not in self.left][:limit]
+            for uid in waiting:
                 try:
                     raw, _ = mailbox.fetch(uid, MAX_MESSAGE)
                 except TooLarge:
+                    if not account.receives:
+                        self.left.add(uid)
+                        continue
                     head, _ = mailbox.header(uid)
                     self.too_large(head, now=now)
                 else:
-                    self.handle(raw, now=now)
+                    if self.handle(raw, now=now) == 'left':
+                        self.left.add(uid)
+                        continue
                 mailbox.done(uid, done_folder)
                 handled += 1
             self.last_problem = None
@@ -677,12 +714,23 @@ class Receiver:
         """Record and act on one message; safe to repeat (it is keyed by its Message-ID)."""
         store, account = self.store, self.account
         received = open_message(raw, account, store=store, transport=self.transport, now=now)
-        if received.notice is not None:
-            # A notice must come from the address the message went to (or its HISP's domain).
-            sent = store.message_by_id(received.notice.original_message_id, direction='out')
-            if sent is not None and _same_party(received.sender, sent['counterpart']):
-                record_notice(store, received.notice, delivery=self.delivery, account=account, now=now)
+        if received.report:
+            notice = received.notice
+            sent = store.message_by_id(notice.original_message_id, direction='out') if notice else None
+            if sent is None:
+                return 'notice'
+            if _is_bounce(notice):
+                # A mail server's bounce comes from its own address, so it counts only as a failure of a message still
+                # waiting for its recipient's first notice, matched by Faxbot's own unguessable Message-ID.
+                if notice.kind == 'failed' and sent['state'] in ('submitted', 'uncertain'):
+                    record_notice(store, notice, delivery=self.delivery, account=account, now=now)
+            elif _same_party(received.sender, sent['counterpart']):
+                # A delivery notice must come from the address the message went to (or its domain).
+                record_notice(store, notice, delivery=self.delivery, account=account, now=now)
             return 'notice'
+        if not account.receives:
+            # Receiving is off: only notices are read; every other message stays in the mailbox as it is.
+            return 'left'
         pdfs = [item for item in received.documents if item[1] in ('application/pdf', 'image/tiff')
                 or item[0].lower().endswith(('.pdf', '.tif', '.tiff'))]
         if received.refused:
@@ -750,7 +798,12 @@ class Receiver:
         account = self.account
         headers, body = notice_message(account=account, original_message_id=received.message_id,
                                        recipient=received.sender, disposition=disposition)
-        recipients = [received.sender_certificate] if received.sender_certificate is not None else []
+        # The sender's published encryption certificate; its signing certificate only when that one may encrypt.
+        found = self.transport.certificates_for(received.sender, anchors=anchors_for(self.store, account))
+        recipients = list(found.certificates)
+        signer = received.sender_certificate
+        if not recipients and signer is not None and certificates.usable_for_encryption(signer):
+            recipients = [signer]
         if not recipients:
             raise DirectRefusedError('There is no certificate to answer the sender with.')
         own, chain, key = own_identity(account)

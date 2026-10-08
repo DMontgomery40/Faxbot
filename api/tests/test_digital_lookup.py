@@ -116,6 +116,36 @@ def test_an_anonymous_ldap_search_finds_the_address_certificate_then_the_domain(
         lookup.ldap_certificates(RECIPIENT, srv=lambda name: [])
 
 
+def test_addresses_from_certificates_and_dns_never_reach_a_private_network(monkeypatch):
+    """A caIssuers or revocation address, an IPKIX link and an LDAP directory come from records anyone can publish:
+    a private or local address is refused before any connection is opened, unless private partners are allowed."""
+    world = pki()
+    opened = []
+
+    class NoClient:
+        def __init__(self, *args, **kwargs):
+            opened.append(kwargs)
+
+        def __enter__(self):
+            raise AssertionError('No connection may be opened to a private address.')
+
+        def __exit__(self, *exc):
+            return False
+    monkeypatch.setattr('httpx.Client', NoClient)
+    leaf = certificate('Hospital records', key(), world.intermediate.subject, world.intermediate_key,
+                       email=RECIPIENT, ca_issuers='http://10.0.0.5/hisp-ca.cer')
+    with pytest.raises(certificates.CertificateRefused, match='not issued by any authority'):
+        certificates.check(leaf, anchors=[world.anchor], address=RECIPIENT, crl_fetch=lookup.http_fetch)
+    with pytest.raises(LookupError, match='private or local'):
+        lookup.https_fetch('https://192.168.1.20/bundle.p7b')
+    with pytest.raises(LookupError, match='private or local'):
+        lookup.http_fetch('http://localhost/list.crl', resolver=lambda host, port: ['127.0.0.1'])
+    assert opened == []
+    connect = lookup.public_connect(False, resolver=lambda host, port: ['10.1.2.3'])
+    with pytest.raises(LookupError, match='private or local'):
+        lookup.ldap_certificates(RECIPIENT, connect=connect, srv=lambda name: [(0, 0, 389, 'ldap.internal')])
+
+
 def test_a_missing_issuer_is_read_from_the_certificates_ca_issuers_address():
     world = pki()
     leaf_key = key()

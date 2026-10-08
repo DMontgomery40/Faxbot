@@ -16,6 +16,8 @@ import { DeliveryError } from './delivery/shared';
 export const DIGITAL_ACCOUNTS_HELP = 'When a recipient can take a Direct message or has a FHIR server, Faxbot can '
   + 'deliver there instead of calling. Add the HISP account and FHIR clients you use here, then confirm each '
   + 'recipient\'s address under Recipients.';
+export const PUBLIC_ADDRESS_NEEDED = 'Faxbot has a signing key. Set this Faxbot\'s public web address under System → '
+  + 'Setup, so the recipient\'s system can read its public key set from it.';
 const HEALTH_COLOR = { ready: 'success', not_set_up: 'warning', off: 'default' } as const;
 const KIND_WORDS: Record<DigitalKind, string> = { hisp: 'Direct messages (HISP)', fhir: 'FHIR client' };
 
@@ -140,11 +142,9 @@ function AccountDialog({ state, account, kindId, busy, onClose, onSave }: {
   );
 }
 
-export default function DigitalAccounts({ client, canWrite, publicBase }: {
+export default function DigitalAccounts({ client, canWrite }: {
   client: AdminAPIClient;
   canWrite: boolean;
-  // Where this Faxbot is reached from outside, for the public key set address; the page's own address otherwise.
-  publicBase?: string | null;
 }) {
   const [state, setState] = useState<DigitalAccountsState | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -174,8 +174,6 @@ export default function DigitalAccounts({ client, canWrite, publicBase }: {
       setBusy(false);
     }
   };
-  const base = (publicBase || window.location.origin).replace(/\/$/, '');
-
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 3 }} data-testid="digital-accounts">
       <Typography variant="h6" component="h2">Direct messages and FHIR</Typography>
@@ -199,7 +197,9 @@ export default function DigitalAccounts({ client, canWrite, publicBase }: {
               + formatServerTime(account.trust_bundle.loaded_at) : 'No trust bundle is loaded yet.'}
           </Typography>}
           {account.provider === 'fhir' && account.public_keys && <Typography variant="body2" color="text.secondary">
-            {`Give the recipient's system this public key set address: ${base}/digital/jwks/${account.key}`}
+            {account.public_keys_url
+              ? `Give the recipient's system this public key set address: ${account.public_keys_url}`
+              : PUBLIC_ADDRESS_NEEDED}
           </Typography>}
           {canWrite && (
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 0.5 }}>

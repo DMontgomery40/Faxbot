@@ -154,6 +154,11 @@ def binding(certificate, address):
     return None
 
 
+def usable_for_encryption(certificate):
+    """Whether a certificate's key may be used to encrypt a message to its holder."""
+    return _usage_ok(certificate, 'encrypt')
+
+
 def _usage_ok(certificate, purpose):
     usage = _extension(certificate, x509.KeyUsage)
     if usage is None:

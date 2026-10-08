@@ -65,10 +65,12 @@ class DigitalWorker:
         self.values = values                    # callable: the configuration in force now
         self.access = access or (lambda: None)
         self.delivery = delivery                # callable: the OutboundStore, or None
-        self.transport = transport or direct_message.Transport()
-        self.fhir_transport = fhir_transport or fhir.Transport()
+        private = lambda: bool(getattr(self.values(), 'direct_allow_private_peers', False))  # noqa: E731
+        self.transport = transport or direct_message.Transport(allow_private=private)
+        self.fhir_transport = fhir_transport or fhir.Transport(allow_private=private)
         self.mailbox_factory = mailbox_factory  # (account) -> Mailbox-like, for tests
         self.problems = {}                      # account key -> the last mailbox problem, for health
+        self.left = {}                          # account key -> UIDs left in its mailbox while receiving is off
 
     def step(self, now=None):
         values = self.values()
@@ -80,7 +82,7 @@ class DigitalWorker:
                 continue
             receiver = direct_message.Receiver(
                 store, account, transport=self.transport, file_document=filer(self.access, values),
-                delivery=delivery,
+                delivery=delivery, left=self.left.setdefault(account.key, set()),
                 mailbox_factory=(lambda account=account: self.mailbox_factory(account)) if self.mailbox_factory
                 else None)
             receiver.check(now=now)

@@ -255,14 +255,26 @@ def _search_certificates(connection, address, domain):
     return []
 
 
-def https_fetch(url, *, timeout=10.0, limit=4 * 1024 * 1024):
-    """Bytes at an https address (an IPKIX certificate or a trust bundle). Raises LookupError."""
+def _get(url, *, timeout, limit, allow_private, resolver=None):
+    """GET ``url`` from a public Internet address only (unless private partners are allowed), at the address checked.
+
+    These addresses come from certificates and DNS records anyone can publish, so a private or local address
+    (``direct/addresses.py``) is refused before any connection, and the request goes to the address that was
+    checked, so a later DNS answer cannot redirect it. Raises LookupError.
+    """
     import httpx
-    if not url.startswith('https://'):
-        raise LookupError('Only https addresses are read.')
+    from ..direct import addresses
+    options = {}
+    target = url
+    if not allow_private:
+        try:
+            address = addresses.checked_address(url, **({'resolver': resolver} if resolver else {}))
+        except addresses.PartnerAddressError:
+            raise LookupError('The address is on a private or local network, or could not be found.') from None
+        target, options = addresses.pinned_request(url, address, {})
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False, verify=ssl.create_default_context()) as client:
-            response = client.get(url)
+            response = client.get(target, **options)
     except httpx.HTTPError:
         raise LookupError('The address could not be read.') from None
     if response.status_code != 200 or len(response.content) > limit:
@@ -270,16 +282,32 @@ def https_fetch(url, *, timeout=10.0, limit=4 * 1024 * 1024):
     return response.content
 
 
-def http_fetch(url, *, timeout=10.0, limit=8 * 1024 * 1024):
-    """A certificate revocation list (CRL addresses are usually plain http). Raises LookupError."""
-    import httpx
+def https_fetch(url, *, timeout=10.0, limit=4 * 1024 * 1024, allow_private=False, resolver=None):
+    """Bytes at an https address (an IPKIX certificate or a trust bundle). Raises LookupError."""
+    if not url.startswith('https://'):
+        raise LookupError('Only https addresses are read.')
+    return _get(url, timeout=timeout, limit=limit, allow_private=allow_private, resolver=resolver)
+
+
+def http_fetch(url, *, timeout=10.0, limit=8 * 1024 * 1024, allow_private=False, resolver=None):
+    """A revocation list or an issuer's certificate (usually plain http addresses). Raises LookupError."""
     if not url.startswith(('http://', 'https://')):
         raise LookupError('Only web addresses are read.')
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
-            response = client.get(url)
-    except httpx.HTTPError:
-        raise LookupError('The revocation list could not be read.') from None
-    if response.status_code != 200 or len(response.content) > limit:
-        raise LookupError('The revocation list could not be read.')
-    return response.content
+    return _get(url, timeout=timeout, limit=limit, allow_private=allow_private, resolver=resolver)
+
+
+def public_connect(allow_private=False, resolver=None):
+    """``connect((host, port), timeout)`` for LDAP that refuses a host resolving to a private or local address."""
+    def connect(target, timeout):
+        from ..direct import addresses
+        host, port = target
+        if allow_private:
+            return socket.create_connection((host, port), timeout)
+        try:
+            found = (resolver or addresses.resolve)(host, port)
+            if not found or not all(addresses.public(item) for item in found):
+                raise LookupError('The directory is on a private or local network.')
+        except (OSError, ValueError):
+            raise LookupError('The directory could not be found.') from None
+        return socket.create_connection((found[0], port), timeout)
+    return connect
