@@ -958,6 +958,13 @@ class OutboundStore:
             _event(connection, self.events, row['id'], 'route_fallback', now, attempt_id=attempt_id,
                    details={'category': 'provider_failed', **({'reason': error} if isinstance(error, str) else {})})
             return True
+        if status == 'failed' and error_category is None and before_data is True and self._hold_after_predata(
+                connection, row, attempt_id, now, error=error):
+            # No allowed try is left (the fallback limit, or no other account), and nothing was sent: the fax
+            # waits in Sent with its sentence instead of failing (owner's answer Q1).
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
+                status='queued', provider_sid=final_sid, error=None, updated_at=now))
+            return True
         self._update(connection, row, now, state=status, claim_expires_at=None)
         connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
             status=status, provider_sid=final_sid, error=error if status == 'failed' else None, updated_at=now))
@@ -1059,6 +1066,32 @@ class OutboundStore:
         except envelopes.UnreadableDecision:
             return True
         return pinned is not None and pinned.strict and before_data is not True
+
+    def _hold_after_predata(self, connection, row, attempt_id, now, *, error=None):
+        """Hold, instead of failing, a fax whose rules chose its route after a call that ended before any fax data
+        when no allowed try is left; False for any other fax. Detaches the attempt, as a fallback does, so a late
+        result for it cannot move the fax."""
+        from .routing import envelope as envelopes, holds
+        if row['dispatch_mode'] != 'normal':
+            return False
+        try:
+            pinned = envelopes.load_on(connection, row['id'])
+        except envelopes.UnreadableDecision:
+            return False
+        t = envelopes.tables(connection) if pinned is not None and pinned.strict else None
+        if t is None:
+            return False
+        from .accounts import sending_accounts
+        revision, _ = self.configuration._outbound_context(connection, row['id'])
+        self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None, claim_token=None,
+                     claim_expires_at=None, next_poll_at=None)
+        holds.hold_after_predata_on(connection, t, job_id=row['id'], pinned=pinned,
+                                    accounts=sending_accounts(revision.values), now=now)
+        from .batching.store import separate_on
+        separate_on(connection, self._batching(connection), row['id'], now)  # a held fax never waits in a group
+        _event(connection, self.events, row['id'], 'route_held', now, attempt_id=attempt_id,
+               details={'category': 'provider_failed', **({'reason': error} if isinstance(error, str) else {})})
+        return True
 
     def _fallback_due(self, connection, row, attempt_id, *, before_data=None):
         """Ask the installed route policy, within the fallback limit, whether another route remains."""

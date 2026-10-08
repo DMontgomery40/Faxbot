@@ -488,6 +488,92 @@ async def test_today_s_fallback_for_faxes_no_rule_decides_is_unchanged(listed):
         OutboundStore.fallback_policy = None
 
 
+def _four_more_sinch_accounts(database, tmp_path):
+    """Four more Sinch accounts send (synthetic credentials), each with its own card; the rules below name only
+    these four."""
+    from api.tests.test_provider_accounts import UK, environment, manager, with_accounts
+    control = manager(database, tmp_path)
+    first = control.initialize({**environment(tmp_path), 'FAX_DATA_DIR': str(tmp_path), 'FAX_DISABLED': 'false',
+                                'PUBLIC_API_URL': 'https://faxbot.example.org'})
+    extra = {key: {**UK, 'label': label, 'receives': False, 'numbers': [], 'credentials': {
+        **UK['credentials'], 'api_key': f'synthetic-{key}-key'}} for key, label in (
+        ('sinch-uk', 'Sinch (UK)'), ('sinch-au', 'Sinch (Australia)'), ('sinch-ca', 'Sinch (Canada)'),
+        ('sinch-us', 'Sinch (US)'))}
+    snapshot = with_accounts(control, first, extra)
+    env = SimpleNamespace(configuration=control.store, delivery=OutboundStore(control.store),
+                          routes=RouteStore(database), snapshot=snapshot, rules=RuleStore(database), engine=database,
+                          tmp=tmp_path)
+    env.routes.replace_cards([card(key, page='0.05') for key in ('sinch-uk', 'sinch-au', 'sinch-ca', 'sinch-us')])
+    return env
+
+
+@pytest.mark.asyncio
+async def test_strict_fallback_stops_at_the_limit_and_the_fax_waits_in_sent_with_its_sentence(database, tmp_path):
+    """Four accounts a rule tries in order, each call ending before any fax data: MAX_FALLBACKS more attempts after
+    the first, each one pre-data, and then the fax is held in Sent (never failed) until someone checks again."""
+    from api.app.outbound_store import FALLBACK_LIMIT
+    from api.app.routing.fallback import MAX_FALLBACKS
+    assert FALLBACK_LIMIT == MAX_FALLBACKS == 2
+    env = _four_more_sinch_accounts(database, tmp_path)
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(env.delivery, env.routes))
+    try:
+        publish(env, {'format': 1, 'routes': [rule('r-four', {'try_in_order': ['sinch-uk', 'sinch-au', 'sinch-ca',
+                                                                               'sinch-us']})]})
+        job = accept(env)
+        assert envelopes.load(env.engine, job).strict
+        worker = OutboundWorker(env.delivery, RoutedTransport(Inner(env.delivery), direct=None))
+        tried = []
+        for expected in ('ready', 'ready', 'ready'):
+            assert await worker.step() is True
+            tried.append(choice(env, env.delivery.get(job)['attempt_id'])['account_key'])
+            assert _fail(env, job, before_data=True) == expected
+        assert tried == ['sinch-uk', 'sinch-au', 'sinch-ca']  # the first try and MAX_FALLBACKS more, in order
+        assert env.delivery.fallback_count(job) == MAX_FALLBACKS
+        with env.engine.connect() as connection:
+            flags = connection.execute(sa.select(env.delivery.attempts.c.ended_before_data).where(
+                env.delivery.attempts.c.job_id == job)).scalars().all()
+        assert flags == [1, 1, 1]
+        (hold,) = holds(env, job)
+        assert hold['kind'] == 'no_route'
+        assert hold['reason'] == ('Faxbot tried Sinch (UK), Sinch (Australia) and Sinch (Canada), and each call '
+                                  'ended before any page was sent. It waits for you in Sent; nothing was sent.')
+        assert env.delivery.get(job)['state'] == 'ready' and env.delivery.get(job)['attempt_id'] is None
+        with env.engine.connect() as connection:
+            status = connection.execute(sa.select(env.configuration.jobs.c.status).where(
+                env.configuration.jobs.c.id == job)).scalar()
+        assert status == 'queued'
+        worker.paused.clear()
+        assert await worker.step() is False  # held: never claimed by itself
+        HoldStore(env.delivery).check_again(hold['id'], version=hold['version'], actor=ANNE)
+        assert await worker.step() is True
+        assert choice(env, env.delivery.get(job)['attempt_id'])['account_key'] == 'sinch-us'  # never one tried
+        assert _fail(env, job, before_data=True) == 'ready'  # still at the limit: held again, never failed
+        assert [item['kind'] for item in holds(env, job)] == ['no_route']
+        assert env.delivery.fallback_count(job) == MAX_FALLBACKS
+    finally:
+        OutboundStore.fallback_policy = None
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_fax_data_at_the_limit_still_fails_and_waits_for_a_person(database, tmp_path):
+    """Holding is only for calls that ended before any page: one that may have sent pages fails as before."""
+    env = _four_more_sinch_accounts(database, tmp_path)
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(env.delivery, env.routes))
+    try:
+        publish(env, {'format': 1, 'routes': [rule('r-two', {'try_in_order': ['sinch-uk', 'sinch-au']})]})
+        job = accept(env)
+        worker = OutboundWorker(env.delivery, RoutedTransport(Inner(env.delivery), direct=None))
+        assert await worker.step() is True
+        assert _fail(env, job, before_data=False) == 'failed'
+        assert holds(env, job) == []
+        unknown = accept(env, to='+12025550188')
+        assert await worker.step() is True
+        assert _fail(env, unknown, before_data=None) == 'failed'  # the provider did not say
+        assert holds(env, unknown) == []
+    finally:
+        OutboundStore.fallback_policy = None
+
+
 # The last check, the busy trunk and applying rules again -------------------------------------------------------------
 
 def test_the_submission_marker_refuses_an_unrecorded_route_when_rules_exclude_the_default(ruled):
