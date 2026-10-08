@@ -72,3 +72,24 @@ def test_charges_show_each_account_and_a_sweep_lists_only(cli, monkeypatch):
     assert (fax['to_number'], fax['cost']) == ('+12025550177', {'currency': 'USD', 'amount': '0.07'})
     assert fax['summary'] == (f"Phaxio billed a fax to +12025550177 on {sent_at.day} {sent_at:%b} ($0.07) that Faxbot "
                               "didn't send.")
+
+
+def test_costs_spending_has_a_received_faxes_line_per_provider(cli):
+    import os
+    import sqlalchemy as sa
+    from api.tests.test_invoices import received
+    engine = sa.create_engine(os.environ['DATABASE_URL'])
+    try:
+        when = datetime.utcnow() - timedelta(days=1)
+        received(engine, 'phaxio', when, account_key='phaxio', charge=70_000)  # Phaxio reported $0.07
+        received(engine, 'phaxio', when, account_key='phaxio', pages=2)  # Phaxio's shipped price: 2 pages estimated
+        received(engine, 'documo', when, account_key='documo')  # no price for Documo here: unknown
+    finally:
+        engine.dispose()
+    shown = cli('costs', 'spending')
+    assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    text = ' '.join(shown.stdout.split())
+    phaxio = [line for line in shown.stdout.splitlines() if line.startswith('Received faxes: Phaxio')]
+    assert len(phaxio) == 1 and phaxio[0].endswith(' for 2 faxes.')
+    assert 'Received faxes: Documo 1 fax, not priced yet.' in text
+    assert '1 fax is not priced yet, so it is not in the total.' in text

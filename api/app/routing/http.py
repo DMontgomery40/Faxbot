@@ -332,7 +332,8 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
     start = since or (utcnow() - timedelta(days=WINDOW_DAYS))
     spending = _spending(request)
     values = request.scope['faxbot.configuration'].active.values
-    outbound, received = await _call(lambda: (spending.outbound(start), spending.received(start)))
+    outbound, received, received_faxes = await _call(lambda: (spending.outbound(start), spending.received(start),
+                                                              spending.received_faxes(start)))
 
     def carrier(entry):
         names = sorted(entry['carriers'])
@@ -350,11 +351,11 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
                 'period_days': entry['plan_days']}
 
     grand = {}
-    for entry in [*outbound, *received]:
+    for entry in [*outbound, *received, *received_faxes]:
         for currency, micros in entry['total_micros'].items():
             grand[currency] = grand.get(currency, 0) + micros
     # Faxes and calls with no charge and no estimate: left out of every total, never counted as $0.
-    not_priced = sum(entry['unpriced'] for entry in [*outbound, *received])
+    not_priced = sum(entry['unpriced'] for entry in [*outbound, *received, *received_faxes])
     # Calls the carrier priced only in part by the give-up time: their priced part is in the totals.
     never_priced = sum(entry['never_priced'] for entry in [*outbound, *received])
     return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand),
@@ -383,7 +384,33 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
             'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
             **_unrecorded_view(entry), 'total_cost': _money(entry['total_micros'])}
-            for entry in received]}
+            for entry in received],
+        # Faxes each cloud provider received (Sinch, Phaxio, HumbleFax…), apart from the trunk's received calls.
+        'received_faxes': [{
+            'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']), 'faxes': entry['faxes'],
+            'reported_cost': _money(entry['reported_cost_micros']), 'faxes_with_reported_cost': entry['reported'],
+            'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
+            'faxes_without_reported_cost': entry['unreported'], 'faxes_not_priced': entry['unpriced'],
+            'faxes_included_in_plan': entry['included'], 'total_cost': _money(entry['total_micros']),
+            'summary': received_faxes_sentence(entry)} for entry in received_faxes]}
+
+
+def received_faxes_sentence(entry):
+    """One line per cloud provider, such as: Received faxes: Sinch $0.42 for 6 faxes, 1 more not priced yet."""
+    from .costs import money_list_text
+    label = route_label(entry['provider_id'])
+    word = lambda count: 'fax' if count == 1 else 'faxes'  # noqa: E731
+    known = entry['faxes'] - entry['unpriced'] - entry['included']
+    if known:
+        text = f"{money_list_text(entry['total_micros'])} for {known} {word(known)}"
+        more = ([f"{entry['unpriced']} more not priced yet"] if entry['unpriced'] else []) + (
+            [f"{entry['included']} more included in the plan"] if entry['included'] else [])
+    elif entry['included']:
+        text = f"{entry['included']} {word(entry['included'])}, included in the plan"
+        more = [f"{entry['unpriced']} more not priced yet"] if entry['unpriced'] else []
+    else:
+        text, more = f"{entry['unpriced']} {word(entry['unpriced'])}, not priced yet", []
+    return f"Received faxes: {label} {', '.join([text, *more])}."
 
 
 def _unrecorded_view(entry):

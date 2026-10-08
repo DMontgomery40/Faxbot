@@ -378,7 +378,9 @@ def attribute(engine, values, account, period, currency, *, now=None):
     if account.provider == 'sip':
         _trunk_received(engine, tables, account, period, in_card, found)
     else:
-        _cloud_received(engine, tables, account, period, in_card, found)
+        # An account on a flat plan with no receiving price of its own: the plan covers what it receives.
+        receiving = in_card or (out_card if flat_out else None)
+        _cloud_received(engine, tables, account, period, receiving, found)
     _unrecorded_faxes(engine, account, period, found)
     budget = plan_budget.budget_for(account.key, out_card, values, inbound=in_card)
     if budget is not None and budget.currency == currency:

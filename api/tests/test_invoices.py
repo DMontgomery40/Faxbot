@@ -363,3 +363,28 @@ def test_invoice_input_is_refused_in_one_sentence_and_needs_settings_write(clien
     assert client.post('/routing/charges/sweep', headers=limited, json={}).status_code == 403
     assert client.post('/routing/invoices', headers=limited, data={'account': 'humblefax', 'month': '2026-09',
                                                                    'total': '10'}).status_code == 403
+
+
+def test_received_faxes_count_in_spending_by_provider_and_unpriced_ones_are_never_zero(client):
+    import os
+    from datetime import timedelta
+    engine = sa.create_engine(os.environ['DATABASE_URL'])
+    try:
+        when = datetime.utcnow() - timedelta(days=2)
+        received(engine, 'humblefax', when, account_key='humblefax')  # on HumbleFax's flat plan
+        received(engine, 'phaxio', when, account_key='phaxio')  # Phaxio has no receiving price here: unknown
+        received(engine, 'phaxio', when, account_key='phaxio', charge=70_000)  # Phaxio reported $0.07
+        received(engine, 'sip', when)  # the trunk's received faxes are its calls, never a received-fax line
+    finally:
+        engine.dispose()
+    costs = client.get('/routing/costs', headers=ADMIN).json()
+    lines = {item['provider_id']: item for item in costs['received_faxes']}
+    assert set(lines) == {'humblefax', 'phaxio'}
+    assert lines['phaxio']['summary'] == 'Received faxes: Phaxio $0.07 for 1 fax, 1 more not priced yet.'
+    assert (lines['phaxio']['faxes'], lines['phaxio']['faxes_not_priced'], lines['phaxio']['total_cost']) == (
+        2, 1, [{'currency': 'USD', 'amount': '0.07'}])
+    assert lines['humblefax']['summary'] == 'Received faxes: HumbleFax 1 fax, included in the plan.'
+    # In the total once, beside HumbleFax's plan fee; the fax with no price is counted, never added as $0.
+    assert costs['not_priced'] == 1
+    sent_total = sum(float(money['amount']) for item in costs['providers'] for money in item['total_cost'])
+    assert [money['amount'] for money in costs['total_cost']] == [f'{sent_total + 0.07:.2f}']

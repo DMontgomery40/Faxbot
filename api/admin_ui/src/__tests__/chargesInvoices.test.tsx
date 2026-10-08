@@ -1,14 +1,45 @@
-// Costs → Charges and Costs → Invoices. Synthetic data only; every request is answered by the fake server.
+// Costs → Charges and Costs → Invoices, and received faxes in Costs → Spending and the Overview.
+// Synthetic data only; every request is answered by the fake server.
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
+import type { ReceivedFaxCosts } from '../api/deliveryTypes';
 import Charges, { lastChecked } from '../components/delivery/Charges';
 import Invoices, { lastMonth } from '../components/delivery/Invoices';
+import Spending from '../components/delivery/Spending';
+import { spendingLines, spendingTotalText } from '../components/delivery/spendingSummary';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 const usd = (amount: string) => ({ currency: 'USD', amount });
+
+const sinchReceived: ReceivedFaxCosts = {
+  provider_id: 'sinch', label: 'Sinch', faxes: 7, reported_cost: [usd('0.35')], faxes_with_reported_cost: 5,
+  estimated_cost_not_reported: [usd('0.07')], faxes_without_reported_cost: 2, faxes_not_priced: 1,
+  faxes_included_in_plan: 0, total_cost: [usd('0.42')],
+  summary: 'Received faxes: Sinch $0.42 for 6 faxes, 1 more not priced yet.',
+};
+
+describe('Received faxes in Spending and the Overview', () => {
+  it('gives each cloud provider its own received line, apart from calls, with unpriced faxes counted', () => {
+    const costs = { providers: [], received: [], received_faxes: [sinchReceived], total_cost: [usd('0.42')] };
+    expect(spendingLines(costs)).toEqual([{ key: 'received-faxes-sinch', label: 'Received faxes: Sinch',
+      value: '$0.42 for 6 faxes, 1 more not priced yet' }]);
+    expect(spendingTotalText(costs)).toBe('$0.42, 1 fax not priced yet');
+  });
+
+  it('shows a received faxes card on Costs → Spending', () => {
+    server.use(http.get('/routing/published-plans/in-use', () => HttpResponse.json({ plans: [] })));
+    render(<Spending client={client()} providers={[]} received={[]} receivedFaxes={[sinchReceived]} carrier={null}
+      canWrite={false} onChanged={() => undefined} />);
+    const card = screen.getByTestId('received-faxes-sinch');
+    expect(within(card).getByText('Received faxes: Sinch')).toBeTruthy();
+    expect(within(card).getByText('$0.42')).toBeTruthy();
+    expect(within(card).getByText('Sinch charged $0.35 for 5 faxes.')).toBeTruthy();
+    expect(within(card).getByText('1 fax not priced yet.')).toBeTruthy();
+  });
+});
 
 const charges = {
   since: '2026-09-08T00:00:00',
