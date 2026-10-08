@@ -380,3 +380,77 @@ def test_signalwire_call_records_feed_the_same_per_call_charge(engine):
     assert routes.decision(attempt)['reported_cost_micros'] == 19_000
     params = provider.requests[0].url.params
     assert (provider.requests[0].url.host, params['PageSize']) == ('example.signalwire.com', '100')
+    # SignalWire's time filters are RFC 2822 GMT.
+    assert params['StartTime>'] == (NOW - timedelta(hours=3) - timedelta(minutes=10)).strftime(
+        '%a, %d %b %Y %H:%M:%S +0000')
+
+
+# Flowroute CDR Exports v2.0 (query-cdrs, cdr-status, cdr-results), read 2026-10-08: POST /v2/cdrs/exports answers 202
+# with the export's id and status; GET /v2/cdrs/exports/{id} gives a signed S3 download_url once completed; the file
+# is a gzip CSV with a header line, times like "2019-06-25 18:18:54+00" and total_cost in decimal dollars.
+FLOWROUTE_CSV = ('direction,start_time,end_time,destination,number_alias,callerid,total_cost,destination_name,'
+                 'callerid_country,line_information,result,call_fail_sip_code,call_fail_reason,duration,'
+                 'billed_duration,rate,first_increment,subsequent_increment,cost_subtotal,connect_fee,usf_fee,ccrf,'
+                 'cnam_lookup_fee,custom_x_tag,customer_ip\n'
+                 'outbound,2026-10-08 09:00:00+00,2026-10-08 09:01:10+00,12025550123,,13035550100,0.00474784,'
+                 'Washington DC,US,,completed,,,65,66,0.0042,6,6,0.0046,0,0.0001,0,0,,192.0.2.10\n'
+                 'inbound,2026-10-08 09:20:00+00,2026-10-08 09:20:40+00,13035550100,,12025550188,0.0021,,US,,'
+                 'completed,,,35,36,0.0035,6,6,0.0021,0,0,0,0,,\n')
+
+
+def test_flowroute_call_records_come_from_an_export_that_is_prepared_then_read():
+    import gzip
+    from api.app.routing.carrier_records import FlowrouteCallRecords
+    from api.app.routing.telnyx import CarrierUnavailable
+    state = {'status': 'processing', 'link': 'https://faxbot-synthetic.s3.us-east-2.amazonaws.com/cdr.csv.gz?X-Amz-S=1'}
+    seen = []
+
+    def answer(request):
+        seen.append((request.method, request.url.host, request.headers.get('authorization')))
+        if request.method == 'POST':
+            assert json.loads(request.content) == {'data': {'type': 'cdrexport', 'attributes': {'filter_parameters': {
+                'start_call_start_time': '2026-10-08 08:00:00', 'start_call_end_time': '2026-10-08 11:00:00'}}}}
+            return httpx.Response(202, json={'data': {'type': 'cdrexport', 'id': 4242,
+                                                      'attributes': {'status': 'processing', 'download_url': None}}})
+        if request.url.host == 'api.flowroute.com':
+            done = state['status'] == 'completed'
+            return httpx.Response(200, json={'data': {'type': 'cdrexport', 'id': 4242, 'attributes': {
+                'status': state['status'], 'download_url': state['link'] if done else None}}})
+        return httpx.Response(200, content=gzip.compress(FLOWROUTE_CSV.encode()))
+
+    reader = FlowrouteCallRecords(lambda: ('synthetic-access', 'synthetic-secret'), clock=lambda: NOW,
+                                  client_factory=lambda: httpx.Client(transport=httpx.MockTransport(answer)))
+    start, end = datetime(2026, 10, 8, 8, 50), datetime(2026, 10, 8, 10, 10)
+    with pytest.raises(CarrierUnavailable, match='preparing'):
+        reader.fetch(start, end)
+    with pytest.raises(CarrierUnavailable, match='preparing'):
+        reader.fetch(start, end)  # the same export is asked about, never a second one
+    state['status'] = 'completed'
+    records, complete = reader.fetch(start, end)
+    assert complete and [(record.direction, record.cli, record.cld, record.amount_micros, record.billed_seconds,
+                          record.answered_at) for record in records] == [
+        ('outbound', '13035550100', '12025550123', 4748, 66, datetime(2026, 10, 8, 9, 0, 5)),
+        ('inbound', '12025550188', '13035550100', 2100, 36, datetime(2026, 10, 8, 9, 20, 5))]
+    assert len({record.id for record in records}) == 2 and all(record.id.startswith('flowroute-') for record in records)
+    assert [item[0] for item in seen].count('POST') == 1
+    # The signed file link is fetched without the Flowroute key.
+    assert seen[-1][1].endswith('.amazonaws.com') and seen[-1][2] is None
+    # A link to any other host is refused.
+    reader.exports.clear()
+    state['link'] = 'https://files.example.net/cdr.csv.gz'
+    with pytest.raises(CarrierUnavailable, match='preparing'):
+        reader.fetch(start, end)
+    with pytest.raises(CarrierUnavailable, match='does not fetch'):
+        reader.fetch(start, end)
+
+
+def test_flowroute_keys_are_needed_and_said_where_to_add():
+    current = values(SIP_TRUNK_PRESET='flowroute')
+    assert reader_for('flowroute', current).ready() is False
+    assert trunk_records(current)['sentence'] == (
+        "Flowroute publishes each call's charge, but Faxbot cannot read it yet: add your Flowroute API access key and "
+        'secret key under Providers → Flowroute.')
+    keyed = values(SIP_TRUNK_PRESET='flowroute', FLOWROUTE_ACCESS_KEY='synthetic-access',
+                   FLOWROUTE_SECRET_KEY='synthetic-secret')
+    assert trunk_records(keyed)['readable'] is True
+    assert trunk_records(keyed)['sources'][0]['url'].startswith('https://developer.flowroute.com/')

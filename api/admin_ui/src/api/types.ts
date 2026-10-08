@@ -272,6 +272,10 @@ export interface Settings {
     // A key Faxbot uses only to read what Telnyx charged for each trunk call.
     telnyx_api_key?: string;
     telnyx_api_key_set?: boolean;
+    // Flowroute API keys Faxbot uses only to read what Flowroute charged for each trunk call.
+    flowroute_access_key?: string;
+    flowroute_secret_key?: string;
+    flowroute_secret_key_set?: boolean;
   };
   fs?: {
     esl_host?: string;

@@ -128,9 +128,9 @@ def invoices_add(account: str = typer.Option(..., '--account', metavar='KEY',
                                                help='Instead of --month: the first day the invoice covers.'),
                  last_day: str = typer.Option(None, '--to', metavar='YYYY-MM-DD',
                                               help='With --from: the last day the invoice covers.'),
-                 currency: str = typer.Option('USD', '--currency', help='The three-letter currency code.'),
-                 note: str = typer.Option(None, '--note', help='A short note, such as the invoice number.'),
-                 file: Path = typer.Option(None, '--file', exists=True, dir_okay=False, readable=True,
+                 currency: str = typer.Option('USD', '--currency', metavar='CODE', help='The three-letter currency code.'),
+                 note: str = typer.Option(None, '--note', metavar='TEXT', help='A short note, such as the invoice number.'),
+                 file: Path = typer.Option(None, '--file', metavar='PATH', exists=True, dir_okay=False, readable=True,
                                            help='The invoice itself: a PDF, PNG, JPEG or CSV file.')):
     """Enter an invoice total for one account and month. Entering the same month again adds a corrected version and keeps the earlier one."""
     if not month and not (first_day and last_day):

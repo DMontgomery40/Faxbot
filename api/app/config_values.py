@@ -177,6 +177,10 @@ class ConfigurationValues(BaseModel):
     # to place calls.
     telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
                                 pattern=r'^[!-~]{0,256}$')
+    # Flowroute API keys, used only to read what Flowroute charged for each trunk call (routing/carrier_records.py).
+    flowroute_access_key: str = Field('', validation_alias='FLOWROUTE_ACCESS_KEY', pattern=r'^[!-~]{0,256}$')
+    flowroute_secret_key: str = Field('', validation_alias='FLOWROUTE_SECRET_KEY', repr=False,
+                                      json_schema_extra={'secret': True}, pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})

@@ -146,6 +146,8 @@ function editorValues(data: SettingsType): SettingsForm {
     mobile_local_base: data.mobile?.local_base ?? '',
     docs_base_url: data.developer?.docs_base_url ?? '',
     telnyx_api_key: data.sip.telnyx_api_key ?? '',
+    flowroute_access_key: data.sip.flowroute_access_key ?? '',
+    flowroute_secret_key: data.sip.flowroute_secret_key ?? '',
     feature_v3_plugins: data.features?.v3_plugins ?? false,
     feature_plugin_install: data.features?.plugin_install ?? false,
     fax_disabled: data.backend.disabled,
@@ -1043,6 +1045,33 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                           type="password"
                           showCurrentValue={!pendingRestart && !!settings.sip.telnyx_api_key_set}
                           {...envField('telnyx_api_key')}
+                        />
+                      </Box>
+                    )}
+                    {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'flowroute' || settings.sip.flowroute_secret_key_set) && (
+                      <Box sx={{ mt: 2 }} data-testid="flowroute-keys">
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.flowroute_access_key)}
+                          label="Flowroute API access key"
+                          value={settings.sip.flowroute_access_key || ''}
+                          editValue={form.flowroute_access_key ?? ''}
+                          helperText="Optional. With it and the secret key, Faxbot shows what Flowroute charged for each call. Find both on the API page of your Flowroute account preferences (manage.flowroute.com/accounts/preferences/api)."
+                          placeholder="Access key"
+                          onChange={(value) => handleForm('flowroute_access_key', value)}
+                          showCurrentValue={!pendingRestart && !!settings.sip.flowroute_access_key}
+                          {...envField('flowroute_access_key')}
+                        />
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.flowroute_secret_key_set)}
+                          label="Flowroute API secret key"
+                          value={settings.sip.flowroute_secret_key_set ? 'Saved' : ''}
+                          editValue={form.flowroute_secret_key ?? ''}
+                          helperText="Faxbot only reads call records with it; it never places calls or changes your Flowroute account."
+                          placeholder="Secret key"
+                          onChange={(value) => handleForm('flowroute_secret_key', value)}
+                          type="password"
+                          showCurrentValue={!pendingRestart && !!settings.sip.flowroute_secret_key_set}
+                          {...envField('flowroute_secret_key')}
                         />
                       </Box>
                     )}

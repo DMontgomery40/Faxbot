@@ -36,6 +36,7 @@ _PROVIDER_FIELDS = frozenset({
     'sip_trunk_max_calls', 'sip_trunk_calls_per_second',
     'sip_trunk_dial_format', 'sip_trunk_dial_prefix',
     'sip_external_address', 'sip_public_address_check_minutes', 'sip_router_ports', 'telnyx_api_key',
+    'flowroute_access_key', 'flowroute_secret_key',
     'phaxio_api_key', 'phaxio_api_secret', 'phaxio_callback_token',
     'phaxio_status_callback_url',
     'sinch_base_url', 'sinch_project_id', 'sinch_api_key', 'sinch_api_secret', 'sinch_webhook_base_url',

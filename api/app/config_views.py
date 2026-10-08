@@ -244,6 +244,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             # Lets Faxbot read what Telnyx charged for each call; never shown.
             'telnyx_api_key': mask_secret(values.telnyx_api_key),
             'telnyx_api_key_set': bool(values.telnyx_api_key),
+            # Lets Faxbot read what Flowroute charged for each call; the secret key is never shown.
+            'flowroute_access_key': values.flowroute_access_key,
+            'flowroute_secret_key': mask_secret(values.flowroute_secret_key),
+            'flowroute_secret_key_set': bool(values.flowroute_secret_key),
         },
         'security': {
             'api_key': mask_secret(values.api_key),

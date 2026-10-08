@@ -4741,6 +4741,8 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `predict`: Show what a fax to a number would take and...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
+* `charges`: What each provider charged: how Faxbot...
+* `invoices`: Your providers&#x27; monthly invoices, and the...
 
 ### `faxbot costs spending`
 
@@ -5105,6 +5107,117 @@ $ faxbot costs plans budget [OPTIONS] {plan}
 * `--included-minutes COUNT`: Minutes the plan includes each month, or none.
 * `--commitment AMOUNT`: A monthly amount you have committed to spend, such as 50.
 * `--default`: Go back to Faxbot&#x27;s starting budget for this plan.
+* `--help`: Show this message and exit.
+
+### `faxbot costs charges`
+
+What each provider charged: how Faxbot reads it, received fax charges, and faxes a provider billed that Faxbot has no record of. Run it alone to show them.
+
+**Usage**:
+
+```console
+$ faxbot costs charges [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back to show.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `sweep`: List each account&#x27;s faxes at its provider...
+
+#### `faxbot costs charges sweep`
+
+List each account&#x27;s faxes at its provider now and show any Faxbot has no record of. This never sends, fetches or changes a fax.
+
+**Usage**:
+
+```console
+$ faxbot costs charges sweep [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: One account&#x27;s key, from &#x27;faxbot providers accounts list&#x27;. Default: every account whose provider lists its faxes.
+* `--days <int range>`: How many days back to list.  [default: 7; 1&lt;=x&lt;=31]
+* `--help`: Show this message and exit.
+
+### `faxbot costs invoices`
+
+Your providers&#x27; monthly invoices, and the part your faxes don&#x27;t explain.
+
+**Usage**:
+
+```console
+$ faxbot costs invoices [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the invoices you entered, each with...
+* `show`: Show one invoice: what your faxes explain,...
+* `add`: Enter an invoice total for one account and...
+
+#### `faxbot costs invoices list`
+
+List the invoices you entered, each with the part your faxes don&#x27;t explain, and what to do when that recurs.
+
+**Usage**:
+
+```console
+$ faxbot costs invoices list [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: Only this account.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs invoices show`
+
+Show one invoice: what your faxes explain, what they don&#x27;t, and each version entered.
+
+**Usage**:
+
+```console
+$ faxbot costs invoices show [OPTIONS] {invoice_id}
+```
+
+**Arguments**:
+
+* `invoice_id`: Invoice ID, from &#x27;faxbot costs invoices list&#x27;.  [required]
+
+**Options**:
+
+* `--save-file PATH`: Save the invoice file entered with it to this path.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs invoices add`
+
+Enter an invoice total for one account and month. Entering the same month again adds a corrected version and keeps the earlier one.
+
+**Usage**:
+
+```console
+$ faxbot costs invoices add [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: The account the invoice is for, from &#x27;faxbot providers accounts list&#x27;, such as humblefax.  [required]
+* `--total AMOUNT`: The invoice total, such as 13.20.  [required]
+* `--month YYYY-MM`: The month the invoice covers, such as 2026-09. Faxbot starts it on the plan&#x27;s billing day.
+* `--from YYYY-MM-DD`: Instead of --month: the first day the invoice covers.
+* `--to YYYY-MM-DD`: With --from: the last day the invoice covers.
+* `--currency CODE`: The three-letter currency code.  [default: USD]
+* `--note TEXT`: A short note, such as the invoice number.
+* `--file PATH`: The invoice itself: a PDF, PNG, JPEG or CSV file.
 * `--help`: Show this message and exit.
 
 ## `faxbot access`

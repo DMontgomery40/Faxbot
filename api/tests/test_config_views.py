@@ -127,6 +127,7 @@ MASKED_PATHS = {
     'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
     'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',
     'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'sip.telnyx_api_key', 'fs.esl_password',
+    'sip.flowroute_secret_key',
     'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'intake.smtp_password',
     'database.url',
 }
