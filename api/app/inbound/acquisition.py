@@ -463,7 +463,7 @@ class ImportStore:
     def begin(self, *, source, account, operation_id, revision='', backend, inbound_backend=None,
               to_number=None, from_number=None, reported_pages=None, report=None, source_received_at=None,
               tiff_path=None, artifact_digest=None, schedule=True, country=DEFAULT_COUNTRY, account_key=None,
-              subaddress=None, binding=None, mailbox_id=None, actor=None):
+              subaddress=None, binding=None, mailbox_id=None, actor=None, diversion=None):
         """Find or create the import for this source identity, in one transaction.
 
         An existing ``pending`` or ``failed`` import is scheduled again at once;
@@ -476,7 +476,8 @@ class ImportStore:
         (``accounts.py``), kept on the import; ``binding`` is ``(revision id,
         profile id)`` of that account, written as the fax's provider binding so a
         later fetch uses that account. ``subaddress`` is the subaddress the sender
-        stated, for the receiving rules. ``mailbox_id`` files a document straight
+        stated, for the receiving rules; ``diversion`` (inbound/diversion.Diversion) the number the call was
+        forwarded from and how far that was checked. ``mailbox_id`` files a document straight
         into a mailbox (an import with no fax number); ``actor``, the importer,
         must be able to read that mailbox.
         """
@@ -502,7 +503,8 @@ class ImportStore:
                 backend=backend[:20], inbound_backend=(inbound_backend or None) and inbound_backend[:20],
                 provider_sid=operation_id if source in FETCHABLE else None, pages=reported_pages,
                 tiff_path=tiff_path, created_at=now, received_at=now, updated_at=now), now, country=country,
-                facts=_facts(account_key, subaddress, source_received_at, now), mailbox_id=mailbox_id, actor=actor)
+                facts=_facts(account_key, subaddress, source_received_at, now, diversion), mailbox_id=mailbox_id,
+                actor=actor)
             extra = {'account_key': account_key[:64]} if account_key and 'account_key' in self.imports.c else {}
             connection.execute(self.imports.insert().values(
                 id=import_id, source=source, account=account, operation_id=operation_id, revision=revision,
@@ -717,7 +719,7 @@ def _number(value):
     return text[:64] or None
 
 
-def _facts(account_key, subaddress, source_received_at, now):
+def _facts(account_key, subaddress, source_received_at, now, diversion=None):
     """What the receiving rules read about a fax that is being recorded (``access.receiving_rules``)."""
     from ..access.receiving_rules import ReceivedFacts
     values = _settings()
@@ -730,6 +732,8 @@ def _facts(account_key, subaddress, source_received_at, now):
         except Exception:
             site = None
     return ReceivedFacts(to_number=None, account_key=account_key, site_key=site, subaddress=subaddress,
+                         diverted_from=getattr(diversion, 'diverted_from', None),
+                         diversion=getattr(diversion, 'state', None),
                          received_at=source_received_at or now,
                          time_source='provider' if source_received_at else 'import',
                          time_zone=getattr(values, 'time_zone', '') or '')

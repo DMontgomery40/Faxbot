@@ -398,9 +398,25 @@ def routing_fax_cost(fax_id: str = typer.Argument(None, help="Fax ID from 'faxbo
         return quote_command(to=to, pages=pages, from_site=from_site)
     if not fax_id:
         raise CliError("Give a fax ID, or --to NUMBER for what a fax would cost.")
+    api = state.api()
     path = ('/routing/inbound/' if received else '/routing/faxes/') + segment(fax_id) + '/cost'
-    result = state.api().get(path)
-    state.out().result(result, lambda out: out.line(result.get('summary') or 'No call was placed for this fax.'))
+    result = api.get(path)
+    coding = None
+    if not received:
+        # The coding the fax's newest attempt asked for, measured on its pages (as Sent details show it).
+        try:
+            coding = api.get('/admin/fax-jobs/' + segment(fax_id)).get('coding')
+        except CliError:
+            coding = None
+        if coding:
+            result = {**result, 'coding': coding}
+
+    def human(out):
+        out.line(result.get('summary') or 'No call was placed for this fax.')
+        for sentence in ((coding or {}).get('sentence'), (coding or {}).get('measured_sentence')):
+            if sentence:
+                out.line(sentence)
+    state.out().result(result, human)
 
 
 def _received_cost_rows(costs, items):
@@ -997,20 +1013,37 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                     layout: str = typer.Option('normal', '--layout',
                                                help='normal, or dense for pages packed with more text.'),
                     resolution: str = typer.Option('fine', '--resolution',
-                                                   help='standard, fine, superfine, 300 or 400.')):
+                                                   help='standard, fine, superfine, 300 or 400.'),
+                    file: Path = typer.Option(None, '--file', exists=True, dir_okay=False, readable=True,
+                                              help='Price this document (PDF or plain text) instead: Faxbot measures '
+                                                   'each fax coding on its own pages. --pages, --layout and '
+                                                   '--resolution then come from the document.')):
     """Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent."""
-    result = state.api().get('/routing/predict', params={'to': to, 'pages': pages, 'layout': layout,
-                                                         'resolution': resolution})
+    if file is not None:
+        media = 'application/pdf' if file.suffix.lower() == '.pdf' else 'text/plain'
+        with file.open('rb') as handle:
+            result = state.api().post('/routing/predict', data={'to': to},
+                                      files={'file': (file.name, handle.read(), media)})
+    else:
+        result = state.api().get('/routing/predict', params={'to': to, 'pages': pages, 'layout': layout,
+                                                             'resolution': resolution})
 
     def human(out):
         out.line(f"{result['to']} is {result['number_class_text']}; {result['pages']} "
                  f"page{'' if result['pages'] == 1 else 's'}.")
+        if result.get('measured_sentence'):
+            out.line(result['measured_sentence'])
         routes = result.get('routes') or []
         if routes:
-            out.table(['Route', 'Cost', 'Time on the line'],
-                      [[route['label'], _predicted_cost(route), _line_time(route.get('seconds'))] for route in routes])
+            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within'],
+                      [[route['label'], _predicted_cost(route), _line_time(route.get('seconds')),
+                        _line_time(route.get('p90_seconds')) if route.get('finish_sentence') else '-']
+                       for route in routes])
             for route in routes:
                 out.line(f"{route['label']}: {route['basis']}")
+                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence')):
+                    if sentence:
+                        out.line(f"{route['label']}: {sentence}")
         out.line(result['sentence'])
         out.line(result['note'])
     state.out().result(result, human)
@@ -1550,6 +1583,47 @@ def peers_fax_images(partner: str = typer.Argument(..., help='Partner organizati
     peer = _peer(api, partner)
     result = api.post(f"/direct/peers/{segment(peer['id'])}/fax-images", json={'accept': choice == 'on'})
     state.out().result(result, lambda out: out.line(result['detail']))
+
+
+@peers.command('tunnel-calls')
+def peers_tunnel_calls(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
+                       choice: str = typer.Argument(..., metavar='on|off',
+                                                    help="on takes the partner's fax calls inside your encrypted "
+                                                         'tunnel; off stops taking them.'),
+                       address: str = typer.Option(None, '--address', metavar='ADDRESS',
+                                                   help="The partner's address inside the tunnel, such as 10.20.0.2 or "
+                                                        '10.20.0.2:5070. Faxes to them go there when the tunnel is up.'),
+                       check: bool = typer.Option(False, '--check',
+                                                  help='Also check now whether a fax to them would go inside the '
+                                                       'tunnel.')):
+    """Fax calls with a partner inside an encrypted tunnel, with no carrier. You set up the WireGuard tunnel yourself,
+    inside the fax engine's network; Faxbot only places and takes calls through it."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls",
+                      json={'accept': choice == 'on', 'address': address or peer.get('peer_call_address')})
+    checked = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check") if check else None
+
+    def show(out):
+        out.line(result['detail'])
+        if result.get('peer_calls_text'):
+            out.line(result['peer_calls_text'])
+        if checked:
+            out.line(checked['sentence'])
+    state.out().result({'partner': result, 'check': checked}, show)
+
+
+@peers.command('tunnel-check')
+def peers_tunnel_check(partner: str = typer.Argument(..., help='Partner organization, fax number or id.')):
+    """Check now whether a fax to a partner would go inside the encrypted tunnel, as the fax engine's network sees
+    it. Places no call."""
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check")
+    state.out().result(result, lambda out: (out.line(result['sentence']), None if result['applies']
+                                            else out.line(result['note'])))
 
 
 @peers.command('add')

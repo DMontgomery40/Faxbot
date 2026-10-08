@@ -83,6 +83,7 @@ export default function WorkDetail({ client, item, onClose, onDownload, fax = nu
             <Field label="Owner" value={shown.owner?.name} />
             <Field label="Same document" value={duplicateSentence(shown)} />
             <Field label="Earlier failures" value={fax ? earlierFailuresText(fax) : null} />
+            <Field label="Forwarded" value={fax?.diversion_text} />
             <Field label="Emailed to" value={emailedTo(delivery)} />
             <Field label="Done note" value={shown.done_note} />
             {can(shown, 'document') && (

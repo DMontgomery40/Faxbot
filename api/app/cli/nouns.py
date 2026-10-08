@@ -15,6 +15,7 @@ from .commands import charges as charge_commands
 from .commands import setup_plan
 from .commands import number_advice
 from .commands import digital
+from .commands import forwarded_trust
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -103,6 +104,7 @@ numbers.add_typer(reply.reply, name='reply')
 numbers.add_typer(blocked.blocked, name='blocked')
 numbers.add_typer(connectors.connectors, name='connectors')
 numbers.add_typer(number_advice.npi, name='npi')
+numbers.add_typer(forwarded_trust.forwarded_trust, name='forwarded-trust')
 
 # -- recipients ----------------------------------------------------------------------
 
@@ -126,6 +128,8 @@ partners.command('challenge')(delivery.peers_challenge)
 partners.command('confirm')(delivery.peers_confirm)
 partners.command('revoke')(delivery.peers_revoke)
 partners.command('fax-images')(delivery.peers_fax_images)
+partners.command('tunnel-calls')(delivery.peers_tunnel_calls)
+partners.command('tunnel-check')(delivery.peers_tunnel_check)
 partners.command('deliveries')(delivery.direct_deliveries)
 partners.command('notice-fax')(notices.notice_fax)
 partners.command('notices')(notices.notices_list)

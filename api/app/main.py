@@ -85,6 +85,7 @@ from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
 from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
+from .inbound.trust_http import router as forwarded_trust_router
 from .engine_frames_http import router as fax_machines_router
 from .intake.http import router as intake_router
 from .intake.sources.http import router as intake_sources_router
@@ -215,6 +216,7 @@ app.include_router(routing_charges_router)
 app.include_router(rules_router)
 app.include_router(reply_number_router)
 app.include_router(screening_router)
+app.include_router(forwarded_trust_router)
 app.include_router(fax_machines_router)
 app.include_router(intake_router)
 app.include_router(intake_sources_router)
@@ -1701,8 +1703,12 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             root = None
         return safely(sent_view, _configuration_manager().store.engine, job_id, root)
     page_view = await run_lifecycle_step(pages_view)
+    # The coding the newest attempt asked for, measured on its pages, and what the call took (pages/coding.py).
+    from .pages import coding as page_coding
+    coding_view = await run_lifecycle_step(lambda: page_coding.sent_view(_configuration_manager().store.engine, job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
+            'coding': coding_view,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
@@ -2441,6 +2447,11 @@ class InboundFaxOut(BaseModel):
     account_label: Optional[str] = None
     # The subaddress the sender stated (T.33 SUB): it chose the mailbox, it proves nothing about the sender.
     subaddress: Optional[str] = None
+    # A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+    # failed or stated) and one sentence saying so. A diversion is the network's statement, not proof of the sender.
+    diverted_from: Optional[str] = None
+    diversion: Optional[str] = None
+    diversion_text: Optional[str] = None
     # A receiving rule marked the fax urgent.
     urgent: bool = False
 

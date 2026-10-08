@@ -54,8 +54,14 @@ def without_later_access_changes(name, rows):
         # 0021 adds a nullable column to every recipient; existing rows hold NULL.
         return [{key: value for key, value in row.items() if key != 'max_calls'} for row in rows]
     if name in ('inbound_imports', 'sip_call_records'):
-        # 0030 adds the receiving account and the call's trunk; existing rows hold NULL.
-        return [{key: value for key, value in row.items() if key not in ('account_key', 'trunk_key')} for row in rows]
+        # 0030 adds the receiving account and the call's trunk, and 0054 the subaddress a call asked for and the
+        # partner of a peer fax call; existing rows hold NULL.
+        return [{key: value for key, value in row.items()
+                 if key not in ('account_key', 'trunk_key', 'subaddress', 'peer_id')} for row in rows]
+    if name in ('inbound_rule_options', 'inbound_fax_routing'):
+        # 0054 adds the forwarded-call condition and record; existing rows hold NULL.
+        return [{key: value for key, value in row.items()
+                 if key not in ('diverted_from', 'diversion_unsigned', 'diversion')} for row in rows]
     return rows
 
 

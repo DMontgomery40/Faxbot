@@ -48,12 +48,27 @@ How the time is worked out
 --------------------------
 seconds = setup + (bits on the line / speed) + page handshake x pages
 
-- Bits on the line: the page bits Faxbot prepared (T.6, MMR) times the factor
-  for the coding the call uses (``WIRE_FACTOR``).
+- Bits on the line: the bits of each page measured in the coding the call
+  uses (``Shape.measured``, ``pages.coding.measure``: MH, MR and MMR measured
+  on the actual pages). Without a measurement for that coding, the page bits
+  Faxbot prepared (T.6, MMR) times a fixed factor (``WIRE_FACTOR``), and the
+  sentence says it is estimated that way: on AR's synthetic pages the fixed
+  factor overestimated a noisy gray scan's MH about threefold.
 - Speed: what earlier successful calls to this number on this route reached,
   else what calls on this route usually reach, else the route's typical speed.
 - Without page bits, the seconds a page that earlier calls to this number
   took, else a typical page (``TYPICAL_PAGE_BITS``).
+
+How the price is worked out
+---------------------------
+A call is priced by its expected bill over the predicted duration's spread,
+E[ceil(D / increment) x increment], never by rounding the expected duration: a
+call of 59 or 61 seconds with equal odds lasts 60 seconds on average but bills
+90 seconds on 60-second steps. The spread comes from the destination's own
+recorded calls (each call's setup and seconds a page, on the engine that
+placed the newest call to it, ``predict_facts.learn``), else the stated
+default ``DEFAULT_SPREAD``, which is an estimate. ``Prediction.p90_seconds``
+is the time 9 in 10 such calls finish within; unknown stays unknown.
 
 Constants and their sources (see each one): measured Faxbot calls where they
 exist, ITU-T T.30 timings where they don't. ``SETUP_SECONDS`` and
@@ -66,8 +81,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from contextlib import contextmanager
 import math
+import statistics
 
-from .costs import Money, RateTerms, billed_seconds, format_amount, money_text, plan_fee_text, terms_cost
+from .costs import (Money, RateTerms, billed_seconds, format_amount, greater_of_pages, money_text, plan_fee_text,
+                    terms_cost)
 from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, DestinationClass, country_name
 
 
@@ -111,6 +128,15 @@ RAW_PAGE_BITS = {'standard': 1728 * 1143, 'fine': 1728 * 2287, 'superfine': 1728
                  '400': 3456 * 4677}
 # Recorded calls needed before a learned figure replaces a default.
 MIN_CALLS = 3
+# The spread of a call's time after setup when the number has fewer than MIN_CALLS recorded calls: 15% shorter or
+# longer a quarter of the time each. An estimate, stated as one wherever it is used; recorded calls replace it.
+DEFAULT_SPREAD = ((0.85, 0.25), (1.0, 0.5), (1.15, 0.25))
+# The share of calls the completion time covers (9 in 10).
+COMPLETION_SHARE = 0.9
+
+
+class ShapeRefused(ValueError):
+    """A documented refusal: a ``Shape`` with an impossible page count, page bits, resolution, layout or coding."""
 
 
 @dataclass(frozen=True)
@@ -119,18 +145,39 @@ class Shape:
     page_bits: tuple[int, ...] | None   # compressed bits per page as they will be sent, if known
     resolution: str                      # 'standard' | 'fine' | 'superfine' | '300' | '400'
     layout: str                          # 'normal' | 'dense' | 'codec'
+    # {coding: bits per page} measured on the actual pages (pages.coding.measure); kept as sorted pairs.
+    measured: object = None
+    coding: str | None = None            # the coding the call uses, when chosen ('MH', 'MR', 'MMR', 'JBIG')
 
     def __post_init__(self):
         if type(self.pages) is not int or not 1 <= self.pages <= 10_000:
-            raise ValueError('A fax has from 1 to 10,000 pages.')
+            raise ShapeRefused('A fax has from 1 to 10,000 pages.')
         if self.page_bits is not None and (
                 not isinstance(self.page_bits, tuple) or len(self.page_bits) != self.pages
                 or any(type(bits) is not int or bits < 0 for bits in self.page_bits)):
-            raise ValueError('Give the compressed bits of every page, as whole numbers.')
+            raise ShapeRefused('Give the compressed bits of every page, as whole numbers.')
         if self.resolution not in RESOLUTIONS:
-            raise ValueError('Choose standard, fine, superfine, 300 or 400 resolution.')
+            raise ShapeRefused('Choose standard, fine, superfine, 300 or 400 resolution.')
         if self.layout not in LAYOUTS:
-            raise ValueError('Choose a normal, dense or codec layout.')
+            raise ShapeRefused('Choose a normal, dense or codec layout.')
+        if self.coding is not None and self.coding not in CODINGS:
+            raise ShapeRefused('Choose the MH, MR, MMR or JBIG coding.')
+        if self.measured is not None:
+            items = self.measured.items() if hasattr(self.measured, 'items') else self.measured
+            try:
+                found = {name: tuple(bits) for name, bits in items}
+            except (TypeError, ValueError):
+                raise ShapeRefused('Give the measured bits of every page for each coding.') from None
+            if any(name not in CODINGS or len(bits) != self.pages or any(type(value) is not int or value < 0
+                                                                         for value in bits)
+                   for name, bits in found.items()):
+                raise ShapeRefused('Give the measured bits of every page for each coding.')
+            object.__setattr__(self, 'measured', tuple((name, found[name]) for name in CODINGS if name in found)
+                               or None)
+
+    def bits_for(self, coding):
+        """The measured bits of each page in ``coding``, or None when that coding was not measured."""
+        return next((bits for name, bits in self.measured or () if name == coding), None)
 
 
 @dataclass(frozen=True)
@@ -140,6 +187,24 @@ class Prediction:
     cost: Money | None                   # the Money type from routing/costs; unknown is None, never 0
     basis: str                           # one plain sentence: how this was worked out
     marginal: bool                       # True when the cost is the marginal cost (flat plans: 0 plus fair-use)
+    # The expected billed seconds over the duration's spread, on a route that bills by time; None otherwise.
+    expected_billed_seconds: float | None = None
+    p90_seconds: float | None = None     # the time 9 in 10 such calls finish within; None when unknown
+    increment_seconds: int | None = None  # one billing step, on a route that bills by time
+    spread: str | None = None            # how the spread was found, as a clause; None when the time is unknown
+    expected_billed_pages: float | None = None  # under a page-or-time rule, the pages expected to be billed
+
+
+@dataclass(frozen=True)
+class ExpectedBill:
+    """What a call is expected to bill over its duration's spread (``expected_bill``)."""
+    units: float | None                  # expected billing steps (per-minute) or pages (page-or-time); None otherwise
+    increment_seconds: int | None        # one billing step in seconds, when the route bills by time
+    billed_seconds: float | None         # expected billed seconds, when the route bills by time
+    cost: Money | None                   # the expected cost; None when unknown, never 0
+    seconds: float | None                # the predicted time on the line
+    p90_seconds: float | None            # the time 9 in 10 such calls finish within
+    basis: str
 
 
 # Facts ------------------------------------------------------------------------------
@@ -161,6 +226,9 @@ class Link:
     setup_calls: int = 0
     typical_rate: int = TYPICAL_RATE     # the route's own speed setting, when nothing was learned
     jbig: bool = False                   # a call to this number used JBIG on the SSL Fax engine
+    # Each recorded call's (seconds outside the pages or None, seconds a page), for the spread of a call's time,
+    # from the calls the engine that placed the newest one made (all engines when it made too few).
+    samples: tuple = ()
 
     def __post_init__(self):
         if self.coding is not None and self.coding not in CODINGS:
@@ -263,15 +331,27 @@ def _setup(link):
     return SETUP_SECONDS
 
 
+def call_coding(shape, link, coding=None):
+    """The coding the call is priced with: the one asked for, the shape's, what calls to the number used, else
+    the default."""
+    return coding or shape.coding or link.coding or DEFAULT_CODING
+
+
 def line_seconds(shape, link, *, coding=None):
     """(seconds, clause): the predicted time on the line and how it was worked out; seconds None when unknown."""
     setup = _setup(link)
+    coding = call_coding(shape, link, coding)
+    measured = shape.bits_for(coding)
+    if measured is not None:
+        rate, how = _speed(link)
+        seconds = setup + sum(measured) / rate + PAGE_SECONDS * shape.pages
+        return seconds, f'{duration_text(seconds)} on the line, from the measured size of each page in {coding} {how}'
     if shape.page_bits is not None:
         rate, how = _speed(link)
-        factor = WIRE_FACTOR[coding or link.coding or DEFAULT_CODING]
-        data = sum(shape.page_bits) * factor / rate
+        data = sum(shape.page_bits) * WIRE_FACTOR[coding] / rate
         seconds = setup + data + PAGE_SECONDS * shape.pages
-        return seconds, f'{duration_text(seconds)} on the line, from the size of each page {how}'
+        estimate = '' if coding == 'MMR' else f', with {coding} estimated from a fixed ratio to MMR'
+        return seconds, f'{duration_text(seconds)} on the line, from the size of each page {how}{estimate}'
     if shape.layout == 'codec':
         return None, "the time on the line is unknown, because a coded page's size depends on its data"
     factor = LAYOUT_FACTOR[shape.layout]
@@ -281,21 +361,101 @@ def line_seconds(shape, link, *, coding=None):
         return seconds, (f'{duration_text(seconds)} on the line, from the time a page took on '
                          f'{_count(link.page_calls, "earlier fax")} to this number')
     rate, how = _speed(link)
-    bits = TYPICAL_PAGE_BITS[shape.resolution] * factor * WIRE_FACTOR[coding or link.coding or DEFAULT_CODING]
+    bits = TYPICAL_PAGE_BITS[shape.resolution] * factor * WIRE_FACTOR[coding]
     seconds = setup + shape.pages * (bits / rate + PAGE_SECONDS)
     return seconds, f'{duration_text(seconds)} on the line, for typical pages {how}'
 
 
+# The spread of a call's time ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Spread:
+    """The predicted time on the line as a distribution: ((seconds, share), ...), shares adding up to 1."""
+    points: tuple
+    learned: bool                        # from the number's own recorded calls; False: ``DEFAULT_SPREAD``
+    calls: int = 0
+    learns: bool = True                  # the route learns from its calls (Faxbot's own trunk); a fax service does not
+
+    def percentile(self, share=COMPLETION_SHARE):
+        """The shortest time that this share of calls finishes within."""
+        total = 0.0
+        ordered = sorted(self.points)
+        for seconds, weight in ordered:
+            total += weight
+            if total >= share - 1e-9:
+                return seconds
+        return ordered[-1][0]
+
+    def clause(self):
+        if self.learned:
+            return f'the spread of {_count(self.calls, "earlier fax")} to this number'
+        if not self.learns:
+            return 'an assumed spread of 15% either way'
+        return f'an assumed spread of 15% either way until this number has {MIN_CALLS} faxes of its own'
+
+
+def spread_for(seconds, link, *, learns=True):
+    """The spread of a call predicted at ``seconds``: each recorded call to the number (``Link.samples``) scales
+    the time after setup by its seconds a page against their median, with its own setup when known; with fewer
+    than ``MIN_CALLS``, ``DEFAULT_SPREAD``. None when the time is unknown."""
+    if seconds is None:
+        return None
+    setup = min(_setup(link), seconds)
+    after = max(0.0, seconds - setup)
+    samples = [(start, page) for start, page in link.samples if page is not None and page > 0]
+    if len(samples) >= MIN_CALLS:
+        middle = statistics.median(page for _, page in samples)
+        weight = 1 / len(samples)
+        points = tuple((max(0.0, (setup if start is None else start) + after * page / middle), weight)
+                       for start, page in samples)
+        return Spread(points, True, len(samples))
+    return Spread(tuple((setup + after * factor, weight) for factor, weight in DEFAULT_SPREAD), False, learns=learns)
+
+
+def _expected(points, value):
+    """Sum of ``value(seconds) x share`` over the spread; None when any point's value is unknown."""
+    total = 0.0
+    for seconds, weight in points:
+        found = value(seconds)
+        if found is None:
+            return None
+        total += found * weight
+    return total
+
+
+def _billed_by_time(terms):
+    return bool(terms.card.per_minute_micros or terms.page_time_seconds)
+
+
+def expected_terms_cost(terms, spread, pages):
+    """(expected micros as a whole number rounded up, or None; expected billed seconds or None) of one delivered
+    fax under ``terms`` over ``spread``: E[cost(D)], never the cost of the expected D."""
+    if spread is None:
+        _, micros = terms_cost(terms, seconds=None, pages=pages)
+        return micros, None
+    micros = _expected(spread.points, lambda seconds: terms_cost(terms, seconds=seconds, pages=pages)[1])
+    billed = (_expected(spread.points, lambda seconds: billed_seconds(terms.card, seconds))
+              if terms.card.per_minute_micros else None)
+    return (None if micros is None else math.ceil(micros - 1e-6)), billed
+
+
+def expected_pages(terms, spread, pages):
+    """Under a page-or-time rule, the pages expected to be billed over ``spread``; None otherwise."""
+    if spread is None or not terms.page_time_seconds:
+        return None
+    return _expected(spread.points, lambda seconds: greater_of_pages(pages, seconds, terms.page_time_seconds))
+
+
 # The price ----------------------------------------------------------------------------
 
-def _plan(facts, shape, seconds, how):
+def _plan(facts, shape, seconds, how, spread=None):
     """A monthly plan: what this fax adds to the bill (marginal), with the plan's room in the sentence."""
     terms, plan, label = facts.terms, facts.plan or PlanUse(), facts.label
     card = terms.card
     fee = plan_fee_text(card.monthly_fee_micros, card.currency) if card.monthly_fee_micros else None
     named = f'your {label} plan' + (f' ({fee} a month)' if fee else '')
     if terms.included_minutes and not terms.included_pages:
-        return _minutes(terms, plan, named, seconds, how)
+        return _minutes(terms, plan, named, seconds, how, spread)
     if terms.included_pages:
         if plan.pages is None:
             return Prediction(None, seconds, None, _sentence(
@@ -325,8 +485,9 @@ def _plan(facts, shape, seconds, how):
                       _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
 
 
-def _minutes(terms, plan, named, seconds, how):
-    """A minute allowance: this fax is free while its minutes fit, and minutes past it cost the per-minute price."""
+def _minutes(terms, plan, named, seconds, how, spread=None):
+    """A minute allowance: this fax is free while its minutes fit, and minutes past it cost the per-minute price,
+    expected over the call's spread."""
     card = terms.card
     if seconds is None:
         return Prediction(None, None, None, _sentence(
@@ -336,16 +497,52 @@ def _minutes(terms, plan, named, seconds, how):
         return Prediction(None, seconds, None, _sentence(
             f'{named} includes {terms.included_minutes} minutes a month, and Faxbot has no count of the minutes '
             'used this month, so whether this fax costs extra is unknown', how), True)
-    minutes = math.ceil(seconds / 60)
     before = max(0, plan.minutes - terms.included_minutes)
-    over = max(0, plan.minutes + minutes - terms.included_minutes) - before
+
+    def over_at(duration):
+        return max(0, plan.minutes + math.ceil(duration / 60) - terms.included_minutes) - before
+    over = over_at(seconds)
+    expected = _expected(spread.points, over_at) if spread is not None else over
+    micros = math.ceil(expected * card.per_minute_micros - 1e-6)
     room = f'{plan.minutes} of its {terms.included_minutes} included minutes used this month'
-    if not over:
+    if not micros:
         return Prediction(0, seconds, Money(0, card.currency),
                           _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
-    return Prediction(0, seconds, Money(over * card.per_minute_micros, card.currency), _sentence(
-        f'{_count(over, "minute")} past what {named} includes, at {money_text(card.per_minute_micros, card.currency)} '
-        'a minute', room, how), True)
+    if not over:
+        return Prediction(0, seconds, Money(micros, card.currency), _sentence(
+            f'Included in {named} unless the call runs past its minutes, so about '
+            f'{money_text(micros, card.currency)} is expected', room, how), True)
+    clause = f'{_count(over, "minute")} past what {named} includes, at {money_text(card.per_minute_micros, card.currency)} a minute'
+    if micros != over * card.per_minute_micros:
+        clause += f', so about {money_text(micros, card.currency)} is expected'
+    return Prediction(0, seconds, Money(micros, card.currency), _sentence(clause, room, how), True)
+
+
+def _spread_price(terms, spread, pages, central, expected):
+    """', or more about 25% of the time, so about $0.00625 is expected' when the spread crosses a billing step."""
+    if spread is None or expected is None or expected == central:
+        return ''
+    costs = [(terms_cost(terms, seconds=seconds, pages=pages)[1], weight) for seconds, weight in spread.points]
+    higher = sum(weight for micros, weight in costs if micros is not None and micros > central)
+    lower = sum(weight for micros, weight in costs if micros is not None and micros < central)
+    parts = ([f'or more about {round(higher * 100)}% of the time'] if higher else []) + (
+        [f'or less about {round(lower * 100)}% of the time'] if lower else [])
+    return (', ' + ' and '.join(parts) if parts else '') + (
+        f', so about {money_text(expected, terms.card.currency)} is expected')
+
+
+def _with_spread(prediction, terms, spread, billed=None, pages=None):
+    """The prediction with its completion time, its billing step and how the spread was found."""
+    if spread is None:
+        return prediction
+    from dataclasses import replace
+    step = None
+    if terms is not None and terms.card.per_minute_micros:
+        step = terms.card.billing_increment_seconds
+    elif terms is not None and terms.page_time_seconds:
+        step = terms.page_time_seconds
+    return replace(prediction, expected_billed_seconds=billed, p90_seconds=spread.percentile(),
+                   increment_seconds=step, spread=spread.clause(), expected_billed_pages=pages)
 
 
 # A Direct message or FHIR document (``digital/``): no call, priced per message by its account's plan.
@@ -401,31 +598,37 @@ def predict_from(facts, shape):
     if facts.route_key == 'local':
         return Prediction(0, 0.0, Money(0, facts.currency), _sentence(
             'This is one of your own fax numbers, so the fax goes straight into Received with no phone call and '
-            'costs nothing'), False)
+            'costs nothing'), False, p90_seconds=0.0)
     if facts.route_key == 'direct':
         return Prediction(0, 0.0, Money(0, facts.currency), _sentence(
             'Delivered straight to a verified partner over the internet, with no phone call, so it costs nothing'),
-            False)
+            False, p90_seconds=0.0)
     if facts.route_key.startswith(DIGITAL_PREFIXES):
         return _digital(facts, shape)
     seconds, how = line_seconds(shape, facts.link)
+    # Only Faxbot's own trunk learns each number's calls (predict_facts.learn); a fax service keeps the assumed one.
+    spread = spread_for(seconds, facts.link, learns=facts.route_key == 'sip')
     terms = facts.terms
     if terms is None:
         if facts.refused:
-            return Prediction(None, seconds, None, _sentence(facts.missing), False)
+            return _with_spread(Prediction(None, seconds, None, _sentence(facts.missing), False), None, spread)
         missing = facts.missing or f'{facts.label} publishes no price for {_what(facts)} to {_where(facts.destination)}'
-        return Prediction(None, seconds, None, _sentence(f'{missing}, so the cost is unknown', how), False)
+        return _with_spread(Prediction(None, seconds, None, _sentence(f'{missing}, so the cost is unknown', how),
+                                       False), None, spread)
     if terms.max_pages_per_fax and shape.pages > terms.max_pages_per_fax:
-        return Prediction(None, seconds, None, _sentence(
+        return _with_spread(Prediction(None, seconds, None, _sentence(
             f'{facts.label} takes at most {terms.max_pages_per_fax} pages in one fax, so this fax cannot go this '
-            'way as one fax'), False)
+            'way as one fax'), False), terms, spread)
     if terms.card.flat_plan or terms.included_pages or terms.included_minutes:
-        return _plan(facts, shape, seconds, how)
-    billed_pages, micros = terms_cost(terms, seconds=seconds, pages=shape.pages)
-    if micros is None:
+        billed = (_expected(spread.points, lambda duration: billed_seconds(terms.card, duration))
+                  if spread is not None and terms.card.per_minute_micros else None)
+        return _with_spread(_plan(facts, shape, seconds, how, spread), terms, spread, billed)
+    billed_pages, central = terms_cost(terms, seconds=seconds, pages=shape.pages)
+    if central is None:
         reason = (f'{facts.label} bills by time on the line, and the time is unknown' if billed_pages is not None
                   else f'{facts.label} counts pages by time on the line, and the time is unknown')
         return Prediction(billed_pages, seconds, None, _sentence(f'{reason}, so the cost is unknown', how), False)
+    micros, billed = expected_terms_cost(terms, spread, shape.pages)
     cost = Money(micros, terms.card.currency)
     if micros == 0 and facts.destination.kind != LOCAL:
         price = f'{facts.label} charges nothing for {_what(facts)} to {_where(facts.destination)}'
@@ -433,7 +636,9 @@ def predict_from(facts, shape):
         price = _price_clause(terms, billed_pages, seconds) or f'{facts.label} charges nothing for this fax'
         if terms.published and facts.destination.kind != LOCAL:
             price += f", {facts.label}'s published price for {_what(facts)} to {_where(facts.destination)}"
-    return Prediction(billed_pages, seconds, cost, _sentence(price, how), False)
+        price += _spread_price(terms, spread, shape.pages, central, micros)
+    return _with_spread(Prediction(billed_pages, seconds, cost, _sentence(price, how), False), terms, spread, billed,
+                        expected_pages(terms, spread, shape.pages))
 
 
 # Gathering the facts --------------------------------------------------------------------
@@ -461,6 +666,31 @@ def predict(route_key: str, destination: str, shape: Shape, *, now=None) -> Pred
         from .predict_facts import facts_for
         facts = facts_for(route_key, destination, now=now)
     return predict_from(facts, shape)
+
+
+def bill_of(prediction):
+    """The ``ExpectedBill`` a prediction carries: billing steps (or pages under a page-or-time rule) expected."""
+    units = None
+    step = prediction.increment_seconds
+    if prediction.expected_billed_seconds is not None and step:
+        units = prediction.expected_billed_seconds / step
+    elif prediction.expected_billed_pages is not None:
+        units = prediction.expected_billed_pages
+    return ExpectedBill(units, step, prediction.expected_billed_seconds, prediction.cost, prediction.seconds,
+                        prediction.p90_seconds, prediction.basis)
+
+
+def expected_bill(route_key: str, destination: str, shape: Shape, *, now=None) -> ExpectedBill:
+    """What a fax on ``route_key`` to ``destination`` is expected to bill over its duration's spread.
+
+    ``units`` are E[ceil(D / increment)] billing steps on a route that bills by
+    time (None otherwise), ``cost`` the expected cost (``predict``'s), and
+    ``p90_seconds`` the time 9 in 10 such calls finish within. Refusals:
+    ``ShapeRefused`` (a ValueError) for an impossible shape, TypeError for
+    something that is not a ``Shape``. An unknown route or price is not an
+    error: ``cost`` is None and ``basis`` says why.
+    """
+    return bill_of(predict(route_key, destination, shape, now=now))
 
 
 # Helpers for callers -------------------------------------------------------------------

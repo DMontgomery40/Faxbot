@@ -18,7 +18,9 @@ import type {
 } from './ProviderRulesApi';
 import { DAYS, documentLabels, recipientLists } from './ProviderRulesApi';
 import type { Names } from './ProviderRulesText';
-import { ALTERNATE_NOTE, DIGITAL_LABEL, ENCRYPTION_NOTE, LAYOUT_NOTE, ruleSentence } from './ProviderRulesText';
+import {
+  ALTERNATE_NOTE, DIGITAL_LABEL, ENCRYPTION_NOTE, LAYOUT_NOTE, SUBADDRESS_NOTE, SUBADDRESS_PATTERN, ruleSentence,
+} from './ProviderRulesText';
 
 type Option = { value: string; label: string };
 type FieldKind = 'text-list' | 'choice-list' | 'flag' | 'count' | 'megabytes' | 'time';
@@ -301,6 +303,7 @@ export function routeActions(method: RouteMethod, then: Actions): Actions {
   if (then.when_busy) settings.when_busy = then.when_busy;
   if (then.page_layout) settings.page_layout = then.page_layout;
   if (then.alternate_number) settings.alternate_number = then.alternate_number;
+  if (then.subaddress) settings.subaddress = then.subaddress;
   switch (method) {
     case 'use': return { use: then.use ?? '', ...settings };
     case 'try_in_order': return { try_in_order: then.try_in_order ?? [], ...settings };
@@ -526,6 +529,12 @@ export default function ProviderRulesEditor(props: RuleEditorProps) {
                 { value: 'never', label: 'Always dial the number the sender gave' },
                 { value: 'only', label: 'Dial only an approved alternate, and hold the fax when there is none' }]}
               onChange={(value) => set({ alternate_number: (value || undefined) as AlternateNumber | undefined })} />
+            <TextField size="small" label="Subaddress" value={then.subaddress ?? ''}
+              error={Boolean(then.subaddress) && !SUBADDRESS_PATTERN.test(then.subaddress ?? '')}
+              helperText={then.subaddress && !SUBADDRESS_PATTERN.test(then.subaddress)
+                ? 'A subaddress is up to 20 digits, such as 2001; it may also use +, # and *.' : SUBADDRESS_NOTE}
+              inputProps={{ 'aria-label': 'Subaddress', inputMode: 'numeric' }}
+              onChange={(event) => set({ subaddress: event.target.value.replace(/ /g, '') || undefined })} />
             {scopeKind === 'organization' && (
               <FormControlLabel control={<Checkbox checked={mandatory} onChange={(event) => setMandatory(event.target.checked)} />}
                 label="Mandatory: a mailbox's or workflow's own rules can't replace this rule" />

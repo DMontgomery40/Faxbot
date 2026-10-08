@@ -280,11 +280,12 @@ def check(kind, scope_id, document, context, *, organization=None):
 # Replay ------------------------------------------------------------------------------------------------------
 
 def route_key(decision):
-    """What "the route would change" compares: outcome, method, accounts, delivery inside, holds, number, layout."""
+    """What "the route would change" compares: outcome, method, accounts, delivery inside, holds, number, layout and
+    subaddress."""
     envelope = decision.envelope
     return (decision.outcome, decision.reason, envelope.mode, envelope.accounts, envelope.local, envelope.direct,
             envelope.require_direct, tuple(hold.kind for hold in envelope.holds),
-            envelope.dial.number if envelope.dial else None, envelope.page_layout)
+            envelope.dial.number if envelope.dial else None, envelope.page_layout, envelope.subaddress)
 
 
 @dataclass(frozen=True)

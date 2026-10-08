@@ -564,18 +564,20 @@ def test_a_send_the_codec_makes_cheapest_records_the_codec_alone(installation, d
 
 def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, database, tmp_path):
     # Unknown machine: A4, where letter pages cannot share a page.
-    assert _send(database, tmp_path) is None
+    # The pages go as they are (the coding measured for them may still go with the call: pages/coding.py).
+    assert sending.unchanged(_send(database, tmp_path))
     _learn(installation)
     installation.set_recipient_settings(PEER, packing='never')
-    assert _send(database, tmp_path) is None
+    assert sending.unchanged(_send(database, tmp_path))
     installation.set_recipient_settings(PEER, packing='allow')
     # The trunk sends standard resolution: the SSL Fax engine would draw fine pages again.
-    assert _send(database, tmp_path, values=SimpleNamespace(sip_fax_fine=False)) is None
+    assert sending.unchanged(_send(database, tmp_path, values=SimpleNamespace(sip_fax_fine=False)))
     # Faxes sent together are left for batching.
     assert sending.prepare(database, SimpleNamespace(), SimpleNamespace(provider_id='sip', manifest=None, traits={}),
                            SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=('x',)), {'to_number': PEER},
                            tmp_path / 'x.pdf', None) is None
-    assert not [path for path in tmp_path.glob('packed-*') if not path.name.startswith('packed-friendly-')]
+    assert not [path for path in tmp_path.glob('packed-*') if not path.name.startswith('packed-friendly-')
+                and not path.name.endswith('.coding.json')]
 
 
 def _fax_row(database, route='sip', pages=5):

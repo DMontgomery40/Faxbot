@@ -155,6 +155,9 @@ READS = {
     ("GET", "/routing/predict"): ("settings:read", False),
     # The savings map: every way Faxbot saves money and how each stands here, never money (like /routing/savings).
     ("GET", "/routing/savings/mechanisms"): ("settings:read", False),
+    # The same with the document itself, its codings measured on its pages; nothing is kept. It draws the pages as
+    # sending does (Ghostscript on an upload), so only someone who may send faxes may ask.
+    ("POST", "/routing/predict"): ("fax:send", False),
 }
 
 

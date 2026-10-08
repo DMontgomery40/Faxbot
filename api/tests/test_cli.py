@@ -290,6 +290,29 @@ def test_sent_show_says_which_approved_number_a_fax_dialed(cli, tmp_path, monkey
     assert 'Dialed' not in cli('sent', 'show', sent['id']).stdout
 
 
+def test_sent_show_and_costs_fax_say_which_fax_coding_went_and_why(cli, tmp_path, monkeypatch):
+    from app.pages import coding
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue')
+    view = {'requested': 'MH', 'negotiated': 'MH', 'measured': True, 'compared': 'MMR', 'pages': 1,
+            'bits': {'MH': 698656, 'MR': 848360, 'MMR': 873336}, 'receiver_known': True,
+            'sentence': 'Sent with MH: 20% shorter than MMR for these pages.',
+            'measured_sentence': coding.measured_sentence({'MH': 698656, 'MR': 848360, 'MMR': 873336})}
+    monkeypatch.setattr(coding, 'sent_view', lambda engine, job_id: view if job_id == sent['id'] else None)
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Fax coding Sent with MH: 20% shorter than MMR for these pages.' in shown
+    assert cli.json('sent', 'show', sent['id'])['coding']['requested'] == 'MH'
+    cost = ' '.join(cli('costs', 'fax', sent['id']).stdout.split())
+    assert 'Sent with MH: 20% shorter than MMR for these pages.' in cost
+    assert ('Measured on these pages at 14,400 bit/s: MH about 49 seconds, MR about 59 seconds, MMR about 1 minute '
+            '1 second.') in cost
+    assert cli.json('costs', 'fax', sent['id'])['coding']['bits']['MMR'] == 873336
+    monkeypatch.setattr(coding, 'sent_view', lambda engine, job_id: None)
+    assert 'Fax coding' not in cli('sent', 'show', sent['id']).stdout
+    assert 'Measured on these pages' not in cli('costs', 'fax', sent['id']).stdout
+
+
 def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
     note = tmp_path / 'note.txt'
     note.write_text('Synthetic\n')
@@ -1131,6 +1154,22 @@ def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
     assert toll_free['number_class_text'] == 'a toll-free number'
     refused = cli('costs', 'predict', '--to', '+12025550123', '--layout', 'tall')
     assert refused.exit_code != 0 and 'Choose a normal or dense layout.' in refused.stdout + refused.stderr
+    assert '9 in 10 calls within' in human
+
+
+@pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
+def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
+    letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')
+    result = cli.json('costs', 'predict', '--to', '+12025550123', '--file', letter)
+    assert result['pages'] == 1 and set(result['measured']) >= {'MH', 'MR', 'MMR'}
+    # This installation sends through Phaxio only, which codes the pages itself (the trunk's coding: test_routing_predict).
+    phaxio = next(route for route in result['routes'] if route['route'] == 'phaxio')
+    assert phaxio['coding'] is None and phaxio['cost'] == {'amount': '0.07', 'currency': 'USD'}
+    human = ' '.join(cli('costs', 'predict', '--to', '+12025550123', '--file', letter).stdout.split())
+    assert '+12025550123 is a local number; 1 page.' in human
+    assert result['measured_sentence'] in human and 'Phaxio: Billed as 1 page at $0.07 a page;' in human
+    missing = cli('costs', 'predict', '--to', '+12025550123', '--file', tmp_path / 'nothing.pdf')
+    assert missing.exit_code != 0
 
 
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):

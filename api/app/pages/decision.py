@@ -47,6 +47,8 @@ class Shape:
     resolution: str = 'fine'
     layout: str = 'normal'
     boundary_seconds: float | None = None  # measured time between pages for this destination, when known
+    measured: dict | None = None  # {coding: bits per page} measured on these pages (pages/coding.py)
+    coding: str | None = None  # the coding the call is priced with, when chosen
 
 
 @dataclass(frozen=True)
@@ -58,8 +60,17 @@ class Prediction:
     marginal: bool  # True for a monthly plan (no money at the margin while pages are included)
 
 
+def _bits(shape):
+    """The bits of each page as the call sends them: measured in the chosen coding when known (pages/coding.py),
+    else the page bits given."""
+    measured = (shape.measured or {}).get(shape.coding) if shape.coding else None
+    if measured is not None and len(measured) == shape.pages:
+        return tuple(measured)
+    return shape.page_bits if shape.page_bits and len(shape.page_bits) == shape.pages else None
+
+
 def _seconds(shape):
-    bits = shape.page_bits if shape.page_bits and len(shape.page_bits) == shape.pages else None
+    bits = _bits(shape)
     data = (sum(bits) if bits else DEFAULT_PAGE_BITS * shape.pages) / LINE_BITS_PER_SECOND
     boundary = shape.boundary_seconds if shape.boundary_seconds is not None else BOUNDARY_SECONDS
     return ESTIMATE_SETUP_SECONDS + data + max(0, shape.pages - 1) * boundary
@@ -99,7 +110,8 @@ def predictor():
 
     def adapted(route_key, destination, shape):
         return shared.predict(route_key, destination,
-                              shared.Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout))
+                              shared.Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout,
+                                           getattr(shape, 'measured', None), getattr(shape, 'coding', None)))
     return adapted
 
 
@@ -131,12 +143,16 @@ ORDER = {'normal': 0, 'dense': 1, 'codec': 2}
 
 
 def rank(prediction, shape):
-    """Sort key: the cheapest first; when the cost is the same (or unknown), fewer billed pages, then less time
-    on the line in whole seconds; only a full tie keeps the simpler layout (normal, then dense, then codec)."""
+    """Sort key: the cheapest expected bill first (the shared predictor prices a call over its time's spread);
+    when that is the same (or unknown), fewer expected billing steps (minutes inside an allowance), then fewer
+    billed pages, then less expected time on the line, unrounded, so a measured coding's seconds count; only a
+    full tie keeps the simpler layout (normal, then dense, then codec)."""
     cost = prediction.cost
     billed = prediction.billed_pages if prediction.billed_pages is not None else shape.pages
-    seconds = math.floor(prediction.seconds) if prediction.seconds is not None else 0
-    return (cost is None, cost.micros if cost is not None else 0, billed, seconds, ORDER[shape.layout])
+    steps = getattr(prediction, 'expected_billed_seconds', None)
+    seconds = prediction.seconds if prediction.seconds is not None else 0.0
+    return (cost is None, cost.micros if cost is not None else 0, steps if steps is not None else 0.0, billed,
+            seconds, ORDER[shape.layout])
 
 
 def decide(route_key, destination, normal, dense, *, card=None, predict=None):
