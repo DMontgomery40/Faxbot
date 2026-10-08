@@ -21,6 +21,11 @@ MAX_CODE_FAILURES = 5
 VERIFIED_LIFETIME = timedelta(days=365)
 
 
+def _not_relay(deliveries):
+    """Rows that are not documents relayed through a partner (``kind`` is NULL for an original document)."""
+    return sa.or_(deliveries.c.kind.is_(None), deliveries.c.kind != 'relay')
+
+
 class DirectConflict(RuntimeError):
     """Plain-sentence refusal of a partner change."""
 
@@ -272,8 +277,9 @@ class DirectStore:
                                                                                      FILING_ACCOUNT + 'unknown'),
                                                imports.c.operation_id == d.c.message_id,
                                                imports.c.state.in_(('received', 'conflict', 'failed'))))
+        # A document a partner sent for relaying is sent on as a fax here, never filed as received (relay.py).
         query = (sa.select(d).where(d.c.direction == 'inbound', d.c.state == 'accepted', d.c.manifest != '',
-                                    d.c.document_path.is_not(None), ~legacy, ~settled)
+                                    d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d))
                  .order_by(d.c.accepted_at, d.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
@@ -299,9 +305,10 @@ class DirectStore:
     def awaiting_partner(self, *, limit=20):
         """Sent documents whose answer was lost while the fax waits for confirmation."""
         d, o = self.deliveries, self.outbound
+        # Relayed documents are reconciled by the relay's own reconciler: accepted there is not delivered.
         query = (sa.select(d).join(o, o.c.id == d.c.job_id)
                  .where(d.c.direction == 'outbound', d.c.state.in_(('sending', 'uncertain')),
-                        o.c.state == 'reconciliation_required', o.c.attempt_id == d.c.attempt_id)
+                        o.c.state == 'reconciliation_required', o.c.attempt_id == d.c.attempt_id, _not_relay(d))
                  .order_by(d.c.updated_at, d.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]

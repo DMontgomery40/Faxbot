@@ -222,6 +222,18 @@ def decide(compiled, facts, accounts):
         account = by_key.get(key)
         if key in limits.never:
             continue
+        if model.is_relay(key):
+            # A partner relay (direct/relay.py): its local call is an ordinary call at the partner, and the
+            # partner sees the document, so a relay never meets "direct only" or "encrypted only".
+            if model.RELAY in limits.never:
+                excluded.append(Excluded(key, 'never', limits.never[model.RELAY]))
+            elif limits.require_direct is not None:
+                excluded.append(Excluded(key, 'direct_required', limits.require_direct))
+            elif limits.require_encryption is not None:
+                excluded.append(Excluded(key, 'not_encrypted', limits.require_encryption))
+            elif key not in order:
+                order.append(key)
+            continue
         if account is None:
             excluded.append(Excluded(key, 'unknown_account', route))
         elif not account.sends:

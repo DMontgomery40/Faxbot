@@ -39,6 +39,11 @@ FAX_COMPRESSIONS = ('MH', 'MR', 'MMR')
 # A registered form (api/app/forms): field values and the page hashes a pinned renderer must reproduce.
 FORM = 'form'
 FORM_TYPE = 'application/vnd.faxbot.form+json'
+# A document a partner relays as a local fax call in its own country (direct/relay.py): the original PDF, with
+# the agreement it travels under, the number to dial and whether it may share a call with other partners' faxes.
+RELAY = 'relay'
+RELAY_FACTS = frozenset({'agreement', 'destination', 'together'})
+_AGREEMENT = re.compile(r'[a-f0-9]{32}')
 
 
 class DirectProtocolError(ValueError):
@@ -88,6 +93,13 @@ def _fax_facts(facts, pages):
             and isinstance(facts['header_line'], str) and 0 < len(facts['header_line']) <= 200)
 
 
+def _relay_facts(facts):
+    """Whether ``facts`` are well-formed relay facts: an agreement ID, an E.164 destination and a yes/no."""
+    return (isinstance(facts, dict) and set(facts) == RELAY_FACTS and isinstance(facts['agreement'], str)
+            and _AGREEMENT.fullmatch(facts['agreement']) is not None and isinstance(facts['destination'], str)
+            and _NUMBER.fullmatch(facts['destination']) is not None and type(facts['together']) is bool)
+
+
 def capabilities(*, fax_images, peer_calls, said_at=None):
     """What this installation accepts from one partner, as a signed statement carries it."""
     return {'fax_images': bool(fax_images), 'peer_calls': bool(peer_calls), 'said_at': said_at or timestamp()}
@@ -105,9 +117,9 @@ def parse_capabilities(value):
 
 
 def kind_of(manifest):
-    """``fax_image``, ``form`` or ``original``."""
+    """``fax_image``, ``form``, ``relay`` or ``original``."""
     kind = manifest.get('kind')
-    return kind if kind in (FAX_IMAGE, FORM) else 'original'
+    return kind if kind in (FAX_IMAGE, FORM, RELAY) else 'original'
 
 
 class Identity:
@@ -151,12 +163,14 @@ def _aad(manifest):
 
 
 def seal(identity, *, message_id, organization, fax_number, recipient_number, recipient_signing_key,
-         recipient_exchange_key, document, pages=None, created_at=None, fax=None, form=False):
+         recipient_exchange_key, document, pages=None, created_at=None, fax=None, form=False, relay=None):
     """Encrypt ``document`` to the recipient; returns (manifest bytes, signature, ciphertext).
 
     ``fax`` makes it a fax image: ``document`` is the TIFF and ``fax`` holds the
     planned fax facts (``faximage.facts``), which the signed manifest carries.
     ``form=True`` makes it a registered form: ``document`` is the form payload (``forms/exchange.py``).
+    ``relay`` makes it a document the recipient relays as a local fax call (``relay.py``): ``document`` is the
+    original PDF and ``relay`` holds the relay facts (``RELAY_FACTS``), which the signed manifest carries.
     """
     content_key, nonce, key_nonce = AESGCM.generate_key(bit_length=256), os.urandom(12), os.urandom(12)
     ephemeral = X25519PrivateKey.generate()
@@ -174,6 +188,8 @@ def seal(identity, *, message_id, organization, fax_number, recipient_number, re
         manifest.update(kind=FAX_IMAGE, fax=dict(fax))
     elif form:
         manifest['kind'] = FORM
+    elif relay is not None:
+        manifest.update(kind=RELAY, relay=dict(relay))
     ciphertext = AESGCM(content_key).encrypt(nonce, document, _aad(manifest))
     wrapped = AESGCM(_kek(shared, ephemeral_public, recipient_public, message_id)).encrypt(
         key_nonce, content_key, canonical({'message_id': message_id}))
@@ -193,10 +209,14 @@ def parse_manifest(encoded):
         if canonical(manifest) != encoded:
             raise ValueError
         image, form = manifest.get('kind') == FAX_IMAGE, manifest.get('kind') == FORM
-        if (set(manifest) != _MANIFEST_KEYS | ({'kind', 'fax'} if image else {'kind'} if form else set())
+        relay = manifest.get('kind') == RELAY
+        extra = {'kind', 'fax'} if image else {'kind'} if form else {'kind', 'relay'} if relay else set()
+        if (set(manifest) != _MANIFEST_KEYS | extra
                 or manifest['version'] != PROTOCOL or not MESSAGE_ID.fullmatch(manifest['message_id'])):
             raise ValueError
         if image and not _fax_facts(manifest['fax'], manifest['document']['pages']):
+            raise ValueError
+        if relay and not _relay_facts(manifest['relay']):
             raise ValueError
         sender, recipient = manifest['sender'], manifest['recipient']
         document, encryption = manifest['document'], manifest['encryption']

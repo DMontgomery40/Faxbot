@@ -8,7 +8,7 @@ Commands are defined in their modules; this module gives each one its home.
 import typer
 
 from .commands import (access, accounts, admin, blocked, codec, delivery, fax, fax_machines, forms, operations, pages,
-                       reply, rules, schedule, settings, setup, sslfax, trunk, work)
+                       relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -111,6 +111,7 @@ partners.command('confirm')(delivery.peers_confirm)
 partners.command('revoke')(delivery.peers_revoke)
 partners.command('fax-images')(delivery.peers_fax_images)
 partners.command('deliveries')(delivery.direct_deliveries)
+partners.add_typer(relay.relay, name='relay')
 recipients.add_typer(partners, name='partners')
 # The case group, with the commands case_commands adds (accept, repair, checklists ...).
 recipients.add_typer(case_commands.cases, name='cases')

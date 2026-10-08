@@ -35,7 +35,8 @@ def service_for(app):
         return access.inbound if access is not None else None
     try:
         return DirectService(engine, values=lambda: runtime.manager.store.read().active.values,
-                             environment=runtime.environment, http=http, resources=resources)
+                             environment=runtime.environment, http=http, resources=resources,
+                             access=lambda: getattr(app.state, 'access_runtime', None))
     except DeliveryStoreError:
         raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
 
@@ -239,6 +240,9 @@ DELIVERY_TEXT = {'sending': 'Sending.', 'accepted': 'Accepted by the recipient.'
 
 def delivery_text(row):
     """One sentence for a direct delivery record. A fax image is never called "faxed": no telephone call was made."""
+    if row.get('kind') == 'relay' and row['state'] == 'accepted':
+        # Accepted for relaying as a local call (relay.py), which is not yet delivered.
+        return 'Accepted for relaying as a local call.'
     if row.get('kind') != 'fax_image' or row['state'] != 'accepted':
         return DELIVERY_TEXT[row['state']]
     name = row.get('organization')
