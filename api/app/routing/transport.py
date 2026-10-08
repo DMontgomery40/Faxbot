@@ -213,6 +213,11 @@ class RoutedTransport:
                     continue
                 raise CapacityWait()
             if route.bound:
+                if _pinned(plan) is not None and not self._bound_ready(claim):
+                    # Under sending rules the fax's own account is checked like any other: with the trunk's engine
+                    # down, the next allowed account takes the fax instead of a send that would fail.
+                    skipped.append((route.key, 'not_ready'))
+                    continue
                 return self._chosen(plan, choice, skipped), claim
             try:
                 configuration = _account_route_configuration(revision, route.key)
@@ -230,6 +235,14 @@ class RoutedTransport:
                 continue
         self._skipped = tuple(skipped)
         return None, claim
+
+    def _bound_ready(self, claim):
+        """Whether the fax's own (bound) account can take a call now: local readiness only, never a provider call."""
+        try:
+            _, bound = self.store.configuration.outbound_context(claim.job_id)
+            return route_ready(bound.configuration, ami=getattr(self.inner, 'ami', None))
+        except Exception:
+            return False
 
     def _chosen(self, plan, choice, skipped):
         self._skipped = tuple(skipped)
@@ -338,8 +351,8 @@ class RoutedTransport:
                     'you in Sent; check again in a moment.')))
             logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')
             plan = choice = None
-        if choice is None and plan is not None and _pinned(plan) is not None and \
-                not await run_lifecycle_step(lambda: self._bound_allowed(claim)):
+        if choice is None and plan is not None and _pinned(plan) is not None:
+            # Nothing the rules allow can take the fax now, its own account included (owner's answer Q1).
             await run_lifecycle_step(lambda: self._hold(claim, plan))
         if choice is not None:
             try:

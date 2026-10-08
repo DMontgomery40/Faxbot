@@ -176,6 +176,28 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
                     default_sending_key(values))
 
 
+def recorder_for(engine, revision, actor, *, job_id, destination, pages, document_path=None, case_packet=False,
+                 control=None):
+    """Facts, preview and the acceptance-transaction recorder in one call, for faxes Faxbot accepts itself.
+
+    Email and folder connectors (``intake/sources/send.py``) and generated documents (case packets, challenge
+    faxes, forms: ``routing/submit.py``) go through the same rules as POST /fax; nothing about the rules is
+    skipped. Raises when the rules cannot be read, so the fax is not accepted outside them.
+    """
+    from .holds import document_sha256
+    digest = document_sha256(document_path) if document_path else None
+    size = 0
+    if document_path:
+        try:
+            import os
+            size = os.path.getsize(document_path)
+        except OSError:
+            size = 0
+    plan = prepare(engine, revision, actor=actor, destination=destination, pages=pages, size_bytes=size,
+                   case_packet=case_packet, document_sha256=digest)
+    return recorder(plan, job_id, actor, control=control)
+
+
 def compiled_on(connection, store):
     """The active rules of every scope, read on the acceptance transaction's own connection."""
     revisions, state = store.revisions, store.state

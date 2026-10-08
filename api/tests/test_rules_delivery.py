@@ -57,12 +57,13 @@ def rule(rule_id, then, when=None, **extra):
     return {'id': rule_id, 'name': f'Rule {rule_id}', 'on': True, 'when': when or {}, 'then': then, **extra}
 
 
-def installation(database, tmp_path, environment):
+def installation(database, tmp_path, environment, outbound=None):
     upgrade_schema(database)
     configuration = ConfigurationStore(database, tmp_path / 'installation.key')
     values = ConfigurationValues.from_environment({**environment, 'FAX_DATA_DIR': str(tmp_path)})
-    phaxio = ProviderConfiguration('phaxio', credentials={'api_key': 'synthetic-key', 'api_secret': 'synthetic-secret'})
-    snapshot = configuration.initialize(values, actor='test', providers={'outbound': phaxio})
+    outbound = outbound or ProviderConfiguration('phaxio', credentials={'api_key': 'synthetic-key',
+                                                                         'api_secret': 'synthetic-secret'})
+    snapshot = configuration.initialize(values, actor='test', providers={'outbound': outbound})
     routes = RouteStore(database)
     routes.replace_cards([card('phaxio', page='0.07'), card('signalwire', minute='0.0095')])
     return SimpleNamespace(configuration=configuration, delivery=OutboundStore(configuration), routes=routes,
@@ -787,3 +788,70 @@ def test_the_planner_ranks_partner_relays_with_its_own_routes_by_cost(sender):
     direct_only = planner.plan(to_number=DEST, bound='phaxio', values=values, pages=2, alternates=True, now=NOW,
                                pinned=pinned(require_direct=True, direct=True))
     assert all(choice.route.kind != 'relay' for choice in direct_only.choices)
+
+
+# The trunk's engine down ----------------------------------------------------------------------------------------------
+
+TRUNK = {**BASE, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': 'signalwire', 'SIP_TRUNK_PRESET': 'telnyx',
+         'SIP_TRUNK_HOST': 'sip.telnyx.com', 'SIP_TRUNK_CALLER_ID': '+13035550100'}
+
+
+@pytest.mark.asyncio
+async def test_with_the_trunk_engine_down_the_fax_goes_by_the_next_allowed_account(database, tmp_path):
+    """The trunk is the default account and the cheapest; with its engine down a fax the rules let go another way is
+    accepted and sent by SignalWire, and one the rules keep on the trunk waits in Sent instead of failing."""
+    from api.app.main import _engine_down_refuses
+    env = installation(database, tmp_path, TRUNK, outbound=ProviderConfiguration('sip'))
+    env.routes.replace_cards([card('sip', minute='0.001'), card('signalwire', minute='0.0095')])
+    plan = rules_acceptance.prepare(env.engine, env.snapshot.active, actor=ANNE, destination=TO, pages=3)
+    assert plan.bound_key == 'sip' and not _engine_down_refuses(plan)
+    job = accept(env)
+    inner = Inner(env.delivery)  # no AMI connection: the trunk's engine is down
+    assert await OutboundWorker(env.delivery, RoutedTransport(inner, direct=None)).step() is True
+    assert inner.used == ['signalwire']
+    recorded = choice(env, env.delivery.get(job)['attempt_id'])
+    assert recorded['account_key'] == 'signalwire'
+    assert envelopes.skipped_of(recorded)[0] == [('sip', 'not_ready')]
+    publish(env, {'format': 1, 'routes': [rule('r-trunk', {'use': 'sip'})]})
+    kept = rules_acceptance.prepare(env.engine, env.snapshot.active, actor=ANNE, destination=TO, pages=3)
+    assert _engine_down_refuses(kept)  # POST /fax answers 503 with the engine's own sentence
+    # Another number: the first fax's call still holds TO's one line (capacity.py).
+    held = accept(env, to='+12025550199')
+    assert await OutboundWorker(env.delivery, RoutedTransport(inner, direct=None)).step() is False
+    assert inner.used == ['signalwire'] and env.delivery.get(held)['state'] == 'ready'
+    assert holds(env, held)[0]['reason'] == ('No account your rules allow can send this fax now: Telnyx is not '
+                                             'ready. It waits for you in Sent; nothing was sent.')
+
+
+# Two accounts at one provider through the real worker ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_rule_sends_by_a_second_sinch_account_with_its_own_credentials_card_and_costs(database, tmp_path):
+    """sinch and sinch-uk both send: a rule picks sinch-uk; its attempt binds sinch-uk's own credentials, records
+    route sinch-uk (provider sinch), is priced by sinch-uk's card, and its result authenticates."""
+    from api.tests.test_provider_accounts import UK, environment, manager, with_accounts
+    control = manager(database, tmp_path)
+    first = control.initialize({**environment(tmp_path), 'FAX_DATA_DIR': str(tmp_path), 'FAX_DISABLED': 'false',
+                                'PUBLIC_API_URL': 'https://faxbot.example.org'})
+    snapshot = with_accounts(control, first, {'sinch-uk': {**UK, 'receives': False, 'numbers': []}})
+    env = SimpleNamespace(configuration=control.store, delivery=OutboundStore(control.store),
+                          routes=RouteStore(database), snapshot=snapshot, rules=RuleStore(database), engine=database,
+                          tmp=tmp_path)
+    env.routes.replace_cards([card('sinch', page='0.045'), card('sinch-uk', page='0.06')])
+    publish(env, {'format': 1, 'routes': [rule('r-uk', {'use': 'sinch-uk'})]})
+    job = accept(env)
+    inner = Inner(env.delivery, [SubmissionReceipt('FXUK1', 'in_progress')])
+    assert await OutboundWorker(env.delivery, RoutedTransport(inner, direct=None)).step() is True
+    attempt = env.delivery.get(job)['attempt_id']
+    _, profile = env.delivery.attempt_context(job, attempt)
+    assert profile.configuration.provider_id == 'sinch'
+    assert profile.configuration.credentials['api_key'] == 'synthetic-uk-key'
+    assert profile.id != snapshot.active.profile_id('outbound')
+    assert choice(env, attempt)['account_key'] == 'sinch-uk'
+    decided = env.routes.decision(attempt)
+    assert (decided['route'], decided['provider_id']) == ('sinch-uk', 'sinch')
+    assert env.delivery.observe(job, attempt_id=attempt, profile_id=profile.id, provider_sid='FXUK1',
+                                status='success', event_key='synthetic-uk-success') is True
+    (target,) = [item for item in env.routes.pending_captures() if item.attempt_id == attempt]
+    assert (target.route, target.provider_id) == ('sinch-uk', 'sinch')
+    assert env.routes.capture(target)['estimated_cost_micros'] == 180_000  # 3 pages at sinch-uk's $0.06

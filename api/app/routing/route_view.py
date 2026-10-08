@@ -119,6 +119,11 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
             choices = {row['id']: dict(row) for row in connection.execute(
                 sa.select(t['delivery_rule_choices']).where(t['delivery_rule_choices'].c.job_id == job_id)).mappings()}
     decision = pinned.decision if pinned is not None else None
+    from .store import RouteStore
+    try:
+        cards = RouteStore(engine)
+    except Exception:
+        cards = None
     attempts = []
     for index, attempt in enumerate(rows):
         cost = costs.get(attempt['id']) or {}
@@ -130,8 +135,9 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
             next_key = (choices.get(following['id']) or {}).get('account_key') or (
                 costs.get(following['id']) or {}).get('route')
         estimate = _money(cost.get('estimated_cost_micros'), cost.get('currency'))
-        if cost.get('route_reason') == 'included':
-            estimate = None
+        in_plan = cost.get('route_reason') == 'included' or _plan_fax(cards, key, cost)
+        if in_plan:
+            estimate = None  # a monthly plan's own fax reads "In your plan", never $0.00
         dialed = attempt.get('dialed_number')
         attempts.append({
             'number': index + 1, 'account': key, 'account_label': label(key) if key else 'Your outbound provider',
@@ -140,7 +146,7 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
             'page_layout': (pinned.envelope.page_layout if pinned is not None else None),
             'sentence': attempt_sentence(label(key) if key else 'your outbound provider', choice, decision, cost,
                                          attempt, label(next_key) if next_key else None, zone, label=label),
-            'estimate': estimate, 'estimate_text': 'In your plan' if cost.get('route_reason') == 'included' else None,
+            'estimate': estimate, 'estimate_text': 'In your plan' if in_plan else None,
             'outcome': attempt.get('phase')})
     if decision is not None:
         sentence = text.decision_sentence(decision, accounts, names, zone)
@@ -154,6 +160,20 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
     return {'job_id': job_id, 'sentence': sentence, 'attempts': attempts, 'hold': hold_view, 'trace': trace,
             'page_layout': pinned.envelope.page_layout if pinned is not None else None,
             'dial': text.dial_sentence(decision, pinned.facts.destination) if decision is not None else None}
+
+
+def _plan_fax(cards, key, cost):
+    """Whether a monthly plan carried this attempt: its account's card has a monthly fee and the fax added nothing."""
+    if cards is None or not key or cost.get('estimated_cost_micros') not in (0, None):
+        return False
+    try:
+        card = cards.card_for_route(key, cost.get('provider_id') or key)
+    except Exception:
+        return False
+    if card is None or not card.monthly_fee_micros:
+        return False
+    # A flat plan includes every fax; an allowance plan or bundle only when this fax cost nothing extra.
+    return card.flat_plan or cost.get('estimated_cost_micros') == 0
 
 
 def _version_text(ref, names):
@@ -255,8 +275,13 @@ def apply_to_waiting(delivery, rules, *, actor=None, actor_name=None, access_sto
                 reason='The current rules were applied to this fax.', version=holds.c.version + 1, updated_at=now))
             fresh = envelopes.Pinned(identity, pinned.sequence + 1, decision, pinned.facts)
             if decision.outcome != 'route':
+                # A new approval binds to the document as it is now, like one made at acceptance.
+                from pathlib import Path
+                document = hold_store.document_sha256(Path(revision.values.fax_data_dir) / f'{job_id}.pdf')
+                digest = hold_store.digest_for(fresh, job_id, pinned.facts.destination, document) if document else None
                 hold_store.holds_for_decision_on(connection, t, job_id=job_id, pinned=fresh, now=now,
-                                                 requested_by=pinned.facts.sender.principal_id, accounts=accounts,
+                                                 requested_by=pinned.facts.sender.principal_id, digest=digest,
+                                                 accounts=accounts,
                                                  zone_name=getattr(revision.values, 'time_zone', '') or None)
                 from ..batching.store import separate_on
                 separate_on(connection, delivery._batching(connection), job_id, now)

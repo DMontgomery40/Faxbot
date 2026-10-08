@@ -91,6 +91,9 @@ CONSOLE_ONLY = {
 
 # The command line only, by design.
 CLI_ONLY = {
+    ('GET', '/routing/quote'): (
+        'one fax priced by each account your rules allow, for faxbot costs fax --to; the console shows the same '
+        'price for each allowed account in Providers -> Rules -> Try a fax (POST /routing/explain)'),
     ('GET', '/routing/inbound/{inbound_id}/cost'): (
         "one received fax's cost for faxbot costs received <id>; the console reads the costs of the received faxes "
         'on screen in one request (GET /routing/inbound-costs)'),
