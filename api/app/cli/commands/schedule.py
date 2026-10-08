@@ -1,4 +1,5 @@
-"""When Faxbot sends to one recipient, on the command line: its hours and the busy hours Faxbot learned."""
+"""When Faxbot sends to one recipient, on the command line: its hours, and the busy hours and call hours Faxbot
+learned."""
 import typer
 
 from .. import state
@@ -11,7 +12,8 @@ DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 def schedule_fields(view):
     """The rows 'faxbot recipients schedule' prints for one number."""
     return [('Fax number', view['number']), ('Hours', view['hours_sentence']),
-            ('Busy hours', view['busy_sentence']), ('Failed tries', (view.get('failed_try') or {}).get('sentence'))]
+            ('Busy hours', view['busy_sentence']), ('Failed tries', (view.get('failed_try') or {}).get('sentence')),
+            ('Call hours', view.get('call_hours_sentence')), ('Any hour', view.get('typical_hour'))]
 
 
 def _human(view):
@@ -21,6 +23,10 @@ def _human(view):
             out.table(['Hours', 'What earlier calls showed'],
                       [[item['label'], item['sentence']] for item in view['busy_hours']],
                       title='Busy hours learned from the last 30 days')
+        if view.get('call_hours'):
+            out.table(['Hours', 'What earlier calls showed'],
+                      [[item['label'], item['sentence']] for item in view['call_hours']],
+                      title='Time a page and failed calls by hour, from the last 30 days')
     return human
 
 
@@ -38,9 +44,11 @@ def recipient_schedule(number: str = typer.Argument(..., help='Fax number.'),
                                                      help="The recipient's time zone, such as America/New_York, "
                                                           "or default for your installation's."),
                        learn: bool = typer.Option(None, '--learn/--no-learn',
-                                                  help='Whether Faxbot learns the hours this number is usually '
-                                                       'busy and holds ordinary faxes out of them.')):
-    """Show or set when Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned."""
+                                                  help='Whether Faxbot learns when this number is usually '
+                                                       'busy, slow or failing, and holds ordinary faxes for a '
+                                                       'better hour.')):
+    """Show or set when Faxbot sends to one recipient: the hours it takes faxes, and the busy hours and call hours
+    Faxbot learned."""
     api = state.api()
     path = '/routing/destinations/' + segment(number) + '/schedule'
     view = api.get(path)

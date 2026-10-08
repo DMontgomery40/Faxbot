@@ -121,6 +121,10 @@ export interface RecipientSchedule {
   hours_sentence: string;
   busy_hours: { label: string; sentence: string }[];
   busy_sentence: string;
+  // Learned call hours (M26): time a page and failed calls by hour, the typical hour, and what Faxbot does with them.
+  call_hours?: { label: string; sentence: string }[];
+  typical_hour?: string | null;
+  call_hours_sentence?: string;
   failed_try: { route: string | null; label: string; sentence: string; sources: string[]; read_on: string };
 }
 

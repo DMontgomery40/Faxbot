@@ -1940,7 +1940,8 @@ $ faxbot recipients fax-machine [OPTIONS] {number}
 
 ### `faxbot recipients schedule`
 
-Show or set when Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+Show or set when Faxbot sends to one recipient: the hours it takes faxes, and the busy hours and call hours
+Faxbot learned.
 
 **Usage**:
 
@@ -1959,7 +1960,7 @@ $ faxbot recipients schedule [OPTIONS] {number}
 * `--until HH:MM`: Time the recipient stops taking faxes, such as 18:00.
 * `--any-time`: The recipient takes faxes at any time (clears the days and hours).
 * `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
-* `--learn / --no-learn`: Whether Faxbot learns the hours this number is usually busy and holds ordinary faxes out of them.
+* `--learn / --no-learn`: Whether Faxbot learns when this number is usually busy, slow or failing, and holds ordinary faxes for a better hour.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients iaf`

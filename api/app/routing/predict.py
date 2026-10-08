@@ -223,6 +223,11 @@ class Link:
     # Each recorded call's (seconds outside the pages or None, seconds a page), for the spread of a call's time,
     # from the calls the engine that placed the newest one made (all engines when it made too few).
     samples: tuple = ()
+    # This hour's time a page against the number's typical hour (1.4: 40% more), from learned call hours
+    # (routing/schedule.py ``HourTiming.factor_at``), when both have enough calls; None otherwise. ``hour_scope``
+    # says whose calls: 'number' (calls to this number) or 'route' (every number on the trunk).
+    hour_factor: float | None = None
+    hour_scope: str | None = None
 
     def __post_init__(self):
         if self.coding is not None and self.coding not in CODINGS:
@@ -386,6 +391,29 @@ class Spread:
         if not self.learns:
             return 'an assumed spread of 15% either way'
         return f'an assumed spread of 15% either way until this number has {MIN_CALLS} faxes of its own'
+
+
+# The hour of the call (M26) -------------------------------------------------------------------------------
+
+# An hour within this share of the typical hour changes nothing (and says nothing).
+HOUR_EFFECT_FLOOR = 0.1
+
+
+def hour_effect(seconds, how, link):
+    """(seconds, clause) with the time after setup scaled by this hour's learned time a page (``Link.hour_factor``)
+    when it differs from the number's typical hour by at least ``HOUR_EFFECT_FLOOR``; unchanged otherwise."""
+    factor = link.hour_factor
+    if seconds is None or not factor or abs(factor - 1) < HOUR_EFFECT_FLOOR:
+        return seconds, how
+    setup = min(_setup(link), seconds)
+    adjusted = setup + (seconds - setup) * factor
+    before = duration_text(seconds)
+    if how.startswith(before):
+        how = duration_text(adjusted) + how[len(before):]
+    whose = 'calls to this number' if link.hour_scope != 'route' else 'calls on this phone line'
+    percent = round(abs(factor - 1) * 100)
+    change = 'more' if factor > 1 else 'less'
+    return adjusted, f'{how}, and {whose} take about {percent}% {change} time a page at this hour'
 
 
 def spread_for(seconds, link, *, learns=True):
@@ -552,6 +580,7 @@ def predict_from(facts, shape):
             'Delivered straight to a verified partner over the internet, with no phone call, so it costs nothing'),
             False, p90_seconds=0.0)
     seconds, how = line_seconds(shape, facts.link)
+    seconds, how = hour_effect(seconds, how, facts.link)
     # Only Faxbot's own trunk learns each number's calls (predict_facts.learn); a fax service keeps the assumed one.
     spread = spread_for(seconds, facts.link, learns=facts.route_key == 'sip')
     terms = facts.terms

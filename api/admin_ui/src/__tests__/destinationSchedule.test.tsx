@@ -22,6 +22,11 @@ const learned: RecipientSchedule = {
     + 'Urgent faxes always go at once.',
   failed_try: { route: 'sinch', label: 'Sinch', read_on: '2026-10-07', sources: ['https://sinch.com/voice/fax-api/'],
     sentence: 'Sinch publishes a price per page and does not say whether a failed try is charged.' },
+  call_hours: [{ label: 'Weekdays, 9:00 AM to 10:00 AM',
+    sentence: 'About 40 seconds a page on 10 delivered calls; 0 of 10 answered calls failed.' }],
+  typical_hour: 'About 20 seconds a page on 40 delivered calls; 0 of 40 answered calls failed.',
+  call_hours_sentence: 'An ordinary fax may wait up to 12 hours for an hour in which calls to this number take much '
+    + 'less time a page or fail less often after the fax machine answers. Urgent faxes always go at once.',
 };
 
 describe('Recipients, Details: when to send', () => {
@@ -43,6 +48,12 @@ describe('Recipients, Details: when to send', () => {
     expect(within(panel).getByTestId('schedule-busy-hours').textContent).toBe(
       'Weekdays, 9:00 AM to 10:00 AM: Busy on 6 of the last 8 weekdays Faxbot called at this hour.');
     expect(within(panel).getByTestId('schedule-failed-try').textContent).toBe(learned.failed_try.sentence);
+    // Learned call hours (M26): each hour with enough calls, the typical hour, and what Faxbot does with them.
+    expect(within(panel).getByTestId('schedule-call-hours').textContent).toBe(
+      'Weekdays, 9:00 AM to 10:00 AM: About 40 seconds a page on 10 delivered calls; 0 of 10 answered calls failed.');
+    expect(within(panel).getByTestId('schedule-typical-hour').textContent).toBe(
+      'Any hour: About 20 seconds a page on 40 delivered calls; 0 of 40 answered calls failed.');
+    expect(within(panel).getByTestId('schedule-call-hours-sentence').textContent).toBe(learned.call_hours_sentence);
     fireEvent.click(within(panel).getByLabelText('Takes faxes at any time'));
     expect(within(panel).getByTestId('schedule-days')).toBeTruthy();
     fireEvent.mouseDown(within(panel).getByLabelText("Recipient's time zone"));
@@ -68,7 +79,7 @@ describe('Recipients, Details: when to send', () => {
     render(<RecipientSchedulePanel client={client()} number={NUMBER} canWrite />);
     const panel = await screen.findByTestId('recipient-schedule');
     fireEvent.click(within(panel).getByLabelText('Takes faxes at any time'));
-    fireEvent.click(within(panel).getByRole('checkbox', { name: 'Learn the hours this number is usually busy' }));
+    fireEvent.click(within(panel).getByRole('checkbox', { name: 'Learn the hours this number is usually busy, slow or failing' }));
     fireEvent.click(within(panel).getByRole('button', { name: 'Save when to send' }));
     await waitFor(() => expect(writes).toEqual([{ time_zone: null, days: null, start: null, end: null,
       learn_busy: false }]));
