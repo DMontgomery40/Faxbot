@@ -213,7 +213,8 @@ def test_a_fax_the_provider_billed_that_faxbot_has_no_record_of_is_listed_and_ne
     # Read only: no fax, attempt, delivery or received fax changed or was created.
     assert snapshot(engine) == before
     params = provider.requests[0].url.params
-    assert (params['createTime>='], params['pageSize']) == ('2026-10-01T12:00:00Z', '100')
+    assert (params['createTime>'], params['createTime<'], params['pageSize']) == (
+        '2026-10-01T12:00:00Z', '2026-10-08T11:30:00Z', '100')
     rows = unrecorded(engine)
     assert [(row['provider_fax_id'], row['direction'], row['amount_micros']) for row in rows] == [
         ('01SYNTHETICOUT999', 'sent', 90_000), ('01SYNTHETICIN0999', 'received', None)]
@@ -454,3 +455,21 @@ def test_flowroute_keys_are_needed_and_said_where_to_add():
                    FLOWROUTE_SECRET_KEY='synthetic-secret')
     assert trunk_records(keyed)['readable'] is True
     assert trunk_records(keyed)['sources'][0]['url'].startswith('https://developer.flowroute.com/')
+
+
+def test_a_phaxio_listing_pages_by_the_page_size_phaxio_answered_with():
+    # Phaxio API v2.1 "List faxes", read 2026-10-08: paging is {total, per_page, page}; no largest page is named.
+    def fax(identity):
+        return {'id': identity, 'direction': 'sent', 'status': 'success', 'cost': 7, 'num_pages': 1,
+                'created_at': '2026-10-07T09:30:00.000-06:00', 'recipients': [{'phone_number': FAR}]}
+
+    def answer(request):
+        page = int(request.url.params['page'])
+        assert (request.url.params['created_after'], request.url.params['per_page']) == ('2026-10-07T00:00:00Z', '100')
+        items = [fax(page * 10 + index) for index in range(25 if page == 1 else 5)]
+        return httpx.Response(200, json={'success': True, 'message': 'Retrieved faxes', 'data': items,
+                                         'paging': {'total': 30, 'per_page': 25, 'page': page}})
+    provider = Provider(answer)
+    faxes, complete = PhaxioListing(values(), client_factory=provider.factory()).fetch(datetime(2026, 10, 7),
+                                                                                       datetime(2026, 10, 8))
+    assert complete and len(faxes) == 30 and len(provider.requests) == 2

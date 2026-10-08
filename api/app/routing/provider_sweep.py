@@ -150,8 +150,10 @@ class _Listing:
 class SinchListing(_Listing):
     """Sinch Fax API v3 "List faxes": ``GET /v3/projects/{projectId}/faxes``.
 
-    Basic auth with the access key; filtered by ``createTime`` (``createTime>=`` and ``createTime<`` as RFC 3339),
-    paged by ``pageSize`` and ``page`` with ``totalPages`` in the answer; each fax has ``id``, ``direction``
+    Basic auth with the access key; filtered by ``createTime>=`` and ``createTime<=`` (sent as ``createTime>`` and
+    ``createTime<`` with the value after "=", the documented form; full or partial RFC 3339 times), paged by
+    ``pageSize`` (at most 1000) and ``page`` with ``totalPages`` in the answer (``faxes``, ``totalItems``,
+    ``pageSize``, ``page``, ``totalPages``); ``format`` is left out, so the answer is JSON; each fax has ``id``, ``direction``
     (OUTBOUND or INBOUND), ``from``, ``to``, ``numberOfPages``, ``status``, ``createTime`` and ``price``
     (``amount``, ``currencyCode``) once the final price is calculated (Sinch Fax API v3 reference, read
     2026-10-08).
@@ -204,7 +206,7 @@ class SinchListing(_Listing):
         with self.client_factory() as client:
             while True:
                 body = self._get(client, url, auth=(key, secret), params={
-                    'createTime>=': _iso(start), 'createTime<': _iso(end), 'pageSize': self.PAGE_SIZE, 'page': page})
+                    'createTime>': _iso(start), 'createTime<': _iso(end), 'pageSize': self.PAGE_SIZE, 'page': page})
                 items = body.get('faxes')
                 if not isinstance(items, list):
                     raise ListingUnavailable('Sinch returned an unusable answer.')
@@ -222,7 +224,8 @@ class PhaxioListing(_Listing):
     """Phaxio API v2.1 "List faxes": ``GET https://api.phaxio.com/v2.1/faxes``.
 
     Basic auth with the API key and secret; filtered by ``created_after`` and ``created_before`` (RFC 3339), paged
-    by ``per_page`` (at most 1000) and ``page`` with ``paging.total`` in the answer; each fax has ``id``,
+    by ``per_page`` (largest not documented) and ``page`` with ``paging`` (``total``, ``per_page``, ``page``) in the
+    answer; each fax has ``id``,
     ``direction`` (sent or received), ``num_pages``, ``status``, ``is_test``, ``created_at``, ``caller_id``,
     ``from_number``, ``to_number``, ``recipients`` (each with ``phone_number``) and ``cost`` in cents (Phaxio API
     v2.1 reference, read 2026-10-08).
@@ -271,9 +274,11 @@ class PhaxioListing(_Listing):
                     raise ListingUnavailable('Phaxio returned an unusable answer.')
                 found.extend(fax for fax in map(self.parse, items) if fax is not None)
                 paging = body.get('paging') if isinstance(body.get('paging'), dict) else {}
-                total = paging.get('total')
-                if not items or (type(total) is int and page * self.PAGE_SIZE >= total) or (
-                        type(total) is not int and len(items) < self.PAGE_SIZE):
+                # Phaxio names no largest page, so the page size it answered with counts, not the one asked for.
+                total, size = paging.get('total'), paging.get('per_page')
+                size = size if type(size) is int and size > 0 else self.PAGE_SIZE
+                if not items or (type(total) is int and page * size >= total) or (
+                        type(total) is not int and len(items) < size):
                     return [fax for fax in found if fax.time is None or start <= fax.time < end], True
                 if page >= self.max_pages:
                     return found, False
