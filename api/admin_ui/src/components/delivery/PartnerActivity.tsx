@@ -11,6 +11,7 @@ import type { DirectNotice, DirectNoticeCandidate, DirectRepair, DirectTransfer 
 import { formatServerTime } from '../../api/time';
 import { FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, Notice } from './shared';
+import LoadFailed, { saysFailure } from '../common/LoadFailed';
 
 const DIRECTION = { outbound: 'Sent', inbound: 'Received' } as const;
 const WITHOUT = 'without';
@@ -186,19 +187,24 @@ export default function PartnerActivity({ client, canWrite, refresh }: {
 // Received → a fax's details: when the fax is a notice page, which document it announced.
 export function ReceivedNotice({ client, faxId }: { client: AdminAPIClient; faxId: string | null | undefined }) {
   const [text, setText] = useState<string | null>(null);
+  // A fax that is no notice page answers with no text; only a failed read is said.
+  const [unread, setUnread] = useState(false);
   useEffect(() => {
     let live = true;
     setText(null);
+    setUnread(false);
     if (!faxId) return undefined;
     client.getDirectNoticeForFax(faxId).then((value) => { if (live) setText(value.notice_text); })
-      .catch(() => undefined);
+      .catch((failure) => { if (live && saysFailure(failure)) setUnread(true); });
     return () => { live = false; };
   }, [client, faxId]);
-  if (!text) return null;
+  if (!text && !unread) return null;
   return (
     <Box my={1} data-testid="received-notice">
       <Typography variant="caption" color="text.secondary">Notice</Typography>
-      <Typography variant="body2">{text}</Typography>
+      {text ? <Typography variant="body2">{text}</Typography>
+        : <LoadFailed testId="received-notice-unread"
+          text="Whether this fax is a notice from a partner could not be checked. Try again." />}
     </Box>
   );
 }

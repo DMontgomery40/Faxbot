@@ -33,7 +33,7 @@ import {
 } from '@mui/material';
 import { Refresh as RefreshIcon, Send as SendIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
-import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { CostsUnread, FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
 import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
@@ -543,6 +543,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               </Typography>
             </Box>
           ) : (
+            <>
+            <CostsUnread costs={costs} />
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small">
                 <TableHead>
@@ -633,8 +635,9 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                 </TableBody>
               </Table>
             </TableContainer>
+            </>
           )}
-          
+
           {jobs.length > 0 && (
             <Box mt={2}>
               <Typography variant="caption" color="text.secondary">

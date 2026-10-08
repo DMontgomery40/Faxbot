@@ -53,7 +53,7 @@ import {
 } from './delivery/InboxDelivery';
 import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
-import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
+import { CostsUnread, InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
 import ImportDocument from './ImportDocument';
 import UncertainQueue from './work/UncertainQueue';
@@ -612,6 +612,7 @@ export default function Received({
 
       {(receiving || work !== null) && (
         <Box>
+          {shown.length > 0 && <CostsUnread costs={costs} />}
           {loading && rows.length === 0 ? (
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}><CircularProgress /></Paper>
           ) : shown.length === 0 ? (

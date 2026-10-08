@@ -655,3 +655,32 @@ describe('SIP trunk to a phone system', () => {
       .toBe('Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax.');
   });
 });
+
+describe('SIP trunk checks that could not be read', () => {
+  const status = (code: number) => http.get('/admin/sip/status', () => HttpResponse.json({ detail: 'Synthetic' }, { status: code }));
+
+  it("says when the phone system's reach could not be checked, and nothing without permission", async () => {
+    const shared = [http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null }))];
+    server.use(...shared, status(500));
+    const failed = render(<SipTrunkSettings client={client()} />);
+    expect((await screen.findByTestId('phone-system-reach-unread')).textContent).toBe(
+      'How your phone system reaches Faxbot could not be checked. Select Check trunk status to try again.');
+    failed.unmount();
+    server.use(...shared, status(403));
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('phone-system-reach-unread')).toBeNull();
+  });
+
+  it('says when it could not check whether received faxes reach Faxbot', async () => {
+    server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })), status(500));
+    render(<SipTrunkSettings client={client()} showReceiving />);
+    expect((await screen.findByTestId('sip-handover-unread')).textContent).toBe(
+      'Whether received faxes can reach Faxbot could not be checked. Select Check trunk status to try again.');
+  });
+});
