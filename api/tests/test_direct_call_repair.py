@@ -205,6 +205,25 @@ async def test_a_broken_call_is_completed_with_only_the_missing_pages(pair, tmp_
 
 
 @pytest.mark.asyncio
+async def test_the_certainty_question_asks_the_partner_through_the_real_repair_sender(pair, tmp_path):
+    """AV's PartnerQuestion, without a stand-in: its question is this module's signed call query, answered by B."""
+    from api.app.work.certainty import PartnerQuestion
+    job, attempt, _, _ = await broken_call(pair, tmp_path, held=6)
+    ask = PartnerQuestion(None, pair['a'])._ask_function()
+    peer = pair['a'].store.get_peer(pair['b_on_a']['id'])
+    # The call record as AV's checks read it (reflected, so its times are datetimes on both databases).
+    records = sa.Table('sip_call_records', sa.MetaData(), autoload_with=pair['configuration'].engine)
+    with pair['configuration'].engine.connect() as connection:
+        call = dict(connection.execute(sa.select(
+            records.c.caller, records.c.called, records.c.started_at, records.c.answered_at, records.c.ended_at,
+            records.c.pages.label('pages_sent')).where(records.c.attempt_id == attempt)).mappings().one())
+    answer = await ask(peer, call, 10)
+    assert answer['type'] == 'call_pages' and answer['pages_held'] == 6 and answer['envelope']
+    # Asking changes nothing: the fax and its broken attempt stay as they were.
+    assert pair['delivery'].get(job)['state'] == 'failed'
+
+
+@pytest.mark.asyncio
 async def test_damaged_pages_without_error_correction_count_as_missing(pair, tmp_path):
     await broken_call(pair, tmp_path, held=6, damaged=5)
     await repairs(pair).step()

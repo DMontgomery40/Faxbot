@@ -484,10 +484,10 @@ class PartnerQuestion:
         if self.asker is not None:
             return self.asker
         try:
-            from ..direct.repair import RepairSender
+            from ..direct.repair import CallRepair
         except ImportError:
             return None
-        sender = RepairSender(self.service)
+        sender = CallRepair(self.service)  # its signed call question (POST /direct/calls/pages)
 
         async def ask(peer, call, total_pages):
             from ..config_runtime import run_lifecycle_step
