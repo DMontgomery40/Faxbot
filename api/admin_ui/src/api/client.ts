@@ -6,6 +6,9 @@ import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from '.
 import type { CodecFax, CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type {
+  DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
+} from './digitalTypes';
+import type {
   CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
   ChecklistBuildRequest, ChecklistItem,
 } from './caseTypes';
@@ -1487,6 +1490,60 @@ class AdminAPIClient {
   async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
     : Promise<TollFreeSuggestions> {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
+  }
+
+  // Direct messages and FHIR (Providers → In use): the HISP account and FHIR clients; secrets are write-only.
+  async getDigitalAccounts(): Promise<DigitalAccountsState> {
+    return this.json('/digital/accounts');
+  }
+
+  async addDigitalAccount(account: DigitalAccountInput, expectedGeneration: number): Promise<DigitalAccountsState> {
+    return this.json('/digital/accounts', { method: 'POST',
+      body: JSON.stringify({ ...account, expected_generation: expectedGeneration }) });
+  }
+
+  async updateDigitalAccount(key: string, change: DigitalAccountPatch, expectedGeneration: number)
+    : Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}`, { method: 'PATCH',
+      body: JSON.stringify({ ...change, expected_generation: expectedGeneration }) });
+  }
+
+  async makeDigitalSigningKey(key: string, algorithm: 'RS384' | 'ES384' | null, expectedGeneration: number)
+    : Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}/signing-key`, { method: 'POST',
+      body: JSON.stringify({ algorithm, expected_generation: expectedGeneration }) });
+  }
+
+  async loadDigitalTrustBundle(key: string, bundle: { url?: string; content?: string }): Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}/trust-bundle`, { method: 'POST', body: JSON.stringify(bundle) });
+  }
+
+  // A recipient's Direct address and FHIR endpoint (Recipients → Details); used only once confirmed.
+  async getDigitalRecipient(number: string): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}`);
+  }
+
+  async addDigitalAddress(number: string, address: DigitalAddressInput): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}`, { method: 'POST', body: JSON.stringify(address) });
+  }
+
+  async changeDigitalAddress(number: string, addressId: string, action: 'confirm' | 'withdraw' | 'dismiss',
+    note?: string | null): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}/addresses/${id(addressId)}`, { method: 'POST',
+      body: JSON.stringify({ action, note: note || null }) });
+  }
+
+  async suggestDigitalFromNppes(number: string, npi: string): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}/nppes`, { method: 'POST', body: JSON.stringify({ npi }) });
+  }
+
+  // Direct messages and FHIR documents sent and received (Sent, Received).
+  async listDigitalMessages(direction?: 'out' | 'in'): Promise<{ messages: DigitalMessage[] }> {
+    return this.json(`/digital/messages${query({ direction })}`);
+  }
+
+  async getFaxDigitalMessages(jobId: string): Promise<{ job_id: string; messages: DigitalMessage[] }> {
+    return this.json(`/digital/faxes/${id(jobId)}`);
   }
 
   // Whether lightening shaded areas and removing specks would have saved time on recent faxes, or what it saved.
