@@ -129,15 +129,53 @@ def requests(reach):
     return reach.inner
 
 
+def repairs(pair, *, delivery=True):
+    """A's repair step, with A's outbound store (``delivery`` False: as if Faxbot stopped before updating the fax)."""
+    return CallRepair(pair['a'], delivery=(lambda: pair['delivery']) if delivery else None)
+
+
+def attempts(pair, job):
+    table = pair['delivery'].attempts
+    with pair['configuration'].engine.connect() as connection:
+        return {row['id']: dict(row) for row in connection.execute(
+            sa.select(table).where(table.c.job_id == job)).mappings()}
+
+
+def events(pair, job):
+    return [event['kind'] for event in pair['delivery'].history(job)]
+
+
 @pytest.mark.asyncio
 async def test_a_broken_call_is_completed_with_only_the_missing_pages(pair, tmp_path):
     job, attempt, call_fax, _ = await broken_call(pair, tmp_path, held=6)
     to_b = pair['to_b']
     posts_before = to_b.posts
-    assert await CallRepair(pair['a']).step() is False
+    assert await repairs(pair).step() is False
     (row,) = [r for r in RepairStore(pair['a'].store.engine).recent() if r['role'] == 'sender']
     assert row['state'] == 'completed' and row['pages_held'] == 6 and row['total_pages'] == 10
     assert row['attempt_id'] == attempt and row['message_id']
+    # The fax shows delivered, completed by the repair's own attempt; the broken attempt is kept as it was.
+    fax = pair['delivery'].get(job)
+    assert (fax['state'], fax['attempt_id']) == ('success', row['repair_id'])
+    tried = attempts(pair, job)
+    assert (tried[attempt]['phase'], tried[attempt]['error_category']) == ('failed', 'partly_sent')
+    repaired = tried[row['repair_id']]
+    assert repaired['phase'] == 'success' and repaired['sequence'] == tried[attempt]['sequence'] + 1
+    assert repaired['submitted_at'] is not None and repaired['error_category'] is None
+    with pair['configuration'].engine.connect() as connection:
+        status = connection.execute(sa.text('SELECT status, error FROM fax_jobs WHERE id = :id'), {'id': job}).one()
+        route = connection.execute(sa.text('SELECT route FROM delivery_attempt_costs WHERE id = :id'),
+                                   {'id': row['repair_id']}).scalar()
+    assert tuple(status) == ('success', None)
+    assert route == 'direct'  # the pages that went directly are a direct delivery, never priced as a call
+    assert events(pair, job)[-2:] == ['repair_started', 'repair_completed']
+    # A late result for the broken call can no longer move the fax.
+    from api.app.outbound_store import DeliveryConflict
+    _, profile = pair['delivery'].attempt_context(job, attempt)
+    with pytest.raises(DeliveryConflict):
+        pair['delivery'].observe(job, attempt_id=attempt, profile_id=profile.id, provider_sid=None, status='failed',
+                                 event_key='late-broken-call', error='The call broke after page 6.')
+    assert pair['delivery'].get(job)['state'] == 'success'
     # One question and one delivery of the four missing pages; nothing else was sent.
     assert to_b.posts - posts_before == 2
     (delivered,) = stored_document(pair['b_client'])
@@ -153,18 +191,23 @@ async def test_a_broken_call_is_completed_with_only_the_missing_pages(pair, tmp_
         assert whole.n_frames == 10
     sent = pair['a'].store.find('outbound', row['message_id'])
     assert sent['state'] == 'accepted' and sent['kind'] == 'repair'
+    assert sent['attempt_id'] == row['repair_id'] != attempt  # its own attempt, never the broken one
+    from api.app.direct.http import delivery_text
+    assert delivery_text({**sent, 'organization': 'Valley Hospital'}) == (
+        'Completed directly by Valley Hospital after the call broke: only the missing pages went again, and Valley '
+        'Hospital now holds the whole fax.')
     listed = pair['b_client'].get('/direct/repairs', headers=ADMIN).json()['repairs']
     assert listed[0]['status'] == ('Completed: the missing pages went directly and Valley Hospital holds the whole '
                                    'fax. The call brought the first 6 of 10 pages; pages 7 to 10 came directly.')
     # Asked once: a later step does not ask about the same call again.
-    await CallRepair(pair['a']).step()
+    await repairs(pair).step()
     assert to_b.posts - posts_before == 2
 
 
 @pytest.mark.asyncio
 async def test_damaged_pages_without_error_correction_count_as_missing(pair, tmp_path):
     await broken_call(pair, tmp_path, held=6, damaged=5)
-    await CallRepair(pair['a']).step()
+    await repairs(pair).step()
     (row,) = [r for r in RepairStore(pair['a'].store.engine).recent() if r['role'] == 'sender']
     assert row['pages_held'] == 4 and row['state'] == 'completed'
     (delivered,) = stored_document(pair['b_client'])
@@ -180,21 +223,37 @@ async def test_when_the_partner_cannot_find_the_call_nothing_is_sent(pair, tmp_p
         connection.execute(sa.text('UPDATE inbound_faxes SET from_number = :other WHERE id = :id'),
                            {'other': '+15550109999', 'id': call_fax})
     posts_before = pair['to_b'].posts
-    await CallRepair(pair['a']).step()
+    await repairs(pair).step()
     (row,) = [r for r in RepairStore(pair['a'].store.engine).recent() if r['role'] == 'sender']
     assert row['state'] == 'expired' and row['pages_held'] == 0 and row['message_id'] is None
     assert pair['to_b'].posts - posts_before == 1  # the question only
     assert stored_document(pair['b_client']) == [] and pair['delivery'].get(job)['state'] == 'failed'
+    assert len(attempts(pair, job)) == 1  # no attempt of its own: nothing was sent
 
 
 @pytest.mark.asyncio
 async def test_when_the_partner_holds_every_page_nothing_is_sent_again(pair, tmp_path):
-    await broken_call(pair, tmp_path, held=10)
+    job, attempt, _, _ = await broken_call(pair, tmp_path, held=10)
     posts_before = pair['to_b'].posts
-    await CallRepair(pair['a']).step()
+    # Faxbot stops after the partner's answer, before the fax is updated: the fax still reads failed.
+    await repairs(pair, delivery=False).step()
     (row,) = [r for r in RepairStore(pair['a'].store.engine).recent() if r['role'] == 'sender']
     assert row['state'] == 'completed' and row['pages_held'] == 10
     assert pair['to_b'].posts - posts_before == 1 and stored_document(pair['b_client']) == []
+    assert pair['delivery'].get(job)['state'] == 'failed'
+    # The next step finishes it: delivered, with an attempt of its own that sent nothing and is never priced.
+    await repairs(pair).step()
+    fax = pair['delivery'].get(job)
+    assert (fax['state'], fax['attempt_id']) == ('success', row['repair_id'])
+    repaired = attempts(pair, job)[row['repair_id']]
+    assert repaired['phase'] == 'success' and repaired['submitted_at'] is None
+    assert attempts(pair, job)[attempt]['phase'] == 'failed'
+    with pair['configuration'].engine.connect() as connection:
+        assert connection.execute(sa.text('SELECT COUNT(*) FROM delivery_attempt_costs WHERE id = :id'),
+                                  {'id': row['repair_id']}).scalar() == 0
+    assert pair['to_b'].posts - posts_before == 1
+    await repairs(pair).step()  # once only
+    assert events(pair, job).count('repair_completed') == 1
 
 
 def test_a_question_about_a_call_must_be_signed_by_a_verified_partner(pair):
@@ -248,12 +307,12 @@ async def test_an_unreachable_partner_is_asked_again_only_after_a_pause(pair, tm
     _, attempt, _, reach = await broken_call(pair, tmp_path, held=6)
     reach.down = True
     posts_before = pair['to_b'].posts
-    await CallRepair(pair['a']).step()
-    await CallRepair(pair['a']).step()
+    await repairs(pair).step()
+    await repairs(pair).step()
     assert RepairStore(pair['a'].store.engine).for_attempt(attempt) is None
     assert attempt in repair_module._BACKOFF and repair_module._BACKOFF[attempt][1] == 1  # asked once, then paused
     reach.down = False
     repair_module._BACKOFF.pop(attempt)
-    await CallRepair(pair['a']).step()
+    await repairs(pair).step()
     assert RepairStore(pair['a'].store.engine).for_attempt(attempt)['state'] == 'completed'
     assert pair['to_b'].posts - posts_before == 2

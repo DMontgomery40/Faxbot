@@ -1652,3 +1652,20 @@ def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():
     assert fax._assigned_route(Api('fax_image', refuse=True), job) == ('Provider', 'Direct delivery')
     assert fax.came_through({'backend': 'direct'}) == 'Direct delivery'
 
+
+def test_sent_says_a_broken_call_was_completed_directly_by_the_partner():
+    from app.cli.commands import fax
+    sentence = ('Completed directly by County Clinic after the call broke: only the missing pages went again, and '
+                'County Clinic now holds the whole fax.')
+
+    class Api:
+        def get(self, path, params=None):
+            if path.endswith('/cost'):
+                return {'routes': ['sip', 'direct']}
+            if path.endswith('/delivery'):
+                return {'attempt': {'id': 'repair-attempt'}}
+            return {'deliveries': [{'direction': 'outbound', 'message_id': 'pages-message', 'job_id': 'f' * 32,
+                                    'state': 'accepted', 'kind': 'repair', 'status': sentence}]}
+    assert fax._assigned_route(Api(), {'id': 'f' * 32, 'backend': 'sip'}) == ('Provider', sentence)
+    assert fax.EVENT_LABELS['repair_completed'] == 'Completed directly by the partner after the call broke'
+

@@ -29,8 +29,11 @@ def _background(app):
     async def expire():
         return await run_lifecycle_step(step)
 
+    from .relay_http import _delivery
+
     async def repair():
-        return await CallRepair(service).step()
+        # A fax completed through the partner shows delivered in this installation's Sent.
+        return await CallRepair(service, delivery=lambda: _delivery(app)).step()
     return [('faxbot-direct-transfers', repeat_async(expire, interval=900.0, initial_delay=45.0,
                                                      warning='Unfinished direct transfers are cleaned up later.')),
             ('faxbot-direct-call-repair', repeat_async(repair, interval=120.0, initial_delay=50.0,

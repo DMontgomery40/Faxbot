@@ -28,10 +28,13 @@ signed statement says they are missing, and only to a partner verified by the
 challenge fax, and the receiver answers only a partner it enrolled (as it
 accepts documents only from one).
 
-What is not done here: the sent fax's own record stays "partly sent", because
-changing a finished delivery belongs to the delivery store; the repair, its
-pages and the partner's statement are shown beside it (Sent details, Delivery
-routes → Partners, ``faxbot recipients partners repairs``).
+Once the partner holds the whole fax, the delivery store completes it
+(``OutboundStore.complete_repair``): the repair has its own attempt (its ID is
+the repair's), the broken attempt is kept exactly as it was, and the fax shows
+delivered, completed directly by the partner. The pages that went directly are
+recorded as a direct delivery, never as a call. The repair, its pages and the
+partner's statement are also shown beside it (Sent details, Delivery routes →
+Partners, ``faxbot recipients partners repairs``).
 """
 from datetime import timedelta
 import io
@@ -169,6 +172,16 @@ class RepairStore:
             return [dict(row) for row in connection.execute(sa.select(self.repairs).order_by(
                 self.repairs.c.created_at.desc()).limit(limit)).mappings()]
 
+    def completed_but_failed(self, *, limit=20):
+        """Completed repairs whose fax still reads failed on the broken attempt (Faxbot stopped between the two)."""
+        r, d = self.repairs, self.deliveries
+        query = (sa.select(r).select_from(r.join(d, d.c.id == r.c.job_id))
+                 .where(r.c.role == 'sender', r.c.state == 'completed', d.c.state == 'failed',
+                        d.c.attempt_id == r.c.attempt_id)
+                 .order_by(r.c.updated_at).limit(limit))
+        with read_connection(self.engine) as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
 
 def _ecm(engine, call_key):
     """Whether the call used error correction, from its last DCS (T.30 bit 27), or None when not known."""
@@ -251,9 +264,11 @@ def slice_pages(data, first):
 
 
 class CallRepair:
-    def __init__(self, service):
+    def __init__(self, service, *, delivery=None):
+        """``delivery()`` returns this installation's outbound store (None where only the partner's side runs)."""
         self.service = service
         self.store = RepairStore(service.store.engine)
+        self.delivery = delivery or (lambda: None)
 
     # Receiving: the partner's side ----------------------------------------------------------------
     def answer(self, statement, signature, *, now=None):
@@ -420,6 +435,9 @@ class CallRepair:
             if image is None or image.pages != total:
                 held = 0  # The pages would not line up with the call's: nothing is sent; the fax waits for you.
         state = 'completed' if held == total else 'confirmed' if held > 0 else 'expired'
+        delivery = self.delivery()
+        if state == 'confirmed' and delivery is None:
+            return None  # The pages go only with their own attempt, which the outbound store writes; asked later.
         envelope = answer['envelope']
         row, created = await run_lifecycle_step(lambda: self.store.record({
             'role': 'sender', 'repair_id': repair_id, 'peer_id': peer['id'], 'job_id': call['job_id'],
@@ -428,8 +446,21 @@ class CallRepair:
             'total_pages': total, 'pages_held': held,
             'ecm': None if answer.get('ecm') is None else int(bool(answer['ecm'])), 'state': state,
             'statement': envelope['statement'], 'signature': envelope['signature']}))
+        if created and state == 'completed':
+            # The partner already holds every page: nothing goes again, and the fax shows delivered.
+            await run_lifecycle_step(lambda: self.delivered(row, sent=False))
         if not created or state != 'confirmed':
             return state
+        from ..outbound_store import DeliveryConflict
+        try:
+            # The repair's own attempt (its ID is the repair's); the broken attempt is never reused or changed.
+            await run_lifecycle_step(lambda: delivery.begin_repair(call['job_id'], broken_attempt_id=call['attempt_id'],
+                                                                   attempt_id=repair_id))
+        except DeliveryConflict:
+            # The fax moved on (someone sent it again): nothing is sent.
+            await run_lifecycle_step(lambda: self.store.update(row['id'], state='expired'))
+            return 'expired'
+        await run_lifecycle_step(lambda: self._direct_route(call, repair_id))
         data, pages = slice_pages(image.data, held)
         from .faximage import check
         check(data, image.facts, pages)
@@ -445,7 +476,7 @@ class CallRepair:
         import hashlib
         digest = hashlib.sha256(data).hexdigest()
         await run_lifecycle_step(lambda: service.store.record_outbound(
-            message_id=message_id, peer_id=peer['id'], job_id=call['job_id'], attempt_id=call['attempt_id'],
+            message_id=message_id, peer_id=peer['id'], job_id=call['job_id'], attempt_id=repair_id,
             recipient_number=peer['phone_number'], digest=digest, size=len(data), manifest=manifest.decode('ascii'),
             kind=KIND))
         await run_lifecycle_step(lambda: self.store.update(row['id'], state='sent'))
@@ -456,7 +487,36 @@ class CallRepair:
             # Refused (nothing accepted) or not known yet: a later step asks the partner, never resends blindly.
             return 'sent'
         await run_lifecycle_step(lambda: self.store.update(row['id'], state='completed'))
+        await run_lifecycle_step(lambda: self.delivered(row, sent=True))
         return 'completed'
+
+    def _direct_route(self, call, attempt_id):
+        """Record the repair's attempt as a direct delivery, so its pages are never priced as a call."""
+        from ..routing.store import RouteStore
+        RouteStore(self.store.engine).record_decision(attempt_id=attempt_id, job_id=call['job_id'],
+                                                      destination=call['to_number'], route='direct',
+                                                      reason='direct_peer', provider_id='direct')
+
+    def delivered(self, row, *, sent):
+        """Show the fax a completed repair made whole as delivered (``OutboundStore.complete_repair``).
+
+        False when the outbound store is not available here, or the fax moved on (someone sent it again).
+        """
+        from ..outbound_store import DeliveryConflict
+        delivery = self.delivery()
+        if delivery is None or row.get('role') != 'sender' or not row.get('job_id'):
+            return False
+        try:
+            return delivery.complete_repair(row['job_id'], broken_attempt_id=row['attempt_id'],
+                                            attempt_id=row['repair_id'], sent=sent)
+        except DeliveryConflict:
+            return False
+
+    def failed(self, row):
+        """The partner signed that the missing pages did not arrive: the repair's attempt failed."""
+        delivery = self.delivery()
+        if delivery is not None and row.get('job_id'):
+            delivery.fail_repair(row['job_id'], attempt_id=row['repair_id'])
 
     async def settle(self, row):
         """A repair whose pages were sent but whose answer was lost: ask the partner (this fences a no)."""
@@ -466,9 +526,11 @@ class CallRepair:
             return None
         if delivery['state'] == 'accepted':
             await run_lifecycle_step(lambda: self.store.update(row['id'], state='completed'))
+            await run_lifecycle_step(lambda: self.delivered(row, sent=True))
             return 'completed'
         if delivery['state'] == 'refused':
             await run_lifecycle_step(lambda: self.store.update(row['id'], state='expired'))
+            await run_lifecycle_step(lambda: self.failed(row))
             return 'expired'
         from .service import DirectReconciler
 
@@ -485,8 +547,10 @@ class CallRepair:
         outcome = await DirectReconciler(service, _NoDelivery()).reconcile(delivery)
         if outcome == 'accepted':
             await run_lifecycle_step(lambda: self.store.update(row['id'], state='completed'))
+            await run_lifecycle_step(lambda: self.delivered(row, sent=True))
         elif outcome == 'not_received':
             await run_lifecycle_step(lambda: self.store.update(row['id'], state='expired'))
+            await run_lifecycle_step(lambda: self.failed(row))
         return outcome
 
     async def step(self):
@@ -502,6 +566,12 @@ class CallRepair:
                 await self.settle(row)
             except Exception:
                 logging.getLogger(__name__).warning('A repaired fax call is confirmed with the partner later.')
+        if self.delivery() is not None:
+            for row in await run_lifecycle_step(self.store.completed_but_failed):
+                try:
+                    await run_lifecycle_step(lambda: self.delivered(row, sent=row['message_id'] is not None))
+                except Exception:
+                    logging.getLogger(__name__).warning('A fax completed through a partner shows delivered shortly.')
         return False
 
 

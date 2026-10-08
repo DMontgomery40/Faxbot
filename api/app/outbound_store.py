@@ -24,7 +24,8 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
-    'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused'})
+    'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
+    'repair_started', 'repair_completed', 'repair_failed'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -1268,6 +1269,81 @@ class OutboundStore:
             return ('Faxbot could not confirm that this fax was going by a route your rules allow, so nothing was '
                     'sent. It waits for you in Sent.')
         return None
+
+    # A call that broke part way, completed through an enrolled partner (direct/repair.py) -----------------------------
+
+    def _repair_attempt_on(self, connection, job_id, *, broken_attempt_id, attempt_id, sent, now):
+        """The repair's own attempt, written once beside the broken one (which is never changed); its row."""
+        attempt = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == attempt_id)).mappings().one_or_none()
+        if attempt is not None:
+            if attempt['job_id'] != job_id:
+                raise DeliveryConflict('This repair belongs to another fax.')
+            return dict(attempt)
+        row = self._row(connection, job_id)
+        broken = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == broken_attempt_id)).mappings().one_or_none()
+        if (row is None or row['state'] != 'failed' or row['attempt_id'] != broken_attempt_id or broken is None
+                or broken['job_id'] != job_id or broken['error_category'] != 'partly_sent'):
+            raise DeliveryConflict('Only a fax whose call broke part way can be completed through a partner.')
+        sequence = connection.scalar(sa.select(sa.func.max(self.attempts.c.sequence)).where(
+            self.attempts.c.job_id == job_id)) or 0
+        # Pages that go directly are submitted now; a partner that already holds every page needs nothing sent,
+        # so that attempt is never priced as a call.
+        values = dict(id=attempt_id, job_id=job_id, sequence=sequence + 1, profile_id=broken['profile_id'],
+                      phase='in_progress', created_at=now, submitted_at=now if sent else None)
+        connection.execute(self.attempts.insert().values(**values))
+        _event(connection, self.events, job_id, 'repair_started', now, attempt_id=attempt_id)
+        return values
+
+    def begin_repair(self, job_id, *, broken_attempt_id, attempt_id, now=None):
+        """Write the attempt that sends only the pages a broken call left out, directly to the enrolled partner.
+
+        Only for a fax that failed part way through its call (``partly_sent``) and is still on that attempt;
+        raises DeliveryConflict otherwise. The broken attempt is kept as it was, and the fax stays failed until
+        the partner accepts the pages (``complete_repair``) or says it did not (``fail_repair``).
+        """
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            self._repair_attempt_on(connection, job_id, broken_attempt_id=broken_attempt_id, attempt_id=attempt_id,
+                                    sent=True, now=now)
+
+    def complete_repair(self, job_id, *, broken_attempt_id, attempt_id, sent=True, now=None):
+        """The partner holds the whole fax: the repair's attempt succeeded and the fax is delivered.
+
+        ``sent`` False: the partner already held every page, so nothing went again. Idempotent; False when the
+        fax was already completed, or has moved on (someone sent it again), which it then leaves alone.
+        """
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            attempt = self._repair_attempt_on(connection, job_id, broken_attempt_id=broken_attempt_id,
+                                              attempt_id=attempt_id, sent=sent, now=now)
+            if attempt['phase'] not in TERMINAL:
+                connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
+                    phase='success', completed_at=now))
+            row = self._row(connection, job_id)
+            if row is None or row['state'] != 'failed' or row['attempt_id'] != broken_attempt_id:
+                return False
+            # A late result for the broken attempt can no longer move the fax: it is no longer the current one.
+            self._update(connection, row, now, state='success', attempt_id=attempt_id, claim_owner=None,
+                         claim_token=None, claim_expires_at=None, next_poll_at=None)
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == job_id).values(
+                status='success', error=None, updated_at=now))
+            _event(connection, self.events, job_id, 'repair_completed', now, attempt_id=attempt_id)
+            return True
+
+    def fail_repair(self, job_id, *, attempt_id, now=None):
+        """The partner signed that the missing pages did not arrive: the repair's attempt failed, and the fax still
+        waits for a person, as a broken call does. False when there is no such unfinished attempt."""
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            changed = connection.execute(self.attempts.update().where(
+                self.attempts.c.id == attempt_id, self.attempts.c.job_id == job_id,
+                self.attempts.c.phase.not_in(tuple(TERMINAL))).values(
+                phase='failed', error_category='partner_not_received', completed_at=now)).rowcount
+            if changed:
+                _event(connection, self.events, job_id, 'repair_failed', now, attempt_id=attempt_id)
+            return bool(changed)
 
     def fallback_count(self, job_id):
         with self.configuration.engine.connect() as connection:
