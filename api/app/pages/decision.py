@@ -181,3 +181,110 @@ def decide(route_key, destination, normal, dense, *, card=None, predict=None):
         worth = False
     return Decision(worth, before, after, pages_saved, max(0, seconds_saved) if seconds_saved is not None else None,
                     before.basis)
+
+
+# The most faithful pages at the same expected bill (fax-friendly shading, pages/friendly.py) ----------------------
+
+# Candidates whose expected bill is within this share of one billing step of the cheapest's (a time increment, or a
+# page at a page price) cost the same: under a 5% chance of one more billed step. Set by the lead, 2026-10-08.
+TIE_STEPS = 0.05
+# A phone line with no rate card still bills by time; it is compared in whole minutes, the step most carriers use.
+DEFAULT_INCREMENT_SECONDS = 60
+PHONE_ROUTES = frozenset({'sip', 'freeswitch'})
+NAMED_REASONS = ('administrator', 'deadline', 'capacity')
+
+
+@dataclass(frozen=True)
+class Bill:
+    """What one candidate is expected to be billed; None is unknown, never 0."""
+    cost: int | None  # expected money, in micros of the card's currency
+    steps: float | None  # expected billing steps by time (expected billed seconds / the increment)
+    pages: float | None  # pages billed at a page price (0 on a route that has none)
+
+
+def bill(prediction, *, card=None, route=None):
+    """The Bill of one priced candidate. From the shared predictor's expected bill (``routing.predict.bill_of``:
+    billed seconds expected over the call's duration spread, and the pages expected under a page-or-time rule) when
+    it has one; else (the stand-in's predictions, or a route the shared predictor has no billing step for) the card's
+    rounding of the predicted seconds, and a phone line with no card in whole minutes."""
+    from ..routing import predict as shared
+    from ..routing.costs import billed_seconds
+    cost = prediction.cost.micros if prediction.cost is not None else None
+    expected = increment = expected_pages = None
+    if isinstance(prediction, shared.Prediction):
+        found = shared.bill_of(prediction)
+        expected, increment = found.billed_seconds, found.increment_seconds
+        expected_pages = prediction.expected_billed_pages
+    if (expected is None or not increment) and prediction.seconds is not None:
+        per_page = card is not None and getattr(card, 'per_page_micros', 0)
+        by_time = (card is not None and getattr(card, 'per_minute_micros', 0)) or (
+            route in PHONE_ROUTES and not per_page)
+        if by_time and card is not None:
+            expected, increment = billed_seconds(card, prediction.seconds), card.billing_increment_seconds
+        elif by_time:
+            increment = DEFAULT_INCREMENT_SECONDS
+            expected = math.ceil(prediction.seconds / increment) * increment
+        else:
+            expected = increment = None
+    steps = expected / increment if expected is not None and increment else None
+    if expected_pages is not None:
+        pages = float(expected_pages)
+    else:
+        pages = float(prediction.billed_pages) if prediction.billed_pages is not None else None
+    return Bill(cost, steps, pages)
+
+
+def _within(value, least):
+    if value is None or least is None:
+        return value is None and least is None
+    return value - least <= TIE_STEPS + 1e-9
+
+
+def same_bill(candidate, cheapest):
+    """Whether ``candidate`` (a Bill) is expected to cost the same as ``cheapest``: within ``TIE_STEPS`` of a
+    step in time and in pages, and both priced or both unpriced."""
+    if (candidate.cost is None) != (cheapest.cost is None):
+        return False
+    if candidate.steps is None and cheapest.steps is None and candidate.pages is None and cheapest.pages is None:
+        return candidate.cost == cheapest.cost
+    return _within(candidate.steps, cheapest.steps) and _within(candidate.pages, cheapest.pages)
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One way to send this attempt's pages: a rendering ('as_is', 'screened', 'whitened') in a layout."""
+    rendering: str
+    layout: str
+    prediction: Prediction
+    shape: Shape
+    faithful: tuple  # fidelity.Fidelity.rank: smaller is more faithful; the pages as they are rank first
+    bill: Bill
+
+
+RENDERING_ORDER = {'as_is': 0, 'screened': 1, 'whitened': 2}
+
+
+def choose(candidates, *, faster=None):
+    """(the candidate to send, whether a faster one won for ``faster``).
+
+    The layout ranking (``rank``: expected cost, expected billing steps, billed pages, unrounded seconds, the
+    simpler layout) finds the cheapest candidate. The candidates whose Bill is the same as its (``same_bill``:
+    within ``TIE_STEPS`` of a billing step) form the tie band; among them the most faithful wins, then ``rank``
+    again, so with nothing but the pages as they are this is exactly the layout ranking, and a candidate outside
+    the band (a strictly higher bill) never wins. With a named reason (``NAMED_REASONS``) less time on the line
+    comes before fidelity, still only inside the band."""
+    if faster is not None and faster not in NAMED_REASONS:
+        raise ValueError('Unknown reason for faster pages')
+
+    def ranked(item):
+        return rank(item.prediction, item.shape) + (RENDERING_ORDER[item.rendering],)
+    cheapest = min(candidates, key=ranked)
+    tied = [item for item in candidates if same_bill(item.bill, cheapest.bill)]
+    best = min(tied, key=lambda item: (item.faithful, ranked(item)))
+    if faster is None:
+        return best, False
+
+    def seconds(item):
+        return item.prediction.seconds if item.prediction.seconds is not None else math.inf
+    quick = min(tied, key=lambda item: (seconds(item), item.faithful, ranked(item)))
+    return quick, quick is not best

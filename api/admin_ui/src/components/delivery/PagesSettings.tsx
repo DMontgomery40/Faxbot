@@ -4,17 +4,18 @@ import AdminAPIClient from '../../api/client';
 import type { RecipientPages, RoutePages } from '../../api/sipTypes';
 import { parseServerTime } from '../../api/time';
 import { DeliveryError } from './shared';
+import friendlyWords from './faxFriendlySetting.json';
 
 // Dense pages. Recipients, Details: how long a page this fax machine takes (learned from calls) and this
 // number's own page settings. Providers, Delivery routes: long pages for each route, and the installation's
 // setting for blank space at the bottom of pages.
 
 const TRIM_LABEL = 'Blank space at the bottom of pages';
-// Fax-friendly pages (pages/friendly.py): this recipient's own choice beats the setting for all faxes.
-const SHADING_LABEL = 'Lighten shaded areas for this recipient';
-const SHADING_DEFAULT: Record<string, string> = {
-  where_it_saves: 'where it saves time', always: 'always', never: 'never',
-};
+// Fax-friendly shading (pages/friendly.py): this recipient's own choice beats the setting for all faxes. The words
+// are the server's own (faxFriendlySetting.json).
+const SHADING_LABEL = friendlyWords.recipient_label;
+const SHADING_DEFAULT: Record<string, string> = Object.fromEntries(
+  Object.entries(friendlyWords.choices).map(([value, [label]]) => [value, label.toLowerCase()]));
 const TRIM_HELP = 'Machines without error correction take time for every line of a page, even a blank one. '
   + 'Faxbot leaves out the blank bottom of pages it made from your documents, never of scans or pictures.';
 

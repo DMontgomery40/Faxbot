@@ -323,8 +323,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'min_success_percent': values.route_min_success_percent,
             # Faxes to the installation's own numbers become received faxes here, with no call.
             'local_delivery': values.local_delivery_enabled,
-            # Lighten shaded areas and remove specks on documents you send (pages/friendly.py); off by default.
+            # Fax-friendly shading on documents you send (pages/friendly.py), and the opt-in to make light areas
+            # white (off by default).
             'fax_friendly_documents': values.fax_friendly_documents,
+            'fax_friendly_whiten': values.fax_friendly_whiten,
         },
         'intake': {
             'email_enabled': values.intake_email_enabled,
