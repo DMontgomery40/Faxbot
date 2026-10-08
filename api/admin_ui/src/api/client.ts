@@ -108,6 +108,7 @@ import type { RecipientSchedule, RecipientScheduleSave } from './types';
 import type {
   CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
 } from './certaintyTypes';
+import type { ContinuationView } from './continuationTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1561,6 +1562,15 @@ class AdminAPIClient {
 
   async settleUncertain(itemId: string, body: { outcome: CertaintyOutcome; reason: string; version: number; send_again: boolean }): Promise<CertaintyItem> {
     return this.json(`/certainty/items/${id(itemId)}/settle`, { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  // A fax whose call broke part way: which pages are left to send, and sending only those (a person's click).
+  async continuationForFax(faxId: string): Promise<ContinuationView> {
+    return this.json(`/continuations/faxes/${id(faxId)}`);
+  }
+
+  async sendContinuation(faxId: string, body: { first_page: number; reason?: string; version?: number }): Promise<ContinuationView> {
+    return this.json(`/continuations/faxes/${id(faxId)}`, { method: 'POST', body: JSON.stringify(body) });
   }
 
   async getUncertainSettings(): Promise<CertaintySettings> {

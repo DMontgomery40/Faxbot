@@ -99,6 +99,7 @@ from .inbound.http import router as inbound_router
 from .accounts_http import router as accounts_router
 from .work.http import imports_router, router as work_router
 from .work.certainty_http import router as certainty_router
+from .routing.continuation_http import router as continuation_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
 from .codec.http import router as codec_router
@@ -226,6 +227,7 @@ app.include_router(accounts_router)
 app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(certainty_router)
+app.include_router(continuation_router)
 app.include_router(hylafax_router)
 app.include_router(pages_router)
 app.include_router(batching_router)
@@ -488,7 +490,8 @@ def _deliveries():
     return OutboundStore(_configuration_manager().store)
 
 
-def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None, error=None, before_data=None):
+def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None, error=None, before_data=None,
+                    error_category=None):
     if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
         raise DeliveryConflict('Native result has no verified attempt identity.')
@@ -505,7 +508,23 @@ def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=N
     # the create acknowledgement's SID with a channel UUID.
     return delivery.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
         provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key,
-        error=error, before_data=before_data)
+        error=error, before_data=before_data, error_category=error_category)
+
+
+def _native_partly_sent(event):
+    """How many pages a failed built-in engine call confirmed (FAXPAGES), when it confirmed any; else None.
+
+    Such a call broke after pages went: it is ``partly_sent``, so it is never sent again whole by another route
+    by itself; it waits for a person (an uncertain item), who may send only the rest (routing/continuation.py).
+    """
+    fields = {str(key).lower(): value for key, value in event.items()}
+    if normalize_status(str(fields.get('status') or '')) != 'failed':
+        return None
+    try:
+        pages = int(str(fields.get('pages') or '').strip())
+    except ValueError:
+        return None
+    return pages if pages > 0 else None
 
 
 def _handle_fax_result(event):
@@ -519,6 +538,13 @@ def _handle_fax_result(event):
         # Without the SSL Fax engine: a failure with no page transferred, and no fax machine that named itself,
         # ended before any fax data (routing/predata.py).
         from .routing.predata import native_event
+        pages = _native_partly_sent(event)
+        if pages is not None:
+            # Pages went before the call broke: never sent again whole by itself (the SSL Fax engine's sentence).
+            from .hylafax_engine import failure_sentence
+            _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+                            error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
+            return
         _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
                         error=sip_calls.result_summary(event), before_data=native_event(event))
     except Exception:
@@ -2741,12 +2767,18 @@ async def signalwire_callback(request: Request):
 
 
 class FSOutboundResultIn(BaseModel):
+    """The channel variables mod_spandsp sets after txfax (``phase_e_handler`` in
+    src/mod/applications/mod_spandsp/mod_spandsp_fax.c, github.com/signalwire/freeswitch, read 2026-10-08):
+    ``fax_success`` "1" or "0", ``fax_result_code`` (spandsp's T.30 completion code), ``fax_result_text``,
+    ``fax_document_transferred_pages`` (spandsp's ``pages_tx`` when sending: pages the receiving machine
+    confirmed) and ``fax_document_total_pages`` (pages in the file)."""
     attempt_id: Optional[str] = None
     job_id: Optional[str] = None
     fax_status: Optional[str] = None
     fax_result_text: Optional[str] = None
     fax_result_code: Optional[str] = None
     fax_document_transferred_pages: Optional[int] = None
+    fax_document_total_pages: Optional[int] = None
     uuid: Optional[str] = None
 
 
@@ -2754,10 +2786,21 @@ class FSOutboundResultIn(BaseModel):
           description="Deprecated: FreeSWITCH is removed in the next release.")
 def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
     status = str(payload.fax_status or '').lower()
-    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed'}.get(status, status)
+    # fax_success is "1" or "0" (mod_spandsp); older hooks sent true/false or ok/fail.
+    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed', '1': 'success',
+              '0': 'failed'}.get(status, status)
+    pages = payload.fax_document_transferred_pages
+    # Pages went before the call broke: never sent again whole by another route by itself, as on the other engines.
+    partly = status == 'failed' and type(pages) is int and pages > 0
     try:
-        applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
-            event_key='fs-result:' + status, secret=x_internal_secret)
+        if partly:
+            from .hylafax_engine import failure_sentence
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret, error=failure_sentence('', pages),
+                before_data=False, error_category='partly_sent')
+        else:
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret)
     except (DeliveryConflict, ValueError):
         raise HTTPException(409, detail='Native result does not match a verified delivery attempt.') from None
     return {'ok': True, 'applied': applied}

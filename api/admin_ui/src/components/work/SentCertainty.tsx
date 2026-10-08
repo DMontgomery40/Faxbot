@@ -11,6 +11,7 @@ import type {
 } from '../../api/certaintyTypes';
 import { formatServerTime } from '../../api/time';
 import { deliveryErrorMessage } from '../delivery/shared';
+import { ContinuationFacts, onTheirWay } from './SentContinuation';
 import { shortTime } from './text';
 
 export const RESULT_LABELS: Record<string, string> = {
@@ -80,14 +81,18 @@ function CheckRow({ check, index, item, busy, onDraft, onSendQuery }: {
 
 function SettleForm({ item, busy, onSettle }: {
   item: CertaintyItem; busy: boolean;
-  onSettle: (outcome: CertaintyOutcome, reason: string, sendAgain: boolean) => void;
+  onSettle: (outcome: CertaintyOutcome, reason: string, sendAgain: boolean, sendRest: boolean) => void;
 }) {
   const [outcome, setOutcome] = useState<CertaintyOutcome | ''>(item.suggestion ?? '');
   const [reason, setReason] = useState('');
   const [sendAgain, setSendAgain] = useState(false);
+  // Only the pages the receiving machine did not confirm (routing/continuation.py), instead of the whole fax.
+  const [sendRest, setSendRest] = useState(false);
+  const rest = item.continuation?.state === 'offered' && item.continuation.may_send ? item.continuation : null;
   const ready = outcome !== '' && reason.trim().length >= 3;
+  const notDelivered = outcome === 'not_delivered';
   return (
-    <Box component="form" onSubmit={(event) => { event.preventDefault(); if (ready) onSettle(outcome as CertaintyOutcome, reason, sendAgain && outcome === 'not_delivered'); }}>
+    <Box component="form" onSubmit={(event) => { event.preventDefault(); if (ready) onSettle(outcome as CertaintyOutcome, reason, sendAgain && notDelivered, sendRest && notDelivered && rest !== null); }}>
       <Typography variant="subtitle1" component="h3" gutterBottom>Settle it</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         Faxbot never sends this fax again on its own. Choose what happened; Faxbot keeps your name and your reason with it.
@@ -98,8 +103,20 @@ function SettleForm({ item, busy, onSettle }: {
         ))}
       </RadioGroup>
       {outcome === 'not_delivered' && !item.moved_on && (
-        <FormControlLabel control={<Checkbox checked={sendAgain} onChange={(event) => setSendAgain(event.target.checked)} disabled={busy} />}
+        <FormControlLabel control={<Checkbox checked={sendAgain} onChange={(event) => { setSendAgain(event.target.checked); if (event.target.checked) setSendRest(false); }} disabled={busy} />}
           label="Send it again now, as a new fax linked to this one" />
+      )}
+      {notDelivered && !item.moved_on && rest && (
+        <Box>
+          <FormControlLabel control={<Checkbox checked={sendRest} onChange={(event) => { setSendRest(event.target.checked); if (event.target.checked) setSendAgain(false); }} disabled={busy} />}
+            label={`${rest.action} only, as a new fax linked to this one`} />
+          <Box sx={{ pl: 4 }}>
+            <ContinuationFacts basis={rest.basis} costText={rest.cost_text} warning={rest.warning} />
+          </Box>
+        </Box>
+      )}
+      {notDelivered && !item.moved_on && item.continuation?.state === 'unavailable' && (
+        <Typography variant="body2" color="text.secondary">{item.continuation.reason}</Typography>
       )}
       <TextField fullWidth size="small" label="How do you know?" value={reason} disabled={busy} sx={{ my: 1 }}
         onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 400 }}
@@ -143,9 +160,18 @@ function ItemPanel({ client, initial, onOpenFax }: { client: AdminAPIClient; ini
   });
   const sendQuery = () => act(() => client.sendReceiptQuery(item.id, item.version),
     'Receipt query sent. When the recipient faxes it back, settle this fax.');
-  const settle = (outcome: CertaintyOutcome, reason: string, sendAgain: boolean) => act(
-    () => client.settleUncertain(item.id, { outcome, reason, version: item.version, send_again: sendAgain }),
-    sendAgain ? 'Settled. The fax is on its way again as a new fax.' : 'Settled.');
+  const settle = (outcome: CertaintyOutcome, reason: string, sendAgain: boolean, sendRest: boolean) => {
+    const rest = item.continuation?.state === 'offered' ? item.continuation : null;
+    if (sendRest && rest) {
+      // Sending only the remaining pages settles the item as not delivered, with the new fax linked to it.
+      return act(async () => (await client.sendContinuation(item.fax_id, {
+        first_page: rest.first_page, reason, version: item.version })).item ?? undefined,
+      `Settled. ${onTheirWay(rest.pages_text)}`);
+    }
+    return act(
+      () => client.settleUncertain(item.id, { outcome, reason, version: item.version, send_again: sendAgain }),
+      sendAgain ? 'Settled. The fax is on its way again as a new fax.' : 'Settled.');
+  };
   const loadPeople = async () => {
     if (people) return;
     try {
@@ -203,7 +229,7 @@ function ItemPanel({ client, initial, onOpenFax }: { client: AdminAPIClient; ini
       {!settled && item.suggestion && (
         <Alert severity="info" sx={{ mb: 2 }}>The checks point to “{OUTCOME_LABELS[item.suggestion]}”. You decide.</Alert>
       )}
-      {!settled && item.actions.includes('settle') && <SettleForm key={item.version} item={item} busy={busy} onSettle={(o, r, s) => void settle(o, r, s)} />}
+      {!settled && item.actions.includes('settle') && <SettleForm key={item.version} item={item} busy={busy} onSettle={(o, r, s, rest) => void settle(o, r, s, rest)} />}
       {settled && item.resend_fax_id && onOpenFax && (
         <Button onClick={() => onOpenFax(item.resend_fax_id as string)}>Open the new fax</Button>
       )}

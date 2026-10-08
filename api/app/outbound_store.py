@@ -42,9 +42,10 @@ def _valid_actor(actor):
 
 def _failure_sentences():
     """Provider adapters' own failure sentences, the only reasons history shows."""
+    from .documo_service import FAILURE_SENTENCES as DOCUMO_SENTENCES
     from .humblefax_service import FAILURE_SENTENCES
     from .sinch_service import FAILURE_SENTENCES as SINCH_SENTENCES
-    return FAILURE_SENTENCES | SINCH_SENTENCES
+    return FAILURE_SENTENCES | SINCH_SENTENCES | DOCUMO_SENTENCES
 
 
 def _safe_event_details(encoded):

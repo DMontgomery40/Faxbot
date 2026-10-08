@@ -311,6 +311,9 @@ FAILURE_SENTENCES = frozenset({sentence for _, sentence in _FAILURES} | {
     'HumbleFax could not deliver the fax.'})
 
 
+PARTLY_SENT = 'HumbleFax sent only some of the pages.'
+
+
 def _failure_sentence(fax: dict) -> str:
     """One plain sentence for why HumbleFax could not deliver this fax."""
     status = str(fax.get('status') or '').strip().lower()
@@ -351,6 +354,14 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         # Whether the call ended before any fax data, by HumbleFax's documented fields (routing/predata.py).
         from .routing.predata import humblefax as before_fax_data
         receipt['before_fax_data'] = before_fax_data(fax)
+        # The most pages any one HumbleFax attempt sent (routing/continuation.py), kept as evidence.
+        from .routing.continuation import humblefax_pages
+        sent, _ = humblefax_pages(fax)
+        if sent is not None:
+            receipt['pages_sent'] = sent
+        if str(fax.get('status') or '').strip().lower() == 'partial success' or sent:
+            # Pages reached the fax machine before it failed: never sent again whole by itself; a person decides.
+            receipt['failure'], receipt['failure_category'] = PARTLY_SENT, 'partly_sent'
     sender = _account_number(fax.get('fromNumber'))
     if sender:
         receipt['from_number'] = sender

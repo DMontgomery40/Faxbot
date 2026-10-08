@@ -14,6 +14,11 @@ needs the person's request and their own ``fax:send``: the caller passes
 active configuration, so the fax goes through the same acceptance as any other
 (the sending rules decide its route, and may hold it). Its fax ID is derived
 from the item, so a repeated request returns the fax already queued.
+
+A fax whose call broke part way may instead get only its remaining pages
+(``routing/continuation.py``): settling it as not delivered with
+``continue_from`` sends pages k+1 to n as a new fax, whose ID comes from the
+broken attempt, so Sent's own action and this one give the same fax.
 """
 from io import BytesIO
 import json
@@ -76,7 +81,13 @@ def state_key(item, now):
     return 'assigned' if item['owner_principal_id'] else 'waiting'
 
 
-def state_text(item, names, now):
+def _sent_pages(pages):
+    """'Pages 8–20 were sent as a new fax.' for 'pages 8–20'; 'Page 20 was sent ...' for one page."""
+    return f"{pages[0].upper()}{pages[1:]} {'was' if pages.startswith('page ') else 'were'} sent as a new fax."
+
+
+def state_text(item, names, now, continued=None):
+    """``continued``: the pages text of the continuation the item was settled with, if it was."""
     key = state_key(item, now)
     owner = names.get(item['owner_principal_id']) or 'someone who is no longer listed'
     if key == 'settled':
@@ -84,6 +95,8 @@ def state_text(item, names, now):
             return item['settled_reason']  # closed by itself when the fax was delivered: the sentence says how
         who = item['settled_by_name'] or names.get(item['settled_by']) or 'a person'
         text = f"Settled as {OUTCOME_TEXT.get(item['outcome'], 'settled')} by {who}."
+        if continued:
+            return f'{text} {_sent_pages(continued)}'
         return text + (' The fax was sent again as a new fax.' if item['resend_job_id'] else '')
     if key == 'overdue':
         return f'Overdue; assigned to {owner}.' if item['owner_principal_id'] else 'Overdue; waiting for an owner.'
@@ -128,6 +141,8 @@ def event_text(kind, details):
         reason = (details.get('reason') or '').strip()
         text = f'{actor} settled it as {outcome}' + (f': {reason}' if reason else '')
         text = text if text.endswith(('.', '!', '?')) else text + '.'
+        if details.get('continuation'):
+            return f"{text} {_sent_pages(str(details['continuation']))}"
         return text + (' The fax was sent again as a new fax.' if details.get('resend_job_id') else '')
     if kind == 'escalated':
         if details.get('to_name'):
@@ -287,11 +302,65 @@ class CertaintyService:
                                when_text=when),
         ]
 
+    # -- continuations (routing/continuation.py) -------------------------------------------------------
+    def _continuations(self):
+        """The continuation store, or None on an installation without its tables."""
+        found = getattr(self, '_continuation_store', None)
+        if found is None:
+            try:
+                from ..routing.continuation import ContinuationStore
+                found = ContinuationStore(self.store.engine)
+            except Exception:
+                found = False
+            self._continuation_store = found
+        return found or None
+
+    def _data_dir(self):
+        return getattr(self.values(), 'fax_data_dir', '') or '.'
+
+    def _continuation_view(self, connection, row, link, *, may_act):
+        """What the item says about sending only the remaining pages: sent, offered, why not, or None."""
+        from ..routing.continuation import offer_on, pages_text
+        if link is not None:
+            return {'state': 'sent', 'fax_id': link['continuation_job_id'], 'first_page': link['first_page'],
+                    'last_page': link['last_page'], 'pages_text': pages_text(link['first_page'], link['last_page'])}
+        store = self._continuations()
+        if store is None or row['state'] != 'open':
+            return None
+        offer = offer_on(store, connection, row['job_id'], data_dir=self._data_dir())
+        if offer is None or offer.attempt_id != row['attempt_id']:
+            return None
+        if not offer.available:
+            return {'state': 'unavailable', 'reason': offer.reason} if row['category'] == 'partly_sent' else None
+        first, last = offer.first_page, offer.last_page
+        return {'state': 'offered', 'first_page': first, 'last_page': last, 'pages': last - first + 1,
+                'pages_text': pages_text(first, last), 'action': f'Send {pages_text(first, last)}',
+                'basis': offer.confirmed.sentence,
+                'warning': f'Page {first} may already have arrived, so the recipient may get it twice.',
+                'may_send': may_act, 'total_pages': last}
+
+    def _with_cost(self, actor, views):
+        """Price each offered continuation on the account the rules would choose, outside the transaction."""
+        from ..routing.continuation import cost
+        for view in views:
+            offer = view.get('continuation')
+            if not offer or offer.get('state') != 'offered':
+                continue
+            with self.store.engine.connect() as connection:  # the full number stays out of the view
+                number = connection.execute(sa.select(self.store.jobs.c.to_number).where(
+                    self.store.jobs.c.id == view['fax_id'])).scalar()
+            sentence, account, money = cost(self.store.engine, self.values(), actor, to_number=number,
+                                            pages=offer['pages'], total=offer['total_pages'])
+            offer.update({'cost_text': sentence, 'cost_account': account, 'cost': money})
+        return views
+
     def _views(self, connection, actor, rows, now, *, detail=False):
         rows = [dict(row) for row in rows]
         names = self.store.names_on(connection, [row[field] for row in rows for field in
                                                  ('owner_principal_id', 'settled_by')])
         manage = self._among(connection, actor, {row['resource_id'] for row in rows}, now)
+        continuations = self._continuations()
+        links = continuations.links_for(connection, [row['resend_job_id'] for row in rows]) if continuations else {}
         views = []
         for row in rows:
             mine = row['owner_principal_id'] == actor.principal_id
@@ -304,9 +373,14 @@ class CertaintyService:
                 if not row['query_job_id']:
                     actions.append('send_query')
             person = lambda identity: {'id': identity, 'name': names.get(identity)} if identity else None  # noqa: E731
+            link = links.get(row['resend_job_id'])
+            continued = None
+            if link is not None:
+                from ..routing.continuation import pages_text
+                continued = pages_text(link['first_page'], link['last_page'])
             view = {
                 'id': row['id'], 'fax_id': row['job_id'], 'reference': row['reference'], 'state': row['state'],
-                'state_key': state_key(row, now), 'state_text': state_text(row, names, now),
+                'state_key': state_key(row, now), 'state_text': state_text(row, names, now, continued),
                 'why': category_text(row['category']), 'category': row['category'],
                 'to_number': mask(row['to_number']), 'pages': row['pages'], 'sent_at': self._sent_at(row),
                 'mailbox': row['mailbox'], 'owner': person(row['owner_principal_id']),
@@ -329,6 +403,11 @@ class CertaintyService:
                                                                      else None))
                 if may_act:
                     view['number'] = row['to_number']
+                view['continuation'] = self._continuation_view(connection, row, link, may_act=may_act)
+                if (view['continuation'] or {}).get('state') == 'offered' and may_act:
+                    actions.append('continue')
+            elif link is not None:
+                view['continuation'] = self._continuation_view(connection, row, link, may_act=may_act)
             views.append(view)
         return views
 
@@ -380,7 +459,8 @@ class CertaintyService:
 
     def detail(self, actor, item_id):
         with self.access_store.transaction() as connection:
-            return self._detail_on(connection, actor, item_id, self.clock())
+            view = self._detail_on(connection, actor, item_id, self.clock())
+        return self._with_cost(actor, [view])[0]
 
     def for_fax(self, actor, fax_id):
         """Every item of one sent fax the person can see, newest first, each with its checks."""
@@ -398,12 +478,15 @@ class CertaintyService:
                 sa.or_(items.c.resend_job_id == fax_id, items.c.query_job_id == fax_id))).first()
             views = self._views(connection, actor, rows, now, detail=True)
             linked = None
+            continuations = self._continuations()
+            if continuations is not None and continuations.link_for_continuation(connection, fax_id) is not None:
+                origin = None  # a continuation's link both ways is Sent's continuation section
             # Only a fax this person may read is named.
             if origin is not None and self._allowed(connection, actor, 'fax:read',
                                                     self.store.resource_of(connection, origin.job_id), now):
                 linked = {'fax_id': origin.job_id,
                           'kind': 'resend' if origin.resend_job_id == fax_id else 'receipt_query'}
-            return {'items': views, 'about': linked}
+        return {'items': self._with_cost(actor, views), 'about': linked}
 
     def history(self, actor, item_id):
         events = self.store.events
@@ -510,8 +593,12 @@ class CertaintyService:
             return self._change(connection, actor, row, {'query_job_id': job_id}, kind='query_sent',
                                 details={'fax_id': job_id}, now=now)
 
-    def settle(self, actor, item_id, *, outcome, reason, version, send_again=False, send=None):
-        """A person decides what happened: delivered, not delivered (and maybe send again), or can't tell."""
+    def settle(self, actor, item_id, *, outcome, reason, version, send_again=False, send=None, continue_from=None):
+        """A person decides what happened: delivered, not delivered (and maybe send again), or can't tell.
+
+        ``continue_from``: with not delivered, send only pages ``continue_from`` to the end as a new fax
+        (``routing/continuation.py``); the page the person saw, so a changed offer is refused, never guessed.
+        """
         if outcome not in OUTCOMES:
             raise CertaintyInputError("Choose delivered, not delivered or can't tell.")
         reason = ' '.join(str(reason or '').split())
@@ -521,7 +608,10 @@ class CertaintyService:
             raise CertaintyInputError(f'Keep the reason to {MAX_REASON} characters.')
         if send_again and outcome != 'not_delivered':
             raise CertaintyInputError('Only a fax that did not arrive is sent again.')
-        resend = None
+        if continue_from is not None and (send_again or outcome != 'not_delivered'):
+            raise CertaintyInputError('Send either the whole fax again or only its remaining pages, with not '
+                                      'delivered.')
+        resend = prepared = None
         with self.access_store.transaction() as connection:
             now = self.clock()
             row = self._require(connection, actor, item_id, now, act=True)
@@ -543,6 +633,9 @@ class CertaintyService:
             resend = resend_id(item_id)
             send(to_number=row['to_number'], document=source.read_bytes(), file_name=row['file_name'] or 'fax.pdf',
                  pages=row['pages'], job_id=resend)
+        if continue_from is not None:
+            prepared = self._prepare_continuation(row, continue_from, send)
+            resend = prepared.job_id
         with self.access_store.transaction() as connection:
             now = self.clock()
             row = self._require(connection, actor, item_id, now, act=True)
@@ -556,9 +649,38 @@ class CertaintyService:
                       'settled_by_name': (name or '')[:200] or None, 'settled_at': now, 'settled_reason': reason}
             if resend is not None:
                 values['resend_job_id'] = resend
-            return self._change(connection, actor, row, values, kind='settled', now=now, details={
-                'outcome': outcome, 'reason': reason, 'resend_job_id': resend,
-                'evidence': checks.snapshot(found)})
+            details = {'outcome': outcome, 'reason': reason, 'resend_job_id': resend,
+                       'evidence': checks.snapshot(found)}
+            if prepared is not None:
+                from ..routing.continuation import pages_text
+                details['continuation'] = pages_text(prepared.first_page, prepared.last_page)
+                self._continuations().record_on(connection, prepared, actor_id=actor.principal_id, actor_name=name,
+                                                item_id=item_id, reason=reason, now=now)
+            view = self._change(connection, actor, row, values, kind='settled', now=now, details=details)
+        return self._with_cost(actor, [view])[0]
+
+    def _prepare_continuation(self, row, first_page, send):
+        """Check, build and send the remaining pages of this item's broken call; the ``Prepared`` continuation."""
+        from ..routing.continuation import ContinuationError, offer_on, prepare
+        store = self._continuations()
+        if send is None or store is None:
+            raise CertaintyConflict('Sending only the remaining pages is not available here.')
+        with self.access_store.transaction() as connection:
+            offer = offer_on(store, connection, row['job_id'], data_dir=self._data_dir(), resume=True)
+        if offer is None or offer.attempt_id != row['attempt_id']:
+            raise CertaintyConflict('This fax did not break part way through a call, so there are no remaining pages '
+                                    'to send.')
+        if not offer.available:
+            raise CertaintyConflict(offer.reason)
+        if type(first_page) is not int or offer.first_page != first_page:
+            raise CertaintyConflict('The pages to send changed; reload and check them again.')
+        try:
+            prepared = prepare(offer, data_dir=self._data_dir())
+        except ContinuationError as error:
+            raise CertaintyConflict(error.message) from None
+        send(to_number=prepared.to_number, document=prepared.document, file_name=prepared.file_name,
+             pages=prepared.pages, job_id=prepared.job_id)
+        return prepared
 
     # -- settings --------------------------------------------------------------------------------
     def _fallback_people(self, connection):

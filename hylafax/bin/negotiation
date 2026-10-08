@@ -23,6 +23,15 @@
 # page" to the next "SEND begin page" (the end-of-page exchange and the next
 # training), over boundaries pages, never for SSL Fax. Faxbot packs pages for
 # this machine from them (api/app/pages); null means not reported.
+#
+# Sent calls also report the other machine's answer to each page ("SEND recv
+# MCF", "RTP" or "RTN"): clean_pages, how many pages it answered MCF (received
+# fine) before any other answer, and flagged_page, the page the first other
+# answer was about (RTP: kept with damaged lines; RTN: not received well), or
+# null. Without error correction Faxbot counts only clean_pages as confirmed
+# when it offers to send the rest of a broken fax (api/app/routing/
+# continuation.py), because the engine's own page count can include a page the
+# other machine answered RTN. Both are left out when the log has no page answer.
 set -u
 
 log=${1:-}
@@ -75,6 +84,9 @@ function length_of(text) {
   if (text ~ /^unlimited page length/) return "unlimited"
   return ""
 }
+function answered() {
+  if (answers) printf ",\"clean_pages\":%d,\"flagged_page\":%s", clean, (flagged ? flagged : "null")
+}
 function capability() {
   printf ",\"page_length\":%s,\"page_width\":%s,\"fine\":%s", quoted(page_length), quoted(page_width), (fine == "" ? "null" : fine)
   # Error correction and the scan line time are known only when the DIS was logged (its page length).
@@ -105,6 +117,14 @@ function seconds(clock,   part) {
       boundaries++
     }
     ended = ""
+  }
+  # Sent: how the other machine answered each page; after the first answer that is not MCF, nothing more counts.
+  if (text ~ /^SEND recv (MCF|RTP|RTN|PIP|PIN)( |$)/) {
+    answers++
+    if (!flagged) {
+      if (text ~ /^SEND recv MCF/) clean++
+      else flagged = clean + 1
+    }
   }
   if (text ~ /^SESSION BEGIN/) begin = seconds($3)
   else if (text ~ /^SESSION END/) end = seconds($3)
@@ -148,6 +168,7 @@ END {
   if (!agreed && !sslfax) {
     printf "{\"rate_first\":null,\"rate_lowest\":null,\"rate_last\":null,\"trainings\":%s,", number(trainings)
     printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s", session
+    answered()
     capability()
     exit
   }
@@ -156,5 +177,6 @@ END {
   if (sslfax) { first = 0; lowest = 0; last = 0 }
   printf "{\"rate_first\":%s,\"rate_lowest\":%s,\"rate_last\":%s,\"trainings\":%s,", number(first), number(lowest), number(last), number(trainings)
   printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s", one("compression"), one("resolution"), ecm, session
+  answered()
   capability()
 }' "$log" | base64 | tr -d '\n'
