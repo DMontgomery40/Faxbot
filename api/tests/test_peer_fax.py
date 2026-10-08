@@ -297,8 +297,14 @@ async def test_a_partner_that_turned_fax_images_off_gets_the_original_directly_a
                      id=fax['id'])
     assert stored['tiff_path'] is None and stored['sha256'] == sha(original)
     assert Path(stored['pdf_path']).read_bytes() == original
+    # The app's own Work worker (faxbot-work-queue: 2 s after start, then every 5 s) may create the item before
+    # this test does, so the test asserts the outcome, not which feeder made it. Forcing the worker first shows
+    # the feeders agree: the worker's step makes the one item, and a later feed adds none.
     from app.work.store import WorkStore
-    assert WorkStore(pair['b_engine']).feed() == 1
+    from app.work.worker import WorkWorker
+    WorkWorker(WorkStore(pair['b_engine']), control=lambda: main.app.state.access_runtime.control,
+               values=lambda: main.app.state.configuration_runtime.manager.store.read().active.values).step()
+    assert WorkStore(pair['b_engine']).feed() == 0
     assert [item['inbound_fax_id'] for item in client.get('/work', headers=ADMIN).json()['items']] == [fax['id']]
 
 
@@ -372,9 +378,10 @@ async def test_an_arrival_accepted_just_before_a_crash_is_filed_once_by_the_fili
     job = accept(pair)
     row, _ = await send(pair, job)
     assert row['state'] == 'success' and received(pair) == []
-    monkeypatch.setattr(DirectFiling, 'file', original)
     service = direct_http.service_for(main.app)
+    # Checked while filing still fails, so the app's own filing step (every 60 s) cannot file it first.
     assert [item['message_id'] for item in service.store.unfiled()] == [row['attempt_id']]
+    monkeypatch.setattr(DirectFiling, 'file', original)
     service.filing.step()
     service.filing.step()
     assert [fax['status_text'] for fax in received(pair)] == [IMAGE_LABEL]
