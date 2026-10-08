@@ -214,12 +214,18 @@ export function alternateSentence(dialed: string, alternate: AlternateDial): str
 // "Why this route" for one sent fax, as items for the fax's details.
 export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) {
   const [route, setRoute] = useState<FaxRoute | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let live = true;
     setRoute(null);
-    api.faxRoute(jobId).then((value) => { if (live) setRoute(value); }).catch(() => { if (live) setRoute(null); });
+    setError(null);
+    api.faxRoute(jobId).then((value) => { if (live) setRoute(value); }).catch((failure) => {
+      // Someone who may not see this fax's route sees no route; any other failure is said.
+      if (live && !isForbidden(failure)) setError(failure);
+    });
     return () => { live = false; };
   }, [api, jobId]);
+  if (error) return <ListItem><DeliveryError error={error} /></ListItem>;
   if (!route?.sentence) return null;
   return (
     <>
@@ -248,11 +254,16 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
 // Overview: "Faxes waiting for you", when your rules hold any.
 export function WaitingForYouCard({ api, onOpen }: { api: RulesApi; onOpen: () => void }) {
   const [holds, setHolds] = useState<Hold[]>([]);
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let live = true;
-    api.holds().then((value) => { if (live) setHolds(value.holds); }).catch(() => undefined);
+    api.holds().then((value) => { if (live) setHolds(value.holds); }).catch((failure) => {
+      // Someone who may not see held faxes has none to count; any other failure is said.
+      if (live && !isForbidden(failure)) setError(failure);
+    });
     return () => { live = false; };
   }, [api]);
+  if (error) return <DeliveryError error={error} onClose={() => setError(null)} />;
   if (holds.length === 0) return null;
   const count = (kind: Hold['kind']) => holds.filter((hold) => hold.kind === kind).length;
   const parts = [
