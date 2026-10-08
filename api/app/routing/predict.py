@@ -189,6 +189,7 @@ class RouteFacts:
     currency: str = 'USD'                # the currency of a no-call route's nothing
     missing: str | None = None           # why there is no price, as a clause, when ``terms`` is None
     refused: bool = False                # the route does not take this kind of number; ``missing`` says so
+    origin: str | None = None            # the origin-rated row that priced the call ('any', a site, 'country:GB')
 
 
 # Sentences --------------------------------------------------------------------------

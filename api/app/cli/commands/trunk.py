@@ -461,3 +461,54 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
         kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'
         out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot providers trunk apply to connect it.")
     state.out().result({'preset': preset, 'changed': bool(result.get('changed'))}, human)
+
+
+# -- send-only numbers (B9) ----------------------------------------------------------------------------------
+
+send_only = typer.Typer(help='Numbers you show on faxes you send but never receive on here, such as your main office '
+                             'number.', no_args_is_help=True)
+trunk.add_typer(send_only, name='send-only')
+
+
+def _send_only_lines(out, result):
+    numbers = result.get('numbers') or []
+    if numbers:
+        out.table(['Number', 'Where it shows'], [[item['number'], item['sentence']] for item in numbers], empty='')
+        for item in numbers:
+            for rule in item.get('carrier_rules') or []:
+                out.line(f"{rule['trunk']}: {rule['sentence']} ({rule['source_url']}, read {rule['read_on']})")
+    else:
+        out.line('You have no send-only numbers. Faxes show the caller ID and station ID set on each trunk.')
+    for item in result.get('advice') or []:
+        out.line(item['sentence'])
+
+
+@send_only.command('list')
+def send_only_list():
+    """Show your send-only numbers, where each shows, and numbers you rent only to send from."""
+    result = state.api().get('/admin/sip/send-only')
+    state.out().result(result, lambda out: _send_only_lines(out, result))
+
+
+def _save_send_only(numbers):
+    api = state.api()
+    api.put('/admin/sip/send-only', json={'numbers': numbers})
+    result = api.get('/admin/sip/send-only')
+    state.out().result(result, lambda out: _send_only_lines(out, result))
+
+
+@send_only.command('add')
+def send_only_add(number: str = typer.Argument(..., metavar='NUMBER',
+                                               help='The number with its country code, such as +13035550100.')):
+    """Add a send-only number. To show it, set it as a trunk's caller ID or as the station ID too."""
+    current = [item['number'] for item in state.api().get('/admin/sip/send-only').get('numbers') or []]
+    _save_send_only(current + [number.strip()])
+
+
+@send_only.command('remove')
+def send_only_remove(number: str = typer.Argument(..., metavar='NUMBER', help='The send-only number to remove.')):
+    """Remove a send-only number; it counts as one of your numbers again only if an account receives on it."""
+    current = [item['number'] for item in state.api().get('/admin/sip/send-only').get('numbers') or []]
+    if number.strip() not in current:
+        raise CliError(f'{number.strip()} is not one of your send-only numbers.')
+    _save_send_only([item for item in current if item != number.strip()])

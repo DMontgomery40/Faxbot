@@ -287,6 +287,16 @@ async def sending_recommendations(request: Request):
             'country_rules': country_rules(items), 'empty_sentence': NO_SENDING}
 
 
+@router.get('/recommendations/trunks', dependencies=[Depends(require_permission('settings:read'))])
+async def trunk_recommendations(request: Request):
+    """Whether one trunk's traffic fits on another and what moving it would save (advice only; WP-T, B6)."""
+    from .trunk_advice import WINDOW_DAYS as TRUNK_DAYS, advice
+    store = _store(request)
+    values = request.scope['faxbot.configuration'].active.values
+    found = await _call(lambda: advice(values, store.engine, routes=store))
+    return {'window_days': TRUNK_DAYS, **found}
+
+
 @router.get('/recommendations/plans', dependencies=[Depends(require_permission('settings:read'))])
 async def plan_recommendations(request: Request):
     """Whether each monthly plan is worth its fee at your traffic (estimates; Faxbot never cancels anything)."""
@@ -762,6 +772,8 @@ class RateCardIn(BaseModel):
     # Shown by GET; accepted and ignored so a listed card can be saved back unchanged.
     included_in_plan: bool | None = None
     provider_name: str | None = None
+    # Prices by where calls start (origin_rates), shown by GET; their own rows are saved separately.
+    rows: list | None = None
 
 
 class RateCardsIn(BaseModel):
@@ -775,8 +787,17 @@ async def list_rate_cards(request: Request):
     cards = await _call(store.current_cards)
     # What each sending route publishes about calling toll-free numbers (an approved alternate), with its source.
     from .dialing import terms_view
+    from .origin_rates import card_rows, organization_sites
     values = request.scope['faxbot.configuration'].active.values
-    return {'cards': [_card_view(card) for card in cards], 'toll_free': terms_view(values)}
+
+    def rows():
+        # Each sending card's prices by where calls start (origin_rates), shipped and saved, with source and date.
+        sites = organization_sites(store.engine)
+        return {card.provider_id: card_rows(card.provider_id, store.engine, sites)
+                for card in cards if card.direction == 'outbound'}
+    by_card = await _call(rows)
+    return {'cards': [{**_card_view(card), 'rows': by_card.get(card.provider_id, []) if card.direction == 'outbound'
+                       else []} for card in cards], 'toll_free': terms_view(values)}
 
 
 @router.get('/published-plans', dependencies=[Depends(require_permission('settings:read'))])
@@ -1001,14 +1022,33 @@ async def quote(request: Request, to: str = Query(max_length=64), pages: int = Q
         keys = list(envelope.accounts)
         if site:
             keys.sort(key=lambda key: getattr(by_key.get(key), 'site', None) != site)
+        # Where each call starts, in words (origin_rates: the row that priced it, else the account's site).
+        from .origin_rates import organization_sites, origin_label
+        from .pricing import price
+        from ..rules import model as rules_model
+        sites = organization_sites(store.engine)
+        dialed = envelope.dial.number if envelope.dial is not None else number
         found = []
         for key in keys:
             item = next((q for q in facts.quotes if q.account == key and q.number == quoted), None)
             account = by_key.get(key)
+            if site and account is not None:
+                # Priced as a call from that site ("faxbot costs fax --from-site"), with its rows.
+                try:
+                    priced = price(store, values, key, dialed, pages, provider=account.provider, site=site,
+                                   number=quoted)
+                    item = rules_model.Quote(key, priced.micros, priced.currency if priced.micros is not None else None,
+                                             number=quoted, origin=priced.origin, pages=pages, plan=priced.plan)
+                except Exception:
+                    pass
             in_plan = item is not None and item.plan is not None
+            account_site = site or getattr(account, 'site', None)
+            where = (origin_label(item.origin, sites) if item is not None and item.origin
+                     else origin_label(account_site, sites) if account_site else None)
             found.append({
                 'account': key, 'label': account.label if account is not None else route_label(key),
-                'site': getattr(account, 'site', None), 'origin_label': getattr(account, 'site', None),
+                'site': getattr(account, 'site', None), 'origin_label': where,
+                'origin': item.origin if item is not None else None,
                 'estimate': (None if item is None or in_plan or item.micros is None
                              else {'currency': item.currency, 'amount': format_amount(item.micros)}),
                 'estimate_text': plan_text(item.plan if item else None, item.micros if item else None),

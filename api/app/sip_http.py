@@ -6,6 +6,7 @@ import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from .access.http import require_identity
 from .access.route_policy import RoutePermission, require_permission
@@ -803,6 +804,50 @@ async def restart_engine(request: Request, identity=Depends(require_permission('
     from .audit import audit_event
     audit_event('sip_engine_restart_requested', backend='sip', reason='manual')
     return {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
+
+
+@router.get('/send-only')
+async def send_only_numbers(request: Request, identity=Depends(require_permission('providers:read'))):
+    """Send-only numbers (shown on faxes you send, never received on here) and numbers rented only to send from."""
+    from .routing import send_only
+    values = configuration_values()
+
+    def read():
+        engine = None
+        try:
+            engine = _engine(request)
+        except HTTPException:
+            engine = None
+        return {'numbers': send_only.view(values), 'advice': send_only.advice(values, engine),
+                'quiet_days': send_only.QUIET_DAYS}
+    return await run_lifecycle_step(read)
+
+
+class SendOnlyBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    numbers: list[str] = Field(max_length=50)
+
+
+@router.put('/send-only')
+async def set_send_only_numbers(body: SendOnlyBody, request: Request,
+                                identity=Depends(require_permission('settings:write'))):
+    """Save the send-only numbers; a number one of your accounts receives on is refused with the reason."""
+    from .routing import send_only
+
+    def save():
+        snapshot = request.scope['faxbot.configuration']
+        try:
+            numbers = send_only.checked(snapshot.desired.values, body.numbers)
+        except send_only.SendOnlyRefused as refused:
+            raise HTTPException(409, detail=str(refused)) from None
+        from .access.http import runtime as access_runtime
+        runtime = _runtime(request)
+        access = access_runtime(request)
+        access.configuration_access.prepare_settings_write(identity.actor, snapshot, snapshot.desired.id)
+        runtime.manager.patch_authorized(snapshot, {send_only.SETTING: send_only.encode(numbers)},
+                                         principal=identity.actor, control=access.control)
+        return {'ok': True, 'numbers': numbers}
+    return await run_lifecycle_step(save)
 
 
 @router.get('/network')

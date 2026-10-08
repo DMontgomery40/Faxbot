@@ -232,6 +232,10 @@ class ConfigurationValues(BaseModel):
     # Mailboxes with a reply number of their own: "<mailbox ID>=<number>" pairs separated by semicolons.
     fax_reply_numbers: str = Field('', validation_alias='FAX_REPLY_NUMBERS', pattern=(
         r'^(?:[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}(?:;[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}){0,99})?$'))
+    # Send-only numbers (routing/send_only.py): numbers shown as caller ID and station ID on faxes you send that
+    # never receive faxes here, such as your main office number; comma-separated E.164.
+    fax_send_only_numbers: str = Field('', validation_alias='FAX_SEND_ONLY_NUMBERS', pattern=(
+        r'^(?:\+[1-9][0-9]{6,14}(?:,\+[1-9][0-9]{6,14}){0,49})?$'))
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')

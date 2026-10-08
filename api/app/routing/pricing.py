@@ -34,6 +34,7 @@ class Price:
     uses_budget: bool = False          # it uses part of a plan's budget or allowance
     sentence: str = ''                 # how it was worked out, one plain sentence
     number: str = 'original'           # 'alternate' when the route calls the recipient's approved alternate
+    origin: str | None = None          # the origin-rated row that priced it ('any', a site, 'country:GB'); WP-T
 
     @property
     def known(self):
@@ -72,8 +73,13 @@ def _now(now):
     return (now or datetime.now(timezone.utc)).replace(tzinfo=None, microsecond=0)
 
 
-def price(routes, values, key, destination, pages, *, provider=None, now=None, layout='normal', number='original'):
-    """The ``Price`` of one fax of ``pages`` pages to ``destination`` by account ``key``."""
+def price(routes, values, key, destination, pages, *, provider=None, now=None, layout='normal', number='original',
+          site=None):
+    """The ``Price`` of one fax of ``pages`` pages to ``destination`` by account ``key``.
+
+    An origin-rated row for where the account's calls start prices it when one matches (``origin_rates``);
+    ``site`` prices it as if the call started from that site.
+    """
     from .plan_budget import budget_left, marginal, plan_use
     from .predict import Shape, predict_from
     from .predict_facts import facts_for
@@ -83,7 +89,7 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     facts_key = key
     if key != provider and routes.card_for(key) is None:
         facts_key = provider
-    facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values)
+    facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site)
     if facts_key != key and facts.plan is not None:
         # The provider's terms, this account's own use: a second plan never shares the first one's month.
         try:
@@ -103,7 +109,8 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     in_plan = bool(prediction.marginal and micros == 0) or bool(left is not None and micros == 0 and found.uses_budget)
     return Price(key, micros, cost.currency if cost is not None else None, in_plan=in_plan,
                  over_budget=bool(found.over_budget), uses_budget=bool(found.uses_budget),
-                 sentence=found.sentence or prediction.basis, number=number)
+                 sentence=found.sentence or prediction.basis, number=number,
+                 origin=getattr(facts, 'origin', None))
 
 
 def _accounts(values):
@@ -163,5 +170,6 @@ def quotes_for(routes, values, accounts, destination, pages, alternate=None, *, 
             except Exception:
                 item = Price(account.key, None, None, number=which)
             found.append(model.Quote(account.key, item.micros, item.currency if item.micros is not None else None,
-                                     number=which, pages=max(int(pages or 1), 1), plan=item.plan))
+                                     number=which, origin=item.origin, pages=max(int(pages or 1), 1),
+                                     plan=item.plan))
     return tuple(found)

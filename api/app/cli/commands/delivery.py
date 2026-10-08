@@ -747,7 +747,29 @@ RECOMMENDATION_SECTIONS = [
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
     ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
+    ('trunks', 'Your trunks', lambda api: _read_trunks(api), lambda out, result: show_trunks(out, result)),
 ]
+
+
+def _read_trunks(api):
+    return api.get('/routing/recommendations/trunks')
+
+
+def show_trunks(out, result):
+    """Each trunk's fee, lines, faxes and cost per delivered fax, then whether one's traffic fits on another."""
+    trunks = result.get('trunks') or []
+    if trunks:
+        out.table(['Trunk', 'A month', 'Lines', 'Most at once', 'Faxes sent', 'Faxes received', 'Each sent fax'],
+                  [[row['label'], row.get('monthly') or 'Not known', row['lines'], row['peak_lines'], row['sent'],
+                    row['received'], row.get('cost_per_delivered') or '-'] for row in trunks],
+                  empty='')
+    for item in result.get('items') or []:
+        out.line(item['sentence'])
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    if result.get('items'):
+        out.line('This is advice only: Faxbot never cancels a trunk. To keep faxes off a trunk, add a sending limit '
+                 "with 'faxbot providers rules add'.")
 
 recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
                                    'every section.', invoke_without_command=True)
@@ -755,7 +777,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, and how much time lightening shaded areas would save. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time lightening shaded areas would save, and whether one trunk's faxes fit on another. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -800,7 +822,10 @@ for _name, _read, _show, _help in (
          'switching carriers means moving your numbers, and Faxbot never switches anything.'),
         ('shading', _read_friendly, show_friendly,
          'Show how much time lightening shaded areas and removing specks saved, or would save, on your recent '
-         'faxes.')):
+         'faxes.'),
+        ('trunks', _read_trunks, show_trunks,
+         "Compare your trunks' monthly fees, busiest times and cost per fax, and show when one trunk's faxes fit on "
+         'another and what that would save. Advice only.')):
     recommendations.command(_name, help=_help)(_section(_read, _show))
 
 

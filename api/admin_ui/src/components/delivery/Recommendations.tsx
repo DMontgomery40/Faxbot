@@ -14,13 +14,14 @@ import ReceivingRecommendations from './ReceivingRecommendations';
 import RelayRecommendations from './RelayRecommendations';
 import SendingRecommendations from './SendingRecommendations';
 import FaxFriendlyRecommendation from './FaxFriendlyRecommendation';
+import TrunkAdvice from './TrunkAdvice';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays';
+  | 'tollFree' | 'pages' | 'relays' | 'trunks';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays'];
+  'tollFree', 'pages', 'relays', 'trunks'];
 
 export default function Recommendations({ client, canWrite = false, onNavigate }: {
   client: AdminAPIClient;
@@ -56,6 +57,7 @@ export default function Recommendations({ client, canWrite = false, onNavigate }
         <TollFreeSection client={client} onCount={callbacks.tollFree} onNavigate={onNavigate} />
         <FaxMarkerSection client={client} onCount={callbacks.marker} />
         <FaxFriendlyRecommendation client={client} onCount={callbacks.pages} />
+        <TrunkAdvice client={client} onCount={callbacks.trunks} />
       </Stack>
     </Box>
   );
