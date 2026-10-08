@@ -3,6 +3,8 @@
 
 Thin Node.js client for the Faxbot API. Sends faxes and checks status via the unified Faxbot REST API (independent of the server's backend: Phaxio or SIP/Asterisk).
 
+The current source package is proprietary and requires prior written permission from David Montgomery for use. Previously released MIT versions retain their existing permissions. See the [license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
+
 - Package name: `faxbot`
 - Requires: Node.js 18+
 
@@ -39,8 +41,7 @@ run().catch(console.error);
 - Optional helper: `checkHealth()` pings `/health`.
 
 ## Publishing (maintainers)
-- Configure GitHub secret `NPM_TOKEN`.
-- Create a GitHub Release to trigger publish via CI.
+Do not publish publicly without separate written permission from David Montgomery. The package is marked `private`, so npm blocks the `npm publish` step in the release workflow.
 
 ## MCP Note
 - MCP (Model Context Protocol) is not part of this SDK. It is a separate integration layer for AI assistants.

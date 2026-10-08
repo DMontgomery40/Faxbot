@@ -25,7 +25,7 @@ Welcome to Faxbot! This section will help you get up and running quickly.
 
 ## What is Faxbot?
 
-Faxbot is an open-source, self-hostable fax API that combines:
+Faxbot is a proprietary, self-hosted fax API. Use, modification, distribution and hosting need written permission from the owner (see the LICENSE file in the repository). It combines:
 
 - Simple REST API for sending faxes
 - Multiple backend options (cloud and self‑hosted)
