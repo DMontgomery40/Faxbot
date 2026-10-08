@@ -250,9 +250,12 @@ class FlowrouteCallRecords:
       ``destination``, ``callerid``, ``total_cost`` (decimal dollars), ``result``, ``duration`` and
       ``billed_duration`` (seconds), ``rate`` and fees. Times read like "2019-06-25 18:18:54+00".
 
-    An export takes a while, so a fetch that has to wait raises ``CarrierUnavailable`` and the reconciler asks
-    again after its back-off; the next fetch for the same hours polls the same export rather than making another.
-    Windows are widened to whole hours so nearby windows share an export. A record carries no ID and no SIP Call-ID,
+    An export takes a while. A fetch asks about it a few times, ``WAIT`` apart; if it is still being prepared the
+    fetch raises ``ExportPreparing`` and the reconciler asks again after its back-off. Windows are widened to whole
+    UTC days, and one reader is shared per set of keys (``reader_for``), so the background job, the hourly check
+    for unrecorded calls and Check now all poll the same export rather than each making another. A completed
+    export's records are reused for ``KEEP``, as fresh as a Telnyx read, then read again so a corrected cost is
+    seen. A record carries no ID and no SIP Call-ID,
     so its identity is a digest of its direction, numbers and times, and a call is matched by numbers and times; its
     answer time is its end less its duration. The download link is followed only to an ``amazonaws.com`` host, never
     with the Flowroute key, and at most 20 MB compressed and 100 MB of text are read.
@@ -263,15 +266,20 @@ class FlowrouteCallRecords:
     MAX_COMPRESSED = 20 * 1024 * 1024
     MAX_TEXT = 100 * 1024 * 1024
     KEEP = timedelta(minutes=30)
+    POLLS = 6
+    WAIT = 2.0
 
-    def __init__(self, credentials, *, timeout=30.0, client_factory=None, clock=None):
+    def __init__(self, credentials, *, timeout=30.0, client_factory=None, clock=None, sleep=None):
         """``credentials()`` returns ``(access key, secret key)``, each '' when not set."""
+        import time
         self.credentials = credentials
         self.timeout = timeout
         self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False,
                                                                       transport=_TRANSPORT))
         self.clock = clock
-        self.exports = {}   # (start, end) -> {'id': ..., 'records': [...] | None, 'at': when read}
+        self.sleep = sleep or time.sleep
+        self.exports = {}   # (first day, day after) -> {'id': ..., 'records': [...] | None, 'at': when read}
+        self.preparing = False
 
     def _keys(self):
         try:
@@ -285,10 +293,10 @@ class FlowrouteCallRecords:
         return bool(access and secret)
 
     @staticmethod
-    def _hours(start, end):
-        floor = start.replace(minute=0, second=0, microsecond=0)
-        ceiling = end.replace(minute=0, second=0, microsecond=0)
-        return floor, ceiling if ceiling >= end else ceiling + timedelta(hours=1)
+    def _days(start, end):
+        floor = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        ceiling = end.replace(hour=0, minute=0, second=0, microsecond=0)
+        return floor, ceiling if ceiling >= end else ceiling + timedelta(days=1)
 
     @staticmethod
     def parse(row):
@@ -352,7 +360,7 @@ class FlowrouteCallRecords:
         access, secret = self._keys()
         if not (access and secret):
             raise CarrierUnavailable('No Flowroute API key is set.')
-        window = self._hours(start, end)
+        window = self._days(start, end)
         now = self._now()
         for key in list(self.exports):
             item = self.exports[key]
@@ -372,17 +380,23 @@ class FlowrouteCallRecords:
                 if len(self.exports) >= 8:
                     self.exports.pop(next(iter(self.exports)))
                 found = self.exports[window] = {'id': export, 'records': None, 'at': now}
-                raise CarrierUnavailable('Flowroute is preparing the call records; Faxbot will ask again shortly.')
-            if found['records'] is None:
+            polls = 0
+            while found['records'] is None:
                 answer = self._call(client, 'GET', f"{self.URL}/{found['id']}", (access, secret), headers)
                 status = str((answer.get('attributes') or {}).get('status') or '').lower()
                 if status == 'failed':
                     self.exports = {key: item for key, item in self.exports.items() if item is not found}
                     raise CarrierUnavailable('Flowroute could not prepare the call records; Faxbot will ask again.')
-                if status != 'completed':
-                    raise CarrierUnavailable('Flowroute is preparing the call records; Faxbot will ask again shortly.')
-                found['records'] = self._read_file(client, (answer.get('attributes') or {}).get('download_url'))
-                found['at'] = now
+                if status == 'completed':
+                    found['records'] = self._read_file(client, (answer.get('attributes') or {}).get('download_url'))
+                    found['at'] = now
+                    break
+                polls += 1
+                if polls >= self.POLLS:
+                    self.preparing = True
+                    raise ExportPreparing('Flowroute is preparing the call records; Faxbot will ask again shortly.')
+                self.sleep(self.WAIT)
+        self.preparing = False
         return [record for record in found['records'] if start <= record.started_at < end], True
 
     @staticmethod
@@ -405,6 +419,10 @@ class FlowrouteCallRecords:
         return data
 
 
+class ExportPreparing(CarrierUnavailable):
+    """The carrier is still preparing its call records; nothing is wrong."""
+
+
 def json_text(body):
     import json
     return json.dumps(body, separators=(',', ':'))
@@ -413,22 +431,40 @@ def json_text(body):
 READERS = {'signalwire': SignalWireCallRecords, 'flowroute': FlowrouteCallRecords}
 
 
-def reader_for(preset, values, *, client_factory=None):
-    """The call-record reader for a trunk preset other than Telnyx, or None when the carrier publishes none."""
-    def current():
-        return values() if callable(values) else values
+_SHARED = {}
+
+
+def _credentials(preset, values):
     if preset == 'signalwire':
-        def credentials():
-            found = current()
-            return (getattr(found, 'signalwire_space_url', ''), getattr(found, 'signalwire_project_id', ''),
-                    getattr(found, 'signalwire_api_token', ''))
-        return SignalWireCallRecords(credentials, client_factory=client_factory)
+        return (str(getattr(values, 'signalwire_space_url', '') or ''),
+                str(getattr(values, 'signalwire_project_id', '') or ''),
+                str(getattr(values, 'signalwire_api_token', '') or ''))
     if preset == 'flowroute':
-        def keys():
-            found = current()
-            return getattr(found, 'flowroute_access_key', ''), getattr(found, 'flowroute_secret_key', '')
-        return FlowrouteCallRecords(keys, client_factory=client_factory)
+        return (str(getattr(values, 'flowroute_access_key', '') or ''),
+                str(getattr(values, 'flowroute_secret_key', '') or ''))
     return None
+
+
+def reader_for(preset, values, *, client_factory=None):
+    """The call-record reader for a trunk preset other than Telnyx, or None when the carrier publishes none.
+
+    One reader is kept per carrier and keys, so the background job and Check now share Flowroute's pending
+    export. A test passing its own ``client_factory`` gets a reader of its own.
+    """
+    import hashlib
+    current = values() if callable(values) else values
+    keys = _credentials(preset, current)
+    if keys is None:
+        return None
+    if client_factory is not None:
+        return READERS[preset](lambda: keys, client_factory=client_factory)
+    identity = hashlib.sha256(repr((preset, keys)).encode('utf-8')).hexdigest()
+    reader = _SHARED.get(identity)
+    if reader is None:
+        if len(_SHARED) >= 8:
+            _SHARED.pop(next(iter(_SHARED)))
+        reader = _SHARED[identity] = READERS[preset](lambda: keys)
+    return reader
 
 
 def trunk_records(values):
@@ -486,9 +522,12 @@ def other_carrier_task(engine, values):
         preset = getattr(current, 'sip_trunk_preset', '') if current is not None else ''
         if preset not in READERS:
             return False
-        if preset not in reconcilers:
-            reconcilers[preset] = CarrierReconciler(store, routes, reader_for(preset, values), preset=preset,
-                                                    numbers=numbers)
-        return reconcilers[preset].step()
+        source = reader_for(preset, current)
+        key = (preset, id(source))
+        if key not in reconcilers:
+            # A new carrier or new keys: start again, keeping no back-off from the earlier ones.
+            reconcilers.clear()
+            reconcilers[key] = CarrierReconciler(store, routes, source, preset=preset, numbers=numbers)
+        return reconcilers[key].step()
     return ('faxbot-other-carrier-charges', repeat(step, interval=60.0, initial_delay=55.0,
                                                    warning='Carrier call charges are temporarily unavailable.'))

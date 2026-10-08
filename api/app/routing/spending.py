@@ -31,7 +31,8 @@ from .plan import route_label
 
 
 # Trunk presets whose carrier charges Faxbot reads, and the providers it asks itself.
-CARRIER_PRESETS = ('telnyx', 'signalwire')
+# Telnyx (routing/telnyx.py) and every carrier with a call-record reader (routing/carrier_records.py).
+CARRIER_PRESETS = ('telnyx', 'signalwire', 'flowroute')
 REPORTING_PROVIDERS = ('signalwire', 'sinch', 'phaxio')
 
 

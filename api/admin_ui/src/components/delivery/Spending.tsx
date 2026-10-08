@@ -199,7 +199,7 @@ export default function Spending({ client, providers, received, carrier, canWrit
       <Notice message={notice} onClose={() => setNotice(null)} />
       {carrier?.supported && !carrier.readable && (
         <Typography variant="body2" color="text.secondary" mb={2}>
-          {carrier.carrier} call charges appear here once you add your {carrier.carrier} API key in Providers → {carrier.carrier}.
+          {carrier.sentence ?? `${carrier.carrier} call charges appear here once you add your ${carrier.carrier} API key in Providers → ${carrier.carrier}.`}
         </Typography>
       )}
       {carrier?.supported && carrier.readable && canWrite && (

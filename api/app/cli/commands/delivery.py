@@ -363,9 +363,11 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
         _never_priced_lines(out, result)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
-            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
-                     f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
-                     "--secret telnyx_api_key.")
+            # Another carrier's sentence names what it needs; Telnyx's text names the command that saves its key.
+            out.line(carrier['sentence'] if carrier.get('sentence') and carrier['carrier'] != 'Telnyx' else (
+                f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
+                f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
+                "--secret telnyx_api_key."))
     state.out().result(result, human)
 
 

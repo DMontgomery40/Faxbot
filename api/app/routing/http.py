@@ -409,10 +409,10 @@ def _carrier_status(values):
     preset = values.sip_trunk_preset
     if preset not in CARRIER_PRESETS:
         return {'carrier': carrier_label(preset) if preset else None, 'readable': False, 'supported': False}
-    if preset == 'telnyx':
-        return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
-    from .carrier_records import trunk_records  # another carrier that publishes its call records
-    return {'carrier': carrier_label(preset), 'supported': True, 'readable': trunk_records(values)['readable']}
+    from .carrier_records import trunk_records  # what to set, in one sentence, for this carrier
+    found = trunk_records(values)
+    return {'carrier': carrier_label(preset), 'supported': True, 'readable': found['readable'],
+            'sentence': found['sentence']}
 
 
 NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
@@ -467,6 +467,10 @@ async def reconcile(request: Request):
                                        numbers=lambda: _trunk_numbers(values))
         return reconciler.run_now().as_dict()
     result = await _call(run)
+    if result['carrier_unavailable'] and getattr(source, 'preparing', False):
+        # Flowroute prepares its call records as an export; the next check reads the same one.
+        return {**result, 'summary': f'{source.label} is still preparing its call records; Faxbot reads them '
+                                     'within a few minutes, or select Check again.'}
     return {**result, 'summary': _reconcile_summary(result, source.label)}
 
 

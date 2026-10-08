@@ -354,12 +354,16 @@ class SignalWireListing(_Listing):
 LISTINGS = {'sinch': SinchListing, 'phaxio': PhaxioListing, 'signalwire': SignalWireListing}
 
 # Providers that publish no list of an account's faxes Faxbot can read, with what they publish instead.
+# Read 2026-10-08: HumbleFax's public API (api.humblefax.com) documents sending and webhooks only, with no list of
+# faxes and no charge per fax (a monthly plan). eFax Corporate prices by quote; its list endpoints were not
+# verified. Documo's API reference could not be read.
 UNSUPPORTED = {
-    'humblefax': ('HumbleFax lists received faxes for its own app but publishes no charge per fax; its plan is a '
-                  'monthly fee, so enter its invoice under Costs → Invoices.'),
-    'efax': ('eFax Corporate publishes no charge per fax and no list of sent faxes Faxbot can read; enter its '
+    'humblefax': ('HumbleFax charges a monthly plan, not each fax, and Faxbot cannot list the faxes sent from '
+                  "HumbleFax's own website; enter its invoice under Costs → Invoices."),
+    'efax': ('eFax Corporate prices by quote, and Faxbot cannot read its charges or list its faxes yet; enter its '
              'invoice under Costs → Invoices.'),
-    'documo': ('Documo publishes no charge per fax; enter its invoice under Costs → Invoices.'),
+    'documo': ("Faxbot cannot read Documo's charges or list its faxes yet; enter its invoice under Costs → "
+               'Invoices.'),
     'freeswitch': 'Your own FreeSWITCH places the calls; your carrier bills them.',
     'sip': 'The carrier trunk is checked call by call against your carrier\'s call records.',
 }

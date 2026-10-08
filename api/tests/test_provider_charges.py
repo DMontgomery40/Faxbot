@@ -410,7 +410,7 @@ def test_flowroute_call_records_come_from_an_export_that_is_prepared_then_read()
         seen.append((request.method, request.url.host, request.headers.get('authorization')))
         if request.method == 'POST':
             assert json.loads(request.content) == {'data': {'type': 'cdrexport', 'attributes': {'filter_parameters': {
-                'start_call_start_time': '2026-10-08 08:00:00', 'start_call_end_time': '2026-10-08 11:00:00'}}}}
+                'start_call_start_time': '2026-10-08 00:00:00', 'start_call_end_time': '2026-10-09 00:00:00'}}}}
             return httpx.Response(202, json={'data': {'type': 'cdrexport', 'id': 4242,
                                                       'attributes': {'status': 'processing', 'download_url': None}}})
         if request.url.host == 'api.flowroute.com':
@@ -419,13 +419,15 @@ def test_flowroute_call_records_come_from_an_export_that_is_prepared_then_read()
                 'status': state['status'], 'download_url': state['link'] if done else None}}})
         return httpx.Response(200, content=gzip.compress(FLOWROUTE_CSV.encode()))
 
-    reader = FlowrouteCallRecords(lambda: ('synthetic-access', 'synthetic-secret'), clock=lambda: NOW,
+    waits = []
+    reader = FlowrouteCallRecords(lambda: ('synthetic-access', 'synthetic-secret'), clock=lambda: NOW, sleep=waits.append,
                                   client_factory=lambda: httpx.Client(transport=httpx.MockTransport(answer)))
     start, end = datetime(2026, 10, 8, 8, 50), datetime(2026, 10, 8, 10, 10)
     with pytest.raises(CarrierUnavailable, match='preparing'):
         reader.fetch(start, end)
     with pytest.raises(CarrierUnavailable, match='preparing'):
         reader.fetch(start, end)  # the same export is asked about, never a second one
+    assert waits and set(waits) == {FlowrouteCallRecords.WAIT}  # asked a few times, a short wait apart
     state['status'] = 'completed'
     records, complete = reader.fetch(start, end)
     assert complete and [(record.direction, record.cli, record.cld, record.amount_micros, record.billed_seconds,
@@ -439,8 +441,6 @@ def test_flowroute_call_records_come_from_an_export_that_is_prepared_then_read()
     # A link to any other host is refused.
     reader.exports.clear()
     state['link'] = 'https://files.example.net/cdr.csv.gz'
-    with pytest.raises(CarrierUnavailable, match='preparing'):
-        reader.fetch(start, end)
     with pytest.raises(CarrierUnavailable, match='does not fetch'):
         reader.fetch(start, end)
 
@@ -483,3 +483,56 @@ def test_the_trunk_page_says_whether_its_carrier_publishes_call_records():
         'Avaya IP Office is your phone system; the carrier behind it bills these calls, so enter its invoice under '
         'Costs → Invoices.')
     assert _call_records(values(SIP_TRUNK_PRESET='telnyx', TELNYX_API_KEY='KEYsynthetic'))['readable'] is True
+
+
+
+def test_the_background_job_and_check_now_share_one_flowroute_export(engine, monkeypatch):
+    import gzip
+    from api.app.routing import carrier_records
+    from api.app.routing.carrier_records import FlowrouteCallRecords
+    from api.app.routing.spending import CARRIER_PRESETS
+    assert set(CARRIER_PRESETS) == {'telnyx', *carrier_records.READERS}
+    monkeypatch.setattr(FlowrouteCallRecords, 'POLLS', 1)
+    monkeypatch.setattr(carrier_records, '_SHARED', {})
+    state = {'status': 'processing', 'posts': 0}
+
+    def answer(request):
+        if request.method == 'POST':
+            state['posts'] += 1
+            return httpx.Response(202, json={'data': {'id': 77, 'attributes': {'status': 'processing'}}})
+        if request.url.host == 'api.flowroute.com':
+            link = 'https://synthetic.s3.us-east-2.amazonaws.com/cdr.csv.gz?X-Amz-S=1'
+            return httpx.Response(200, json={'data': {'id': 77, 'attributes': {
+                'status': state['status'], 'download_url': link if state['status'] == 'completed' else None}}})
+        return httpx.Response(200, content=gzip.compress(FLOWROUTE_CSV.encode()))
+    monkeypatch.setattr(carrier_records, '_TRANSPORT', httpx.MockTransport(answer))
+    current = values(SIP_TRUNK_PRESET='flowroute', FLOWROUTE_ACCESS_KEY='synthetic-access',
+                     FLOWROUTE_SECRET_KEY='synthetic-secret')
+    assert reader_for('flowroute', current) is reader_for('flowroute', lambda: current)
+    # The sent call of FLOWROUTE_CSV's first row, as Faxbot's engine recorded it.
+    t = tables(engine)
+    job, attempt = sent_attempt(engine, None, when=datetime(2026, 10, 8, 9, 0))
+    call = uuid4().hex
+    with engine.begin() as connection:
+        connection.execute(t['sip_call_records'].insert().values(
+            id=call, direction='outbound', call_id=attempt, job_id=job, attempt_id=attempt, trunk_preset='flowroute',
+            did='+13035550100', caller='+13035550100', called=FAR, started_at=datetime(2026, 10, 8, 9, 0),
+            answered_at=datetime(2026, 10, 8, 9, 0, 5), ended_at=datetime(2026, 10, 8, 9, 1, 10),
+            disposition='answered', connected_seconds=65, t38='yes', pages=1, fax_status='SUCCESS', fax_preference=0,
+            created_at=datetime(2026, 10, 8, 9, 0), updated_at=datetime(2026, 10, 8, 9, 1, 10)))
+    routes = RouteStore(engine, sip_preset=lambda: 'flowroute')
+    carriers = CarrierChargeStore(engine)
+    background = CarrierReconciler(carriers, routes, reader_for('flowroute', current), preset='flowroute',
+                                   numbers=lambda: ('+13035550100',))
+    check_now = CarrierReconciler(carriers, routes, reader_for('flowroute', current), preset='flowroute',
+                                  numbers=lambda: ('+13035550100',))
+    moment = datetime(2026, 10, 8, 10, 0)
+    background.step(now=moment)
+    assert check_now.run_now(now=moment + timedelta(seconds=30)).unavailable is True
+    assert state['posts'] == 1 and reader_for('flowroute', current).preparing is True
+    state['status'] = 'completed'
+    background.step(now=moment + timedelta(minutes=5))
+    # The day's export is read; then the hourly check for unrecorded calls asks for its own two days, once.
+    assert state['posts'] == 2
+    [charge] = carriers.in_effect([call])[call]
+    assert (charge['provider_id'], charge['amount_micros']) == ('flowroute', 4748)

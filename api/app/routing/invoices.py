@@ -22,10 +22,10 @@ fax with no reported charge and no estimate is counted, never priced at zero,
 so the residual is then marked incomplete. Amounts in another currency than
 the invoice are left out of the comparison and said so.
 
-A recommendation appears when residuals recur: in at least two of an account's
-last three invoices whose comparison is complete, the residual has the same
-sign and is at least $1 (one whole unit of the invoice's currency) and 5% of
-the invoice.
+A recommendation appears when residuals recur: among an account's last three
+invoices, at least two whose comparison is complete have a residual of the same
+sign that is at least $1 (one whole unit of the invoice's currency) and 5% of
+the invoice. An incomplete month never counts toward it.
 
 Invoices are append-only (``provider_invoices``): entering a total again for
 the same account and period adds a version that supersedes the earlier one,

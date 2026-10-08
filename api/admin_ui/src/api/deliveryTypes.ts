@@ -238,6 +238,8 @@ export interface CarrierChargeStatus {
   carrier: string | null;
   supported: boolean;
   readable: boolean;
+  // What to set so Faxbot can read this carrier's call charges, in one sentence.
+  sentence?: string;
 }
 
 export interface RouteCostsResponse {

@@ -890,7 +890,8 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     assert sources == ['KEYsynthetic-cli'] and 'KEYsynthetic-cli' not in result.stdout
     assert telnyx_cli.json('costs', 'reconcile')['checked'] == 0
     costs = telnyx_cli.json('costs', 'spending')
-    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True, 'sentence':
+                                        "Telnyx publishes each call's charge; Faxbot reads it with the Telnyx API key."}
     human = telnyx_cli('costs', 'spending')
     assert 'call charges appear once' not in human.stdout
     # A Telnyx record of a call Faxbot never recorded is shown, included in Charged, and in the total.

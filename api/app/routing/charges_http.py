@@ -115,9 +115,9 @@ def _account_sources(values, sweeps):
         'sinch': '{label} reports what each sent and received fax cost; Faxbot reads it after each fax.',
         'phaxio': '{label} reports what each sent and received fax cost; Faxbot reads it after each fax.',
         'signalwire': '{label} reports what each sent fax cost; Faxbot reads it after each fax.',
-        'humblefax': '{label} reports no charge per fax. Enter its monthly invoice under Costs → Invoices.',
-        'efax': '{label} reports no charge per fax. Enter its monthly invoice under Costs → Invoices.',
-        'documo': '{label} reports no charge per fax. Enter its monthly invoice under Costs → Invoices.',
+        'humblefax': '{label} charges a monthly plan, not each fax. Enter its invoice under Costs → Invoices.',
+        'efax': '{label} prices by quote. Enter its monthly invoice under Costs → Invoices.',
+        'documo': "Faxbot can't read {label}'s charges yet. Enter its monthly invoice under Costs → Invoices.",
     }
     found = []
     for account in all_accounts(values):
