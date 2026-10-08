@@ -310,6 +310,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # call from what it learned about the number, with why (engine learning).
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
     changes = (job.get('fax_engine') or {}).get('changes') or []
+    # The coding the newest attempt asked for, measured on its pages, and what the call used.
+    coded = (job.get('coding') or {}).get('sentence')
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -317,6 +319,7 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                                                                           'Reference on its separator page')
         out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
+                   + ([('Fax coding', coded)] if coded else [])
                    + ([('How the call went', negotiation)] if negotiation else [])
                    + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:

@@ -81,6 +81,7 @@ def prepare_originate_fields(
     iaf: Optional[str] = None,
     audio: bool = False,
     endpoint: str = "trunk-endpoint",
+    compression: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -138,6 +139,12 @@ def prepare_originate_fields(
         variables["FAXBOT_MAXRATE"] = str(max_rate)
     if ecm is not None:
         variables["FAXBOT_ECM"] = "yes" if ecm else "no"
+    # The most compact coding this call may use, measured on its pages (pages/coding.py): patched res_fax_spandsp
+    # offers MH, MH and MR, or MH, MR and MMR, and spandsp takes the best the receiving machine also has.
+    if compression is not None:
+        if compression not in ("mh", "mr", "mmr"):
+            raise ValueError("Unsupported AMI fax coding")
+        variables["FAXBOT_COMPRESSION"] = compression
     # Patch 0004: ask for T.38 at once (a number that never asks itself), and Internet Aware Fax (an approved
     # fax server or enrolled partner only). Both are learned or approved per number (engine_frames.py).
     if t38_now:
@@ -297,6 +304,11 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     from .routing.reply_number import caller_id_for
     values, endpoint = trunk_values(values, trunk)
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
+    # The coding Faxbot measured for this attempt's pages; the built-in engine has no JBIG (T.85), so JBIG offers
+    # up to MMR, which is what spandsp falls back to anyway.
+    coding = getattr(call, "coding", None)
+    if coding is not None:
+        limits["compression"] = {"MH": "mh", "MR": "mr", "MMR": "mmr", "JBIG": "mmr"}[coding]
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
     learned = getattr(call, "learned", None)
     if learned is not None:
