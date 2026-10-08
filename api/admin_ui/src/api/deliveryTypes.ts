@@ -417,6 +417,95 @@ export interface DirectPartner {
 // POST /direct/peers/{id}/fax-images: the partner as it now stands, the sentence to show and whether it was told now.
 export type DirectFaxImagesResult = DirectPartner & { detail: string; partner_told: boolean };
 
+// GET /direct/relay/agreements: partner relays both ways. ``role`` 'relay' means this installation sends the
+// partner's faxes; 'sender' means the partner sends ours. Every text field is one sentence from the server.
+export interface RelayPriceLine {
+  country: string;
+  kind: string;
+  text: string;
+}
+
+export interface RelayAgreement {
+  id: string;
+  peer_id: string;
+  partner: string;
+  role: 'relay' | 'sender';
+  state: 'offered' | 'accepting' | 'active' | 'withdrawn';
+  summary: string;
+  status: string;
+  notes: string[];
+  countries: string[];
+  regions: string[];
+  monthly_pages: number | null;
+  monthly_spend: Money | null;
+  hours: { days: string[]; start_minute: number; end_minute: number } | null;
+  together: boolean;
+  send_together: boolean;
+  same_organization: boolean;
+  reply_number: string | null;
+  marketing: boolean;
+  price: { priced_at: string; valid_until: string; routes: RelayPriceLine[] } | null;
+  version: number;
+  detail?: string | null;
+}
+
+export interface RelayGrant {
+  partner: string;
+  countries: string[];
+  regions?: string[];
+  monthly_pages: number | null;
+  monthly_spend: Money | null;
+  hours: { days: string[]; from: string; until: string } | null;
+  together: boolean;
+  same_organization: boolean;
+}
+
+export interface RelayAcceptance {
+  reply_number: string | null;
+  together: boolean;
+  same_organization: boolean;
+  marketing: { business_number: string; contact: string; opt_out: string } | null;
+}
+
+// GET /direct/relay/costs: what each agreement carried and cost, on this side.
+export interface RelayCost {
+  agreement_id: string;
+  role: 'relay' | 'sender';
+  partner: string;
+  faxes: number;
+  pages: number;
+  amounts: Money[];
+  own_route: Money[];
+  sentence: string;
+}
+
+// GET /direct/relay/recommendations: partners whose signed price would have cost less lately.
+export interface RelayRecommendation {
+  peer_id: string;
+  partner: string;
+  country: string;
+  agreement_id: string | null;
+  agreement_state: string | null;
+  faxes: number;
+  saving: { amount_micros: number; currency: string };
+  sentence: string;
+  action: string;
+}
+
+// GET /direct/relay/faxes: faxes relayed for partners ('relay') and through partners ('sender').
+export interface RelayedFax {
+  fax_id: string;
+  role: 'relay' | 'sender';
+  partner: string;
+  fax_number: string;
+  pages: number | null;
+  seconds: number | null;
+  state: 'sending' | 'accepted' | 'delivered' | 'failed_before_data' | 'uncertain' | 'refused';
+  shared: boolean;
+  status: string;
+  created_at: string;
+}
+
 // GET /direct/deliveries: recent direct deliveries. For a sent document the
 // message id is the fax's delivery attempt id.
 export interface DirectDeliveryRecord {

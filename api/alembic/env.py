@@ -52,6 +52,7 @@ config.attributes["schema_forms"] = importlib.import_module(package + ".schema_f
 config.attributes["schema_destination_schedule"] = importlib.import_module(package + ".schema_destination_schedule")
 config.attributes["schema_intake_sources"] = importlib.import_module(package + ".schema_intake_sources")
 config.attributes["schema_friendly_pages"] = importlib.import_module(package + ".schema_friendly_pages")
+config.attributes["schema_partner_relay"] = importlib.import_module(package + ".schema_partner_relay")
 
 
 def migrate(connection):

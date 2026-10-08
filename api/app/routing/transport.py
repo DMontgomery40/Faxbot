@@ -61,12 +61,32 @@ def _installation_direct_route(inner):
         return None
 
 
+def _installation_relay_route(inner):
+    """The installation's partner relay route (``direct/relay_route.py``), built like the direct route."""
+    runtime = getattr(inner, 'runtime', None)
+    store = getattr(getattr(runtime, 'manager', None), 'store', None)
+    if store is None:
+        return None
+    try:
+        from ..direct.relay_route import RelayRoute
+        from ..direct.service import DirectService
+        from ..outbound_store import OutboundStore
+        return RelayRoute(DirectService(store.engine, values=lambda: store.read().active.values,
+                                        environment=getattr(runtime, 'environment', {})),
+                          delivery=lambda: OutboundStore(store))
+    except Exception:
+        logging.getLogger(__name__).warning('Partner relays are unavailable; faxes use their providers.')
+        return None
+
+
 class RoutedTransport:
-    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None):
-        """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``)."""
+    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None, relay=_AUTOMATIC):
+        """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``);
+        ``relay`` sends a fax through a partner's relay when the plan chose ``relay:<partner>``."""
         self.inner = inner
         self.store = inner.store
         self.direct = _installation_direct_route(inner) if direct is _AUTOMATIC else direct
+        self.relay = _installation_relay_route(inner) if relay is _AUTOMATIC else relay
         self.local = local
         self._route_store = route_store
 
@@ -122,7 +142,7 @@ class RoutedTransport:
         """
         for choice in plan.choices:
             route = choice.route
-            if route.kind in ('direct', 'local'):
+            if route.kind in ('direct', 'local', 'relay'):
                 return choice, claim
             if route.provider_id == 'sip' and not self._trunk_has_room(claim, revision):
                 raise CapacityWait()
@@ -140,8 +160,12 @@ class RoutedTransport:
         return None, claim
 
     def _record(self, claim, plan, choice):
+        route = choice.route.key
+        if choice.route.kind == 'relay':
+            from ..direct.relay import ledger_key
+            route = ledger_key(route)  # The ledger's grammar has no colon: relay.<partner>.
         self.routes().record_decision(attempt_id=claim.attempt_id, job_id=claim.job_id,
-                                      destination=plan.destination, route=choice.route.key,
+                                      destination=plan.destination, route=route,
                                       reason=choice.reason, provider_id=choice.route.provider_id)
 
     def _restore_bound(self, claim, plan, revision):
@@ -194,6 +218,26 @@ class RoutedTransport:
                     await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
                     operation = await stack.enter_async_context(self.inner.prepare(claim))
                 yield operation
+            return
+        if choice is not None and choice.route.kind == 'relay' and self.relay is not None:
+            # A partner relays it as a local call; a signed refusal (nothing accepted) lets the fax's own
+            # route send it in the same attempt, recorded as a fallback.
+            async with AsyncExitStack() as stack:
+                conventional = None
+                if any(c.route.bound for c in plan.choices):
+                    try:
+                        conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                    except PreparationFailure:
+                        conventional = None
+                try:
+                    relayed = await stack.enter_async_context(self.relay.prepare(claim, plan, job, choice))
+                except Exception:
+                    if conventional is None:
+                        raise PreparationFailure('provider_unavailable') from None
+                    await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
+                    yield conventional
+                    return
+                yield _RoutedOperation(self, claim, plan, relayed, conventional)
             return
         if choice is None or choice.route.kind != 'direct' or self.direct is None:
             async with AsyncExitStack() as stack:

@@ -264,7 +264,19 @@ def _context(request, store, kind, scope_id, accounts):
     for account in accounts:
         card = routes.card_for(account.key)
         prices[account.key] = (estimate_cost(card, 1), card.currency) if card is not None else None
-    return CheckContext(accounts=accounts, prices=prices, matches_30_days=_matches(store, kind, scope_id), **context)
+    return CheckContext(accounts=accounts, prices=prices, matches_30_days=_matches(store, kind, scope_id),
+                        relays=_relays(engine), **context)
+
+
+def _relays(engine):
+    """Partner IDs whose relay agreement with this installation is in force (direct/relay.py), or None."""
+    agreements = sa.table('relay_agreements', sa.column('peer_id'), sa.column('role'), sa.column('state'))
+    try:
+        with read_connection(engine) as connection:
+            return frozenset(connection.execute(sa.select(agreements.c.peer_id).where(
+                agreements.c.role == 'sender', agreements.c.state == 'active')).scalars())
+    except Exception:
+        return None
 
 
 def _organization_document(store):

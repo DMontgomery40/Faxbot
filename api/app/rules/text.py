@@ -38,11 +38,29 @@ def account_label(key, accounts=()):
         return 'This Faxbot'
     if key == model.DIRECT:
         return 'Direct delivery'
+    if key == model.RELAY:
+        return 'Partner relays'
+    if model.is_relay(key):
+        return relay_label(key)
     try:
         from ..routing.plan import route_label
         return route_label(key)
     except Exception:
         return key
+
+
+def relay_label(key):
+    """'Through Sydney office' for ``relay:<partner>``, from the enrolled partner's name."""
+    try:
+        import sqlalchemy as sa
+        from ..db import engine
+        peers = sa.table('direct_peers', sa.column('id'), sa.column('organization'))
+        with engine.connect() as connection:
+            name = connection.execute(sa.select(peers.c.organization).where(
+                peers.c.id == key[len('relay:'):])).scalar()
+        return f'Through {name}' if name else 'A partner relay'
+    except Exception:
+        return 'A partner relay'
 
 
 def _join(names):

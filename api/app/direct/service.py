@@ -24,9 +24,9 @@ from ..outbound_worker import SubmissionReceipt
 from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
-from .crypto import (FAX_IMAGE, FORM, DirectProtocolError, capabilities, card, canonical, check_card, check_signed,
-                     kind_of, open_document, parse_capabilities, parse_manifest, parse_timestamp, seal, signed,
-                     timestamp, verify)
+from .crypto import (FAX_IMAGE, FORM, RELAY, DirectProtocolError, capabilities, card, canonical, check_card,
+                     check_signed, kind_of, open_document, parse_capabilities, parse_manifest, parse_timestamp, seal,
+                     signed, timestamp, verify)
 from . import faximage
 from .filing import DirectFiling
 from .identity import IdentityUnavailable, identity_path, load_identity
@@ -87,9 +87,11 @@ def _flag(value):
 
 
 class DirectService:
-    def __init__(self, engine, *, values, environment=None, http=None, resolver=resolve, resources=None):
+    def __init__(self, engine, *, values, environment=None, http=None, resolver=resolve, resources=None, access=None):
         """``values`` returns the active configuration values; ``resources()`` the access runtime's inbound
-        resources, which filing an arrival as a received fax needs (None until it is ready)."""
+        resources, which filing an arrival as a received fax needs (None until it is ready); ``access()`` the
+        access runtime itself, which relaying a partner's fax as this installation's own needs (relay.py)."""
+        self.access = access or (lambda: None)
         self.store = DirectStore(engine)
         self.values = values
         self.environment = environment or {}
@@ -223,6 +225,11 @@ class DirectService:
             document = open_document(identity, manifest, ciphertext)
         except DirectProtocolError as error:
             return 400, self._refusal(identity, message_id, error.reason, str(error), peer)
+        if kind == RELAY:
+            # A document to send as a local call for the partner: queued as this installation's own fax within
+            # the partner's agreement, never filed as a received fax (relay.py).
+            from .relay import RelayService
+            return RelayService(self, access=self.access).receive(identity, peer, manifest, document, now=now)
         if kind == FORM:
             # A registered form: the pages drawn here from its data are filed, and only when they match.
             from ..forms.exchange import receive_form

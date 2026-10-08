@@ -148,7 +148,7 @@ def cap_micros(cap):
 
 def _account_keys(value, *, allow_reserved=False):
     return _strings(value) and value and all(
-        model.ACCOUNT_KEY.fullmatch(key) and (allow_reserved or key not in model.RESERVED_KEYS) for key in value)
+        model.route_key(key) and (allow_reserved or key not in model.RESERVED_KEYS) for key in value)
 
 
 def _check_then(then, kind, label, rule_id, problems, path, *, scope):
@@ -193,7 +193,7 @@ def _check_then(then, kind, label, rule_id, problems, path, *, scope):
         return
     action = actions[0]
     value = then[action]
-    if action == 'use' and not (isinstance(value, str) and model.ACCOUNT_KEY.fullmatch(value)
+    if action == 'use' and not (isinstance(value, str) and model.route_key(value)
                                 and value not in model.RESERVED_KEYS):
         problems.error('shape', f'{label}: use names one account by its key.', rule_id, f'{path}.use')
     if action in ('try_in_order', 'cheapest_reliable') and not _account_keys(value):

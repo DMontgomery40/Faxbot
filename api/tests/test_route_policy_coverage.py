@@ -38,6 +38,8 @@ OWN_AUTHENTICATION = {
     ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
     ("POST", "/direct/verifications"): "signed partner code confirmation",
     ("POST", "/direct/capabilities"): "signed partner statement of what it accepts",
+    ("POST", "/direct/relay/statements"): "signed partner relay statement (offer, acceptance, withdrawal, price, receipt)",
+    ("GET", "/direct/relay/outcomes/{message_id}"): "signed partner request: the outcome of a fax it relayed here",
     ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
     ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",
     ("GET", "/openapi.json"): "API description",

@@ -2122,6 +2122,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `revoke`: Remove a partner.
 * `fax-images`: Accept faxes from a partner as the exact...
 * `deliveries`: List recent faxes sent to and received...
+* `relay`: Partner relays: a partner office sends...
 
 #### `faxbot recipients partners card`
 
@@ -2256,6 +2257,214 @@ $ faxbot recipients partners deliveries [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners relay`
+
+Partner relays: a partner office sends your faxes to its own country as local calls, or you send theirs.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List relay agreements both ways: partners...
+* `show`: Show the relay agreements with one...
+* `offer`: Offer to send a partner&#x27;s faxes as local...
+* `accept`: Accept a partner&#x27;s offer to send your...
+* `withdraw`: End a relay agreement with a partner at once.
+* `price`: Give a partner you relay for new prices...
+* `quote`: Ask a partner what sending your faxes...
+* `costs`: Show what relays carried and cost: faxes...
+* `suggestions`: Show partners whose local price would have...
+* `faxes`: List faxes relayed for partners and faxes...
+
+##### `faxbot recipients partners relay list`
+
+List relay agreements both ways: partners who send your faxes, and partners whose faxes you send.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay show`
+
+Show the relay agreements with one partner, their limits, prices and what each side should know.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay show [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay offer`
+
+Offer to send a partner&#x27;s faxes as local calls from here. They accept from their Faxbot.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay offer [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--country <str>`: A country they may send to through you, by its two-letter code (AU). Repeat for more.
+* `--region <str>`: A region from your sending rules. Repeat for more.
+* `--pages <int range>`: Most pages a month. Default: no limit.  [x&gt;=1]
+* `--spend <str>`: Most money a month, such as &#x27;80 AUD&#x27;. Default: no limit.
+* `--hours <str>`: Your hours for their faxes, such as &#x27;mon-fri 08:00-18:00&#x27;. Default: any time.
+* `--together`: Their faxes may share a call with other senders&#x27; faxes to the same number.
+* `--same-organization`: They are an office of your own organization.
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay accept`
+
+Accept a partner&#x27;s offer to send your faxes as local calls in their country.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay accept [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--reply-number <str>`: The number printed on your relayed faxes for replies. Default: your reply number.
+* `--together`: Your faxes may share a call with other senders&#x27; faxes to the same number.
+* `--same-organization`: They are an office of your own organization.
+* `--marketing-business-number <str>`: For marketing faxes: your business number (such as an ABN), printed on the first page.
+* `--marketing-contact <str>`: For marketing faxes: how to contact you.
+* `--marketing-opt-out <str>`: For marketing faxes: where recipients ask to stop.
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay withdraw`
+
+End a relay agreement with a partner at once. Faxes already accepted for relaying still go.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay withdraw [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay price`
+
+Give a partner you relay for new prices from your current rate cards.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay price [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay quote`
+
+Ask a partner what sending your faxes through them would cost. Nothing is relayed.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay quote [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--country <str>`: A country to price, by its two-letter code (AU). Repeat for more.  [required]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay costs`
+
+Show what relays carried and cost: faxes you relayed for partners, and faxes partners sent for you.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay costs [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay suggestions`
+
+Show partners whose local price would have cost less than your own calls lately.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay suggestions [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners relay faxes`
+
+List faxes relayed for partners and faxes partners relayed for you, newest first.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners relay faxes [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back to list.  [default: 30; 1&lt;=x&lt;=366]
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients cases`
