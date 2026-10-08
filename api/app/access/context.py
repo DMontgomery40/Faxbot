@@ -102,6 +102,8 @@ class ConsoleContext:
                                     **rules_acceptance.send_choices(connection=connection)}
                 except Exception:
                     send_choices = {}
+                # Offered only when the organization uses them, so the context is unchanged until then.
+                send_choices = {name: value for name, value in send_choices.items() if value}
             return {
                 'policy_version': policy_version,
                 'active_revision_id': active.id,
