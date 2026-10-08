@@ -36,7 +36,7 @@ from ..rules.check import CheckContext, check, compile_for_replay, replay
 from ..rules.store import RuleStore, RulesConflict, RulesInputError
 from . import facts as facts_module
 from .context import clean_context
-from .packs import APPLIES, compile_plan, target_document
+from .packs import APPLIES, compile_plan, pack_saving, target_document
 from .store import PlanStore, encode
 
 
@@ -149,6 +149,8 @@ class SetupPlan:
                             'rules.' if changed else f'None of your last {checked} faxes would have gone another way.')
             results[scope] = {'warnings': [{'rule_id': problem.rule_id, 'message': problem.message}
                                            for problem in warnings], 'replay': sentence}
+        for pack in plan['packs']:
+            pack['saving'] = pack_saving(pack['items'])  # an item the check blocked no longer counts
         return results
 
     # Reading ------------------------------------------------------------------------------------------------

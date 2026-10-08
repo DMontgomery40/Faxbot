@@ -55,6 +55,17 @@ def test_unplaced_faxes_and_repeated_junk_come_from_their_own_tables(installatio
                            'rejected': 0},)
 
 
+def test_a_fax_the_receiving_rules_placed_is_never_called_unplaced(database):  # noqa: F811
+    """Companion of the seeded rows above: faxes placed by the real receiving path (access/inbound.py)."""
+    from api.tests.test_access_policy import NOW as PLACED_AT
+    from api.tests.test_inbound_access import InboundWorld
+    world = InboundWorld(database)
+    world.fax('placed', '+15550100002')        # Billing's number rule places it
+    world.fax('loose-1', '+15550100099')       # no rule for this number
+    world.fax('loose-2', '+15550100099')
+    assert facts_module.unplaced(database, PLACED_AT) == ({'number': '+15550100099', 'faxes': 2},)
+
+
 def test_plans_are_numbered_kept_and_their_applications_recorded(installation):  # noqa: F811
     configuration, _, snapshot = installation
     store = PlanStore(configuration.engine)

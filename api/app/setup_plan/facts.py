@@ -277,6 +277,8 @@ def gather(engine, snapshot, *, bound=None, relay=None, now=None):
     route_store = RouteStore(engine)
     boxes = mailboxes(engine, values)
     rules = rules_state(RuleStore(engine), [box['id'] for box in boxes])
+    # A number with a mailbox rule now is placed from here on, whatever happened before the rule.
+    ruled = {number for box in boxes for number in box['numbers']}
     revision = snapshot.active
     items, by_country = sending(route_store, revision, bound)
     rows = history(route_store, now)
@@ -288,6 +290,7 @@ def gather(engine, snapshot, *, bound=None, relay=None, now=None):
         partners=tuple(partner_candidates(route_store)['items']), discovered=discovered(engine),
         relay_offers=tuple(relay.recommendations(now=now)) if relay is not None else (),
         send_once_offers=send_once_offers(engine), reply=reply_view(values, engine),
-        unplaced=unplaced(engine, now), junk=junk(engine, now),
+        unplaced=tuple(item for item in unplaced(engine, now) if item['number'] not in ruled),
+        junk=junk(engine, now),
         fallbacks=fallbacks(route_store, revision, bound, accounts), busy=busy(engine, values, rows, now),
         long_pages=long_pages(engine, accounts), plan_budgets=plan_budgets(route_store, values, accounts))

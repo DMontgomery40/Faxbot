@@ -137,6 +137,8 @@ def test_a_cost_heavy_installation_gets_rules_with_predicted_savings_sources_and
     assert [source['name'] for source in country['sources']] == ['Costs → Recommendations', 'Faxbot’s cost estimate']
     toll = rules_['cost.toll-free-class.signalwire']
     assert toll['rule']['when'] == {'destination': {'prefixes': ['+1800']}}
+    # The route those faxes took stays next, so a failed call can still move on.
+    assert toll['rule']['then'] == {'try_in_order': ['signalwire', 'phaxio']}
     assert toll['saving']['amount'] == '0.14'
     # Shading is off: the setting goes back to "where it saves"; long pages are on for one route, a step for another.
     friendly = next(item for item in items(plan, 'cost') if item['key'] == 'cost.fax-friendly')
@@ -276,6 +278,8 @@ def test_two_mailboxes_with_different_jurisdictions_stay_independent():
     assert header['key'] == 'compliance.header' and header['kind'] == 'setting'
     assert header['changes'] == {'fax_header': 'Example Health'} and header['applies_to'] == ['box-us']
     assert '47 CFR 68.318(d)' in header['sentence'] and 'not legal advice' in header['sentence']
+    # The header line is one for the whole installation, and the suggestion says so for the other mailbox.
+    assert header['sentence'].endswith('Faxbot has one header line for every fax, so faxes from Leeds will show it too.')
     views = {view['id']: view for view in plan['mailboxes']}
     assert views['box-us']['items'] == ['compliance.header'] and views['box-gb']['items'] == []
     assert views['box-gb']['missing'] == ['reviewed-rules.GB'] and views['box-us']['missing'] == []

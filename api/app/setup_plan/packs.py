@@ -264,7 +264,14 @@ def _toll_free_class(plan, price):
         return
     account, saving = best
     prefixes = sorted({row[0][:5] if row[0].startswith('+1') else row[0] for row in faxes})
-    rule = {'when': {'destination': {'prefixes': prefixes}}, 'then': {'use': account.key}}
+    # The route these faxes mostly took stays as the next one to try, so a failed call can still move on.
+    keys = {item.key for item in facts.accounts if item.sends and item.enabled}
+    used = {}
+    for _, route, _ in faxes:
+        if route != account.key and route in keys:
+            used[route] = used.get(route, 0) + 1
+    then = ({'try_in_order': [account.key, max(sorted(used), key=used.get)]} if used else {'use': account.key})
+    rule = {'when': {'destination': {'prefixes': prefixes}}, 'then': then}
     label = account.label or account.key
     plan.rule('cost', f'cost.toll-free-class.{account.key}', f'Toll-free numbers go by {label}',
               f'Calls to the toll-free numbers you fax cost less through {label}.' + _saving_sentence(saving),
@@ -324,8 +331,8 @@ def receiving_pack(plan):
     for found in facts.unplaced:
         plan.item('receiving', f"receiving.mailbox.{found['number']}", 'step', f"Give {found['number']} a mailbox",
                   f"{_plural(found['faxes'], 'fax', 'faxes')} to {found['number']} arrived in the last 30 days with "
-                  'no mailbox, so they wait in Received for you to place them. Add a number rule that sends them '
-                  'to the right mailbox.',
+                  'no mailbox, because no number rule places them. Add a number rule that sends them to the right '
+                  'mailbox.',
                   [{'name': 'Received faxes', 'detail': 'Faxes with no mailbox in the last 30 days'}],
                   link=NUMBERS_PAGE, cli='faxbot numbers add')
     for found in facts.junk:
@@ -405,10 +412,13 @@ def compliance_pack(plan, countries):
                       [HEADER_SOURCE], applies_to=applies)
         elif name:
             now_text = f'shows “{header}”' if header else 'is empty'
+            others = [box['name'] for box in facts.mailboxes if countries.get(box['id'], ('',))[0] != 'US']
+            shared = (f" Faxbot has one header line for every fax, so faxes from {', '.join(others)} will show it too."
+                      if others else '')
             plan.setting('compliance', 'compliance.header', 'Print your business name at the top of each page',
                          f'US fax rules ({HEADER_RULE}) ask that each page shows the date and time, the business '
                          f'sending it and its fax number. Your header line {now_text}; this puts “{name}” there. '
-                         'A suggestion, not legal advice.',
+                         f'A suggestion, not legal advice.{shared}',
                          [HEADER_SOURCE, {'name': 'Describe your organization', 'detail': 'The name you typed'}],
                          {'fax_header': name[:80]}, applies_to=applies, link=IDENTITY_PAGE)
         else:
@@ -540,7 +550,7 @@ def compile_plan(facts, context, *, price=None):
     for key, title, sentence in PACKS:
         items = [item for item in plan.items if item['pack'] == key]
         packs.append({'key': key, 'title': title, 'sentence': sentence, 'items': items,
-                      'saving': _pack_saving(items)})
+                      'saving': pack_saving(items)})
     targets = {scope: {'kind': state['kind'], 'scope_id': state['scope_id'], 'base_revision': state['active'],
                        'base': state['document']}
                for scope, state in facts.rules.items()
@@ -552,7 +562,7 @@ def compile_plan(facts, context, *, price=None):
                                 for scope, state in sorted(facts.rules.items())}}}
 
 
-def _pack_saving(items):
+def pack_saving(items):
     """The pack's chosen items' predicted monthly saving, when every one is known and in one currency."""
     from ..routing.costs import format_amount, parse_amount
     total, currency = 0, None
