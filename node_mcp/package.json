@@ -1,6 +1,8 @@
 {
   "name": "faxbot-node-mcp",
   "version": "3.0.0",
+  "license": "UNLICENSED",
+  "private": true,
   "description": "Node.js MCP servers for Faxbot (stdio, Streamable HTTP)",
   "main": "src/servers/stdio.js",
   "type": "module",
@@ -11,7 +13,6 @@
   "author": "David Montgomery <dmontg@gmail.com>",
   "bugs": { "url": "https://github.com/DMontgomery40/Faxbot/issues" },
   "homepage": "https://github.com/DMontgomery40/Faxbot",
-  "publishConfig": { "access": "public" },
   "engines": { "node": ">=20" },
   "scripts": {
     "stdio": "node src/servers/stdio.js",

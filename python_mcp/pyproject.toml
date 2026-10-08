@@ -8,7 +8,8 @@ version = "3.0.0"
 description = "Faxbot MCP servers (Python): stdio, HTTP, SSE"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Proprietary - written permission required; see LICENSE" }
+classifiers = ["License :: Other/Proprietary License", "Private :: Do Not Upload"]
 authors = [
   { name = "David Montgomery", email = "dmontg@gmail.com" }
 ]
