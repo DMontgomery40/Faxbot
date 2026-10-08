@@ -510,6 +510,22 @@ export interface InboundFax {
   earlier_failures_text?: string | null;
 }
 
+// GET /admin/forwarded-trust: certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs).
+export interface ForwardedTrustAnchor {
+  fingerprint: string;
+  short: string;
+  name: string;
+  valid_until: string;
+  source: string;
+  added_on: string;
+}
+
+export interface ForwardedTrust {
+  anchors: ForwardedTrustAnchor[];
+  sentence: string;
+  note: string;
+}
+
 export interface InboundEarlierFailure {
   stopped_at: string | null;
   attempts: number;

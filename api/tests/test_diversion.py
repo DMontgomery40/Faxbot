@@ -105,7 +105,8 @@ def test_a_signature_that_checks_against_the_certificate_it_names_is_not_verifie
     assert (found.diverted_from, found.state, found.source) == (FORWARDED, 'unanchored', 'passport')
     assert fetched == [CERT_URL]
     assert found.sentence == ('Forwarded from +13035550142; signed with the certificate at cert.carrier.example, but '
-                              'who issued that certificate was not checked, so the forwarding is not verified.')
+                              'you trust no certificate authority for forwarded calls yet, so the forwarding is not '
+                              'verified.')
 
 
 @pytest.mark.parametrize('changes, words', [
@@ -247,7 +248,7 @@ def test_a_forwarded_call_routes_by_where_it_was_forwarded_from_and_says_how_far
     rule(http, to_number=TO, mailbox_id=desk, diverted_from=FORWARDED, diversion_unsigned=True, position=2)
     key, certificate = _key_and_certificate(valid_from=datetime.utcnow() - timedelta(days=1),
                                             valid_until=datetime.utcnow() + timedelta(days=1))
-    monkeypatch.setattr(diversion, 'fetch_certificate', lambda url: certificate)
+    monkeypatch.setattr(diversion, 'fetch_chain', lambda url: [certificate])
     now = int(datetime.now(timezone.utc).timestamp())
     signed = _headers_file(tmp_path, '1791049701.1', Identity=passport(key, iat=now))
     fax_signed = handover(http, tmp_path, 'signed', uniqueid='1791049701.1', call={'started_at': now})

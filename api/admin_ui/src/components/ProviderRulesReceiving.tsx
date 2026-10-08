@@ -1,12 +1,14 @@
 // Receiving rules on Numbers: the extra conditions and actions a number rule can have (which account a fax
 // arrives on, who sent it, when, email, urgency, how long it is kept), and "Try a received fax", which says
 // where a fax would go. The number rule list itself stays on Numbers.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Checkbox, FormControl, FormControlLabel, InputLabel, MenuItem, Paper, Select, Stack, Switch,
   TextField, Typography,
 } from '@mui/material';
 import { DeliveryError } from './delivery/shared';
+import type AdminAPIClient from '../api/client';
+import type { ForwardedTrust } from '../api/types';
 import type { ReceivedExplainResult, ReceivingOptions, RulesApi } from './ProviderRulesApi';
 import { TimeEditor } from './ProviderRulesEditor';
 import {
@@ -164,6 +166,64 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
         <DeliveryError error={error} onClose={() => setError(null)} />
         {result && <Alert severity="info">{result.sentence}</Alert>}
       </Box>
+    </Paper>
+  );
+}
+
+// Certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs). A forwarding is verified only when the
+// carrier's signing certificate chains to one; the "Only calls forwarded from" condition takes only verified ones
+// unless its box says otherwise.
+export function ForwardedTrustPanel({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
+  const [trust, setTrust] = useState<ForwardedTrust | null>(null);
+  const [pem, setPem] = useState('');
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    client.listForwardedTrust().then(setTrust).catch(setError);
+  }, [client]);
+  const change = (action: () => Promise<ForwardedTrust>) => {
+    setBusy(true);
+    setError(null);
+    action().then((result) => { setTrust(result); setPem(''); setUrl(''); })
+      .catch(setError).finally(() => setBusy(false));
+  };
+  return (
+    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} aria-label="Forwarded calls you can verify" role="region">
+      <Typography variant="h6" component="h2">Forwarded calls you can verify</Typography>
+      {trust && <Typography variant="body2" sx={{ mb: 1 }}>{trust.sentence}</Typography>}
+      {trust && <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{trust.note}</Typography>}
+      <DeliveryError error={error} onClose={() => setError(null)} />
+      {trust && trust.anchors.length > 0 && (
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          {trust.anchors.map((anchor) => (
+            <Stack key={anchor.fingerprint} direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+              <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                {anchor.name}, valid until {new Date(anchor.valid_until).toLocaleDateString()}, from {anchor.source}
+                {' '}(fingerprint {anchor.short})
+              </Typography>
+              {canWrite && (
+                <Button size="small" color="error" disabled={busy}
+                  onClick={() => change(() => client.removeForwardedTrust(anchor.fingerprint))}>Remove</Button>
+              )}
+            </Stack>
+          ))}
+        </Stack>
+      )}
+      {canWrite && (
+        <Stack spacing={1}>
+          <TextField size="small" multiline minRows={3} label="Certificates to trust (PEM)" value={pem}
+            placeholder="-----BEGIN CERTIFICATE-----" onChange={(event) => setPem(event.target.value)} />
+          <TextField size="small" label="Or the address of a list you can reach" value={url} placeholder="https://"
+            onChange={(event) => setUrl(event.target.value)} />
+          <Box>
+            <Button variant="outlined" disabled={busy || (!pem.trim() && !url.trim())}
+              onClick={() => change(() => client.addForwardedTrust(pem.trim() ? { pem } : { url: url.trim() }))}>
+              Trust these
+            </Button>
+          </Box>
+        </Stack>
+      )}
     </Paper>
   );
 }

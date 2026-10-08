@@ -10,6 +10,7 @@ import typer
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import discovery
+from .commands import forwarded_trust
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -89,6 +90,7 @@ numbers.add_typer(email, name='email')
 numbers.add_typer(reply.reply, name='reply')
 numbers.add_typer(blocked.blocked, name='blocked')
 numbers.add_typer(connectors.connectors, name='connectors')
+numbers.add_typer(forwarded_trust.forwarded_trust, name='forwarded-trust')
 
 # -- recipients ----------------------------------------------------------------------
 

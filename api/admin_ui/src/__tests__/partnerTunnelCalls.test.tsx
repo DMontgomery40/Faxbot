@@ -36,7 +36,7 @@ describe('fax calls inside a tunnel with a partner', () => {
       canWrite onChanged={changed} />);
     const group = screen.getAllByRole('group', { name: 'Fax calls inside a tunnel with Valley Hospital' })[0];
     expect(within(group).getByText(partner.peer_calls_text as string)).toBeTruthy();
-    expect(within(group).getByText(/Set up the WireGuard tunnel to this partner yourself/)).toBeTruthy();
+    expect(within(group).getByText(/Set up a WireGuard tunnel to this partner on the fax engine's network yourself/)).toBeTruthy();
     fireEvent.change(within(group).getByLabelText('Their address inside the tunnel'), { target: { value: ' 10.20.0.2 ' } });
     fireEvent.click(within(group).getByLabelText('Take their fax calls inside the tunnel'));
     expect(await screen.findByText('Saved. Press Apply on the SIP trunk page so the fax engine loads it.')).toBeTruthy();

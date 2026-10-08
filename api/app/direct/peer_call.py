@@ -60,8 +60,8 @@ PEER_PORT = 5070
 PEER_TRANSPORT = 'transport-peer'
 _PEER_ID = re.compile(r'[a-f0-9]{32}')
 PEER_ENDPOINT = re.compile(r'peer-[a-f0-9]{32}-endpoint')
-TUNNEL_NOTE = ('Set up the WireGuard tunnel to this partner yourself, inside the fax engine\'s network (a WireGuard '
-               'container that shares the Asterisk container\'s network). Faxbot only places calls through it.')
+TUNNEL_NOTE = ("Set up a WireGuard tunnel to this partner on the fax engine's network yourself; Faxbot only places "
+               'calls through it.')
 
 
 class PeerCallRefused(RuntimeError):

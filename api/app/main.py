@@ -83,6 +83,7 @@ from .routing.schedule_http import router as routing_schedule_router
 from .rules.http import router as rules_router
 from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
+from .inbound.trust_http import router as forwarded_trust_router
 from .engine_frames_http import router as fax_machines_router
 from .intake.http import router as intake_router
 from .intake.sources.http import router as intake_sources_router
@@ -204,6 +205,7 @@ app.include_router(routing_schedule_router)
 app.include_router(rules_router)
 app.include_router(reply_number_router)
 app.include_router(screening_router)
+app.include_router(forwarded_trust_router)
 app.include_router(fax_machines_router)
 app.include_router(intake_router)
 app.include_router(intake_sources_router)

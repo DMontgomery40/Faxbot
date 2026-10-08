@@ -737,14 +737,16 @@ def stated_subaddress(payload, engine=None):
 def received_diversion(payload, call, engine, *, received_at=None):
     """The call's diversion (inbound/diversion.py) from the headers Asterisk kept for it, or None when it was not
     forwarded. The network's signature is checked only when an enabled receiving rule depends on a diversion."""
-    from . import diversion
+    from . import diversion, trust
     from ..access.receiving_rules import diversion_rules_exist
+    from ..config import configuration_values
     headers = diversion.read_headers(settings.fax_data_dir, payload.get('uniqueid'))
     if not headers:
         return None
     moment = diversion.call_time(call, received_at or diversion.utcnow())
     return diversion.diversion_for(headers, did=payload.get('to_number'), at=moment,
-                                   check=diversion_rules_exist(engine), country=settings.fax_default_country)
+                                   check=diversion_rules_exist(engine), country=settings.fax_default_country,
+                                   trusted=trust.certificates(configuration_values()))
 
 
 def remote_address(payload):

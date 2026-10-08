@@ -973,6 +973,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `reply`: The number printed on the faxes you send,...
 * `blocked`: Junk senders whose calls are turned away...
 * `connectors`: Email mailboxes and folders that bring...
+* `forwarded-trust`: Certificate authorities you trust to...
 
 ### `faxbot numbers list`
 
@@ -1701,6 +1702,78 @@ Show the mailboxes, people and mail services you can use when adding a connector
 ```console
 $ faxbot numbers connectors choices [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot numbers forwarded-trust`
+
+Certificate authorities you trust to verify that a carrier forwarded a call (STIR/SHAKEN STI-CAs). A forwarding is verified only when it chains to one.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the certificate authorities you trust...
+* `add`: Trust certificate authorities for...
+* `remove`: Stop trusting one certificate authority...
+
+#### `faxbot numbers forwarded-trust list`
+
+List the certificate authorities you trust for forwarded calls.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers forwarded-trust add`
+
+Trust certificate authorities for forwarded calls: from a file of PEM certificates, or from a list at an
+address. Only certificate authorities are kept, each once.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust add [OPTIONS] [FILE]
+```
+
+**Arguments**:
+
+* `[FILE]`: PEM certificates of the certificate authorities, or &#x27;-&#x27; for standard input.
+
+**Options**:
+
+* `--url ADDRESS`: Read the list from this https:// address instead, once, now (a list you can reach, such as one your carrier gives you).
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers forwarded-trust remove`
+
+Stop trusting one certificate authority for forwarded calls.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust remove [OPTIONS] {fingerprint}
+```
+
+**Arguments**:
+
+* `fingerprint`: The start of its fingerprint, as the list shows it (at least 8 characters).  [required]
 
 **Options**:
 

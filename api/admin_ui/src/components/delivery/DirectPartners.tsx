@@ -152,8 +152,8 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       )}
       {canWrite && (
         <Typography variant="caption" color="text.secondary" display="block">
-          Set up the WireGuard tunnel to this partner yourself, inside the fax engine's network (a WireGuard container
-          that shares the Asterisk container's network). Faxbot only places calls through it.
+          Set up a WireGuard tunnel to this partner on the fax engine's network yourself; Faxbot only places calls
+          through it.
         </Typography>
       )}
     </Box>

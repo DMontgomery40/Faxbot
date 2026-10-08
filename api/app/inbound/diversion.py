@@ -16,14 +16,15 @@ where it came from in three ways, all read here from the received call:
 A diversion is the network's statement about the call, never proof of who
 sent the fax. Faxbot records how far it checked it (``state``):
 
-- ``signed``: reserved for a PASSporT whose certificate chains to a STIR/SHAKEN
-  certificate authority you trust (RFC 8224 section 6.2.2, ATIS-1000074). Faxbot
-  has no list of those authorities yet, so nothing is ``signed`` today.
-- ``unanchored``: the PASSporT's ES256 signature checks against the certificate
-  it names, the certificate is valid at the call, the PASSporT is fresh (60 s)
-  and its ``dest`` is the number that received the call, but who issued that
-  certificate is not checked. The URL is the caller's choice, so anyone with a
-  web server could make one: it is not verified, and the sentence says so.
+- ``signed`` (verified): the PASSporT's ES256 signature checks against the
+  certificate it names, the certificate is valid at the call, the PASSporT is
+  fresh (60 s) and its ``dest`` is the number that received the call, and that
+  certificate chains to a STIR/SHAKEN certificate authority you trust
+  (inbound/trust.py; RFC 8224 section 6.2.2, ATIS-1000074).
+- ``unanchored``: all of that, but the certificate does not chain to a
+  certificate authority you trust, or you trust none yet. The URL is the
+  caller's choice, so anyone with a web server could make one: it is not
+  verified, and the sentence says so.
 - ``unchecked``: signed, but not checked (no receiving rule needs it, the
   certificate could not be fetched, or the compact form carries no claims).
 - ``failed``: its signature, time or destination did not check. It never
@@ -295,10 +296,17 @@ def _public_host(host):
         return False
 
 
-def fetch_certificate(url, *, get=None, resolve=_public_host, now=time.monotonic):
-    """The X.509 certificate at ``url`` (PEM or DER), or None: HTTPS only, a public host, no redirects, at most
-    CERT_BYTES within FETCH_SECONDS; kept CACHE_SECONDS (a failure FAILED_CACHE_SECONDS)."""
-    from cryptography import x509
+def fetch_certificate(url, **options):
+    """The signing certificate at ``url`` (the first of its chain), or None."""
+    chain = fetch_chain(url, **options)
+    return chain[0] if chain else None
+
+
+def fetch_chain(url, *, get=None, resolve=_public_host, now=time.monotonic):
+    """The certificates at ``url``, signing certificate first (PEM, a PEM chain, or one DER), or None: HTTPS only,
+    a public host, no redirects, at most CERT_BYTES within FETCH_SECONDS; kept CACHE_SECONDS (a failure
+    FAILED_CACHE_SECONDS)."""
+    from .trust import _certificates
     cached = _CACHE.get(url)
     if cached is not None and cached[0] > now():
         return cached[1]
@@ -311,17 +319,16 @@ def fetch_certificate(url, *, get=None, resolve=_public_host, now=time.monotonic
             response = fetch(url)
             body = response.content[:CERT_BYTES + 1] if response.status_code == 200 else b''
             if body and len(body) <= CERT_BYTES:
-                certificate = (x509.load_pem_x509_certificate(body) if b'-----BEGIN' in body
-                               else x509.load_der_x509_certificate(body))
+                certificate = _certificates(body) or None
         except (OSError, ValueError, httpx.HTTPError):
             certificate = None
     _CACHE[url] = (now() + (CACHE_SECONDS if certificate is not None else FAILED_CACHE_SECONDS), certificate)
     return certificate
 
 
-def check_passport(passport, *, did, at, fetch=None):
-    """UNANCHORED (with the certificate's host), FAILED or UNCHECKED for one diversion PASSporT, with the reason in
-    a few words. Never SIGNED: no certificate authority is trusted to anchor the certificate yet."""
+def check_passport(passport, *, did, at, fetch=None, trusted=()):
+    """SIGNED, UNANCHORED, FAILED or UNCHECKED for one diversion PASSporT, with the reason in a few words. SIGNED
+    only when the certificate chains to one of ``trusted`` (inbound/trust.py)."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -338,9 +345,11 @@ def check_passport(passport, *, did, at, fetch=None):
     url = passport.header.get('x5u') or passport.info
     if passport.info and passport.header.get('x5u') and passport.info != passport.header['x5u']:
         return FAILED, 'it names two different certificates'
-    certificate = (fetch or fetch_certificate)(url) if url else None
-    if certificate is None:
+    found = (fetch or fetch_chain)(url) if url else None
+    chain = found if isinstance(found, list) else ([found] if found is not None else [])
+    if not chain:
         return UNCHECKED, 'its certificate could not be fetched'
+    certificate, intermediates = chain[0], chain[1:]
     moment = at.replace(tzinfo=timezone.utc)
     if not certificate.not_valid_before_utc <= moment <= certificate.not_valid_after_utc:
         return FAILED, 'its certificate was not valid at the time of the call'
@@ -353,7 +362,13 @@ def check_passport(passport, *, did, at, fetch=None):
         key.verify(signature, passport.signing_input, ec.ECDSA(hashes.SHA256()))
     except InvalidSignature:
         return FAILED, 'its signature does not match its certificate'
-    return UNANCHORED, urlsplit(url).hostname
+    host = urlsplit(url).hostname
+    if not trusted:
+        return UNANCHORED, f'{host}, but you trust no certificate authority for forwarded calls yet'
+    from .trust import verify_chain
+    if verify_chain(certificate, intermediates, trusted, moment):
+        return SIGNED, None
+    return UNANCHORED, f'{host}, which no certificate authority you trust issued'
 
 
 # -- the call's diversion ---------------------------------------------------------------------------------------------
@@ -365,7 +380,7 @@ def _number(number, country):
     return received_number(number, country) or number
 
 
-def diversion_for(headers, *, did, at, check=False, country=None, fetch=None) -> Diversion | None:
+def diversion_for(headers, *, did, at, check=False, country=None, fetch=None, trusted=()) -> Diversion | None:
     """The call's diversion from its headers, or None when it was not forwarded. ``check`` fetches the certificate
     and verifies the signature (only when a receiving rule needs it)."""
     passports, compact = div_passports(headers.get('Identity'))
@@ -380,7 +395,7 @@ def diversion_for(headers, *, did, at, check=False, country=None, fetch=None) ->
             state, why = UNCHECKED, 'no receiving rule needed it checked'
         else:
             try:
-                state, why = check_passport(passport, did=did, at=at, fetch=fetch)
+                state, why = check_passport(passport, did=did, at=at, fetch=fetch, trusted=trusted)
             except ValueError as error:  # an unusable certificate or key (cryptography's documented error)
                 logging.getLogger(__name__).info('A diversion signature could not be checked: %s', error)
                 state, why = UNCHECKED, 'its certificate could not be read'
@@ -396,10 +411,12 @@ def diversion_for(headers, *, did, at, check=False, country=None, fetch=None) ->
 def sentence(number, state, why=None):
     """One plain sentence for the received fax."""
     if state == SIGNED:
-        return f'Forwarded from {number}; the network signed the forwarding and its signature is verified.'
+        return (f'Forwarded from {number}; the forwarding is verified: signed with a certificate from a certificate '
+                'authority you trust.')
     if state == UNANCHORED:
-        return (f'Forwarded from {number}; signed with the certificate at {why}, but who issued that certificate was '
-                'not checked, so the forwarding is not verified.')
+        if not why:
+            return f'Forwarded from {number}; signed, but not by a certificate authority you trust, so not verified.'
+        return f'Forwarded from {number}; signed with the certificate at {why}, so the forwarding is not verified.'
     because = f': {why}' if why else ''
     if state == FAILED:
         return f'Forwarded from {number}, the network said, but its signature did not check{because}.'

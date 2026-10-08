@@ -90,7 +90,7 @@ import type {
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
-import type { EfaxStatus, HumbleFaxStatus } from './types';
+import type { EfaxStatus, ForwardedTrust, HumbleFaxStatus } from './types';
 import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
 import type {
@@ -1296,6 +1296,19 @@ class AdminAPIClient {
   }
 
   // Fax calls with a partner inside an encrypted tunnel set up outside Faxbot: take its calls, its address there.
+  // Certificate authorities you trust for forwarded calls; each change is an audited configuration change.
+  async listForwardedTrust(): Promise<ForwardedTrust> {
+    return this.json('/admin/forwarded-trust');
+  }
+
+  async addForwardedTrust(body: { pem?: string; url?: string }): Promise<ForwardedTrust> {
+    return this.json('/admin/forwarded-trust', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async removeForwardedTrust(fingerprint: string): Promise<ForwardedTrust> {
+    return this.json(`/admin/forwarded-trust/${id(fingerprint)}`, { method: 'DELETE' });
+  }
+
   async setDirectTunnelCalls(partnerId: string, accept: boolean, address: string | null): Promise<DirectFaxImagesResult> {
     return this.json(`/direct/peers/${id(partnerId)}/peer-calls`, { method: 'POST', body: JSON.stringify({ accept, address }) });
   }
