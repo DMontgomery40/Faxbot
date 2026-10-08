@@ -498,6 +498,11 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 * `approve`: Approve a fax your rules held for...
 * `refuse`: Refuse a held fax.
 * `check-again`: Look again for a route your rules allow...
+* `uncertain`: List sent faxes whose outcome Faxbot could...
+* `probe`: Show what Faxbot found out about a sent...
+* `settle`: Settle what happened to a sent fax Faxbot...
+* `assign`: Give a sent fax Faxbot is unsure of to the...
+* `uncertain-settings`: Show or change how soon uncertain sent...
 
 ### `faxbot sent list`
 
@@ -703,6 +708,107 @@ $ faxbot sent check-again [OPTIONS] {FAX_ID}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot sent uncertain`
+
+List sent faxes whose outcome Faxbot could not confirm, with their owner and the time to settle each.
+
+**Usage**:
+
+```console
+$ faxbot sent uncertain [OPTIONS]
+```
+
+**Options**:
+
+* `--mine`: Only faxes you own.
+* `--unassigned`: Only faxes nobody owns yet.
+* `--overdue`: Only faxes past the time to settle them.
+* `--settled`: Faxes already settled, instead of open ones.
+* `--limit <int range>`: How many faxes to show.  [default: 100; 1&lt;=x&lt;=200]
+* `--ids`: Also show each fax ID, for probe, settle and assign.
+* `--help`: Show this message and exit.
+
+### `faxbot sent probe`
+
+Show what Faxbot found out about a sent fax it is unsure of: the checks, cheapest first, and what each means.
+
+**Usage**:
+
+```console
+$ faxbot sent probe [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of the sent fax, from &#x27;faxbot sent uncertain --ids&#x27; or &#x27;faxbot sent list --ids&#x27;.  [required]
+
+**Options**:
+
+* `--history`: Also show everything that happened.
+* `--query-pdf FILE`: Save the one-page receipt query to check it before sending. Use &#x27;-&#x27; for standard output.
+* `--send-query`: Fax the one-page receipt query to the recipient now.
+* `--force`: With --query-pdf: replace the file.
+* `--help`: Show this message and exit.
+
+### `faxbot sent settle`
+
+Settle what happened to a sent fax Faxbot was unsure of. Faxbot records who decided and why.
+
+**Usage**:
+
+```console
+$ faxbot sent settle [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of the sent fax, from &#x27;faxbot sent uncertain --ids&#x27; or &#x27;faxbot sent list --ids&#x27;.  [required]
+
+**Options**:
+
+* `--delivered`: It arrived.
+* `--not-delivered`: It did not arrive.
+* `--cant-tell`: You cannot find out.
+* `--reason <str>`: How you know, for example who you spoke to (up to 400 characters).  [required]
+* `--send-again`: With --not-delivered: send the same document again now, as a new fax linked to this one.
+* `--help`: Show this message and exit.
+
+### `faxbot sent assign`
+
+Give a sent fax Faxbot is unsure of to the person who will settle it. They must already be able to see it.
+
+**Usage**:
+
+```console
+$ faxbot sent assign [OPTIONS] {fax_id} {user}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of the sent fax, from &#x27;faxbot sent uncertain --ids&#x27; or &#x27;faxbot sent list --ids&#x27;.  [required]
+* `user`: The new owner: their login or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot sent uncertain-settings`
+
+Show or change how soon uncertain sent faxes should be settled, and who settles them when the sender cannot.
+
+**Usage**:
+
+```console
+$ faxbot sent uncertain-settings [OPTIONS]
+```
+
+**Options**:
+
+* `--hours <int range>`: Hours to settle an uncertain fax, from when Faxbot finds it (0 for no deadline).  [0&lt;=x&lt;=720]
+* `--fallback <str>`: The person who settles uncertain faxes when the sender cannot: their login or name.
+* `--no-fallback`: Remove the fallback person.
 * `--help`: Show this message and exit.
 
 ## `faxbot forms`

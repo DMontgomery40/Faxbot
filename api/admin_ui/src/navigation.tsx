@@ -71,6 +71,7 @@ import CasePackets from './components/delivery/CasePackets';
 import Savings from './components/delivery/Savings';
 import Recommendations from './components/delivery/Recommendations';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
+import UncertainSettingsPanel from './components/work/UncertainSettingsPanel';
 import Terminal from './components/Terminal';
 import AuditLog from './components/AuditLog';
 import { DeploymentSection } from './components/common/Deployment';
@@ -249,7 +250,7 @@ export const NAVIGATION: NavArea[] = [
           canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
           show={readFilter(ctx.params.get('show'))}
           onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
-          onSendFax={sendFax(ctx)} />) },
+          onSendFax={sendFax(ctx)} onOpenSentFax={ctx.openJob} />) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
         render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
@@ -282,6 +283,9 @@ export const NAVIGATION: NavArea[] = [
             )}
             {ctx.permissions.has('settings:read') && (
               <Box sx={{ mt: 4 }}><WorkSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
+            )}
+            {ctx.permissions.has('settings:read') && (
+              <Box sx={{ mt: 4 }}><UncertainSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
             )}
           </>
         ) },
