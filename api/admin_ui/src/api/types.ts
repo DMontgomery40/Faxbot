@@ -313,9 +313,10 @@ export interface Settings {
     min_success_percent: number;
     // Faxes to the installation's own numbers become received faxes here, with no call.
     local_delivery?: boolean;
-    // Lighten shaded areas and remove specks on documents you send: where it saves time (the default), always
-    // or never.
+    // Fax-friendly shading on documents you send: where it saves time (the default), always or never; and the
+    // opt-in to also make light areas white (off by default; it may erase pale text).
     fax_friendly_documents?: 'where_it_saves' | 'always' | 'never';
+    fax_friendly_whiten?: boolean;
   };
   intake?: {
     email_enabled: boolean;

@@ -716,6 +716,19 @@ def describe_setting():
                        'warning': WHITEN_WARNING}}
 
 
+RECOMMENDATION_HEADING = 'Shaded areas'
+# The console keeps a copy of these words (api/admin_ui/src/components/delivery/faxFriendlySetting.json);
+# tests/test_faithful_choice.py fails when the copy and this source differ.
+CONSOLE_WORDS = 'api/admin_ui/src/components/delivery/faxFriendlySetting.json'
+
+
+def console_words():
+    """Everything the console says about the setting: ``describe_setting`` plus its help, the whitening opt-in's
+    help, the recipient's label and the recommendation's heading."""
+    return {**describe_setting(), 'help': SETTING_SENTENCE, 'whiten_help': WHITEN_SENTENCE,
+            'recipient_label': RECIPIENT_LABEL, 'heading': RECOMMENDATION_HEADING}
+
+
 def recipient_view(engine, number, values):
     """Recipients, Details: this recipient's choice and the setting for all faxes."""
     return {'shading': recipient_choice(engine, number), 'shading_default': documents_choice(values)}

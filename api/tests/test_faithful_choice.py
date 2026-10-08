@@ -221,3 +221,15 @@ def test_describe_setting_keeps_guided_setups_keys_and_adds_the_whitening_opt_in
     assert 'pale text' in friendly.WHITEN_WARNING and 'light marks' in friendly.WHITEN_WARNING
     from app.cli.commands.pages import shading_text
     assert shading_text('where_it_saves') == 'where it saves time' and shading_text(None) == 'where it saves time'
+
+
+def test_the_console_and_the_command_line_say_the_same_words_as_the_server():
+    import json
+    from pathlib import Path
+    from app.cli.commands.delivery import RECOMMENDATION_SECTIONS
+    copy = Path(__file__).resolve().parents[2] / friendly.CONSOLE_WORDS
+    words = json.loads(json.dumps(friendly.console_words()))
+    assert json.loads(copy.read_text(encoding='utf-8')) == words, (
+        f'Update {friendly.CONSOLE_WORDS} from friendly.console_words().')
+    assert dict((key, heading) for key, heading, _, _ in RECOMMENDATION_SECTIONS)['pages'] == \
+        friendly.RECOMMENDATION_HEADING
