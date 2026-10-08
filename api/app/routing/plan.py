@@ -114,6 +114,11 @@ def _is_digital(key):
     return is_digital(key)
 
 
+def _is_relay(key):
+    from ..rules.model import is_relay
+    return is_relay(key)
+
+
 def _accounts(values):
     """The revision's sending accounts by key (``accounts.sending_accounts``); empty when they cannot be read."""
     try:
@@ -150,20 +155,21 @@ def _in_order(candidates, prices=None, pages=1):
     return choices
 
 
-def _with_digital(candidates, digital, pinned):
-    """The candidates with digital routes placed where the fax's rules put them.
+def _placed(candidates, extra, pinned):
+    """The candidates with partner relays or digital routes (``extra``) placed where the fax's rules put them.
 
-    In a rule's own order (``use``, ``try_in_order``), a digital route sits where its key, or ``digital``, is
-    listed; otherwise (and for the automatic choice and ``cheapest``) it is ranked by cost with the accounts.
+    In a rule's own order (``use``, ``try_in_order``), each sits where its key (or, for a digital route, the group
+    ``digital``) is listed; otherwise (and for the automatic choice and ``cheapest``) it is ranked by cost with the
+    accounts.
     """
     if pinned is None or pinned.envelope.mode not in ('one', 'ordered'):
-        return candidates + digital
+        return candidates + list(extra)
     from ..rules.model import DIGITAL
     order = list(pinned.envelope.accounts)
     rank = {key: index for index, key in enumerate(order)}
     group = rank.get(DIGITAL, len(order))
     placed = list(candidates)
-    for item in digital:
+    for item in extra:
         place = rank.get(item.key, group)
         position = next((index for index, candidate in enumerate(placed)
                          if candidate.kind not in ('local', 'direct') and rank.get(candidate.key, len(order)) > place),
@@ -293,8 +299,9 @@ class RoutePlanner:
                 keys = [key for key in keys if pinned.allows(key)]
         else:
             keys = [key for key in pinned.envelope.accounts if alternates or key == bound]
-        # Digital routes (``dsm:``, ``fhir:``, or all of them as ``digital``) are offered below, not as accounts.
-        keys = [key for key in keys if not _is_digital(key)]
+        # Partner relays (``relay:<partner>``) and digital routes (``dsm:``, ``fhir:``, or all of them as
+        # ``digital``) a rule names are offered below as themselves, never as provider accounts.
+        keys = [key for key in keys if not _is_digital(key) and not _is_relay(key)]
         candidates = []
         for key in keys:
             why = self._unusable(key, current, pinned, prices)
@@ -315,7 +322,7 @@ class RoutePlanner:
             candidates.insert(0, RouteCandidate(local_delivery.LOCAL, 'local', local_delivery.LOCAL, None))
         relays, relay_prices = self._relays(destination, pages, pinned, job_id, now,
                                             home=getattr(values, 'fax_default_country', None))
-        candidates += relays
+        candidates = _placed(candidates, relays, pinned)
         if relay_prices:
             # A relay is ranked by its partner's signed price like any account; an unknown price sorts last.
             prices = {**(prices or {}), **relay_prices}
@@ -324,7 +331,7 @@ class RoutePlanner:
         skipped += digital_skipped
         if digital:
             prices = {**(prices or {}), **digital_prices}
-            candidates = _with_digital(candidates, digital, pinned)
+            candidates = _placed(candidates, digital, pinned)
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
         if tried:
             done = {(route, number or destination) for route, number in tried}
