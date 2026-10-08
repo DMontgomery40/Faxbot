@@ -940,9 +940,10 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
                             "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
-                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION"}, variable
+                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION", "FAXBOT_FAR_SUB"}, variable
+    # The sender's SUB frame (WP-B, receiving rules) goes over only through its hex filter.
     for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
-                "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}"):
+                "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}", "${FAXBOT_FAR_SUB}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw
     assert done[-1].endswith("Return()")
 
