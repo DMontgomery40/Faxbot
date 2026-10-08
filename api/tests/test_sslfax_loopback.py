@@ -1479,6 +1479,11 @@ def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(t
     context = loopback('q', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
                        api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
     docker, key = context['docker'], context['key']
+    # Pages as drawn on both faxes: once the first call puts the peer's unlimited page length on record, dense
+    # pages would pack the second fax onto one long page (it did, on 8 October 2026, intact and in JBIG).
+    kept = api(docker, 'PUT', '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/pages', key=key,
+               body={'packing': 'never'})
+    assert kept['status'] == 200, kept
     proofs = {}
     for name in ('first', 'second'):
         folder = tmp_path / name
@@ -1494,9 +1499,11 @@ def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(t
         detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
         proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'receiver_on_record': known,
                       'desireddf': re.findall(r'^desireddf:(\d+)$', outcome['done_qfile'], re.MULTILINE),
-                      'sent_detail': detail.get('coding')})
-        assert_delivered(outcome, proof)
+                      'sent_detail': detail.get('coding'),
+                      'received_info_raw': outcome['received_info'][:400]})
         proofs[name] = proof
+        print(f'\nSSLFAX_PROOF_Q_{name.upper()} ' + json.dumps(proof, indent=2, default=str))
+        assert_delivered(outcome, proof)
     print('\nSSLFAX_PROOF_Q ' + json.dumps(proofs, indent=2, default=str))
     first, second = proofs['first'], proofs['second']
     # Measured in JBIG on the API image, smaller than every other coding.
