@@ -3769,6 +3769,7 @@ $ faxbot recipients digital messages [OPTIONS]
 * `--received`: Show messages received.
 * `--sent`: Show messages sent.
 * `--limit <int range>`: How many to show.  [default: 50; 1&lt;=x&lt;=200]
+* `--fax FAX_ID`: Show only the messages one sent fax went as.
 * `--help`: Show this message and exit.
 
 ## `faxbot providers`
