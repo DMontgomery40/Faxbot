@@ -18,10 +18,15 @@ const STATUS_CHIP = { size: 'small', variant: 'outlined', sx: { height: 22, font
 
 type Navigate = (destination: AdminDestination) => void;
 
-// On a wide screen a stage with many mechanisms takes two columns, so no stage runs far below the others.
-function span(count: number): number {
-  return count > 6 ? 2 : 1;
+// On a wide screen a stage with many mechanisms takes two columns (three on the widest), so no stage runs far
+// below the others.
+function span(count: number, wide: boolean): number {
+  if (count <= 6) return 1;
+  return wide ? 3 : 2;
 }
+
+// How far each mechanism is proven, at a glance; the legend says what each means.
+const TESTED_COLOR = { live: 'info', lab: 'secondary', built: 'default' } as const;
 
 function MechanismCard({ item, onNavigate }: { item: SavingsMechanism; onNavigate?: Navigate }) {
   const link = item.link;
@@ -44,16 +49,17 @@ function MechanismCard({ item, onNavigate }: { item: SavingsMechanism; onNavigat
       <Box display="flex" flexWrap="wrap" gap={0.5}>
         <Chip {...STATUS_CHIP} label={item.enabled.label} color={item.enabled.on ? 'success' : 'default'} />
         <Chip {...STATUS_CHIP} label={item.works.label} color={item.works.here ? 'success' : 'warning'} />
+        <Chip {...STATUS_CHIP} label={item.evidence.label} color={TESTED_COLOR[item.evidence.level]}
+          icon={<TestedIcon />} data-testid={`savings-map-tested-${item.key}`}
+          sx={{ ...STATUS_CHIP.sx, '& .MuiChip-icon': { fontSize: 14 } }} />
       </Box>
+      {/* The reasons a status is negative are the useful text; then one short line about this installation. */}
       {reasons.map((sentence) => (
         <Typography key={sentence} variant="caption" color="text.secondary" sx={{ lineHeight: 1.35 }}>{sentence}</Typography>
       ))}
-      <Box display="flex" alignItems="flex-start" gap={0.5}>
-        <TestedIcon sx={{ fontSize: 14, mt: '2px', color: item.evidence.level === 'built' ? 'text.disabled' : 'info.main' }} />
-        <Typography variant="caption" sx={{ lineHeight: 1.35 }}>
-          {item.evidence.label}. <Box component="span" color="text.secondary">{item.here.sentence}</Box>
-        </Typography>
-      </Box>
+      {item.here.sentence && (
+        <Typography variant="caption" sx={{ lineHeight: 1.35 }}>{item.here.sentence}</Typography>
+      )}
       {item.turn_on && onNavigate && (
         <Button size="small" variant="text" sx={{ alignSelf: 'flex-start', px: 0.5, minWidth: 0 }}
           onClick={(event) => { event.stopPropagation(); onNavigate(item.page as AdminDestination); }}
@@ -98,10 +104,11 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
       </Stack>
       <Box sx={{ display: 'grid', gap: { xs: 0, md: 2 },
         gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: `repeat(${path.length}, minmax(0, 1fr))`,
-          lg: path.map((stage) => `minmax(0, ${span(stage.mechanisms.length)}fr)`).join(' ') } }}>
+          lg: path.map((stage) => `minmax(0, ${span(stage.mechanisms.length, false)}fr)`).join(' '),
+          xl: path.map((stage) => `minmax(0, ${span(stage.mechanisms.length, true)}fr)`).join(' ') } }}>
         {path.map((stage, index) => {
           const last = index === path.length - 1;
-          const columns = span(stage.mechanisms.length);
+          const count = stage.mechanisms.length;
           return (
             <Box key={stage.key} data-testid={`savings-map-stage-${stage.key}`} sx={{ minWidth: 0 }}>
               <Box sx={{ position: 'relative', mb: 1.5 }}>
@@ -114,7 +121,8 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
                 )}
               </Box>
               <Box sx={{ display: 'grid', gap: 1, alignItems: 'start',
-                gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: `repeat(${columns}, minmax(0, 1fr))` } }}>
+                gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: `repeat(${span(count, false)}, minmax(0, 1fr))`,
+                  xl: `repeat(${span(count, true)}, minmax(0, 1fr))` } }}>
                 {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} onNavigate={onNavigate} />)}
               </Box>
               {!last && (
@@ -130,6 +138,9 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
       {beside.map((stage) => (
         <Box key={stage.key} data-testid={`savings-map-stage-${stage.key}`} sx={{ mt: 3 }}>
           <Box sx={{ mb: 1.5, maxWidth: { md: 360 } }}><StageTitle number={path.length + 1} title={stage.title} /></Box>
+          {stage.sentence && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>{stage.sentence}</Typography>
+          )}
           <Box sx={{ display: 'grid', gap: 1,
             gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))',
               lg: 'repeat(4, minmax(0, 1fr))' } }}>

@@ -14,8 +14,8 @@
         "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
       },
       {
-        "label": "Tested",
-        "sentence": "How far Faxbot has proven it, and whether it has worked on your faxes in the last 30 days."
+        "label": "Live call, Test lab or Sample data",
+        "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
       }
     ],
     "stages": [
@@ -23,6 +23,7 @@
         "key": "document",
         "title": "Preparing the document",
         "path": true,
+        "sentence": null,
         "mechanisms": [
           {
             "key": "case_packets",
@@ -40,11 +41,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "case_packets",
             "page": "recipients/list",
@@ -70,11 +71,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "packing",
             "page": "providers/sending",
@@ -100,11 +101,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "encoding",
             "page": "recipients/list",
@@ -130,11 +131,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "fax_friendly",
             "page": "providers/sending",
@@ -150,6 +151,7 @@
         "key": "route",
         "title": "Choosing the route",
         "path": true,
+        "sentence": null,
         "mechanisms": [
           {
             "key": "own_numbers",
@@ -167,11 +169,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "own_numbers",
             "page": "providers/sending",
@@ -197,11 +199,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "direct_delivery",
             "page": "recipients/partners",
@@ -227,11 +229,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "direct_fax_images",
             "page": "recipients/partners",
@@ -257,11 +259,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "direct_bytes",
             "page": "recipients/partners",
@@ -287,11 +289,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "relay",
             "page": "recipients/partners",
@@ -317,11 +319,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "toll_free",
             "page": "recipients/list",
@@ -347,11 +349,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 2,
-              "sentence": "Worked on 2 faxes in the last 30 days."
+              "sentence": "Used on 2 faxes in 30 days"
             },
             "part": "cheapest_route",
             "page": "recipients/list",
@@ -377,11 +379,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "plan_first",
             "page": "costs/prices",
@@ -407,11 +409,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Faxbot works these hours out afresh each time and keeps no count of the faxes that waited."
+              "sentence": "Faxbot keeps no count of the faxes that waited"
             },
             "part": null,
             "page": "recipients/list",
@@ -437,11 +439,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Faxbot works out free lines from its delivery records each time and keeps no count of the faxes that waited."
+              "sentence": "Faxbot keeps no count of the faxes that waited"
             },
             "part": null,
             "page": "recipients/list",
@@ -467,11 +469,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "digital",
             "page": "recipients/list",
@@ -487,6 +489,7 @@
         "key": "call",
         "title": "On the call",
         "path": true,
+        "sentence": null,
         "mechanisms": [
           {
             "key": "fax_over_ip",
@@ -504,11 +507,11 @@
             },
             "evidence": {
               "level": "live",
-              "label": "Proven on a live call"
+              "label": "Live call"
             },
             "here": {
               "used": 10,
-              "sentence": "Worked on 10 calls in the last 30 days."
+              "sentence": "Used on 10 calls in 30 days"
             },
             "part": "t38",
             "page": "providers/trunk",
@@ -534,11 +537,11 @@
             },
             "evidence": {
               "level": "lab",
-              "label": "Proven in the test lab"
+              "label": "Test lab"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "sending_together",
             "page": "recipients/list",
@@ -564,11 +567,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "separator_pages",
             "page": "recipients/list",
@@ -590,15 +593,15 @@
             "works": {
               "here": false,
               "label": "Not here",
-              "sentence": "Faxbot's fast fax service starts when you select Apply and connect."
+              "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
             },
             "evidence": {
               "level": "lab",
-              "label": "Proven in the test lab"
+              "label": "Test lab"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "sslfax",
             "page": "providers/trunk",
@@ -614,6 +617,7 @@
         "key": "after",
         "title": "After the call",
         "path": true,
+        "sentence": null,
         "mechanisms": [
           {
             "key": "continuation",
@@ -631,11 +635,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "continuation",
             "page": "faxes/sent",
@@ -661,11 +665,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Not used here in the last 30 days."
+              "sentence": "Not used in 30 days"
             },
             "part": "partner_repair",
             "page": "recipients/partners",
@@ -691,11 +695,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Its figures are on Costs → Charges and Costs → Invoices."
+              "sentence": null
             },
             "part": null,
             "page": "costs/charges",
@@ -711,6 +715,7 @@
         "key": "receiving",
         "title": "Receiving",
         "path": true,
+        "sentence": null,
         "mechanisms": [
           {
             "key": "blocked_senders",
@@ -728,11 +733,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 1,
-              "sentence": "Turned away 1 call in the last 30 days."
+              "sentence": "Turned away 1 call in 30 days"
             },
             "part": "blocked_calls",
             "page": "numbers/blocked",
@@ -748,6 +753,7 @@
         "key": "advice",
         "title": "Advice you act on",
         "path": false,
+        "sentence": "Advice only: nothing changes until you act on it.",
         "mechanisms": [
           {
             "key": "advice_sending",
@@ -765,11 +771,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -795,11 +801,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -825,11 +831,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -855,11 +861,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -885,11 +891,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -915,11 +921,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -945,11 +951,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -975,11 +981,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1005,11 +1011,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1035,11 +1041,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1065,11 +1071,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1095,11 +1101,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1125,11 +1131,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1155,11 +1161,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "costs/recommendations",
@@ -1185,11 +1191,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "providers/trunk",
@@ -1215,11 +1221,11 @@
             },
             "evidence": {
               "level": "built",
-              "label": "Built and tested; not yet run on a live call"
+              "label": "Sample data"
             },
             "here": {
               "used": 0,
-              "sentence": "Advice only: nothing changes until you act on it."
+              "sentence": null
             },
             "part": null,
             "page": "system/setup",
@@ -1238,187 +1244,171 @@
     "Every way Faxbot saves money, in the order a fax meets them.",
     "",
     "Preparing the document",
-    "  Case packets: Off · Works here · Built and tested; not yet run on a live call",
+    "  Case packets: Off · Works here · Sample data",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    No recipient accepts a list of the documents they already have yet.",
-    "    Not used here in the last 30 days.",
+    "    Not used in 30 days",
     "    Turn it on in Recipients → Details.",
-    "  Dense pages: On · Works here · Built and tested; not yet run on a live call",
+    "  Dense pages: On · Works here · Sample data",
     "    Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
-    "    Not used here in the last 30 days.",
-    "  Encoded pages (experimental): Off · Works here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Encoded pages (experimental): Off · Works here · Sample data",
     "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
     "    No recipient has agreed to encoded pages yet.",
-    "    Not used here in the last 30 days.",
+    "    Not used in 30 days",
     "    Turn it on in Recipients → Details.",
-    "  Lighter shading: Off · Works here · Built and tested; not yet run on a live call",
+    "  Lighter shading: Off · Works here · Sample data",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    Not used here in the last 30 days.",
+    "    Not used in 30 days",
     "    Turn it on in Providers → In use → Delivery routes.",
     "",
     "Choosing the route",
-    "  Faxes to your own numbers: On · Works here · Built and tested; not yet run on a live call",
+    "  Faxes to your own numbers: On · Works here · Sample data",
     "    Delivers a fax to one of your own numbers straight into Received, with no phone call.",
-    "    Not used here in the last 30 days.",
-    "  Direct delivery: Off · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Direct delivery: Off · Not here · Sample data",
     "    Sends documents to verified partners over the internet instead of placing a fax call.",
     "    Needs a verified partner; you have none yet.",
-    "    Not used here in the last 30 days.",
-    "  Fax images to partners: Off · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Fax images to partners: Off · Not here · Sample data",
     "    Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
     "    Off while direct delivery is off.",
     "    Needs a verified partner; you have none yet.",
-    "    Not used here in the last 30 days.",
-    "  Send once and reuse: Off · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Send once and reuse: Off · Not here · Sample data",
     "    Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
     "    Off while direct delivery is off.",
     "    Needs a verified partner; you have none yet.",
-    "    Not used here in the last 30 days.",
-    "  Partner relays: Off · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Partner relays: Off · Not here · Sample data",
     "    Sends faxes abroad through a partner that places them as local calls in its own country.",
     "    Off until you and a partner both sign a relay agreement.",
     "    Needs a verified partner; you have none yet.",
-    "    Not used here in the last 30 days.",
-    "  Approved toll-free numbers: On · Works here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Approved toll-free numbers: On · Works here · Sample data",
     "    Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
     "    On for 1 recipient who approved a toll-free number.",
-    "    Not used here in the last 30 days.",
-    "  Cheapest route per delivered fax: On · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Cheapest route per delivered fax: On · Not here · Sample data",
     "    Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
     "    On; a preferred route for a number still comes first.",
     "    Needs a second sending route to compare with; you send through Telnyx only.",
-    "    Worked on 2 faxes in the last 30 days.",
-    "  Your plan's faxes first: On · Not here · Built and tested; not yet run on a live call",
+    "    Used on 2 faxes in 30 days",
+    "  Your plan's faxes first: On · Not here · Sample data",
     "    Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
     "    Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan.",
-    "    Not used here in the last 30 days.",
-    "  Calls at the right hour: On · Works here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Calls at the right hour: On · Works here · Sample data",
     "    Waits out a number's usual busy hours when a failed call there could be charged.",
     "    On; urgent faxes still go at once.",
-    "    Faxbot works these hours out afresh each time and keeps no count of the faxes that waited.",
-    "  Wait for a free line: On · Works here · Built and tested; not yet run on a live call",
+    "    Faxbot keeps no count of the faxes that waited",
+    "  Wait for a free line: On · Works here · Sample data",
     "    Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
     "    On; each number takes one call at a time unless you allow more.",
-    "    Faxbot works out free lines from its delivery records each time and keeps no count of the faxes that waited.",
-    "  Direct messages and FHIR: Off · Not here · Built and tested; not yet run on a live call",
+    "    Faxbot keeps no count of the faxes that waited",
+    "  Direct messages and FHIR: Off · Not here · Sample data",
     "    Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
     "    No recipient has a confirmed Direct address or FHIR server yet.",
     "    Needs a Direct messaging (HISP) or FHIR account; none is set up yet.",
-    "    Not used here in the last 30 days.",
+    "    Not used in 30 days",
     "",
     "On the call",
-    "  Fax over IP (T.38): On · Works here · Proven on a live call",
+    "  Fax over IP (T.38): On · Works here · Live call",
     "    Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
-    "    Worked on 10 calls in the last 30 days.",
-    "  Sending together: On · Works here · Proven in the test lab",
+    "    Used on 10 calls in 30 days",
+    "  Sending together: On · Works here · Test lab",
     "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
     "    On for 1 recipient who agreed.",
-    "    Not used here in the last 30 days.",
-    "  Fewer separator pages: Off · Works here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Fewer separator pages: Off · Works here · Sample data",
     "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
     "    No recipient has agreed to an index page or page marks yet.",
-    "    Not used here in the last 30 days.",
+    "    Not used in 30 days",
     "    Turn it on in Recipients → Details.",
-    "  Faster pages: On · Not here · Proven in the test lab",
+    "  Faster pages: On · Not here · Test lab",
     "    Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
-    "    Faxbot's fast fax service starts when you select Apply and connect.",
-    "    Not used here in the last 30 days.",
+    "    Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+    "    Not used in 30 days",
     "",
     "After the call",
-    "  Only the missing pages: On · Works here · Built and tested; not yet run on a live call",
+    "  Only the missing pages: On · Works here · Sample data",
     "    Finishes a fax whose call broke by sending only the pages the call did not confirm.",
     "    On; you choose it for each fax whose call broke.",
-    "    Not used here in the last 30 days.",
-    "  Missing pages to partners: Off · Not here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Missing pages to partners: Off · Not here · Sample data",
     "    After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
     "    Off while direct delivery is off.",
     "    Needs a verified partner; you have none yet.",
-    "    Not used here in the last 30 days.",
-    "  Charge checks: On · Works here · Built and tested; not yet run on a live call",
+    "    Not used in 30 days",
+    "  Charge checks: On · Works here · Sample data",
     "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
-    "    Its figures are on Costs → Charges and Costs → Invoices.",
     "    See: faxbot costs charges",
     "",
     "Receiving",
-    "  Junk callers turned away: On · Works here · Built and tested; not yet run on a live call",
+    "  Junk callers turned away: On · Works here · Sample data",
     "    Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
     "    On for 1 number on your blocked list.",
-    "    Turned away 1 call in the last 30 days.",
+    "    Turned away 1 call in 30 days",
     "",
     "Advice you act on",
-    "  Cheaper routes per number: On · Not here · Built and tested; not yet run on a live call",
+    "Advice only: nothing changes until you act on it.",
+    "  Cheaper routes per number: On · Not here · Sample data",
     "    Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
     "    Needs a second sending route to compare with; you send through Telnyx only.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations sending",
-    "  Plans worth their fee: On · Not here · Built and tested; not yet run on a live call",
+    "  Plans worth their fee: On · Not here · Sample data",
     "    Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
     "    Needs a monthly plan; none of your fax services has one.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations plans",
-    "  Receiving lines and numbers: On · Works here · Built and tested; not yet run on a live call",
+    "  Receiving lines and numbers: On · Works here · Sample data",
     "    Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations receiving",
-    "  Other carriers' prices: On · Works here · Built and tested; not yet run on a live call",
+    "  Other carriers' prices: On · Works here · Sample data",
     "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations carriers",
-    "  Calls just past a billed minute: On · Works here · Built and tested; not yet run on a live call",
+    "  Calls just past a billed minute: On · Works here · Sample data",
     "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations billing-steps",
-    "  Partner candidates: On · Works here · Built and tested; not yet run on a live call",
+    "  Partner candidates: On · Works here · Sample data",
     "    Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations partners",
-    "  Recipients that run Faxbot: On · Works here · Built and tested; not yet run on a live call",
+    "  Recipients that run Faxbot: On · Works here · Sample data",
     "    Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot recipients partners discover",
-    "  Partners that could relay: On · Not here · Built and tested; not yet run on a live call",
+    "  Partners that could relay: On · Not here · Sample data",
     "    Names partners whose signed local price would have cost less than your own calls.",
     "    Needs a verified partner; you have none yet.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot recipients partners relay",
-    "  Toll-free numbers on file: On · Works here · Built and tested; not yet run on a live call",
+    "  Toll-free numbers on file: On · Works here · Sample data",
     "    Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations toll-free",
-    "  Fax marker on calls: On · Works here · Built and tested; not yet run on a live call",
+    "  Fax marker on calls: On · Works here · Sample data",
     "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations fax-marker",
-    "  Time lighter shading would save: On · Works here · Built and tested; not yet run on a live call",
+    "  Time lighter shading would save: On · Works here · Sample data",
     "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations shading",
-    "  Your trunks compared: On · Not here · Built and tested; not yet run on a live call",
+    "  Your trunks compared: On · Not here · Sample data",
     "    Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
     "    Needs two or more trunks to compare; you have one.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations trunks",
-    "  Where each number should live: On · Works here · Built and tested; not yet run on a live call",
+    "  Where each number should live: On · Works here · Sample data",
     "    Says where each of your fax numbers costs least to receive on, and the steps to move it.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations numbers",
-    "  Calls by state: On · Works here · Built and tested; not yet run on a live call",
+    "  Calls by state: On · Works here · Sample data",
     "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot costs recommendations sites",
-    "  Caller-name lookup: On · Not here · Built and tested; not yet run on a live call",
+    "  Caller-name lookup: On · Not here · Sample data",
     "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
     "    Needs your Telnyx key saved on the Telnyx page.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot providers trunk telnyx names",
-    "  Suggested packs: On · Works here · Built and tested; not yet run on a live call",
+    "  Suggested packs: On · Works here · Sample data",
     "    Gathers the settings and rules that would save money here into packs you review and apply.",
-    "    Advice only: nothing changes until you act on it.",
     "    See: faxbot system setup plan",
     "",
     "On or Off: Whether it is switched on for your faxes.",
     "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
-    "Tested: How far Faxbot has proven it, and whether it has worked on your faxes in the last 30 days.",
+    "Live call, Test lab or Sample data: How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only.",
     "What each one saved: faxbot costs savings"
   ]
 }

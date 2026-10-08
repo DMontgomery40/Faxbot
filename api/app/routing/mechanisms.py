@@ -33,13 +33,14 @@ STAGES = (('document', 'Preparing the document'), ('route', 'Choosing the route'
           ('after', 'After the call'), ('receiving', 'Receiving'), ('advice', 'Advice you act on'))
 # The stages on a fax's own path; advice sits beside it.
 PATH = ('document', 'route', 'call', 'after', 'receiving')
-ADVICE_HERE = 'Advice only: nothing changes until you act on it.'
+# Said once, under the advice stage's title.
+STAGE_SENTENCES = {'advice': 'Advice only: nothing changes until you act on it.'}
 
 # How far Faxbot has proven a mechanism; the lower level whenever the roadmap is in doubt.
 EVIDENCE = {
-    'live': 'Proven on a live call',
-    'lab': 'Proven in the test lab',
-    'built': 'Built and tested; not yet run on a live call',
+    'live': 'Live call',
+    'lab': 'Test lab',
+    'built': 'Sample data',
 }
 
 TITLE = 'How Faxbot saves money'
@@ -48,15 +49,16 @@ LEGEND = (
     ('On or Off', 'Whether it is switched on for your faxes.'),
     ('Works here or Not here', 'Whether this installation has what it needs, such as its own phone line or a '
                                'partner.'),
-    ('Tested', 'How far Faxbot has proven it, and whether it has worked on your faxes in the last 30 days.'),
+    ('Live call, Test lab or Sample data', 'How far Faxbot has proven it: on a live carrier call, in its own test '
+                                           'lab, or with sample data only.'),
 )
 
 # Mechanisms with no part on Costs → Savings, each with the reason. Whoever gives one a part removes it here.
 # The reason is the map's "on this installation" sentence for that mechanism.
+# (Each works out its wait afresh from the delivery records whenever it schedules a fax and stores no count.)
 NO_PART = {
-    'busy_hours': 'Faxbot works these hours out afresh each time and keeps no count of the faxes that waited.',
-    'free_line': 'Faxbot works out free lines from its delivery records each time and keeps no count of the faxes '
-                 'that waited.',
+    'busy_hours': 'Faxbot keeps no count of the faxes that waited',
+    'free_line': 'Faxbot keeps no count of the faxes that waited',
 }
 
 
@@ -89,13 +91,12 @@ class Mechanism:
     settings: tuple = ()
     # What its Savings part counts: (key in the part, one, many).
     counts: tuple = ('faxes', 'fax', 'faxes')
-    verb: str = 'Worked on'
+    verb: str = 'Used on'
     # For an entry with no Savings part: where its own figures or advice already are (a console address, its
-    # name, and the command that prints them), and the sentence that stands for what happened here.
+    # name, and the command that prints them).
     link: str | None = None
     link_label: str | None = None
     command: str | None = None
-    here: str | None = None
 
     @property
     def destination(self):
@@ -180,8 +181,8 @@ class Installation:
         part = self.saved.get(mechanism.part) or {}
         count = int(part.get(key) or 0)
         if count:
-            return count, f"{mechanism.verb} {count} {one if count == 1 else many} in the last {self.days} days."
-        return 0, f'Not used here in the last {self.days} days.'
+            return count, f"{mechanism.verb} {count} {one if count == 1 else many} in {self.days} days"
+        return 0, f'Not used in {self.days} days'
 
 
 # -- each mechanism's check ---------------------------------------------------------------------------------------
@@ -376,12 +377,12 @@ def separator_pages(here):
 
 
 def sslfax(here):
-    from ..hylafax_engine import NOT_SET_UP, engine_conf_path
+    from ..hylafax_engine import engine_conf_path
     why = None
     if not here.trunk_sends:
         why = f'Needs your own SIP trunk; {here.through()}.'
     elif not engine_conf_path(here.values).is_file():
-        why = NOT_SET_UP
+        why = "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
     return State(bool(getattr(here.values, 'sip_sslfax_enabled', True)), why is None, None, why)
 
 
@@ -517,7 +518,7 @@ def _telnyx_numbers(here):
 def _advice(key, name, sentence, section, command, check):
     return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Costs → Recommendations',
                      check, link=f'costs/recommendations?section={section}', link_label='Costs → Recommendations',
-                     command=command, here=ADVICE_HERE)
+                     command=command)
 
 
 # -- the catalogue --------------------------------------------------------------------------------------------------
@@ -611,8 +612,7 @@ CATALOGUE = (
               'Matches what your carriers and fax services billed against your faxes, and points out charges and '
               "invoice amounts your faxes don't explain.",
               'after', 'built', None, 'costs/charges', 'Costs → Charges', charge_checks,
-              link='costs/charges', link_label='Costs → Charges', command='faxbot costs charges',
-              here='Its figures are on Costs → Charges and Costs → Invoices.'),
+              link='costs/charges', link_label='Costs → Charges', command='faxbot costs charges'),
     Mechanism('blocked_senders', 'Junk callers turned away',
               'Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.',
               'receiving', 'built', 'blocked_calls', 'numbers/blocked', 'Numbers → Blocked senders',
@@ -669,11 +669,11 @@ CATALOGUE = (
               'turn it off.',
               'advice', 'built', None, 'providers/trunk', 'Providers → Carrier trunk', _telnyx_numbers,
               link='providers/trunk', link_label='Providers → Carrier trunk',
-              command='faxbot providers trunk telnyx names', here=ADVICE_HERE),
+              command='faxbot providers trunk telnyx names'),
     Mechanism('advice_setup_packs', 'Suggested packs',
               'Gathers the settings and rules that would save money here into packs you review and apply.',
               'advice', 'built', None, 'system/setup', 'System → Setup', _always,
-              link='system/setup', link_label='System → Setup', command='faxbot system setup plan', here=ADVICE_HERE),
+              link='system/setup', link_label='System → Setup', command='faxbot system setup plan'),
 )
 BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
@@ -688,10 +688,12 @@ def _label(page, label, values):
 
 def _view(mechanism, here):
     state = mechanism.check(here)
+    # One short line about this installation only: what its Savings part counted, or why nothing is counted.
+    # Advice and charge checks have none: their own pages say what they found.
     if mechanism.part:
         count, used = here.used(mechanism)
     else:
-        count, used = 0, NO_PART.get(mechanism.key) or mechanism.here
+        count, used = 0, NO_PART.get(mechanism.key)
     return {
         'key': mechanism.key, 'name': mechanism.name, 'sentence': mechanism.sentence,
         'enabled': {'on': state.on, 'label': 'On' if state.on else 'Off', 'sentence': state.on_sentence},
@@ -723,7 +725,7 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
         'legend': [{'label': label, 'sentence': sentence} for label, sentence in LEGEND],
         # ``path``: a stage on the fax's own path (drawn with arrows), or advice beside it.
-        'stages': [{'key': key, 'title': title, 'path': key in PATH,
+        'stages': [{'key': key, 'title': title, 'path': key in PATH, 'sentence': STAGE_SENTENCES.get(key),
                     'mechanisms': [_view(mechanism, here) for mechanism in CATALOGUE if mechanism.stage == key]}
                    for key, title in STAGES],
     }

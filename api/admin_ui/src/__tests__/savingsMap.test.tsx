@@ -30,12 +30,17 @@ describe('The savings map on Overview', () => {
       expect(card.textContent).toContain(item.name);
       expect(card.textContent).toContain(item.enabled.label);
       expect(card.textContent).toContain(item.works.label);
-      expect(card.textContent).toContain(item.evidence.label);
-      expect(card.textContent).toContain(item.here.sentence);
+      expect(screen.getByTestId(`savings-map-tested-${item.key}`).textContent).toBe(item.evidence.label);
+      if (item.here.sentence) {
+        expect(card.textContent).toContain(item.here.sentence);
+        expect(fixture.cli).toContain(`    ${item.here.sentence}`);
+      }
       if (item.enabled.sentence) expect(card.textContent).toContain(item.enabled.sentence);
       if (item.works.sentence) expect(card.textContent).toContain(item.works.sentence);
-      expect(fixture.cli).toContain(`    ${item.here.sentence}`);
     }
+    // "Advice only" is said once, under the advice stage's title.
+    const advice = answer.stages.find((stage) => stage.key === 'advice')!;
+    expect(screen.getAllByText(advice.sentence as string)).toHaveLength(1);
     expect(map.textContent).not.toContain('$');
     expect(map.textContent).not.toMatch(/USD|[0-9a-f]{32}/);
   });

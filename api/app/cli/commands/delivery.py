@@ -469,6 +469,8 @@ def mechanism_lines(result):
     lines = [result['title'], result['sentence']]
     for stage in result['stages']:
         lines += ['', stage['title']]
+        if stage.get('sentence'):
+            lines.append(stage['sentence'])
         for item in stage['mechanisms']:
             lines.append(f"  {item['name']}: {item['enabled']['label']} · {item['works']['label']} · "
                          f"{item['evidence']['label']}")

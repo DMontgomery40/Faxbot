@@ -781,7 +781,8 @@ export interface SavingsMechanism {
   enabled: { on: boolean; label: string; sentence: string | null };
   works: { here: boolean; label: string; sentence: string | null };
   evidence: { level: 'live' | 'lab' | 'built'; label: string };
-  here: { used: number; sentence: string };
+  // One short line about this installation ("Used on 14 faxes in 30 days"), or null for advice.
+  here: { used: number; sentence: string | null };
   // Its part on Costs → Savings, or null when it has none.
   part: string | null;
   // The console page that holds its setting ('recipients/list'), and that page's name.
@@ -802,7 +803,8 @@ export interface SavingsMechanisms {
   sentence: string;
   legend: Array<{ label: string; sentence: string }>;
   // `path`: a stage on a fax's own path, drawn with arrows; advice sits beside it.
-  stages: Array<{ key: string; title: string; path: boolean; mechanisms: SavingsMechanism[] }>;
+  // `sentence`: said once under the stage's title (the advice stage's "Advice only…").
+  stages: Array<{ key: string; title: string; path: boolean; sentence: string | null; mechanisms: SavingsMechanism[] }>;
 }
 
 // GET /direct/send-once: "send once" agreements both ways, and the bytes reuse and changes saved.

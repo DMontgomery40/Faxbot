@@ -78,7 +78,7 @@ def test_every_entry_names_real_settings_pages_parts_and_an_evidence_level():
             # Advice and charge checks lead to the page that already has their figures, never to Savings.
             page, _, query = mechanism.link.partition('?')
             assert page in pages, f'{mechanism.key}: the console has no page {page}'
-            assert mechanism.link_label and mechanism.command and mechanism.here, mechanism.key
+            assert mechanism.link_label and mechanism.command, mechanism.key
             assert f'### `{mechanism.command}`' in reference, f'{mechanism.key}: no command {mechanism.command}'
             if page == 'costs/recommendations':
                 section = query.removeprefix('section=')
@@ -194,21 +194,21 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     together = items['sending_together']
     assert (together['enabled']['on'], together['works']['here']) == (True, True)
     assert together['enabled']['sentence'] == 'On for 1 recipient who agreed.'
-    assert together['evidence'] == {'level': 'lab', 'label': 'Proven in the test lab'}
-    assert together['here'] == {'used': 0, 'sentence': 'Not used here in the last 30 days.'}
+    assert together['evidence'] == {'level': 'lab', 'label': 'Test lab'}
+    assert together['here'] == {'used': 0, 'sentence': 'Not used in 30 days'}
     assert together['turn_on'] is False
 
     blocked = items['blocked_senders']
     assert blocked['enabled'] == {'on': True, 'label': 'On', 'sentence': 'On for 1 number on your blocked list.'}
     assert blocked['works'] == {'here': True, 'label': 'Works here', 'sentence': None}
-    assert blocked['here'] == {'used': 1, 'sentence': 'Turned away 1 call in the last 30 days.'}
+    assert blocked['here'] == {'used': 1, 'sentence': 'Turned away 1 call in 30 days'}
     assert blocked['part'] == 'blocked_calls' and blocked['page'] == 'numbers/blocked'
     assert savings['blocked_calls']['sentence'] == '1 call from blocked senders was turned away before Faxbot answered.'
 
     assert items['toll_free']['enabled']['sentence'] == 'On for 1 recipient who approved a toll-free number.'
 
     cheapest = items['cheapest_route']
-    assert cheapest['here'] == {'used': 2, 'sentence': 'Worked on 2 faxes in the last 30 days.'}
+    assert cheapest['here'] == {'used': 2, 'sentence': 'Used on 2 faxes in 30 days'}
     assert savings['cheapest_route']['sentence'] == '2 faxes went by the route that cost least per delivered fax to their numbers.'
     assert savings['cheapest_route']['estimate'] is False and savings['cheapest_route']['saved'] == []
     # One sending route only: nothing to compare yet, said in one sentence that names it.
@@ -232,13 +232,13 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
 
     sslfax = items['sslfax']
     assert sslfax['page_label'] == 'Providers → Telnyx' and sslfax['evidence']['level'] == 'lab'
-    # The fast fax service starts only after Apply and connect, which this installation never ran.
+    # The fax engine starts only after Apply and connect, which this installation never ran.
     assert sslfax['works']['here'] is False and 'Apply and connect' in sslfax['works']['sentence']
 
     # Fax over IP is the one proven on a live call; Savings compares measured seconds a page, no money.
     t38 = items['fax_over_ip']
     assert (t38['enabled']['on'], t38['works']['here'], t38['evidence']['level']) == (True, True, 'live')
-    assert t38['here']['sentence'] == 'Worked on 10 calls in the last 30 days.'
+    assert t38['here']['sentence'] == 'Used on 10 calls in 30 days'
     assert t38['link'] == 'costs/savings?part=t38' and t38['command'] == 'faxbot costs savings'
     assert savings['t38']['sentence'] == ('Fax over IP (T.38) took about 18 seconds a page over 10 calls, and audio '
                                           'fax about 30 seconds a page over 10 calls.')
@@ -254,7 +254,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert plans['enabled']['on'] is True and plans['turn_on'] is False
     assert plans['works'] == {'here': False, 'label': 'Not here',
                               'sentence': 'Needs a monthly plan; none of your fax services has one.'}
-    assert plans['here']['sentence'] == mechanisms.ADVICE_HERE
+    assert plans['here']['sentence'] is None
     assert items['advice_billing_steps']['works']['here'] is True  # the trunk
     assert items['advice_caller_names']['works']['sentence'] == 'Needs your Telnyx key saved on the Telnyx page.'
     charges = items['charge_checks']
@@ -262,8 +262,14 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
         'costs/charges', 'Costs → Charges', 'faxbot costs charges')
     stages = {stage['key']: stage for stage in body['stages']}
     assert [key for key, stage in stages.items() if not stage['path']] == ['advice']
+    # "Advice only" is said once, under the advice stage's title, never on each card.
+    assert stages['advice']['sentence'] == 'Advice only: nothing changes until you act on it.'
+    assert all(stage['sentence'] is None for key, stage in stages.items() if key != 'advice')
     for item in items.values():
-        assert item['evidence']['level'] in mechanisms.EVIDENCE and item['here']['sentence'].endswith('.')
+        assert item['evidence']['label'] in ('Live call', 'Test lab', 'Sample data')
+        # Advice and charge checks never claim a call was or was not made, and carry no line about this installation.
+        if item['part'] is None and item['link']:
+            assert item['evidence']['label'] == 'Sample data' and item['here']['sentence'] is None, item['key']
         # "Turn on" only for something off that works here.
         assert not item['turn_on'] or (not item['enabled']['on'] and item['works']['here']), item['key']
 
@@ -329,7 +335,7 @@ def test_faxbot_costs_mechanisms_prints_the_map_by_stage(cli):
     assert lines[0] == 'How Faxbot saves money' and lines[-1] == 'What each one saved: faxbot costs savings'
     for _, title in mechanisms.STAGES:
         assert title in lines
-    assert '  Sending together: Off · Not here · Proven in the test lab' in lines
+    assert '  Sending together: Off · Not here · Test lab' in lines
     assert '    Needs your own SIP trunk; you send through Phaxio only.' in lines
     assert '$' not in result.stdout
     body = cli.json('costs', 'mechanisms')
