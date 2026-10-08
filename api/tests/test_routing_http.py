@@ -49,7 +49,10 @@ def test_rate_cards_round_trip_as_money(client):
     cards = {card['provider_id']: card for card in response.json()['cards']}
     assert cards['sip']['per_minute'] == '0.005' and cards['sip']['per_page'] == '0.00'
     assert cards['phaxio']['per_page'] == '0.07' and cards['sip']['captured_on'] == '2026-10-03'
-    assert client.get('/routing/rate-cards', headers=ADMIN).json()['cards'] == response.json()['cards']
+    # GET adds each card's prices by where calls start (origin_rates), saved on their own; none here.
+    listed = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']
+    assert all(card['rows'] == [] for card in listed)
+    assert [{key: value for key, value in card.items() if key != 'rows'} for card in listed] == response.json()['cards']
     bad = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [{**PHAXIO, 'per_page': '-1'}]})
     assert bad.status_code == 400 and 'six decimal places' in bad.json()['detail']
 
