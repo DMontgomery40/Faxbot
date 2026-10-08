@@ -1,0 +1,60 @@
+{
+  "_source": "Shaped like an NPPES Registry API v2.1 response (https://npiregistry.cms.hhs.gov/api-page, read 2026-10-08): result_count, results[] with number, enumeration_type, basic, addresses (LOCATION and MAILING, each with telephone_number and fax_number as 10 digits with dashes), practiceLocations, taxonomies, identifiers, endpoints and other_names. Every value is synthetic: 555-01xx numbers and example.org addresses.",
+  "result_count": 2,
+  "results": [
+    {
+      "created_epoch": "1117584000000",
+      "enumeration_type": "NPI-2",
+      "last_updated_epoch": "1717200000000",
+      "number": "1234567893",
+      "addresses": [
+        {"country_code": "US", "country_name": "United States", "address_purpose": "LOCATION", "address_type": "DOM",
+         "address_1": "100 SYNTHETIC WAY", "address_2": "", "city": "DENVER", "state": "CO", "postal_code": "802040000",
+         "telephone_number": "303-555-0110", "fax_number": "303-555-0111"},
+        {"country_code": "US", "country_name": "United States", "address_purpose": "MAILING", "address_type": "DOM",
+         "address_1": "PO BOX 0", "address_2": "", "city": "DENVER", "state": "CO", "postal_code": "802010000",
+         "telephone_number": "303-555-0110", "fax_number": "866-555-0112"}
+      ],
+      "practiceLocations": [
+        {"country_code": "US", "country_name": "United States", "address_purpose": "LOCATION", "address_type": "DOM",
+         "address_1": "200 EXAMPLE AVE", "address_2": "", "city": "AURORA", "state": "CO", "postal_code": "800100000",
+         "telephone_number": "720-555-0113", "fax_number": "720-555-0114"}
+      ],
+      "basic": {"organization_name": "SYNTHETIC HEALTH CLINIC", "organizational_subpart": "NO", "enumeration_date": "2005-06-01",
+                "last_updated": "2024-06-01", "status": "A", "authorized_official_first_name": "ADA",
+                "authorized_official_last_name": "EXAMPLE", "authorized_official_telephone_number": "3035550110"},
+      "taxonomies": [{"code": "261QP2300X", "taxonomy_group": "", "desc": "Clinic/Center, Primary Care", "state": "CO",
+                      "license": null, "primary": true}],
+      "identifiers": [],
+      "endpoints": [
+        {"endpointType": "DIRECT", "endpointTypeDescription": "Direct Messaging Address",
+         "endpoint": "records@direct.synthetic-clinic.example.org", "affiliation": "N",
+         "use": "DIRECT", "useDescription": "Direct", "contentType": "OTHER", "contentTypeDescription": "Other",
+         "country_code": "US", "country_name": "United States", "address_type": "DOM", "address_1": "100 SYNTHETIC WAY",
+         "city": "DENVER", "state": "CO", "postal_code": "802040000"},
+        {"endpointType": "FHIR", "endpointTypeDescription": "FHIR URL",
+         "endpoint": "https://fhir.synthetic-clinic.example.org/r4", "affiliation": "Y",
+         "affiliationName": "SYNTHETIC HEALTH NETWORK", "use": "OTHER", "useDescription": "Other",
+         "country_code": "US", "address_type": "DOM", "city": "DENVER", "state": "CO", "postal_code": "802040000"}
+      ],
+      "other_names": []
+    },
+    {
+      "created_epoch": "1117584000000",
+      "enumeration_type": "NPI-2",
+      "last_updated_epoch": "1717200000000",
+      "number": "1245319599",
+      "addresses": [
+        {"country_code": "US", "country_name": "United States", "address_purpose": "LOCATION", "address_type": "DOM",
+         "address_1": "300 SAMPLE ST", "address_2": "", "city": "DENVER", "state": "CO", "postal_code": "802050000",
+         "telephone_number": "303-555-0120", "fax_number": "303-555-0121"}
+      ],
+      "practiceLocations": [],
+      "basic": {"organization_name": "SYNTHETIC HEALTH IMAGING LLC", "organizational_subpart": "NO", "status": "A"},
+      "taxonomies": [],
+      "identifiers": [],
+      "endpoints": [],
+      "other_names": []
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "_source": "The NPPES Registry API answers a query it refuses with HTTP 200 and an Errors list (https://npiregistry.cms.hhs.gov/api-page, read 2026-10-08). Synthetic.",
+  "Errors": [
+    {"description": "No valid search criteria provided", "field": "generic", "number": "04"}
+  ]
+}

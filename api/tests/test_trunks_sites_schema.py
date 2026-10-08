@@ -49,8 +49,8 @@ def _row(connection, **values):
         ':created_at)'), row)
 
 
-def test_0033_is_the_head_after_rules_in_delivery():
-    assert schema_trunks_sites.REVISION == schema.HEAD == '0033_trunks_sites'
+def test_0033_comes_after_rules_in_delivery():
+    assert schema_trunks_sites.REVISION == schema.TRUNKS_SITES == '0033_trunks_sites'
     assert schema.RULES_DELIVERY == PRIOR
     assert schema_trunks_sites.TABLES <= schema.STRICT_TABLES
 

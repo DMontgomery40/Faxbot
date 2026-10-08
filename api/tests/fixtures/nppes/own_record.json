@@ -1,0 +1,24 @@
+{
+  "_source": "Shaped like an NPPES Registry API v2.1 lookup by number (https://npiregistry.cms.hhs.gov/api-page, read 2026-10-08). Every value is synthetic.",
+  "result_count": 1,
+  "results": [
+    {
+      "enumeration_type": "NPI-2",
+      "number": "1234567893",
+      "addresses": [
+        {"country_code": "US", "address_purpose": "LOCATION", "address_type": "DOM", "address_1": "1 OUR WAY",
+         "city": "DENVER", "state": "CO", "postal_code": "802040000",
+         "telephone_number": "303-555-0100", "fax_number": "720-555-0199"},
+        {"country_code": "US", "address_purpose": "MAILING", "address_type": "DOM", "address_1": "PO BOX 1",
+         "city": "DENVER", "state": "CO", "postal_code": "802010000",
+         "telephone_number": "303-555-0100", "fax_number": "720-555-0199"}
+      ],
+      "practiceLocations": [],
+      "basic": {"organization_name": "OUR SYNTHETIC PRACTICE", "status": "A"},
+      "taxonomies": [],
+      "identifiers": [],
+      "endpoints": [],
+      "other_names": []
+    }
+  ]
+}
