@@ -42,6 +42,8 @@ HARBOUR = '+441134960456'
 DEST = '+61755501234'
 # Faxbot calls one number once at a time, so faxes in flight together go to different numbers.
 OTHERS = ('+61755501235', '+61755501236', '+61755501237')
+# ACMA's number reserved for fiction in the premium-rate range (1900 654 321).
+PREMIUM = '+611900654321'
 CODE = '48291374'
 
 
@@ -606,3 +608,73 @@ async def test_a_partner_that_did_not_opt_in_never_shares_a_call(relay_trio, mon
     await send(a)
     assert held == []  # Never asked: it goes on its own straight away.
     assert relayed_job(trio, a)['shared'] == 0
+
+
+# Withdrawal and lost answers -------------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_withdrawal_lets_accepted_faxes_finish_and_refuses_new_ones_before_anything_is_accepted(relay_trio):
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    queue(a)
+    await send(a)
+    accepted = relayed_job(trio, a)
+    # B ends the agreement while A cannot hear it, so A still believes it may relay.
+    trio.partners.drop = True
+    (agreement,) = trio.client.get('/direct/relay/agreements', headers=ADMIN).json()['agreements']
+    ended = trio.client.post(f"/direct/relay/agreements/{agreement['id']}/withdraw", headers=ADMIN)
+    assert ended.json()['state'] == 'withdrawn'
+    assert offer_on(a)['state'] == 'active'
+    # The fax B accepted before the withdrawal still goes, as B's own fax, and gets its receipt.
+    await asyncio.to_thread(b_result, trio, accepted['job_id'], 'success')
+    trio.partners.drop = False
+    assert await asyncio.to_thread(b_report) == 1
+    assert rows(a.engine, "SELECT state FROM relay_faxes WHERE role = 'sender'") == [{'state': 'delivered'}]
+    # A new fax is refused, signed, before anything is accepted: A's own route sends it in the same attempt, and
+    # the fallback is recorded, never hidden.
+    second = queue(a, number=OTHERS[0])
+    conventional = await send(a)
+    assert conventional.submissions == 1
+    row = a.delivery.get(second)
+    assert a.direct.store.find('outbound', row['attempt_id'])['state'] == 'refused'
+    (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE role = 'sender' AND state = 'refused'")
+    assert refused['detail'] == 'Sydney office has no relay agreement in force with you, so nothing was accepted.'
+    assert rows(a.engine, 'SELECT route, route_reason FROM delivery_attempt_costs WHERE id = :id',
+                id=row['attempt_id']) == [{'route': 'phaxio', 'route_reason': 'alternative'}]
+    assert len(rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'relay'")) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lost_answer_is_asked_about_and_an_accepted_fax_waits_for_its_receipt(relay_trio):
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    job = queue(a)
+    a.to_b.mode = 'lose_answer'
+    conventional = await send(a)
+    assert a.delivery.get(job)['state'] == 'reconciliation_required' and conventional.submissions == 0
+    a.to_b.mode = 'normal'
+    reconciler = RelayReconciler(a.direct, a.delivery)
+    (lost,) = await asyncio.to_thread(reconciler._lost)
+    assert await reconciler.reconcile(lost) == 'accepted'
+    # Accepted for relaying is in progress, not delivered, and nothing was sent twice.
+    assert a.delivery.get(job)['state'] == 'in_progress'
+    assert len(rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'relay'")) == 1
+    relayed = relayed_job(trio, a)
+    await asyncio.to_thread(b_result, trio, relayed['job_id'], 'success')
+    await asyncio.to_thread(b_relay().settle)
+    # The receipt has not been sent yet; A asks for it and settles the fax.
+    (mine,) = rows(a.engine, "SELECT * FROM relay_faxes WHERE role = 'sender'")
+    assert await reconciler.relay.ask_outcome(mine) == 'delivered'
+    assert a.delivery.get(job)['state'] == 'success'
+
+
+@pytest.mark.asyncio
+async def test_a_premium_rate_number_is_never_relayed(relay_trio):
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    job = queue(a, number=PREMIUM)
+    conventional = await send(a)
+    assert conventional.submissions == 1
+    (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE state = 'refused'")
+    assert refused['detail'] == 'Sydney office does not relay faxes to premium-rate numbers, so nothing was accepted.'
+    assert a.delivery.get(job)['state'] == 'in_progress'

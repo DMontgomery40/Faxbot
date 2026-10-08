@@ -125,7 +125,8 @@ def _region_definitions(engine):
     """The organization rules' regions (key -> {name, countries, prefixes}), or {}."""
     try:
         from ..rules.store import RuleStore
-        document = RuleStore(engine).organization_document()
+        active = RuleStore(engine).active('organization')
+        document = json.loads(active['document']) if active else None
     except Exception:
         return {}
     regions = (document or {}).get('regions') if isinstance(document, dict) else None
@@ -150,9 +151,10 @@ def parse_terms(raw, *, zone_name, regions=None):
         region = (regions or {}).get(key)
         if not isinstance(region, dict):
             raise RelayConflict(f'There is no region “{key}” in your rules.')
-        named.append({'key': str(key), 'name': str(region.get('name') or key)[:100]})
-        countries = sorted(set(countries) | {str(code).upper() for code in region.get('countries') or ()
-                                             if _COUNTRY.fullmatch(str(code).upper())})
+        inside = sorted({str(code).upper() for code in region.get('countries') or ()
+                         if _COUNTRY.fullmatch(str(code).upper())})
+        named.append({'key': str(key), 'name': str(region.get('name') or key)[:100], 'countries': inside})
+        countries = sorted(set(countries) | set(inside))
         prefixes |= {str(prefix) for prefix in region.get('prefixes') or () if _PREFIX.fullmatch(str(prefix))}
     if not countries and not prefixes:
         raise RelayConflict('Choose at least one country this partner may send faxes to through you.')
@@ -200,8 +202,8 @@ def check_terms(terms):
                 or not (terms['countries'] or terms['prefixes'])):
             return None
         if not isinstance(terms['regions'], list) or any(
-                not isinstance(r, dict) or set(r) != {'key', 'name'} or not isinstance(r['name'], str)
-                for r in terms['regions']):
+                not isinstance(r, dict) or set(r) != {'key', 'name', 'countries'} or not isinstance(r['name'], str)
+                or not isinstance(r['countries'], list) for r in terms['regions']):
             return None
         pages = terms['monthly_pages']
         if pages is not None and (type(pages) is not int or pages < 1):
@@ -294,8 +296,12 @@ def country_name(code):
 
 
 def places_text(terms):
-    names = [region['name'] for region in terms.get('regions') or ()]
-    names += [f'numbers in {country_name(code)}' for code in terms.get('countries') or ()][:5 if names else 6]
+    """Where a relay sends faxes, for a sentence: "numbers in Australia", "Australia and New Zealand"."""
+    regions = terms.get('regions') or ()
+    names = [region['name'] for region in regions]
+    within = {code for region in regions for code in region.get('countries') or ()}
+    names += [f'numbers in {country_name(code)}' for code in terms.get('countries') or ()
+              if code not in within][:6]
     if not names:
         names = ['numbers starting ' + ', '.join(terms.get('prefixes') or ())]
     return names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
@@ -983,6 +989,11 @@ class RelayService:
         terms = json.loads(row['terms'])
         if not covers(terms, facts['destination']):
             raise RelayRefused('destination', f'{relay} did not agree to relay faxes to this number, so nothing was '
+                                              'accepted.')
+        from ..routing.destinations import PREMIUM, classify
+        if classify(facts['destination'], country_of(facts['destination']) or 'US').kind == PREMIUM:
+            # A partner's fax never makes the relay dial a premium-rate number, whatever the agreement covers.
+            raise RelayRefused('destination', f'{relay} does not relay faxes to premium-rate numbers, so nothing was '
                                               'accepted.')
         if not hours_open(terms, now):
             raise RelayRefused('outside_hours', f'It is outside the hours {relay} relays faxes, so nothing was '
