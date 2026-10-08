@@ -1,7 +1,7 @@
 {
   "about": "Provider rules in words. The console (ProviderRulesText.ts) and the faxbot command (cli/commands/rules.py) must both produce each sentence exactly. Every condition, action and setting appears at least once.",
   "cli_condition_fields": ["to-number", "to-list", "to-prefix", "to-country", "to-region", "to-recipient", "partner", "own-number", "approved-alternate", "in-site-country", "from-person", "from-key", "from-group", "from-mailbox", "from-site", "workflow", "pages-over", "pages-under", "larger-than-mb", "case-packet", "urgent", "real-call", "label", "days", "between", "site-time"],
-  "action_keys": ["use", "try_in_order", "cheapest_reliable", "site_accounts", "mode", "automatic", "when_busy", "page_layout", "alternate_number", "never", "require_direct", "require_encryption", "cap_cost", "hold_for_approval", "hold_until", "place_a_real_call"],
+  "action_keys": ["use", "try_in_order", "cheapest_reliable", "site_accounts", "mode", "automatic", "when_busy", "page_layout", "alternate_number", "subaddress", "never", "require_direct", "require_encryption", "cap_cost", "hold_for_approval", "hold_until", "place_a_real_call"],
   "connectors": {"c-night": "Night inbox"},
   "receiving_cases": [
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Front desk"}, "sentence": "Faxes to +17208565062 go to Front desk."},
@@ -24,6 +24,7 @@
     "recipients": {"d-county": "County clinic", "d-valley": "Valley Hospital"}
   },
   "cases": [
+    {"rule": {"when": {"destination": {"numbers": ["+13035550150"]}}, "then": {"automatic": true, "subaddress": "2001"}}, "sentence": "When the number is +13035550150, choose the cheapest reliable route, as before. The fax asks for subaddress 2001 at the recipient's number."},
     {"rule": {"when": {"destination": {"countries": ["GB"]}}, "then": {"try_in_order": ["sinch-uk", "sip"]}}, "sentence": "When the destination country is United Kingdom, try Sinch (UK), then Telnyx."},
     {"rule": {"when": {}, "then": {"cheapest_reliable": ["sip", "humblefax"], "page_layout": "as_receiver_allows"}}, "sentence": "For every fax, use the cheapest reliable of Telnyx and HumbleFax. Pages per sheet: as the receiving machine allows."},
     {"rule": {"when": {"destination": {"countries": ["GB", "IE"]}}, "then": {"never": ["humblefax"]}}, "sentence": "When the destination country is United Kingdom or Ireland, never use HumbleFax."},

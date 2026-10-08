@@ -161,3 +161,57 @@ def test_their_fax_machine_view_says_whether_the_subaddress_was_carried(engine, 
     call = view['calls'][0]
     assert call['subaddress_requested'] == '4021' and call['subaddress_carried'] is False
     assert any('does not take subaddresses' in sentence for sentence in call['sentences'])
+
+
+# -- a subaddress the sending rules chose -------------------------------------------------------------------
+
+def _decide(then, to='+13035550150'):
+    from app.rules import model
+    from app.rules.compile import compile_document
+    from app.rules.evaluate import decide
+    document = {'format': 1, 'limits': [], 'routes': [{'id': 'r-dept', 'name': 'Cardiology', 'on': True,
+                                                         'when': {'destination': {'numbers': [to]}}, 'then': then}]}
+    compiled = compile_document(model.RevisionRef('organization', '', 'org-1', 1), document)
+    accounts = (model.Account('sip', 'sip', 'Telnyx trunk', default=True, automatic=True),)
+    return decide({'organization': compiled}, model.Facts(to, '2026-10-08T15:00:00', country='US'), accounts)
+
+
+def test_a_routing_rule_can_ask_for_a_subaddress_and_a_bad_one_is_refused():
+    from app.rules import model
+    from app.rules.compile import DocumentError, compile_document
+    decision = _decide({'automatic': True, 'subaddress': '2001'})
+    assert decision.envelope.subaddress == '2001' and decision.route.rule_id == 'r-dept'
+    # A stored decision from before the setting existed reads back with none, and a new one round-trips.
+    stored = model.Decision.from_json(decision.to_json())
+    assert stored.envelope.subaddress == '2001'
+    old = decision.to_json().replace('"subaddress":"2001",', '')
+    assert model.Decision.from_json(old).envelope.subaddress is None
+    assert _decide({'automatic': True}).envelope.subaddress is None
+    for bad in ('20a1', '123456789012345678901', 2001):
+        with pytest.raises(DocumentError, match='a subaddress is up to 20 digits'):
+            compile_document(model.RevisionRef('organization', '', 'org-2', 2), {
+                'format': 1, 'limits': [], 'routes': [{'id': 'r-bad', 'name': 'Bad', 'on': True, 'when': {},
+                                                       'then': {'automatic': True, 'subaddress': bad}}]})
+    with pytest.raises(ValueError):
+        model.Envelope(mode='automatic', subaddress='20;01')
+
+
+def test_the_rule_subaddress_reaches_the_call_and_a_notice_id_comes_first(monkeypatch, engine):
+    from app.routing import envelope as envelopes
+    pinned = types.SimpleNamespace(envelope=_decide({'automatic': True, 'subaddress': '2001'}).envelope)
+    monkeypatch.setattr(envelopes, 'load', lambda database, job_id: pinned if job_id != 'old' else None)
+    monkeypatch.setattr(ami, '_database', lambda: engine)
+    monkeypatch.setitem(sys.modules, ami._NOTICE_MODULE, None)
+    trunk = values()
+    fields = ami.originate_fields_for(trunk, 'job1', NUMBER, '/faxdata/job1.tiff', choice=ami.reply_choice(trunk))
+    assert ami.requested_subaddress(fields) == '2001'
+    assert ami.rule_subaddress('old') is None
+    notice = types.ModuleType(ami._NOTICE_MODULE)
+    notice.subaddress_for = lambda database, job_id: NOTICE_ID
+    monkeypatch.setitem(sys.modules, ami._NOTICE_MODULE, notice)
+    assert ami.fax_subaddress('job1') == NOTICE_ID
+
+    def unreadable(database, job_id):
+        raise envelopes.UnreadableDecision('The stored routing decision for this fax cannot be read.')
+    monkeypatch.setattr(envelopes, 'load', unreadable)
+    assert ami.rule_subaddress('job1') is None

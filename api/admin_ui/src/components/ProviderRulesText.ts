@@ -233,6 +233,7 @@ export function settingSentences(then: Actions): string[] {
     sentences.push("Faxbot dials only the recipient's approved alternate number, and holds the fax when there is none.");
   }
   if (then.alternate_number === 'never') sentences.push('Faxbot always dials the number the sender gave.');
+  if (then.subaddress) sentences.push(`The fax asks for subaddress ${then.subaddress} at the recipient's number.`);
   return sentences;
 }
 
@@ -313,6 +314,11 @@ export const ENCRYPTION_NOTE = 'SSL Fax encrypts the call, but it cannot confirm
 
 export const ALTERNATE_NOTE = 'An approved alternate number is one the recipient confirmed. When it is a toll-free '
   + 'number, the recipient pays for the call.';
+
+export const SUBADDRESS_NOTE = 'A department or mailbox behind the recipient\'s fax number, if they gave you one. '
+  + 'Their fax machine must take subaddresses; each call shows whether it did.';
+// A subaddress as a fax carries it: up to 20 digits, also +, # and *.
+export const SUBADDRESS_PATTERN = /^[0-9#*+]{1,20}$/;
 
 export const LAYOUT_NOTE = 'Several pages on one sheet saves pages and call time. Faxbot stacks whole pages only as '
   + 'far as the receiving machine says it can print, and marks them so a receiving Faxbot can split them again.';

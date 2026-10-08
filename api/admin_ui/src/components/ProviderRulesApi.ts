@@ -74,6 +74,8 @@ export interface Actions {
   when_busy?: 'wait' | 'next';
   page_layout?: PageLayout;
   alternate_number?: AlternateNumber;
+  // The subaddress the fax asks for at the recipient's number (up to 20 digits; also +, # and *).
+  subaddress?: string;
   // Limits.
   never?: string[];
   require_direct?: boolean;
@@ -290,6 +292,7 @@ export interface ExplainResult {
   holds: string[];
   dial: { number: string; sentence: string } | null;
   page_layout: string | null;
+  subaddress?: string | null;
   trace: TraceStep[];
 }
 

@@ -182,7 +182,10 @@ ROUTE_SETTINGS = (
     'when_busy',          # WHEN_BUSY; 'wait' when absent
     'page_layout',        # PAGE_LAYOUTS; Faxbot's own default when absent
     'alternate_number',   # ALTERNATE_SETTINGS; Faxbot's own default (dial an approved alternate) when absent
+    'subaddress',         # the T.33 subaddress the fax asks for (SUBADDRESS): a department or mailbox behind the number
 )
+# A subaddress as a fax carries it (T.30 SUB, at most 20 characters): digits and +, # and *.
+SUBADDRESS = re.compile(r'[0-9#*+]{1,20}')
 SITE_ACCOUNT_MODES = ('ordered', 'cheapest_reliable')
 # A limit's ``then`` holds one or more of these.
 LIMIT_ACTIONS = (
@@ -420,12 +423,18 @@ class Envelope:
     dial: Alternate | None = None          # the number calling attempts dial instead of the original, pinned
     page_layout: str | None = None         # PAGE_LAYOUTS, or None for Faxbot's default
     strict_fallback: bool = False          # a rule chose the route: fall back only after a pre-data failure (Q3)
+    # The T.33 subaddress a calling attempt asks for (the built-in engine's patch 0005; ami.py), or None. Requested,
+    # never promised: the far end's machine must take subaddresses.
+    subaddress: str | None = None
 
     def __post_init__(self):
         _one_of(self.mode, MODES, 'route mode')
         _one_of(self.when_busy, WHEN_BUSY, 'busy setting')
         _one_of(self.alternate, ALTERNATE_SETTINGS, 'alternate number setting', optional=True)
         _one_of(self.page_layout, PAGE_LAYOUTS, 'page layout', optional=True)
+        if self.subaddress is not None and (not isinstance(self.subaddress, str)
+                                            or SUBADDRESS.fullmatch(self.subaddress) is None):
+            raise ValueError('Unknown subaddress.')
         if len(set(self.accounts)) != len(self.accounts) or any(key in RESERVED_KEYS for key in self.accounts):
             raise ValueError('Each account may appear once.')
         if len({cap.currency for cap in self.caps}) != len(self.caps):

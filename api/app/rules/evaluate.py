@@ -297,7 +297,9 @@ def decide(compiled, facts, accounts):
         holds=tuple(holds), when_busy=settings.get('when_busy', 'wait'),
         preferred=preferred if mode == 'automatic' and preferred in order else None,
         alternate=alternate, dial=dial, page_layout=page_layout,
-        strict_fallback=route.kind == 'rule' and mode != 'automatic')
+        strict_fallback=route.kind == 'rule' and mode != 'automatic',
+        # The subaddress the routing rule asks for (M17): a department or mailbox behind the recipient's number.
+        subaddress=settings.get('subaddress'))
     outcome = 'blocked' if reason is not None else ('held' if holds else 'route')
     return Decision(
         outcome=outcome, envelope=envelope, route=route, facts_digest=facts.digest(),

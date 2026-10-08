@@ -201,6 +201,7 @@ def explanation(decision, facts, accounts, *, scope_names=None):
         'dial': (None if envelope.dial is None else
                  {'number': envelope.dial.number, 'sentence': text.dial_sentence(decision, facts.destination)}),
         'page_layout': envelope.page_layout,
+        'subaddress': envelope.subaddress,
         'site': decision.site,
         'workflow': decision.workflow,
         'trace': [_step_view(step, scope_names) for step in decision.trace],

@@ -348,6 +348,8 @@ def setting_sentences(then):
         sentences.append("Faxbot dials only the recipient's approved alternate number, and holds the fax when there is none.")
     if alternate == 'never':
         sentences.append('Faxbot always dials the number the sender gave.')
+    if then.get('subaddress'):
+        sentences.append(f"The fax asks for subaddress {then['subaddress']} at the recipient's number.")
     return sentences
 
 
@@ -695,7 +697,7 @@ def _accounts(choices, keys, hint='accounts'):
 
 def actions_from(*, use, try_order, cheapest, site_accounts, in_order, automatic, never, require_direct,
                  require_encryption, cap, approval, separate_approver, send_days, send_between, real_call_always,
-                 when_busy, pages_per_sheet, alternate, choices, document):
+                 when_busy, pages_per_sheet, alternate, choices, document, subaddress=None):
     then = {}
     if use:
         then['use'] = _accounts(choices, [use])[0]
@@ -742,6 +744,11 @@ def actions_from(*, use, try_order, cheapest, site_accounts, in_order, automatic
         if alternate not in ('use', 'never', 'only'):
             raise CliError('Write --alternate use, never or only.')
         then['alternate_number'] = alternate
+    if subaddress is not None:
+        clean = subaddress.replace(' ', '')
+        if not SUBADDRESS_DIGITS.fullmatch(clean):
+            raise CliError('A subaddress is up to 20 digits, such as 2001; it may also use +, # and *.')
+        then['subaddress'] = clean
     routes = [key for key in ('use', 'try_in_order', 'cheapest_reliable', 'site_accounts', 'automatic') if key in then]
     if len(routes) > 1:
         raise CliError('Give a rule one way to send: --use, --try, --cheapest, --site-accounts or --automatic.')
@@ -780,6 +787,11 @@ WHEN_BUSY = typer.Option(None, '--when-busy', metavar='wait|next',
                          help='When every line is busy: wait for a free line, or use the next account.')
 PAGES_PER_SHEET = typer.Option(None, '--pages-per-sheet', metavar='as-allowed|one',
                                help='Pages per sheet: as many as the receiving machine allows, or one.')
+SUBADDRESS = typer.Option(None, '--subaddress', metavar='DIGITS',
+                          help="The department or mailbox to ask for at the recipient's number (a subaddress, up to "
+                               '20 digits). Their fax machine must take subaddresses. A setting of a rule that says '
+                               'how to send: add --automatic to keep the usual route.')
+SUBADDRESS_DIGITS = re.compile(r'[0-9#*+]{1,20}')
 ALTERNATE = typer.Option(None, '--alternate', metavar='use|never|only',
                          help="Dial the recipient's approved alternate number: when there is one, never, or only "
                               '(hold the fax when there is none).')
@@ -893,7 +905,7 @@ def rules_add(name: str = typer.Argument(..., help='What the rule is for, in you
               cap: str = CAP, approval: bool = APPROVAL, separate_approver: bool = SEPARATE,
               send_days: str = SEND_DAYS, send_between: str = SEND_BETWEEN, real_call: bool = REAL_CALL,
               when_busy: str = WHEN_BUSY, pages_per_sheet: str = PAGES_PER_SHEET, alternate: str = ALTERNATE,
-              mandatory: bool = MANDATORY,
+              subaddress: str = SUBADDRESS, mandatory: bool = MANDATORY,
               before: str = typer.Option(None, '--before', metavar='RULE', help='Put it before this rule.'),
               off: bool = typer.Option(False, '--off', help='Add it switched off.')):
     """Add a rule to the draft. A rule that says how to send is a routing rule; any other rule is a limit."""
@@ -909,7 +921,7 @@ def rules_add(name: str = typer.Argument(..., help='What the rule is for, in you
         automatic=automatic, never=never, require_direct=require_direct, require_encryption=require_encryption, cap=cap,
         approval=approval, separate_approver=separate_approver, send_days=send_days, send_between=send_between,
         real_call_always=real_call, when_busy=when_busy, pages_per_sheet=pages_per_sheet, alternate=alternate,
-        choices=choices, document=definitions(current, document))
+        choices=choices, document=definitions(current, document), subaddress=subaddress)
     if not then:
         raise CliError('Say what the rule does, for example --use ACCOUNT, --try ACCOUNT, --never ACCOUNT or '
                        '--approval.')
@@ -937,7 +949,7 @@ def rules_update(rule: str = typer.Argument(..., metavar='RULE', help="The rule'
                  require_encryption: bool = REQUIRE_ENCRYPTION, cap: str = CAP, approval: bool = APPROVAL,
                  separate_approver: bool = SEPARATE, send_days: str = SEND_DAYS, send_between: str = SEND_BETWEEN,
                  real_call: bool = REAL_CALL, when_busy: str = WHEN_BUSY, pages_per_sheet: str = PAGES_PER_SHEET,
-                 alternate: str = ALTERNATE, mandatory: bool = MANDATORY):
+                 alternate: str = ALTERNATE, subaddress: str = SUBADDRESS, mandatory: bool = MANDATORY):
     """Change a rule in the draft. --when replaces all its conditions, and any action option replaces all it does."""
     api = state.api()
     scope_value = scope_param(api, scope)
@@ -951,7 +963,7 @@ def rules_update(rule: str = typer.Argument(..., metavar='RULE', help="The rule'
         automatic=automatic, never=never, require_direct=require_direct, require_encryption=require_encryption, cap=cap,
         approval=approval, separate_approver=separate_approver, send_days=send_days, send_between=send_between,
         real_call_always=real_call, when_busy=when_busy, pages_per_sheet=pages_per_sheet, alternate=alternate,
-        choices=choices, document=definitions(current, document))
+        choices=choices, document=definitions(current, document), subaddress=subaddress)
     changed = False
     if name:
         found['name'], changed = name, True
@@ -1183,6 +1195,8 @@ def show_explain(out, result):
         out.line(result['dial']['sentence'])
     if result.get('page_layout'):
         out.line(f"Pages per sheet: {layout_words(result['page_layout'])}.")
+    if result.get('subaddress'):
+        out.line(f"The fax asks for subaddress {result['subaddress']} at the recipient's number.")
     trace = result.get('trace') or []
     if trace:
         out.table(['Rules', 'Rule', 'Result', 'Why'],
