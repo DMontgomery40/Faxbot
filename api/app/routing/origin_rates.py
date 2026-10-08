@@ -266,11 +266,19 @@ def rated_terms(identities, destination, where, *, values, account_key, engine=N
     if getattr(where, 'kind', None) in (PREMIUM, TOLL_FREE, UNKNOWN):
         return None, None
     rows = rows_for(identities, engine)
-    if not rows:
+    from .jurisdiction import has_rows
+    if not rows and not has_rows(engine, identities):
         return None, None
     if sites is None:
         sites = organization_sites(engine)
-    row = best(rows, origins(values, account_key, sites=sites, site=site), destination)
+    where_from = origins(values, account_key, sites=sites, site=site)
+    row = best(rows, where_from, destination) if rows else None
+    if row is None or row.origin == ANY or row.origin.startswith('country:'):
+        # A carrier's US price by jurisdiction, from the state of the site the call really starts at
+        # (routing/jurisdiction.py); a row for the site itself still wins.
+        from .jurisdiction import origin_row
+        state = ((sites or {}).get(where_from[0]) or {}).get('state') if len(where_from) > 2 else None
+        row = origin_row(engine, identities, state, destination) or row
     if row is None:
         return None, None
     prefixes = (f'+{row.destination_prefix}',) if row.destination_prefix and len(row.destination_prefix) <= 7 else ()
@@ -287,6 +295,9 @@ def origin_label(origin, sites=None) -> str:
     """'Leeds office', 'United Kingdom' or 'Anywhere' for a row's origin."""
     if not origin or origin == ANY:
         return 'Anywhere'
+    from .jurisdiction import label
+    if label(origin):
+        return label(origin)
     if origin.startswith('country:'):
         code = origin.split(':', 1)[1]
         try:

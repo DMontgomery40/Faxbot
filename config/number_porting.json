@@ -1,0 +1,271 @@
+{
+  "schema": 1,
+  "description": "How each carrier and fax service takes a number in (port in) and lets one go (port out), as each publishes it, for Faxbot's advice on where each number should live (routing/number_placement.py, M24). Advice only: Faxbot never ports anything. Every fact has its source and the date it was read; a fact a provider does not publish is null, never guessed; secondary marks a fact read on a review site or forum, not the provider's own page.",
+  "read_on": "2026-10-08",
+  "providers": {
+    "telnyx": {
+      "label": "Telnyx",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US", "CA", "GB", "AU", "IE"],
+        "fee": "0",
+        "fee_text": "Free for US and Canadian numbers.",
+        "lead_time": "Same day for numbers that qualify for FastPort; otherwise days, and up to several weeks abroad.",
+        "documents": "a signed letter of authorization (LOA) listing every number, a recent invoice from your current carrier, and its customer service record (CSR) where you can get one",
+        "how": "In the Telnyx portal (Mission Control), open Numbers, then Port in numbers, and create a port-in order.",
+        "sources": [
+          {"url": "https://support.telnyx.com/en/articles/2030770-port-in-best-practices", "label": "Telnyx: port-in best practices"},
+          {"url": "https://support.telnyx.com/en/articles/6460777-porting-requirements", "label": "Telnyx: porting requirements"},
+          {"url": "https://support.telnyx.com/en/articles/2054704-fastport-faqs", "label": "Telnyx: FastPort"}
+        ]
+      },
+      "port_out": {
+        "needs": "Telnyx uses no account number: give the new carrier one of the numbers being moved as the account number, and the port-out PIN you set in the Telnyx portal (for the whole account or for each number). A request with a missing or wrong PIN is rejected.",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://support.telnyx.com/en/articles/2033789-port-numbers-away-from-telnyx", "label": "Telnyx: port numbers away"},
+          {"url": "https://support.telnyx.com/en/articles/8006189-port-out-pin-protection", "label": "Telnyx: port-out PIN"}
+        ]
+      }
+    },
+    "signalwire": {
+      "label": "SignalWire",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US", "CA"],
+        "fee": "0",
+        "fee_text": "Free.",
+        "lead_time": null,
+        "documents": "a signed letter of authorization dated within the last 30 days, with your current carrier's name, your account number and PIN there, the billing number and the service address",
+        "how": "Start a port request from your SignalWire space (Phone Numbers, Port in) with your project ID and the numbers to move.",
+        "sources": [
+          {"url": "https://signalwire.com/docs/platform/porting-into-signalwire", "label": "SignalWire: porting into SignalWire"}
+        ]
+      },
+      "port_out": {
+        "needs": "Open a SignalWire support ticket before the new carrier submits its request; support gives you the account number and PINs and unlocks the numbers.",
+        "fee": "5.00",
+        "fee_text": "$5.00 a number.",
+        "restriction": null,
+        "sources": [
+          {"url": "https://developer.signalwire.com/guides/porting-out-of-signalwire", "label": "SignalWire: porting out"}
+        ]
+      }
+    },
+    "flowroute": {
+      "label": "Flowroute",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": "2 to 4 weeks.",
+        "documents": "a PDF bill from your current carrier for each number and a digitally signed letter of authorization; a customer service record (CSR) helps",
+        "how": "In Flowroute Manager, open DIDs, then Port Orders, and create a port order (questions to porting@flowroute.com).",
+        "sources": [
+          {"url": "https://support.bcmone.com/flowroute-support/docs/port-your-telephone-number-to-flowroute", "label": "Flowroute: port your number to Flowroute"}
+        ]
+      },
+      "port_out": {
+        "needs": "Give the new carrier a copy of your latest Flowroute statement (within 30 days) showing the number, and the name, company and address on your Flowroute account.",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://support.bcmone.com/flowroute-support/docs/port-your-telephone-number-to-new-provider", "label": "Flowroute: port your number to a new provider"}
+        ]
+      }
+    },
+    "anveo": {
+      "label": "AnveoDirect",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US", "CA", "GB", "AU"],
+        "fee": "15.00",
+        "fee_text": "$15 a US or Canadian number, local or toll-free (UK: $29 local, $75 toll-free; Australia: $110 and $120), not refundable.",
+        "lead_time": "About 25 business days for US numbers (3 to 6 weeks on average).",
+        "documents": "Anveo's porting form, one per number, and your latest bill showing the number (or a screenshot of your carrier's portal)",
+        "how": "Fill in Anveo's porting form and email it with your latest bill to LNP@ANVEO.COM.",
+        "sources": [
+          {"url": "https://www.anveo.com//Anveo_CustomerLOA_direct.pdf", "label": "AnveoDirect: porting form and fees"}
+        ]
+      },
+      "port_out": {
+        "needs": "Give the new carrier your Anveo account number; the number and the account must still be active on the date the port completes.",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://www.anveo.com/faq.asp?code=faq_did_portout", "label": "Anveo: porting a number out"}
+        ]
+      }
+    },
+    "sinch": {
+      "label": "Sinch",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US", "CA"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": "a letter of authorization and the account number and port-out PIN from your current carrier",
+        "how": "Start a port-in order in the Sinch Customer Dashboard (Numbers, Porting) or through Sinch's porting API.",
+        "sources": [
+          {"url": "https://developers.sinch.com/docs/numbers/api-reference/porting/port-in-numbers", "label": "Sinch: port-in numbers"},
+          {"url": "https://sinch.com/voice/sip-trunking/", "label": "Sinch: SIP trunking"}
+        ]
+      },
+      "port_out": {
+        "needs": "North American numbers carry a port-out PIN; give it and your Sinch account number to the new carrier.",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://community.sinch.com/t5/Virtual-Numbers/Number-Porting-for-USA-Canada/ta-p/18217", "label": "Sinch community: porting for the USA and Canada", "secondary": true}
+        ]
+      }
+    },
+    "humblefax": {
+      "label": "HumbleFax",
+      "port_in": {
+        "number_types": ["local"],
+        "countries": ["US", "CA"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": "HumbleFax's number transfer form",
+        "how": "Choose \"already have a fax number?\" when you sign up and fill in HumbleFax's transfer form.",
+        "sources": [
+          {"url": "https://humblefax.com/faq", "label": "HumbleFax: FAQ"}
+        ]
+      },
+      "port_out": {
+        "needs": "HumbleFax is the customer of record for its numbers: tell HumbleFax in writing at least 30 days before you end the account, have the new carrier submit its request at least 30 days before, and pay the account in full.",
+        "fee": null,
+        "restriction": "Without that notice HumbleFax may charge $500 and block the port, and a number may go to another customer once the account ends.",
+        "sources": [
+          {"url": "https://humblefax.com/terms", "label": "HumbleFax: terms of service"}
+        ]
+      },
+      "plan_includes_number": true,
+      "extra_number_fee": null
+    },
+    "efax": {
+      "label": "eFax",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": "eFax's letter of authorization, the account number from your current bill, the service address, your current carrier's name and the owner name on file",
+        "how": "Sign up, accept eFax's letter of authorization and use the temporary number eFax gives you while the port runs.",
+        "sources": [
+          {"url": "https://www.efax.com/features/port-fax-number", "label": "eFax: port your fax number"}
+        ]
+      },
+      "port_out": {
+        "needs": "The new carrier sends its port request to Consensus (eFax's owner); after approval the two carriers exchange the PIN between themselves. Only one number moves at a time.",
+        "fee": null,
+        "restriction": "Review sites report that numbers eFax assigned (not ones you brought) cannot leave, and a $40 port-out fee; eFax's own page does not say.",
+        "sources": [
+          {"url": "https://www.efax.com/features/port-fax-number", "label": "eFax: port your fax number"},
+          {"url": "https://support.onsip.com/hc/en-us/articles/42549639028109-Porting-from-eFax", "label": "OnSIP: porting from eFax", "secondary": true}
+        ]
+      }
+    },
+    "phaxio": {
+      "label": "Phaxio",
+      "port_in": {
+        "number_types": ["local"],
+        "countries": ["US", "CA"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": "the port-out PIN and account details from your current carrier",
+        "how": "Ask Phaxio support (support@phaxio.com) or create a port order through Phaxio's API.",
+        "sources": [
+          {"url": "https://www.phaxio.com/docs/api/v2.1/port_orders/create", "label": "Phaxio: port orders"}
+        ]
+      },
+      "port_out": {
+        "needs": "Ask Phaxio support (support@phaxio.com) for the account details the new carrier needs.",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://www.phaxio.com/faq/", "label": "Phaxio: FAQ"}
+        ]
+      }
+    },
+    "documo": {
+      "label": "Documo",
+      "port_in": {
+        "number_types": ["local", "toll_free"],
+        "countries": ["US", "CA"],
+        "fee": "15.00",
+        "fee_text": "$15 a number, once.",
+        "lead_time": "About 7 to 10 business days once accepted.",
+        "documents": "Documo's signed letter of authorization and a bill under 30 days old showing the numbers, or a customer service record",
+        "how": "Submit a port request from the Documo web app with the signed letter and the bill.",
+        "sources": [
+          {"url": "https://help.documo.com/hc/en-us/articles/7794497831707-Porting-Details", "label": "Documo: porting details"},
+          {"url": "https://help.documo.com/hc/en-us/articles/7794529558043-How-To-Submit-a-Port-Request", "label": "Documo: submit a port request"}
+        ]
+      },
+      "port_out": {
+        "needs": "Documo does not restrict porting out, but asks you not to move a number you have had for under 90 days (numbers you brought in are exempt).",
+        "fee": null,
+        "restriction": null,
+        "sources": [
+          {"url": "https://help.documo.com/hc/en-us/articles/7794497831707-Porting-Details", "label": "Documo: porting details"}
+        ]
+      }
+    },
+    "gamma": {
+      "label": "Gamma",
+      "port_in": {
+        "number_types": ["local"],
+        "countries": ["GB"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": "4 to 7 working days for a single number; 17 to 25 for a range of direct-dial numbers.",
+        "documents": "your reseller's porting form",
+        "how": "Ask the reseller you buy Gamma through to port the numbers.",
+        "sources": [
+          {"url": "https://assets.applytosupply.digitalmarketplace.service.gov.uk/g-cloud-14/documents/700154/722211090400184-service-definition-document-2024-05-03-1553.pdf", "label": "G-Cloud service definition (Gamma reseller)", "secondary": true}
+        ]
+      },
+      "port_out": {"needs": "Ask the reseller you buy Gamma through.", "fee": null, "restriction": null, "sources": []}
+    },
+    "bt-one-voice": {
+      "label": "BT One Voice",
+      "port_in": {
+        "number_types": ["local"],
+        "countries": ["GB"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": "BT's porting request",
+        "how": "Ask your BT account team; BT ports existing ranges where its interconnect carriers allow it.",
+        "sources": [
+          {"url": "https://business.bt.com/content/dam/bt-business/pdfs/terms-and-conditions/service-schedules/digital-workplace/One-Voice-Global-SIP-Trunking-Service-Schedule-Part-A-March-2023-V1.pdf", "label": "BT One Voice SIP trunking service schedule"}
+        ]
+      },
+      "port_out": {"needs": "Ask your BT account team.", "fee": null, "restriction": null, "sources": []}
+    },
+    "telstra-sip-connect": {
+      "label": "Telstra SIP Connect",
+      "port_in": {
+        "number_types": ["local"],
+        "countries": ["AU"],
+        "fee": null,
+        "fee_text": null,
+        "lead_time": null,
+        "documents": null,
+        "how": "Ask Telstra; it publishes no porting steps for SIP Connect that Faxbot could find.",
+        "sources": [
+          {"url": "https://www.telstra.com.au/content/dam/shared-component-assets/tecom/support/sip-connect/sipc-integration-guide.pdf", "label": "Telstra SIP Connect integration guide"}
+        ]
+      },
+      "port_out": {"needs": "Ask Telstra.", "fee": null, "restriction": null, "sources": []}
+    }
+  }
+}

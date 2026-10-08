@@ -79,6 +79,7 @@ from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
+from .routing.number_http import router as routing_number_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
@@ -207,6 +208,7 @@ app.include_router(management_router)
 app.include_router(routing_router)
 app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
+app.include_router(routing_number_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_charges_router)
 app.include_router(rules_router)
@@ -1997,8 +1999,13 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     # Experimental encoded pages are not decided here: each attempt chooses its pages' layout for its own route
     # (pages/sending.py), so the fax's accepted PDF and image stay exactly as prepared above.
 
+    from .routing.submit import first_send_warning, record_first_send_warning
     # One transaction accepts the row and its immutable account/profile binding.
     try:
+        # Before a first fax: what NPPES records Faxbot already read say about this number (stored reads only,
+        # never the registry); kept with the fax for Sent details once accepted, never a reason to refuse it.
+        recipient_warning = await run_lifecycle_step(lambda: first_send_warning(
+            manager.store.engine, revision.values, destination))
         accepted_at = datetime.utcnow()
         result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages,
                           backend=ob, created_at=accepted_at, updated_at=accepted_at,
@@ -2036,6 +2043,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise
     # Serialize before COMMIT; a second database read must not turn confirmed
     # acceptance into an unidentifiable error and invite duplicate submission.
+    # The NPPES warning is kept with the accepted fax; storage failures are logged, never raised.
+    await run_lifecycle_step(lambda: record_first_send_warning(manager.store.engine, job_id, recipient_warning))
     audit_event("job_created", job_id=job_id, backend=ob)
     return result
 

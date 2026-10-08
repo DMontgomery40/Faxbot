@@ -203,8 +203,9 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders and Faxes → Forms.
-    expect(opened).toHaveLength(46);
+    // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders, Numbers → Your NPI record,
+    // Faxes → Forms, Costs → Charges and Costs → Invoices.
+    expect(opened).toHaveLength(47);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);

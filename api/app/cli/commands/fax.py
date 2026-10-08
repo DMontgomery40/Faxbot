@@ -168,9 +168,14 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
          by: str = typer.Option(None, '--by', metavar='TIME',
                                 help="The time the fax must be sent by, such as 17:00 or '2026-10-08 17:00', in "
                                      "your installation's time zone. Faxbot never holds the fax past it for the "
-                                     "recipient's hours or a busy hour.")):
+                                     "recipient's hours or a busy hour."),
+         recipient: str = typer.Option(None, '--recipient', metavar='NAME',
+                                       help='The provider or person the fax is for. Before a first fax to a number, '
+                                            'Faxbot warns when the NPI registry lists that number for someone else; '
+                                            'it still sends.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
+    warning = _first_send_warning(api, to, recipient)
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
     content_type = _TYPES.get(file.suffix.lower(), 'application/octet-stream')
     data = {'to': to, 'queue_only': 'true' if queue else 'false'}
@@ -194,12 +199,26 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
     route = _planned_route(api, job)
 
     def human(out):
+        if warning:
+            out.line(warning)
         out.line('Fax accepted.')
         out.fields(_fax_fields(job, route))
         if waiting:
             out.line(waiting)
         out.line(f"Check on it with: faxbot status {job['id']}")
-    state.out().result(job, human)
+    state.out().result({**job, 'recipient_warning': warning} if warning else job, human)
+
+
+def _first_send_warning(api, to, recipient):
+    """The NPPES warning before a first fax to ``to``, or None. It never stops the fax: a check that can't run
+    says why and the fax goes ahead."""
+    from ..errors import CliError
+    from .number_advice import recipient_lookup
+    try:
+        result = recipient_lookup(api, to, recipient)
+    except CliError as error:
+        return f'Faxbot could not check this number against NPPES ({error}); sending anyway.'
+    return result.get('sentence') if result.get('warning') else None
 
 
 def _together_line(view):
@@ -296,6 +315,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The number the fax dialed when it was the recipient's approved toll-free number, as Sent details show it.
     if (cost.get('dialed') or {}).get('sentence'):
         route.append(('Dialed', cost['dialed']['sentence']))
+    # What NPPES records Faxbot had read said about the number when the fax was accepted (it still went).
+    if (cost.get('recipient_warning') or {}).get('sentence'):
+        route.append(('NPPES', cost['recipient_warning']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):

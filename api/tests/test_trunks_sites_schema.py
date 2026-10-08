@@ -51,7 +51,7 @@ def _row(connection, **values):
 
 
 def test_0033_follows_send_once():
-    assert schema_trunks_sites.REVISION == '0033_trunks_sites'
+    assert schema_trunks_sites.REVISION == schema.TRUNKS_SITES == '0033_trunks_sites'
     assert schema.SEND_ONCE == PRIOR
     assert schema_trunks_sites.TABLES <= schema.STRICT_TABLES
 

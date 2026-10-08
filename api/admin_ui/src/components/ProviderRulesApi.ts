@@ -97,7 +97,7 @@ export interface Rule {
 export interface RecipientList { name: string; numbers?: string[]; prefixes?: string[] }
 export interface Region { name: string; countries?: string[]; prefixes?: string[] }
 export interface Site {
-  key: string; name: string; country?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
+  key: string; name: string; country?: string; state?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
   // Accounts the site lists; accounts whose own site names it belong to it too.
   accounts?: string[];
 }

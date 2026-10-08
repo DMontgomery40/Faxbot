@@ -148,6 +148,8 @@ function SharedLines({ advice }: { advice: Advice }) {
 
 function QuietNumbers({ advice }: { advice: Advice }) {
   const quiet = advice.quiet_numbers;
+  // Shown once you add your NPI and Faxbot has read it (Your NPI record, below).
+  const npi = quiet.numbers.some((row) => row.npi_record);
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="receiving-quiet">
       <Heading title="Numbers with few calls" />
@@ -161,6 +163,7 @@ function QuietNumbers({ advice }: { advice: Advice }) {
                 <TableCell align="right">{`Received, last ${advice.days} days`}</TableCell>
                 <TableCell align="right">{`Sent, last ${advice.days} days`}</TableCell>
                 <TableCell align="right">Rental a month (estimate)</TableCell>
+                {npi && <TableCell>On your NPI record</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -170,6 +173,7 @@ function QuietNumbers({ advice }: { advice: Advice }) {
                   <TableCell align="right">{row.received}</TableCell>
                   <TableCell align="right">{row.sent}</TableCell>
                   <TableCell align="right">{formatMoneyList(row.monthly_rental, 'No price yet')}</TableCell>
+                  {npi && <TableCell>{row.npi_record?.state === 'listed' ? 'Yes: keep it' : 'No'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>

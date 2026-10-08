@@ -89,6 +89,7 @@ import DeliveryRoutes from './components/DeliveryRoutes';
 import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOverview';
 import ReplyNumber from './components/ReplyNumber';
 import BlockedSenders from './components/BlockedSenders';
+import NpiRecordPanel from './components/NpiRecord';
 import BlockIcon from '@mui/icons-material/Block';
 import Forms from './components/forms/Forms';
 
@@ -295,6 +296,9 @@ export const NAVIGATION: NavArea[] = [
         ) },
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
+      // The organization's NPIs and what the NPI registry lists for them (routing/nppes.py).
+      { id: 'npi', label: 'Your NPI record', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <NpiRecordPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'blocked', label: 'Blocked senders', icon: <BlockIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <BlockedSenders client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       // Mailboxes and folders that bring documents in or send faxes (intake connectors).

@@ -287,6 +287,8 @@ export interface FaxCost {
   // The number the fax dialed when it was not the one entered (the recipient's approved toll-free number),
   // or why it went back to the number entered; null when it simply called the number entered.
   dialed?: DialedNumber | null;
+  // What NPPES records Faxbot had read said about the number when the fax was accepted; the fax still went.
+  recipient_warning?: { state: string; sentence: string; npi: string | null; name: string | null } | null;
 }
 
 // GET /routing/rate-cards toll_free: what one sending route publishes about calling toll-free numbers.
@@ -905,7 +907,9 @@ export interface ReceivingRecommendations {
     state: 'quiet' | 'none_quiet' | 'too_little_history' | 'no_trunk';
     sentence: string;
     // question: "Is … still printed …?", asked before giving any number up.
-    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[]; question?: string | null }>;
+    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[]; question?: string | null;
+      // What your NPI record says (routing/nppes.py): null when you set no NPI or Faxbot has not read it.
+      npi_record?: { state: 'listed' | 'not_listed'; read_at: string | null; sentence: string | null } | null }>;
     monthly_total: Money[];
   };
   connections: { sentence: string; items: Array<{ name: string; kind: 'trunk' | 'provider'; monthly_fee: Money[] }> };
@@ -924,6 +928,7 @@ export interface ProviderNumber {
   quiet: boolean;
   plan_fee: Money[];
   question: string | null;
+  npi_record?: { state: 'listed' | 'not_listed'; read_at: string | null; sentence: string | null } | null;
   sentence: string;
 }
 

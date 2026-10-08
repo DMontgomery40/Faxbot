@@ -543,9 +543,11 @@ def receiving_report(engine, routes, values, *, now=None, days=WINDOW_DAYS, path
     prices = carrier_prices(preset, path) if preset else CarrierPrices('')
     carrier = carrier_label(preset) if preset else None
     windows = {'choose': _window(choose_start, check_start), 'check': _window(check_start, now)}
+    from .nppes import published_numbers
+    published = published_numbers(engine)
     result = {'days': days, 'estimate': True, 'carrier': carrier, 'windows': windows, 'prices': prices.sources,
               'connections': connections(values, routes, prices, engine, choose_start, now),
-              'provider_numbers': provider_numbers(engine, routes, values, now=now, days=days)}
+              'provider_numbers': provider_numbers(engine, routes, values, now=now, days=days, published=published)}
     configured = _configured_numbers(values, country)
     if not preset:
         sentence = 'Faxbot has no phone line from a carrier set up, so there are no received calls to compare.'
@@ -560,7 +562,8 @@ def receiving_report(engine, routes, values, *, now=None, days=WINDOW_DAYS, path
                          'first_call_at': history.first_at, 'days': have}
     kinds = {number: number_kind(number, prices.country or country)
              for number in set(configured) | history.numbers_seen}
-    result['quiet_numbers'] = quiet_numbers(history, configured, kinds, prices, carrier, check_start, now, days)
+    result['quiet_numbers'] = quiet_numbers(history, configured, kinds, prices, carrier, check_start, now, days,
+                                            published)
     result['pool'] = pool_advice(history, kinds, prices, carrier, choose_start, check_start, now, days)
     result['sentence'] = result['pool']['sentence']
     return result
@@ -689,8 +692,12 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
             'assumptions': _assumptions(history, carrier, days, prices)}
 
 
-def quiet_numbers(history, configured, kinds, prices, carrier, check_start, now, days):
-    """Numbers with few or no calls in the later window, with what each costs to keep a month."""
+def quiet_numbers(history, configured, kinds, prices, carrier, check_start, now, days, published=None):
+    """Numbers with few or no calls in the later window, with what each costs to keep a month.
+
+    ``published`` is what your NPI record lists (``nppes.published_numbers``): a quiet number still printed
+    there is marked "keep it" (M18 b). None: you set no NPI, or Faxbot has not read it yet.
+    """
     currency = prices.currency
     window = _days_text(days)
     if not covers(history.first_at, check_start):
@@ -716,7 +723,7 @@ def quiet_numbers(history, configured, kinds, prices, carrier, check_start, now,
         else:
             total += fee
         rows.append({'number': number, 'received': received.get(number, 0), 'sent': sent.get(number, 0),
-                     'monthly_rental': _money(fee, currency), 'question': still_published(number)})
+                     'monthly_rental': _money(fee, currency), **_published_fields(published, number)})
     if not rows:
         sentence = (f"Every one of your {carrier} numbers had more than {_plural(QUIET_CALLS, 'call')} in {window}, "
                     'so none is quiet.')
@@ -837,7 +844,18 @@ def still_published(number):
             'If it is, keep it.')
 
 
-def provider_numbers(engine, routes, values, *, now=None, days=WINDOW_DAYS):
+def _published_fields(published, number):
+    """``question`` and ``npi_record`` for a quiet number: your NPI record's answer when it lists the number.
+
+    A number your NPI record does not list keeps the question: it may still be on letterhead, forms or a website.
+    """
+    from .nppes import npi_evidence
+    evidence = npi_evidence(published, number)
+    listed = evidence is not None and evidence['state'] == 'listed'
+    return {'question': evidence['sentence'] if listed else still_published(number), 'npi_record': evidence}
+
+
+def provider_numbers(engine, routes, values, *, now=None, days=WINDOW_DAYS, published=None):
     """Each fax service number Faxbot knows of (HumbleFax, eFax), with its faxes in the last ``days``.
 
     Received faxes are counted from Faxbot's received faxes by the service that
@@ -874,7 +892,8 @@ def provider_numbers(engine, routes, values, *, now=None, days=WINDOW_DAYS):
                 connection.scalar(sa.select(sa.func.min(costs.c.created_at)).where(costs.c.provider_id == provider)))
                 if moment is not None]
             rows.append(_provider_row(provider, route_label(provider), number, received, sent,
-                                      min(first) if first else None, fees.get(provider), since, now, days))
+                                      min(first) if first else None, fees.get(provider), since, now, days,
+                                      published))
     quiet = [row for row in rows if row['quiet']]
     if quiet:
         state = 'quiet'
@@ -892,7 +911,7 @@ def provider_numbers(engine, routes, values, *, now=None, days=WINDOW_DAYS):
     return {'state': state, 'sentence': sentence, 'numbers': rows, 'most_faxes': QUIET_CALLS}
 
 
-def _provider_row(provider, name, number, received, sent, first, card, since, now, days):
+def _provider_row(provider, name, number, received, sent, first, card, since, now, days, published=None):
     enough = first is not None and first <= since + HISTORY_GRACE
     quiet = enough and received + sent <= QUIET_CALLS
     total = received + sent
@@ -911,4 +930,11 @@ def _provider_row(provider, name, number, received, sent, first, card, since, no
     return {'provider': provider, 'name': name, 'number': number, 'received': received, 'sent': sent,
             'enough_history': enough, 'quiet': quiet,
             'plan_fee': _money(card.monthly_fee_micros, card.currency) if card else [],
-            'question': still_published(number) if quiet else None, 'sentence': sentence}
+            **(_published_fields(published, number) if quiet else {'question': None,
+                                                                   'npi_record': _npi_only(published, number)}),
+            'sentence': sentence}
+
+
+def _npi_only(published, number):
+    from .nppes import npi_evidence
+    return npi_evidence(published, number)
