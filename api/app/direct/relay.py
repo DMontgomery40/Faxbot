@@ -59,9 +59,10 @@ import re
 from uuid import uuid4
 
 import httpx
+import sqlalchemy as sa
 
 from ..config_runtime import run_lifecycle_step
-from ..routing.database import utcnow
+from ..routing.database import DeliveryStoreError, utcnow
 from .crypto import DirectProtocolError, check_signed, parse_timestamp, signed, timestamp, verify
 from .relay_store import COUNTED, RelayConflict, RelayStore
 
@@ -505,7 +506,9 @@ def own_prediction(engine, values, bound, destination, pages, *, now=None):
             return None, None
         facts = facts_for(choice.route.key, destination, now=now, engine=engine, values=values)
         return predict_from(facts, Shape(pages, None, 'fine', 'normal')), facts.label
-    except Exception:
+    except (ValueError, sa.exc.SQLAlchemyError, DeliveryStoreError):
+        # The predictor refused the fax, or the route records could not be read; anything else is a bug and raised.
+        logging.getLogger(__name__).warning("This installation's own route could not be priced.", exc_info=True)
         return None, None
 
 

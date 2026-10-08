@@ -11,7 +11,7 @@
       "outbound_status_only"
     ],
     "notes": "This file is JSON (no comments). Traits apply to provider ids. Manifest traits override these defaults.",
-    "pages_notes": "pages: how each route bills and whether it sends a long page unchanged (dense pages, api/app/pages). billing: per_page, per_minute, plan or carrier (the trunk carrier's card). how_sent: image (Faxbot's own engine sends the fax image), pdf_upload (Faxbot uploads a PDF) or pdf_url (the provider fetches the fax's own PDF, so pages cannot be packed). long_pages: receiver (the receiving machine's DIS decides), accepts, or not_documented (off until a person turns it on). page_rule page_or_60_seconds: a page that takes more than 60 seconds may be billed as more than one."
+    "pages_notes": "pages: how each route bills and whether it sends a long page unchanged (dense pages, api/app/pages). billing: per_page, per_minute, plan or carrier (the trunk carrier's card). how_sent: image (Faxbot's own engine sends the fax image), pdf_upload (Faxbot uploads a PDF) or pdf_url (the provider fetches the PDF the attempt chose from a link Faxbot serves). long_pages: receiver (the receiving machine's DIS decides), accepts, or not_documented (off until a person turns it on). page_rule page_or_60_seconds: a page that takes more than 60 seconds may be billed as more than one."
   },
   "phaxio": {
     "id": "phaxio",
@@ -32,7 +32,7 @@
       "page_cap": 200,
       "source": "https://www.phaxio.com/docs/api/v2.1/faxes/create_and_send_fax",
       "read_on": "2026-10-07",
-      "note": "Faxbot gives Phaxio a link to fetch the fax's own PDF, so packed pages cannot go this way. Phaxio allows at most 200 pages a fax and does not document what it does with a page longer than letter or A4."
+      "note": "Faxbot gives Phaxio a link to fetch the PDF each attempt chose, packed pages included once long pages are turned on. Phaxio allows at most 200 pages a fax and does not document what it does with a page longer than letter or A4."
     }
   },
   "sinch": {
@@ -74,7 +74,7 @@
       "long_pages": "not_documented",
       "source": "https://signalwire.com/pricing/fax",
       "read_on": "2026-10-07",
-      "note": "SignalWire fetches the fax's own PDF from a link, so packed pages cannot go this way; it bills by the minute."
+      "note": "SignalWire fetches the PDF each attempt chose from a link, packed pages included once long pages are turned on; it bills by the minute."
     }
   },
   "documo": {

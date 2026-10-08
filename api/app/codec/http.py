@@ -1,8 +1,9 @@
 """HTTP surface of the experimental payload codec.
 
-Per-number settings use the settings permissions. A sent fax's encoded-pages
-line needs read access to that fax; a received fax's decode result and its
-decoded original need access to that fax's document.
+Per-number settings use the settings permissions. A received fax's decode
+result and its decoded original need access to that fax's document. A sent
+fax's encoded pages are said in its page line (``pages.views.sent_view``, the
+Sent detail), because each attempt chooses its pages' layout.
 """
 from datetime import timezone
 
@@ -16,8 +17,8 @@ from ..audit import audit_event
 from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine
 from ..routing.numbers import InvalidNumber, normalize_number
-from . import receive, send
-from .store import (CodecConflict, CodecInputError, CodecSettings, CodecStoreError, KeySeal, receipt_for, send_for)
+from . import receive
+from .store import CodecConflict, CodecInputError, CodecSettings, CodecStoreError, KeySeal, receipt_for
 
 router = APIRouter(prefix='/codec', tags=['Encoded pages (experimental)'])
 
@@ -144,24 +145,6 @@ async def put_number(number: str, payload: NumberSetting, request: Request,
 @router.delete('/numbers/{number}')
 async def delete_number(number: str, request: Request, identity=Depends(require_permission('settings:write'))):
     return await _save(request, identity, _number(number, request), NumberSetting(enabled=False))
-
-
-def _send_view(row, status):
-    if row is None:
-        return {'encoded': False, 'sentence': None}
-    return {'encoded': True, 'sentence': send.sentence(row, status), 'pages_original': row['pages_original'],
-            'pages_encoded': row['pages_encoded'], 'layout': row['layout'], 'provider': row['provider_id'],
-            'encrypted': bool(row['encrypted']), 'seconds_original': row['seconds_original'],
-            'seconds_encoded': row['seconds_encoded'], 'experimental': True}
-
-
-@router.get('/faxes/{job_id}')
-async def fax(job_id: str, request: Request, identity=Depends(require_identity)):
-    service = access_runtime(request)
-    job = await run_lifecycle_step(private_operation(lambda: service.queries.job(identity.actor, job_id)))
-    engine, _ = _engine(request)
-    status = (job or {}).get('status') or 'queued'
-    return await _call(lambda: _send_view(send_for(engine, job_id), status))
 
 
 def _receipt_view(receipt):

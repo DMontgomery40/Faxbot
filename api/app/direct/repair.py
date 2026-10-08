@@ -410,7 +410,7 @@ class CallRepair:
 
     def _image(self, values, job_id):
         from . import faximage
-        return faximage.build(values, job_id, encoded=faximage.encoded_send(self.store.engine, job_id))
+        return faximage.build(values, job_id)
 
     async def repair(self, call):
         """Ask about one broken call and send only the missing pages; the repair's state."""

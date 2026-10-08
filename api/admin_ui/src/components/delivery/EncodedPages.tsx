@@ -1,11 +1,12 @@
-// Encoded pages (experimental): the per-number opt-in in a fax number's Details, the line in a sent fax's
-// details, and a received fax's decode result. The server words every state sentence.
+// Encoded pages (experimental): the per-number opt-in in a fax number's Details and a received fax's decode
+// result. A sent fax's encoded pages are its page line ("How the pages were sent"), chosen for each attempt
+// with the other layouts. The server words every state sentence.
 import { useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, Checkbox, Divider, FormControlLabel, ListItem, ListItemText, Switch, TextField, Typography,
+  Alert, Box, Button, Checkbox, FormControlLabel, Switch, TextField, Typography,
 } from '@mui/material';
 import type AdminAPIClient from '../../api/client';
-import type { CodecFax, CodecNumber, CodecReceived } from '../../api/codecTypes';
+import type { CodecNumber, CodecReceived } from '../../api/codecTypes';
 import { formatServerTime } from '../../api/time';
 import { DeliveryError } from './shared';
 
@@ -156,26 +157,6 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
         </Box>
       )}
     </Box>
-  );
-}
-
-// A sent fax's details: "Sent as 1 encoded page instead of 23 (experimental)." Nothing for other faxes.
-export function FaxEncodedItem({ client, jobId }: { client: AdminAPIClient; jobId: string }) {
-  const [view, setView] = useState<CodecFax | null>(null);
-  useEffect(() => {
-    let live = true;
-    setView(null);
-    client.getCodecFax(jobId).then((value) => { if (live) setView(value); }).catch(() => undefined);
-    return () => { live = false; };
-  }, [client, jobId]);
-  if (!view?.sentence) return null;
-  return (
-    <>
-      <Divider />
-      <ListItem data-testid="job-encoded-pages">
-        <ListItemText primary="Encoded pages" secondary={view.sentence} />
-      </ListItem>
-    </>
   );
 }
 

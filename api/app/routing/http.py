@@ -559,7 +559,9 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             # Faxes that called their recipient's approved toll-free number; the recipient pays those calls.
             'toll_free': _saving_view(result['toll_free']),
             # Pages saved by packing them onto long pages, and blank page bottoms left out (pages/).
-            'packing': _saving_view(result['packing'])}
+            'packing': _saving_view(result['packing']),
+            # Pages saved by the experimental encoded pages (pages/views.encoding_sentence).
+            'encoding': _saving_view(result['encoding'])}
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])

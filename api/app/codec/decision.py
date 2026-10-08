@@ -63,12 +63,31 @@ def g4_page_bits(image):
         return 8 * sum(written.tag_v2.get(279, (len(buffer.getvalue()),)))
 
 
+def _amount(cost):
+    """(micros, currency) of a known cost: the predictor's Money, or plain micros (currency None); else None."""
+    if cost is None:
+        return None
+    micros = getattr(cost, 'micros', cost)
+    if type(micros) is not int:
+        return None
+    return micros, getattr(cost, 'currency', None)
+
+
+def _cheaper(encoded, original):
+    """True or False when both costs are known in one currency; None when they cannot be compared."""
+    a, b = _amount(encoded), _amount(original)
+    if a is None or b is None or a[1] != b[1]:
+        return None
+    return a[0] < b[0]
+
+
 def saves(original, encoded, pages_original, pages_encoded):
     """True when ``encoded`` is cheaper by the rules above."""
     if original is None or encoded is None:
         return False
-    if not original.marginal and original.cost is not None and encoded.cost is not None:
-        return encoded.cost < original.cost
+    cheaper = None if original.marginal else _cheaper(encoded.cost, original.cost)
+    if cheaper is not None:
+        return cheaper
     if original.seconds is not None and encoded.seconds is not None and encoded.seconds > original.seconds:
         return False
     if original.billed_pages is not None and encoded.billed_pages is not None and original.billed_pages > 0:
@@ -78,7 +97,8 @@ def saves(original, encoded, pages_original, pages_encoded):
 
 def _rank(prediction):
     unknown = float('inf')
-    return (prediction.cost if prediction.cost is not None and not prediction.marginal else unknown,
+    amount = None if prediction.marginal else _amount(prediction.cost)
+    return (amount[0] if amount is not None else unknown,
             prediction.billed_pages if prediction.billed_pages is not None else unknown,
             prediction.seconds if prediction.seconds is not None else unknown)
 
@@ -93,7 +113,7 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         return Choice(False, 'Faxbot cannot yet predict what this route charges, so the fax goes as normal pages.')
     predict, Shape = tools
     encode = encoder or codec.encode_document
-    original = predict(route_key, destination, Shape(pages=pages_original, page_bits=list(page_bits_original),
+    original = predict(route_key, destination, Shape(pages=pages_original, page_bits=tuple(page_bits_original),
                                                      resolution=resolution, layout='normal'))
     if style == 'picture':
         candidates = [dict(layout='picture')]
@@ -108,7 +128,7 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
                            picture=picture if options['layout'] == 'picture' else None, **options)
         except codec.CodecError:
             continue
-        bits = [g4_page_bits(page) for page in pages.pages]
+        bits = tuple(g4_page_bits(page) for page in pages.pages)
         prediction = predict(route_key, destination, Shape(pages=pages.page_count, page_bits=bits,
                                                            resolution=resolution, layout='codec'))
         if not saves(original, prediction, pages_original, pages.page_count):

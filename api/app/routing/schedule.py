@@ -824,10 +824,15 @@ def for_engine(engine, connection=None):
 
 
 def attempt_price(route, number, pages, *, now=None):
-    """The predictor's price of one try on ``route`` as text ('$0.05'), or None when unknown (never 0)."""
+    """The predictor's price of one try on ``route`` as text ('$0.05'), or None when unknown (never 0).
+
+    Only the predictor's own refusal (ValueError) or an unreadable database makes it unknown, and the log says
+    why; any other error is a bug and is raised."""
+    from .predict import Shape, amount_text, predict
     try:
-        from .predict import Shape, amount_text, predict
         prediction = predict(route, number, Shape(max(1, int(pages or 1)), None, 'fine', 'normal'), now=now)
-    except Exception:
+    except (ValueError, sa.exc.SQLAlchemyError):
+        import logging
+        logging.getLogger(__name__).warning('The price of a try could not be predicted.', exc_info=True)
         return None
     return amount_text(prediction) if prediction.cost is not None and prediction.cost.micros > 0 else None

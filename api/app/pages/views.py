@@ -17,20 +17,37 @@ def _pages(count, word='page'):
     return f'{count} {word}' if count == 1 else f'{count} {word}s'
 
 
-def packed_sentence(change):
-    """"Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length." or None."""
-    if not change or change.get('layout') is None:
+def packed_sentence(change, phase=None):
+    """One sentence for the layout an attempt kept (dense pages or the experimental encoded pages), for the
+    attempt's state, or None for the pages' own layout:
+
+    - delivered (``phase`` 'success', or not known): "Sent as 2 long pages instead of 5; the receiving machine
+      accepts unlimited length." / "Sent as 1 encoded page instead of 5 (experimental).";
+    - failed: "Tried as 2 long pages instead of 5; the call failed.";
+    - cancelled: "Prepared as 2 long pages instead of 5; the fax was cancelled.";
+    - any other state (on its way, or its outcome not known yet): "Going as …", worded as when delivered.
+    """
+    if not change or change.get('layout') not in ('dense', 'codec'):
         return None
-    if change.get('reason'):
-        return change['reason']
-    if change['layout'] != 'dense' or change['sent_pages'] >= change['original_pages']:
-        return f"Sent as {_pages(change['sent_pages'])} instead of {change['original_pages']}." 
-    head = f"Sent as {_pages(change['sent_pages'], 'long page')} instead of {change['original_pages']}"
-    limit = change.get('page_limit') or capabilities.DEFAULT_LIMIT
-    if change.get('limit_learned_at') is None:
-        return (f"{head}; the receiving machine's longest page is not known yet, so Faxbot kept to "
-                f"{LIMIT_TEXT[limit]}.")
-    return f'{head}; the receiving machine accepts {LIMIT_TEXT[limit]}.'
+    sent, original = change['sent_pages'], change['original_pages']
+    if change['layout'] == 'codec':
+        what, tail = _pages(sent, 'encoded page'), ' (experimental).'
+    elif sent >= original:
+        what, tail = _pages(sent), '.'
+    else:
+        what = _pages(sent, 'long page')
+        limit = change.get('page_limit') or capabilities.DEFAULT_LIMIT
+        if change.get('limit_learned_at') is None:
+            tail = (f"; the receiving machine's longest page is not known yet, so Faxbot kept to "
+                    f"{LIMIT_TEXT[limit]}.")
+        else:
+            tail = f'; the receiving machine accepts {LIMIT_TEXT[limit]}.'
+    if phase == 'failed':
+        return f'Tried as {what} instead of {original}; the call failed.'
+    if phase == 'cancelled':
+        return f'Prepared as {what} instead of {original}; the fax was cancelled.'
+    verb = 'Sent as' if phase in (None, 'success') else 'Going as'
+    return f'{verb} {what} instead of {original}{tail}'
 
 
 def trimmed_sentence(change):
@@ -45,17 +62,52 @@ def trimmed_sentence(change):
 RESOLUTION_SENTENCE = 'Sent at standard resolution, as received.'
 
 
+def newest_attempt_change(engine, job_id):
+    """The page change of the fax's newest attempt, or None when that attempt sent its pages as they were.
+
+    The Sent detail follows the attempt, as the lightened pages' line does (``friendly.run_for``): a fax that
+    went as encoded pages and then as its own pages on another route shows the second attempt. The change
+    carries that attempt's state as ``attempt_phase``. Without attempt records, the newest change (state not
+    known)."""
+    records = records_for(engine)
+    table = records.table('fax_page_changes')
+
+    def read(connection):
+        query = sa.select(table).where(table.c.job_id == job_id)
+        newest = None
+        try:
+            attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+        except sa.exc.NoSuchTableError:
+            attempts = None
+        if attempts is not None:
+            newest = connection.execute(sa.select(attempts.c.id, attempts.c.phase).where(
+                attempts.c.job_id == job_id).order_by(attempts.c.sequence.desc()).limit(1)).first()
+            if newest is not None:
+                query = query.where(table.c.attempt_id == newest[0])
+        row = connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)
+                                 ).mappings().first()
+        if row is None:
+            return None
+        return {**dict(row), 'attempt_phase': newest[1] if newest is not None else None}
+    return records._read(read)
+
+
 def sent_view(engine, job_id, root=None):
-    """The Sent detail's page block, or None when Faxbot sent the pages as they were."""
+    """The Sent detail's page block for the fax's newest attempt, or None when it sent the pages as they were.
+
+    One sentence says which layout the attempt kept (dense pages, or the experimental encoded pages), then what
+    else changed on the pages as they are or dense pages: blank space left out, standard resolution, shading
+    lightened. Encoded pages never have those."""
     if engine is None or not _HEX32.fullmatch(str(job_id or '')):
         return None
-    change = records_for(engine).change_for_job(job_id)
+    change = newest_attempt_change(engine, job_id)
     resolution = (change or {}).get('resolution')
     # Shaded areas lightened and specks removed (pages/friendly.py, migration 0042).
     from .friendly import call_rate, run_for, seconds_at, sent_sentence
     lightened = run_for(engine, job_id)
     rate = call_rate(engine, job_id) if lightened else None
-    sentences = [text for text in (packed_sentence(change), trimmed_sentence(change),
+    sentences = [text for text in (packed_sentence(change, (change or {}).get('attempt_phase')),
+                                   trimmed_sentence(change),
                                    RESOLUTION_SENTENCE if resolution == 'standard' else None,
                                    sent_sentence(lightened, rate)) if text]
     if not sentences:
@@ -102,7 +154,7 @@ def recipient_view(engine, number):
 
 def route_sentence(view, label):
     if not view['long_pages_possible']:
-        return f'{label} fetches the document from Faxbot itself, so long pages cannot be sent through it.'
+        return f'Long pages cannot be sent through {label}.'
     if view['route'] in capabilities.IMAGE_ROUTES:
         return ('Faxbot puts several pages on one long page when the receiving machine takes long pages and it '
                 'saves pages or time.')
@@ -128,8 +180,9 @@ def route_views(engine, routes=None):
 
 # Savings -------------------------------------------------------------------------------------------------------
 
-def savings(routes, engine, *, since, days):
-    """Pages saved by packing (and seconds by trimming) on delivered sends, priced with each route's billing.
+def savings(routes, engine, *, since, days, layout=None):
+    """Pages saved by packing (and seconds by trimming) on delivered sends, priced with each route's billing;
+    with ``layout`` 'codec', the pages saved by the experimental encoded pages instead (``encoding_sentence``).
 
     Always an estimate: what the same fax would have cost sent page by page.
     Per page: the pages not sent. Per minute: the call with the saved seconds
@@ -145,7 +198,10 @@ def savings(routes, engine, *, since, days):
             changes.c.route, changes.c.original_pages, changes.c.sent_pages, changes.c.pages_saved,
             changes.c.trimmed_pages, changes.c.seconds_saved, costs.c.billed_seconds,
         ).join(costs, costs.c.id == changes.c.attempt_id).where(
-            costs.c.outcome == 'success', changes.c.created_at >= since)).all()
+            costs.c.outcome == 'success', changes.c.created_at >= since,
+            # Encoded pages (experimental) are counted apart from packing.
+            changes.c.layout == 'codec' if layout == 'codec' else
+            sa.or_(changes.c.layout.is_(None), changes.c.layout != 'codec'))).all()
     result = {'faxes': 0, 'pages_saved': 0, 'trimmed_pages': 0, 'seconds_saved': 0, 'priced': 0, 'in_plan': 0,
               'plan_pages': 0, 'unpriced': 0, 'saved': {}}
     cards = {}
@@ -177,8 +233,25 @@ def savings(routes, engine, *, since, days):
         result['priced'] += 1
         if before > after:
             result['saved'][card.currency] = result['saved'].get(card.currency, 0) + before - after
-    result['sentence'] = savings_sentence(result, days, money_text)
+    result['sentence'] = (encoding_sentence if layout == 'codec' else savings_sentence)(result, days, money_text)
     return result
+
+
+def encoding_sentence(result, days, money_text):
+    """Costs, Savings: "Pages saved by encoding (experimental)"."""
+    if not result['faxes']:
+        return f'No faxes went as encoded pages in the last {days} days.'
+    faxes = _pages(result['faxes'], 'fax').replace('faxs', 'faxes')
+    sentence = f"{_pages(result['pages_saved'])} saved by encoding on {faxes}"
+    minutes = result['seconds_saved'] // 60
+    if minutes:
+        sentence += f", about {_pages(minutes, 'minute')} less on the phone"
+    money = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items()))
+    sentence += f', saving about {money}.' if money else '.'
+    if result['plan_pages']:
+        sentence += (f" {_pages(result['plan_pages'])} of them went through your monthly plan: no money saved, but "
+                     "more room under its fair use and page limits.")
+    return sentence
 
 
 def savings_sentence(result, days, money_text):

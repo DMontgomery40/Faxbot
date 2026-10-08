@@ -639,8 +639,7 @@ class DirectRoute:
             signed_at = json.loads(earlier['manifest'])['created_at'] if earlier is not None else timestamp()
             try:
                 image = await run_lifecycle_step(lambda: faximage.build(
-                    values, claim.job_id, moment=parse_timestamp(signed_at),
-                    encoded=faximage.encoded_send(service.store.engine, claim.job_id)))
+                    values, claim.job_id, moment=parse_timestamp(signed_at)))
             except faximage.FaxImageUnavailable as error:
                 # Nothing was sent; the original still goes directly, with no call. Said once per fax, so a partner
                 # who opted in but keeps getting originals can be explained (no fax image tools in this image).

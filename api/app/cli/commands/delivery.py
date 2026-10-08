@@ -425,7 +425,8 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'Separator pages left out'),
                 ('direct_delivery', 'Direct delivery'), ('direct_fax_images', 'Direct fax images'),
                 ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
-                ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'))
+                ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'),
+                ('encoding', 'Pages saved by encoding (experimental)'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):

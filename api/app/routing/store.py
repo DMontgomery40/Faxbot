@@ -54,8 +54,8 @@ class CaptureTarget:
     dialed: str | None = None
     # The account the attempt went by (``sinch-uk``); its own rate card is used first, then its provider's.
     route: str | None = None
-    # Where ``pages`` came from: 'sent' (the sheets a dense layout actually sent), 'codec' (the experimental
-    # encoded pages made for this route), or 'original' (the accepted document's pages).
+    # Where ``pages`` came from: 'sent' (the pages the attempt's chosen layout actually sent: dense pages or the
+    # experimental encoded pages), or 'original' (the accepted document's pages).
     pages_source: str = 'original'
 
 
@@ -338,11 +338,11 @@ class RouteStore:
             return connection.execute(riders.where(m.c.attempt_id == attempt_id)).first() is not None
 
     def _sent_pages_tables(self):
-        """AF's ``fax_page_changes`` and AG's ``codec_sends``, or None for each before it exists."""
+        """AF's ``fax_page_changes``, or None before it exists."""
         found = getattr(self, '_page_tables', None)
         if found is None:
             found = {}
-            for name in ('fax_page_changes', 'codec_sends'):
+            for name in ('fax_page_changes',):
                 try:
                     found[name] = reflect(self.engine, (name,))[name]
                 except DeliveryStoreError:
@@ -353,9 +353,9 @@ class RouteStore:
     def pending_captures(self, *, limit=100):
         """Finished attempts to cost, each with the pages it actually sent.
 
-        An attempt that sent dense pages costs by its sheets (AF's ``fax_page_changes.sent_pages``, by attempt);
-        one that sent the experimental encoded pages its route was made for costs by those (AG's
-        ``codec_sends.pages_encoded``); every other attempt by the accepted document's pages, as before.
+        An attempt whose chosen layout changed its pages (dense pages or the experimental encoded pages) costs by
+        the pages it sent (``fax_page_changes.sent_pages``, by attempt; each attempt chooses for its own route);
+        every other attempt by the accepted document's pages, as before.
         """
         a, j, c = self.attempts, self.jobs, self.costs
         # A fax that rode in another fax's call is never costed on its own: the call is counted once, on the
@@ -366,20 +366,16 @@ class RouteStore:
                        sa.and_(c.c.outcome == 'uncertain', a.c.phase != 'uncertain'))
         dialed = a.c.dialed_number if 'dialed_number' in a.c else sa.null()
         pages = self._sent_pages_tables()
-        changes, codec = pages['fax_page_changes'], pages['codec_sends']
+        changes = pages['fax_page_changes']
         source = a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id)
-        sent = encoded = codec_route = sa.null()
+        sent = sa.null()
         if changes is not None:
             source = source.outerjoin(changes, changes.c.attempt_id == a.c.id)
             sent = changes.c.sent_pages
-        if codec is not None:
-            source = source.outerjoin(codec, codec.c.id == a.c.job_id)
-            encoded, codec_route = codec.c.pages_encoded, codec.c.provider_id
         query = (sa.select(a.c.id, a.c.job_id, a.c.phase, a.c.provider_sid, a.c.submitted_at, a.c.completed_at,
                            j.c.to_number, j.c.pages, j.c.backend, c.c.id.label('decision'),
                            c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'),
-                           c.c.route.label('decided_route'), dialed.label('dialed'), sent.label('sent_pages'),
-                           encoded.label('encoded_pages'), codec_route.label('codec_route'))
+                           c.c.route.label('decided_route'), dialed.label('dialed'), sent.label('sent_pages'))
                  .select_from(source)
                  .where(a.c.submitted_at.is_not(None), a.c.phase.in_(tuple(OUTCOMES)), finished, stale,
                         *(() if riders is None else (a.c.id.not_in(riders),)))
@@ -392,8 +388,6 @@ class RouteStore:
             count, origin = row['pages'], 'original'
             if row['sent_pages'] is not None:
                 count, origin = row['sent_pages'], 'sent'
-            elif row['encoded_pages'] is not None and row['codec_route'] == provider:
-                count, origin = row['encoded_pages'], 'codec'
             targets.append(CaptureTarget(
                 row['id'], row['job_id'], destination_key(row['to_number']), provider,
                 row['provider_sid'] or row['decided_sid'], row['phase'], count, row['submitted_at'],

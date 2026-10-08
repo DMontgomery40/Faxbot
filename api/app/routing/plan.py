@@ -10,7 +10,7 @@ import re
 import sqlalchemy as sa
 
 from .costs import plan_fee_text
-from .database import read_connection
+from .database import DeliveryStoreError, read_connection
 from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
@@ -373,8 +373,12 @@ class RoutePlanner:
             shape = Shape(max(int(pages or 1), 1), None, 'standard', 'normal')
             found = relay_candidates(destination, shape, now, engine=self.store.engine, job_id=job_id, never=never,
                                      home=home)
-        except Exception:
-            return [], {}  # relay records unreadable: the fax goes by its own routes
+        except (ValueError, sa.exc.SQLAlchemyError, DeliveryStoreError):
+            # The predictor refused the fax or the relay records could not be read: the fax goes by its own routes.
+            # Anything else is a bug and is raised.
+            import logging
+            logging.getLogger(__name__).warning('Relays could not be offered for this fax.', exc_info=True)
+            return [], {}
         candidates, prices = [], {}
         for item in found:
             if pinned is not None and not pinned.allows(item.key):

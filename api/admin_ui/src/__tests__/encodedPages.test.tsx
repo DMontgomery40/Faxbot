@@ -1,10 +1,11 @@
-// Encoded pages (experimental): the per-number opt-in in a fax number's Details, the sent fax's line,
+// Encoded pages (experimental): the per-number opt-in in a fax number's Details, the sent fax's one page line,
 // and a received fax's decode result with its download.
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import { EncodedPagesPanel, FaxEncodedItem, ReceivedEncodedPages } from '../components/delivery/EncodedPages';
+import JobsList from '../components/JobsList';
+import { EncodedPagesPanel, ReceivedEncodedPages } from '../components/delivery/EncodedPages';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -63,12 +64,23 @@ describe('Encoded pages in a fax number\'s Details', () => {
 });
 
 describe('Encoded pages on a sent and a received fax', () => {
-  it('says how many encoded pages a fax went as, and nothing for an ordinary fax', async () => {
-    server.use(http.get('/codec/faxes/:job', () => HttpResponse.json({
-      encoded: true, sentence: 'Sent as 1 encoded page instead of 23 (experimental).', pages_original: 23,
-      pages_encoded: 1 })));
-    render(<FaxEncodedItem client={client()} jobId={JOB} />);
-    expect(await screen.findByText('Sent as 1 encoded page instead of 23 (experimental).')).toBeTruthy();
+  it('says once, in the page line, that the newest attempt went as encoded pages', async () => {
+    const sentence = 'Sent as 1 encoded page instead of 23 (experimental).';
+    const job = { id: JOB, to_number: '+15550100001', status: 'success', backend: 'sinch', pages: 23,
+      created_at: '2026-10-07T12:00:00', updated_at: '2026-10-07T12:01:00', delivery_state: 'success',
+      dispatch_mode: 'normal', delivery_version: 3,
+      page_layout: { layout: 'codec', original_pages: 23, sent_pages: 1, sentences: [sentence] } };
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [job] })),
+      http.get(`/admin/fax-jobs/${JOB}`, () => HttpResponse.json(job)),
+    );
+    render(<JobsList client={client()} />);
+    fireEvent.click(await screen.findByText('+15550100001'));
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    const line = await within(dialog).findByTestId('job-pages');
+    expect(line.textContent).toBe(`How the pages were sent${sentence}`);
+    expect(within(dialog).getAllByText(sentence)).toHaveLength(1);
+    expect(within(dialog).queryByText('Encoded pages')).toBeNull();
   });
 
   it('shows the decode result, offers the original, and gives the fallback sentence when decoding failed', async () => {

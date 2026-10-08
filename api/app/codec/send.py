@@ -1,29 +1,26 @@
-"""Sending with the experimental payload codec: the per-fax plan at acceptance and the pages a route sends.
+"""Sending with the experimental payload codec: the encoded pages one attempt may send.
 
-Only for a number whose recipient agreed (``codec_numbers``). At acceptance
-the fax's original PDF stays exactly as accepted. When the payload saves on
-the fax's route:
+Only for a number whose recipient agreed (``codec_numbers``). The codec is one
+of the layouts the attempt-time chooser prices (``conversion.choose_layout``,
+called for each attempt from ``pages/sending.py``), beside the pages as they
+are and dense pages, all made from the same original pages. It is decided
+again for every attempt, so a fax that moves to another route is decided for
+that route, and encoded pages are never packed, trimmed or lightened.
 
-- a route where Faxbot makes the fax image (the SIP trunk engines) gets the
-  payload pages as its fax TIFF, written over the TIFF ``pdf_to_tiff`` made
-  from the original moments earlier (the TIFF is derived, never the
-  original);
-- a provider route gets ``<job>.payload-<provider>.pdf`` beside the original,
-  and the transport sends that file when the attempt goes to the same
-  provider (``transmitted_pdf``). Any other route sends the original pages.
-
-The plan is recorded in ``codec_sends`` inside the acceptance transaction.
-The job's own page count stays the original's (the public fax contract);
-the encoded count lives in the send row.
+Nothing here writes a file: the chooser writes the one layout it keeps as the
+attempt's own files (``packed-<fax>-<attempt>``), and the fax's original PDF
+and fax image never change. An attempt that sends encoded pages is recorded
+in ``fax_page_changes`` for that attempt (layout 'codec', the pages it sent
+and its sentence), which is what its cost and the Sent detail read;
+``codec_sends`` keeps the codec's details once per fax, from its first attempt
+that sent them. The job's own page count stays the original's (the public fax
+contract).
 """
 import logging
-import os
 from pathlib import Path
-import re
-import tempfile
+from typing import NamedTuple
 
 import sqlalchemy as sa
-from PIL import Image
 
 from . import decision
 from .store import CodecSettings, CodecStoreError, record_send
@@ -32,37 +29,31 @@ log = logging.getLogger(__name__)
 FORMAT_VERSION = 1
 
 
-def payload_pdf_path(root, job_id, provider_id):
-    return Path(root) / f'{job_id}.payload-{provider_id}.pdf'
+class AttemptPages(NamedTuple):
+    """Encoded pages for one attempt: the pages, the Sent detail's sentence, and the ``codec_sends`` details."""
+    pages: list
+    sentence: str
+    row: dict
 
 
-def transmitted_pdf(pdf_path, job_id, provider_id):
-    """The PDF to give ``provider_id`` for this fax: its payload pages when they were made for it."""
-    if not isinstance(provider_id, str) or re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', provider_id) is None:
-        return pdf_path
-    candidate = payload_pdf_path(Path(pdf_path).parent, job_id, provider_id)
-    if candidate.is_file() and not candidate.is_symlink():
-        return type(pdf_path)(candidate) if not isinstance(pdf_path, str) else str(candidate)
-    return pdf_path
+def setting_for(engine, number, recipient=None):
+    """The codec setting that applies to a call to ``number``, or None when encoded pages are off for it.
 
-
-def _tiff_page_bits(path):
+    When an approved alternate number is dialed instead of the recipient the person chose, both numbers must
+    be on: the machine that answers decodes the pages, and the person agreed for their recipient. The dialed
+    number's own setting (style, error correction, shared key) is used."""
+    if engine is None or not number:
+        return None
     try:
-        from ..routing.predict import tiff_page_bits
-        return list(tiff_page_bits(path))
-    except ImportError:
-        pass
-    bits = []
-    with Image.open(path) as image:
-        index = 0
-        while True:
-            try:
-                image.seek(index)
-            except EOFError:
-                break
-            bits.append(8 * sum(image.tag_v2.get(279, (0,))))
-            index += 1
-    return bits
+        settings = CodecSettings(engine)
+        setting = settings.get(number)
+        if not setting['enabled']:
+            return None
+        if recipient and recipient != number and not settings.get(recipient)['enabled']:
+            return None
+    except (CodecStoreError, sa.exc.SQLAlchemyError):
+        return None
+    return setting
 
 
 def _ecm_and_fine_seen(engine, number):
@@ -83,58 +74,46 @@ def _ecm_and_fine_seen(engine, number):
     return row is not None and row[0] == 'on' and row[1] in ('fine', 'superfine')
 
 
-def _first_page_picture(tiff_path):
-    with Image.open(tiff_path) as image:
-        return image.convert('L').copy()
+def _secret(engine, seal, number):
+    """The shared key sealed for ``number``, or None when it cannot be read."""
+    from ..config_secrets import ConfigurationSecretError
+    try:
+        return CodecSettings(engine, seal).secret(number)
+    except (CodecStoreError, ConfigurationSecretError, sa.exc.SQLAlchemyError, OSError):
+        return None
 
 
-def plan_for_fax(engine, *, provider_id, needs_tiff, destination, pdf_path, tiff_path, pages, job_id,
-                 seal=None, tools=None):
-    """(Choice, recorder) for a fax being accepted, or (None, None) when the number has not opted in.
+def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path, seal=None, exact_raster=False,
+                  resolution='fine', tools=None):
+    """``AttemptPages`` when the codec's own check (``decision.choose``) says encoded pages save on ``route``,
+    else None. Writes nothing.
 
-    Writes the payload artifact when the choice is to use it. ``recorder``
-    runs inside the acceptance transaction.
-    """
+    ``frames`` are the pages as this attempt would otherwise send them and ``page_bits`` their coded bits, the
+    same pages the chooser prices as normal. ``exact_raster``: Faxbot makes the fax image itself (the phone
+    line), so run-coded pages are a candidate once a call to the number negotiated ECM at fine resolution;
+    otherwise a provider draws the PDF and only sturdy grid pages are made. A number with a shared key never
+    gets an unencrypted document: without the key, the attempt sends other pages."""
     from .. import codec
-    try:
-        settings = CodecSettings(engine, seal)
-        setting = settings.get(destination)
-    except CodecStoreError:
-        return None, None
-    if not setting['enabled']:
-        return None, None
-    secret = settings.secret(destination) if setting['has_key'] else None
-    data = Path(pdf_path).read_bytes()
-    document = codec.Document(data, 'application/pdf', 'document.pdf')
-    temporary = None
-    try:
-        measured = tiff_path
-        if not measured:
-            from ..conversion import pdf_to_tiff
-            descriptor, temporary = tempfile.mkstemp(prefix='.codec-', suffix='.tiff', dir=Path(pdf_path).parent)
-            os.close(descriptor)
-            pdf_to_tiff(pdf_path, temporary)
-            measured = temporary
-        page_bits = _tiff_page_bits(measured)
-        # With a shared key the visible picture is a plain pattern: the first page would show through.
-        picture = (_first_page_picture(measured) if setting['style'] == 'picture' and not secret else None)
-        choice = decision.choose(
-            document, route_key=provider_id, destination=destination, pages_original=pages,
-            page_bits_original=page_bits, exact_raster=needs_tiff,
-            ecm_and_fine_seen=needs_tiff and _ecm_and_fine_seen(engine, destination),
-            provider_renders=not needs_tiff, fec=setting['fec'], style=setting['style'], secret=secret,
-            picture=picture, tools=tools)
-    finally:
-        if temporary:
-            Path(temporary).unlink(missing_ok=True)
+    secret = None
+    if setting['has_key']:
+        secret = _secret(engine, seal, number)
+        if not secret:
+            log.warning('The shared key for encoded pages could not be read, so this attempt sends other pages.')
+            return None
+    document = codec.Document(Path(pdf_path).read_bytes(), 'application/pdf', 'document.pdf')
+    # With a shared key the visible picture is a plain pattern: the first page would show through.
+    picture = frames[0].convert('L') if setting['style'] == 'picture' and not secret and frames else None
+    choice = decision.choose(
+        document, route_key=route, destination=number, pages_original=len(frames), page_bits_original=page_bits,
+        exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
+        provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
+        picture=picture, resolution=resolution, tools=tools)
     if not choice.use:
-        log.info('Fax %s goes as normal pages: %s', job_id, choice.sentence)
-        return choice, None
-    _write_artifact(choice, pdf_path=pdf_path, tiff_path=tiff_path, job_id=job_id, provider_id=provider_id,
-                    needs_tiff=needs_tiff)
+        log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
+        return None
     row = {
-        'phone_number': destination, 'provider_id': provider_id, 'layout': choice.layout,
-        'resolution': choice.resolution, 'fec': choice.fec, 'pages_original': max(1, int(pages or 1)),
+        'phone_number': number, 'provider_id': route, 'layout': choice.layout,
+        'resolution': choice.resolution, 'fec': choice.fec, 'pages_original': max(1, len(frames)),
         'pages_encoded': choice.pages_encoded,
         'seconds_original': _whole(getattr(choice.original, 'seconds', None)),
         'seconds_encoded': _whole(getattr(choice.encoded, 'seconds', None)),
@@ -145,10 +124,20 @@ def plan_for_fax(engine, *, provider_id, needs_tiff, destination, pdf_path, tiff
     }
     if row['basis'] is not None:
         row['basis'] = str(row['basis'])[:300]
+    return AttemptPages(list(choice.pages.pages), choice.sentence, row)
 
-    def record(connection, now):
-        record_send(connection, engine, job_id, row, now)
-    return choice, record
+
+def record_attempt(engine, job_id, row, now):
+    """Keep the codec's details for the fax, once: an earlier attempt's row stays as it is."""
+    from .store import send_for
+    if send_for(engine, job_id) is not None:
+        return False
+    try:
+        with engine.begin() as connection:
+            record_send(connection, engine, job_id, row, now)
+    except sa.exc.IntegrityError:
+        return False  # another attempt recorded it first
+    return True
 
 
 def _whole(seconds):
@@ -169,27 +158,6 @@ def _currency(prediction):
     return currency if isinstance(currency, str) and len(currency) == 3 else None
 
 
-def _write_artifact(choice, *, pdf_path, tiff_path, job_id, provider_id, needs_tiff):
-    from .. import codec
-    from ..conversion import FAX_IMAGE_MODE, tiff_to_pdf
-    folder = Path(pdf_path).parent
-    descriptor, temporary = tempfile.mkstemp(prefix='.codec-', suffix='.tiff', dir=folder)
-    os.close(descriptor)
-    try:
-        codec.write_tiff(choice.pages.pages, temporary)
-        if needs_tiff and tiff_path:
-            os.chmod(temporary, FAX_IMAGE_MODE)
-            os.replace(temporary, tiff_path)
-            temporary = None
-        else:
-            target = payload_pdf_path(folder, job_id, provider_id)
-            tiff_to_pdf(temporary, str(target))
-            os.chmod(target, 0o600)
-    finally:
-        if temporary:
-            Path(temporary).unlink(missing_ok=True)
-
-
 def combine(*steps):
     """One acceptance-transaction step that runs every given step (None steps are skipped)."""
     present = [step for step in steps if step is not None]
@@ -202,14 +170,42 @@ def combine(*steps):
     return run
 
 
-def sentence(row, status='success'):
-    """The fax detail line for a fax sent (or going) as payload pages, or None."""
-    if not row:
-        return None
-    count, original = row['pages_encoded'], row['pages_original']
-    pages = f'{count} encoded page{"s" if count != 1 else ""} instead of {original} (experimental).'
-    if status == 'success':
-        return 'Sent as ' + pages
-    if status in ('failed', 'cancelled'):
-        return 'Prepared as ' + pages
-    return 'Going as ' + pages
+def restore_original_image(engine, job_id, pdf_path, tiff_path=None):
+    """Upgrade safety for a fax accepted while encoded pages were decided at acceptance (before one chooser per
+    attempt): that build wrote the encoded pages over the fax image (``<job>.tiff``) on a phone-line route, or
+    beside the fax as ``<job>.payload-<provider>.pdf`` for a provider. Such a fax has a ``codec_sends`` row and
+    no attempt that sent encoded pages (``fax_page_changes`` layout 'codec').
+
+    Called before an attempt chooses its pages (``pages/sending.py``): an image whose first page shows the
+    encoded pattern is made again from the original PDF, and the unused payload PDFs are removed, each once
+    (afterwards there is nothing left to find), with a log line. True when anything was restored."""
+    from .. import codec
+    from ..conversion import pdf_to_tiff
+    from .store import send_for
+    if engine is None:
+        return False
+    try:
+        if send_for(engine, job_id) is None:
+            return False
+        with engine.connect() as connection:
+            changes = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=connection)
+            if connection.execute(sa.select(changes.c.id).where(
+                    changes.c.job_id == job_id, changes.c.layout == 'codec').limit(1)).first() is not None:
+                return False  # encoded pages chosen by an attempt: the fax image was never touched
+    except (CodecStoreError, sa.exc.SQLAlchemyError):
+        return False  # no codec records (an installation before 0031): nothing was ever encoded
+    restored = False
+    image = Path(tiff_path) if tiff_path else None
+    if image is not None and image.is_file() and not image.is_symlink():
+        first = codec.first_page(image.read_bytes())
+        if first is not None and codec.looks_like_payload(first):
+            pdf_to_tiff(str(pdf_path), str(image))
+            log.warning('Fax %s: its fax image held encoded pages written when it was accepted by an earlier '
+                        'build; it was made again from the original document before this attempt.', job_id)
+            restored = True
+    for payload in Path(pdf_path).parent.glob(f'{job_id}.payload-*.pdf'):
+        if payload.is_file() and not payload.is_symlink():
+            payload.unlink(missing_ok=True)
+            log.warning('Fax %s: an unused encoded-pages PDF from an earlier build was removed.', job_id)
+            restored = True
+    return restored

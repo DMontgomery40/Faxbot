@@ -269,14 +269,16 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     # Pages saved by packing several pages onto long pages, and blank space left out (pages/).
     from ..pages.views import savings as page_savings
     packing = page_savings(routes, engine, since=since, days=days)
+    # Pages saved by the experimental encoded pages, each attempt's choice (pages/sending.py).
+    encoding = page_savings(routes, engine, since=since, days=days, layout='codec')
     total = {}
-    for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing):
+    for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing, encoding):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'separator_pages': index, 'direct_delivery': direct,
             'direct_fax_images': fax_images,
             'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'toll_free': toll_free, 'packing': packing,
-            'total': total,
+            'encoding': encoding, 'total': total,
             'total_sentence': total_sentence(total, days)}
 
 

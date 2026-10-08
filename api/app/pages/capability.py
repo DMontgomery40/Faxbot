@@ -91,12 +91,14 @@ def page_model(route):
 
 
 def route_default(route):
-    """(long pages on by default, can be turned on at all) for a route."""
+    """(long pages on by default, can be turned on at all) for a route.
+
+    A provider that fetches the document from Faxbot gets the attempt's own pages at its fetch address
+    (``pages/sending.fetched_pdf``), so it is like any other cloud route: off until someone checks it sends
+    long pages unchanged."""
     model = page_model(route)
     if route in IMAGE_ROUTES:
         return True, True
-    if model.get('how_sent') == 'pdf_url':
-        return False, False
     return model.get('long_pages') == 'accepts', True
 
 
@@ -259,8 +261,7 @@ class PageRecords:
         changes = {}
         if long_pages is not ...:
             if long_pages is not None and not route_default(route)[1]:
-                raise ValueError('This provider fetches the document from Faxbot itself, so long pages cannot '
-                                 'be sent through it.')
+                raise ValueError('Long pages cannot be sent through this provider.')
             if long_pages is not None and not isinstance(long_pages, bool):
                 raise ValueError('Choose on or off.')
             changes['long_pages'] = None if long_pages is None else int(long_pages)

@@ -152,8 +152,6 @@ class CapturedTransport:
         tiff = root / (claim.job_id + '.tiff') if configuration.traits.get('requires_tiff') is True else None
         if any(path.is_symlink() or not path.is_file() for path in (pdf, tiff) if path is not None):
             raise PreparationFailure('artifact_unavailable')
-        from .codec.send import transmitted_pdf
-        pdf = transmitted_pdf(pdf, claim.job_id, pid)  # encoded pages made for this provider (experimental)
         if claim.members:
             if pid != 'sip' or configuration.manifest is not None:
                 raise PreparationFailure('preparation_failed')
@@ -246,22 +244,28 @@ class CapturedTransport:
                         and parsed.hostname not in {'localhost', '127.0.0.1', '::1'})):
                 raise PreparationFailure('provider_unavailable')
             token = secrets.token_urlsafe(32)
-            media_url = base + '/fax/' + claim.job_id + '/pdf?token=' + token
+            # The attempt names the pages this attempt chose (pages/sending.fetched_pdf); the token alone opens them.
+            media_url = base + '/fax/' + claim.job_id + '/pdf?token=' + token + '&attempt=' + claim.attempt_id
             try:
                 await run_lifecycle_step(lambda: self.store.grant_pdf(claim, url=media_url, token=token,
                     expires_at=datetime.utcnow() + timedelta(minutes=values.pdf_token_ttl_minutes)))
             except ValueError:
                 raise PreparationFailure('provider_unavailable') from None
-        # Dense pages (pages/sending.py): several original pages on one long page when the receiving machine
-        # and the route allow it and it saves; blank page bottoms left out for a machine without error
-        # correction. The fax's own files never change; this never stops a send.
+        # One layout for this attempt (pages/sending.py): the pages as they are, dense pages (several original
+        # pages on one long page when the receiving machine and the route allow it), or the experimental encoded
+        # pages for a recipient who agreed, whichever costs least; then blank page bottoms left out, standard
+        # resolution kept and shading lightened where that applies. The fax's own files never change; a provider
+        # that fetches the document gets this attempt's pages at the link above; this never stops a send.
         from .pages import sending as page_sending
-        store_engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
+        store_configuration = getattr(self.store, 'configuration', None)
+        store_engine = getattr(store_configuration, 'engine', None)
         # The page layout the fax's sending rules chose (routing/envelope.py): "as the receiver allows" turns long
         # pages on, "one per sheet" keeps every page on its own sheet; with no rule, Faxbot's own default applies.
         layout_rule = await run_lifecycle_step(lambda: _layout_rule(store_engine, claim.job_id))
+        from .codec.store import KeySeal
+        seal = KeySeal(store_configuration) if store_configuration is not None else None
         changed = await run_lifecycle_step(lambda: page_sending.prepare(
-            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule))
+            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule, seal=seal))
         if changed is not None:
             pdf = Path(changed.pdf) if changed.pdf else pdf
             tiff = Path(changed.tiff) if changed.tiff else tiff

@@ -689,7 +689,7 @@ def where_it_saves(engine):
     return saves
 
 
-def recommendation(engine, data_dir, *, choice, how_sent, now=None, measure=None, saves=None):
+def recommendation(engine, data_dir, *, choice, now=None, measure=None, saves=None):
     """Costs, Recommendations: with the setting at Never, whether "Where it saves time" would have saved time on
     your recent faxes (at most FAXES faxes and PAGE_BUDGET pages, each drawn again once). Faxes that went by a
     provider charging per page save nothing and are not counted. With any other choice there is nothing to say."""
@@ -698,10 +698,6 @@ def recommendation(engine, data_dir, *, choice, how_sent, now=None, measure=None
             'recommend': False, 'faxes_checked': 0, 'faxes_changed': 0, 'seconds_saved': 0, 'sentence': None,
             'action': None}
     if choice != 'never':
-        return view
-    if how_sent == 'pdf_url':
-        view['sentence'] = ('Your fax provider fetches each document from Faxbot and draws its pages itself, so '
-                            'Faxbot cannot lighten them.')
         return view
     measure = measure or measure_document
     saves = saves or where_it_saves(engine)

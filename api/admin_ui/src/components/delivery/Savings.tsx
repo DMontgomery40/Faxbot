@@ -85,6 +85,9 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
             <Part title="Bytes saved by reuse and patches" sentence={data.direct_bytes.sentence} estimate={false}
               testId="savings-bytes" />
           )}
+          {data.encoding && (
+            <Part title="Pages saved by encoding (experimental)" sentence={data.encoding.sentence} testId="savings-encoding" />
+          )}
         </Stack>
       )}
     </Box>

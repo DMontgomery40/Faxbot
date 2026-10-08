@@ -3,7 +3,7 @@ import type {
 } from './sipTypes';
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
-import type { CodecFax, CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type {
   CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
@@ -1164,10 +1164,6 @@ class AdminAPIClient {
 
   async turnOffCodecNumber(number: string): Promise<CodecNumber> {
     return this.json(`/codec/numbers/${id(number)}`, { method: 'DELETE' });
-  }
-
-  async getCodecFax(jobId: string): Promise<CodecFax> {
-    return this.json(`/codec/faxes/${id(jobId)}`);
   }
 
   async getCodecReceived(inboundId: string): Promise<CodecReceived> {

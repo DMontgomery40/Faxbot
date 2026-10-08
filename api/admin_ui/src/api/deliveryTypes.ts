@@ -719,6 +719,11 @@ export interface Savings {
     faxes: number; pages_saved: number; trimmed_pages: number; seconds_saved: number; priced: number;
     in_plan: number; plan_pages: number; unpriced: number;
   };
+  // Pages saved by the experimental encoded pages, chosen for each attempt; optional for older servers.
+  encoding?: SavingPart & {
+    faxes: number; pages_saved: number; seconds_saved: number; priced: number; in_plan: number; plan_pages: number;
+    unpriced: number;
+  };
   // Bytes partners did not need sent again (a reference or only the changes): counted exactly, never money, and
   // never part of the money total. Optional for older servers.
   direct_bytes?: SendOnceBytes;
