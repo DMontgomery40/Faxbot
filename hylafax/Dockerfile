@@ -87,6 +87,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /opt/install/ /
+COPY LICENSE LICENSE-MIT /usr/share/doc/faxbot/
 
 # faxsetup writes etc/setup.cache with the tool paths of this stage.
 RUN mkdir -p /run/lock && chmod 1777 /run/lock \
