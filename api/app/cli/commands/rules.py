@@ -1567,7 +1567,8 @@ def route_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The 
             out.table(['Attempt', 'Account', 'Number dialed', 'Pages per sheet', 'Estimate', 'What happened'],
                       [[item['number'], item['account_label'], item.get('dialed_number') or '-',
                         layout_words(item['page_layout']) if item.get('page_layout') else '-',
-                        f"{money_amount(item['estimate'])} estimate" if item.get('estimate') else '-', item['sentence']]
+                        item.get('estimate_text') or (f"{money_amount(item['estimate'])} estimate"
+                                                      if item.get('estimate') else '-'), item['sentence']]
                        for item in attempts])
         for item in attempts:
             if item.get('alternate') and item.get('dialed_number'):

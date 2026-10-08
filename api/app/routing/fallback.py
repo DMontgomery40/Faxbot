@@ -2,14 +2,20 @@
 
 Only a final failure reported by the provider qualifies. Uncertain attempts are
 never retried here: they wait for the provider, a partner, or an operator.
+
+A fax accepted under sending rules moves only to the next route its envelope
+allows (``routing.envelope``), and when a rule chose its route, only after a
+call that ended before any fax data (the delivery store checks that on the
+failed attempt). The next route keeps the envelope's dialed number and layout.
 """
 from datetime import timedelta
 
 import sqlalchemy as sa
 
 from .database import read_connection, utcnow
-from .plan import RoutePlanner
-from .routes import RouteUnavailable, route_configuration, route_ready
+from .plan import RoutePlanner, ledger_key
+from .routes import RouteUnavailable, route_ready
+from . import envelope as envelopes
 
 
 MAX_FALLBACKS = 2
@@ -35,10 +41,11 @@ class FallbackScheduler:
 
     def _usable(self, choice, revision):
         route = choice.route
-        if route.kind == 'direct' or route.bound:
+        if route.kind in ('direct', 'relay') or route.bound:
             return True
         try:
-            return route_ready(route_configuration(revision, route.provider_id), ami=self.ami)
+            from ..accounts import route_configuration
+            return route_ready(route_configuration(revision, route.key), ami=self.ami)
         except RouteUnavailable:
             return False
 
@@ -58,11 +65,23 @@ class FallbackScheduler:
                 failed_number = connection.scalar(sa.select(self.routes.attempts.c.dialed_number).where(
                     self.routes.attempts.c.id == attempt_id))
             dial['refused'] = dial['refused'] or failed_number == dial['alternate']
-        plan = planner.plan(to_number=job.to_number, bound=bound.configuration.provider_id, values=revision.values,
-                            pages=job.pages, alternates=True, dial=dial, tried=tried)
+        try:
+            pinned = envelopes.load(self.routes.engine, job_id)
+        except envelopes.UnreadableDecision:
+            return None  # Without a readable decision there is no allowed next route.
+        key, prices = bound.configuration.provider_id, None
+        if pinned is not None:
+            from ..accounts import default_sending_key
+            from .pricing import prices_for
+            key = default_sending_key(revision.values) or key
+            prices = prices_for(self.routes, revision.values, job.to_number, job.pages, pinned=pinned, bound=key,
+                                dial=dial)
+        plan = planner.plan(to_number=job.to_number, bound=key, values=revision.values,
+                            pages=job.pages, alternates=True, dial=dial, tried=tried, pinned=pinned, prices=prices,
+                            job_id=job_id)
         done = {(route, number or plan.destination) for route, number in tried}
         return next((choice for choice in plan.choices
-                     if (choice.route.key, plan.number_for(choice.route.key)) not in done
+                     if (ledger_key(choice.route.key), plan.number_for(choice.route.key)) not in done
                      and self._usable(choice, revision)), None)
 
     def step(self):

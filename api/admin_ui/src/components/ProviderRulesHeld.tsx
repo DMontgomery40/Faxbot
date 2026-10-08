@@ -7,7 +7,7 @@ import {
   Paper, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import { formatLocalDate, formatServerTime } from '../api/time';
-import { isForbidden, isNotAvailable } from '../api/client';
+import { isForbidden } from '../api/client';
 import type { AdminDestination } from '../navigation';
 import { DeliveryError, formatMoney, Notice } from './delivery/shared';
 import type { AlternateDial, FaxRoute, Hold, HoldDecision, RulesApi } from './ProviderRulesApi';
@@ -92,8 +92,8 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
 
   const load = useCallback(() => {
     api.holds().then((value) => setHolds(value.holds)).catch((failure) => {
-      // Someone who may not see held faxes, or a server without them, simply has none to show.
-      if (isForbidden(failure) || isNotAvailable(failure)) setHolds([]);
+      // Someone who may not see held faxes simply has none to show.
+      if (isForbidden(failure)) setHolds([]);
       else setError(failure);
     });
   }, [api]);
@@ -233,7 +233,8 @@ export function FaxRouteItems({ api, jobId }: { api: RulesApi; jobId: string }) 
               {attempt.dialed_number && !attempt.alternate && <span>Number dialed: {attempt.dialed_number}</span>}
               {attempt.dialed_number && attempt.alternate && <span>{alternateSentence(attempt.dialed_number, attempt.alternate)}</span>}
               {attempt.page_layout && <span>Pages per sheet: {layoutWords(attempt.page_layout)}</span>}
-              {attempt.estimate && <span>About {formatMoney(attempt.estimate)} (estimate)</span>}
+              {attempt.estimate_text && <span>{attempt.estimate_text}</span>}
+              {!attempt.estimate_text && attempt.estimate && <span>About {formatMoney(attempt.estimate)} (estimate)</span>}
             </Stack>
           )} />
         </ListItem>

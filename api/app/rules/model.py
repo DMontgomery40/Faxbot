@@ -85,6 +85,8 @@ DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 TIME_ZONES = ('installation', 'sender_site')
 SENDER_KINDS = ('person', 'key', 'system')
 QUOTE_NUMBERS = ('original', 'alternate')
+# A quote for a fax a monthly plan carries ('In your plan'), or carries past your normal-use budget.
+QUOTE_PLANS = ('included', 'over_budget')
 # What chose a decision's route: a written rule, the recipient's preferred route, or the automatic choice.
 SOURCE_KINDS = ('rule', 'preferred', 'automatic')
 STEP_KINDS = ('limit', 'route', 'preferred')
@@ -264,7 +266,9 @@ class Quote:
 
     ``micros`` None is an unknown cost, never zero. ``number`` says whether it prices the original number
     or the approved alternate. ``origin`` is the rate row's origin ('any', a site key, 'country:GB'), or
-    None for the card's flat price. ``pages`` is the page or sheet count the estimate used.
+    None for the card's flat price. ``pages`` is the page or sheet count the estimate used. ``plan`` is
+    'included' when a monthly plan carries the fax (what it adds is 0, and it reads "In your plan", never
+    "$0.00"), 'over_budget' when that plan is past the normal-use budget you set, else None.
     """
     account: str
     micros: int | None
@@ -272,9 +276,11 @@ class Quote:
     number: str = 'original'
     origin: str | None = None
     pages: int | None = None
+    plan: str | None = None
 
     def __post_init__(self):
         _one_of(self.number, QUOTE_NUMBERS, 'quoted number')
+        _one_of(self.plan, QUOTE_PLANS, 'plan quote', optional=True)
         if (self.micros is None) != (self.currency is None):
             raise ValueError('A quote has both an amount and a currency, or neither.')
 

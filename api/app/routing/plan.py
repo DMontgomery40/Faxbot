@@ -34,6 +34,7 @@ REASON_TEXT = {
     # Only the reason is stored with a sent fax, so its details use this sentence without the amount.
     'cheapest_delivered': f'The cheapest route per delivered fax to this number over the last {WINDOW_DAYS} days.',
     'own_number': 'One of your own fax numbers: the fax goes straight into Received, with no phone call.',
+    'rule': 'Your sending rule chose this account first.',
 }
 
 
@@ -96,6 +97,47 @@ def extra_routes(values, bound):
             if identity not in {bound, DIRECT} and re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', identity)]
 
 
+def ledger_key(key):
+    """The key the delivery ledger records a route under: a partner relay's ``relay:<id>`` as ``relay.<id>``."""
+    return key.replace(':', '.', 1) if isinstance(key, str) and key.startswith('relay:') else key
+
+
+def _accounts(values):
+    """The revision's sending accounts by key (``accounts.sending_accounts``); empty when they cannot be read."""
+    try:
+        from ..accounts import all_accounts
+        return {account.key: account for account in all_accounts(values) if account.sends}
+    except Exception:
+        return {}
+
+
+def _card(card_for, key, provider, account):
+    """The rate card for one account: its own card first, then its provider's (a second trunk by its own carrier)."""
+    if key == provider:
+        return card_for(key)
+    card = card_for(key)
+    if card is None and provider == 'sip' and account is not None:
+        preset = (getattr(account, 'settings', None) or {}).get('preset')
+        card = card_for(f'sip-{preset}') if preset else None
+    return card if card is not None else card_for(provider)
+
+
+def _in_order(candidates, prices=None, pages=1):
+    """Choices in the given order (a rule's list): delivery inside Faxbot and direct delivery first, as always."""
+    from .costs import estimate_cost
+    local = [candidate for candidate in candidates if candidate.kind == 'local']
+    direct = [candidate for candidate in candidates if candidate.kind == 'direct']
+    calls = [candidate for candidate in candidates if candidate.kind not in ('local', 'direct')]
+    choices = [RouteChoice(candidate, 'own_number', None) for candidate in local]
+    choices += [RouteChoice(candidate, 'direct_peer', None) for candidate in direct]
+    for index, candidate in enumerate(calls):
+        price = (prices or {}).get(candidate.key)
+        estimate = price.micros if price is not None else (
+            estimate_cost(candidate.card, pages) if candidate.card is not None else None)
+        choices.append(RouteChoice(candidate, 'rule' if index == 0 and not choices else 'alternative', estimate))
+    return choices
+
+
 def _trunk_numbers(values):
     """The numbers the carrier sends to this installation's trunk, as destination keys."""
     country = getattr(values, 'fax_default_country', 'US')
@@ -110,6 +152,12 @@ class RoutePlan:
     # The number each provider route calls (route key -> E.164): the recipient's approved alternate where
     # that route may call it, else the destination. Empty when the fax has no approved alternate.
     dialed: dict = field(default_factory=dict)
+    # Accounts the fax's rules allow that this attempt could not use, with why (``routing.envelope.SKIPS``).
+    skipped: tuple = ()
+    # Accounts kept in the administrator's order although faxes to this number often failed on them.
+    unreliable: tuple = ()
+    # The fax's routing decision (``routing.envelope.Pinned``), or None for a fax accepted before rules.
+    pinned: object = None
 
     def number_for(self, key):
         return self.dialed.get(key, self.destination)
@@ -152,9 +200,11 @@ class RoutePlanner:
             return {(route, number) for route, number in connection.execute(query).all()}
 
     def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None, by_call=False,
-             dial=None, tried=None):
+             dial=None, tried=None, pinned=None, current=None, prices=None, job_id=None, now=None):
         """``by_call``: the sender asked for a real call, so an own number is not delivered inside Faxbot.
 
+        ``bound`` is the fax's own account: the default sending account it was
+        accepted with (its key is the provider id for a provider's first account).
         ``dial`` is the number choice kept with the fax at acceptance
         (``OutboundStore.dial_state``): each provider route that may call the
         approved alternate calls it, priced for its class (a toll-free call by
@@ -162,6 +212,16 @@ class RoutePlanner:
         the destination. ``tried`` holds ``(route, number)`` pairs earlier
         attempts used (``tried``); a route is left out only for the number it
         already called.
+
+        ``pinned`` is the fax's routing decision (``routing.envelope``): only the
+        accounts its envelope allows are candidates, in the administrator's order
+        for ``one`` and ``ordered`` (an unreliable account keeps its place and is
+        noted), ranked by ``RoutePolicy`` for ``cheapest`` and ``automatic``.
+        ``current`` is the configuration in force now: an account turned off, or
+        at its daily spending limit, is skipped, as is one over the decision's
+        cost cap with today's price. ``prices`` (``routing.pricing``) ranks by
+        what one more fax adds on each route instead of the bare rate card.
+        Without ``pinned`` the plan is exactly what it was before rules.
         """
         destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
         card_for = card_for or self.store.card_for
@@ -170,51 +230,141 @@ class RoutePlanner:
             alternate = None
         preset = getattr(values, 'sip_trunk_preset', '') or ''
         dialed = {}
+        owners = _accounts(values)
+        skipped = []
+
+        def provider_of(key):
+            account = owners.get(key)
+            return account.provider if account is not None else key
 
         def provider(identity, is_bound=False):
+            kind = provider_of(identity)
             # The same rule the attempt records its number by (``alternates.attempt_number``).
             number, _ = attempt_number(destination, alternate=alternate, route_reaches=bool(alternate) and
-                                       dialing.reaches(identity, alternate, values, sip_preset=preset))
+                                       dialing.reaches(kind, alternate, values, sip_preset=preset))
             dialed[identity] = number
-            card = card_for(identity)
+            card = _card(card_for, identity, kind, owners.get(identity))
             doubt = 0
             if number != destination:
-                card = dialing.class_card(card, identity, number, sip_preset=preset)
-                terms = dialing.terms_for(identity, preset)
+                card = dialing.class_card(card, kind, number, sip_preset=preset)
+                terms = dialing.terms_for(kind, preset)
                 # A route that publishes that it calls toll-free numbers goes before one that does not say, at
                 # equal cost (Telnyx's free toll-free calls before a flat plan that is $0 a fax).
                 doubt = int(dialing.is_toll_free(number) and (terms is None or terms.reaches != 'yes'))
-            return RouteCandidate(identity, 'provider', identity, card, bound=is_bound, doubt=doubt)
-        candidates = [provider(bound, True)]
-        if alternates:
-            candidates += [provider(identity) for identity in extra_routes(values, bound)]
-        peer = None
-        if getattr(values, 'direct_delivery_enabled', False) and self.direct_ready():
-            peer = self.store.verified_peer(destination)
-            if peer is not None:
-                candidates.insert(0, RouteCandidate(DIRECT, 'direct', DIRECT, None, peer_id=peer['id']))
-        if self.local_ready() and local_delivery.applies(values, destination, by_call=by_call):
+            return RouteCandidate(identity, 'provider', kind, card, bound=is_bound, doubt=doubt)
+
+        if pinned is None or pinned.automatic:
+            keys = [bound] + (extra_routes(values, bound) if alternates else [])
+            if pinned is not None:
+                keys = [key for key in keys if pinned.allows(key)]
+        else:
+            keys = [key for key in pinned.envelope.accounts if alternates or key == bound]
+        candidates = []
+        for key in keys:
+            why = self._unusable(key, current, pinned, prices)
+            if why is not None:
+                skipped.append((key, why))
+                continue
+            candidates.append(provider(key, key == bound))
+        if pinned is None or pinned.allows(DIRECT):
+            peer = None
+            if getattr(values, 'direct_delivery_enabled', False) and self.direct_ready():
+                peer = self.store.verified_peer(destination)
+                if peer is not None:
+                    candidates.insert(0, RouteCandidate(DIRECT, 'direct', DIRECT, None, peer_id=peer['id']))
+        else:
+            peer = None
+        if (pinned is None or pinned.allows(local_delivery.LOCAL)) and self.local_ready() and \
+                local_delivery.applies(values, destination, by_call=by_call):
             candidates.insert(0, RouteCandidate(local_delivery.LOCAL, 'local', local_delivery.LOCAL, None))
+        candidates += self._relays(destination, pages, pinned, job_id, now)
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
         if tried:
             done = {(route, number or destination) for route, number in tried}
-            candidates = [candidate for candidate in candidates
-                          if (candidate.key, dialed.get(candidate.key, destination)) not in done]
+            kept = []
+            for candidate in candidates:
+                if (ledger_key(candidate.key), dialed.get(candidate.key, destination)) in done:
+                    if candidate.kind == 'provider':
+                        skipped.append((candidate.key, 'tried'))
+                    continue
+                kept.append(candidate)
+            candidates = kept
         if destination in _trunk_numbers(values):
             # One of the trunk's own numbers: an extra route over that trunk only calls itself back
             # (seen live on 2026-10-04 when a fallback faxed the Telnyx number over the Telnyx trunk).
             candidates = [candidate for candidate in candidates if candidate.bound or candidate.key != 'sip']
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
-        # What each route really cost per delivered fax here; it decides only with enough evidence.
-        providers = sum(candidate.kind == 'provider' for candidate in candidates)
-        # Costs observed calling the destination say nothing about calling its approved alternate.
-        calls_alternate = any(dialed.get(candidate.key, destination) != destination for candidate in candidates)
-        delivered = (DeliveredEvidence(self.store).for_destination(destination)
-                     if providers > 1 and not calls_alternate else {})
-        choices = policy.order(candidates, stats=self.store.route_stats(destination),
-                               preferred=row['preferred_route'] if row else None, pages=pages, delivered=delivered)
-        if not choices:
+        stats = self.store.route_stats(destination)
+        unreliable = ()
+        if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
+            # The administrator's order wins; an account that often failed here keeps its place and is noted.
+            choices = _in_order(candidates, prices, pages)
+            unreliable = tuple(candidate.key for candidate in candidates
+                               if candidate.kind == 'provider' and policy.unreliable(stats.get(candidate.key)))
+        else:
+            # What each route really cost per delivered fax here; it decides only with enough evidence.
+            providers = sum(candidate.kind == 'provider' for candidate in candidates)
+            # Costs observed calling the destination say nothing about calling its approved alternate.
+            calls_alternate = any(dialed.get(candidate.key, destination) != destination for candidate in candidates)
+            delivered = (DeliveredEvidence(self.store).for_destination(destination)
+                         if providers > 1 and not calls_alternate else {})
+            if pinned is None:
+                preferred = row['preferred_route'] if row else None
+            else:
+                # Pinned when the fax was accepted; a rule that chose "cheapest" ranks only its own accounts.
+                preferred = pinned.envelope.preferred if pinned.automatic else None
+            choices = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
+                                   prices=prices)
+        held_back = {key for key, why in skipped if why != 'tried'}
+        if not choices and (pinned is None or (pinned.allows(bound) and bound not in held_back)):
             choices = [RouteChoice(provider(bound, True), 'configured', None)]
         return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None,
-                         {key: number for key, number in dialed.items() if number != destination})
+                         {key: number for key, number in dialed.items() if number != destination},
+                         skipped=tuple(skipped), unreliable=unreliable, pinned=pinned)
+
+    def _unusable(self, key, current, pinned, prices):
+        """Why an allowed account cannot take this attempt now, or None: turned off, at its daily spending limit,
+        or over the decision's cost cap with today's price (an unknown price fails a cap)."""
+        if current is not None:
+            from ..accounts import account_named, over_daily_limit
+            account = account_named(current, key)
+            if account is not None and not account.enabled:
+                return 'turned_off'
+            if account is not None and account.daily_spend_micros is not None:
+                try:
+                    if over_daily_limit(self.store.engine, current, account):
+                        return 'spending_limit'
+                except Exception:
+                    pass
+        if pinned is not None and pinned.envelope.caps:
+            price = (prices or {}).get(key)
+            micros, currency = (price.micros, price.currency) if price is not None else (None, None)
+            for cap in pinned.envelope.caps:
+                if micros is None or currency != cap.currency:
+                    return 'unknown_cost'
+                if micros > cap.micros:
+                    return 'over_cap'
+        return None
+
+    def _relays(self, destination, pages, pinned, job_id, now):
+        """Partner relays (``direct.relay``) the decision allows, ranked like any account; none when unavailable."""
+        if pinned is not None and (pinned.envelope.require_direct or pinned.envelope.require_encryption):
+            return []
+        try:
+            from ..direct import relay
+            candidates_for = relay.relay_candidates
+        except (ImportError, AttributeError):
+            return []
+        never = ()
+        if pinned is not None:
+            never = tuple(item.account for item in pinned.decision.excluded
+                          if item.why == 'never' and (item.account == 'relay' or item.account.startswith('relay:')))
+        try:
+            from .predict import Shape
+            shape = Shape(max(int(pages or 1), 1), None, 'standard', 'normal')
+            found = candidates_for(destination, shape, now, engine=self.store.engine, job_id=job_id, never=never)
+        except Exception:
+            return []
+        return [RouteCandidate(item.key, 'relay', 'relay', None, peer_id=item.peer_id) for item in found
+                if pinned is None or pinned.allows(item.key)]

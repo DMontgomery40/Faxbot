@@ -320,7 +320,7 @@ def plan_terms(route_key, terms, card, values):
     card matches, so an allowance or extra-page price you set prices the fax
     here too. Terms that are not the route's own plan card are unchanged.
     """
-    if terms is None or card is None or terms.card is not card or not card.monthly_fee_micros:
+    if terms is None or card is None or terms.card is not card:
         return terms
     try:
         from .plan_budget import budget_for
@@ -329,8 +329,12 @@ def plan_terms(route_key, terms, card, values):
         return terms
     if budget is None:
         return terms
+    # A minute allowance (a trunk bundle) prices any card's fax; minutes past it cost its per-minute price.
+    minutes = budget.included_minutes if budget.included_minutes and card.per_minute_micros else None
+    if not card.monthly_fee_micros:
+        return replace(terms, included_minutes=minutes) if minutes else terms
     included = budget.included_pages
-    return replace(terms, included_pages=included,
+    return replace(terms, included_pages=included, included_minutes=minutes,
                    overage_page_micros=budget.page_overage_micros if included else None)
 
 
@@ -389,7 +393,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
             if cap and link.rate and link.rate > cap:
                 # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
                 link = replace(link, rate=cap)
-        if terms is not None and (terms.card.flat_plan or terms.included_pages):
+        if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, route_key, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None)

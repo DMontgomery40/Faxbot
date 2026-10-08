@@ -159,6 +159,9 @@ class SinchFaxService:
         result = {key: value for key, value in data.items() if key not in ('failure', 'failure_category')}
         if isinstance(fax, dict) and str(fax.get('status') or '').upper() == 'FAILURE':
             result['failure'], result['failure_category'] = failure_outcome(fax)
+            # Whether the call ended before any fax data, by Sinch's documented codes (routing/predata.py).
+            from .routing.predata import sinch as before_fax_data
+            result['before_fax_data'] = before_fax_data(fax)
         return result
 
     # Received faxes (checked against developers.sinch.com on 2026-10-03):

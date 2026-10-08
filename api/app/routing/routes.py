@@ -29,9 +29,13 @@ def _catalog(revision):
 
 
 def route_configuration(revision, provider_id):
-    """The provider configuration for ``provider_id`` captured in ``revision``."""
+    """The provider configuration for ``provider_id`` captured in ``revision``.
+
+    A provider listed in ``FAX_OUTBOUND_ROUTES``, or one whose first account sends faxes in that revision (a sending
+    rule may name it; ``assign_route`` checks the fax's rules allow it).
+    """
     from ..config_activation import ConfigurationActivationError, _configuration_for, _effective_definition
-    if provider_id not in revision.values.outbound_route_providers:
+    if provider_id not in revision.values.outbound_route_providers and not _sends(revision, provider_id):
         raise RouteUnavailable('This route is not listed for the fax.')
     try:
         catalog = _catalog(revision)
@@ -47,6 +51,16 @@ def route_configuration(revision, provider_id):
     if manifest is not None and 'send_fax' not in manifest.get('actions', {}):
         raise RouteUnavailable('This provider cannot send faxes.')
     return configuration
+
+
+def _sends(revision, provider_id):
+    """Whether the provider's first account sends faxes in the revision (``accounts.all_accounts``)."""
+    try:
+        from ..accounts import account_named
+        account = account_named(revision.values, provider_id)
+    except Exception:
+        return False
+    return account is not None and account.primary and account.sends and account.set_up
 
 
 def route_needs_tiff(configuration):
