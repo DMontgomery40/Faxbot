@@ -10,7 +10,6 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 from urllib.parse import urlsplit
-from uuid import uuid4
 
 import httpx
 import pytest
