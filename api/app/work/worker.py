@@ -1,4 +1,4 @@
-"""Background work: give each received document an item, then escalate missed targets.
+"""Background work: give each received document an item, fold duplicates from the direct path, then escalate.
 
 A restart changes nothing already done: items and deadlines are stored, and an
 escalation is recorded once per item. The step is safe to run from several
@@ -16,5 +16,8 @@ class WorkWorker:
         now = now or utcnow()
         hours = getattr(self.values(), 'work_acknowledge_hours', 0) or 0
         created = self.store.feed(installation_hours=hours, now=now)
+        # A partner's notice fax and a repaired call's first pages close into their document's item.
+        from .duplicates import fold
+        fold(self.store, self.control(), now=now)
         escalated = self.store.escalate(self.control(), now=now)
         return created >= 100 or escalated >= 100  # A full batch: run again at once.

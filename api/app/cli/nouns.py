@@ -9,7 +9,7 @@ import typer
 
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
-from .commands import discovery
+from .commands import certainty, discovery
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -68,6 +68,12 @@ sent.command('route')(rules.route_command)
 sent.command('approve')(rules.approve_command)
 sent.command('refuse')(rules.refuse_command)
 sent.command('check-again')(rules.check_again_command)
+# Sent faxes Faxbot could not confirm: their owner, the checks ranked by cost, and settling them.
+sent.command('uncertain')(certainty.uncertain_list)
+sent.command('probe')(certainty.uncertain_probe)
+sent.command('settle')(certainty.uncertain_settle)
+sent.command('assign')(certainty.uncertain_assign)
+sent.command('uncertain-settings')(certainty.uncertain_settings)
 
 # -- numbers -------------------------------------------------------------------------
 

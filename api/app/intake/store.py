@@ -303,6 +303,7 @@ class IntakeStore:
             self._imports = reflect(self.engine, ('inbound_imports',))['inbound_imports']
         imports = self._imports
         from ..inbound.acquisition import PLACEHOLDER_DIGESTS
+        from ..work.duplicates import email_note, held
         recorded = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id))
         authentic = sa.or_(inbound.c.sha256.is_(None), inbound.c.sha256.not_in(tuple(PLACEHOLDER_DIGESTS)))
         acquired = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id,
@@ -311,7 +312,9 @@ class IntakeStore:
                            inbound.c.received_at)
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
                  .where(items.c.id.is_(None), inbound.c.pdf_path.is_not(None), inbound.c.pdf_path != '',
-                        sa.or_(sa.and_(~recorded, authentic), sa.and_(inbound.c.status == 'received', acquired)))
+                        sa.or_(sa.and_(~recorded, authentic), sa.and_(inbound.c.status == 'received', acquired)),
+                        # A fax that may be a partner's notice waits for the notice matcher (work/duplicates.py).
+                        ~held(self.engine, inbound, now=now))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         created = 0
         with read_connection(self.engine) as connection:
@@ -322,6 +325,9 @@ class IntakeStore:
                     if connection.execute(sa.select(items.c.id).where(items.c.inbound_fax_id == row.id)).first():
                         continue
                     when, note = self._schedule(connection, row.to_number, row.received_at, now, row.id)
+                    paired = email_note(connection, self.engine, row.id)
+                    if paired is not None:
+                        when, note = None, paired  # its document is emailed instead; a person can still send it
                     connection.execute(items.insert().values(
                         id=uuid4().hex, source='fax', inbound_fax_id=row.id, received_at=row.received_at,
                         pages=row.pages, from_number=row.from_number, to_number=row.to_number, state='received',

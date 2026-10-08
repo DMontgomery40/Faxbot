@@ -102,6 +102,9 @@ import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
 import type { RecipientSchedule, RecipientScheduleSave } from './types';
+import type {
+  CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
+} from './certaintyTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -1461,6 +1464,57 @@ class AdminAPIClient {
 
   async saveWorkMailbox(entry: { mailbox_id: string; acknowledge_hours: number | null; backup_principal_id: string | null; version: number }): Promise<WorkSettings> {
     return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
+  }
+
+  // Sent faxes Faxbot could not confirm: an owner, checks ranked by cost, and a person settles each.
+  async listUncertain(params: { view?: 'all' | 'mine' | 'unassigned' | 'overdue'; state?: 'open' | 'settled' | 'any'; limit?: number } = {}): Promise<{ items: CertaintyItem[] }> {
+    return this.json(`/certainty/items${query(params)}`);
+  }
+
+  async uncertainCounts(): Promise<CertaintyCounts> {
+    return this.json('/certainty/counts');
+  }
+
+  async uncertainForFax(faxId: string): Promise<CertaintyForFax> {
+    return this.json(`/certainty/faxes/${id(faxId)}`);
+  }
+
+  async getUncertain(itemId: string): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}`);
+  }
+
+  async uncertainHistory(itemId: string): Promise<{ events: CertaintyEvent[] }> {
+    return this.json(`/certainty/items/${id(itemId)}/history`);
+  }
+
+  async uncertainAssignees(itemId: string): Promise<{ people: CertaintyPerson[] }> {
+    return this.json(`/certainty/items/${id(itemId)}/assignees`);
+  }
+
+  async assignUncertain(itemId: string, principalId: string, version: number): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/assign`, { method: 'POST', body: JSON.stringify({ principal_id: principalId, version }) });
+  }
+
+  // The one-page receipt query, to check before sending; reading it sends nothing.
+  async receiptQueryPdf(itemId: string): Promise<Blob> {
+    const res = await this.fetch(`/certainty/items/${id(itemId)}/receipt-query`);
+    return res.blob();
+  }
+
+  async sendReceiptQuery(itemId: string, version: number): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/receipt-query`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async settleUncertain(itemId: string, body: { outcome: CertaintyOutcome; reason: string; version: number; send_again: boolean }): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/settle`, { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async getUncertainSettings(): Promise<CertaintySettings> {
+    return this.json('/certainty/settings');
+  }
+
+  async saveUncertainSettings(body: { fallback_principal_id: string | null; settle_hours: number; version: number }): Promise<CertaintySettings> {
+    return this.json('/certainty/settings', { method: 'PUT', body: JSON.stringify(body) });
   }
 
   // What sending together, direct delivery and case packets saved in the last `days` (estimates).

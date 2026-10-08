@@ -56,6 +56,7 @@ import { DeliveryError, Notice } from './delivery/shared';
 import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
 import ImportDocument from './ImportDocument';
+import UncertainQueue from './work/UncertainQueue';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 import { providerLabel } from '../providerLabels';
@@ -145,10 +146,13 @@ interface ReceivedProps {
   onShowChange?: (show: ReceivedFilter) => void;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
+  // Opens a sent fax in Sent, for the sent faxes to settle shown here beside the received work.
+  onOpenSentFax?: (faxId: string) => void;
 }
 
 export default function Received({
   client, docsBase, inboundEnabled, onNavigate, permissions, canList = true, canWork = true, show = 'all', onShowChange, onSendFax,
+  onOpenSentFax,
 }: ReceivedProps) {
   const canReadProviders = !!permissions?.has('providers:read');
   const canChangeProviders = !!permissions?.has('providers:write');
@@ -572,6 +576,9 @@ export default function Received({
           </Button>
         </Box>
       </Box>
+
+      {/* Sent faxes Faxbot could not confirm: owned work too, settled in Sent. Nothing shows when there are none. */}
+      <UncertainQueue client={client} onOpenSentFax={onOpenSentFax} />
 
       {!receiving && (
         <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}

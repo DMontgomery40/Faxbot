@@ -38,6 +38,7 @@ import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import { FaxEncodedItem } from './delivery/EncodedPages';
+import { FaxCertaintyItem } from './work/SentCertainty';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
@@ -814,6 +815,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               )}
             </List>
           )}
+          {/* A fax Faxbot could not confirm: its owner, the checks cheapest first, and settling it. */}
+          {detailJob && <FaxCertaintyItem client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
           <Divider sx={{ my: 2 }} />
           <Typography variant="h6" component="h2" gutterBottom>Delivery attempts</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
