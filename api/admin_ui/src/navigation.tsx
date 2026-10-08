@@ -94,6 +94,8 @@ import BlockedSenders from './components/BlockedSenders';
 import NpiRecordPanel from './components/NpiRecord';
 import BlockIcon from '@mui/icons-material/Block';
 import Forms from './components/forms/Forms';
+import ExpectedFaxes from './components/expected/ExpectedFaxes';
+import PendingActionsIcon from '@mui/icons-material/PendingActions';
 
 export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
 
@@ -272,6 +274,11 @@ export const NAVIGATION: NavArea[] = [
       { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
         render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
           canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
+      // Faxes recorded before they arrive, matched by a reference the sender stated; imports of open work and
+      // outage recovery (faxbot expected).
+      { id: 'expected', label: 'Expected', icon: <PendingActionsIcon />, gate: { anyOf: ['work:read', 'work:import'] },
+        render: (ctx) => <ExpectedFaxes client={ctx.client} canImport={ctx.permissions.has('work:import')}
+          canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')} /> },
     ],
   },
   {
