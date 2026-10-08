@@ -538,7 +538,10 @@ def _handle_fax_result(event):
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
     try:
         # A call that carried several faxes gives each its own outcome from the confirmed pages.
-        if batching_results.apply_fax_result(_deliveries(), event, failure_sentence=sip_calls.result_summary(event)):
+        # A person or a voice line answered: the fax fails and takes no other route (sip_calls.PERSON_ANSWERED).
+        answered_by = sip_calls.category_for(sip_calls.verdict(event))
+        if batching_results.apply_fax_result(_deliveries(), event, failure_sentence=sip_calls.result_summary(event),
+                                             failure_category=answered_by):
             return
         status = fields.get('status', '')
         # Without the SSL Fax engine: a failure with no page transferred, and no fax machine that named itself,
@@ -552,7 +555,8 @@ def _handle_fax_result(event):
                             error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
             return
         _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                        error=sip_calls.result_summary(event), before_data=native_event(event))
+                        error=sip_calls.result_summary(event), before_data=native_event(event),
+                        **({'error_category': answered_by} if answered_by else {}))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
 

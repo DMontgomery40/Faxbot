@@ -134,6 +134,7 @@ const categoryLabels: Record<string, string> = {
   local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
+  person_answered: 'A person answered, not a fax machine, so Faxbot did not call again',
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct

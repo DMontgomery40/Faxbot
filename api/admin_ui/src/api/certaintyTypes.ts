@@ -2,7 +2,7 @@
 import type { CertaintyContinuation } from './continuationTypes';
 
 
-export type CertaintyCheckKind = 'partner' | 'call_record' | 'receipt_query' | 'phone_call';
+export type CertaintyCheckKind = 'partner' | 'call_record' | 'receipt_query' | 'phone_call' | 'npi_lookup';
 
 export interface CertaintyCheck {
   kind: CertaintyCheckKind;
@@ -18,6 +18,8 @@ export interface CertaintyCheck {
   action: 'send_query' | 'call' | null;
   script?: string[];
   fax_id?: string;
+  // Where the finding comes from (the NPI registry for a person-answered fax to a healthcare provider).
+  source_url?: string;
 }
 
 export type CertaintyOutcome = 'delivered' | 'not_delivered' | 'unknown';

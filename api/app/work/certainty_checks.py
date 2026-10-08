@@ -32,10 +32,12 @@ from ..routing.database import reflect
 
 
 # The order and the cost of each check, cheapest first.
-ORDER = ('partner', 'call_record', 'receipt_query', 'phone_call')
-COSTS = {'partner': 'Free', 'call_record': 'Free', 'receipt_query': 'One page', 'phone_call': 'A few minutes'}
+ORDER = ('partner', 'call_record', 'receipt_query', 'phone_call', 'npi_lookup')
+COSTS = {'partner': 'Free', 'call_record': 'Free', 'receipt_query': 'One page', 'phone_call': 'A few minutes',
+         'npi_lookup': 'Free'}
 TITLES = {'partner': 'Ask the partner', 'call_record': 'Read the call record',
-          'receipt_query': 'Fax a receipt query', 'phone_call': 'Phone the recipient'}
+          'receipt_query': 'Fax a receipt query', 'phone_call': 'Phone the recipient',
+          'npi_lookup': 'Look the provider up in the NPI registry'}
 # What a finding suggests a person decides. Only a signed answer is proof.
 PROOF, READING = 'proof', 'reading'
 NO_DURATION = {
@@ -361,6 +363,47 @@ def phone_check(item, job, *, organization, number, when_text):
     return finding('phone_call', 'not_done', 'Call the recipient and ask whether the fax arrived complete.',
                    action='call', script=phone_script(item, job, organization=organization, number=number,
                                                       when_text=when_text))
+
+
+def person_answered_check():
+    """The call record of a fax a person answered: nothing arrived, and Faxbot never called again."""
+    return finding('call_record', 'not_delivered', 'A person answered the call, not a fax machine, so nothing '
+                   'arrived. Faxbot did not call the number again.', 'Settle it as not delivered, and send it '
+                   'again only to the right fax number.', strength=PROOF, automatic=True)
+
+
+def number_check(item, *, organization, number, when_text):
+    """The phone call for a fax a person answered: confirm the fax number, never whether it arrived."""
+    who = organization or 'our office'
+    return finding('phone_call', 'not_done', 'Call the recipient and ask for the right fax number.',
+                   action='call', script=[
+                       f'Call the recipient. The number Faxbot faxed, {number}, may be a voice line.',
+                       f'Say: "This is {who}. We tried to fax you on {when_text}, reference {item["reference"]}, '
+                       'and a person answered. What is your fax number?"',
+                       'Settle this fax as not delivered, then send it again to the number they give you.'])
+
+
+def npi_checks(engine, item):
+    """For a healthcare provider: what the NPI registry lists for the number, from records Faxbot already read
+    (``routing/nppes.py``, M18); none when Faxbot has no record that the recipient or you are a provider."""
+    from ..routing.database import DeliveryStoreError
+    from ..routing.nppes import DOCS_URL, NppesStore
+    try:
+        store = NppesStore(engine)
+        listed = store.listings(item['to_number'])
+        provider = bool(listed) or bool(store.own()) or bool(store.warning_for(item['job_id']))
+    except (DeliveryStoreError, sa.exc.NoSuchTableError, KeyError):
+        return []  # an installation before the NPPES tables (0055) has no such record
+    if not provider:
+        return []
+    faxes = [entry for entry in listed if entry.get('kind') == 'fax']
+    if faxes:
+        text = (f"The NPI registry lists this number for {faxes[0]['name'] or 'a provider'}. Check the provider's "
+                'fax number there, then confirm it with the recipient.')
+    else:
+        text = ("Look the provider up in the NPI registry: enter its name as the recipient name on Send a fax, and "
+                'Faxbot checks the number against the registry before a first fax.')
+    return [finding('npi_lookup', 'not_done', text, action=None, source_url=DOCS_URL)]
 
 
 def suggestion(findings):

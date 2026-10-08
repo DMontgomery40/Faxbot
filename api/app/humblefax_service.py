@@ -297,8 +297,14 @@ def _status(value: object) -> str:
 
 # HumbleFax's own words for a failed call, read on 2026-10-04 from GetSentFax recipients[].failureReason
 # ("No fax machine detected at destination"), turned into Faxbot's sentences; never shown as provider text.
+# A person or a voice line answered (research N9): HumbleFax's words for it, when its reason says so. Its documented
+# example ("No fax machine detected at destination") does not say who answered, so it stays a plain failure that
+# another route may send; only a reason naming a voice or a person answering is never sent again by itself.
+PERSON_ANSWERED = 'A person answered, not a fax machine; Faxbot did not call again.'
+_PERSON_WORDS = ('voice answered', 'voice detected', 'human answered', 'person answered', 'answered by a person')
 _FAILURES = (
-    (('no fax machine', 'no fax tone', 'not a fax', 'voice answered'), 'No fax machine answered at that number.'),
+    (_PERSON_WORDS, PERSON_ANSWERED),
+    (('no fax machine', 'no fax tone', 'not a fax'), 'No fax machine answered at that number.'),
     (('busy',), 'The number was busy each time HumbleFax called.'),
     (('no answer', 'not answer', 'unanswered'), 'Nobody answered the call.'),
     (('invalid', 'not in service', 'disconnected', 'unallocated'), 'The number could not be reached.'),
@@ -362,6 +368,9 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         if str(fax.get('status') or '').strip().lower() == 'partial success' or sent:
             # Pages reached the fax machine before it failed: never sent again whole by itself; a person decides.
             receipt['failure'], receipt['failure_category'] = PARTLY_SENT, 'partly_sent'
+        elif receipt['failure'] == PERSON_ANSWERED:
+            # A person answered: calling again on another route would ring them again; a person checks the number.
+            receipt['failure_category'], receipt['before_fax_data'] = 'person_answered', True
     sender = _account_number(fax.get('fromNumber'))
     if sender:
         receipt['from_number'] = sender

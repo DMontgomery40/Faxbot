@@ -44,12 +44,17 @@ NO_FAX_SIGNAL = 'no_fax_signal'
 NO_SIGNAL = "The call connected but the fast fax service heard no fax machine on the line."
 NO_SOUND = 'The call connected but no sound came back from the carrier.'
 NOT_A_FAX = 'The call connected but the other end did not answer as a fax machine.'
+# A person or a voice line answered: sound came back, no fax message ever did, and the far end hung up first
+# (research N9, 2026-10-08). The call was answered by a person, never by a fax machine on another route, so the
+# fax takes no other route by itself (``outbound_store.NO_FALLBACK_CATEGORIES``) and a person checks the number.
+PERSON_ANSWERED = 'person_answered'
+PERSON = 'A person answered, not a fax machine; Faxbot did not call again.'
 # Verdicts for an answered call that delivered no fax. The no-data ones mean the
 # network path failed; the other two mean the network carried the call.
 NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
 # A received fax whose image Asterisk stored but could not hand to Faxbot.
 NOT_HANDED_OVER = 'not_handed_over'
-VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL}
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED}
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
@@ -86,6 +91,10 @@ _NO_MESSAGE_ERRORS = frozenset({
     'timed out waiting for initial communication', 'timed out waiting for the first message',
     'timeout', 'hangup', 'channel_hangup', 'the call dropped prematurely', 'remote channel hungup',
     'disconnected after permitted retries'})
+# Of those, the endings in which the far end hung up first (spandsp's T30_ERR_CALLDROPPED, res_fax's HANGUP). With
+# sound back and no fax message, that is a person or a voice line; a timeout with the line still open may be a
+# silent route or a media problem, so it stays ``no_fax_answer`` and another route may still send the fax.
+_HUNG_UP = frozenset({'hangup', 'channel_hangup', 'the call dropped prematurely', 'remote channel hungup'})
 _DISPOSITION_TEXT = {
     'busy': 'The number was busy.',
     'no_answer': 'Nobody answered the call.',
@@ -142,8 +151,11 @@ def verdict(event):
     if received == 0:
         return 'no_media_back'
     if received is not None:
-        # Sound came back, so the network path works; the far end sent no fax signal.
-        return 'no_fax_answer' if reasons & _NO_MESSAGE_ERRORS else 'remote_fax_failed'
+        # Sound came back, so the network path works; the far end sent no fax signal. When it also hung up first,
+        # a person or a voice line answered.
+        if reasons & _NO_MESSAGE_ERRORS:
+            return PERSON_ANSWERED if reasons & _HUNG_UP else 'no_fax_answer'
+        return 'remote_fax_failed'
     if reasons & _NO_MESSAGE_ERRORS:
         return 'no_t38_data_back' if mode == 't38' else 'no_fax_data_back'
     return 'remote_fax_failed'
@@ -154,6 +166,7 @@ def verdict(event):
 # fax answer once the call connected), E126 "No receiver protocol (T.30 T1 timeout)" and, receiving,
 # E102 "No sender protocol (T.30 T1 timeout)".
 _ENGINE_NO_MESSAGE = re.compile(r'\bE(?:002|102|126)\b|No carrier detected|T\.30 T1 timeout', re.IGNORECASE)
+_ENGINE_HUNG_UP = re.compile(r'\bE002\b|No carrier detected', re.IGNORECASE)
 # What the trunk heard on an audio engine call, kept until the engine's result arrives.
 _HEARD, _SILENT = 'trunk heard sound', 'trunk heard no sound'
 # The same, after the engine's words when its result came before the call ended.
@@ -176,8 +189,15 @@ def engine_verdict(record, heard=None):
     if not _ENGINE_NO_MESSAGE.search(record['error_cause'] or ''):
         return 'remote_fax_failed'
     if audio and heard and record['direction'] == 'outbound':
-        return 'no_fax_answer'
+        # E002 "No carrier detected": the line dropped before any fax carrier, after sound came back, as when a
+        # person answers and hangs up; a T.30 T1 timeout (E126) kept the line open and stays no_fax_answer.
+        return PERSON_ANSWERED if _ENGINE_HUNG_UP.search(record['error_cause'] or '') else 'no_fax_answer'
     return NO_FAX_SIGNAL
+
+
+def category_for(found):
+    """The attempt's error category for a call verdict: ``person_answered`` (never another route), else None."""
+    return PERSON_ANSWERED if found == PERSON_ANSWERED else None
 
 
 def verdict_sentence(found):
@@ -225,6 +245,8 @@ def _sentence(found, reason=''):
         return NO_FAX_DATA
     if found == 'no_fax_answer':
         return NOT_A_FAX
+    if found == PERSON_ANSWERED:
+        return PERSON
     if found == 'remote_fax_failed':
         reason = reason.strip().rstrip('.')
         return (f'The other fax machine answered but the fax failed: {reason}.' if reason

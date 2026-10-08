@@ -54,12 +54,13 @@ def own_start(member):
     return member['first_page'] + 1 if member.get('layout') in (None, SEPARATORS) else member['first_page']
 
 
-def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None):
+def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None, failure_category=None):
     """``members``: rows with ``id``, ``attempt_id``, ``first_page``, ``last_page`` and ``layout``, in call order.
 
     ``layout`` is 'separators', 'index_page' or 'page_headers'; missing or None means separators (calls
     formed before migration 0025). ``succeeded``: the fax engine reported the whole call sent.
-    ``confirmed_pages``: the call's confirmed page count, or None when it is unknown.
+    ``confirmed_pages``: the call's confirmed page count, or None when it is unknown. ``failure_category``: the
+    call's own category when no page went (``person_answered``: no fax in it takes another route by itself).
     """
     outcomes = []
     total = max((member['last_page'] for member in members), default=0)
@@ -77,7 +78,8 @@ def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None):
             # The page before its first page was not confirmed, so none of its own pages had been sent.
             sentence = (failure_sentence if confirmed_pages == 0 and failure_sentence
                         else 'The call failed before this fax was sent.')
-            outcomes.append(Outcome(member['id'], member['attempt_id'], 'failed', None, sentence[:80]))
+            outcomes.append(Outcome(member['id'], member['attempt_id'], 'failed',
+                                    failure_category if confirmed_pages == 0 else None, sentence[:80]))
         else:
             # The page before its first page was confirmed, so its next page may have been on its way.
             arrived = confirmed_pages - (start - 1)

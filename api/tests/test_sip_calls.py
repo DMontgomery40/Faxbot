@@ -283,6 +283,10 @@ ANSWERED = {'Answered': str(_epoch(NOW + timedelta(seconds=8))), 'Ended': str(_e
      'no_media_back'),
     ({'Status': 'FAILED', 'Error': 'Timed out waiting for initial communication', 'Pages': '0', 'Mode': 'audio',
       'RtpRx': '1500'}, 'no_fax_answer'),
+    # Sound came back, no fax message, and the far end hung up first: a person or a voice line answered.
+    ({'Status': 'FAILED', 'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'audio', 'RtpRx': '1500'},
+     'person_answered'),
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0', 'Mode': 'audio', 'RtpRx': '240'}, 'person_answered'),
     # A far end that answered as a fax machine: the network carried the call.
     ({'Status': 'FAILED', 'Error64': _b64('Received no response to DCS or TCF'), 'Pages': '0', 'Mode': 'T38'},
      'remote_fax_failed'),

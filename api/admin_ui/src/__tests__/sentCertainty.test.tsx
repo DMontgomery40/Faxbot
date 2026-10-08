@@ -101,6 +101,31 @@ describe('sent faxes to settle', () => {
     expect(screen.queryByLabelText('Send it again now, as a new fax linked to this one')).toBeNull();
   });
 
+  it('asks to check the number for a fax a person answered, with the NPI registry and no receipt query', async () => {
+    const answered = item({
+      category: 'person_answered', why: 'A person answered at this number; check the fax number with the recipient.',
+      actions: ['settle'], suggestion: 'not_delivered', checks: [
+        { kind: 'call_record', title: 'Read the call record', cost: 'Free', automatic: true, result: 'not_delivered',
+          strength: 'proof', text: 'A person answered the call, not a fax machine, so nothing arrived. Faxbot did not '
+            + 'call the number again.', meaning: 'Settle it as not delivered, and send it again only to the right fax '
+            + 'number.', action: null },
+        { kind: 'phone_call', title: 'Phone the recipient', cost: 'A few minutes', automatic: false, result: 'not_done',
+          strength: null, text: 'Call the recipient and ask for the right fax number.', meaning: null, action: 'call',
+          script: ['Call the recipient. The number Faxbot faxed, +12025550123, may be a voice line.'] },
+        { kind: 'npi_lookup', title: 'Look the provider up in the NPI registry', cost: 'Free', automatic: false,
+          result: 'not_done', strength: null, text: 'Look the provider up in the NPI registry.', meaning: null,
+          action: null, source_url: 'https://npiregistry.cms.hhs.gov/api-page' },
+      ] });
+    server.use(http.get('/certainty/faxes/fax-1', () => HttpResponse.json({ items: [answered], about: null })));
+    render(<FaxCertaintyItem client={client()} jobId="fax-1" />);
+    expect(await screen.findByText('A person answered at this number; check the fax number with the recipient.'))
+      .toBeTruthy();
+    expect(screen.getByText('Call the recipient. The number Faxbot faxed, +12025550123, may be a voice line.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'The NPI registry' }).getAttribute('href'))
+      .toBe('https://npiregistry.cms.hhs.gov/api-page');
+    expect(screen.queryByRole('button', { name: 'Fax it to the recipient' })).toBeNull();
+  });
+
   it('says a fax sent again points back to the earlier one', async () => {
     server.use(http.get('/certainty/faxes/fax-2', () => HttpResponse.json({ items: [], about: { fax_id: 'fax-1', kind: 'resend' } })));
     const opened: string[] = [];

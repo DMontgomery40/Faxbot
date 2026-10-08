@@ -59,8 +59,11 @@ CASES = [
      sip_calls.NO_SIGNAL),
     # Audio: no sound came back at all.
     ('0', 'DISABLED', '0', 'No carrier detected {E002}', 0, 'no_media_back', sip_calls.NO_SOUND),
-    # Audio with sound, but no fax answer: not a fax machine.
-    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 0, 'no_fax_answer', sip_calls.NOT_A_FAX),
+    # Audio with sound, and the line dropped before any fax carrier: a person or a voice line answered.
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 0, sip_calls.PERSON_ANSWERED, sip_calls.PERSON),
+    # Audio with sound and the line kept open, but no fax answer: not a fax machine (another route may try).
+    ('0', 'DISABLED', '412', 'No receiver protocol (T.30 T1 timeout) {E126}', 0, 'no_fax_answer',
+     sip_calls.NOT_A_FAX),
     # Audio, sound not reported: the engine heard no fax machine.
     ('0', 'DISABLED', '', 'No carrier detected {E002}', 0, sip_calls.NO_FAX_SIGNAL, sip_calls.NO_SIGNAL),
     # The other machine answered (pages or its station ID): it failed, the network did not.
