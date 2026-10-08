@@ -49,8 +49,10 @@ HEADER_SOURCE = {'name': 'US fax rules, 47 CFR 68.318(d)',
                  'detail': 'Each page of a fax sent in the United States shows the date and time, the business '
                            'sending it and its fax number.'}
 COUNTRY_RULES_REVIEWED = ('US',)
-RULES_PAGE, PARTNERS_PAGE, RECIPIENTS_PAGE = 'providers/rules', 'recipients/partners', 'recipients'
-NUMBERS_PAGE, BLOCKED_PAGE, SETTINGS_PAGE = 'numbers', 'numbers/blocked', 'system/settings'
+# Console pages, as the console's navigation names them.
+RULES_PAGE, PARTNERS_PAGE, RECIPIENTS_PAGE = 'providers/rules', 'recipients/partners', 'recipients/list'
+NUMBERS_PAGE, BLOCKED_PAGE, IDENTITY_PAGE = 'numbers/list', 'numbers/blocked', 'numbers/identity'
+IN_USE_PAGE, STORAGE_PAGE = 'providers/sending', 'system/storage'
 
 
 def _plural(count, one, many=None):
@@ -113,7 +115,7 @@ class _Plan:
                          blocked=blocked, link=RULES_PAGE, **extra)
 
     def setting(self, pack, key, title, sentence, sources, changes, **extra):
-        extra.setdefault('link', SETTINGS_PAGE)
+        extra.setdefault('link', IN_USE_PAGE)
         return self.item(pack, key, 'setting', title, sentence, sources, changes=dict(changes), **extra)
 
     def lack(self, key, sentence, *, owner, operation, blocking=False, scope='organization', link=None):
@@ -235,7 +237,7 @@ def cost_pack(plan, price):
                       f"Long pages save call time, but they are off for {found['label']} until you check that it "
                       'sends them unchanged. Send yourself a test fax with a long page, then turn them on.',
                       [{'name': 'Providers → Long pages', 'detail': f"Off until checked for {found['label']}"}],
-                      link='providers', cli='faxbot providers long-pages')
+                      link=IN_USE_PAGE, cli='faxbot providers long-pages')
     for found in facts.plan_budgets:
         plan.item('cost', f"cost.plan-budget.{found['route']}", 'in_effect', f"Plan budget for {found['label']}",
                   found['sentence'] + ' Faxbot uses your plan first and moves faxes to metered routes past it.',
@@ -283,7 +285,7 @@ def partners_pack(plan):
                     'detail': f"{_plural(found['faxes'], 'fax', 'faxes')} in the last 30 days"}],
                   saving=({**found['monthly_cost'], 'faxes': found['faxes'], 'estimate': True}
                           if found.get('monthly_cost') else None),
-                  link=PARTNERS_PAGE, cli='faxbot recipients partners')
+                  link=PARTNERS_PAGE, cli='faxbot recipients partners add')
     for found in facts.discovered:
         name = found.get('organization') or found['number']
         plan.item('partners', f"partners.discovered.{found['id']}", 'step', f'Enroll {name} as a direct partner',
@@ -325,20 +327,20 @@ def receiving_pack(plan):
                   'no mailbox, so they wait in Received for you to place them. Add a number rule that sends them '
                   'to the right mailbox.',
                   [{'name': 'Received faxes', 'detail': 'Faxes with no mailbox in the last 30 days'}],
-                  link=NUMBERS_PAGE, cli='faxbot numbers mailboxes')
+                  link=NUMBERS_PAGE, cli='faxbot numbers add')
     for found in facts.junk:
         if found['active']:
             plan.item('receiving', f"receiving.junk.{found['number']}", 'step', f"Keep blocking {found['number']}",
                       f"{found['number']} called {_plural(found['rejected'], 'time')} while blocked, and its block "
                       'ends within two weeks. Block it again for longer if you still want its calls turned away.',
                       [{'name': 'Numbers → Blocked senders', 'detail': 'Calls turned away before answering'}],
-                      link=BLOCKED_PAGE, cli='faxbot numbers blocked')
+                      link=BLOCKED_PAGE, cli='faxbot numbers blocked add')
         else:
             plan.item('receiving', f"receiving.junk.{found['number']}", 'step', f"Block {found['number']} again",
                       f"You marked {found['number']} as junk {_plural(found['marks'], 'time')}, and its last block "
                       'has ended. Block it again so its calls are turned away before answering, which costs nothing.',
                       [{'name': 'Numbers → Blocked senders', 'detail': 'Your earlier junk marks'}],
-                      link=BLOCKED_PAGE, cli='faxbot numbers blocked')
+                      link=BLOCKED_PAGE, cli='faxbot numbers blocked add')
     reply = facts.reply or {}
     suggestion = reply.get('suggestion')
     if reply.get('number'):
@@ -350,7 +352,7 @@ def receiving_pack(plan):
                      f"{suggestion['sentence']} Faxbot prints the reply number on each page, so replies reach a "
                      'mailbox. Saving it keeps it the same even when your numbers change.',
                      [{'name': 'Numbers → Sender identity', 'detail': 'Your numbers that receive into a mailbox'}],
-                     {'fax_reply_number': suggestion['number']}, link='numbers/identity')
+                     {'fax_reply_number': suggestion['number']}, link=IDENTITY_PAGE)
 
 
 # Reliability ------------------------------------------------------------------------------------------------
@@ -383,7 +385,7 @@ def reliability_pack(plan):
                       f'This number is often busy at the same hours, but learning is turned off for it: {hours} '
                       'Turn learning back on so Faxbot waits those hours out.',
                       [{'name': 'Recipients → Hours', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE,
-                      cli='faxbot recipients hours')
+                      cli='faxbot recipients schedule')
 
 
 # Compliance -------------------------------------------------------------------------------------------------
@@ -408,7 +410,7 @@ def compliance_pack(plan, countries):
                          f'sending it and its fax number. Your header line {now_text}; this puts “{name}” there. '
                          'A suggestion, not legal advice.',
                          [HEADER_SOURCE, {'name': 'Describe your organization', 'detail': 'The name you typed'}],
-                         {'fax_header': name[:80]}, applies_to=applies)
+                         {'fax_header': name[:80]}, applies_to=applies, link=IDENTITY_PAGE)
         else:
             plan.lack('header-name', 'Type your business name under Describe your organization: US fax rules ask '
                                      'for it at the top of each page, and Faxbot never guesses it.',
@@ -417,7 +419,7 @@ def compliance_pack(plan, countries):
             plan.lack('header-number', 'Faxbot has no number to print at the top of each page for replies. Give one '
                                        'of your numbers a mailbox, or set a reply number under Numbers → Sender '
                                        'identity.', owner='you', operation='Compliance basics: the header line',
-                      link='numbers/identity')
+                      link=IDENTITY_PAGE)
     for country in sorted(stated - set(COUNTRY_RULES_REVIEWED)):
         where = [box['name'] for box in facts.mailboxes if countries.get(box['id'], ('',))[0] == country]
         scope = next((box['id'] for box in facts.mailboxes if countries.get(box['id'], ('',))[0] == country),
@@ -430,7 +432,7 @@ def compliance_pack(plan, countries):
         plan.lack('retention', 'Choose how long Faxbot keeps the documents you send. It keeps them until you choose; '
                                'Faxbot never picks a period for you, because how long to keep records is your '
                                'decision.', owner='you', operation='Compliance basics: keeping sent documents',
-                  link=SETTINGS_PAGE)
+                  link=STORAGE_PAGE)
 
 
 # Missing ----------------------------------------------------------------------------------------------------
