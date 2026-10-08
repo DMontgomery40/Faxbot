@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import lru_cache
 import json
+import math
 
 from .costs import attempt_cost, money_text, parse_amount
 from .database import utcnow
@@ -447,3 +448,192 @@ def _fixed_fee(host, routes, published):
     if card is not None and card.monthly_fee_micros:
         return card.monthly_fee_micros, card.currency
     return None, None
+
+
+# -- whether a line can go (CE5): keep, move the termination, investigate or can likely go -------------------------------
+
+QUIET_DAYS = 90
+YEAR_DAYS = 365
+# One-sided 95% upper bound on a steady arrival rate after zero arrivals in T days: -ln(0.05) / T, about 3 / T.
+POISSON_95 = -math.log(0.05)
+VERDICTS = {'keep': 'Keep', 'move_termination': 'Move the termination', 'investigate': 'Investigate',
+            'can_likely_go': 'Can likely go'}
+QUIET_LIMIT = ('This says nothing about yearly, seasonal or emergency use: a number used once a year, in one season or '
+               'only in an emergency can be quiet this long and still be needed, so "can likely go" also needs your '
+               'answers about it.')
+LINE_ADVICE_ONLY = 'Faxbot only advises: it never ports, cancels or releases a number or a line.'
+
+
+def carrier_facts(number, *, broadband=False, about=None, path=None):
+    """Carrier rules about moving or keeping a line in the number's country (``carrier_facts``), with sources."""
+    from ..config_paths import bundled_config_dir
+    try:
+        document = json.loads((path or bundled_config_dir() / 'number_porting.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    region = _region(number)
+    wanted = {'all', 'broadband', 'other_lines'} if about is None else {about}
+    if broadband:
+        wanted = {'broadband'}
+    return [{'id': fact.get('id'), 'sentence': fact.get('sentence'), 'about': fact.get('about'),
+             'source': (fact.get('source') or {}).get('url'), 'label': (fact.get('source') or {}).get('label'),
+             'read_on': fact.get('read_on')}
+            for fact in (document.get('carrier_facts') or ()) if isinstance(fact, dict)
+            and region in (fact.get('countries') or ()) and fact.get('about') in wanted]
+
+
+def quiet_bound(days):
+    """The one-sided 95% upper bound on a steady daily rate after ``days`` days with no arrival, with its limit."""
+    if not days or days <= 0:
+        return None
+    per_day = POISSON_95 / days
+    every = 1 / per_day
+    return {'per_day': round(per_day, 6), 'days': days,
+            'sentence': (f'No fax arrived in the {days:,} days Faxbot has watched it. Had faxes come at a steady rate '
+                         f'of more than about one every {every:,.0f} days, at least one would very likely (95%) have '
+                         'arrived by now.'),
+            'limit': QUIET_LIMIT}
+
+
+def _records_start(engine):
+    """When Faxbot's record of received faxes starts; None when it holds none."""
+    import sqlalchemy as sa
+    from .database import read_connection, reflect
+    faxes = reflect(engine, ('inbound_faxes',))['inbound_faxes']
+    with read_connection(engine) as connection:
+        return connection.execute(sa.select(sa.func.min(sa.func.coalesce(faxes.c.received_at,
+                                                                        faxes.c.created_at)))).scalar()
+
+
+def _month_label(year, month):
+    from datetime import date
+    return f'{date(year, month, 1):%B %Y}'
+
+
+def _months(now, found):
+    """Arrivals in each of the last 12 calendar months, oldest first."""
+    year, month = now.year, now.month
+    keys = []
+    for _ in range(12):
+        keys.append((year, month))
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+    counts = {key: 0 for key in keys}
+    for at, *_ in found:
+        key = (at.year, at.month)
+        if key in counts:
+            counts[key] += 1
+    return [{'month': f'{year:04d}-{month:02d}', 'label': _month_label(year, month), 'arrivals': counts[(year, month)]}
+            for year, month in reversed(keys)]
+
+
+def _removed(row):
+    """(micros or None, currency, sentence): the monthly expense that giving the number up would remove."""
+    current = next((cost for cost in row['costs'] if cost['current']), None) if row else None
+    fee = (current or {}).get('number_fee') or []
+    if not fee:
+        return None, None, 'Faxbot does not know what this number costs you a month on its own.'
+    amount = parse_amount(fee[0]['amount'], whole_digits=6)
+    if amount == 0:
+        return 0, fee[0]['currency'], (f"It is included in your {row['account']} plan, so giving it up removes no "
+                                       'monthly expense unless the plan ends too.')
+    return amount, fee[0]['currency'], f"Giving it up removes about {_about(amount, fee[0]['currency'])} a month."
+
+
+def line_advice(engine, values, *, routes=None, now=None, days=QUIET_DAYS, path=None, published=None):
+    """Per number: keep, move the termination, investigate or can likely go, with the evidence; never applied."""
+    from .number_moves import DependencyStore, MoveStore, QUESTIONS, arrivals, dependency_rows, outcome
+    from .nppes import npi_evidence, published_numbers
+    from .receiving import shown_number
+    now = (now or utcnow()).replace(microsecond=0)
+    places = placed_numbers(values)
+    questions = [{'question': key, 'label': label, 'help': text} for key, (label, text) in QUESTIONS.items()]
+    if not places:
+        return {'state': 'no_numbers', 'sentence': 'Faxbot knows none of your fax numbers yet, so there is nothing to '
+                'advise on.', 'numbers': [], 'questions': questions, 'note': LINE_ADVICE_ONLY}
+    npi = published_numbers(engine) if published is None else published
+    placed = {row['number']: row for row in placement(engine, values, routes=routes, now=now, path=path,
+                                                       published=npi)['numbers']}
+    start = _records_start(engine)
+    covered = max(0, (now - start).days) if start is not None else 0
+    answers_store, moves = DependencyStore(engine), MoveStore(engine)
+    rows = []
+    for number, host in places:
+        found = arrivals(engine, number, now - timedelta(days=YEAR_DAYS))
+        last = found[-1][0] if found else None
+        if last is None and start is not None:
+            older = arrivals(engine, number, start)
+            last = older[-1][0] if older else None
+        recent = [item for item in found if item[0] >= now - timedelta(days=days)]
+        senders = len({item[3] for item in recent if item[3]})
+        quiet_since = max(item for item in (last, start) if item is not None) if (last or start) else None
+        quiet_days = max(0, (now - quiet_since).days) if quiet_since is not None else 0
+        evidence_npi = npi_evidence(npi, number)
+        answers = answers_store.answers(number)
+        removed, currency, removed_sentence = _removed(placed.get(number))
+        placed_state = (placed.get(number) or {}).get('state')
+        reasons = []
+        if recent:
+            verdict = 'move_termination' if placed_state == 'move' else 'keep'
+        else:
+            if covered < YEAR_DAYS:
+                reasons.append(f"Faxbot's record of received faxes covers only {covered:,} days, less than a year, "
+                               'so yearly or seasonal use cannot be ruled out.')
+            if found:
+                months = sorted({(at.year, at.month) for at, *_ in found})
+                reasons.append(f"It received faxes in {_join([_month_label(*key) for key in months])} and none "
+                               'since: that may be seasonal or yearly use.')
+            if evidence_npi is not None and evidence_npi.get('state') == 'listed':
+                reasons.append(evidence_npi['sentence'])
+            for question, (label, _) in QUESTIONS.items():
+                row = answers.get(question)
+                if row is None or row['answer'] == 'unknown':
+                    reasons.append(f'Not answered yet: {label}')
+                elif row['answer'] == 'yes':
+                    reasons.append(f'You answered yes to: {label}' + (f" ({row['note']})" if row['note'] else ''))
+            if not removed:
+                reasons.append(removed_sentence)
+            if not reasons:
+                verdict = 'can_likely_go'
+            elif placed_state == 'move':
+                verdict = 'move_termination'
+            else:
+                verdict = 'investigate'
+        display = shown_number(number)
+        sentence = {
+            'keep': (f"Keep {display}: {len(recent)} {'fax' if len(recent) == 1 else 'faxes'} from {senders} "
+                     f"{'sender' if senders == 1 else 'senders'} arrived in the last {days} days."),
+            'move_termination': (f"Keep {display} but move it to {(placed.get(number) or {}).get('cheapest')}: the "
+                                 'number stays the same for everyone who has it, and its line costs less there.'),
+            'investigate': f'Find out more before giving up {display}.',
+            'can_likely_go': (f'{display} can likely go: nothing arrived in over a year, nothing you answered needs '
+                              f'it, and {removed_sentence[0].lower()}{removed_sentence[1:]}'),
+        }[verdict]
+        move, events = moves.current(number)
+        move_state = None
+        if move is not None:
+            ended = outcome(events)
+            move_state = {'state': ended or 'open',
+                          'sentence': {'finished': 'Its move is finished.', 'abandoned': 'Its last move was abandoned.'}
+                          .get(ended, 'A move is in progress.')}
+        rows.append({
+            'number': number, 'display': display, 'account': host.name, 'verdict': verdict,
+            'verdict_label': VERDICTS[verdict], 'sentence': sentence, 'reasons': reasons,
+            'evidence': {
+                'last_arrival': last.isoformat() if last else None, 'last_arrival_text': _last_text(last, now),
+                'senders': senders, 'window_days': days, 'covered_days': covered, 'months': _months(now, found),
+                'npi_record': evidence_npi, 'quiet_bound': quiet_bound(quiet_days) if not recent else None,
+                'removed': _money(removed, currency), 'removed_sentence': removed_sentence},
+            'dependencies': dependency_rows(answers),
+            'carrier_facts': carrier_facts(number, path=path),
+            'move': move_state})
+    counts = {verdict: sum(1 for row in rows if row['verdict'] == verdict) for verdict in VERDICTS}
+    parts = [f'{counts[key]} {VERDICTS[key].lower()}' for key in VERDICTS if counts[key]]
+    return {'state': 'advice', 'sentence': f"Your {len(rows)} {'number' if len(rows) == 1 else 'numbers'}: "
+            + ', '.join(parts) + '.', 'numbers': rows, 'questions': questions, 'note': LINE_ADVICE_ONLY}
+
+
+def _last_text(last, now):
+    if last is None:
+        return 'No fax has arrived on it in the time Faxbot has records for.'
+    from ..people_time import date_and_time
+    return f'Its last fax arrived {(now - last).days:,} days ago, on {date_and_time(last)}.'

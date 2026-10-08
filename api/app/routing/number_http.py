@@ -176,3 +176,152 @@ async def import_jurisdiction_rates(request: Request, file: UploadFile = File(..
             raise HTTPException(400, detail=str(error)) from None
         return {'prices': import_rows(store.engine, route, rates)}
     return await _call(save)
+
+
+# -- whether a line can go, and moving a number (CE5, international 4) ------------------------------------------------
+
+@router.get('/recommendations/lines', dependencies=[Depends(require_permission('settings:read'))])
+async def line_advice(request: Request, days: int = Query(default=90, ge=30, le=183)):
+    """Per number: keep, move the termination, investigate or can likely go, with the evidence. Advice only."""
+    from .number_placement import line_advice as advice
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: advice(store.engine, values, routes=store, days=days))
+
+
+class DependencyIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    question: str = Field(min_length=1, max_length=16)
+    answer: str = Field(min_length=1, max_length=8)
+    note: str = Field(default='', max_length=2000)
+
+
+class MoveIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    to_account: str = Field(min_length=1, max_length=64)
+
+
+class StepIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    state: str = Field(min_length=1, max_length=16)
+    note: str = Field(default='', max_length=2000)
+
+
+class ReceiptTestIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    origin: str = Field(min_length=1, max_length=64)
+
+
+def _actor(engine, identity):
+    return getattr(identity.actor, 'principal_id', None), _actor_name(engine, identity.actor)
+
+
+@router.post('/numbers/{number}/dependencies', dependencies=[Depends(require_permission('settings:write'))])
+async def answer_dependency(number: str, payload: DependencyIn, request: Request, identity=Depends(require_identity)):
+    """Record your answer about what else depends on one of your numbers (broadband, other lines, emergency use,
+    where it is printed). Earlier answers stay as history."""
+    from .number_moves import DependencyStore, dependency_rows
+    store = _store(request)
+    canonical = _number(number, request)
+
+    def save():
+        by, name = _actor(store.engine, identity)
+        answers = DependencyStore(store.engine).answer(canonical, payload.question, payload.answer,
+                                                       note=payload.note, principal_id=by, by_name=name)
+        return {'number': canonical, 'dependencies': dependency_rows(answers)}
+    return await _call(save)
+
+
+@router.get('/numbers/{number}/move', dependencies=[Depends(require_permission('settings:read'))])
+async def read_move(number: str, request: Request):
+    """The number's move as a checked plan: each step's state and evidence. Faxbot never places the port order."""
+    from .number_moves import move_view
+    store = _store(request)
+    values = _values(request)
+    canonical = _number(number, request)
+    return await _call(lambda: move_view(store.engine, values, canonical))
+
+
+@router.post('/numbers/{number}/move', dependencies=[Depends(require_permission('settings:write'))])
+async def start_move(number: str, payload: MoveIn, request: Request, identity=Depends(require_identity)):
+    """Start a move of one of your numbers to another of your accounts: a checked plan, never a port order."""
+    from ..accounts import account_named
+    from .number_moves import MoveStore, move_view
+    from .number_placement import placed_numbers
+    from .store import RoutingInputError
+    store = _store(request)
+    values = _values(request)
+    canonical = _number(number, request)
+
+    def start():
+        current = next((host for placed, host in placed_numbers(values) if placed == canonical), None)
+        if current is None:
+            raise RoutingInputError('None of your accounts receives on this number, so there is nothing to move.')
+        target = account_named(values, payload.to_account)
+        if target is None or not target.receives:
+            raise RoutingInputError('Choose one of your accounts that receives faxes to move the number to.')
+        by, name = _actor(store.engine, identity)
+        MoveStore(store.engine).start(canonical, current.key, payload.to_account, principal_id=by, by_name=name)
+        return move_view(store.engine, values, canonical)
+    return await _call(start)
+
+
+@router.post('/numbers/{number}/move/steps/{step}', dependencies=[Depends(require_permission('settings:write'))])
+async def record_move_step(number: str, step: str, payload: StepIn, request: Request,
+                           identity=Depends(require_identity)):
+    """Record a step you took (the new account is ready, the port is ordered, the carrier completed it), or finish
+    or abandon the move."""
+    from .number_moves import RECORDED, MoveStore, move_view
+    from .store import RoutingInputError
+    store = _store(request)
+    values = _values(request)
+    canonical = _number(number, request)
+    allowed = {**{key: ('done', 'not_done') for key in RECORDED}, 'move': ('finished', 'abandoned')}
+
+    def record():
+        if step not in allowed or payload.state not in allowed[step]:
+            raise RoutingInputError('Choose a step you record yourself with done or not_done, or finish or abandon '
+                                    'the move.')
+        by, name = _actor(store.engine, identity)
+        MoveStore(store.engine).record(canonical, step, payload.state, note=payload.note, principal_id=by,
+                                       by_name=name)
+        return move_view(store.engine, values, canonical)
+    return await _call(record)
+
+
+@router.post('/numbers/{number}/move/tests', dependencies=[Depends(require_permission('settings:write'))])
+async def start_receipt_test(number: str, payload: ReceiptTestIn, request: Request,
+                             identity=Depends(require_identity)):
+    """Start a receipt test from one of the routes Faxbot sends by. Faxbot then matches the test fax you send through
+    that route to its arrival; it sends nothing by itself."""
+    from ..accounts import account_named
+    from .number_moves import MoveStore, move_view
+    from .store import RoutingInputError
+    store = _store(request)
+    values = _values(request)
+    canonical = _number(number, request)
+
+    def start():
+        account = account_named(values, payload.origin)
+        if account is None or not account.sends:
+            raise RoutingInputError('Choose one of the accounts Faxbot sends faxes through.')
+        by, name = _actor(store.engine, identity)
+        MoveStore(store.engine).record(canonical, 'receipt_test', 'started', origin=payload.origin, principal_id=by,
+                                       by_name=name)
+        return move_view(store.engine, values, canonical)
+    return await _call(start)
+
+
+@router.post('/numbers/{number}/move/forget', dependencies=[Depends(require_permission('settings:write'))])
+async def forget_for_move(number: str, request: Request, identity=Depends(require_identity)):
+    """Forget what earlier calls on the old carrier taught Faxbot about this number, and record it with the move."""
+    from .number_moves import forget_learned, move_view
+    store = _store(request)
+    values = _values(request)
+    canonical = _number(number, request)
+
+    def forget():
+        by, name = _actor(store.engine, identity)
+        forget_learned(store.engine, canonical, principal_id=by, by_name=name)
+        return move_view(store.engine, values, canonical)
+    return await _call(forget)
