@@ -288,14 +288,20 @@ def notice_subaddress(job_id) -> Optional[str]:
 
 def rule_subaddress(job_id) -> Optional[str]:
     """The subaddress the fax's sending rules chose (``routing/envelope.py``, the envelope's ``subaddress``), or
-    None. A fax accepted before rules, or whose decision can no longer be read, asks for none."""
+    None. A fax accepted before rules, or whose decision can no longer be read, asks for none; when the database
+    cannot be read the cause is logged. Anything else is a bug and raises."""
     engine = _database()
     if engine is None:
         return None
+    import sqlalchemy as sa
     from .routing import envelope as envelopes
     try:
         pinned = envelopes.load(engine, job_id)
     except envelopes.UnreadableDecision:
+        return None
+    except sa.exc.SQLAlchemyError as error:
+        logging.getLogger(__name__).warning("Fax %s: its routing decision could not be read, so it asks for no "
+                                            "subaddress from its rules: %s", job_id, error)
         return None
     return getattr(pinned.envelope, "subaddress", None) if pinned is not None else None
 

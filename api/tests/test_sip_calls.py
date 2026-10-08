@@ -215,7 +215,8 @@ async def test_ami_events_flow_into_records_without_touching_delivery_listeners(
             with use_configuration(values):
                 task = asyncio.create_task(client.originate_sendfax(JOB, '+15555550123', '/fax/a.tif',
                                                                     attempt_id=ATTEMPT))
-            await writer.requests.get()
+            # With a time limit: a call that fails before its Originate is written fails here, never hangs the run.
+            await asyncio.wait_for(writer.requests.get(), 10)
             feed_response(client, f'faxbot:{JOB}:{ATTEMPT}')
             await task
             frame = ''.join(f'{key}: {value}\r\n' for key, value in fax_result().items()) + '\r\n'
@@ -238,7 +239,8 @@ async def test_a_broken_record_store_never_blocks_the_call(monkeypatch):
         try:
             task = asyncio.create_task(client.originate_sendfax(JOB, '+15555550123', '/fax/a.tif',
                                                                 attempt_id=ATTEMPT))
-            await writer.requests.get()
+            # With a time limit: a call that fails before its Originate is written fails here, never hangs the run.
+            await asyncio.wait_for(writer.requests.get(), 10)
             feed_response(client, f'faxbot:{JOB}:{ATTEMPT}')
             assert await task is None
         finally:
