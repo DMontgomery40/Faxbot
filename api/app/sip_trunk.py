@@ -918,7 +918,7 @@ def engine_uses_current(values) -> bool:
     """Whether the running Asterisk loaded exactly these trunk settings and internet address."""
     try:
         started = started_configuration_path(values).read_bytes()
-        expected = render_pjsip(values).encode()
+        expected = rendered_configuration(values).encode()
     except (OSError, TrunkConfigurationError):
         return False
     if started != expected:
@@ -959,6 +959,14 @@ def peer_sections(values, peers=None) -> str:
     return peer_call.render_peers(peers)
 
 
+def rendered_configuration(values, peers=None) -> str:
+    """pjsip.conf exactly as Faxbot writes it: the trunks, then any partners' peer fax calls. Whether Asterisk runs
+    the current settings is decided against this same text (``engine_uses_current``, sip_http's applied check)."""
+    text = render_pjsip(values)
+    peered = peer_sections(values, peers)
+    return text + '\n\n' + peered if peered else text
+
+
 def write_asterisk_configuration(values, *, inbound_secret=None, peers=None) -> Path:
     """Atomically write the private files the Asterisk container reads.
 
@@ -968,10 +976,7 @@ def write_asterisk_configuration(values, *, inbound_secret=None, peers=None) -> 
     console's Apply always passes one (Faxbot creates it when none is set). It
     is removed only when no secret is known at all.
     """
-    text = render_pjsip(values)
-    peered = peer_sections(values, peers)
-    if peered:
-        text += '\n\n' + peered
+    text = rendered_configuration(values, peers)
     target = configuration_path(values)
     target.parent.mkdir(parents=True, exist_ok=True, mode=SHARED_FOLDER_MODE)
     _write_private(target, text)

@@ -35,9 +35,11 @@ OPTION_FIELDS = ('enabled', 'any_number', 'account_key', 'site_key', 'subaddress
                  'diverted_from', 'diversion_unsigned')
 CONDITION_FIELDS = ('account_key', 'site_key', 'subaddress', 'from_numbers', 'days', 'start_minute', 'end_minute',
                     'diverted_from')
-# How far a received call's diversion was checked (inbound/diversion.py): the network signed it and the signature
-# checked, it was signed but not checked, its signature failed, or only a header stated it.
-DIVERSION_SIGNED, DIVERSION_UNCHECKED, DIVERSION_FAILED, DIVERSION_STATED = 'signed', 'unchecked', 'failed', 'stated'
+# How far a received call's diversion was checked (inbound/diversion.py): verified against a certificate authority
+# you trust (none yet), signed with a certificate whose issuer was not checked, signed but not checked, its signature
+# failed, or only a header stated it.
+DIVERSION_SIGNED, DIVERSION_UNANCHORED, DIVERSION_UNCHECKED, DIVERSION_FAILED, DIVERSION_STATED = (
+    'signed', 'unanchored', 'unchecked', 'failed', 'stated')
 DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 MAX_FROM = 50
 MAX_KEEP_DAYS = 36500
@@ -45,7 +47,7 @@ _SUBADDRESS = re.compile(r'[0-9#*+]{1,20}')
 _TABLES = weakref.WeakKeyDictionary()
 
 
-DIVERSION_STATES = ('signed', 'unchecked', 'failed', 'stated')
+DIVERSION_STATES = ('signed', 'unanchored', 'unchecked', 'failed', 'stated')
 
 
 class ReceivingRuleError(ValueError):
@@ -328,14 +330,16 @@ def conditions_hold(options, facts):
 
 
 def diversion_matches(options, facts):
-    """Whether a call forwarded from the rule's number meets it: the network signed the diversion and the
-    signature checked, or the rule also takes an unsigned or unchecked statement. A failed signature never matches."""
+    """Whether a call forwarded from the rule's number meets it: the forwarding is verified, or the rule also takes
+    one that is not (signed with an unchecked certificate, not checked, or unsigned). A failed signature never
+    matches."""
     if not facts.diverted_from or ''.join(filter(str.isdigit, facts.diverted_from)) != ''.join(
             filter(str.isdigit, options['diverted_from'])):
         return False
     if facts.diversion == DIVERSION_SIGNED:
         return True
-    return bool(options.get('diversion_unsigned')) and facts.diversion in (DIVERSION_UNCHECKED, DIVERSION_STATED)
+    return bool(options.get('diversion_unsigned')) and facts.diversion in (DIVERSION_UNANCHORED, DIVERSION_UNCHECKED,
+                                                                           DIVERSION_STATED)
 
 
 def diversion_rules_exist(engine):
@@ -520,7 +524,7 @@ def explain(access_store, intake, values, *, to_number, from_number=None, accoun
                           subaddress=subaddress, received_at=moment, time_zone=zone_name,
                           diverted_from=stored_number(diverted_from.strip(), country=country)
                           if diverted_from and diverted_from.strip() else None,
-                          diversion=diversion if diversion in DIVERSION_STATES else DIVERSION_SIGNED)
+                          diversion=diversion if diversion in DIVERSION_STATES else DIVERSION_UNANCHORED)
     with access_store.engine.connect() as connection:
         rule = choose(ordered_rules(connection, access_store.tables, tables(access_store.engine)), facts, country)
     options = (rule or {}).get('options') or {}

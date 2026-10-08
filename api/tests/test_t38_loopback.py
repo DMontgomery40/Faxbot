@@ -1134,7 +1134,8 @@ def test_a_forwarded_calls_headers_reach_faxbot_unchanged_and_its_signature_stil
     assert headers.get('Identity') and headers['Identity'][0].split(';')[0] == identity.split(';')[0]
     found = diversion.diversion_for(headers, did=DID, at=datetime.utcfromtimestamp(now), check=True, country='US',
                                     fetch=lambda url: certificate)
-    assert (found.diverted_from, found.state, found.source) == (forwarded, 'signed', 'passport'), found
+    # The signature still checks after Asterisk carried it (not verified: who issued the certificate is unchecked).
+    assert (found.diverted_from, found.state, found.source) == (forwarded, 'unanchored', 'passport'), found
     stated = diversion.diversion_for({name: values for name, values in headers.items() if name != 'Identity'},
                                      did=DID, at=datetime.utcnow(), country='US')
     assert (stated.diverted_from, stated.state) == (forwarded, 'stated')

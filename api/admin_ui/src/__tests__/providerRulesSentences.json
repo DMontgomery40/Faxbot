@@ -5,7 +5,7 @@
   "connectors": {"c-night": "Night inbox"},
   "receiving_cases": [
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Records", "diverted_from": "+13035550142"}, "sentence": "Faxes to +17208565062 forwarded from +13035550142 go to Records."},
-    {"rule": {"to_number": "+17208565062", "mailbox_label": "Records", "diverted_from": "+13035550142", "diversion_unsigned": true}, "sentence": "Faxes to +17208565062 forwarded from +13035550142 (signed by the network or not) go to Records."},
+    {"rule": {"to_number": "+17208565062", "mailbox_label": "Records", "diverted_from": "+13035550142", "diversion_unsigned": true}, "sentence": "Faxes to +17208565062 forwarded from +13035550142 (verified or not) go to Records."},
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Front desk"}, "sentence": "Faxes to +17208565062 go to Front desk."},
     {"rule": {"to_number": "+17208565062", "mailbox_label": "Front desk", "account_key": "sip", "from_numbers": ["+1303*"], "days": ["mon", "tue", "wed", "thu", "fri"], "start_minute": 540, "end_minute": 1020, "urgent": true, "email_off": true, "keep_days": 30}, "sentence": "Faxes to +17208565062 received on Telnyx from numbers starting with +1303 on weekdays between 09:00 and 17:00 go to Front desk, marked urgent, with no email, kept for 30 days."},
     {"rule": {"to_number": "", "any_number": true, "mailbox_label": "Night desk", "start_minute": 1080, "end_minute": 420, "email_connector_id": "c-night", "keep_days": 1}, "sentence": "Faxes to any of your numbers between 18:00 and 07:00 go to Night desk, emailed through Night inbox, kept for 1 day."},

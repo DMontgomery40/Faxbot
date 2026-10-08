@@ -16,12 +16,14 @@ where it came from in three ways, all read here from the received call:
 A diversion is the network's statement about the call, never proof of who
 sent the fax. Faxbot records how far it checked it (``state``):
 
-- ``signed``: the PASSporT's ES256 signature checks against the certificate it
-  names, the certificate is valid at the call, the PASSporT is fresh (60 s,
-  RFC 8224 section 6.2.2) and its ``dest`` is the number that received the
-  call. The certificate's issuer is not checked against the STI-PA's list of
-  certificate authorities, so this proves which certificate signed, not that a
-  US carrier did; the sentence says so.
+- ``signed``: reserved for a PASSporT whose certificate chains to a STIR/SHAKEN
+  certificate authority you trust (RFC 8224 section 6.2.2, ATIS-1000074). Faxbot
+  has no list of those authorities yet, so nothing is ``signed`` today.
+- ``unanchored``: the PASSporT's ES256 signature checks against the certificate
+  it names, the certificate is valid at the call, the PASSporT is fresh (60 s)
+  and its ``dest`` is the number that received the call, but who issued that
+  certificate is not checked. The URL is the caller's choice, so anyone with a
+  web server could make one: it is not verified, and the sentence says so.
 - ``unchecked``: signed, but not checked (no receiving rule needs it, the
   certificate could not be fetched, or the compact form carries no claims).
 - ``failed``: its signature, time or destination did not check. It never
@@ -58,7 +60,7 @@ CACHE_SECONDS = 3600
 FAILED_CACHE_SECONDS = 300
 HEADERS_BYTES = 64 * 1024
 HEADER_NAMES = ('Diversion', 'History-Info', 'Identity')
-SIGNED, UNCHECKED, FAILED, STATED = 'signed', 'unchecked', 'failed', 'stated'
+SIGNED, UNANCHORED, UNCHECKED, FAILED, STATED = 'signed', 'unanchored', 'unchecked', 'failed', 'stated'
 _TOKEN = re.compile(r'[0-9]{1,40}')
 _USER = re.compile(r'(?:sips?|tel):\+?([0-9][0-9\-.() ]{2,31})', re.IGNORECASE)
 _CACHE: dict = {}
@@ -318,7 +320,8 @@ def fetch_certificate(url, *, get=None, resolve=_public_host, now=time.monotonic
 
 
 def check_passport(passport, *, did, at, fetch=None):
-    """SIGNED, FAILED or UNCHECKED for one diversion PASSporT, with the reason in a few words."""
+    """UNANCHORED (with the certificate's host), FAILED or UNCHECKED for one diversion PASSporT, with the reason in
+    a few words. Never SIGNED: no certificate authority is trusted to anchor the certificate yet."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -350,7 +353,7 @@ def check_passport(passport, *, did, at, fetch=None):
         key.verify(signature, passport.signing_input, ec.ECDSA(hashes.SHA256()))
     except InvalidSignature:
         return FAILED, 'its signature does not match its certificate'
-    return SIGNED, None
+    return UNANCHORED, urlsplit(url).hostname
 
 
 # -- the call's diversion ---------------------------------------------------------------------------------------------
@@ -393,8 +396,10 @@ def diversion_for(headers, *, did, at, check=False, country=None, fetch=None) ->
 def sentence(number, state, why=None):
     """One plain sentence for the received fax."""
     if state == SIGNED:
-        return (f'Forwarded from {number}; the network signed the forwarding and the signature checked (the '
-                "certificate's issuer is not checked against the list of US carrier certificate authorities).")
+        return f'Forwarded from {number}; the network signed the forwarding and its signature is verified.'
+    if state == UNANCHORED:
+        return (f'Forwarded from {number}; signed with the certificate at {why}, but who issued that certificate was '
+                'not checked, so the forwarding is not verified.')
     because = f': {why}' if why else ''
     if state == FAILED:
         return f'Forwarded from {number}, the network said, but its signature did not check{because}.'

@@ -260,9 +260,9 @@ class ReceivedExplain(StrictInput):
     from_number: Annotated[str, Field(max_length=100)] | None = None
     account_key: ShortText | None = None
     subaddress: Annotated[str, Field(max_length=40)] | None = None
-    # A call forwarded from this number, and how far the forwarding checked (signed, unchecked, failed, stated).
+    # A call forwarded from this number, and how far the forwarding was checked.
     diverted_from: Annotated[str, Field(max_length=40)] | None = None
-    diversion: Literal['signed', 'unchecked', 'failed', 'stated'] | None = None
+    diversion: Literal['signed', 'unanchored', 'unchecked', 'failed', 'stated'] | None = None
     # A local time at this installation ("2026-10-07T18:30"), or now.
     at: Annotated[str, Field(max_length=32)] | None = None
 

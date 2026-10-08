@@ -12,12 +12,12 @@ call. This revision adds nullable columns only and changes no stored row:
   carrier call.
 - ``inbound_rule_options.diverted_from`` and ``diversion_unsigned``: a receiving
   rule that matches a call forwarded from this number (X4). With
-  ``diversion_unsigned`` NULL it matches only a diversion the network signed and
-  whose signature checked; 1 also matches an unsigned or unchecked statement.
+  ``diversion_unsigned`` NULL it matches only a verified forwarding; 1 also
+  matches one that is not verified (never one whose signature failed).
 - ``inbound_fax_routing.diverted_from`` and ``diversion``: the number a received
   call said it was forwarded from, and how far that was checked: ``signed``,
-  ``unchecked``, ``failed`` or ``stated`` (headers only), as Faxbot read them
-  when it placed the fax.
+  ``unanchored``, ``unchecked``, ``failed`` or ``stated`` (headers only), as
+  Faxbot read them when it placed the fax.
 
 The downgrade drops the columns; it refuses while any of them holds a value,
 because that is how calls went and how faxes were placed. Runtime code reflects

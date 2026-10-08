@@ -378,7 +378,7 @@ def receiving_sentence(rule, names, connectors=None):
         sentence += f" with subaddress {rule['subaddress']}"
     if rule.get('diverted_from'):
         sentence += (f" forwarded from {rule['diverted_from']}"
-                     + (' (signed by the network or not)' if rule.get('diversion_unsigned') else ''))
+                     + (' (verified or not)' if rule.get('diversion_unsigned') else ''))
     if rule.get('account_key'):
         sentence += f" received on {names.account(rule['account_key'])}"
     elif rule.get('site_key'):
@@ -1684,11 +1684,13 @@ NUMBER_SUBADDRESS = typer.Option(None, '--subaddress', metavar='DIGITS',
                                       "department's 2001. It chooses the mailbox and never gives anyone access.")
 NUMBER_SITE = typer.Option(None, '--site', metavar='SITE', help='Only faxes received on an account of this site.')
 NUMBER_FORWARDED = typer.Option(None, '--forwarded-from', metavar='NUMBER',
-                                help='Only calls forwarded to this number from NUMBER, as the network signed it. '
-                                     '"" removes the condition.')
+                                help='Only calls forwarded to this number from NUMBER, when the forwarding is '
+                                     'verified (add --forwarded-unsigned to take one that is not). "" removes the '
+                                     'condition.')
 NUMBER_FORWARDED_UNSIGNED = typer.Option(None, '--forwarded-unsigned/--forwarded-signed-only',
-                                         help='Also take a forwarding the network did not sign, or whose signature '
-                                              'Faxbot could not check (never one whose signature failed).')
+                                         help='Also take a forwarding that is not verified: signed with a '
+                                              "certificate whose issuer Faxbot cannot check yet, not checked, or "
+                                              'unsigned (never one whose signature failed).')
 
 
 def receiving_options(api, *, account=None, from_numbers=None, days=None, between=None, email=None, no_email=False,

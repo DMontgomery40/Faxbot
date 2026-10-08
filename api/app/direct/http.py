@@ -229,24 +229,15 @@ class PeerCallsIn(BaseModel):
     address: str | None = Field(default=None, max_length=64)
 
 
-def _write_peer_endpoints(request):
-    """Rewrite Asterisk's file with the partners' peer fax calls; False when there is no SIP trunk to write it for."""
-    from .. import sip_trunk
-    values = request.scope['faxbot.configuration'].active.values
-    try:
-        sip_trunk.write_asterisk_configuration(values)
-    except sip_trunk.TrunkConfigurationError:
-        return False
-    return True
-
-
 @router.post('/peers/{peer_id}/peer-calls', dependencies=[Depends(require_permission('settings:write'))])
 async def set_peer_calls(peer_id: str, payload: PeerCallsIn, request: Request):
     """Take fax calls from this partner inside the encrypted tunnel, or stop, and its address inside the tunnel.
 
-    The tunnel itself is set up outside Faxbot. The partner is told your choice with a signed statement, and
-    Asterisk's file gets the partner's endpoint; the fax engine loads it on the trunk page's Apply.
+    The tunnel itself is set up outside Faxbot. The partner is told your choice with a signed statement. The
+    trunk page's Apply writes the partner's endpoint into Asterisk's file (sip_trunk.rendered_configuration) and
+    loads it; until then the trunk page says its settings are not applied.
     """
+    from .. import sip_trunk
     service = service_for(request.app)
     try:
         peer, told = await service.set_peer_calls(peer_id, payload.accept, (payload.address or '').strip() or None)
@@ -256,9 +247,9 @@ async def set_peer_calls(peer_id: str, payload: PeerCallsIn, request: Request):
         raise HTTPException(503, detail='Direct delivery keys are unavailable on this installation.') from None
     except DeliveryStoreError:
         raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
-    written = await run_lifecycle_step(lambda: _write_peer_endpoints(request))
+    trunk = sip_trunk.configured(request.scope['faxbot.configuration'].active.values)
     name = peer['organization']
-    detail = ('Saved. Press Apply on the SIP trunk page so the fax engine loads it.' if written
+    detail = ('Saved. Press Apply on the SIP trunk page so the fax engine loads it.' if trunk
               else 'Saved. Set up a SIP trunk first: fax calls inside the tunnel go through its fax engine.')
     if told == 'unreachable':
         detail += f' Faxbot could not reach {name} just now; it tells them as soon as it can.'

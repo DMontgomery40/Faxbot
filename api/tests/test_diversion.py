@@ -95,13 +95,17 @@ def test_the_header_file_asterisk_writes_is_read_by_the_calls_token(tmp_path):
 
 # -- the diversion PASSporT ---------------------------------------------------------------------------------------
 
-def test_a_signed_diversion_checks_against_its_certificate():
+def test_a_signature_that_checks_against_the_certificate_it_names_is_not_verified():
+    """Anyone with a web server can name a certificate, so a signature that checks against it is 'unanchored': who
+    issued the certificate is not checked (no STIR/SHAKEN certificate authority is trusted yet), and it says so."""
     key, certificate = _key_and_certificate()
     fetched = []
     found = diversion.diversion_for({'Identity': [passport(key)]}, did=TO, at=AT, check=True, country='US',
                                     fetch=lambda url: fetched.append(url) or certificate)
-    assert (found.diverted_from, found.state, found.source) == (FORWARDED, 'signed', 'passport')
-    assert fetched == [CERT_URL] and 'signature checked' in found.sentence and 'not checked against' in found.sentence
+    assert (found.diverted_from, found.state, found.source) == (FORWARDED, 'unanchored', 'passport')
+    assert fetched == [CERT_URL]
+    assert found.sentence == ('Forwarded from +13035550142; signed with the certificate at cert.carrier.example, but '
+                              'who issued that certificate was not checked, so the forwarding is not verified.')
 
 
 @pytest.mark.parametrize('changes, words', [
@@ -189,6 +193,21 @@ def test_a_host_that_resolves_to_a_private_address_is_refused(monkeypatch):
 
 # -- "forwarded from" as a receiving-rule fact --------------------------------------------------------------------
 
+def test_header_files_left_behind_are_removed_after_a_day_and_nothing_else_is(tmp_path):
+    import os
+    from app.inbound.sip_handover import prune_headers
+    now = datetime(2026, 10, 8, 12, 0)
+    old, fresh, image = tmp_path / '17913919947.sip', tmp_path / '17913919948.sip', tmp_path / '1791391994.7.tiff'
+    for path in (old, fresh, image):
+        path.write_text('x')
+    stamp = (now - timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp()
+    for path in (old, image):
+        os.utime(path, (stamp, stamp))
+    os.utime(fresh, ((now - timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp(),) * 2)
+    assert prune_headers(tmp_path, now) == 1
+    assert not old.exists() and fresh.exists() and image.exists()
+
+
 def test_a_rule_for_calls_forwarded_from_a_number_needs_a_signed_forwarding_unless_it_says_otherwise():
     from app.access.receiving_rules import DEFAULT_OPTIONS, ReceivedFacts, clean_options, conditions_hold
     signed_only = clean_options({'diverted_from': '(303) 555-0142'}, country='US')
@@ -196,10 +215,12 @@ def test_a_rule_for_calls_forwarded_from_a_number_needs_a_signed_forwarding_unle
     assert signed_only['diverted_from'] == FORWARDED and anything['diversion_unsigned'] is True
     facts = lambda number, state: ReceivedFacts(to_number=TO, diverted_from=number, diversion=state)  # noqa: E731
     assert conditions_hold(signed_only, facts(FORWARDED, 'signed'))
+    assert not conditions_hold(signed_only, facts(FORWARDED, 'unanchored'))
     assert not conditions_hold(signed_only, facts(FORWARDED, 'stated'))
     assert not conditions_hold(signed_only, facts('+13035550199', 'signed'))
     assert not conditions_hold(signed_only, facts(None, None))
     assert conditions_hold(anything, facts(FORWARDED, 'stated')) and conditions_hold(anything, facts(FORWARDED, 'unchecked'))
+    assert conditions_hold(anything, facts(FORWARDED, 'unanchored'))
     assert not conditions_hold(anything, facts(FORWARDED, 'failed'))
     assert conditions_hold(dict(DEFAULT_OPTIONS), facts(FORWARDED, 'failed'))
     from app.access.receiving_rules import ReceivingRuleError
@@ -218,10 +239,12 @@ def _headers_file(tmp_path, uniqueid, **headers):
 
 def test_a_forwarded_call_routes_by_where_it_was_forwarded_from_and_says_how_far_it_was_checked(
         http, isolated_installation, tmp_path, monkeypatch):
-    front, records = mailbox(http, 'Front desk'), mailbox(http, 'Records')
+    front, records, desk = mailbox(http, 'Front desk'), mailbox(http, 'Records'), mailbox(http, 'Forwarded desk')
     rule(http, to_number=TO, mailbox_id=front)
+    # A rule that wants a verified forwarding takes nothing yet; one that also takes an unverified one does.
     made = rule(http, to_number=TO, mailbox_id=records, diverted_from=FORWARDED)
     assert made['diverted_from'] == FORWARDED and made['diversion_unsigned'] is False
+    rule(http, to_number=TO, mailbox_id=desk, diverted_from=FORWARDED, diversion_unsigned=True, position=2)
     key, certificate = _key_and_certificate(valid_from=datetime.utcnow() - timedelta(days=1),
                                             valid_until=datetime.utcnow() + timedelta(days=1))
     monkeypatch.setattr(diversion, 'fetch_certificate', lambda url: certificate)
@@ -232,13 +255,14 @@ def test_a_forwarded_call_routes_by_where_it_was_forwarded_from_and_says_how_far
     fax_stated = handover(http, tmp_path, 'stated', uniqueid='1791049702.1', call={'started_at': now})
     fax_plain = handover(http, tmp_path, 'plain', uniqueid='1791049703.1')
     faxes = {fax['id']: fax for fax in http.get('/inbound', headers=ADMIN).json()}
-    assert faxes[fax_signed]['mailbox'] == 'Records' and faxes[fax_signed]['diversion'] == 'signed', {key: faxes[fax_signed].get(key) for key in ('diverted_from', 'diversion', 'diversion_text', 'mailbox')}
-    assert faxes[fax_signed]['diverted_from'] == FORWARDED and 'signature checked' in faxes[fax_signed]['diversion_text']
-    # Only a header said so: recorded and shown, but this rule wants the network's signature.
-    assert faxes[fax_stated]['mailbox'] == 'Front desk' and faxes[fax_stated]['diversion'] == 'stated'
+    shown = {key: faxes[fax_signed].get(key) for key in ('diverted_from', 'diversion', 'diversion_text', 'mailbox')}
+    assert faxes[fax_signed]['mailbox'] == 'Forwarded desk' and faxes[fax_signed]['diversion'] == 'unanchored', shown
+    assert faxes[fax_signed]['diverted_from'] == FORWARDED and 'not verified' in faxes[fax_signed]['diversion_text']
+    # Only a header said so: recorded and shown, and taken only by the rule that also takes an unverified forwarding.
+    assert faxes[fax_stated]['mailbox'] == 'Forwarded desk' and faxes[fax_stated]['diversion'] == 'stated'
     assert 'without a signature' in faxes[fax_stated]['diversion_text']
     assert faxes[fax_plain]['diverted_from'] is None and faxes[fax_plain]['mailbox'] == 'Front desk'
     assert not signed.exists()
     tried = http.post('/access/inbound-rules/explain', headers=ADMIN,
-                      json={'to_number': TO, 'diverted_from': FORWARDED, 'diversion': 'stated'}).json()
-    assert tried['mailbox_label'] == 'Front desk' if 'mailbox_label' in tried else True
+                      json={'to_number': TO, 'diverted_from': FORWARDED, 'diversion': 'signed'})
+    assert tried.status_code == 200 and tried.json()['mailbox_label'] == 'Records', tried.text

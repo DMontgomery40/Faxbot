@@ -63,6 +63,20 @@ def test_the_file_asterisk_reads_has_the_trunks_then_the_partners(tmp_path):
     assert sip_trunk.write_asterisk_configuration(values, peers=[]).read_text() == sip_trunk.render_pjsip(values)
 
 
+def test_whether_asterisk_runs_the_current_settings_is_judged_against_the_same_file_with_its_partners(tmp_path,
+                                                                                                    monkeypatch):
+    """The write and the applied checks use one text: a partner's endpoint never makes the trunk read as not applied
+    for ever, and a change to a partner's calls does read as not applied until Apply."""
+    from app import sip_http
+    values = trunk_values(FAX_DATA_DIR=str(tmp_path))
+    monkeypatch.setattr(peer_call, 'installation_peers', lambda engine: [partner()])
+    written = sip_trunk.write_asterisk_configuration(values)
+    assert f'[peer-{PEER}-endpoint]' in written.read_text()
+    assert sip_trunk.rendered_configuration(values) == written.read_text() and sip_http._applied(values)
+    monkeypatch.setattr(peer_call, 'installation_peers', lambda engine: [partner(peer_call_address='10.20.0.9')])
+    assert not sip_http._applied(values)
+
+
 @pytest.mark.parametrize('text, stored', [('10.20.0.2', '10.20.0.2:5070'), ('10.20.0.2:5080', '10.20.0.2:5080'),
                                           ('fd00::2', '[fd00::2]:5070')])
 def test_a_tunnel_address_is_stored_with_its_port(text, stored):
