@@ -53,8 +53,13 @@ def uncertain(client):
                                                     created_at=now, submitted_at=now))
         connection.execute(deliveries.update().where(deliveries.c.id == job).values(
             state='reconciliation_required', dispatch_mode='normal', attempt_id='attempt-' + job[:24]))
+    # The app's own certainty worker (faxbot-certainty: 5 s after start, then every 15 s) may make the item
+    # first, so the test asserts the one item that results, never how many this feed() made.
     store = CertaintyStore(engine())
-    assert store.feed(main.app.state.access_runtime.control) == 1
+    store.feed(main.app.state.access_runtime.control)
+    with engine().connect() as connection:
+        assert connection.execute(sa.select(sa.func.count()).select_from(store.items).where(
+            store.items.c.job_id == job)).scalar() == 1
     return job
 
 

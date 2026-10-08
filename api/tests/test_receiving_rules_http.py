@@ -157,8 +157,11 @@ def test_email_off_a_chosen_connector_keep_days_and_urgent_work(http, isolated_i
     assert timedelta(days=3) - timedelta(seconds=5) <= kept <= timedelta(days=3)
     assert moment(faxes[usual]['retention_until']) - moment(faxes[usual]['updated_at']) >= timedelta(days=29)
     # The urgent fax's work item says so and comes first among open items.
-    assert WorkStore(runtime.manager.store.engine).feed() == 3
+    # The app's own Work worker (faxbot-work-queue: 2 s after start, then every 5 s) may feed these first, so
+    # the test asserts the Work items that result, never how many this feed() made.
+    WorkStore(runtime.manager.store.engine).feed()
     work = http.get('/work', headers=ADMIN).json()
     listed = work['items'] if isinstance(work, dict) else work
+    assert sorted(item['inbound_fax_id'] for item in listed) == sorted([silent, billed, usual])
     assert listed[0]['inbound_fax_id'] == billed and listed[0]['urgent'] is True
     assert {item['inbound_fax_id'] for item in listed if not item['urgent']} == {silent, usual}

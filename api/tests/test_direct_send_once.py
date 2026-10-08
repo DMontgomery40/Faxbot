@@ -217,8 +217,15 @@ async def test_one_copy_goes_to_the_intake_and_each_recipient_gets_its_own_recei
     assert texts[0] == ('Delivered directly by Valley Hospital to your intake, which files one copy for each of 3 '
                         'numbers; no telephone call.')
     assert texts[2].endswith(f'No receiving rule files faxes to {B4}, so it waits in Received with no mailbox.')
+    # The app's own Work worker (faxbot-work-queue: 2 s after start, then every 5 s) may feed these first, so
+    # the test asserts the Work items that result, never how many this feed() made.
     from api.app.work.store import WorkStore
-    assert WorkStore(b_engine()).feed(installation_hours=0) == 3
+    work = WorkStore(b_engine())
+    work.feed(installation_hours=0)
+    with b_engine().connect() as connection:
+        faxes = connection.execute(sa.select(work.inbound.c.id)).scalars().all()
+        items = connection.execute(sa.select(work.items.c.inbound_fax_id)).scalars().all()
+    assert len(faxes) == 3 and sorted(items) == sorted(faxes)
     # Sent says so for each fax, and the two references count as bytes saved, not money.
     from api.app.direct.distribute import sent_texts
     texts = sent_texts(intake['a'], intake['a'].store.recent())
