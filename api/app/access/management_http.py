@@ -23,6 +23,7 @@ from .http import (AUTH_ERROR_RESPONSES, PRIVATE_HEADERS, PrivateAuthRoute, Sess
 from .mutation_types import (AssignmentValues, CustomRoleValues, GroupSubject, GroupValues, InboundRuleValues,
                              IntegrationValues, KeyMetadata, KeyValues, MailboxValues, MutationDeniedError,
                              MutationReason, PrincipalSubject, UserValues, VersionedEntity)
+from .route_policy import require_permission
 from .types import ResourceRef, ScopedPermission
 
 
@@ -216,17 +217,48 @@ class MailboxPatch(StrictInput):
     expected_policy_version: PolicyVersion
 
 
-class RuleCreate(StrictInput):
-    to_number: Annotated[str, Field(max_length=100)]
+Day = Literal['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+ShortText = Annotated[str, Field(max_length=64)]
+
+
+class RuleOptions(StrictInput):
+    """A number rule's receiving options (provider-rules design §4.9); each one left out stays as it is."""
+    position: Annotated[int, Field(ge=1, le=100000)] | None = None
+    enabled: bool | None = None
+    any_number: bool | None = None
+    account_key: ShortText | None = None
+    site_key: ShortText | None = None
+    subaddress: Annotated[str, Field(max_length=40)] | None = None
+    from_numbers: Annotated[list[Annotated[str, Field(max_length=40)]], Field(max_length=50)] | None = None
+    days: Annotated[list[Day], Field(max_length=7)] | None = None
+    start_minute: Annotated[int, Field(ge=0, le=1439)] | None = None
+    end_minute: Annotated[int, Field(ge=0, le=1439)] | None = None
+    email_connector_id: ShortText | None = None
+    email_off: bool | None = None
+    urgent: bool | None = None
+    keep_days: Annotated[int, Field(ge=1, le=36500)] | None = None
+
+
+class RuleCreate(RuleOptions):
+    to_number: Annotated[str, Field(max_length=100)] = ''
     mailbox_id: Identifier
     expected_policy_version: PolicyVersion
 
 
-class RulePatch(StrictInput):
+class RulePatch(RuleOptions):
     to_number: Annotated[str, Field(max_length=100)] | None = None
     mailbox_id: Identifier | None = None
     version: int
     expected_policy_version: PolicyVersion
+
+
+class ReceivedExplain(StrictInput):
+    to_number: Annotated[str, Field(max_length=100)]
+    from_number: Annotated[str, Field(max_length=100)] | None = None
+    account_key: ShortText | None = None
+    subaddress: Annotated[str, Field(max_length=40)] | None = None
+    # A local time at this installation ("2026-10-07T18:30"), or now.
+    at: Annotated[str, Field(max_length=32)] | None = None
 
 
 # -- catalogue and roles -----------------------------------------------------------
@@ -579,11 +611,79 @@ async def update_mailbox(mailbox_id: str, body: MailboxPatch, request: Request, 
     return await _mutate(mutate, lambda receipt: service.reads.mailbox(actor, receipt.target.id), 'mailbox')
 
 
+def _receiving(service):
+    from .receiving_rules import tables
+    return tables(service.store.engine)
+
+
+def _with_options(service, items):
+    """Each rule with its receiving options and its place among number rules (1 first)."""
+    from .receiving_rules import DEFAULT_OPTIONS, options_on, rule_order
+    receiving = _receiving(service)
+    if receiving is None:
+        return items
+    with service.store.engine.connect() as connection:
+        order = rule_order(connection, service.store.tables, receiving)
+        stored = options_on(connection, receiving, [item['id'] for item in items])
+    place = {identity: number + 1 for number, identity in enumerate(order)}
+    for item in items:
+        options = (stored.get(item['id']) or (None,))[0] or dict(DEFAULT_OPTIONS)
+        item.update(options)
+        item['position'] = place.get(item['id'])
+    return items
+
+
+def _rule_view(service, actor, rule_id):
+    return _with_options(service, [service.reads.inbound_rule(actor, rule_id)])[0]
+
+
+def _current_options(service, rule_id):
+    """(the receiving-rule tables, a rule's stored options or None)."""
+    from .receiving_rules import options_on
+    receiving = _receiving(service)
+    if receiving is None or rule_id is None:
+        return receiving, None
+    with service.store.engine.connect() as connection:
+        return receiving, (options_on(connection, receiving, [rule_id]).get(rule_id) or (None,))[0]
+
+
+async def _rule_mutation(mutate, view, number):
+    """A number-rule change; a second rule for a number that already has a rule without conditions is refused
+    with a sentence about the number (reached only after the permission check, so it reveals no mailbox)."""
+    try:
+        return await _mutate(mutate, view, 'rule')
+    except MutationDeniedError as denied:
+        if denied.code != 'duplicate':
+            raise
+    raise HTTPException(400, detail=f'A rule already takes every fax to {number or "this number"}. Give this rule a '
+                                    'condition, such as a subaddress or a sender, or change that rule.')
+
+
+async def _clean_rule_options(request, service, body, rule_id=None):
+    """(complete cleaned options or None when none were given, position). 400 with a sentence when refused."""
+    from .receiving_rules import ReceivingRuleError, clean_options
+    given = body.model_dump(exclude_unset=True, include=set(RuleOptions.model_fields) - {'position'})
+    position = body.position
+    if not given:
+        return None, position
+    receiving, current = await _read(lambda: _current_options(service, rule_id))
+    if receiving is None:
+        raise HTTPException(400, detail='Upgrade the database before giving a number rule options.')
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    try:
+        return clean_options(given, current, country=country,
+                             subaddress_column='subaddress' in receiving['options'].c), position
+    except ReceivingRuleError as error:
+        raise HTTPException(400, detail=str(error)) from None
+
+
 @router.get('/inbound-rules', summary='Inbound routing rules')
 async def list_inbound_rules(request: Request, cursor: Cursor = None, limit: Limit = 50,
         identity=Depends(require_identity)):
     service = runtime(request)
-    return await _read(lambda: service.reads.inbound_rules(identity.actor, cursor=cursor, limit=limit))
+    page = await _read(lambda: service.reads.inbound_rules(identity.actor, cursor=cursor, limit=limit))
+    page['items'] = await _read(lambda: _with_options(service, page['items']))
+    return page
 
 
 def _fax_number(value, request):
@@ -599,24 +699,48 @@ def _fax_number(value, request):
 @router.post('/inbound-rules', summary='Route a fax number to a mailbox')
 async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
-    number = _fax_number(body.to_number, request)
-    return await _mutate(lambda: service.mutations.create_inbound_rule(actor,
+    options, position = await _clean_rule_options(request, service, body)
+    # An "any number" rule matches every receiving number and stores none.
+    number = '' if options and options['any_number'] else _fax_number(body.to_number, request)
+    return await _rule_mutation(lambda: service.mutations.create_inbound_rule(actor,
         InboundRuleValues(number, body.mailbox_id),
-        expected_policy_version=body.expected_policy_version, now=utcnow()),
-        lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'rule')
+        expected_policy_version=body.expected_policy_version, now=utcnow(), options=options, position=position),
+        lambda receipt: _rule_view(service, actor, receipt.target.id), number)
 
 
 @router.patch('/inbound-rules/{rule_id}', summary='Change an inbound routing rule')
 async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
-    number = None if body.to_number is None else _fax_number(body.to_number, request)
+    number = None if not body.to_number else _fax_number(body.to_number, request)
+    options, position = await _clean_rule_options(request, service, body, rule_id)
     def mutate():
         current = service.reads.inbound_rule(actor, rule_id)
         values = InboundRuleValues(number if number is not None else current['to_number'],
                                    body.mailbox_id if body.mailbox_id is not None else current['mailbox_id'])
         return service.mutations.update_inbound_rule(actor, VersionedEntity(rule_id, body.version), values,
-            expected_policy_version=body.expected_policy_version, now=utcnow())
-    return await _mutate(mutate, lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'rule')
+            expected_policy_version=body.expected_policy_version, now=utcnow(), options=options, position=position)
+    return await _rule_mutation(mutate, lambda receipt: _rule_view(service, actor, receipt.target.id), number)
+
+
+@router.post('/inbound-rules/explain', summary='Which mailbox and email a received fax would get, and why',
+             dependencies=[Depends(require_permission('mailboxes:read'))])
+async def explain_received(body: ReceivedExplain, request: Request):
+    """The receiving rules' answer for a fax that has not arrived. Nothing is received or saved."""
+    from .receiving_rules import ReceivingRuleError, _local_moment, explain
+    values = request.scope['faxbot.configuration'].active.values
+    try:
+        moment = _local_moment(body.at, values.time_zone)
+    except ReceivingRuleError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    try:
+        from ..intake.http import _store as intake_store
+        intake = intake_store(request)
+    except HTTPException:
+        intake = None
+    service = runtime(request)
+    return await _read(lambda: explain(service.store, intake, values, to_number=body.to_number,
+                                       from_number=body.from_number, account_key=body.account_key,
+                                       subaddress=body.subaddress, at=moment))
 
 
 # -- audit --------------------------------------------------------------------------------------------

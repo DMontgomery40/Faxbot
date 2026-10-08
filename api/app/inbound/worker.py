@@ -51,10 +51,36 @@ def inside_directory(path, directory):
 
 
 class Acquirer:
-    def __init__(self, store: ImportStore, *, frame=None):
-        """``frame()`` returns ``(values, profiles)`` for the active configuration revision."""
+    def __init__(self, store: ImportStore, *, frame=None, bindings=None):
+        """``frame()`` returns ``(values, profiles)`` for the active configuration revision; ``bindings(fax id)``
+        returns the (revision, profile) a received fax is bound to, or None (``ConfigurationStore.inbound_context``)."""
         self.store = store
         self.frame = frame
+        self.bindings = bindings
+
+    def fetch_values(self, claim, values):
+        """The configuration to fetch one received fax with: the account it arrived on as settings have it now,
+        else as it was when the fax arrived (its provider binding), whichever still matches the account the fax
+        was recorded under. Faxes from before accounts existed use the provider's first account, as before."""
+        from .. import accounts
+        source = claim['source']
+        key = claim.get('account_key') or source
+        try:
+            current = accounts.account_values(values, key)
+        except accounts.AccountsError:
+            current = None
+        if current is not None and _identity(source, current) in (None, claim['account']):
+            return current
+        if self.bindings is not None:
+            try:
+                bound = self.bindings(claim['inbound_fax_id'])
+            except Exception:
+                bound = None
+            if bound is not None:
+                captured = accounts.values_from_configuration(values, bound[1].configuration)
+                if captured is not None and _identity(source, captured) == claim['account']:
+                    return captured
+        return current if current is not None else values
 
     async def step(self):
         """One unit of work; True when an import was attempted."""
@@ -86,12 +112,14 @@ class Acquirer:
                 claim['id'], 'Faxbot could not fetch the document.', claim_token=claim['claim_token']))
 
     async def _acquire(self, claim):
-        from ..config import settings
+        from ..config import configuration_values, settings
         source, inbound_id = claim['source'], claim['inbound_fax_id']
         source_time = None
+        own = await run_lifecycle_step(lambda: self.fetch_values(claim, configuration_values())) \
+            if source in ('efax', 'phaxio', 'sinch') else settings
         if source == 'efax':
             from .efax import acquire
-            await acquire(self.store, claim, settings)
+            await acquire(self.store, claim, own)
             return
         if source == 'humblefax':
             from .humblefax import acquire
@@ -101,8 +129,8 @@ class Acquirer:
             path = inside_directory(claim.get('tiff_path'), settings.fax_data_dir)
             artifact = await run_lifecycle_step(lambda: convert_tiff(path, inbound_id, engine=self.store.engine))
         elif source in ('phaxio', 'sinch'):
-            service, name = provider_service(source, settings)
-            if account_identity(source, _account_value(source, settings)) != claim['account']:
+            service, name = provider_service(source, own)
+            if account_identity(source, _account_value(source, own)) != claim['account']:
                 raise FetchError(f'The {name} account in settings changed after this fax arrived, '
                                  'so Faxbot cannot fetch it.')
             metadata = await service.get_received_fax(claim['operation_id'])
@@ -127,6 +155,17 @@ class Acquirer:
 
 def _account_value(source, values):
     return values.phaxio_api_key if source == 'phaxio' else values.sinch_project_id
+
+
+def _identity(source, values):
+    """The account identity a fax from ``source`` would be recorded under with these values; None when it can't
+    be worked out here (the source checks it itself)."""
+    if source in ('phaxio', 'sinch'):
+        return account_identity(source, _account_value(source, values))
+    if source == 'efax':
+        from .efax import account_for
+        return account_for(values)
+    return None
 
 
 def provider_service(source, values):

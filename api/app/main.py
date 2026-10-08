@@ -2324,6 +2324,13 @@ class InboundFaxOut(BaseModel):
     # Each time fetching stopped before it was set going again, oldest first, and one sentence about them.
     earlier_failures: List["InboundEarlierFailure"] = []
     earlier_failures_text: Optional[str] = None
+    # The provider account the fax arrived on (accounts.py), by key and name; None for faxes from before accounts.
+    account_key: Optional[str] = None
+    account_label: Optional[str] = None
+    # The subaddress the sender stated (T.33 SUB): it chose the mailbox, it proves nothing about the sender.
+    subaddress: Optional[str] = None
+    # A receiving rule marked the fax urgent.
+    urgent: bool = False
 
 
 class InboundEarlierFailure(BaseModel):

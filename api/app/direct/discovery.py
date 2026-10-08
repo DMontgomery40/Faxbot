@@ -1257,6 +1257,19 @@ def publication_text(state, row, *, expires_text=None):
                                           expires=expires_text or '')
 
 
+def record_received_hint(engine, *, call_key, number, address):
+    """Keep the far end's SSL Fax address from a fax the SSL Fax engine received: the ``host:port`` of its TSA,
+    as the hand-over reported it (``inbound/http.remote_address``), never a passcode. No network here."""
+    found = ssl_address('ssl://' + address) if isinstance(address, str) and address else None
+    if found is None or not call_key or not number:
+        return False
+    store = DiscoveryStore(engine)
+    if not store.settings().from_calls:
+        return False
+    return store.add_hint(source='engine', source_ref='in:' + str(call_key), direction='in', number=number,
+                          host=found[0], port=found[1])
+
+
 def record_engine_hint(engine, *, attempt_id, job_id, number, payload):
     """Keep the far end's SSL Fax address from the SSL Fax engine's report of one sent fax.
 

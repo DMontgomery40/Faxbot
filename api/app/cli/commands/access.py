@@ -659,12 +659,15 @@ def numbers_list(ids: bool = IDS):
         connectors = api.get('/intake/connectors')['connectors']
     except CliError:
         connectors = None
-    rows = {}
+    # One row per number rule (a number can have several, one per subaddress or sender); a carried number joins
+    # the first rule for it, or gets a row of its own.
+    rows, first = {}, {}
     for rule in rules:
-        rows[comparable_number(rule['to_number']) or rule['to_number']] = {
-            'number': rule['to_number'], 'rule': rule, 'providers': []}
+        rows[rule['id']] = {'number': rule['to_number'], 'rule': rule, 'providers': []}
+        if rule['to_number']:
+            first.setdefault(comparable_number(rule['to_number']) or rule['to_number'], rule['id'])
     for number, provider, in_use in carried:
-        row = rows.setdefault(number, {'number': number, 'rule': None, 'providers': []})
+        row = rows.setdefault(first.get(number, number), {'number': number, 'rule': None, 'providers': []})
         row['providers'].append({'provider': provider, 'name': CARRIERS[provider], 'in_use': in_use})
     # --json rows keep the keys an inbound rule had (id, to_number, mailbox_id, mailbox_label, version),
     # None for a number with no mailbox rule, next to the new ones.
@@ -702,16 +705,21 @@ def numbers_add(number: str = typer.Argument(..., help='Your fax number, as faxe
                 account: str = rules.NUMBER_ACCOUNT, sender: list[str] = rules.NUMBER_FROM, days: str = rules.NUMBER_DAYS,
                 between: str = rules.NUMBER_BETWEEN, email: str = rules.NUMBER_EMAIL, no_email: bool = rules.NUMBER_NO_EMAIL,
                 urgent: bool = rules.NUMBER_URGENT, keep_days: int = rules.NUMBER_KEEP,
-                position: int = rules.NUMBER_POSITION, any_number: bool = rules.NUMBER_ANY):
+                position: int = rules.NUMBER_POSITION, any_number: bool = rules.NUMBER_ANY,
+                subaddress: str = rules.NUMBER_SUBADDRESS, site: str = rules.NUMBER_SITE):
     """Send faxes that arrive on a number to a mailbox, optionally only some of them and with their own email and urgency."""
     api = state.api()
     found = resolve.mailbox(api, mailbox)
     options = rules.receiving_options(api, account=account, from_numbers=sender, days=days, between=between, email=email,
                                       no_email=no_email, urgent=urgent, keep_days=keep_days, position=position,
-                                      any_number=any_number)
+                                      any_number=any_number, subaddress=subaddress, site=site)
     result = api.post('/access/inbound-rules',
                       json=api.with_policy({'to_number': number, 'mailbox_id': found['id'], **options}))
-    state.out().result(result, lambda out: out.line(f"Faxes to {number} now go to {found['label']}."))
+    # A rule with options takes only some faxes: say which, as the rule reads on Numbers.
+    saved = {'to_number': number, **options, **(result.get('rule') or {}), 'mailbox_label': found['label']}
+    said = (rules.receiving_sentence(saved, rules.Names()) if options
+            else f"Faxes to {number} now go to {found['label']}.")
+    state.out().result(result, lambda out: out.line(said))
 
 
 @numbers.command('update')
@@ -722,12 +730,13 @@ def numbers_update(number: str = typer.Argument(..., help='Fax number of the rul
                    days: str = rules.NUMBER_DAYS, between: str = rules.NUMBER_BETWEEN, email: str = rules.NUMBER_EMAIL,
                    no_email: bool = rules.NUMBER_NO_EMAIL, urgent: bool = rules.NUMBER_URGENT,
                    keep_days: int = rules.NUMBER_KEEP, position: int = rules.NUMBER_POSITION,
-                   any_number: bool = rules.NUMBER_ANY):
+                   any_number: bool = rules.NUMBER_ANY, subaddress: str = rules.NUMBER_SUBADDRESS,
+                   site: str = rules.NUMBER_SITE):
     """Change a fax number's mailbox, the number itself, or which of its faxes the rule takes and how."""
     api = state.api()
     body = rules.receiving_options(api, account=account, from_numbers=sender, days=days, between=between, email=email,
                                    no_email=no_email, urgent=urgent, keep_days=keep_days, position=position,
-                                   any_number=any_number)
+                                   any_number=any_number, subaddress=subaddress, site=site)
     if new_number:
         body['to_number'] = new_number
     if mailbox:

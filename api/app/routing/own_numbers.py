@@ -49,7 +49,22 @@ def receiving_numbers(values):
     if reader is not None:
         for number in reader(values) or ():
             numbers.add(destination_key(number, country))
+    # The union over receiving accounts: each extra account's numbers (a second trunk's DIDs, a second Sinch
+    # account's numbers), and numbers set on a first account in the account list. A HumbleFax account's
+    # numbers are left out, as above: a fax to one still places a real call.
+    for number in _account_receiving_numbers(values):
+        numbers.add(destination_key(number, country))
     return {number for number in numbers if number.startswith('+')}
+
+
+def _account_receiving_numbers(values):
+    try:
+        from ..accounts import receiving_accounts
+        listed = receiving_accounts(values)
+    except Exception:
+        return ()  # values without provider accounts (a fixture)
+    return tuple(number for account in listed if account.provider != 'humblefax'
+                 and not (account.primary and account.provider == 'sip') for number in account.numbers)
 
 
 def account_numbers(values, accounts=None):
@@ -59,4 +74,9 @@ def account_numbers(values, accounts=None):
     for fields in PROVIDER_NUMBERS.values():
         found += [getattr(values, field, '') or '' for field in fields]
     found += [number for numbers in (accounts or {}).values() for number in numbers]
+    try:
+        from ..accounts import all_accounts
+        found += [number for account in all_accounts(values) for number in account.numbers]
+    except Exception:
+        pass  # values without provider accounts (a fixture)
     return {stored_number(number, country=country) for number in found if number} | receiving_numbers(values)

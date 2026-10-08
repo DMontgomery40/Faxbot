@@ -12,7 +12,8 @@ describe('provider rules in words', () => {
 
   it.each(fixture.receiving_cases.map((item) => [item.sentence, item.rule]))('%s', (sentence, rule) => {
     const connectors: Record<string, string> = fixture.connectors;
-    expect(receivingSentence(rule as never, { account: names.account, connector: (id) => connectors[id] })).toBe(sentence);
+    expect(receivingSentence(rule as never, { account: names.account, connector: (id) => connectors[id], site: names.site }))
+      .toBe(sentence);
   });
 
   it('reads the last routing row and time windows the way people say them', () => {

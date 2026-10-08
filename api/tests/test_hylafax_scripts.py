@@ -100,7 +100,9 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     assert body['engine'] == {'engine': 'hylafax', 'engine_ref': '0123456789abcdef:000000007-1791180000',
                               'sslfax': True, 'sslfax_offered': True, 'transfer_seconds': 12,
                               'signal_rate_b64': base64.b64encode(b'SSL Fax').decode(),
-                              'data_format_b64': base64.b64encode(b'JBIG').decode()}
+                              'data_format_b64': base64.b64encode(b'JBIG').decode(),
+                              # The far end's internet fax address from its TSA: host and port only.
+                              'remote_address_b64': base64.b64encode(b'x:1').decode()}
     # Over SSL Fax there is no speed; the two log lines name no compression or resolution either.
     assert negotiation == {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': None,
                            'compression': None, 'resolution': None, 'ecm': None, 'session': None,
@@ -109,6 +111,48 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     # The secret went in a header from standard input, never on the command line.
     headers = ''.join(path.read_text() for path in tmp_path.glob('header.*'))
     assert 'X-Internal-Secret: synthetic-secret-value' in headers
+
+
+@pytest.mark.parametrize('faxinfo, log, stated', [
+    ("'    Sender: +1 555 555 0199' '   SubAddr: 20 01' '     Pages: 2'", '', '2001'),
+    # Without faxinfo's SubAddr, the session log's line; "<unspecified>" is no subaddress.
+    ("'    Sender: +1 555 555 0199' '     Pages: 2'",
+     'RECV FAX (000000007): recvq/fax000000007.tif from 5550199, subaddress <2002>, 2 pages in 0:00:12\n', '2002'),
+    ("'    Sender: +1 555 555 0199' '     Pages: 2'",
+     'RECV FAX (000000007): recvq/fax000000007.tif from 5550199, subaddress <unspecified>, 2 pages\n', None),
+])
+def test_the_subaddress_the_sender_stated_reaches_faxbot(engine, tmp_path, faxinfo, log, stated):
+    """Faxbot's number rules can route by it (it is never proof of who sent the fax)."""
+    spool, state, data, environment = engine
+    _stub(tmp_path / 'tools', 'faxinfo', f"printf '%s\\n' 'x:' {faxinfo}\n")
+    with (spool / 'log' / 'c000000007').open('a') as session:
+        session.write(log)
+    assert run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX1', '000000007', '',
+               '+15555550199', '5.15555550100', cwd=spool).returncode == 0
+    (tmp_path / 'answer').write_text('200')
+    assert run('handover', environment).returncode == 0
+    assert json.loads((tmp_path / 'body').read_text())['subaddress'] == stated
+
+
+@pytest.mark.parametrize('line, address', [
+    ('REMOTE TSA "ssl://synthetic-passcode@fax.partner.example:10443"', b'fax.partner.example:10443'),
+    ('REMOTE TSA "ssl://192.0.2.7:10443"', b'192.0.2.7:10443'),
+    ('REMOTE CSA "ssl://(passcode hidden)@x:1"', None),
+])
+def test_a_received_calls_internet_fax_address_reaches_faxbot_without_its_passcode(engine, tmp_path, line, address):
+    """For partner discovery, as sent calls report it: the TSA's host and port, never the passcode."""
+    spool, state, data, environment = engine
+    (spool / 'log' / 'c000000007').write_text(f'Oct 05 01:00:00.00: [ 1]: {line}\n')
+    assert run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX1', '000000007', '',
+               '+15555550199', '5.15555550100', cwd=spool).returncode == 0
+    ticket = next((state / 'received').glob('*.ticket')).read_text()
+    assert 'synthetic-passcode' not in ticket
+    (tmp_path / 'answer').write_text('200')
+    assert run('handover', environment).returncode == 0
+    body = (tmp_path / 'body').read_text()
+    assert 'synthetic-passcode' not in body
+    expected = base64.b64encode(address).decode() if address else None
+    assert json.loads(body)['engine']['remote_address_b64'] == expected
 
 
 def test_a_ticket_left_from_an_older_container_is_handed_over_from_the_volume(engine, tmp_path):

@@ -262,9 +262,11 @@ export function textMinutes(time: string): number | null {
 // A number rule in words: "Faxes to +17208565062 received on Telnyx from numbers starting with +1303 on weekdays
 // between 09:00 and 17:00 go to Front desk, marked urgent, with no email, kept for 30 days."
 export function receivingSentence(rule: { to_number: string; mailbox_label: string } & Partial<ReceivingOptions>,
-  names: { account: (key: string) => string; connector: (id: string) => string }): string {
+  names: { account: (key: string) => string; connector: (id: string) => string; site?: (key: string) => string }): string {
   let sentence = rule.any_number || !rule.to_number ? 'Faxes to any of your numbers' : `Faxes to ${rule.to_number}`;
+  if (rule.subaddress) sentence += ` with subaddress ${rule.subaddress}`;
   if (rule.account_key) sentence += ` received on ${names.account(rule.account_key)}`;
+  else if (rule.site_key) sentence += ` received on an account of ${names.site ? names.site(rule.site_key) : rule.site_key}`;
   const from = (rule.from_numbers ?? []).map((entry) => (entry.endsWith('*')
     ? `numbers starting with ${entry.slice(0, -1)}` : entry));
   if (from.length > 0) sentence += ` from ${joinOr(from)}`;

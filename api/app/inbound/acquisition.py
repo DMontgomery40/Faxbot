@@ -462,7 +462,8 @@ class ImportStore:
     # Begin --------------------------------------------------------------
     def begin(self, *, source, account, operation_id, revision='', backend, inbound_backend=None,
               to_number=None, from_number=None, reported_pages=None, report=None, source_received_at=None,
-              tiff_path=None, artifact_digest=None, schedule=True, country=DEFAULT_COUNTRY):
+              tiff_path=None, artifact_digest=None, schedule=True, country=DEFAULT_COUNTRY, account_key=None,
+              subaddress=None, binding=None, mailbox_id=None, actor=None):
         """Find or create the import for this source identity, in one transaction.
 
         An existing ``pending`` or ``failed`` import is scheduled again at once;
@@ -470,6 +471,14 @@ class ImportStore:
         different content, which records a conflict and keeps the original.
         ``schedule=False`` means the caller holds the document and will call
         ``complete``; a safety fetch is still scheduled for a fetchable source.
+
+        ``account_key`` is the provider account that received the fax
+        (``accounts.py``), kept on the import; ``binding`` is ``(revision id,
+        profile id)`` of that account, written as the fax's provider binding so a
+        later fetch uses that account. ``subaddress`` is the subaddress the sender
+        stated, for the receiving rules. ``mailbox_id`` files a document straight
+        into a mailbox (an import with no fax number); ``actor``, the importer,
+        must be able to read that mailbox.
         """
         if (source not in SOURCES or not isinstance(account, str) or not 0 < len(account) <= 100
                 or not isinstance(operation_id, str) or not 0 < len(operation_id) <= 100
@@ -492,13 +501,21 @@ class ImportStore:
                 id=inbound_id, from_number=_number(from_number), to_number=_number(to_number), status='waiting',
                 backend=backend[:20], inbound_backend=(inbound_backend or None) and inbound_backend[:20],
                 provider_sid=operation_id if source in FETCHABLE else None, pages=reported_pages,
-                tiff_path=tiff_path, created_at=now, received_at=now, updated_at=now), now, country=country)
+                tiff_path=tiff_path, created_at=now, received_at=now, updated_at=now), now, country=country,
+                facts=_facts(account_key, subaddress, source_received_at, now), mailbox_id=mailbox_id, actor=actor)
+            extra = {'account_key': account_key[:64]} if account_key and 'account_key' in self.imports.c else {}
             connection.execute(self.imports.insert().values(
                 id=import_id, source=source, account=account, operation_id=operation_id, revision=revision,
                 state='pending', attempts=0, next_attempt_at=due, imported_at=now,
                 source_received_at=source_received_at, to_number=_number(to_number),
                 from_number=_number(from_number), reported_pages=reported_pages, report=report_text,
-                inbound_fax_id=inbound_id, created_at=now, updated_at=now))
+                inbound_fax_id=inbound_id, created_at=now, updated_at=now, **extra))
+            if binding is not None:
+                # The account that received the fax, as its revision captured it: later fetches use it.
+                bindings = history_table(self.engine, 'inbound_fax_bindings')
+                if bindings is not None:
+                    connection.execute(bindings.insert().values(id=inbound_id, revision_id=binding[0],
+                                                                profile_id=binding[1]))
             return Begun(import_id, inbound_id, 'pending', True, False)
 
     def _resume_on(self, connection, record, now, *, artifact_digest=None, schedule=True, resumed_by,
@@ -583,6 +600,11 @@ class ImportStore:
                 artifact_media_type=media_type[:64], claim_token=None, claim_expires_at=None, next_attempt_at=None,
                 last_error=None, source_received_at=record['source_received_at'] or source_received_at,
                 updated_at=now))
+            # A receiving rule's "keep for N days" replaces the usual cleanup age for this fax (never a legal hold).
+            from ..access.receiving_rules import routing_for
+            placed = routing_for(connection, self.resources.receiving_tables(), record['inbound_fax_id'])
+            if placed is not None and placed.get('keep_days'):
+                retention = int(placed['keep_days'])
             connection.execute(self.faxes.update().where(self.faxes.c.id == record['inbound_fax_id']).values(
                 status='received', pdf_path=artifact_path, sha256=digest, size_bytes=size, pages=pages,
                 pdf_token=secrets.token_urlsafe(32), pdf_token_expires_at=now + timedelta(minutes=ttl),
@@ -693,6 +715,24 @@ def _number(value):
         return None
     text = str(value).strip()
     return text[:64] or None
+
+
+def _facts(account_key, subaddress, source_received_at, now):
+    """What the receiving rules read about a fax that is being recorded (``access.receiving_rules``)."""
+    from ..access.receiving_rules import ReceivedFacts
+    values = _settings()
+    site = None
+    if account_key:
+        try:
+            from ..accounts import account_named
+            account = account_named(values, account_key)
+            site = account.site if account is not None else None
+        except Exception:
+            site = None
+    return ReceivedFacts(to_number=None, account_key=account_key, site_key=site, subaddress=subaddress,
+                         received_at=source_received_at or now,
+                         time_source='provider' if source_received_at else 'import',
+                         time_zone=getattr(values, 'time_zone', '') or '')
 
 
 def _sentence(message):

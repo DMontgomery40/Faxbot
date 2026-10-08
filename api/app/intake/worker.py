@@ -72,7 +72,7 @@ class IntakeWorker:
 
     def deliver(self, item):
         store = self.store
-        connector = store.connector_for(item['to_number'])
+        connector = store.connector_for_item(item)  # a number rule may choose the connector (receiving rules)
         if connector is None:
             store.record_failed(item, message='No email delivery is set up for this number.')
             return

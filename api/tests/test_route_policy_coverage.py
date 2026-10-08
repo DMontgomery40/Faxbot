@@ -24,6 +24,10 @@ OWN_AUTHENTICATION = {
     ("POST", "/phaxio-inbound"): "verified provider ingest",
     ("POST", "/sinch-inbound"): "verified provider ingest",
     ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",
+    # One address per extra provider account, each checked with that account's own basic auth or signature.
+    ("POST", "/phaxio-inbound/{key}"): "verified provider ingest for one Phaxio account (its own signature)",
+    ("POST", "/sinch-inbound/{key}"): "verified provider ingest for one Sinch account (its own basic auth)",
+    ("POST", "/efax-inbound/{key}"): "verified provider signal for one eFax account; stores nothing",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",

@@ -947,38 +947,91 @@ class AccessMutations:
     def update_mailbox(self, actor: PrincipalContext, target: VersionedEntity, values: MailboxValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
         return self._standalone(self.update_mailbox_on, actor, target, values, expected_policy_version=expected_policy_version, now=now)
 
-    def _rule_values(self, a, values, exclude=None):
+    def _receiving(self):
+        """The receiving-rule tables (0030), or None before that migration."""
+        from .receiving_rules import tables
+        return tables(self.store.engine)
+
+    def _rule_values(self, a, values, exclude=None, options=None):
+        """(number, mailbox) for a number rule. An "any number" rule stores an empty number. Two rules for one
+        number are refused only when neither has a condition (account, site, subaddress, sender or time), since
+        the later one could never place a fax; with conditions, one number can reach several mailboxes."""
+        from .receiving_rules import has_conditions, options_on
         if type(values) is not InboundRuleValues or type(values.to_number) is not str or not _id(values.mailbox_id): _deny()
         number = values.to_number.strip()
-        if re.fullmatch(r'\+?[0-9]{2,20}', number) is None: _deny()
+        if options is not None and options.get('any_number'):
+            number = ''
+        elif re.fullmatch(r'\+?[0-9]{2,20}', number) is None: _deny()
         mailboxes, rules = self.tables['mailboxes'], self.tables['inbound_rules']
         mailbox = a.connection.execute(sa.select(mailboxes.c.id, mailboxes.c.label).where(
             mailboxes.c.id == values.mailbox_id)).first()
         if mailbox is None: _deny(MutationReason.INVALID_TARGET)
-        query = sa.select(rules.c.id).where(rules.c.to_number == number)
-        if exclude is not None:
-            query = query.where(rules.c.id != exclude)
-        if a.connection.execute(query).first() is not None: _deny(MutationReason.DUPLICATE)
+        if number:
+            query = sa.select(rules.c.id).where(rules.c.to_number == number)
+            if exclude is not None:
+                query = query.where(rules.c.id != exclude)
+            same = list(a.connection.execute(query).scalars())
+            if same and not has_conditions(options):
+                existing = options_on(a.connection, self._receiving(), same)
+                if any(not has_conditions(existing.get(identity, (None,))[0]) for identity in same):
+                    _deny(MutationReason.DUPLICATE)
         return number, mailbox
 
-    def create_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
+    def _place_rule(self, a, identity, number, options, position):
+        """Put a new or moved rule in the place order: at ``position`` (1-based) when given; a new rule with
+        conditions just before the first plain rule for its number, so the more specific rule is read first."""
+        from .receiving_rules import has_conditions, options_on, renumber, rule_order
+        receiving = self._receiving()
+        if receiving is None:
+            return
+        order = [rule for rule in rule_order(a.connection, self.tables, receiving) if rule != identity]
+        if position is not None:
+            index = max(0, min(int(position) - 1, len(order)))
+        elif number and has_conditions(options):
+            rules = self.tables['inbound_rules']
+            same = set(a.connection.execute(sa.select(rules.c.id).where(rules.c.to_number == number)).scalars())
+            existing = options_on(a.connection, receiving, same)
+            plain = [index for index, rule in enumerate(order)
+                     if rule in same and not has_conditions(existing.get(rule, (None,))[0])]
+            index = plain[0] if plain else len(order)
+        else:
+            index = len(order)
+        order.insert(index, identity)
+        renumber(a.connection, receiving, order, a.now)
+
+    def create_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime, options=None, position=None) -> MutationOutcome[MutationReceipt]:
+        """``options`` are the rule's cleaned receiving options (``receiving_rules.clean_options``), or None for a
+        plain number rule; ``position`` is its 1-based place among number rules."""
         def planner(a):
-            number, mailbox = self._rule_values(a, values)
+            number, mailbox = self._rule_values(a, values, options=options)
             identity = uuid.uuid4().hex
+            if options is not None and self._receiving() is None: _deny()
             def writes():
+                from .receiving_rules import write_options
                 self._insert(a.connection, 'inbound_rules', id=identity, to_number=number,
                     mailbox_label=mailbox.label, created_at=a.now)
                 self._insert(a.connection, 'access_mailbox_routes', id=identity, mailbox_id=mailbox.id,
                     version=1, created_at=a.now, updated_at=a.now)
+                if options is not None:
+                    write_options(a.connection, self._receiving(), identity, options, a.now)
+                if options is not None or position is not None:
+                    self._place_rule(a, identity, number, options, position)
             return self._plan(a, identity, 1, True, writes)
         return self._run(connection, actor, 'create_inbound_rule', 'inbound_rule', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
 
-    def create_inbound_rule(self, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
-        return self._standalone(self.create_inbound_rule_on, actor, values, expected_policy_version=expected_policy_version, now=now)
+    def create_inbound_rule(self, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime, options=None, position=None) -> MutationReceipt:
+        return self._standalone(lambda connection, *args, **kwargs: self.create_inbound_rule_on(
+            connection, *args, options=options, position=position, **kwargs),
+            actor, values, expected_policy_version=expected_policy_version, now=now)
 
-    def update_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
-        """Change the number or bind the rule to another mailbox id; version 0 binds an unmatched rule."""
+    def update_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime, options=None, position=None) -> MutationOutcome[MutationReceipt]:
+        """Change the number or bind the rule to another mailbox id; version 0 binds an unmatched rule.
+
+        ``options`` are the rule's complete cleaned receiving options after the change, or None to leave them;
+        ``position`` moves the rule. Every change counts in the rule's version, which each received fax records.
+        """
         def planner(a):
+            from .receiving_rules import options_on
             self._optional_version(target)
             rules, routes = self.tables['inbound_rules'], self.tables['access_mailbox_routes']
             row = a.connection.execute(sa.select(rules).where(rules.c.id == target.id)).mappings().one_or_none()
@@ -987,10 +1040,17 @@ class AccessMutations:
             route = a.connection.execute(sa.select(routes).where(routes.c.id == row['id'])).mappings().one_or_none()
             version = route['version'] if route is not None else 0
             if version != target.version: _deny(MutationReason.STALE_VERSION)
-            number, mailbox = self._rule_values(a, values, exclude=row['id'])
+            if options is not None and self._receiving() is None: _deny()
+            current = options_on(a.connection, self._receiving(), [row['id']]).get(row['id'], (None, 0))[0]
+            effective = options if options is not None else current
+            if effective is not None and not effective.get('any_number') and not values.to_number.strip():
+                _deny()  # a rule that stops matching any number needs its number back
+            number, mailbox = self._rule_values(a, values, exclude=row['id'], options=effective)
+            options_changed = options is not None and options != current
             changed = (route is None or route['mailbox_id'] != mailbox.id or row['to_number'] != number
-                       or row['mailbox_label'] != mailbox.label)
+                       or row['mailbox_label'] != mailbox.label or options_changed or position is not None)
             def writes():
+                from .receiving_rules import write_options
                 if not changed: return
                 self._update(a.connection, 'inbound_rules', row['id'], to_number=number, mailbox_label=mailbox.label)
                 if route is None:
@@ -999,8 +1059,20 @@ class AccessMutations:
                 else:
                     self._update(a.connection, 'access_mailbox_routes', row['id'], mailbox_id=mailbox.id,
                         version=version + 1, updated_at=a.now)
+                if options_changed:
+                    if current is None:
+                        # A rule gets options in its existing place.
+                        from .receiving_rules import rule_order
+                        place = rule_order(a.connection, self.tables, self._receiving()).index(row['id'])
+                        write_options(a.connection, self._receiving(), row['id'], options, a.now, place=place)
+                    else:
+                        write_options(a.connection, self._receiving(), row['id'], options, a.now)
+                if position is not None:
+                    self._place_rule(a, row['id'], number, effective, position)
             return self._plan(a, row['id'], version + int(changed), changed, writes)
         return self._run(connection, actor, 'update_inbound_rule', 'inbound_rule', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
 
-    def update_inbound_rule(self, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
-        return self._standalone(self.update_inbound_rule_on, actor, target, values, expected_policy_version=expected_policy_version, now=now)
+    def update_inbound_rule(self, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime, options=None, position=None) -> MutationReceipt:
+        return self._standalone(lambda connection, *args, **kwargs: self.update_inbound_rule_on(
+            connection, *args, options=options, position=position, **kwargs),
+            actor, target, values, expected_policy_version=expected_policy_version, now=now)

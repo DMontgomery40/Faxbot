@@ -102,6 +102,10 @@ class WorkStore:
         self.resources, self.mailboxes = tables['access_resources'], tables['mailboxes']
         self.principals, self.users = tables['access_principals'], tables['access_users']
         self.intake, self.connectors = tables['intake_items'], tables['intake_connectors']
+        # How each received fax was placed (0030): a receiving rule may mark its item urgent. None before then.
+        from ..access.receiving_rules import tables as receiving_tables
+        receiving = receiving_tables(engine)
+        self.routing = receiving['routing'] if receiving is not None else None
 
     # -- reading ---------------------------------------------------------------------
     def received(self):

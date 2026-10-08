@@ -444,6 +444,20 @@ def test_the_ssl_fax_engines_report_keeps_only_host_and_port_as_a_hint(pair):
     assert not discovery.record_engine_hint(engine, attempt_id='c' * 32, job_id=None, number=B_NUMBER, payload={})
 
 
+def test_a_received_ssl_fax_call_gives_a_hint_from_the_far_ends_tsa(pair):
+    from api.app.inbound.http import remote_address
+    engine = pair['engine']
+    # What the SSL Fax engine's hand-over reports for a received call (hylafax/bin/received).
+    address = remote_address({'engine': {'remote_address_b64': base64.b64encode(b'b.example:10443').decode()}})
+    assert address == 'b.example:10443'
+    assert discovery.record_received_hint(engine, call_key='1728300000.42', number=B_NUMBER, address=address)
+    assert not discovery.record_received_hint(engine, call_key='1728300000.42', number=B_NUMBER, address=address)
+    assert not discovery.record_received_hint(engine, call_key='1728300000.43', number=None, address=address)
+    (hint,) = rows(engine, 'direct_discovery_hints')
+    assert (hint['source'], hint['direction'], hint['number'], hint['host'], hint['port']) == (
+        'engine', 'in', B_NUMBER, 'b.example', 10443)
+
+
 def test_notify_reports_the_far_ends_address_without_its_passcode(tmp_path):
     from api.tests.test_hylafax_scripts import QFILE, ROOT, TOOLS, _stub, run
     import shutil

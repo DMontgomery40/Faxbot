@@ -250,7 +250,39 @@ class IntakeStore:
         return (exact or [c for c in enabled if c.match_number is None] or [None])[0]
 
     # Items --------------------------------------------------------------
-    def _schedule(self, connection, to_number, received_at, now):
+    def _placement(self, connection, inbound_id):
+        """How the receiving rules placed one received fax (``inbound_fax_routing``), or None."""
+        if inbound_id is None:
+            return None
+        from ..access.receiving_rules import routing_for, tables
+        return routing_for(connection, tables(self.engine), inbound_id)
+
+    def connector_for_item(self, item):
+        """The connector one email item goes through: the one the number rule that placed its fax chose, else
+        the usual one for its number."""
+        if item.get('inbound_fax_id'):
+            with self.engine.connect() as connection:
+                placed = self._placement(connection, item['inbound_fax_id'])
+                if placed is not None and placed.get('rule_id') and placed.get('connector_id'):
+                    return next((c for c in self.list_connectors(connection)
+                                 if c.id == placed['connector_id'] and c.enabled), None)
+        return self.connector_for(item.get('to_number'))
+
+    def _schedule(self, connection, to_number, received_at, now, inbound_id=None):
+        placed = self._placement(connection, inbound_id)
+        if placed is not None and placed.get('rule_id'):
+            from ..access.receiving_rules import email_off_for
+            if email_off_for(placed.get('rule_snapshot')):
+                # The number rule that placed this fax sends no email; a person can still send it.
+                return None, 'The number rule for this fax sends no email.'
+            if placed.get('connector_id'):
+                chosen = next((c for c in self.list_connectors(connection)
+                               if c.id == placed['connector_id'] and c.enabled), None)
+                if chosen is None:
+                    return None, 'The email connector the number rule chose is turned off or gone.'
+                if received_at < chosen.created_at:
+                    return None, 'This fax arrived before email delivery was set up; send it when you are ready.'
+                return now, None
         connector = self.connector_for(to_number, connection)
         # A connector delivers what arrives after it was set up; earlier faxes wait for a person.
         if connector is None:
@@ -289,7 +321,7 @@ class IntakeStore:
                 with write_transaction(self.engine) as connection:
                     if connection.execute(sa.select(items.c.id).where(items.c.inbound_fax_id == row.id)).first():
                         continue
-                    when, note = self._schedule(connection, row.to_number, row.received_at, now)
+                    when, note = self._schedule(connection, row.to_number, row.received_at, now, row.id)
                     connection.execute(items.insert().values(
                         id=uuid4().hex, source='fax', inbound_fax_id=row.id, received_at=row.received_at,
                         pages=row.pages, from_number=row.from_number, to_number=row.to_number, state='received',
