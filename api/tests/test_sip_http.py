@@ -299,7 +299,10 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('GET', '/admin/sip/negotiation'): [('providers:read', False)],
                         # One received fax's call: that fax's own read check, as its detail (route policy coverage).
                         ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [],
-                        ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)]}
+                        ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)],
+                        # Caller-name lookup at Telnyx (Costs advice): read it, and turn it off per number.
+                        ('GET', '/admin/sip/telnyx/names'): [('providers:read', False)],
+                        ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): [('providers:write', True)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):
