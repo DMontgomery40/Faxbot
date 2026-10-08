@@ -386,6 +386,9 @@ class DirectService:
             return 403, {'detail': 'This request is not from an enrolled partner.'}
         row = self.store.answer_or_fence(message_id, peer, now=now)
         if row is None or row['peer_id'] != peer['id'] or row['state'] != 'accepted':
+            # The sender never got these pages here: an offer for them (repair.py) will never be completed.
+            from .repair import RepairStore
+            RepairStore(self.store.engine).expire_offers(now=now, message_id=message_id)
             return 200, signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'not_received',
                                           'answered_at': timestamp(), 'capabilities': self.offered(peer)})
         return 200, {**signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'accepted',

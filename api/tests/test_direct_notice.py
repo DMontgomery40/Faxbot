@@ -239,6 +239,23 @@ async def test_a_partner_that_cannot_pair_notices_gets_the_fax_by_fax(noticed):
     assert sent['state'] == 'cancelled' and sent['notice_job_id'] is None
 
 
+@pytest.mark.asyncio
+async def test_only_a_waiting_notice_holds_the_original(noticed):
+    """A notice that ends any other way (cancelled) no longer keeps its original out of Received."""
+    original, _, attempt, _, _, _ = await send_with_notice(noticed, 'Held then released')
+    client = noticed['b_client']
+    service = b_service()
+    assert b_items(client) == [] and [row['message_id'] for row in service.store.unfiled()] == []
+    store = notice.NoticeStore(b_engine())
+    held = store.find('receiver', attempt)
+    assert held['state'] == 'waiting'
+    store.update(held['id'], state='cancelled')
+    assert [row['message_id'] for row in service.store.unfiled()] == [attempt]
+    service.filing.step()
+    (item,) = b_items(client)
+    assert item['source'] == 'direct' and stored_document(client) == [original]
+
+
 def test_a_notice_link_needs_the_sender_signature_and_comes_before_its_document(noticed):
     from api.app.direct.crypto import canonical, timestamp
     a, client = noticed['a'], noticed['b_client']

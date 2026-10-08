@@ -257,3 +257,39 @@ async def test_an_unreachable_partner_is_asked_again_only_after_a_pause(pair, tm
     await CallRepair(pair['a']).step()
     assert RepairStore(pair['a'].store.engine).for_attempt(attempt)['state'] == 'completed'
     assert pair['to_b'].posts - posts_before == 2
+
+
+@pytest.mark.asyncio
+async def test_an_offer_whose_pages_never_come_does_not_stay_open(pair, tmp_path):
+    """The partner's side keeps no open offer for pages that will never come (owner fix, 2026-10-08)."""
+    from api.app.direct.crypto import timestamp
+    from api.app.direct.repair import OFFER_LIFETIME, repair_view
+    await broken_call(pair, tmp_path, held=6)
+    a, client = pair['a'], pair['b_client']
+    (call,) = RepairStore(pair['configuration'].engine).broken_calls()
+    identity, peer = a.identity(), a.store.get_peer(pair['b_on_a']['id'])
+    # Asked, but the sender never sends the pages (as when it could not build them).
+    first, second = uuid4().hex, uuid4().hex
+    answer = await CallRepair(a).ask(identity, peer, call, repair_id=uuid4().hex, message_id=first, total_pages=10)
+    assert answer['pages_held'] == 6
+    offered = RepairStore(b_engine()).for_message('receiver', first)
+    assert offered['state'] == 'offered'
+    # The sender's own question about those pages is answered "not received", which closes the offer at once.
+    moment = timestamp()
+    path = f'/direct/deliveries/{first}'
+    status = client.get(path, headers={'X-Faxbot-Direct-Key': identity.signing_key, 'X-Faxbot-Direct-Time': moment,
+                                       'X-Faxbot-Direct-Signature': identity.sign(f'GET {path} {moment}'.encode())})
+    assert status.status_code == 200 and '"status":"not_received"' in status.json()['statement']
+    closed = RepairStore(b_engine()).for_message('receiver', first)
+    assert closed['state'] == 'expired'
+    assert repair_view(closed, 'Valley Hospital')['status'] == (
+        'Valley Hospital did not send the missing pages, so the fax stays as the call brought it.')
+    # Another offer nobody asks about again closes once it is older than a day, and not before.
+    with b_engine().begin() as connection:
+        connection.execute(sa.text("UPDATE direct_call_repairs SET inbound_id = NULL WHERE role = 'receiver'"))
+    await CallRepair(a).ask(identity, peer, call, repair_id=uuid4().hex, message_id=second, total_pages=10)
+    store = RepairStore(b_engine())
+    assert store.for_message('receiver', second)['state'] == 'offered'
+    assert store.expire_offers() == 0 and store.for_message('receiver', second)['state'] == 'offered'
+    assert store.expire_offers(now=datetime.utcnow() + OFFER_LIFETIME + timedelta(minutes=1)) == 1
+    assert store.for_message('receiver', second)['state'] == 'expired'
