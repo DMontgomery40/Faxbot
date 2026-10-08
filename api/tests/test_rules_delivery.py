@@ -597,3 +597,140 @@ def test_two_accounts_at_one_provider_each_send_with_their_own_costs(ruled):
     assert costs[other]['estimated_cost_micros'] == 135_000
     totals = {row['provider_id']: row['attempts'] for row in ruled.routes.cost_totals(datetime(2026, 1, 1))}
     assert totals == {'sinch': 3}
+
+
+def test_require_encryption_is_met_by_ssl_fax_a_number_used_before(ruled):
+    """Owner's answer Q2: direct delivery, or SSL Fax on the trunk for a number that has completed an SSL Fax call."""
+    from api.app.rules import model
+    from api.app.rules.evaluate import decide
+    from api.app.rules.explain import FactsReader
+    publish(ruled, {'format': 1, 'limits': [rule('l-enc', {'require_encryption': True})]})
+    trunk = model.Account('sip', 'sip', 'Telnyx', default=True, automatic=True, sslfax=True)
+    cloud = model.Account('phaxio', 'phaxio', 'Phaxio', automatic=True)
+    reader = FactsReader(ruled.engine, ruled.snapshot.active.values, ruled.routes)
+
+    def decided():
+        facts = reader.read(to_number=TO, accounts=(trunk, cloud), pages=1)
+        return facts, decide(ruled.rules.compiled_active(), facts, (trunk, cloud))
+    facts, decision = decided()
+    assert not facts.sslfax_seen and decision.outcome == 'blocked' and decision.reason == 'needs_encryption'
+    observations = sa.Table('sslfax_observations', sa.MetaData(), autoload_with=ruled.engine)
+    with ruled.engine.begin() as connection:
+        connection.execute(observations.insert().values(id=uuid4().hex, number=TO, direction='outbound', accepts=1,
+                                                        source='engine-synthetic-1', observed_at=datetime.utcnow()))
+    facts, decision = decided()
+    assert facts.sslfax_seen and decision.outcome == 'route'
+    assert decision.envelope.accounts == ('sip',) and decision.envelope.sslfax
+    assert [(item.account, item.why) for item in decision.excluded] == [('phaxio', 'not_encrypted')]
+
+
+# Acceptance checks, direct delivery, sending together, caps, alternates and layout ---------------------------------
+
+def _prepared(env, document=None, **facts):
+    if document is not None:
+        publish(env, document)
+    return rules_acceptance.prepare(env.engine, env.snapshot.active, actor=ANNE, destination=TO, pages=3, **facts)
+
+
+def test_with_the_trunk_down_only_a_fax_that_could_go_nowhere_else_is_refused(ruled):
+    from api.app.main import _engine_down_refuses
+    trunk_only = replace_bound(_prepared(ruled, {'format': 1, 'routes': [rule('r-p', {'use': 'phaxio'})]}), 'phaxio')
+    assert _engine_down_refuses(trunk_only) is True
+    other = replace_bound(_prepared(ruled, {'format': 1, 'routes': [rule('r-sw', {'use': 'signalwire'})]}), 'phaxio')
+    assert _engine_down_refuses(other) is False
+    held = replace_bound(_prepared(ruled, {'format': 1, 'limits': [rule('l-a', {'hold_for_approval': {}})],
+                                           'routes': [rule('r-p', {'use': 'phaxio'})]}), 'phaxio')
+    assert held.decision.outcome == 'held' and _engine_down_refuses(held) is False
+
+
+def replace_bound(prepared, key):
+    from dataclasses import replace
+    return replace(prepared, bound_key=key)
+
+
+def test_require_direct_never_reaches_a_call(ruled):
+    publish(ruled, {'format': 1, 'limits': [rule('l-direct', {'require_direct': True})]})
+    job = accept(ruled)
+    pinned = envelopes.load(ruled.engine, job)
+    assert (pinned.decision.outcome, pinned.decision.reason, pinned.envelope.accounts) == (
+        'blocked', 'needs_partner', ())
+    assert holds(ruled, job)[0]['reason'].startswith('The rule ‘Rule l-direct’ requires direct delivery')
+    revision, _ = ruled.configuration.outbound_context(job)
+    plan = RoutePlanner(ruled.routes).plan(to_number=TO, bound='phaxio', values=revision.values, pages=3,
+                                           alternates=True, pinned=pinned)
+    assert plan.choices == ()  # no call, and no drop-back to the default account
+
+
+def test_sending_together_waits_only_when_the_trunk_goes_first():
+    from api.app.rules import model
+    from api.app.routing.rules_acceptance import first_route_is_bound
+
+    def decision(mode, accounts, outcome='route', reason=None):
+        return model.Decision(outcome=outcome, envelope=model.Envelope(mode=mode, accounts=accounts),
+                              route=model.AUTOMATIC, facts_digest='0' * 64, reason=reason)
+    assert first_route_is_bound(decision('automatic', ('phaxio', 'sip')), 'sip')
+    assert first_route_is_bound(decision('ordered', ('sip', 'phaxio')), 'sip')
+    assert not first_route_is_bound(decision('ordered', ('phaxio', 'sip')), 'sip')
+    assert not first_route_is_bound(decision('one', ('phaxio',)), 'sip')
+    assert not first_route_is_bound(decision('ordered', (), 'blocked', 'no_allowed_account'), 'sip')
+
+
+def test_a_cap_at_dispatch_skips_an_account_whose_price_is_unknown_or_over(ruled):
+    from api.app.routing.pricing import Price
+    publish(ruled, {'format': 1, 'limits': [rule('l-cap', {'cap_cost': {'currency': 'USD', 'amount': '0.50'}})],
+                    'routes': [rule('r-both', {'cheapest_reliable': ['phaxio', 'signalwire']})]})
+    job = accept(ruled)
+    pinned = envelopes.load(ruled.engine, job)
+    revision, _ = ruled.configuration.outbound_context(job)
+    planner = RoutePlanner(ruled.routes)
+    prices = {'phaxio': Price('phaxio', 900_000, 'USD')}  # today's price is over; SignalWire's is unknown
+    plan = planner.plan(to_number=TO, bound='phaxio', values=revision.values, pages=3, alternates=True,
+                        pinned=pinned, prices=prices)
+    assert plan.choices == () and plan.skipped == (('phaxio', 'over_cap'), ('signalwire', 'unknown_cost'))
+    prices['signalwire'] = Price('signalwire', 9_500, 'USD')
+    plan = planner.plan(to_number=TO, bound='phaxio', values=revision.values, pages=3, alternates=True,
+                        pinned=pinned, prices=prices)
+    assert [choice.route.key for choice in plan.choices] == ['signalwire']
+
+
+TOLL_FREE_ALTERNATE = '+18005550100'
+
+
+def _approve_alternate(env, action='approved'):
+    from api.app.routing.tollfree import TollFreeApprovals
+    TollFreeApprovals(env.engine).record(TO, action=action, alternate_number=TOLL_FREE_ALTERNATE,
+                                         approved_by='Jane Smith', approved_on=datetime(2026, 10, 7),
+                                         evidence='Same intake, confirmed by phone on 7 October.')
+
+
+def _alternate_of(env, job):
+    deliveries = env.delivery.deliveries
+    with env.engine.connect() as connection:
+        return connection.scalar(sa.select(deliveries.c.alternate_number).where(deliveries.c.id == job))
+
+
+def test_the_alternate_number_follows_use_never_and_only_and_a_withdrawal_changes_new_faxes_only(ruled):
+    _approve_alternate(ruled)
+    used = accept(ruled)
+    assert envelopes.load(ruled.engine, used).envelope.dial.number == TOLL_FREE_ALTERNATE
+    assert _alternate_of(ruled, used) == TOLL_FREE_ALTERNATE
+    publish(ruled, {'format': 1, 'limits': [rule('l-never', {'alternate_number': 'never'})]})
+    never = accept(ruled)
+    assert envelopes.load(ruled.engine, never).envelope.dial is None and _alternate_of(ruled, never) is None
+    publish(ruled, {'format': 1, 'routes': [rule('r-only', {'automatic': True, 'alternate_number': 'only'})]})
+    _approve_alternate(ruled, 'withdrawn')
+    only = accept(ruled)
+    assert envelopes.load(ruled.engine, only).decision.reason == 'needs_alternate'
+    # The queued fax keeps the number it was accepted with.
+    assert envelopes.load(ruled.engine, used).envelope.dial.number == TOLL_FREE_ALTERNATE
+    assert _alternate_of(ruled, used) == TOLL_FREE_ALTERNATE
+
+
+def test_the_envelope_s_layout_reaches_the_page_hook(ruled):
+    from api.app.outbound_transport import _layout_rule
+    plain = accept(ruled)
+    publish(ruled, {'format': 1, 'routes': [rule('r-long', {'automatic': True, 'page_layout': 'as_receiver_allows'})]})
+    long_pages = accept(ruled)
+    publish(ruled, {'format': 1, 'routes': [rule('r-one', {'automatic': True, 'page_layout': 'one_per_sheet'})]})
+    one = accept(ruled)
+    assert [_layout_rule(ruled.engine, job) for job in (plain, long_pages, one)] == [None, 'allow', 'never']

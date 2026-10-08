@@ -160,4 +160,29 @@ describe('Costs → Recommendations: Add as rule', () => {
     expect(await screen.findByText('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
     expect(drafts.map((draft) => draft.document.routes.map((rule) => rule.name))).toEqual([['Faxes to +44 numbers go through Sinch (UK)']]);
   });
+
+  it('offers one rule for a whole country where the same account was cheaper for several numbers', async () => {
+    const drafts: Array<{ document: { routes: Array<{ name: string; when: unknown }> } }> = [];
+    const item = (number: string) => ({ number, display_name: null, version: 1, preferred_route: null, chosen_by_you: false,
+      kind: 'cheaper_route', current_label: 'Telnyx', current: null,
+      suggested: { route: 'sinch', label: 'Sinch', delivered: 19, attempts: 19, cost_text: '$0.03', basis_text: null },
+      saving_per_fax: { currency: 'USD', amount: '0.031' }, sentence: `Sinch cost less for ${number}.`, rule_suggestion: null });
+    server.use(
+      http.get('/routing/recommendations/sending', () => HttpResponse.json({ window_days: 30, min_delivered: 3, empty_sentence: '',
+        items: [item('+442071234567'), item('+441614960000')],
+        country_rules: [{ country: 'GB', route: 'sinch', numbers: 2, delivered: 38, saving_per_fax: { currency: 'USD', amount: '0.031' },
+          sentence: 'Faxes to +44 numbers cost about $0.031 less each through Sinch over the last 30 days (38 delivered faxes to 2 numbers). Add as a rule?',
+          rule_suggestion: { name: 'Numbers in the United Kingdom go by Sinch', when: { destination: { countries: ['GB'] } },
+            then: { use: 'sinch' } } }] })),
+      http.put('/routing/rules/draft', async ({ request }) => {
+        drafts.push(await request.json() as never);
+        return HttpResponse.json({ document: {}, version: 1, base_revision: null, actor_name: null, updated_at: '2026-10-07T12:00:00', check: null });
+      }),
+    );
+    render(<SendingRecommendations client={keyClient()} canWrite onNavigate={() => undefined} />);
+    expect(await screen.findByText(/Faxes to \+44 numbers cost about \$0\.031 less each through Sinch/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add as rule' }));
+    expect(await screen.findByText('“Numbers in the United Kingdom go by Sinch” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
+    expect(drafts[0].document.routes[0].when).toEqual({ destination: { countries: ['GB'] } });
+  });
 });

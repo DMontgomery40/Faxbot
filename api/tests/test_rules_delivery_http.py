@@ -158,3 +158,63 @@ def test_new_routes_need_their_permissions(client):
     applied = client.post('/routing/rules/apply-to-waiting', headers=ADMIN)
     assert applied.status_code == 200 and applied.json()['sentence'] == (
         'No fax is waiting to be sent, so nothing changed.')
+
+
+# The real faxbot commands against this server ---------------------------------------------------------------------
+
+@pytest.fixture
+def ruled_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for served in _serve(monkeypatch, tmp_path, FAX_OUTBOUND_ROUTES='humblefax',
+                         HUMBLEFAX_ACCESS_KEY='synthetic-access', HUMBLEFAX_SECRET_KEY='synthetic-secret'):
+        yield Cli(served), tmp_path
+
+
+def _cli_ok(result):
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    return ' '.join(result.stdout.split())
+
+
+def test_the_sent_and_costs_commands_against_a_real_server(ruled_cli):
+    from api.tests.test_cli import BOOTSTRAP
+    cli, tmp_path = ruled_cli
+    admin = {'X-API-Key': BOOTSTRAP}
+    cards = cli.client.put('/routing/rate-cards', headers=admin, json={'cards': [HUMBLEFAX, PHAXIO]})
+    assert cards.status_code == 200, cards.text
+    publish_as(cli.client, admin, {'format': 1, 'limits': [rule('l-all', {'hold_for_approval': {}})]})
+    # A flat plan's fax is "In your plan", never $0.00; Phaxio by its page price.
+    quoted = _cli_ok(cli('costs', 'fax', '--to', US, '--pages', '2'))
+    assert 'In your plan' in quoted and 'About $0.14' in quoted and '$0.00' not in quoted
+    document = tmp_path / 'note.txt'
+    document.write_text('Synthetic page\n')
+    first = cli.json('send', US, str(document))['id']
+    second = cli.json('send', US, str(document))['id']
+    held = _cli_ok(cli('sent', 'list', '--held'))
+    assert first in held and second in held and 'Waits for approval: the rule ‘Rule l-all’ matched.' in held
+    route = _cli_ok(cli('sent', 'route', first))
+    assert route.startswith('Waits for approval: the rule ‘Rule l-all’ matched. Organization rules version 1.')
+    assert _cli_ok(cli('sent', 'approve', first)) == 'Approved. The fax is no longer held.'
+    refused = _cli_ok(cli('sent', 'refuse', second, '--reason', 'wrong recipient'))
+    assert refused.startswith('Refused. Nothing was sent.') and refused.endswith('wrong recipient')
+    # A cap no account meets: the fax waits with no route, and anyone may check again.
+    publish_as(cli.client, admin, {'format': 1, 'limits': [rule('l-cap', {'cap_cost': {'currency': 'USD',
+                                                                                        'amount': '0.01'}},
+                                                                {'destination': {'numbers': ['+13035550199']}})],
+                                   'routes': [rule('r-phaxio', {'use': 'phaxio'})]})
+    capped = cli.json('send', '+13035550199', str(document))['id']
+    assert 'No account is estimated to cost less than the $0.01 cap' in _cli_ok(cli('sent', 'list', '--held'))
+    assert _cli_ok(cli('sent', 'check-again', capped)).startswith('Faxbot is trying the accounts your rules allow')
+    # Now the routing rule allows only Phaxio: its quote is an amount.
+    quoted = _cli_ok(cli('costs', 'fax', '--to', US, '--pages', '2'))
+    assert 'Phaxio' in quoted and 'About $0.14' in quoted and 'HumbleFax' not in quoted
+
+
+def publish_as(client, headers, document):
+    current = client.get('/routing/rules', headers=headers).json()
+    saved = client.put('/routing/rules/draft', headers=headers, json={
+        'document': document, 'expected_version': current['draft']['version'] if current['draft'] else 0})
+    assert saved.status_code == 200, saved.text
+    active = current['active']['number'] if current['active'] else None
+    published = client.post('/routing/rules/publish', headers=headers, json={
+        'expected_active_revision': active, 'expected_draft_version': saved.json()['version'], 'note': 'Synthetic'})
+    assert published.status_code == 200, published.text
