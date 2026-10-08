@@ -187,3 +187,40 @@ def test_a_direct_reply_closes_the_expectation_for_the_request_it_names(client):
     view = expected(client, created.json()['code'])
     assert view['state'] == 'matched' and view['match']['signal'] == 'digital_message'
     assert view['state_text'].startswith('Arrived and matched by its Direct message ID on ')
+
+
+def test_a_partners_registered_form_closes_the_expectation_only_with_the_revision_it_states(client, tmp_path):
+    from app.forms.store import FormStore
+    from app.inbound.acquisition import ImportStore
+    from app.intake.store import IntakeStore
+    from api.tests.test_work_http import pdf
+    mailbox(client, 'Purchasing', '+15550100001')
+    box = client.get('/expected-faxes/mailboxes', headers=B).json()['mailboxes'][0]
+    codes = {}
+    for reference, revision in (('PO 483', 'B'), ('PO 484', 'C')):
+        created = client.post('/expected-faxes', headers=B, json={
+            'reference': reference, 'kind': 'Signed acknowledgement', 'mailbox_id': box['id'],
+            'form_field': 'po_number', 'revision_field': 'rev', 'required_revision': revision})
+        assert created.status_code == 201, created.text
+        codes[reference] = created.json()['code']
+    document = tmp_path / 'form.pdf'
+    document.write_bytes(pdf('Synthetic acknowledgement form'))
+    for message_id, values in (('a' * 32, {'po_number': 'PO 483', 'rev': 'B'}),
+                               ('b' * 32, {'po_number': 'po  484', 'rev': 'B'})):
+        # What forms/exchange.py records for a partner's form that matched, then direct/filing.py's filing.
+        FormStore(engine()).record(direction='inbound', route='direct', message_id=message_id, peer_id='peer-1',
+                                   partner='Acme Supply', form_address='f' * 64, renderer='synthetic',
+                                   resolution='fine', fax_number='+15550104444', field_values=json.dumps(values),
+                                   page_hashes='[]', pages=1, digest='d' * 64, state='matched')
+        IntakeStore(engine(), None).add_fax_image(
+            ImportStore(app.state.access_runtime.inbound), account='direct:peer-1', message_id=message_id,
+            image_path=str(document), from_number='+15550104444', to_number='+15550100001', pages=1,
+            received_at=None, report={'route': 'direct', 'kind': 'form', 'partner': 'Acme Supply',
+                                      'message_id': message_id}, original=True)
+    match_now()
+    closed = expected(client, codes['PO 483'])
+    assert closed['state'] == 'matched' and closed['match']['signal'] == 'form_field'
+    wrong = expected(client, codes['PO 484'])
+    assert wrong['state'] == 'proposed_match'
+    assert wrong['proposals'][0]['text'] == ("It carries the reference in the partner's registered form, but says "
+                                             'revision B; you expect revision C.')
