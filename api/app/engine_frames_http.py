@@ -166,6 +166,10 @@ def _call_view(view):
     from .sip_calls import call_summary
     frame, record, negotiated = view['frame'] or {}, view['record'], view['engine_row']
     sentences = engine_frames.describe(frame) if frame else []
+    # The subaddress a sent call asked for (patch 0005): requested, and carried only if the far end takes one.
+    requested = (record or {}).get('subaddress') if view['direction'] == 'outbound' else None
+    if requested:
+        sentences.append(engine_frames.subaddress_sentence(requested, frame))
     if negotiated is not None and (negotiated.get('negotiation_by') or negotiated.get('sslfax') == 1):
         sentences.append(call_sentence(negotiated, record))
     elif frame and (view['compression'] or view['ecm']):
@@ -185,6 +189,8 @@ def _call_view(view):
             'iaf': view['iaf'], 'sentences': sentences,
             'capabilities': engine_frames.decode_dis(frame.get('dis')) if frame else None,
             'subaddress': engine_frames.decode_sub(frame.get('sub')) if frame else None,
+            'subaddress_requested': requested,
+            'subaddress_carried': engine_frames.subaddress_carried(requested, frame),
             # Joined from the call record and the engine's report (both engines).
             'engine': view['engine'], 'engine_label': ENGINE_WORDS.get(view['engine']),
             'mode_label': MODE_WORDS.get(view['mode']), 'outcome': outcome, 'pages': view['pages'],

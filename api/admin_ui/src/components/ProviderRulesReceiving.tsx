@@ -1,15 +1,19 @@
 // Receiving rules on Numbers: the extra conditions and actions a number rule can have (which account a fax
 // arrives on, who sent it, when, email, urgency, how long it is kept), and "Try a received fax", which says
 // where a fax would go. The number rule list itself stays on Numbers.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Checkbox, FormControl, FormControlLabel, InputLabel, MenuItem, Paper, Select, Stack, Switch,
   TextField, Typography,
 } from '@mui/material';
 import { DeliveryError } from './delivery/shared';
+import type AdminAPIClient from '../api/client';
+import type { ForwardedTrust } from '../api/types';
 import type { ReceivedExplainResult, ReceivingOptions, RulesApi } from './ProviderRulesApi';
 import { TimeEditor } from './ProviderRulesEditor';
-import { KEEP_DAYS_NOTE, minutesText, textMinutes } from './ProviderRulesText';
+import {
+  FORWARDED_UNSIGNED_LABEL, KEEP_DAYS_NOTE, forwardedHelp, minutesText, textMinutes,
+} from './ProviderRulesText';
 
 export interface Named { key: string; label: string }
 
@@ -33,7 +37,9 @@ export const SUBADDRESS_HELP = 'Up to 20 digits some fax machines send with a fa
   + 'never gives anyone access.';
 
 // The options of one number rule, as fields; the Numbers dialog saves them with the rule.
-export function ReceivingOptionsFields({ value, onChange, accounts, connectors, timeZone, sites = [] }: {
+export function ReceivingOptionsFields({
+  value, onChange, accounts, connectors, timeZone, sites = [], trustsAnchors = false,
+}: {
   value: ReceivingOptions;
   onChange: (value: ReceivingOptions) => void;
   // Accounts that receive faxes.
@@ -43,6 +49,8 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
   timeZone: string;
   // Sites (Providers → Rules), for faxes that arrive on an account of one site.
   sites?: Named[];
+  // Whether you trust a certificate authority for forwarded calls, so a forwarding can be verified.
+  trustsAnchors?: boolean;
 }) {
   const [fromText, setFromText] = useState(value.from_numbers.join(', '));
   const set = (patch: Partial<ReceivingOptions>) => onChange({ ...value, ...patch });
@@ -69,6 +77,14 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
       <TextField size="small" label="Only faxes with subaddress" value={value.subaddress ?? ''} placeholder="2001"
         helperText={SUBADDRESS_HELP} inputProps={{ maxLength: 20 }}
         onChange={(event) => set({ subaddress: event.target.value.trim() || null })} />
+      <TextField size="small" label="Only calls forwarded from" value={value.diverted_from ?? ''}
+        placeholder="+13035550100" helperText={forwardedHelp(trustsAnchors)} inputProps={{ maxLength: 40 }}
+        onChange={(event) => set({ diverted_from: event.target.value.trim() || null })} />
+      {Boolean(value.diverted_from) && (
+        <FormControlLabel label={FORWARDED_UNSIGNED_LABEL} control={
+          <Checkbox checked={Boolean(value.diversion_unsigned)}
+            onChange={(event) => set({ diversion_unsigned: event.target.checked })} />} />
+      )}
       <TextField size="small" label="Only faxes from" value={fromText} placeholder="+13035550100, +1303*"
         helperText="Fax numbers, separated by commas. End one with * to match every number that starts with it."
         onChange={(event) => {
@@ -116,13 +132,15 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
   const [from, setFrom] = useState('');
   const [account, setAccount] = useState('');
   const [subaddress, setSubaddress] = useState('');
+  const [forwarded, setForwarded] = useState('');
   const [at, setAt] = useState('');
   const [result, setResult] = useState<ReceivedExplainResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const run = () => {
     setError(null);
     api.explainReceived({ to_number: to.trim(), from_number: from.trim() || null, account_key: account || null, at: at || null,
-      ...(subaddress.trim() ? { subaddress: subaddress.trim() } : {}) })
+      ...(subaddress.trim() ? { subaddress: subaddress.trim() } : {}),
+      ...(forwarded.trim() ? { diverted_from: forwarded.trim() } : {}) })
       .then(setResult).catch((failure) => { setResult(null); setError(failure); });
   };
   return (
@@ -136,6 +154,8 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
         <TextField size="small" label="From" value={from} onChange={(event) => setFrom(event.target.value)} />
         <TextField size="small" label="Subaddress" value={subaddress} inputProps={{ maxLength: 20 }}
           onChange={(event) => setSubaddress(event.target.value)} />
+        <TextField size="small" label="Forwarded from" value={forwarded} inputProps={{ maxLength: 40 }}
+          onChange={(event) => setForwarded(event.target.value)} />
         {accounts.length > 1 && (
           <Box sx={{ minWidth: 200 }}>
             <SelectBox label="Received on" value={account}
@@ -150,6 +170,70 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
         <DeliveryError error={error} onClose={() => setError(null)} />
         {result && <Alert severity="info">{result.sentence}</Alert>}
       </Box>
+    </Paper>
+  );
+}
+
+// Certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs). A forwarding is verified only when the
+// carrier's signing certificate chains to one; the "Only calls forwarded from" condition takes only verified ones
+// unless its box says otherwise. Saved as the stir_trust_anchors setting through /admin/forwarded-trust, which
+// audits each change.
+export function ForwardedTrustPanel({ client, canWrite, onChange }: {
+  client: AdminAPIClient; canWrite: boolean;
+  // Told the trusted certificate authorities whenever they are read or changed (the rule fields' help follows them).
+  onChange?: (trust: ForwardedTrust) => void;
+}) {
+  const [trust, setTrust] = useState<ForwardedTrust | null>(null);
+  const [pem, setPem] = useState('');
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const show = (result: ForwardedTrust) => { setTrust(result); onChange?.(result); };
+  useEffect(() => {
+    client.listForwardedTrust().then(show).catch(setError);
+  }, [client]);
+  const change = (action: () => Promise<ForwardedTrust>) => {
+    setBusy(true);
+    setError(null);
+    action().then((result) => { show(result); setPem(''); setUrl(''); })
+      .catch(setError).finally(() => setBusy(false));
+  };
+  return (
+    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} aria-label="Forwarded calls you can verify" role="region">
+      <Typography variant="h6" component="h2">Forwarded calls you can verify</Typography>
+      {trust && <Typography variant="body2" sx={{ mb: 1 }}>{trust.sentence}</Typography>}
+      {trust && <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{trust.note}</Typography>}
+      <DeliveryError error={error} onClose={() => setError(null)} />
+      {trust && trust.anchors.length > 0 && (
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          {trust.anchors.map((anchor) => (
+            <Stack key={anchor.fingerprint} direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+              <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                {anchor.name}, valid until {new Date(anchor.valid_until).toLocaleDateString()}, from {anchor.source}
+                {' '}(fingerprint {anchor.short})
+              </Typography>
+              {canWrite && (
+                <Button size="small" color="error" disabled={busy}
+                  onClick={() => change(() => client.removeForwardedTrust(anchor.fingerprint))}>Remove</Button>
+              )}
+            </Stack>
+          ))}
+        </Stack>
+      )}
+      {canWrite && (
+        <Stack spacing={1}>
+          <TextField size="small" multiline minRows={3} label="Certificates to trust (PEM)" value={pem}
+            placeholder="-----BEGIN CERTIFICATE-----" onChange={(event) => setPem(event.target.value)} />
+          <TextField size="small" label="Or the address of a list you can reach" value={url} placeholder="https://"
+            onChange={(event) => setUrl(event.target.value)} />
+          <Box>
+            <Button variant="outlined" disabled={busy || (!pem.trim() && !url.trim())}
+              onClick={() => change(() => client.addForwardedTrust(pem.trim() ? { pem } : { url: url.trim() }))}>
+              Trust these
+            </Button>
+          </Box>
+        </Stack>
+      )}
     </Paper>
   );
 }

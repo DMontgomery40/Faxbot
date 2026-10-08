@@ -53,7 +53,7 @@ import httpx
 import sqlalchemy as sa
 
 from ..config_runtime import run_lifecycle_step
-from ..routing.database import read_connection, reflect, utcnow, write_transaction
+from ..routing.database import DeliveryStoreError, read_connection, reflect, utcnow, write_transaction
 from .crypto import DirectProtocolError, canonical, check_signed, parse_timestamp, signed, timestamp, verify
 
 
@@ -400,10 +400,15 @@ class NoticeStore:
 
 
 def subaddress_for(engine, job_id):
-    """The 20-digit notice ID to send as the T.33 subaddress for a notice fax, or None for any other fax."""
+    """The 20-digit notice ID to send as the T.33 subaddress for a notice fax, or None for any other fax.
+
+    Notice records that cannot be read give None, with the cause logged; anything else is a bug and raises.
+    """
     try:
         row = NoticeStore(engine).for_job(job_id)
-    except Exception:
+    except DeliveryStoreError as error:
+        logging.getLogger(__name__).warning('Fax %s: notice records could not be read, so it asks for no notice '
+                                            'subaddress: %s', job_id, error)
         return None
     return row['notice_id'] if row is not None else None
 

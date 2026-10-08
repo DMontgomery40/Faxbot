@@ -153,6 +153,9 @@ READS = {
     ("GET", "/routing/recommendations/plans"): ("settings:read", False),
     # The dry run: what a fax would cost on each route, before sending; nothing is sent or recorded.
     ("GET", "/routing/predict"): ("settings:read", False),
+    # The same with the document itself, its codings measured on its pages; nothing is kept. It draws the pages as
+    # sending does (Ghostscript on an upload), so only someone who may send faxes may ask.
+    ("POST", "/routing/predict"): ("fax:send", False),
 }
 
 

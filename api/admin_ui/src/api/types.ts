@@ -61,6 +61,20 @@ export interface NumberFormat {
   international: string;
 }
 
+// The fax coding of a sent fax's newest attempt (MH, MR, MMR or JBIG), measured on its own pages. sentence: which
+// coding went and why; measured_sentence: how long each coding's page data takes at 14,400 bit/s.
+export interface SentCoding {
+  requested: 'MH' | 'MR' | 'MMR' | 'JBIG';
+  negotiated: 'MH' | 'MR' | 'MMR' | 'JBIG' | null;
+  measured: boolean;
+  compared: string | null;
+  pages: number;
+  bits: Record<string, number>;
+  receiver_known: boolean;
+  sentence: string | null;
+  measured_sentence: string | null;
+}
+
 export interface FaxJob extends DeliveryMetadata {
   id: string;
   to_number: string;
@@ -83,6 +97,8 @@ export interface FaxJob extends DeliveryMetadata {
   } | null;
   // Pages Faxbot packed onto long pages, blank space it left out, or standard resolution it kept; one sentence each.
   page_layout?: SentPages | null;
+  // The fax coding the newest attempt asked for, measured on its pages, and what the call used.
+  coding?: SentCoding | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.
@@ -504,11 +520,32 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
+  // A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+  // failed or stated), and one sentence saying so.
+  diverted_from?: string | null;
+  diversion?: string | null;
+  diversion_text?: string | null;
   // Each time fetching the document stopped before it was set going again, oldest first.
   earlier_failures?: InboundEarlierFailure[];
   // The server's sentence about them, in the installation's time zone. The console builds its own from
   // earlier_failures in the viewer's (earlierFailuresText) and shows this only from a server without them.
   earlier_failures_text?: string | null;
+}
+
+// GET /admin/forwarded-trust: certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs).
+export interface ForwardedTrustAnchor {
+  fingerprint: string;
+  short: string;
+  name: string;
+  valid_until: string;
+  source: string;
+  added_on: string;
+}
+
+export interface ForwardedTrust {
+  anchors: ForwardedTrustAnchor[];
+  sentence: string;
+  note: string;
 }
 
 export interface InboundEarlierFailure {

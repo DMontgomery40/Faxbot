@@ -20,7 +20,7 @@ _ORDINARY_FIELDS = frozenset({
     'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours', 'case_suggestions_enabled',
     'plan_budgets', 'fax_friendly_documents',
     'max_file_size_mb', 'fax_disabled', 'fax_header', 'fax_station_id', 'fax_default_country',
-    'fax_reply_number', 'fax_reply_numbers', 'fax_send_only_numbers',
+    'fax_reply_number', 'fax_reply_numbers', 'fax_send_only_numbers', 'stir_trust_anchors',
     'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days', 'time_zone',
 })
 _PROVIDER_FIELDS = frozenset({

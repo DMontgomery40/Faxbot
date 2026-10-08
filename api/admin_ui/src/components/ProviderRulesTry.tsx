@@ -112,6 +112,11 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
       {result.page_layout && (
         <Typography variant="body2" sx={{ mb: 1 }}>Pages per sheet: {layoutWords(result.page_layout)}.</Typography>
       )}
+      {result.subaddress && (
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          The fax asks for subaddress {result.subaddress} at the recipient's number.
+        </Typography>
+      )}
       <TraceTable steps={result.trace} />
     </Box>
   );

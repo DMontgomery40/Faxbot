@@ -263,8 +263,14 @@ def _received_on(record, placed):
             label = account.label if account is not None else None
         except Exception:
             label = None
-    return {'account_key': key, 'account_label': label, 'subaddress': (placed or {}).get('subaddress'),
-            'urgent': bool((placed or {}).get('urgent'))}
+    found = {'account_key': key, 'account_label': label, 'subaddress': (placed or {}).get('subaddress'),
+             'urgent': bool((placed or {}).get('urgent'))}
+    # A forwarded call (X4): the number the network said it came from, and how far that was checked.
+    diverted, state = (placed or {}).get('diverted_from'), (placed or {}).get('diversion')
+    if diverted:
+        from ..inbound.diversion import sentence
+        found.update(diverted_from=diverted, diversion=state, diversion_text=sentence(diverted, state))
+    return found
 
 
 class AuthorizedInboundQueries:

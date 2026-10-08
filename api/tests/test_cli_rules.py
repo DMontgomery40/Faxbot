@@ -290,7 +290,8 @@ def test_rules_read_as_the_same_sentences_as_the_console(monkeypatch):
                   send_days=None, send_between=None, real_call_always=False, when_busy=None, pages_per_sheet=None,
                   alternate=None, choices=CHOICES, document=ACTIVE)
     written = set()
-    for options in ({'use': 'sip', 'when_busy': 'next', 'pages_per_sheet': 'one', 'alternate': 'only'},
+    for options in ({'use': 'sip', 'when_busy': 'next', 'pages_per_sheet': 'one', 'alternate': 'only',
+                     'subaddress': '2001'},
                     {'try_order': ['sip']}, {'cheapest': ['sip']}, {'site_accounts': 'sender', 'in_order': True},
                     {'automatic': True},
                     {'never': ['humblefax'], 'require_direct': True, 'require_encryption': True, 'cap': '0.5',

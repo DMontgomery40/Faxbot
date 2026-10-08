@@ -447,7 +447,8 @@ def test_a_machine_without_error_correction_is_lightened_on_any_route(installati
 def test_the_recipients_never_beats_always_and_its_always_beats_never(installation, tmp_path, billed):
     friendly.set_recipient_choice(installation, PEER, 'never', actor='synthetic')
     assert friendly.recipient_choice(installation, PEER) == 'never'
-    assert attempt(installation, tmp_path, TRUNK, choice='always') is None
+    # The pages go as they are (the coding measured for them may still go with the call: pages/coding.py).
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always'))
     friendly.set_recipient_choice(installation, PEER, 'always')
     assert attempt(installation, tmp_path, SINCH, choice='never', attempt_id='f' * 32).pdf.endswith('.pdf')
     assert friendly.set_recipient_choice(installation, PEER, None) is None
@@ -462,12 +463,15 @@ def test_never_for_the_chosen_recipient_holds_when_an_approved_toll_free_number_
                                                                                            billed):
     toll_free = '+18005550199'
     friendly.set_recipient_choice(installation, PEER, 'never')
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is None
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                     recipient=PEER))
     friendly.set_recipient_choice(installation, PEER, None)
     friendly.set_recipient_choice(installation, toll_free, 'never')
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is None
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                     recipient=PEER))
     friendly.set_recipient_choice(installation, toll_free, None)
-    assert attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free, recipient=PEER) is not None
+    assert not sending.unchanged(attempt(installation, tmp_path, TRUNK, choice='always', number=toll_free,
+                                         recipient=PEER))
 
 
 @needs_gs

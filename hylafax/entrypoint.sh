@@ -192,6 +192,7 @@ MaxDials:		1
 MaxTries:		1
 MaxBatchJobs:		1
 NotifyCmd:		/usr/local/lib/faxbot-engine/notify
+JobControlCmd:		/usr/local/lib/faxbot-engine/jobcontrol
 EOF
 chown uucp:uucp "$spool/etc/config"
 

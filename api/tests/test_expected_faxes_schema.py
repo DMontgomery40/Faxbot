@@ -1,4 +1,4 @@
-"""Actual 0052 to 0064 upgrade: expected fax tables (SQLite and PostgreSQL)."""
+"""Actual 0056 to 0064 upgrade: expected fax tables (SQLite and PostgreSQL)."""
 from datetime import datetime
 
 from alembic import command
@@ -13,8 +13,8 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 8, 9, 0)
-# The migration chain follows merge order: 0064 comes after 0052 (digital routes) on this branch.
-PRIOR = '0052_digital_routes'
+# The migration chain follows merge order: 0064 comes after 0056 (measured coding) on this branch.
+PRIOR = '0056_measured_codec'
 
 
 def _downgrade(engine, revision):
@@ -39,9 +39,9 @@ EXPECTATION = {'code': 'ACD34', 'reference': 'PO 483', 'reference_key': 'po 483'
                'state': 'open', 'window_start': NOW, 'version': 1, 'created_at': NOW, 'updated_at': NOW}
 
 
-def test_expected_faxes_follow_digital_routes():
+def test_expected_faxes_follow_measured_coding():
     assert schema_expected_faxes.REVISION == '0064_expected_faxes' == schema.HEAD
-    assert schema.DIGITAL_ROUTES == PRIOR
+    assert schema.MEASURED_CODEC == PRIOR
     assert schema_expected_faxes.TABLES <= schema.STRICT_TABLES
     assert len(schema_expected_faxes.TABLES) == 9
 

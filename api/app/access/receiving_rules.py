@@ -31,13 +31,23 @@ import sqlalchemy as sa
 
 
 OPTION_FIELDS = ('enabled', 'any_number', 'account_key', 'site_key', 'subaddress', 'from_numbers', 'days',
-                 'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days')
-CONDITION_FIELDS = ('account_key', 'site_key', 'subaddress', 'from_numbers', 'days', 'start_minute', 'end_minute')
+                 'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days',
+                 'diverted_from', 'diversion_unsigned')
+CONDITION_FIELDS = ('account_key', 'site_key', 'subaddress', 'from_numbers', 'days', 'start_minute', 'end_minute',
+                    'diverted_from')
+# How far a received call's diversion was checked (inbound/diversion.py): verified against a certificate authority
+# you trust (none yet), signed with a certificate whose issuer was not checked, signed but not checked, its signature
+# failed, or only a header stated it.
+DIVERSION_SIGNED, DIVERSION_UNANCHORED, DIVERSION_UNCHECKED, DIVERSION_FAILED, DIVERSION_STATED = (
+    'signed', 'unanchored', 'unchecked', 'failed', 'stated')
 DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 MAX_FROM = 50
 MAX_KEEP_DAYS = 36500
 _SUBADDRESS = re.compile(r'[0-9#*+]{1,20}')
 _TABLES = weakref.WeakKeyDictionary()
+
+
+DIVERSION_STATES = ('signed', 'unanchored', 'unchecked', 'failed', 'stated')
 
 
 class ReceivingRuleError(ValueError):
@@ -52,6 +62,10 @@ class ReceivedFacts:
     account_key: str | None = None
     site_key: str | None = None
     subaddress: str | None = None
+    # The number the call was forwarded from (X4), as the network stated it, and how far that was checked
+    # (DIVERSION_*). A diversion is the network's statement about the call, never proof of who sent the fax.
+    diverted_from: str | None = None
+    diversion: str | None = None
     # Naive UTC: the provider's reported time when it gave one, else when Faxbot recorded the fax.
     received_at: datetime | None = None
     time_source: str = 'import'
@@ -128,12 +142,14 @@ def row_options(row):
         'start_minute': row['start_minute'], 'end_minute': row['end_minute'],
         'email_connector_id': row['email_connector_id'], 'email_off': _flag(row['email_off']),
         'urgent': _flag(row['urgent']), 'keep_days': row['keep_days'],
+        'diverted_from': row.get('diverted_from'), 'diversion_unsigned': _flag(row.get('diversion_unsigned')),
     }
 
 
 DEFAULT_OPTIONS = {'enabled': True, 'any_number': False, 'account_key': None, 'site_key': None, 'subaddress': None,
                    'from_numbers': [], 'days': [], 'start_minute': None, 'end_minute': None,
-                   'email_connector_id': None, 'email_off': False, 'urgent': False, 'keep_days': None}
+                   'email_connector_id': None, 'email_off': False, 'urgent': False, 'keep_days': None,
+                   'diverted_from': None, 'diversion_unsigned': False}
 
 
 def clean_options(given, current=None, *, country='US', subaddress_column=True):
@@ -143,7 +159,7 @@ def clean_options(given, current=None, *, country='US', subaddress_column=True):
     for name, value in given.items():
         if name not in OPTION_FIELDS:
             continue
-        if name in ('enabled', 'any_number', 'email_off', 'urgent'):
+        if name in ('enabled', 'any_number', 'email_off', 'urgent', 'diversion_unsigned'):
             if type(value) is not bool:
                 raise ReceivingRuleError('Use true or false for the switches of a number rule.')
             options[name] = value
@@ -161,6 +177,17 @@ def clean_options(given, current=None, *, country='US', subaddress_column=True):
                 if not subaddress_column:
                     raise ReceivingRuleError('Upgrade the database before saving a subaddress.')
                 options[name] = clean
+        elif name == 'diverted_from':
+            if value in (None, ''):
+                options[name] = None
+            else:
+                try:
+                    options[name] = normalize_number(value.strip(), country=country) if isinstance(value, str) else None
+                except (InvalidNumber, ValueError):
+                    options[name] = None
+                if options[name] is None:
+                    raise ReceivingRuleError('Enter the number calls were forwarded from with its country code, such '
+                                             'as +13035550100.')
         elif name == 'from_numbers':
             if value is None:
                 value = []
@@ -214,6 +241,8 @@ def stored_values(options):
         'end_minute': options['end_minute'], 'email_connector_id': options['email_connector_id'],
         'email_off': int(options['email_off']), 'urgent': int(options['urgent']), 'keep_days': options['keep_days'],
         **({'subaddress': options['subaddress']} if 'subaddress' in options else {}),
+        **({'diverted_from': options['diverted_from'], 'diversion_unsigned': 1 if options.get('diversion_unsigned')
+            else None} if 'diverted_from' in options else {}),
     }
 
 
@@ -235,7 +264,7 @@ def ordered_rules(connection, access_tables, receiving, *, enabled_mailboxes_onl
     options = receiving['options'] if receiving is not None else None
     stored_names = ('place', 'version', 'enabled', 'any_number', 'account_key', 'site_key', 'subaddress',
                     'from_numbers', 'days', 'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent',
-                    'keep_days')
+                    'keep_days', 'diverted_from', 'diversion_unsigned')
     if options is not None:
         columns += [options.c[name].label('option_' + name) for name in stored_names if name in options.c]
         source = source.outerjoin(options, options.c.id == rules.c.id)
@@ -289,6 +318,8 @@ def conditions_hold(options, facts):
         return False
     if not _sender_matches(options['from_numbers'], facts.from_number):
         return False
+    if options.get('diverted_from') and not diversion_matches(options, facts):
+        return False
     if options['days'] or options['start_minute'] is not None:
         from ..rules.compile import Window
         window = Window(frozenset(DAYS.index(day) for day in (options['days'] or DAYS)), options['start_minute'],
@@ -296,6 +327,37 @@ def conditions_hold(options, facts):
         if not window.contains(*facts.local()):
             return False
     return True
+
+
+def diversion_matches(options, facts):
+    """Whether a call forwarded from the rule's number meets it: the forwarding is verified, or the rule also takes
+    one that is not (signed with an unchecked certificate, not checked, or unsigned). A failed signature never
+    matches."""
+    if not facts.diverted_from or ''.join(filter(str.isdigit, facts.diverted_from)) != ''.join(
+            filter(str.isdigit, options['diverted_from'])):
+        return False
+    if facts.diversion == DIVERSION_SIGNED:
+        return True
+    return bool(options.get('diversion_unsigned')) and facts.diversion in (DIVERSION_UNANCHORED, DIVERSION_UNCHECKED,
+                                                                           DIVERSION_STATED)
+
+
+def diversion_rules_exist(engine):
+    """Whether an enabled receiving rule depends on where a call was forwarded from (then its signature is
+    checked); False before migration 0054."""
+    found = tables(engine) if engine is not None else None
+    if found is None or 'diverted_from' not in found['options'].c:
+        return False
+    options = found['options']
+    with engine.connect() as connection:
+        return connection.execute(sa.select(options.c.id).where(options.c.diverted_from.is_not(None),
+                                                                 options.c.enabled == 1).limit(1)).first() is not None
+
+
+def uses_diversion(rules):
+    """Whether any enabled rule depends on where a call was forwarded from (then a diversion is checked)."""
+    return any((rule.get('options') or {}).get('enabled') and (rule.get('options') or {}).get('diverted_from')
+               for rule in rules)
 
 
 def choose(rules, facts, country):
@@ -355,6 +417,8 @@ def record_on(connection, receiving, inbound_id, rule, facts, now, *, mailbox_id
                   created_at=now)
     if 'subaddress' in routing.c:
         values['subaddress'] = normalize_subaddress(facts.subaddress)
+    if 'diverted_from' in routing.c and facts.diverted_from:
+        values['diverted_from'], values['diversion'] = facts.diverted_from[:32], facts.diversion
     connection.execute(routing.insert().values(**values))
 
 
@@ -386,8 +450,9 @@ def write_options(connection, receiving, rule_id, options, now, *, place=None):
     """Create or change one rule's options row; its version counts each change. ``place`` None keeps it."""
     table = receiving['options']
     values = stored_values({name: options[name] for name in OPTION_FIELDS if name in options})
-    if 'subaddress' not in table.c:
-        values.pop('subaddress', None)
+    for name in ('subaddress', 'diverted_from', 'diversion_unsigned'):
+        if name not in table.c:
+            values.pop(name, None)
     current = connection.execute(sa.select(table.c.version, table.c.place).where(table.c.id == rule_id)).first()
     if current is None:
         connection.execute(table.insert().values(id=rule_id, place=place if place is not None else 0, version=1,
@@ -439,7 +504,7 @@ def _join(parts):
 
 
 def explain(access_store, intake, values, *, to_number, from_number=None, account_key=None, subaddress=None,
-            at=None):
+            at=None, diverted_from=None, diversion=None):
     """Where a received fax with these facts would go (the console's "Try a received fax"); nothing is saved.
 
     ``intake`` is the email store (``intake.store.IntakeStore``), or None when email delivery can't be read.
@@ -456,7 +521,10 @@ def explain(access_store, intake, values, *, to_number, from_number=None, accoun
         site = account.site if account is not None else None
     moment = at if isinstance(at, datetime) else _local_moment(at, zone_name)
     facts = ReceivedFacts(to_number=to, from_number=sender, account_key=account_key, site_key=site,
-                          subaddress=subaddress, received_at=moment, time_zone=zone_name)
+                          subaddress=subaddress, received_at=moment, time_zone=zone_name,
+                          diverted_from=stored_number(diverted_from.strip(), country=country)
+                          if diverted_from and diverted_from.strip() else None,
+                          diversion=diversion if diversion in DIVERSION_STATES else DIVERSION_UNANCHORED)
     with access_store.engine.connect() as connection:
         rule = choose(ordered_rules(connection, access_store.tables, tables(access_store.engine)), facts, country)
     options = (rule or {}).get('options') or {}

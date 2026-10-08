@@ -129,6 +129,14 @@ class OutboundWorker:
             for member in claim.everyone:
                 self.paused[member.job_id] = until
             return False
+        except Exception:
+            if not preparing:
+                raise
+            # Any other error before the durable marker is a bug or an integration failure (such as a database
+            # whose migration did not run), and nothing was sent: the fax fails as a preparation failure with its
+            # cause logged, so its pre-data rules apply. Raised, it would be claimed, leased and recovered for ever.
+            logging.getLogger(__name__).exception('Fax %s could not be prepared; nothing was sent.', claim.job_id)
+            await run_lifecycle_step(lambda: self.store.fail_preparation(claim, category='preparation_failed'))
         return True
 
     async def run(self):

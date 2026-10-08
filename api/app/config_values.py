@@ -240,6 +240,9 @@ class ConfigurationValues(BaseModel):
     # never receive faxes here, such as your main office number; comma-separated E.164.
     fax_send_only_numbers: str = Field('', validation_alias='FAX_SEND_ONLY_NUMBERS', pattern=(
         r'^(?:\+[1-9][0-9]{6,14}(?:,\+[1-9][0-9]{6,14}){0,49})?$'))
+    # Certificate authorities you trust for forwarded calls (inbound/trust.py; STIR/SHAKEN STI-CAs): a JSON list of
+    # {"pem", "source", "added_on"}. A forwarding is verified only when its signing certificate chains to one.
+    stir_trust_anchors: str = Field('', validation_alias='STIR_TRUST_ANCHORS', max_length=1_000_000)
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
