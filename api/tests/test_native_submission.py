@@ -941,9 +941,12 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
                             "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
                             "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION", "FAXBOT_FAR_SUB",
-                            "FAXBOT_TRUNK"}, variable
+                            "FAXBOT_TRUNK", "FAXBOT_PEER"}, variable
     # The subaddress (hex) and the trunk key reach the shell only through FILTER.
     assert "${FILTER(0123456789abcdef,${FAXBOT_FAR_SUB})}" in command
+    # The partner of a peer fax call (its endpoint's set_var), checked whole on arrival and filtered again.
+    assert "peer=${FILTER(0123456789abcdef,${FAXBOT_PEER})}" in command
+    assert any('Set(FAXBOT_PEER=${IF($[${REGEX("^[a-f0-9]{32}$" ${FAXBOT_PEER})}]' in line for line in receive)
     # The trunk key was checked whole when the call came in (faxbot-inbound-receive), never caller-chosen.
     assert "trunk=${FAXBOT_TRUNK})" in command
     assert any('Set(FAXBOT_TRUNK=${IF($[${REGEX("^[a-z0-9][a-z0-9_-]*$" ${FAXBOT_TRUNK})}]' in line

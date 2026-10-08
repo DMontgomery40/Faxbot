@@ -1489,6 +1489,47 @@ def peers_fax_images(partner: str = typer.Argument(..., help='Partner organizati
     state.out().result(result, lambda out: out.line(result['detail']))
 
 
+@peers.command('tunnel-calls')
+def peers_tunnel_calls(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
+                       choice: str = typer.Argument(..., metavar='on|off',
+                                                    help="on takes the partner's fax calls inside your encrypted "
+                                                         'tunnel; off stops taking them.'),
+                       address: str = typer.Option(None, '--address', metavar='ADDRESS',
+                                                   help="The partner's address inside the tunnel, such as 10.20.0.2 or "
+                                                        '10.20.0.2:5070. Faxes to them go there when the tunnel is up.'),
+                       check: bool = typer.Option(False, '--check',
+                                                  help='Also check now whether a fax to them would go inside the '
+                                                       'tunnel.')):
+    """Fax calls with a partner inside an encrypted tunnel, with no carrier. You set up the WireGuard tunnel yourself,
+    inside the fax engine's network; Faxbot only places and takes calls through it."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls",
+                      json={'accept': choice == 'on', 'address': address or peer.get('peer_call_address')})
+    checked = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check") if check else None
+
+    def show(out):
+        out.line(result['detail'])
+        if result.get('peer_calls_text'):
+            out.line(result['peer_calls_text'])
+        if checked:
+            out.line(checked['sentence'])
+    state.out().result({'partner': result, 'check': checked}, show)
+
+
+@peers.command('tunnel-check')
+def peers_tunnel_check(partner: str = typer.Argument(..., help='Partner organization, fax number or id.')):
+    """Check now whether a fax to a partner would go inside the encrypted tunnel, as the fax engine's network sees
+    it. Places no call."""
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check")
+    state.out().result(result, lambda out: (out.line(result['sentence']), None if result['applies']
+                                            else out.line(result['note'])))
+
+
 @peers.command('add')
 def peers_add(card_file: str = typer.Argument(..., help="The partner's card file, or '-' for standard input.")):
     """Add a partner from their card. Then send them a check fax to confirm their number."""

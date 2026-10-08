@@ -2127,6 +2127,8 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `confirm`: Enter the code from a partner&#x27;s check fax...
 * `revoke`: Remove a partner.
 * `fax-images`: Accept faxes from a partner as the exact...
+* `tunnel-calls`: Fax calls with a partner inside an...
+* `tunnel-check`: Check now whether a fax to a partner would...
 * `deliveries`: List recent faxes sent to and received...
 * `introduce`: Introduce two of your partners to each other.
 * `may-introduce`: Set whether a partner may be introduced to...
@@ -2250,6 +2252,47 @@ $ faxbot recipients partners fax-images [OPTIONS] {partner} {on|off}
 
 * `partner`: Partner organization, fax number or id.  [required]
 * `on|off`: on (the default) accepts the partner&#x27;s faxes as the exact fax image, filed like any received fax; off accepts only original documents.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners tunnel-calls`
+
+Fax calls with a partner inside an encrypted tunnel, with no carrier. You set up the WireGuard tunnel yourself,
+inside the fax engine&#x27;s network; Faxbot only places and takes calls through it.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners tunnel-calls [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+* `on|off`: on takes the partner&#x27;s fax calls inside your encrypted tunnel; off stops taking them.  [required]
+
+**Options**:
+
+* `--address ADDRESS`: The partner&#x27;s address inside the tunnel, such as 10.20.0.2 or 10.20.0.2:5070. Faxes to them go there when the tunnel is up.
+* `--check`: Also check now whether a fax to them would go inside the tunnel.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners tunnel-check`
+
+Check now whether a fax to a partner would go inside the encrypted tunnel, as the fax engine&#x27;s network sees
+it. Places no call.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners tunnel-check [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
 
 **Options**:
 
@@ -4159,6 +4202,7 @@ $ faxbot providers rules add [OPTIONS] {name}
 * `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
 * `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
 * `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--subaddress DIGITS`: The department or mailbox to ask for at the recipient&#x27;s number (a subaddress, up to 20 digits). Their fax machine must take subaddresses. A setting of a rule that says how to send: add --automatic to keep the usual route.
 * `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
 * `--before RULE`: Put it before this rule.
 * `--off`: Add it switched off.
@@ -4203,6 +4247,7 @@ $ faxbot providers rules update [OPTIONS] {RULE}
 * `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
 * `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
 * `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--subaddress DIGITS`: The department or mailbox to ask for at the recipient&#x27;s number (a subaddress, up to 20 digits). Their fax machine must take subaddresses. A setting of a rule that says how to send: add --automatic to keep the usual route.
 * `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
 * `--help`: Show this message and exit.
 

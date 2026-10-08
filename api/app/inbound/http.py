@@ -798,6 +798,11 @@ def receive_handover(request: Request, payload: dict, root: str):
     address = remote_address(payload)
     if address:
         report['remote_address'] = address
+    # A peer fax call: an enrolled partner's Faxbot called inside the encrypted tunnel, with no carrier
+    # (direct/peer_call.py; its endpoint names the partner). Kept with the fax and its call record.
+    peer = payload.get('peer')
+    if isinstance(peer, str) and re.fullmatch(r'[a-f0-9]{32}', peer):
+        report['peer_call'] = peer
     snapshot = request.scope.get('faxbot.configuration')
     runtime = getattr(request.app.state, 'configuration_runtime', None)
     binding = (account_binding(runtime.manager.store, snapshot.active, account_key)

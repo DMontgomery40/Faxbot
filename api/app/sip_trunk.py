@@ -20,6 +20,7 @@ the private file written with mode 0600; errors name fields, never values.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import os
 from pathlib import Path
 import re
@@ -940,15 +941,37 @@ def applied_public_address(values):
         return None
 
 
-def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
+def peer_sections(values, peers=None) -> str:
+    """The partners' peer fax call sections for pjsip.conf (direct/peer_call.py), '' for none.
+
+    ``peers`` None reads the enrolled partners from Faxbot's database; when it cannot be read the file is written
+    without them (logged), and peer fax calls wait for the next write.
+    """
+    from .direct import peer_call
+    from .routing.database import DeliveryStoreError
+    if peers is None:
+        from .ami import _database
+        try:
+            peers = peer_call.installation_peers(_database())
+        except DeliveryStoreError as error:
+            logging.getLogger(__name__).warning('Partners could not be read for peer fax calls (%s).', error)
+            peers = []
+    return peer_call.render_peers(peers)
+
+
+def write_asterisk_configuration(values, *, inbound_secret=None, peers=None) -> Path:
     """Atomically write the private files the Asterisk container reads.
 
-    ``pjsip.conf`` is loaded when Asterisk starts. ``inbound.secret`` holds the
+    ``pjsip.conf`` is loaded when Asterisk starts: the trunks, then any partners' peer fax calls
+    (``peer_sections``). ``inbound.secret`` holds the
     shared secret the inbound dialplan sends with each received fax; the
     console's Apply always passes one (Faxbot creates it when none is set). It
     is removed only when no secret is known at all.
     """
     text = render_pjsip(values)
+    peered = peer_sections(values, peers)
+    if peered:
+        text += '\n\n' + peered
     target = configuration_path(values)
     target.parent.mkdir(parents=True, exist_ok=True, mode=SHARED_FOLDER_MODE)
     _write_private(target, text)

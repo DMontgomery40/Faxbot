@@ -813,7 +813,9 @@ class SipCallRecords:
             'remote_station_id': _station(call.get('remote_station_id_b64')), 'error_cause': None,
             'fax_preference': 0, 'sip_call_id': _sip_call_id(call.get('sip_call_id_b64')),
             'trunk_key': _trunk(call.get('trunk')), 'created_at': now, 'updated_at': now}
-
+        # A peer fax call from an enrolled partner inside its tunnel, with no carrier (direct/peer_call.py).
+        if _peer(call.get('peer')):
+            record['peer_id'] = _peer(call.get('peer'))
         return self._insert_inbound(record)
 
     def record_inbound_event(self, event, *, preset=None, now=None):
@@ -893,7 +895,8 @@ class SipCallRecords:
                     sip_call_id=record['sip_call_id']))
             if existing is not None:
                 return existing['id']
-            connection.execute(table.insert().values(**record))
+            connection.execute(table.insert().values(**{key: value for key, value in record.items()
+                                                        if key in table.c or key != 'peer_id'}))
             return record['id']
         return self._write(apply)
 

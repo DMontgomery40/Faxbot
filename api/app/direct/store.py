@@ -167,6 +167,19 @@ class DirectStore:
                 updated_at=now))
             return self.get_peer(peer_id, connection)
 
+    def set_peer_calls(self, peer_id, *, accept, address):
+        """Whether you take peer fax calls from a partner, and its address inside the tunnel (a private address,
+        checked by the caller); the partner is told your choice again. None clears the address."""
+        now = utcnow()
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if peer is None or peer['state'] == 'revoked':
+                raise DirectConflict('This partner is not enrolled.')
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                receive_peer_calls=1 if accept else None, peer_call_address=address, told_partner_at=None,
+                version=peer['version'] + 1, updated_at=now))
+            return self.get_peer(peer_id, connection)
+
     def untold(self, *, limit=50):
         """Enrolled partners that still have to be told, signed, what we accept from them."""
         with read_connection(self.engine) as connection:

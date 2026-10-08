@@ -103,10 +103,10 @@ WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
-COPY bin/faxbot-inbound-notify bin/faxbot-public-address /usr/local/bin/
+COPY bin/faxbot-inbound-notify bin/faxbot-public-address bin/faxbot-peer-route /usr/local/bin/
 # What Asterisk writes is its own; its configuration stays root's, readable by its group
 # (start.sh renders the rest of it as root at every start).
-RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address \
+RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address /usr/local/bin/faxbot-peer-route \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
     && chown -R asterisk:asterisk /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk \
     && chown -R root:asterisk /etc/asterisk && chmod -R u=rwX,g=rX,o= /etc/asterisk \

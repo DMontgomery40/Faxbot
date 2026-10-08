@@ -10,6 +10,11 @@ from .config import settings
 
 
 LOGIN_TIMEOUT_SECONDS = 10.0
+# How long a peer fax call's route check inside Asterisk may take (peer_route).
+PEER_ROUTE_TIMEOUT_SECONDS = 5.0
+PEER_ADDRESS = re.compile(r"[0-9A-Fa-f.:]{2,45}")
+# A partner's peer fax call endpoint (direct/peer_call.py); never a trunk's, so neither path can reach the other.
+PEER_ENDPOINT = re.compile(r"peer-[a-f0-9]{32}-endpoint")
 ORIGINATE_RESPONSE_TIMEOUT_SECONDS = 10.0
 STATUS_TIMEOUT_SECONDS = 5.0
 AMI_MAX_LINE_BYTES = 1024
@@ -77,6 +82,17 @@ def subaddress_text(value) -> Optional[str]:
     return text if SUBADDRESS.fullmatch(text) else None
 
 
+def peer_route_fields(token: str, address: str) -> Dict[str, str]:
+    """The Originate that runs one peer fax call route check in Asterisk ([faxbot-peer-route]); nothing is dialed."""
+    if not isinstance(address, str) or not PEER_ADDRESS.fullmatch(address):
+        raise ValueError("Unsupported peer address")
+    if not re.fullmatch(r"[0-9a-f]{32}", token or ""):
+        raise ValueError("Unsupported check")
+    return {"Action": "Originate", "ActionID": "faxbot-route:" + token, "Channel": "Local/s@faxbot-peer-route",
+            "Application": "Wait", "Data": "1", "Async": "true",
+            "Variable": f"FAXBOT_CHECK={token},FAXBOT_PEER_ADDRESS={address}"}
+
+
 def requested_subaddress(fields: Dict[str, str]) -> Optional[str]:
     """The subaddress an Originate's fields ask for, or None."""
     found = SUBADDRESS_VARIABLE.search(fields.get("Variable", ""))
@@ -101,6 +117,7 @@ def prepare_originate_fields(
     audio: bool = False,
     endpoint: str = "trunk-endpoint",
     subaddress: Optional[str] = None,
+    peer: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -118,6 +135,9 @@ def prepare_originate_fields(
     machine for (patch 0005, ``FAXBOT_TX_SUB``): digits and +, # and *, at most
     20. It is requested, never promised: the engine sends it only when the far
     end's machine says it takes one.
+    ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
+    direct/peer_call.py): the call goes there, inside the tunnel, instead of
+    over ``endpoint``. The caller checked the tunnel first.
     Async Originate ignores PreDialGoSub in Asterisk 22, so the header is set
     as an Originate variable, which Asterisk applies to the new channel before
     the INVITE is sent.
@@ -137,6 +157,8 @@ def prepare_originate_fields(
         station_id = caller_id
     if not isinstance(endpoint, str) or not re.fullmatch(r"trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint", endpoint):
         raise ValueError("Unsupported AMI trunk")
+    if peer is not None and (not isinstance(peer, str) or not PEER_ENDPOINT.fullmatch(peer)):
+        raise ValueError("Unsupported AMI partner")
     if not isinstance(fax_preference, bool):
         raise ValueError("Unsupported AMI fax preference")
     if not isinstance(tiff_path, str) or not re.fullmatch(
@@ -189,7 +211,7 @@ def prepare_originate_fields(
         "ActionID": (
             f"faxbot:{job_id}:{attempt_id}" if attempt_id is not None else str(uuid4())
         ),
-        "Channel": f"PJSIP/{dial}@{endpoint}",
+        "Channel": f"PJSIP/{dial}@{peer or endpoint}",
         "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
@@ -351,11 +373,12 @@ def trunk_values(values, trunk=None):
 
 
 def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
-                         choice=None, trunk=None):
+                         choice=None, trunk=None, peer=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     ``trunk`` is the trunk account the fax goes over (its key); None or ``sip`` is the first trunk. The call
-    then uses that trunk's caller ID, number format and endpoint.
+    then uses that trunk's caller ID, number format and endpoint. ``peer`` (direct/peer_call.PeerCall) sends it
+    to an enrolled partner's Asterisk inside the tunnel instead, with Internet Aware Fax.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
@@ -386,6 +409,10 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     subaddress = fax_subaddress(job_id)
     if subaddress:
         limits["subaddress"] = subaddress
+    if peer is not None:
+        # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
+        # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
+        limits.update(peer=peer.endpoint, iaf="peer")
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=header, attempt_id=attempt_id,
@@ -395,7 +422,8 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
         header=header, attempt_id=attempt_id,
         station_id=identity[1] if identity is not None else (choice.number or None),
-        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, endpoint=endpoint, **limits)
+        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest),
+        fax_preference=trunk.fax_preference and peer is None, endpoint=endpoint, **limits)
 
 
 async def _login(
@@ -446,6 +474,8 @@ class AMIClient:
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
         self._queries: Dict[str, Dict[str, object]] = {}
+        # Peer fax call route checks waiting for their FaxPeerRoute event, by check token (peer_route).
+        self._route_waiters: Dict[str, asyncio.Future] = {}
         # Why the last connection attempt failed ("login_rejected" or
         # "unreachable"); None after a successful login or before any attempt.
         self.problem: Optional[str] = None
@@ -613,6 +643,10 @@ class AMIClient:
             self._emit("FaxScreened", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxframes":
             self._emit("FaxFrames", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxpeerroute":
+            waiter = self._route_waiters.get(fields.get("check", ""))
+            if waiter is not None and not waiter.done():
+                waiter.set_result(fields.get("route", ""))
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -677,6 +711,32 @@ class AMIClient:
             raise PermissionError("AMI peer list refused")
         return sum(1 for event in events if str(event.get("ObjectName", "")).startswith(prefix)
                    and str(event.get("Status", "")).upper().startswith("OK"))
+
+    async def peer_route(self, address: str):
+        """(interface, kind) the route from Asterisk's own network to ``address`` leaves through, or None.
+
+        Asked inside the Asterisk container, where the fax call's packets start (direct/peer_call.py): a Local
+        channel runs ``[faxbot-peer-route]``, which runs ``faxbot-peer-route`` and reports a FaxPeerRoute event,
+        then hangs up. Nothing is dialed. None when Asterisk cannot say within PEER_ROUTE_TIMEOUT_SECONDS; raises
+        ConnectionError or TimeoutError when the manager connection refuses the check.
+        """
+        token = uuid4().hex
+        fields = peer_route_fields(token, address)
+        waiter = asyncio.get_running_loop().create_future()
+        self._route_waiters[token] = waiter
+        try:
+            await self._send_action(fields)
+            try:
+                async with asyncio.timeout(PEER_ROUTE_TIMEOUT_SECONDS):
+                    route = await waiter
+            except TimeoutError:
+                return None
+        finally:
+            self._route_waiters.pop(token, None)
+            if not waiter.done():
+                waiter.cancel()
+        parts = str(route).strip().split("/")
+        return (parts[0], parts[1]) if len(parts) == 2 and parts[0] and parts[0] != "none" else None
 
     async def db_put(self, family: str, key: str, value: str):
         """Store one value in Asterisk's database (the SSL Fax engine's call plans); raises when not stored."""
@@ -768,8 +828,12 @@ class AMIClient:
         the action is written, so an unacknowledged call still leaves a record.
         ``trunk`` is the trunk account the fax goes over (None: the first trunk).
         """
+        # A fax to an enrolled partner whose Faxbot takes peer fax calls goes inside the encrypted tunnel when the
+        # tunnel is up (checked in Asterisk's own network just now); otherwise by the carrier, as before.
+        from .direct import peer_call
+        peer = await peer_call.call_for(self, settings, _database(), dest)
         fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call,
-                                      trunk=trunk)
+                                      trunk=trunk, peer=peer)
         own, _ = trunk_values(settings, trunk)
         submission = {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
@@ -780,6 +844,8 @@ class AMIClient:
         subaddress = requested_subaddress(fields)
         if subaddress:
             submission["Subaddress"] = subaddress
+        if peer is not None:
+            submission["Peer"] = peer.peer_id
         if trunk and trunk != "sip":
             submission["Trunk"] = trunk
         learned = getattr(call, "learned", None)

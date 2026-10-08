@@ -112,6 +112,8 @@ partners.command('challenge')(delivery.peers_challenge)
 partners.command('confirm')(delivery.peers_confirm)
 partners.command('revoke')(delivery.peers_revoke)
 partners.command('fax-images')(delivery.peers_fax_images)
+partners.command('tunnel-calls')(delivery.peers_tunnel_calls)
+partners.command('tunnel-check')(delivery.peers_tunnel_check)
 partners.command('deliveries')(delivery.direct_deliveries)
 partners.add_typer(relay.relay, name='relay')
 # Find partners: suggestions from calls, introductions and trusted directories, and publishing your number.
