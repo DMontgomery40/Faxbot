@@ -22,7 +22,7 @@ function efax(changes: Partial<PlanAllocationPlan> = {}): PlanAllocationPlan {
       { job_id: 'synthetic-small', to: '+12025550141', pages: 60, units: 60, queued_at: '2026-10-20T15:00:00',
         urgent: false, send_by: null, outcome: 'other', route: 'sip', route_label: 'Telnyx',
         cost: [{ currency: 'USD', amount: '0.50' }],
-        sentence: 'Goes by Telnyx for about $0.50, so the pages go where they save more.' },
+        sentence: 'Goes by Telnyx for about $0.50, so the plan\'s pages go where they save more.' },
       { job_id: 'synthetic-large', to: '+12025550142', pages: 100, units: 100, queued_at: '2026-10-20T15:01:00',
         urgent: false, send_by: null, outcome: 'plan', route: 'efax', route_label: 'eFax', cost: [],
         sentence: 'Gets 100 pages of the plan; by Sinch it would cost about $50.' },
@@ -48,7 +48,7 @@ describe('Costs → Prices & plans → Who gets your plans’ last pages', () =>
     const rows = within(plan).getAllByRole('row');
     expect(rows).toHaveLength(3);
     expect(within(rows[1]).getByText('Goes another way')).toBeTruthy();
-    expect(within(rows[1]).getByText('Goes by Telnyx for about $0.50, so the pages go where they save more.')).toBeTruthy();
+    expect(within(rows[1]).getByText('Goes by Telnyx for about $0.50, so the plan\'s pages go where they save more.')).toBeTruthy();
     expect(within(rows[2]).getByText('Gets the plan')).toBeTruthy();
     expect(within(plan).getByText(/saves about \$49\.50 against giving them to the waiting faxes in turn/)).toBeTruthy();
     expect(within(plan).getByText(/Faxbot keeps 40 pages for faxes like the ones you usually send/)).toBeTruthy();

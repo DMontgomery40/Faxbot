@@ -667,6 +667,15 @@ def _seconds(routes, values, key, number, pages, now):
     return found
 
 
+def carries(routes, values, key, number, pages, now):
+    """Whether plan ``key`` can carry ``pages`` pages to ``number``: it prices that kind of number, does not refuse
+    it, and takes that many pages in one fax (the shared predictor's facts)."""
+    from .predict_facts import facts_for
+    facts = facts_for(key, number, now=now, engine=routes.engine, values=values)
+    terms = facts.terms
+    return not (terms is None or facts.refused or (terms.max_pages_per_fax and pages > terms.max_pages_per_fax))
+
+
 def _units(routes, values, key, budget, unit, number, pages, now):
     """A fax's units on the plan's first dim: pages (the greater of pages and started periods on the line for a
     plan that counts both, such as HumbleFax), or started minutes for a minute allowance."""
@@ -722,6 +731,12 @@ def feature(routes, values, fax, plans, now, *, dial=None):
     cached = _FEATURES.get(memo) if dial is None else None
     if cached is not None:
         return cached
+    # A plan that cannot carry this fax (a kind of number it does not call, more pages than it takes) is no plan
+    # for it: it is neither given its room nor freed of its price.
+    plans = [plan for plan in plans if carries(routes, values, plan.key, fax.to_number, fax.pages, now)]
+    keys = tuple(plan.key for plan in plans)
+    if not keys:
+        return Feature('never')
     try:
         pinned = envelopes.load(routes.engine, fax.job_id)
     except envelopes.UnreadableDecision:
@@ -801,13 +816,13 @@ def history(routes, values, scarce, others, now):
                          .join(j, j.c.id == first.c.job_id))
             .where(c.c.route.not_in(('local', 'direct')), sa.not_(c.c.route.like('relay.%')))
             .order_by(first.c.at.desc()).limit(HISTORY_READ)).all()
-    carries, priced, found = {}, {}, []
+    carried, priced, found = {}, {}, []
     for row in rows:
         pages = max(1, int(row.pages or 1))
-        if row.to_number not in carries:
+        if row.to_number not in carried:
             facts = facts_for(scarce.key, row.to_number, now=now, engine=routes.engine, values=values)
-            carries[row.to_number] = None if facts.terms is None or facts.refused else facts.terms
-        terms = carries[row.to_number]
+            carried[row.to_number] = None if facts.terms is None or facts.refused else facts.terms
+        terms = carried[row.to_number]
         if terms is None or (terms.max_pages_per_fax and pages > terms.max_pages_per_fax):
             continue
         units = _units(routes, values, scarce.key, budget, scarce.unit, row.to_number, pages, now)
@@ -1201,7 +1216,8 @@ def view(routes, values, now=None):
             else:
                 outcome = 'other'
                 sentence = (f'Goes by {route_label(other)} for about '
-                            f'{short_money_text(claimant.alternative, currency)}, so the pages go where they save more.')
+                            f"{short_money_text(claimant.alternative, currency)}, so the plan's {unit} go where they "
+                            'save more.')
             if outcome in ('plan', 'forced'):
                 given_units += units
             faxes.append({'job_id': claimant.job_id, 'to': fax.to_number, 'pages': fax.pages, 'units': units,
@@ -1236,15 +1252,15 @@ def view(routes, values, now=None):
         bound = None
         if found.solution is not None and not found.solution.exact and found.solution.bound_micros is not None:
             gap = max(0, found.solution.bound_micros - found.solution.saving_micros)
-            bound = (f'With this many waiting faxes Faxbot shares the pages by what each saves per page; the best '
-                     f'possible sharing would save at most about {short_money_text(gap, currency)} more.')
+            bound = (f'With this many waiting faxes Faxbot shares the {unit} by what each saves per {unit[:-1]}; '
+                     f'the best possible sharing would save at most about {short_money_text(gap, currency)} more.')
         plans.append({
             'route': plan.key, 'name': label, 'unit': unit, 'room': room, 'on_their_way': plan.in_flight[0],
             'renews_on': plan.left.period.next_day.isoformat(), 'reserve': reserve,
             'reserve_sentence': _reserve_sentence(plan, reserve, found.curves.get(plan.key)),
             'sentence': sentence, 'left_sentence': plan.left.sentence,
             'saving': _money(saving, currency),
-            'saving_sentence': (f'Sharing the pages this way saves about {short_money_text(saving, currency)} against '
+            'saving_sentence': (f'Sharing the {unit} this way saves about {short_money_text(saving, currency)} against '
                                 'giving them to the waiting faxes in turn (estimate).') if saving else None,
             'bound_sentence': bound, 'faxes': faxes})
     return {'plans': plans, 'estimate': True,
