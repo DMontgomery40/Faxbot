@@ -64,8 +64,8 @@ interface Mailbox { id: string; label: string; enabled: boolean; resource_id: st
 interface Rule { id: string; to_number: string; mailbox_id: string; version: number; [option: string]: unknown }
 
 // A number rule's receiving options (design §4.9), each optional on create and change.
-const RECEIVING_OPTIONS = ['position', 'enabled', 'any_number', 'account_key', 'from_numbers', 'days', 'start_minute',
-  'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days'];
+const RECEIVING_OPTIONS = ['position', 'enabled', 'any_number', 'account_key', 'site_key', 'subaddress', 'from_numbers',
+  'days', 'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days'];
 const optionsIn = (body: Json) => Object.fromEntries(RECEIVING_OPTIONS.filter((key) => key in body).map((key) => [key, body[key]]));
 interface Assignment { id: string; subject: { kind: 'principal' | 'group'; id: string }; role_id: string; resource_id: string; version: number }
 

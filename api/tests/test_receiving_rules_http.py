@@ -56,7 +56,7 @@ def test_number_rule_options_are_saved_listed_placed_and_explained(http, isolate
     assert (sub['position'], sub['subaddress'], sub['urgent'], sub['keep_days']) == (1, '2001', True, 30)
     duplicate = http.post('/access/inbound-rules', headers=ADMIN, json={
         'to_number': TO, 'mailbox_id': billing, 'expected_policy_version': version(http)})
-    assert duplicate.status_code == 400
+    assert (duplicate.status_code, duplicate.json()['detail']) == (409, f'{TO} already has a rule that takes all its faxes. Give this rule a condition, such as a subaddress or a sender, or change that rule.')
     refused = http.post('/access/inbound-rules', headers=ADMIN, json={
         'to_number': TO, 'mailbox_id': billing, 'start_minute': 60, 'expected_policy_version': version(http)})
     assert (refused.status_code, refused.json()['detail']) == (400, 'Give both a start and an end time, or neither.')
@@ -91,6 +91,18 @@ def test_a_stated_subaddress_places_a_trunk_fax_and_is_recorded(http, isolated_i
     assert [faxes[fax]['mailbox'] for fax in (from_frame, from_text, unstated)] == ['Billing', 'Billing', 'Front desk']
     assert [faxes[fax]['subaddress'] for fax in (from_frame, from_text, unstated)] == ['2001', '2001', None]
     assert faxes[from_frame]['account_key'] == 'sip'
+
+
+def test_a_received_engine_calls_internet_fax_address_is_kept_on_the_import_for_discovery():
+    import base64
+    from app.inbound.http import remote_address
+    encode = lambda text: {'engine': {'engine': 'hylafax', 'remote_address_b64': base64.b64encode(text).decode()}}  # noqa: E731
+    assert remote_address(encode(b'fax.partner.example:10443')) == 'fax.partner.example:10443'
+    # Anything that is not a host and port (a passcode, a path, a quote) is not kept.
+    assert remote_address(encode(b'secret@fax.partner.example:10443')) is None
+    assert remote_address(encode(b'fax.example/"x"')) is None
+    assert remote_address({'engine': {'remote_address_b64': 'not base64!'}}) is None
+    assert remote_address({}) is None
 
 
 def test_the_frames_row_supplies_the_subaddress_when_the_hand_over_has_none(http, isolated_installation, tmp_path):

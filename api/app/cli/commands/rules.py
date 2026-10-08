@@ -400,8 +400,8 @@ def receiving_sentence(rule, names, connectors=None):
     return sentence + '.'
 
 
-RECEIVING_OPTION_KEYS = ('enabled', 'any_number', 'account_key', 'from_numbers', 'days', 'start_minute', 'end_minute',
-                         'email_connector_id', 'email_off', 'urgent', 'keep_days')
+RECEIVING_OPTION_KEYS = ('enabled', 'any_number', 'account_key', 'site_key', 'subaddress', 'from_numbers', 'days',
+                         'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days')
 
 KEEP_DAYS_NOTE = ('This is when cleanup removes the fax from Faxbot. It is not a legal hold, and it does not promise to '
                   'keep the fax that long.')

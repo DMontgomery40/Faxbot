@@ -450,17 +450,27 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
   }, [client, canReadSettings]);
   useEffect(() => { void loadExtras(); }, [loadExtras]);
 
+  // One row per number rule: a number can have several (one per subaddress or sender), and a rule for any of
+  // your numbers has none. A carried number joins the first rule for it, or gets a row of its own.
   const rows = useMemo<NumberRow[]>(() => {
+    const list: NumberRow[] = [];
     const byNumber = new Map<string, NumberRow>();
     for (const rule of data?.rules ?? []) {
-      byNumber.set(comparableNumber(rule.to_number) || rule.to_number, { number: rule.to_number, rule, carriers: [] });
+      const row: NumberRow = { number: rule.to_number, rule, carriers: [] };
+      list.push(row);
+      const key = comparableNumber(rule.to_number) || rule.to_number;
+      if (rule.to_number && !byNumber.has(key)) byNumber.set(key, row);
     }
     for (const entry of carried) {
-      const row = byNumber.get(entry.number) ?? { number: entry.number, rule: null, carriers: [] };
+      let row = byNumber.get(entry.number);
+      if (!row) {
+        row = { number: entry.number, rule: null, carriers: [] };
+        byNumber.set(entry.number, row);
+        list.push(row);
+      }
       row.carriers.push(entry);
-      byNumber.set(entry.number, row);
     }
-    return [...byNumber.values()];
+    return list;
   }, [data, carried]);
 
   const emailText = (number: string) => {
@@ -549,8 +559,8 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
               </TableHead>
               <TableBody>
                 {rows.map((row) => (
-                  <TableRow key={row.number} hover>
-                    <TableCell>{row.number}</TableCell>
+                  <TableRow key={row.rule?.id ?? row.number} hover>
+                    <TableCell>{row.number || 'Any of your numbers'}</TableCell>
                     <TableCell>
                       {row.carriers.length === 0 ? <Typography variant="body2" color="text.secondary">-</Typography>
                         : row.carriers.map((entry) => (

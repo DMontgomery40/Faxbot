@@ -49,6 +49,13 @@ log=log/c$commid
 if [ -z "$subaddr" ] && [ -z "$queued" ] && [ -f "$log" ]; then
   subaddr=$(sed -n 's/.*, subaddress <\([0-9#*+ ]*\)>.*/\1/p' "$log" | head -1 | tr -cd '0-9#*+' | cut -c1-20)
 fi
+# The far end's internet fax address (its TSA, ssl://...) when it offered one, for partner discovery, as sent
+# calls report it: host and port only, never the passcode in front of the last @.
+tsa=''
+if [ -z "$queued" ] && [ -f "$log" ]; then
+  tsa=$(sed -n 's/.*REMOTE TSA "ssl:\/\/\([^"]*\)".*/\1/p' "$log" | head -1)
+  tsa=$(printf '%s' "${tsa##*@}" | tr -cd 'A-Za-z0-9.:-' | cut -c1-255)
+fi
 sslfax=false offered=''
 # Without its communication ID the call has no session log of its own: whether SSL Fax ran is unknown.
 [ -z "$queued" ] || sslfax=unknown
@@ -77,5 +84,5 @@ temporary=$state/received/.$key.ticket
   printf 'reason64=%s\nstation64=%s\nrate64=%s\nformat64=%s\n' \
     "$(b64 "$reason")" "$(b64 "$station")" "$(b64 "$rate")" "$(b64 "$format")"
   printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$received"
-  printf 'negotiation64=%s\nsubaddr=%s\n' "$negotiation" "$subaddr"
+  printf 'negotiation64=%s\nsubaddr=%s\nremote_address64=%s\n' "$negotiation" "$subaddr" "$(b64 "$tsa")"
 } > "$temporary" && mv -f "$temporary" "$ticket"

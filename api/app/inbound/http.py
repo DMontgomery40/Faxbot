@@ -732,6 +732,21 @@ def stated_subaddress(payload, engine=None):
     return None
 
 
+def remote_address(payload):
+    """The far end's internet fax address (host:port from its TSA) a received SSL Fax engine call reported, or
+    None. Partner discovery reads it from the fax's import report (``remote_address``); it is a hint, never
+    identity, and carries no passcode."""
+    engine = payload.get('engine') if isinstance(payload, dict) else None
+    encoded = engine.get('remote_address_b64') if isinstance(engine, dict) else None
+    if not isinstance(encoded, str) or not encoded or len(encoded) > 400:
+        return None
+    try:
+        text = base64.b64decode(encoded, validate=True).decode('ascii').strip()
+    except (ValueError, UnicodeError, binascii.Error):
+        return None
+    return text if re.fullmatch(r'[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?', text) else None
+
+
 def receive_handover(request: Request, payload: dict, root: str):
     """Store one received fax a fax engine handed over; its image must sit inside ``root``.
 
@@ -776,6 +791,9 @@ def receive_handover(request: Request, payload: dict, root: str):
     subaddress = stated_subaddress(payload, store.engine)
     if subaddress:
         report['subaddress'] = subaddress
+    address = remote_address(payload)
+    if address:
+        report['remote_address'] = address
     snapshot = request.scope.get('faxbot.configuration')
     runtime = getattr(request.app.state, 'configuration_runtime', None)
     binding = (account_binding(runtime.manager.store, snapshot.active, account_key)

@@ -647,6 +647,18 @@ def _current_options(service, rule_id):
         return receiving, (options_on(connection, receiving, [rule_id]).get(rule_id) or (None,))[0]
 
 
+async def _rule_mutation(mutate, view, number):
+    """A number-rule change; a second rule for a number that already has a rule without conditions is refused
+    with a sentence about the number (reached only after the permission check, so it reveals no mailbox)."""
+    try:
+        return await _mutate(mutate, view, 'rule')
+    except MutationDeniedError as denied:
+        if denied.code != 'duplicate':
+            raise
+    raise HTTPException(409, detail=f'{number or "This number"} already has a rule that takes all its faxes. Give '
+                                    'this rule a condition, such as a subaddress or a sender, or change that rule.')
+
+
 async def _clean_rule_options(request, service, body, rule_id=None):
     """(complete cleaned options or None when none were given, position). 400 with a sentence when refused."""
     from .receiving_rules import ReceivingRuleError, clean_options
@@ -690,10 +702,10 @@ async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depen
     options, position = await _clean_rule_options(request, service, body)
     # An "any number" rule matches every receiving number and stores none.
     number = '' if options and options['any_number'] else _fax_number(body.to_number, request)
-    return await _mutate(lambda: service.mutations.create_inbound_rule(actor,
+    return await _rule_mutation(lambda: service.mutations.create_inbound_rule(actor,
         InboundRuleValues(number, body.mailbox_id),
         expected_policy_version=body.expected_policy_version, now=utcnow(), options=options, position=position),
-        lambda receipt: _rule_view(service, actor, receipt.target.id), 'rule')
+        lambda receipt: _rule_view(service, actor, receipt.target.id), number)
 
 
 @router.patch('/inbound-rules/{rule_id}', summary='Change an inbound routing rule')
@@ -707,7 +719,7 @@ async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, i
                                    body.mailbox_id if body.mailbox_id is not None else current['mailbox_id'])
         return service.mutations.update_inbound_rule(actor, VersionedEntity(rule_id, body.version), values,
             expected_policy_version=body.expected_policy_version, now=utcnow(), options=options, position=position)
-    return await _mutate(mutate, lambda receipt: _rule_view(service, actor, receipt.target.id), 'rule')
+    return await _rule_mutation(mutate, lambda receipt: _rule_view(service, actor, receipt.target.id), number)
 
 
 @router.post('/inbound-rules/explain', summary='Which mailbox and email a received fax would get, and why',

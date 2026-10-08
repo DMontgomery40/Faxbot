@@ -5,6 +5,9 @@ import { ReceivedTry, ReceivingOptionsFields, SUBADDRESS_HELP } from '../compone
 import { NO_RECEIVING_OPTIONS, type ReceivingOptions } from '../components/ProviderRulesApi';
 import { receivingSentence } from '../components/ProviderRulesText';
 import { FakeRules } from './providerRulesFake';
+import AdminAPIClient from '../api/client';
+import ResourceAccess from '../components/ResourceAccess';
+import { backend } from '../test/server';
 
 function choose(name: string, option: string) {
   fireEvent.mouseDown(screen.getByRole('combobox', { name }));
@@ -42,6 +45,17 @@ describe('a number rule by subaddress and site', () => {
     expect(receivingSentence({ to_number: '+17208565062', mailbox_label: 'Billing', subaddress: '2001', site_key: 'leeds' },
       { account: (key) => key, connector: (id) => id, site: () => 'Leeds office' }))
       .toBe('Faxes to +17208565062 with subaddress 2001 received on an account of Leeds office go to Billing.');
+  });
+
+  it('lists each rule of one number on its own row on Numbers', async () => {
+    backend.state.rules.set('rule_front', { id: 'rule_front', to_number: '+17208565062', mailbox_id: 'mbx_main', version: 1 });
+    backend.state.rules.set('rule_sub', { id: 'rule_sub', to_number: '+17208565062', mailbox_id: 'mbx_main', version: 1,
+      subaddress: '2001', urgent: true });
+    await AdminAPIClient.login('admin', 'correct horse');
+    const client = new AdminAPIClient({ kind: 'session', csrf: null });
+    render(<ResourceAccess client={client} me={await client.me()} section="numbers" />);
+    expect(await screen.findByText(/with subaddress 2001 go to Main line, marked urgent\./)).toBeTruthy();
+    expect(screen.getAllByText('+17208565062')).toHaveLength(2);
   });
 
   it('tries a received fax with the subaddress its sender would state', async () => {

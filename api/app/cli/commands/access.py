@@ -659,12 +659,15 @@ def numbers_list(ids: bool = IDS):
         connectors = api.get('/intake/connectors')['connectors']
     except CliError:
         connectors = None
-    rows = {}
+    # One row per number rule (a number can have several, one per subaddress or sender); a carried number joins
+    # the first rule for it, or gets a row of its own.
+    rows, first = {}, {}
     for rule in rules:
-        rows[comparable_number(rule['to_number']) or rule['to_number']] = {
-            'number': rule['to_number'], 'rule': rule, 'providers': []}
+        rows[rule['id']] = {'number': rule['to_number'], 'rule': rule, 'providers': []}
+        if rule['to_number']:
+            first.setdefault(comparable_number(rule['to_number']) or rule['to_number'], rule['id'])
     for number, provider, in_use in carried:
-        row = rows.setdefault(number, {'number': number, 'rule': None, 'providers': []})
+        row = rows.setdefault(first.get(number, number), {'number': number, 'rule': None, 'providers': []})
         row['providers'].append({'provider': provider, 'name': CARRIERS[provider], 'in_use': in_use})
     # --json rows keep the keys an inbound rule had (id, to_number, mailbox_id, mailbox_label, version),
     # None for a number with no mailbox rule, next to the new ones.
@@ -712,7 +715,11 @@ def numbers_add(number: str = typer.Argument(..., help='Your fax number, as faxe
                                       any_number=any_number, subaddress=subaddress, site=site)
     result = api.post('/access/inbound-rules',
                       json=api.with_policy({'to_number': number, 'mailbox_id': found['id'], **options}))
-    state.out().result(result, lambda out: out.line(f"Faxes to {number} now go to {found['label']}."))
+    # A rule with options takes only some faxes: say which, as the rule reads on Numbers.
+    saved = {'to_number': number, **options, **(result.get('rule') or {}), 'mailbox_label': found['label']}
+    said = (rules.receiving_sentence(saved, rules.Names()) if options
+            else f"Faxes to {number} now go to {found['label']}.")
+    state.out().result(result, lambda out: out.line(said))
 
 
 @numbers.command('update')
