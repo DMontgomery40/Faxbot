@@ -506,7 +506,7 @@ def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
 
 
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
-def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_path):  # noqa: F811 - fixture
+def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_path, monkeypatch):  # noqa: F811
     """POST /routing/predict: the document's own pages, measured, and the trunk priced with its coding."""
     shaded = Image.new('L', (1700, 2200), 255)
     draw = ImageDraw.Draw(shaded)
@@ -540,3 +540,19 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     assert broken.status_code == 400
     assert client.post('/routing/predict', data={'to': NUMBER},
                        files={'file': ('shaded.pdf', b'%PDF', 'application/pdf')}).status_code in (401, 403)
+    # Drawing an upload's pages is for people who may send faxes: reading settings is not enough.
+    from api.tests import test_route_policy, test_routing_http
+    monkeypatch.setattr(test_route_policy, 'BOOTSTRAP', test_routing_http.BOOTSTRAP)
+    reader, _ = test_route_policy._role_key(client, permissions=frozenset({'settings:read'}))
+    sender = test_routing_http.scoped_key(client, ['fax:send'])
+    assert client.get('/routing/predict', headers=reader, params={'to': NUMBER}).status_code == 200
+    refused = client.post('/routing/predict', headers=reader, data={'to': NUMBER},
+                          files={'file': ('shaded.pdf', pdf.read_bytes(), 'application/pdf')})
+    assert refused.status_code == 403, refused.text
+    allowed = client.post('/routing/predict', headers=sender, data={'to': NUMBER},
+                          files={'file': ('shaded.pdf', pdf.read_bytes(), 'application/pdf')})
+    assert allowed.status_code == 200, allowed.text
+    # The same limits as a fax sent with POST /fax: the upload size, then the pages of a text document.
+    too_big = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
+                          files={'file': ('big.txt', b'x' * (11 * 1024 * 1024), 'text/plain')})
+    assert too_big.status_code == 413 and too_big.json()['detail'] == 'File exceeds the configured upload limit.'
