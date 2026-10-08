@@ -189,15 +189,25 @@ def test_a_coding_that_failed_twice_to_the_number_is_left_out(measured):
     assert coding.usable_codings(ecm=True, configured='jbig', learned='mr').codings == frozenset({'MH', 'MR'})
 
 
-def test_jbig_that_cannot_be_measured_is_kept_only_where_mmr_measured_smallest(measured):
+def test_jbig_that_cannot_be_measured_stays_the_ssl_fax_engines_and_the_built_in_engine_gets_the_smallest(
+        measured):
+    """Loopback, 8 October 2026: three shaded pages to a JBIG machine took 58 s of transfer in JBIG, 108 s in MH."""
     text = coding.best_coding(frames('drawn_text'), frozenset({'MR', 'MMR', 'JBIG'}), ecm=True,
                               measured=measured['drawn_text'])
-    assert (text.coding, text.measured, text.bits_per_page) == ('JBIG', False, measured['drawn_text']['MMR'])
+    assert (text.coding, text.measured, text.fallback, text.priced) == ('JBIG', False, 'MMR', 'MMR')
+    assert text.bits_per_page == measured['drawn_text']['MMR']
+    assert (text.request('hylafax'), text.request('builtin')) == ('JBIG', 'MMR')
     shaded = coding.best_coding(frames('shaded_0'), frozenset({'MR', 'MMR', 'JBIG'}), ecm=True,
                                 measured=measured['shaded_0'])
-    assert shaded.coding == 'MH'
+    assert (shaded.coding, shaded.fallback, shaded.request('hylafax'), shaded.request('builtin')) == (
+        'JBIG', 'MH', 'JBIG', 'MH')
+    assert shaded.fallback_reason == 'MH: 20% shorter than MMR for these pages.'
+    assert shaded.reason == ('JBIG where the receiving machine takes it (not measured here), otherwise MH: 20% '
+                             'shorter than MMR for these pages.')
     usable = coding.usable_codings(ecm=True, configured='jbig')
     assert not usable.needs_request('JBIG') and usable.needs_request('MH')
+    # The built-in engine has no JBIG: MMR is all it would take anyway; MH is not.
+    assert not usable.needs_request('MMR', 'builtin') and usable.needs_request('MH', 'builtin')
 
 
 # The chooser and the real predictor -------------------------------------------------------------------------
@@ -216,7 +226,7 @@ def test_the_layout_chooser_prices_each_layout_with_its_measured_coding_on_the_r
         chosen = conversion.choose_layout(pages, route='sip', destination=NUMBER, limit='a4', dense_allowed=False,
                                           usable=usable)
         before = conversion.choose_layout(pages, route='sip', destination=NUMBER, limit='a4', dense_allowed=False)
-    assert chosen['coding'].coding == 'MH' and before['coding'] is None
+    assert (chosen['coding'].coding, chosen['coding'].priced) == ('JBIG', 'MH') and before['coding'] is None
     measured, estimated = chosen['predictions']['normal'], before['predictions']['normal']
     assert 'from the measured size of each page in MH' in measured.basis
     assert 'with MR estimated from a fixed ratio to MMR' in estimated.basis
@@ -306,9 +316,12 @@ def add_frames(engine_db, attempt, compression):
 def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_detail_says_it(
         installation, database, tmp_path):  # noqa: F811
     from app.pages import sending
-    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    # Your compression setting stops at MMR, so JBIG is not usable and MH, measured smallest, is the request.
+    values = SimpleNamespace(sip_fax_fine=True, fax_friendly_documents='never', sip_fax_compression='mmr')
+    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=values)
     # The pages go as they are; MH goes with the call, because the engine would otherwise take a larger coding.
     assert sending.unchanged(changed) and changed.coding.coding == 'MH'
+    assert changed.coding.request('hylafax') == changed.coding.request('builtin') == 'MH'
     assert coding.cache_path(tmp_path / f'packed-{JOB}-{ATTEMPT}.tiff').is_file()
     record = coding.newest_coding(database, JOB)
     assert (record['requested'], record['measured'], record['compared'], record['pages']) == ('MH', 1, 'MMR', 1)
@@ -326,22 +339,82 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
                                  'negotiated': 'MH'}, 'sending') == (
         'Going with MR: 5% shorter than MH for these pages. The call used MH.')
     # Recorded once per attempt: deciding the same attempt again keeps the first row.
-    _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    _send(database, tmp_path, pages=frames('shaded_0'), values=values)
     assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']
+
+
+def test_shading_to_an_unknown_machine_keeps_jbig_on_the_ssl_fax_engine_and_sends_mh_on_the_built_in_one(
+        installation, database, tmp_path):  # noqa: F811
+    from app.pages import sending
+    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    assert sending.unchanged(changed) and changed.coding.coding == 'JBIG'
+    assert (changed.coding.request('hylafax'), changed.coding.request('builtin')) == ('JBIG', 'MH')
+    record = coding.newest_coding(database, JOB)
+    # The record keeps the fallback and its own sentence; the Sent detail words it for the engine that sent it.
+    assert (record['requested'], record['measured'], record['compared']) == ('JBIG', 0, 'MH')
+    assert record['reason'] == 'MH: 20% shorter than MMR for these pages.'
+    assert coding.sent_view(database, JOB)['sentence'] == (
+        'Sent with JBIG where the receiving machine takes it (not measured here), otherwise MH: 20% shorter than MMR '
+        'for these pages.')
+    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'JBIG'}) == (
+        'Sent with JBIG where the receiving machine takes it (not measured here), otherwise MH: 20% shorter than MMR '
+        'for these pages.')
+    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'MH'}).endswith('for these pages.')
+    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'MR'}).endswith(' The call used MR.')
+    add_frames(database, ATTEMPT, 'MH')  # the built-in engine sent it: no JBIG there
+    view = coding.sent_view(database, JOB)
+    assert (view['engine'], view['negotiated']) == ('builtin', 'MH')
+    assert view['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'
 
 
 def test_black_text_to_an_unknown_machine_goes_with_the_usual_settings_and_still_says_why(
         installation, database, tmp_path):  # noqa: F811
-    # MMR measured smallest: JBIG (not measured here) where the machine takes it, as the engines would anyway.
+    # MMR measured smallest: JBIG (not measured here) where the machine takes it, MMR otherwise and on the built-in
+    # engine, which is what both engines take anyway: nothing goes with the call.
     assert _send(database, tmp_path, pages=frames('drawn_text'), values=KEEP_SHADING) is None
     view = coding.sent_view(database, JOB)
     assert view['requested'] == 'JBIG' and view['measured'] is False
     assert view['sentence'] == ('Sent with JBIG where the receiving machine takes it (not measured here), otherwise '
-                                'MMR, the smallest of the codings measured for these pages.')
+                                'MMR: 24% shorter than MR for these pages.')
     add_frames(database, ATTEMPT, 'MMR')
-    assert coding.sent_view(database, JOB)['sentence'] == view['sentence']  # MMR is the fallback it named
+    assert coding.sent_view(database, JOB)['sentence'] == 'Sent with MMR: 24% shorter than MR for these pages.'
 
 
 def test_a_fax_service_route_measures_nothing_and_records_nothing(installation, database, tmp_path):  # noqa: F811
     assert _send(database, tmp_path, route='sinch', pages=frames('shaded_0'), values=KEEP_SHADING) is None
     assert coding.newest_coding(database, JOB) is None and coding.sent_view(database, JOB) is None
+
+
+# The SSL Fax engine honours the job's coding ----------------------------------------------------------------
+
+def test_the_engines_job_controls_give_faxsend_the_coding_the_job_asked_for(tmp_path):
+    """hylafax/bin/jobcontrol: faxsend's software conversion ignores a job's own desireddf (HylaFAX+ 7.0.11
+    faxd/FaxSend.c++), so the job controls hand MH (0), MR (1) or MMR (3) back as DesiredDF; JBIG (4), the
+    default, is left to the engine. Run with an explicit PATH and stand-in spool, as faxq runs it."""
+    import os
+    import shutil
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    script = root / 'hylafax' / 'bin' / 'jobcontrol'
+    assert os.access(script, os.X_OK)
+    assert 'JobControlCmd:\t\t/usr/local/lib/faxbot-engine/jobcontrol' in (root / 'hylafax' / 'entrypoint.sh').read_text()
+    tools, spool = tmp_path / 'tools', tmp_path / 'spool'
+    (spool / 'sendq').mkdir(parents=True)
+    tools.mkdir()
+    for tool in ('sh', 'sed', 'tail'):
+        (tools / tool).symlink_to(shutil.which(tool))
+
+    def run(job, desired=None):
+        if desired is not None:
+            (spool / 'sendq' / f'q{job}').write_text(f'jobid:{job}\ndesiredbr:5\ndesireddf:{desired}\ndesiredec:2\n')
+        found = subprocess.run([str(tools / 'sh'), str(script), str(job)], cwd=spool, env={'PATH': str(tools)},
+                               capture_output=True, text=True, timeout=30)
+        assert found.returncode == 0 and found.stderr == '', found
+        return found.stdout
+    assert run(7, 0) == 'DesiredDF: 0\n'  # MH, as Faxbot asked for these pages
+    assert run(8, 1) == 'DesiredDF: 1\n'
+    assert run(9, 3) == 'DesiredDF: 3\n'
+    assert run(10, 4) == ''  # JBIG: the engine keeps its own choice
+    assert run(11, 2) == ''  # MR with uncompressed mode is never asked for
+    assert run(12) == ''  # no job file
+    assert run('12; rm -rf /') == ''  # not a job ID

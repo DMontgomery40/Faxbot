@@ -505,7 +505,12 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     for container, commands in expected.items():
         names = {command.split()[1 if 'python' in command.split()[0] else 0].rsplit('/', 1)[-1]
                  for command in commands}
-        assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
+        # A second daemon stays; hfaxd's own child for one client (the engine's status check runs faxstat every
+        # few seconds) is gone within moments, so the list must settle to exactly one of each.
+        try:
+            wait_for(lambda: daemons(docker, container, names) == commands, 20, f'one of each daemon in {container}')
+        except AssertionError:
+            assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
     for container, lines in ((engine, 2), (peer, 1)):
         assert udp_ports(docker, container) == [4569 + n for n in range(1, lines + 1)], container
     docker.run('exec', '--detach', api_container, 'bash', '-c', AMI_LISTENER)
@@ -1432,11 +1437,13 @@ def shaded_pdf():
 
 def test_p_the_coding_measured_on_the_pages_reaches_the_engines_call(tmp_path, loopback):
     """Measured fax coding (api/app/pages/coding.py): shaded pages measure smallest in MH, so Faxbot asks the SSL
-    Fax engine for MH as the job's data format (JPARM DATAFORMAT "G31D", the job's desireddf 0). The peer's
-    machine takes MR and MMR too, yet the call agrees MH, and every page arrives intact. Shading is kept as it
-    is (FAX_FRIENDLY_DOCUMENTS never), so the measurement is of the pages as drawn."""
+    Fax engine for MH as the job's data format (JPARM DATAFORMAT "G31D", the job's desireddf 0), and the engine's
+    job controls (hylafax/bin/jobcontrol) make faxsend honour it. The compression setting stops at MMR, so JBIG is
+    not usable; the peer's machine takes MR and MMR, yet the call agrees MH, and every page arrives intact.
+    Shading is kept as it is (FAX_FRIENDLY_DOCUMENTS never), so the measurement is of the pages as drawn.
+    Without the job controls (8 October 2026) faxsend's software conversion ignored the job's data format."""
     context = loopback('p', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
-                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mmr'})
     docker, key = context['docker'], context['key']
     outcome = send_and_collect(tmp_path, context, document=shaded_pdf())
     proof = evidence(outcome)
@@ -1460,3 +1467,28 @@ def test_p_the_coding_measured_on_the_pages_reaches_the_engines_call(tmp_path, l
     # The Sent detail says it: asked for MH, the call took MH.
     assert detail['coding']['requested'] == 'MH' and detail['coding']['negotiated'] == 'MH', proof
     assert detail['coding']['sentence'].startswith('Sent with MH: '), proof
+
+
+def test_q_jbig_that_cannot_be_measured_stays_with_the_ssl_fax_engine(tmp_path, loopback):
+    """The same shaded pages with the usual compression setting: JBIG cannot be measured here (no encoder in the
+    API image), so the SSL Fax engine keeps it where the machine takes it, and the call uses JBIG. Measured on 8
+    October 2026: 58 s of transfer in JBIG against 108 s in MH, the smallest of the codings measured."""
+    context = loopback('q', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    outcome = send_and_collect(tmp_path, context, document=shaded_pdf())
+    proof = evidence(outcome)
+    job_id = outcome['job']['id']
+    found = records(context, job_id)
+    coded = database(context, coding=f"SELECT requested, measured, compared, reason "
+                                      f"FROM fax_coding_choices WHERE job_id = '{job_id}'")['coding']
+    negotiated = database(context, engine=f"SELECT compression FROM fax_engine_calls WHERE job_id = '{job_id}'")
+    detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+    proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'engine_record': found['engine'],
+                  'sent_detail': detail.get('coding')})
+    print('\nSSLFAX_PROOF_Q ' + json.dumps(proof, indent=2, default=str))
+    assert_delivered(outcome, proof)
+    assert coded and (coded[0]['requested'], coded[0]['measured'], coded[0]['compared']) == ('JBIG', 0, 'MH'), proof
+    assert negotiated['engine'] and negotiated['engine'][0]['compression'] == 'JBIG', proof
+    assert detail['coding']['sentence'] == ('Sent with JBIG where the receiving machine takes it (not measured '
+                                            'here), otherwise ' + coded[0]['reason']), proof

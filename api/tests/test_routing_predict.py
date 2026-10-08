@@ -525,11 +525,12 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     routes = {route['route']: route for route in body['routes']}
     trunk = routes['sip']
     best = min(('MH', 'MR', 'MMR'), key=lambda name: body['measured'][name])
-    expected = best if best != 'MMR' else 'JBIG'  # JBIG, not measured here, where the machine takes it
-    assert trunk['coding']['coding'] == expected
-    assert trunk['coding']['sentence'].startswith(f'Faxbot would send these pages with {expected}')
-    if expected != 'JBIG':
-        assert f'from the measured size of each page in {expected}' in trunk['basis']
+    # JBIG, not measured here, where the machine takes it; the time is priced at the smallest measured coding.
+    assert trunk['coding']['coding'] == 'JBIG' and trunk['coding']['measured'] is False
+    assert trunk['coding']['sentence'].startswith(
+        f'Faxbot would send these pages with JBIG where the receiving machine takes it (not measured here), '
+        f'otherwise {best}: ')
+    assert f'from the measured size of each page in {best}' in trunk['basis']
     assert routes['phaxio']['coding'] is None  # a fax service codes the pages itself
     empty = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
                         files={'file': ('empty.pdf', b'', 'application/pdf')})

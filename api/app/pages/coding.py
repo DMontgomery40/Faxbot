@@ -47,9 +47,14 @@ So the request is the measured smallest coding among the usable ones:
 - never a coding that failed to this number (``failing``: engine learning's
   rule, two failures in a row after the machine answered), and never past
   your compression setting or what engine learning chose for the number;
-- JBIG that could not be measured is kept as the request only when MMR, its
-  two-dimensional relative, measured smallest; the time is then priced at
-  MMR's measured size.
+- JBIG that could not be measured (no encoder) stays the SSL Fax engine's
+  request wherever it is usable: that engine sends it where the machine takes
+  it, and otherwise picks between MH and MMR by its own measurement
+  (faxd/FaxSend.c++). Measured on the loopback on 8 October 2026, three
+  shaded pages to a JBIG machine took 58 seconds of transfer in JBIG and 108
+  in MH, which measured smallest of the others. The built-in engine has no
+  JBIG, so it gets the smallest measured coding (``fallback``), and the time is
+  priced at that coding's measured size.
 
 A tie keeps the more widely supported coding (MH, then MR, then MMR).
 """
@@ -246,15 +251,26 @@ def measure_cached(raster_pages, cache, *, codings=None):
 @dataclass(frozen=True)
 class CodingChoice:
     coding: str                          # the coding to request: 'MH', 'MR', 'MMR' or 'JBIG'
-    bits_per_page: tuple                 # its measured bits per page (MMR's for a JBIG that was not measured)
+    bits_per_page: tuple                 # its measured bits per page (the fallback's for a JBIG not measured)
     all_measured: dict                   # {coding: bits per page} for every coding measured
     reason: str                          # one sentence: "MH: 20% shorter than MMR for these pages."
     measured: bool = True                # False only for a JBIG request that could not be measured
     compared: str | None = None          # the coding the sentence compares with, when there is one
+    fallback: str | None = None          # for a JBIG not measured: the smallest measured coding, otherwise sent
+    fallback_reason: str | None = None   # that coding's own sentence
 
     @property
     def bits(self) -> int:
         return sum(self.bits_per_page)
+
+    @property
+    def priced(self) -> str:
+        """The coding the time is priced with: the request, or the fallback for a JBIG not measured."""
+        return self.coding if self.measured else self.fallback
+
+    def request(self, engine) -> str:
+        """The coding to ask ``engine`` ('hylafax' or 'builtin') for: the built-in engine has no JBIG."""
+        return self.coding if self.measured or engine == 'hylafax' else self.fallback
 
 
 def _shorter(chosen, other, measured):
@@ -290,20 +306,21 @@ def best_coding(frames, allowed, *, ecm, measured=None) -> CodingChoice:
     best = min(candidates, key=lambda name: (sum(measured[name]), _rank(name)))
     others = sorted((name for name in candidates if name != best), key=lambda name: (sum(measured[name]),
                                                                                      _rank(name)))
-    if best == 'MMR' and 'JBIG' in usable and 'JBIG' not in measured:
-        # JBIG is MMR's two-dimensional relative and was not measured: kept where the machine takes it.
-        return CodingChoice('JBIG', tuple(measured['MMR']), measured,
-                            'JBIG where the receiving machine takes it (not measured here), otherwise MMR, '
-                            'the smallest of the codings measured for these pages.', measured=False,
-                            compared='MMR')
     if not others:
-        return CodingChoice(best, tuple(measured[best]), measured,
-                            f'{best}: the only coding this call can use.', compared=None)
-    # Compared with the coding the engines would have taken without measuring (the most compact usable one),
-    # or, when that is the one chosen, with the next smallest.
-    default = max(candidates, key=_rank)
-    other = default if default != best else others[0]
-    return CodingChoice(best, tuple(measured[best]), measured, _shorter(best, other, measured), compared=other)
+        other, reason = None, f'{best}: the only coding this call can use.'
+    else:
+        # Compared with the coding the engines would have taken without measuring (the most compact usable one),
+        # or, when that is the one chosen, with the next smallest.
+        default = max(candidates, key=_rank)
+        other = default if default != best else others[0]
+        reason = _shorter(best, other, measured)
+    if 'JBIG' in usable and 'JBIG' not in measured:
+        # JBIG could not be measured: the SSL Fax engine keeps it where the machine takes it; otherwise, and on the
+        # built-in engine, the smallest measured coding goes.
+        return CodingChoice('JBIG', tuple(measured[best]), measured,
+                            f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}',
+                            measured=False, compared=other, fallback=best, fallback_reason=reason)
+    return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other)
 
 
 # What may be requested for a number ---------------------------------------------------------------------------
@@ -321,12 +338,14 @@ class Usable:
     def allowed(self, coding) -> bool:
         return coding in self.codings
 
-    def needs_request(self, coding) -> bool:
-        """Whether the engines must be told ``coding``: left alone, they would take a more compact one up to the
-        ceiling that the receiving machine and error correction allow, either a usable one that measured larger or
-        one that failed to this number. Equal to what they would take anyway: no request is needed."""
+    def needs_request(self, coding, engine='hylafax') -> bool:
+        """Whether ``engine`` ('hylafax' or 'builtin', which has no JBIG) must be told ``coding``: left alone, it
+        would take a more compact one up to the ceiling that the receiving machine and error correction allow,
+        either a usable one that measured larger or one that failed to this number. Equal to what it would take
+        anyway: no request is needed."""
         return any(_rank(coding) < _rank(other) <= _rank(self.ceiling)
-                   and (other in self.codings or other in self.failed) for other in CODINGS)
+                   and (other in self.codings or other in self.failed)
+                   and not (engine == 'builtin' and other == 'JBIG') for other in CODINGS)
 
 
 def receiver_codings(dis) -> frozenset | None:
@@ -462,12 +481,16 @@ def record_choice(engine, *, job_id, attempt_id, number, route, choice, receiver
         raise CodingRefused('Unknown fax coding: ' + str(choice.coding) + '.')
     table = _table(engine)
     totals = {name: sum(bits) for name, bits in choice.all_measured.items() if name in CODINGS}
+    # A JBIG request that could not be measured keeps its fallback (the coding the built-in engine, and the SSL Fax
+    # engine for a machine without JBIG, sends) in ``compared`` and that coding's sentence in ``reason``.
+    compared = choice.compared if choice.measured else choice.fallback
+    reason = choice.reason if choice.measured else choice.fallback_reason
     row = {'id': uuid.uuid4().hex, 'job_id': job_id, 'attempt_id': attempt_id,
            'number': re.sub(r'[^0-9+]', '', str(number or ''))[:32] or None, 'route': str(route or '')[:40] or None,
            'requested': choice.coding, 'measured': 1 if choice.measured else 0,
-           'compared': choice.compared if choice.compared in CODINGS else None,
+           'compared': compared if compared in CODINGS else None,
            'pages': len(choice.bits_per_page), 'bits': json.dumps(totals, sort_keys=True),
-           'receiver_known': 1 if receiver_known else 0, 'reason': choice.reason[:300],
+           'receiver_known': 1 if receiver_known else 0, 'reason': str(reason or '')[:300],
            'created_at': now or datetime.utcnow()}
     with engine.begin() as connection:
         found = connection.execute(sa.select(table.c.id).where(table.c.attempt_id == attempt_id)).scalar()
@@ -486,27 +509,34 @@ def _bits(text):
         if isinstance(found, dict) else {}
 
 
-def negotiated(engine, attempt_id) -> str | None:
-    """The coding the call of one attempt agreed with the receiving machine: from the built-in engine's frames
-    (its last DCS, ``engine_frames.decode_dcs``) or the SSL Fax engine's report (``fax_engine_calls``); None
-    until the call reported it."""
+def call_of(engine, attempt_id):
+    """(coding the call agreed, engine that placed it) for one attempt: the coding from the built-in engine's
+    frames (its last DCS, ``engine_frames.decode_dcs``) or the SSL Fax engine's report (``fax_engine_calls``),
+    None until the call reported it; the engine 'hylafax' or 'builtin' from the engine record (frames alone mean
+    the built-in engine), None before the call."""
     import sqlalchemy as sa
     from .. import engine_frames
     from ..routing.database import reflect
     tables = reflect(engine, ('fax_call_frames', 'fax_engine_calls'))
     frames, calls = tables['fax_call_frames'], tables['fax_engine_calls']
+    columns = [calls.c.engine] + ([calls.c.compression] if 'compression' in calls.c else [])
     with engine.connect() as connection:
         frame = connection.execute(sa.select(frames.c.dcs_last, frames.c.dcs_first).where(
             frames.c.id == f'out:{attempt_id}')).first()
-        reported = None
-        if 'compression' in calls.c:
-            reported = connection.execute(sa.select(calls.c.compression).where(
-                calls.c.direction == 'outbound', calls.c.call_key == str(attempt_id))).scalar()
+        row = connection.execute(sa.select(*columns).where(
+            calls.c.direction == 'outbound', calls.c.call_key == str(attempt_id))).first()
+    placed = row[0] if row is not None and row[0] in ('hylafax', 'builtin') else ('builtin' if frame else None)
     if frame is not None:
         decoded = engine_frames.decode_dcs(frame[0]) or engine_frames.decode_dcs(frame[1])
         if decoded and decoded.get('compression') in CODINGS:
-            return decoded['compression']
-    return reported if reported in CODINGS else None
+            return decoded['compression'], placed
+    reported = row[1] if row is not None and len(row) > 1 else None
+    return (reported if reported in CODINGS else None), placed
+
+
+def negotiated(engine, attempt_id) -> str | None:
+    """The coding the call of one attempt agreed with the receiving machine (``call_of``); None until reported."""
+    return call_of(engine, attempt_id)[0]
 
 
 def attempt_coding(engine, attempt_id):
@@ -519,7 +549,8 @@ def attempt_coding(engine, attempt_id):
         row = connection.execute(sa.select(table).where(table.c.attempt_id == attempt_id)).mappings().first()
     if row is None:
         return None
-    return {**dict(row), 'bits': _bits(row['bits']), 'negotiated': negotiated(engine, attempt_id)}
+    agreed, placed = call_of(engine, attempt_id)
+    return {**dict(row), 'bits': _bits(row['bits']), 'negotiated': agreed, 'engine': placed}
 
 
 def newest_coding(engine, job_id):
@@ -562,8 +593,18 @@ def sent_sentence(record, phase=None) -> str | None:
     phase = phase if phase is not None else record.get('attempt_phase')
     verb = {None: 'Sent with', 'success': 'Sent with', 'failed': 'Tried with',
             'cancelled': 'Prepared with'}.get(phase, 'Going with')
+    expected = {requested}
+    if requested == 'JBIG' and not record.get('measured'):
+        # JBIG not measured: the record keeps the fallback (``compared``) and its sentence (``reason``). The built-in
+        # engine has no JBIG and sent the fallback; the SSL Fax engine sent JBIG where the machine took it.
+        fallback = record.get('compared')
+        expected = {'JBIG', fallback}
+        if record.get('engine') == 'builtin':
+            expected = {fallback}
+        else:
+            reason = f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}'
     sentence = f'{verb} {reason}'
-    if agreed and agreed != requested and not (requested == 'JBIG' and agreed == 'MMR'):
+    if agreed and agreed not in expected:
         sentence += f' The call used {agreed}.'
     return sentence
 
@@ -587,7 +628,7 @@ def coding_view(record):
     if not record:
         return None
     bits = record.get('bits') or {}
-    return {'requested': record['requested'], 'negotiated': record.get('negotiated'),
+    return {'requested': record['requested'], 'negotiated': record.get('negotiated'), 'engine': record.get('engine'),
             'measured': bool(record.get('measured')), 'compared': record.get('compared'),
             'pages': record.get('pages'), 'bits': bits,
             'receiver_known': bool(record.get('receiver_known')), 'sentence': sent_sentence(record),

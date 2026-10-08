@@ -187,7 +187,7 @@ def _coded_view(engine, values, number, facts, frames, measured, resolution):
                                capability=records_for(engine).capability(number) if engine is not None else None)
     choice = coding.best_coding(frames, usable.codings, ecm=usable.ecm, measured=measured)
     shape = Shape(pages, tuple(measured['MMR']), resolution, 'normal', measured,
-                  choice.coding if choice.measured else 'MMR')
+                  choice.priced)
     return {**_view(facts, predict_from(facts, shape), pages),
             'coding': {'coding': choice.coding, 'measured': choice.measured,
                        'sentence': f'Faxbot would send these pages with {choice.reason}'}}
