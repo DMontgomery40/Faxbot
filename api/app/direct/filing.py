@@ -29,6 +29,10 @@ def received_text(record):
     report = report if isinstance(report, dict) else {}
     partner = report.get('partner') if isinstance(report.get('partner'), str) and report.get('partner') else 'a partner'
     if report.get('kind') == FAX_IMAGE:
+        if report.get('carriage') == 'body':
+            # Rebuilt from a page body the partner sent before and only its new header lines (reuse.py).
+            from .reuse import BODY, received_text as reuse_text
+            return reuse_text(partner, BODY)
         return f'Delivered directly as a fax image by {partner}; no telephone call.'
     if report.get('kind') == FORM:
         form = report.get('form') if isinstance(report.get('form'), dict) else {}
@@ -89,6 +93,18 @@ def _call_repair(engine, message_id, peer_id):
     return row
 
 
+def _body_reused(row):
+    """How a fax image rebuilt from a body this installation held arrived, from its own signed receipt (reuse.py):
+    {'carriage': 'body', 'base_sha256': the held image, 'body_sha256'}, or None for an image sent whole."""
+    try:
+        statement = json.loads(json.loads(row.get('receipt') or '{}').get('statement') or '{}')
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not isinstance(statement, dict) or statement.get('carriage') != 'body':
+        return None
+    return {'carriage': 'body', 'base_sha256': statement.get('base_sha256'), 'body_sha256': statement.get('body_sha256')}
+
+
 def account(peer_id):
     return FILING_ACCOUNT + (peer_id or 'unknown')
 
@@ -116,6 +132,9 @@ class DirectFiling:
                   'sha256': document['sha256'], 'size': document['size'], 'pages': document['pages']}
         if kind == FAX_IMAGE:
             report['fax'] = manifest['fax']
+            body = _body_reused(row)
+            if body is not None:
+                report.update(body)
         elif kind == FORM:
             report['form'] = _form_drawn(self.store.engine, row['message_id'])
         from .distribute import filing_facts

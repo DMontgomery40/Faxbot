@@ -509,6 +509,7 @@ def test_bytes_saved_are_counted_on_savings_and_never_as_money(intake):
     client = intake['b_client']
     before = client.get('/routing/savings', headers=ADMIN).json()
     assert before['direct_bytes'] == {'bytes_saved': 0, 'documents': 0, 'references': 0, 'patches': 0,
+                                      'fax_images': 0,
                                       'sentence': 'No documents went to partners as references or changes in the '
                                                   'last 30 days.'}
     savings = sa.Table('direct_byte_savings', sa.MetaData(), autoload_with=b_engine())
