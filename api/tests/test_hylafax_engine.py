@@ -269,20 +269,20 @@ async def test_a_call_the_engine_did_not_answer_restarts_it_and_the_trunk_page_s
     monkeypatch.setattr('time.time', lambda: missed_at + 60)
     state, sentence = await hylafax_engine.engine_summary(values, FakeAmi())
     assert state == 'running' and sentence == (
-        "Faxbot's fast fax service did not answer the 9:14 PM MDT fax call, so that fax was received the ordinary "
-        "way; Faxbot is restarting the fast fax service.")
+        "Faxbot's fax engine did not answer the 9:14 PM MDT fax call, so that fax was received the ordinary "
+        "way; Faxbot is restarting the fax engine.")
     status.write_text(json.dumps({'state': 'running', 'lines': 2, 'started': request['asked'] + 5}))
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
-        'Faxbot restarted the fast fax service.')
+        'Faxbot restarted the fax engine.')
     # An engine on audio fax by itself still says so (each screen adds its own way to try T.38 again).
     monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: True)
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
-        'Faxbot restarted the fast fax service. ' + hylafax_engine.ENGINE_AUDIO)
+        'Faxbot restarted the fax engine. ' + hylafax_engine.ENGINE_AUDIO)
     monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: False)
     # A day later the page is back to the usual sentence.
     monkeypatch.setattr('time.time', lambda: missed_at + hylafax_engine.MISSED_SHOWN + 60)
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].startswith(
-        "Faxbot's fast fax service is running on 2 fax lines")
+        "Faxbot's fax engine is running on 2 fax lines")
 
 
 @pytest.mark.asyncio

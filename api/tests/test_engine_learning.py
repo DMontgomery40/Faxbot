@@ -742,7 +742,7 @@ def test_their_fax_machine_joins_both_engines_calls_and_forgets_with_an_audit_ro
     body = client.get('/fax-machines/numbers/303-555-0150', headers=B).json()
     assert [(call['engine'], call['mode_label']) for call in body['calls']] == [
         ('hylafax', 'Audio fax'), ('builtin', 'Fax over IP (T.38)')]
-    assert body['calls'][0]['engine_label'] == "Faxbot's fast fax service"
+    assert body['calls'][0]['engine_label'] == "Faxbot's fax engine"
     assert body['calls'][0]['outcome'] == 'Sent: 2 pages confirmed by the receiving machine.'
     assert body['calls'][1]['outcome'].startswith('The other fax machine answered but the fax failed')
     assert "The far end's fax machine accepts up to 14,400 bit/s" in body['calls'][1]['sentences'][0]

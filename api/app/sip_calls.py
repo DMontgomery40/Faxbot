@@ -39,9 +39,9 @@ COLUMNS = ('id', 'direction', 'job_id', 'attempt_id', 'trunk_preset', 'did', 'ca
 
 NO_FAX_DATA = 'The call connected but no fax data came back from the carrier.'
 # An engine call on which the engine never heard the other fax machine: the engine's own words, never the
-# network's (its T.38 gateway may be the cause); Faxbot's fast fax service is the engine in operator words.
+# network's (its T.38 gateway may be the cause). Operator words call the SSL Fax engine "the fax engine".
 NO_FAX_SIGNAL = 'no_fax_signal'
-NO_SIGNAL = "The call connected but the fast fax service heard no fax machine on the line."
+NO_SIGNAL = "The call connected but the fax engine heard no fax machine on the line."
 NO_SOUND = 'The call connected but no sound came back from the carrier.'
 NOT_A_FAX = 'The call connected but the other end did not answer as a fax machine.'
 # A person or a voice line answered: sound came back, no fax message ever did, and the far end hung up first
@@ -1078,7 +1078,7 @@ def _on_engine_missed(event):
         audit_event('sip_engine_restart_requested', backend='sip', reason='missed_call',
                     lines=re.sub(r'[^A-Za-z0-9:, ]', '', str(event.get('Lines') or ''))[:80])
     except Exception:
-        logging.getLogger(__name__).warning('A fax call the fast fax service did not answer could not be recorded.')
+        logging.getLogger(__name__).warning('A fax call the fax engine did not answer could not be recorded.')
 
 
 def engine_audio_check(row):

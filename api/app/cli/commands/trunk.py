@@ -172,7 +172,7 @@ def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
 
 @trunk.command('restart-engine')
 def trunk_restart_engine():
-    """Restart the fast fax service once no fax is being sent or received."""
+    """Restart the fax engine once no fax is being sent or received."""
     result = state.api().post('/admin/sip/engine/restart')
     state.out().result(result, lambda out: out.line(result.get('message') or ''))
 

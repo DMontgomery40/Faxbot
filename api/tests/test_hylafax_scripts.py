@@ -453,7 +453,7 @@ def test_a_line_that_loses_its_modem_is_reported_and_the_engine_starts_again(ent
     assert process.returncode == 1
     status = _status(data)
     assert status['state'] == 'restarting', status
-    assert status['reason'] == "Faxbot's fast fax service lost a fax line and is starting again."
+    assert status['reason'] == "Faxbot's fax engine lost a fax line and is starting again."
 
 
 def test_a_modem_lock_left_by_a_restart_never_keeps_a_line_out_of_service(entrypoint):
@@ -481,7 +481,7 @@ def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
 
 
 def test_the_engine_starts_again_when_faxbot_asks_and_not_for_a_request_it_already_followed(entrypoint):
-    """Faxbot writes a restart request (a fax call no free line answered, or Restart the fast fax service): the
+    """Faxbot writes a restart request (a fax call no free line answered, or Restart the fax engine): the
     engine starts again once no call is up. A request older than this start was already followed."""
     start, root, data = entrypoint
     (data / 'hylafax' / 'engine-restart').write_text('{"reason": "manual", "at": 1, "asked": 1}\n')
@@ -493,7 +493,7 @@ def test_the_engine_starts_again_when_faxbot_asks_and_not_for_a_request_it_alrea
     assert _wait(lambda: process.poll() is not None)
     assert process.returncode == 0
     assert _status(data)['state'] == 'restarting'
-    assert _status(data)['reason'] == "Faxbot's fast fax service is starting again."
+    assert _status(data)['reason'] == "Faxbot's fax engine is starting again."
 
 
 def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_recovers(entrypoint):
@@ -506,7 +506,7 @@ def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_rec
     (root / 'status.ttyIAX2').write_text('Receiving facsimile\n')
     (root / 'status.ttyIAX1').write_text('Waiting for modem to come free\n')
     assert _wait(lambda: _status(data).get('state') == 'restarting'), _status(data)
-    assert _status(data)['reason'] == "Faxbot's fast fax service lost a fax line and is starting again."
+    assert _status(data)['reason'] == "Faxbot's fax engine lost a fax line and is starting again."
     assert process.poll() is None
     (root / 'status.ttyIAX1').write_text('Running and idle\n')
     assert _wait(lambda: _status(data).get('state') == 'running'), _status(data)
@@ -653,7 +653,7 @@ def test_a_received_call_the_engines_restart_cut_off_is_reported_never_skipped(e
     assert run('sessions', environment).returncode == 0
     (report,) = [json.loads(path.read_text()) for path in (state / 'results').glob('*.report')]
     assert report['commid'] == '000000004' and report['token'] == '179125469614'
-    assert base64.b64decode(report['reason_b64']) == b'Call cut off: the fast fax service restarted'
+    assert base64.b64decode(report['reason_b64']) == b'Call cut off: the fax engine restarted'
 
 
 def test_sessions_read_only_the_sessions_above_the_last_finished_one(engine, tmp_path):

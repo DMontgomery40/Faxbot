@@ -42,9 +42,9 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
     assert await summary(configured, Ami()) == ('not_set_up', hylafax_engine.NOT_SET_UP)
     engine_running(tmp_path, configured)
     state, sentence = await summary(configured, Ami())
-    assert state == 'running' and sentence == ("Faxbot's fast fax service is running on 2 fax lines and sends "
+    assert state == 'running' and sentence == ("Faxbot's fax engine is running on 2 fax lines and sends "
                                                'pages faster when the other fax machine allows it.')
-    assert (await summary(configured, Ami(ready=1)))[1].startswith("Faxbot's fast fax service is running on 1 fax line ")
+    assert (await summary(configured, Ami(ready=1)))[1].startswith("Faxbot's fax engine is running on 1 fax line ")
     assert await summary(configured, Ami(ready=0)) == ('starting', hylafax_engine.STARTING)
     assert await summary(configured, Ami(fail=ConnectionError())) == ('starting', hylafax_engine.STARTING)
     engine_running(tmp_path, configured, listener='203.0.113.10:10443')
@@ -53,7 +53,7 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
     engine_running(tmp_path, configured, loaded=False)
     (tmp_path / 'asterisk' / 'iax.conf.started').write_text('older lines')
     assert await summary(configured, Ami()) == ('starting', hylafax_engine.WAITING_FOR_RESTART)
-    engine_running(tmp_path, configured, state='failed', reason="Faxbot's fast fax service could not start; "
+    engine_running(tmp_path, configured, state='failed', reason="Faxbot's fax engine could not start; "
                                                                  'select Apply and connect to try again.')
     assert (await summary(configured, Ami()))[0] == 'stopped'
     (tmp_path / 'hylafax-out' / 'engine.status').unlink()
@@ -69,7 +69,7 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
     (tmp_path / 'hylafax-out' / 'engine.status').unlink()
     off = values(tmp_path, SIP_SSLFAX_ENABLED='false')
     engine_running(tmp_path, off)
-    assert (await summary(off, Ami()))[1] == ("Faxbot's fast fax service is running on 2 fax lines; "
+    assert (await summary(off, Ami()))[1] == ("Faxbot's fax engine is running on 2 fax lines; "
                                               'faster pages are turned off.')
     # After its T.38 call heard no fax machine, the engine says it sends audio fax and how to try T.38 again.
     hylafax_engine.note_t38_failure(configured)
@@ -97,7 +97,7 @@ def test_the_command_line_names_its_own_command_to_try_t38_again():
     from app.cli.commands import trunk
     out = Out()
     trunk._status_lines(out, {'configured': True, 'message': 'The trunk is ready.', 'engine_audio': True,
-                              'engine_text': "Faxbot's fast fax service is running on 2 fax lines. "
+                              'engine_text': "Faxbot's fax engine is running on 2 fax lines. "
                                              + hylafax_engine.ENGINE_AUDIO})
     assert out.lines[-1] == 'To try T.38 again, run faxbot providers trunk apply.'
     assert not any('select Apply' in line for line in out.lines)
@@ -140,4 +140,4 @@ async def test_diagnostics_says_when_the_engine_missed_a_call_and_restarted(tmp_
     assert hylafax_engine.request_restart(configured, reason='missed_call', at=int(time.time()) - 60)
     [finding] = await diagnostics_report.ssl_fax_engine(SimpleNamespace(request=None, identity=None))
     assert finding.sentence == hylafax_engine.missed_sentence(configured, hylafax_engine.read_status(configured))
-    assert finding.sentence.startswith("Faxbot's fast fax service did not answer the ")
+    assert finding.sentence.startswith("Faxbot's fax engine did not answer the ")

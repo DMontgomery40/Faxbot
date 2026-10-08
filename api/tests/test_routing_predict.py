@@ -411,7 +411,7 @@ def test_the_photo_coding_is_compared_only_for_a_number_that_took_it(tmp_path):
     took = facts(terms, link=Link(coding='MMR', jbig=True))
     choice = predictor.jbig_choice(took, shape)
     assert choice.faster == 'jbig' and choice.jbig.seconds < choice.standard.seconds
-    assert "only Faxbot's fast fax service sends; for the 1 photo-like page here it should save" in choice.sentence
+    assert "only Faxbot's fax engine sends; for the 1 photo-like page here it should save" in choice.sentence
     assert predictor.jbig_choice(facts(terms, link=Link(coding='MMR')), shape) is None
     text_only = Shape(1, (bits[1],), 'fine', 'normal')
     assert predictor.jbig_choice(took, text_only) is None

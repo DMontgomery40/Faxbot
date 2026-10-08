@@ -531,8 +531,8 @@ def jbig_choice(facts, shape):
     faster = 'jbig' if (jbig.seconds or 0) < (standard.seconds or 0) else 'standard'
     if faster == 'jbig':
         saved = (standard.seconds or 0) - (jbig.seconds or 0)
-        sentence = (f"An earlier fax to this number used the coding that suits photos, which only Faxbot's fast fax "
-                    f'service sends; for the {_count(halftone_pages(shape), "photo-like page")} here it should save '
+        sentence = (f"An earlier fax to this number used the coding that suits photos, which only Faxbot's fax engine "
+                    f'sends; for the {_count(halftone_pages(shape), "photo-like page")} here it should save '
                     f'{duration_text(saved)} on the line.')
     else:
         sentence = 'The coding that suits photos would not make this fax shorter, so Faxbot keeps its usual coding.'

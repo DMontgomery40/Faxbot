@@ -42,7 +42,7 @@ scan() {
     [ -f "$started" ] && [ "$log" -ot "$started" ] || return 1
     # A sent fax has no caller (notify, or Faxbot's restart rule, reports it).
     grep -q 'CallID:' "$log" || { mark "$commid"; return 0; }
-    reason='Call cut off: the fast fax service restarted'
+    reason='Call cut off: the fax engine restarted'
   else
     if ! grep -q 'RECV FAX: begin' "$log"; then mark "$commid"; return 0; fi  # a sent fax: notify reports it
     # A document with pages goes through the receive script and the hand-over.

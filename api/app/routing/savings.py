@@ -259,7 +259,7 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     direct = direct_delivery(routes, engine, since=since, days=days)
     fax_images = direct_fax_images(routes, engine, since=since, days=days)
     packets = case_packets(routes, engine, since=since, days=days)
-    # Faxes whose pages went over SSL Fax (the fast fax service), priced with the trunk carrier's billing.
+    # Faxes whose pages went over SSL Fax (the fax engine), priced with the trunk carrier's billing.
     from ..hylafax_records import sslfax_savings
     sslfax = sslfax_savings(routes, engine, since=since, days=days)
     own = own_numbers(routes, engine, since=since, days=days)

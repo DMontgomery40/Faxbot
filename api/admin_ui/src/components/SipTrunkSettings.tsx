@@ -431,7 +431,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
-  // Faxbot restarts the fast fax service by itself after a fax call it did not answer; this is the same by hand.
+  // Faxbot restarts the fax engine by itself after a fax call it did not answer; this is the same by hand.
   const restartEngine = async () => {
     setBusy(true);
     try {
@@ -439,7 +439,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       setNotice({ severity: 'success', text: result.message });
       setStatus(await client.getSipStatus());
     } catch (error) {
-      setNotice({ severity: 'error', text: failure(error, 'The fast fax service could not be restarted. Try again.') });
+      setNotice({ severity: 'error', text: failure(error, 'The fax engine could not be restarted. Try again.') });
     } finally {
       setBusy(false);
     }
@@ -801,7 +801,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               )}
               {(status.engine_state === 'running' || status.engine_state === 'starting') && (
                 <Button size="small" variant="outlined" sx={{ mt: 1, alignSelf: 'flex-start' }} onClick={restartEngine}
-                  disabled={busy}>Restart the fast fax service</Button>
+                  disabled={busy}>Restart the fax engine</Button>
               )}
               {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
                 && <Typography variant="body2">{status.ports_text}</Typography>}

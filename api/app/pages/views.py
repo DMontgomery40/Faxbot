@@ -134,7 +134,7 @@ def sent_view(engine, job_id, root=None):
 def capability_sentence(cap):
     if not cap.learned:
         return ("Faxbot does not know yet how long a page this fax machine takes, so it keeps to A4 length. "
-                'It learns this from the next fax your fast fax service sends to it on your phone line.')
+                'It learns this from the next fax your fax engine sends to it on your phone line.')
     if cap.limit == 'unlimited':
         return 'This fax machine takes pages of unlimited length.'
     return f'This fax machine takes pages up to {LIMIT_TEXT[cap.limit]}.'

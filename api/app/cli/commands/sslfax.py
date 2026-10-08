@@ -1,4 +1,4 @@
-"""The fast fax service (SSL Fax engine) on the command line: one fax machine's own limits."""
+"""The fax engine (SSL Fax engine) on the command line: one fax machine's own limits."""
 import typer
 
 from .. import state

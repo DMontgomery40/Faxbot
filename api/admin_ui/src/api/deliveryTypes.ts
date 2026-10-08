@@ -720,7 +720,7 @@ export interface Savings {
     packets: number; documents_left_out: number; pages_not_resent: number; pages_saved: number;
     priced: number; in_plan: number; unpriced: number;
   };
-  // Faxes whose pages went over SSL Fax (the fast fax service); optional for older servers.
+  // Faxes whose pages went over SSL Fax (the fax engine); optional for older servers.
   sslfax?: SavingPart & {
     faxes: number; seconds_saved: number; priced: number; in_plan: number; unpriced: number; same_cost: number;
   };

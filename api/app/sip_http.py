@@ -548,7 +548,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     network_report = await run_lifecycle_step(lambda: sip_network.report(values)) if configured else None
     telnyx_report = await run_lifecycle_step(lambda: telnyx_t38.report(values, key)) if configured else None
-    # The fast fax service (SSL Fax engine): its state and one sentence.
+    # The fax engine (SSL Fax engine): its state and one sentence.
     from . import hylafax_engine
     from .ami import ami_client
     engine_state, engine_text = (await hylafax_engine.engine_summary(values, ami_client)
@@ -622,7 +622,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
         'network_text': network_report['text'] if network_report and network_report['applies'] else None,
         # Whether Telnyx accepts fax over IP (T.38) on the trunk's numbers (the last check), or None.
         'telnyx_t38': telnyx_report if telnyx_report and telnyx_report['applies'] else None,
-        # The fast fax service: running, starting, not_set_up or stopped, and its sentence (None outside Compose).
+        # The fax engine: running, starting, not_set_up or stopped, and its sentence (None outside Compose).
         'engine_state': engine_state,
         'engine_text': engine_text,
         # The engine went to audio fax on its own; the console and the command line say how to undo it.
@@ -695,7 +695,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         raise HTTPException(500, detail='Faxbot could not save the trunk settings for Asterisk.') from None
     except (AcquisitionError, ConfigurationStoreError):
         raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
-    # Apply and connect lets the fast fax service try T.38 again after it chose audio fax on its own.
+    # Apply and connect lets the fax engine try T.38 again after it chose audio fax on its own.
     from . import hylafax_engine
     from .ami import ami_client
     await run_lifecycle_step(lambda: hylafax_engine.clear_engine_t38(values))
@@ -721,12 +721,12 @@ def _set_t38(runtime, enabled, reason, network=None):
     return values
 
 
-# How long a fax the fast fax service took counts as pending (it dials once, within ten minutes).
+# How long a fax the fax engine took counts as pending (it dials once, within ten minutes).
 ENGINE_PENDING_MINUTES = 15
 
 
 def _engine_faxes_pending() -> bool | None:
-    """Whether the fast fax service holds a fax it took in the last minutes and has not reported on; None when
+    """Whether the fax engine holds a fax it took in the last minutes and has not reported on; None when
     its records cannot be read (never restart Asterisk under a fax that may be about to dial)."""
     from datetime import datetime, timedelta, timezone
     from . import hylafax_records, sip_calls
@@ -739,7 +739,7 @@ def _engine_faxes_pending() -> bool | None:
             before=now + timedelta(seconds=1), since=now - timedelta(minutes=ENGINE_PENDING_MINUTES)))
     except Exception:
         logging.getLogger(__name__).warning(
-            "The fast fax service's unreported faxes could not be read; Asterisk is not restarted now.")
+            "The fax engine's unreported faxes could not be read; Asterisk is not restarted now.")
         return None
 
 
@@ -760,7 +760,7 @@ async def _load_into_engine(values):
         return {'ok': True, 'engine': 'not_connected',
                 'message': 'Saved. ' + (ami_client.engine_message() or ENGINE_UNREACHABLE)}
     try:
-        # A call on any line counts (the trunk, the fast fax service's lines), and so does a fax the fast
+        # A call on any line counts (the trunk, the fax engine's lines), and so does a fax the fast
         # fax service has taken and not reported on yet: it may be about to dial.
         if await ami_client.active_calls():
             return {'ok': True, 'engine': 'busy', 'message': SAVED_BUSY}
@@ -801,7 +801,7 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
 
 @router.post('/engine/restart')
 async def restart_engine(request: Request, identity=Depends(require_permission('providers:write'))):
-    """Restart the fast fax service: it starts again as soon as no fax is going through (the engine reads
+    """Restart the fax engine: it starts again as soon as no fax is going through (the engine reads
     the request; Asterisk and the trunk settings are left as they are)."""
     from . import hylafax_engine
     values = configuration_values()
@@ -810,7 +810,7 @@ async def restart_engine(request: Request, identity=Depends(require_permission('
     if hylafax_engine.read_status(values).state in ('absent', 'failed'):
         raise HTTPException(409, detail=hylafax_engine.RESTART_NOT_RUNNING)
     if not await run_lifecycle_step(lambda: hylafax_engine.request_restart(values, reason='manual')):
-        raise HTTPException(503, detail='Faxbot could not ask the fast fax service to restart; try again.')
+        raise HTTPException(503, detail='Faxbot could not ask the fax engine to restart; try again.')
     from .audit import audit_event
     audit_event('sip_engine_restart_requested', backend='sip', reason='manual')
     return {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
