@@ -562,12 +562,18 @@ class DirectRoute:
         except ValueError:
             sender_number = None
         message_id = claim.attempt_id
-        manifest, signature, ciphertext = seal(
-            identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
-            fax_number=sender_number, recipient_number=peer['phone_number'],
-            recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
-            document=document, pages=image.pages if image is not None else job.get('pages'),
-            fax=image.facts if image is not None else None, created_at=signed_at)
+        from .transfer import TransferSender
+        staged = await run_lifecycle_step(lambda: TransferSender(service).staged(message_id))
+        if staged is not None:
+            # A transfer of this attempt is still open: the partner holds pieces of exactly these bytes.
+            manifest, signature, ciphertext = staged
+        else:
+            manifest, signature, ciphertext = seal(
+                identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
+                fax_number=sender_number, recipient_number=peer['phone_number'],
+                recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
+                document=document, pages=image.pages if image is not None else job.get('pages'),
+                fax=image.facts if image is not None else None, created_at=signed_at)
         await run_lifecycle_step(lambda: service.store.record_outbound(
             message_id=message_id, peer_id=peer['id'], job_id=claim.job_id, attempt_id=claim.attempt_id,
             recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),
@@ -593,6 +599,32 @@ class _DirectSubmission:
 
     async def submit(self):
         service, peer = self.service, self.peer
+        from .transfer import TransferSender, TransferUnsupported
+        if TransferSender.wanted(service, self.ciphertext):
+            # A large document goes in pieces: preflight, only the pieces missing after a drop, one commit.
+            try:
+                identity = await run_lifecycle_step(service.identity)
+                outcome, detail = await TransferSender(service).deliver(
+                    identity, peer, self.message_id, self.manifest, self.signature, self.ciphertext, self.digest)
+            except TransferUnsupported:
+                outcome = None  # Nothing was sent; the whole document goes in one request below.
+            except PartnerUnreachable as error:
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+                if isinstance(error, (PartnerAddressRefused, CertificateChanged)):
+                    raise DirectRefused(str(error)) from None
+                raise DirectRefused('The partner could not be reached; nothing was sent.') from None
+            except BaseException:
+                # Pieces may have reached the partner: the reconciler resumes the transfer instead of resending.
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))
+                raise
+            if outcome == 'accepted':
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'accepted',
+                                                                              receipt=detail))
+                await self.accepted()
+                return SubmissionReceipt(None, 'success')
+            if outcome == 'refused':
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+                raise DirectRefused(detail)
         try:
             status, body = await service.http.request('POST', peer['endpoint_url'] + '/direct/deliveries', files={
                 'manifest': (None, self.manifest, 'application/json'),
@@ -615,6 +647,7 @@ class _DirectSubmission:
             if (status == 200 and statement.get('type') == 'receipt' and statement.get('status') == 'accepted'
                     and statement.get('document_sha256') == self.digest):
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'accepted', receipt=body))
+                await self.accepted()
                 return SubmissionReceipt(None, 'success')
             if statement.get('type') == 'refusal' and 400 <= status < 500:
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
@@ -622,6 +655,19 @@ class _DirectSubmission:
         # The partner may have accepted it; ask instead of sending again.
         await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))
         raise RuntimeError('The answer from the partner could not be confirmed.')
+
+    async def accepted(self):
+        """After the partner's signed receipt: what follows an accepted document (a notice fax's queueing)."""
+        await accepted_followups(self.service, self.message_id)
+
+
+async def accepted_followups(service, message_id):
+    """Work that follows a partner's receipt for ``message_id``; it never changes the delivery's outcome."""
+    try:
+        from .notice import NoticeSender
+        await run_lifecycle_step(lambda: NoticeSender(service).original_accepted(message_id))
+    except Exception:
+        logging.getLogger(__name__).warning('The notice fax for a document delivered directly is queued shortly.')
 
 
 class DirectReconciler:
@@ -641,6 +687,20 @@ class DirectReconciler:
         peer = await run_lifecycle_step(lambda: service.store.get_peer(row['peer_id'])) if row['peer_id'] else None
         if peer is None:
             return None
+        # A document sent in pieces is finished first: only what the partner says it lacks, then one commit.
+        from .transfer import TransferSender
+        resumed = await TransferSender(service).resume(row)
+        if resumed == 'waiting':
+            return None  # The partner could not be reached; asked again later.
+        if resumed is not None:
+            receipt = resumed[1]
+            await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'accepted', receipt=receipt))
+            await accepted_followups(service, row['message_id'])
+            _, profile = await run_lifecycle_step(lambda: self.delivery.attempt_context(row['job_id'], row['attempt_id']))
+            await run_lifecycle_step(lambda: self.delivery.observe(
+                row['job_id'], attempt_id=row['attempt_id'], profile_id=profile.id, provider_sid=None,
+                status='success', event_key='direct:' + row['message_id']))
+            return 'accepted'
         identity = await run_lifecycle_step(service.identity)
         moment = timestamp()
         path = f"/direct/deliveries/{row['message_id']}"
@@ -663,6 +723,7 @@ class DirectReconciler:
             if accepted.get('document_sha256') != row['digest'] or accepted.get('message_id') != row['message_id']:
                 return None
             await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'accepted', receipt=receipt))
+            await accepted_followups(service, row['message_id'])
             _, profile = await run_lifecycle_step(lambda: self.delivery.attempt_context(row['job_id'], row['attempt_id']))
             await run_lifecycle_step(lambda: self.delivery.observe(
                 row['job_id'], attempt_id=row['attempt_id'], profile_id=profile.id, provider_sid=None,
