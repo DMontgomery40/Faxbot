@@ -41,7 +41,8 @@ SUB_2001 = 'ff03c2' + '2001'[::-1].encode().hex()
 
 @pytest.fixture
 def http(isolated_installation, monkeypatch, providers, tmp_path):  # noqa: F811
-    environment(monkeypatch, FAX_BACKEND='sip')
+    # The per-minute limits on reading received faxes count across tests in one process: left off here.
+    environment(monkeypatch, FAX_BACKEND='sip', INBOUND_LIST_RPM='0', INBOUND_GET_RPM='0')
     with client() as http:
         yield http
 

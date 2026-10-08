@@ -20,6 +20,14 @@ from api.tests.test_inbound_acquisition import (ADMIN, client, environment, pdf_
                                                 rows, step)
 
 
+@pytest.fixture(autouse=True)
+def _no_inbound_read_limits(monkeypatch):
+    """The per-minute limits on reading received faxes count across tests in one process; these tests read
+    /inbound to check what was stored, so they leave the limits off rather than use up later tests' minute."""
+    monkeypatch.setenv('INBOUND_LIST_RPM', '0')
+    monkeypatch.setenv('INBOUND_GET_RPM', '0')
+
+
 def _blocked_audits(monkeypatch):
     seen = []
     original = inbound_http.audit_event
