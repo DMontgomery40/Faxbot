@@ -180,8 +180,9 @@ def route_views(engine, routes=None):
 
 # Savings -------------------------------------------------------------------------------------------------------
 
-def savings(routes, engine, *, since, days):
-    """Pages saved by packing (and seconds by trimming) on delivered sends, priced with each route's billing.
+def savings(routes, engine, *, since, days, layout=None):
+    """Pages saved by packing (and seconds by trimming) on delivered sends, priced with each route's billing;
+    with ``layout`` 'codec', the pages saved by the experimental encoded pages instead (``encoding_sentence``).
 
     Always an estimate: what the same fax would have cost sent page by page.
     Per page: the pages not sent. Per minute: the call with the saved seconds
@@ -198,7 +199,8 @@ def savings(routes, engine, *, since, days):
             changes.c.trimmed_pages, changes.c.seconds_saved, costs.c.billed_seconds,
         ).join(costs, costs.c.id == changes.c.attempt_id).where(
             costs.c.outcome == 'success', changes.c.created_at >= since,
-            # Encoded pages (experimental) are not packing; their own line is the Sent detail's.
+            # Encoded pages (experimental) are counted apart from packing.
+            changes.c.layout == 'codec' if layout == 'codec' else
             sa.or_(changes.c.layout.is_(None), changes.c.layout != 'codec'))).all()
     result = {'faxes': 0, 'pages_saved': 0, 'trimmed_pages': 0, 'seconds_saved': 0, 'priced': 0, 'in_plan': 0,
               'plan_pages': 0, 'unpriced': 0, 'saved': {}}
@@ -231,8 +233,25 @@ def savings(routes, engine, *, since, days):
         result['priced'] += 1
         if before > after:
             result['saved'][card.currency] = result['saved'].get(card.currency, 0) + before - after
-    result['sentence'] = savings_sentence(result, days, money_text)
+    result['sentence'] = (encoding_sentence if layout == 'codec' else savings_sentence)(result, days, money_text)
     return result
+
+
+def encoding_sentence(result, days, money_text):
+    """Costs, Savings: "Pages saved by encoding (experimental)"."""
+    if not result['faxes']:
+        return f'No faxes went as encoded pages in the last {days} days.'
+    faxes = _pages(result['faxes'], 'fax').replace('faxs', 'faxes')
+    sentence = f"{_pages(result['pages_saved'])} saved by encoding on {faxes}"
+    minutes = result['seconds_saved'] // 60
+    if minutes:
+        sentence += f", about {_pages(minutes, 'minute')} less on the phone"
+    money = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items()))
+    sentence += f', saving about {money}.' if money else '.'
+    if result['plan_pages']:
+        sentence += (f" {_pages(result['plan_pages'])} of them went through your monthly plan: no money saved, but "
+                     "more room under its fair use and page limits.")
+    return sentence
 
 
 def savings_sentence(result, days, money_text):

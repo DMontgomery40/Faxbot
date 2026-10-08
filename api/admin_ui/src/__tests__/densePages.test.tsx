@@ -72,7 +72,7 @@ describe('Dense pages on the Recipients, Delivery routes and Savings screens', (
     await waitFor(() => expect(writes).toContainEqual({ route: 'sip', trim_blank: false }));
   });
 
-  it('shows the pages saved by packing as an estimate', async () => {
+  it('shows the pages saved by packing and by encoding as estimates', async () => {
     const part = { sentence: '', saved: [], estimate: true };
     server.use(http.get('/routing/savings', () => HttpResponse.json({
       days: 30, since: '2026-09-07T00:00:00', estimate: true, sentence: 'Each figure is an estimate.', total_saved: [],
@@ -82,11 +82,16 @@ describe('Dense pages on the Recipients, Delivery routes and Savings screens', (
         documents_left_out: 0, pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },
       packing: { ...part, faxes: 1, pages_saved: 3, trimmed_pages: 0, seconds_saved: 9, priced: 1, in_plan: 0,
         plan_pages: 0, unpriced: 0, sentence: '3 pages saved by packing on 1 fax, saving about $0.135.' },
+      encoding: { ...part, faxes: 1, pages_saved: 4, seconds_saved: 0, priced: 1, in_plan: 0, plan_pages: 0,
+        unpriced: 0, sentence: '4 pages saved by encoding on 1 fax, saving about $0.18.' },
     })));
     render(<Savings client={client()} />);
     const packing = await screen.findByTestId('savings-packing');
     await waitFor(() => expect(packing.textContent).toContain('3 pages saved by packing on 1 fax'));
     expect(within(packing).getByText('Pages saved by packing')).toBeTruthy();
     expect(within(packing).getByText('Estimate')).toBeTruthy();
+    const encoding = await screen.findByTestId('savings-encoding');
+    expect(within(encoding).getByText('Pages saved by encoding (experimental)')).toBeTruthy();
+    expect(encoding.textContent).toContain('4 pages saved by encoding on 1 fax, saving about $0.18.');
   });
 });

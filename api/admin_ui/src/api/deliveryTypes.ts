@@ -648,6 +648,11 @@ export interface Savings {
     faxes: number; pages_saved: number; trimmed_pages: number; seconds_saved: number; priced: number;
     in_plan: number; plan_pages: number; unpriced: number;
   };
+  // Pages saved by the experimental encoded pages, chosen for each attempt; optional for older servers.
+  encoding?: SavingPart & {
+    faxes: number; pages_saved: number; seconds_saved: number; priced: number; in_plan: number; plan_pages: number;
+    unpriced: number;
+  };
 }
 
 // GET /routing/recommendations/plans: whether each monthly plan is worth its fee. Every figure is an estimate;

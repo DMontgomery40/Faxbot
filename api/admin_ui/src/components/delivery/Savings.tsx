@@ -78,6 +78,9 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
           {data.own_numbers && <Part title="Faxes to your own numbers" sentence={data.own_numbers.sentence} testId="savings-own" />}
           {data.toll_free && <Part title="Approved toll-free numbers" sentence={data.toll_free.sentence} testId="savings-toll-free" />}
           {data.packing && <Part title="Pages saved by packing" sentence={data.packing.sentence} testId="savings-packing" />}
+          {data.encoding && (
+            <Part title="Pages saved by encoding (experimental)" sentence={data.encoding.sentence} testId="savings-encoding" />
+          )}
         </Stack>
       )}
     </Box>

@@ -852,7 +852,28 @@ def test_savings_count_packed_pages_on_delivered_sends_per_billing_model(install
     part = views.savings(routes, database, since=NOW - timedelta(days=30), days=30)
     assert (part['faxes'], part['pages_saved'], part['saved']) == (1, 3, {'USD': 135_000})
     assert part['sentence'] == '3 pages saved by packing on 1 fax, saving about $0.135.'
-    assert all_savings(routes, database, now=NOW + timedelta(days=1))['packing']['pages_saved'] == 3
+    # Pages saved by encoding (experimental) are counted apart: another delivered attempt sent 1 encoded page for 5.
+    encoded_attempt = 'e' * 32
+    tables = {name: sa.Table(name, sa.MetaData(), autoload_with=database)
+              for name in ('outbound_attempts', 'delivery_attempt_costs')}
+    with database.begin() as connection:
+        connection.execute(tables['outbound_attempts'].insert().values(**_filled(tables['outbound_attempts'], {
+            'id': encoded_attempt, 'job_id': JOB, 'sequence': 2})))
+        connection.execute(tables['delivery_attempt_costs'].insert().values(**_filled(
+            tables['delivery_attempt_costs'], {
+                'id': encoded_attempt, 'job_id': JOB, 'destination': PEER, 'route': 'sinch', 'route_reason': 'configured',
+                'provider_id': 'sinch', 'billing_checks': 0, 'outcome': 'success', 'created_at': NOW})))
+    installation.record_change(job_id=JOB, attempt_id=encoded_attempt, number=PEER, route='sinch', original_pages=5,
+                               sent_pages=1, billing='per_page', seconds_saved=0, layout='codec', now=NOW)
+    assert views.savings(routes, database, since=NOW - timedelta(days=30), days=30)['pages_saved'] == 3
+    encoding = views.savings(routes, database, since=NOW - timedelta(days=30), days=30, layout='codec')
+    assert (encoding['faxes'], encoding['pages_saved'], encoding['saved']) == (1, 4, {'USD': 180_000})
+    assert encoding['sentence'] == '4 pages saved by encoding on 1 fax, saving about $0.18.'
+    every = all_savings(routes, database, now=NOW + timedelta(days=1))
+    assert (every['packing']['pages_saved'], every['encoding']['pages_saved']) == (3, 4)
+    assert every['total'] == {'USD': 135_000 + 180_000}
+    nothing = views.savings(routes, database, since=NOW + timedelta(days=1), days=7, layout='codec')
+    assert nothing['sentence'] == 'No faxes went as encoded pages in the last 7 days.'
 
 
 def _attempt(database, attempt_id, route):
