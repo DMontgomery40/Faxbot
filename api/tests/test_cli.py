@@ -1655,8 +1655,8 @@ def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():
 
 def test_sent_says_a_broken_call_was_completed_directly_by_the_partner():
     from app.cli.commands import fax
-    sentence = ('Completed directly by County Clinic after the call broke: only the missing pages went again, and '
-                'County Clinic now holds the whole fax.')
+    sentence = ('Completed directly by County Clinic after the call broke: only the missing pages went, directly, '
+                'and County Clinic now holds the whole fax.')
 
     class Api:
         def get(self, path, params=None):

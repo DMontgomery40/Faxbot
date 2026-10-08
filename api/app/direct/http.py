@@ -262,8 +262,8 @@ def delivery_text(row, *, notice=False):
         return 'Accepted for relaying as a local call.'
     if row.get('kind') == 'repair' and row['state'] == 'accepted':
         name = row.get('organization') or 'the partner'
-        return (f'Completed directly by {name} after the call broke: only the missing pages went again, and {name} '
-                'now holds the whole fax.')
+        return (f'Completed directly by {name} after the call broke: only the missing pages went, directly, and '
+                f'{name} now holds the whole fax.')
     if notice and row['state'] == 'accepted' and row.get('kind') != 'fax_image':
         name = row.get('organization') or 'the partner'
         verb = 'to' if row['direction'] == 'outbound' else 'by'

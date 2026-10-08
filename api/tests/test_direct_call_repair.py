@@ -194,8 +194,8 @@ async def test_a_broken_call_is_completed_with_only_the_missing_pages(pair, tmp_
     assert sent['attempt_id'] == row['repair_id'] != attempt  # its own attempt, never the broken one
     from api.app.direct.http import delivery_text
     assert delivery_text({**sent, 'organization': 'Valley Hospital'}) == (
-        'Completed directly by Valley Hospital after the call broke: only the missing pages went again, and Valley '
-        'Hospital now holds the whole fax.')
+        'Completed directly by Valley Hospital after the call broke: only the missing pages went, directly, and '
+        'Valley Hospital now holds the whole fax.')
     listed = pair['b_client'].get('/direct/repairs', headers=ADMIN).json()['repairs']
     assert listed[0]['status'] == ('Completed: the missing pages went directly and Valley Hospital holds the whole '
                                    'fax. The call brought the first 6 of 10 pages; pages 7 to 10 came directly.')
@@ -254,6 +254,7 @@ async def test_when_the_partner_holds_every_page_nothing_is_sent_again(pair, tmp
     assert pair['to_b'].posts - posts_before == 1
     await repairs(pair).step()  # once only
     assert events(pair, job).count('repair_completed') == 1
+    assert 'repair_started' not in events(pair, job)  # nothing went again
 
 
 def test_a_question_about_a_call_must_be_signed_by_a_verified_partner(pair):

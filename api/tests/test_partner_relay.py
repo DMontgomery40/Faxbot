@@ -799,6 +799,34 @@ async def test_the_relays_own_sending_rules_decide_each_relayed_fax_in_its_accep
 
 
 @pytest.mark.asyncio
+async def test_refusing_a_relayed_fax_the_relays_rules_hold_lets_the_sender_take_its_own_next_route(
+        relay_trio, monkeypatch):
+    """While B's rules hold a relayed fax it waits in B's Sent and A's fax reads accepted for relaying. When B's
+    administrator refuses it, nothing was sent: A hears failed before any page and its own next route sends it."""
+    from api.app.outbound_store import OutboundStore as SenderStore
+    from api.app.routing.holds import HoldStore
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    b_rules(trio, {'format': 1, 'limits': [{'id': 'l-relayed', 'name': 'Relayed faxes', 'on': True, 'when': {},
+                                            'then': {'never': ['phaxio']}}]})
+    job = queue(a)
+    monkeypatch.setattr(SenderStore, 'fallback_policy', lambda job_id, attempt_id: job_id == job)
+    await send(a)
+    assert a.delivery.get(job)['state'] == 'in_progress'
+    relayed = relayed_job(trio, a)
+    (hold,) = HoldStore(trio.b_delivery).holds(job_id=relayed['job_id'])
+    await asyncio.to_thread(lambda: HoldStore(trio.b_delivery).refuse(
+        hold['id'], version=hold['version'], actor=None, actor_name='Ada Admin', reason='We do not send these'))
+    assert await asyncio.to_thread(b_report) == 1
+    (mine,) = rows(a.engine, "SELECT state, detail FROM relay_faxes WHERE role = 'sender'")
+    assert mine['state'] == 'failed_before_data'
+    assert mine['detail'] == ("Sydney office's call failed before any page was sent: Refused by Ada Admin: We do not "
+                              'send these')
+    assert a.delivery.get(job)['state'] == 'ready'  # A's own next route takes it
+    assert trio.provider.sent == []
+
+
+@pytest.mark.asyncio
 async def test_a_relayed_fax_is_never_relayed_again_even_when_the_relays_rules_name_a_relay_first(relay_trio):
     trio, a = relay_trio, relay_trio.a
     await asyncio.to_thread(agree, trio, a)

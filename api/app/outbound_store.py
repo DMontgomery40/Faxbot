@@ -1293,7 +1293,8 @@ class OutboundStore:
         values = dict(id=attempt_id, job_id=job_id, sequence=sequence + 1, profile_id=broken['profile_id'],
                       phase='in_progress', created_at=now, submitted_at=now if sent else None)
         connection.execute(self.attempts.insert().values(**values))
-        _event(connection, self.events, job_id, 'repair_started', now, attempt_id=attempt_id)
+        if sent:
+            _event(connection, self.events, job_id, 'repair_started', now, attempt_id=attempt_id)
         return values
 
     def begin_repair(self, job_id, *, broken_attempt_id, attempt_id, now=None):
