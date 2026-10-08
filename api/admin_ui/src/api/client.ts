@@ -4,6 +4,7 @@ import type {
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecFax, CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type {
   CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
   ChecklistBuildRequest, ChecklistItem,
@@ -1244,6 +1245,48 @@ class AdminAPIClient {
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Find partners: suggestions, introductions, the lookup settings and publishing your number.
+  async getDiscovery(): Promise<Discovery> {
+    return this.json('/direct/discovery');
+  }
+
+  async saveDiscoverySettings(change: DiscoverySettingsChange): Promise<Discovery & { detail: string }> {
+    return this.json('/direct/discovery/settings', { method: 'PUT', body: JSON.stringify(change) });
+  }
+
+  async enrollSuggestion(suggestionId: string): Promise<DirectPartner & { detail: string }> {
+    return this.json(`/direct/discovery/suggestions/${id(suggestionId)}/enroll`, { method: 'POST', body: '{}' });
+  }
+
+  async dismissSuggestion(suggestionId: string): Promise<{ detail: string }> {
+    return this.json(`/direct/discovery/suggestions/${id(suggestionId)}/dismiss`, { method: 'POST', body: '{}' });
+  }
+
+  async lookUpPartner(number: string): Promise<{ detail: string; suggestion_id: string | null }> {
+    return this.json('/direct/discovery/lookup', { method: 'POST', body: JSON.stringify({ number }) });
+  }
+
+  async setMayIntroduce(partnerId: string, allowed: boolean): Promise<{ may_introduce: boolean; detail: string }> {
+    return this.json(`/direct/discovery/partners/${id(partnerId)}/may-introduce`, {
+      method: 'POST', body: JSON.stringify({ allowed }) });
+  }
+
+  async introducePartners(first: string, second: string): Promise<{ detail: string }> {
+    return this.json('/direct/discovery/introductions', { method: 'POST', body: JSON.stringify({ first, second }) });
+  }
+
+  async publishNumber(number: string, directory: string): Promise<DiscoveryPublication & { detail: string }> {
+    return this.json('/direct/discovery/publications', { method: 'POST', body: JSON.stringify({ number, directory }) });
+  }
+
+  async checkPublication(publicationId: string): Promise<{ state: string; detail: string }> {
+    return this.json(`/direct/discovery/publications/${id(publicationId)}/check`, { method: 'POST', body: '{}' });
+  }
+
+  async withdrawPublication(publicationId: string): Promise<{ detail: string }> {
+    return this.json(`/direct/discovery/publications/${id(publicationId)}/withdraw`, { method: 'POST', body: '{}' });
   }
 
   // Work queue

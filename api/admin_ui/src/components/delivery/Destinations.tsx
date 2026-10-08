@@ -208,19 +208,25 @@ function preferredText(destination: Destination): string {
   return destination.routes.find((route) => route.route === destination.preferred_route)?.label ?? destination.preferred_route;
 }
 
-function partnerText(destination: Destination, partners: DirectPartner[] | null): string {
+// Shown for a number that is no partner's when Faxbot found that its recipient runs Faxbot (Partners → Find partners).
+export const RUNS_FAXBOT = 'Runs Faxbot: enroll it under Partners';
+
+function partnerText(destination: Destination, partners: DirectPartner[] | null,
+  suggested: string[] | null = null): string {
   const partner = (partners ?? []).find((peer) => peer.fax_number === destination.number && peer.state !== 'revoked');
-  if (!partner) return '-';
+  if (!partner) return (suggested ?? []).includes(destination.number) ? RUNS_FAXBOT : '-';
   return partner.state === 'verified' ? partner.organization : `${partner.organization} (waiting for verification)`;
 }
 
-export default function Destinations({ client, destinations, canWrite, onChanged, partners = null }: {
+export default function Destinations({ client, destinations, canWrite, onChanged, partners = null, suggested = null }: {
   client: AdminAPIClient;
   destinations: Destination[];
   canWrite: boolean;
   onChanged: () => void;
   // Direct delivery partners, to say which numbers belong to one; null when not readable.
   partners?: DirectPartner[] | null;
+  // Numbers whose recipient runs Faxbot and could become a partner; null when not readable.
+  suggested?: string[] | null;
 }) {
   const { isMobile } = useSmallScreens();
   const [open, setOpen] = useState<string | null>(null);
@@ -287,7 +293,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                   <TableCell>{formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</TableCell>
                   <TableCell>{deliveredSummary(destination)}</TableCell>
                   <TableCell>{preferredText(destination)}</TableCell>
-                  <TableCell>{partnerText(destination, partners)}</TableCell>
+                  <TableCell>{partnerText(destination, partners, suggested)}</TableCell>
                   <TableCell>{destination.accepts_references ? 'Takes a one-page list instead' : 'Full documents'}</TableCell>
                   <TableCell align="right">
                     <Button size="small" onClick={() => setOpen(destination.number)} aria-label={`Details for ${destination.number}`}>Details</Button>

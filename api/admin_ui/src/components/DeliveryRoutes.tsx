@@ -8,6 +8,7 @@ import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, Ra
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
+import FindPartners from './delivery/FindPartners';
 import PlanBudgets from './delivery/PlanBudgets';
 import RateCards from './delivery/RateCards';
 import TollFreePrices from './delivery/TollFreePrices';
@@ -49,18 +50,21 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
   const [cards, setCards] = useState<RateCard[]>([]);
   const [tollFree, setTollFree] = useState<TollFreeTerms[]>([]);
   const [partners, setPartners] = useState<DirectPartner[]>([]);
+  // Numbers whose recipient runs Faxbot (Partners → Find partners), for the recipients list.
+  const [suggested, setSuggested] = useState<string[] | null>(null);
   const shows = (part: DeliveryRoutesSection) => !section || section === part;
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
     const wants = (part: DeliveryRoutesSection) => !section || section === part;
     try {
-      const [routes, costs, rates, peers] = await Promise.all([
+      const [routes, costs, rates, peers, discovery] = await Promise.all([
         wants('numbers') ? client.listDestinations() : null,
         wants('spending') ? client.getRouteCosts() : null,
         wants('rates') ? client.listRateCards() : null,
         // The recipients list names the partner each number belongs to, when partners can be read.
         wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(() => null) : null,
+        section === 'numbers' ? client.getDiscovery().catch(() => null) : null,
       ]);
       if (routes) setDestinations(routes.destinations);
       if (costs) {
@@ -73,6 +77,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
         setTollFree(rates.toll_free ?? []);
       }
       if (peers) setPartners(peers.peers);
+      if (discovery) setSuggested(discovery.suggestions.map((item) => item.number));
       setState('ready');
     } catch (failure) {
       setState(loadFailure(failure));
@@ -100,7 +105,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               onChanged={() => void load()} />)}
           {shows('numbers') && part('numbers',
             <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
-              partners={section === 'numbers' ? partners : null} />)}
+              partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />)}
           {shows('rates') && part('rates',
             <>
               <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
@@ -108,7 +113,16 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               <PlanBudgets client={client} canWrite={canWrite} />
             </>)}
           {shows('partners') && part('partners',
-            <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />)}
+            <>
+              <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />
+              <Box component="section" mt={4}>
+                <Typography variant="h6" component="h2">Find partners</Typography>
+                <Typography variant="body2" color="text.secondary" mb={2}>
+                  Recipients that run Faxbot, found from your fax calls, your partners' introductions and directories you trust.
+                </Typography>
+                <FindPartners client={client} canWrite={canWrite} onChanged={() => void load()} />
+              </Box>
+            </>)}
         </>
       )}
     </Box>
