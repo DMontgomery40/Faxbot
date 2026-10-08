@@ -342,6 +342,21 @@ def test_invoices_are_entered_corrected_listed_and_their_file_is_returned(client
     assert document.headers['content-disposition'] == 'attachment; filename="invoice-humblefax-2026-09-01.pdf"'
 
 
+def test_an_accounts_plan_billing_day_sets_its_invoice_period(client):
+    """The billing day of the account's plan (plan_budget, through its rate card) is the one its invoices use."""
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    saved = client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'], 'plan_budgets': 'humblefax:day=15'})
+    assert saved.status_code == 200, saved.text
+    listed = client.get('/routing/invoices', headers=ADMIN).json()
+    accounts = {account['account_key']: account for account in listed['accounts']}
+    assert (accounts['humblefax']['billing_day'], accounts['phaxio']['billing_day']) == (15, 1)
+    entered = client.post('/routing/invoices', headers=ADMIN,
+                          data={'account': 'humblefax', 'month': '2026-09', 'total': '10.00'})
+    assert entered.status_code == 201, entered.text
+    assert (entered.json()['first_day'], entered.json()['last_day']) == ('2026-09-15', '2026-10-14')
+
+
 def test_invoice_input_is_refused_in_one_sentence_and_needs_settings_write(client):
     for data, status, detail in (
             ({'account': 'nobody', 'month': '2026-09', 'total': '1'}, 404, 'Faxbot has no account with this key.'),

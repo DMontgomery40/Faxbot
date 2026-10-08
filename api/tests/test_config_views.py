@@ -276,3 +276,15 @@ def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret(
     assert view['ENABLE_ADMIN_EXEC'] == {'set': False, 'value': None, 'effective': True}
     assert deployment_view({'ENABLE_LOCAL_ADMIN': 'true', 'ENABLE_ADMIN_EXEC': 'false'})['ENABLE_ADMIN_EXEC']['effective'] is False
     assert deployment_view({})['ENABLE_ADMIN_EXEC']['effective'] is False
+
+
+def test_the_trunk_view_says_whether_faxbot_can_read_its_carriers_call_records():
+    """Read from the real carrier_records.trunk_records: Flowroute publishes charges, readable once both keys are set."""
+    from api.app.config_views import project_admin_settings
+    trunk = {'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'flowroute'}
+    unread = project_admin_settings(snapshot(trunk))['sip']['call_records']
+    assert (unread['published'], unread['readable']) == (True, False)
+    assert 'add your Flowroute API access key and secret key under Providers → Flowroute' in unread['sentence']
+    keys = {'FLOWROUTE_ACCESS_KEY': 'synthetic-access', 'FLOWROUTE_SECRET_KEY': 'synthetic-secret'}
+    read = project_admin_settings(snapshot({**trunk, **keys}))['sip']['call_records']
+    assert (read['published'], read['readable']) == (True, True)

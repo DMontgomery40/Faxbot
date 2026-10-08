@@ -107,8 +107,8 @@ def _database_view(url: str) -> dict[str, Any]:
 
 
 def _call_records(values):
+    from .routing.carrier_records import trunk_records
     try:
-        from .routing.carrier_records import trunk_records
         found = trunk_records(values)
     except Exception:
         return None
