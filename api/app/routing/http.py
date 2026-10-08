@@ -409,32 +409,35 @@ def _carrier_status(values):
     preset = values.sip_trunk_preset
     if preset not in CARRIER_PRESETS:
         return {'carrier': carrier_label(preset) if preset else None, 'readable': False, 'supported': False}
-    return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
+    if preset == 'telnyx':
+        return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
+    from .carrier_records import trunk_records  # another carrier that publishes its call records
+    return {'carrier': carrier_label(preset), 'supported': True, 'readable': trunk_records(values)['readable']}
 
 
 NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
                  'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
 
 
-def _reconcile_summary(result):
+def _reconcile_summary(result, label='Telnyx'):
     # The same split as the Spending card: a record matched to a received fax is not "no record of".
     attached = result.get('unrecorded_matched_to_faxes', 0)
     unattached = result.get('unrecorded_calls', 0) - attached
-    extra = (f" Telnyx billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
+    extra = (f" {label} billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
              if unattached else '')
     if attached:
         extra += (f" {attached} {'call' if attached == 1 else 'calls'} came in that Faxbot did not record at the time; "
                   f"{'its fax is' if attached == 1 else 'their faxes are'} in Received.")
     if result['carrier_unavailable'] and not result['checked']:
-        return 'Telnyx could not be reached; Faxbot will ask again later.'
+        return f'{label} could not be reached; Faxbot will ask again later.'
     if not result['checked']:
         return 'No calls are waiting for a charge.' + extra
     recorded = result['charges_recorded']
     parts = [f"{recorded} new {'charge' if recorded == 1 else 'charges'} recorded"]
     if result['waiting']:
-        parts.append(f"{result['waiting']} still waiting for the Telnyx bill")
+        parts.append(f"{result['waiting']} still waiting for the {label} bill")
     if result['ambiguous']:
-        parts.append(f"{result['ambiguous']} could not be matched to one Telnyx record")
+        parts.append(f"{result['ambiguous']} could not be matched to one {label} record")
     calls = f"{result['checked']} {'call' if result['checked'] == 1 else 'calls'}"
     return f'Checked {calls}: ' + ', '.join(parts) + '.' + extra
 
@@ -445,18 +448,26 @@ async def reconcile(request: Request):
     engine, _ = installation_engine(request.app)
     if engine is None:
         raise HTTPException(503, detail='Installation configuration is not ready.')
-    key = request.scope['faxbot.configuration'].active.values.telnyx_api_key
-    if not key:
-        raise HTTPException(409, detail=NO_TELNYX_KEY)
-
     values = request.scope['faxbot.configuration'].active.values
+    from .carrier_records import READERS, reader_for, trunk_records
+    preset = values.sip_trunk_preset
+    if preset in READERS:
+        # Another carrier that publishes its call records (carrier_records.PUBLISHED).
+        source = reader_for(preset, values)
+        if not source.ready():
+            raise HTTPException(409, detail=trunk_records(values)['sentence'])
+    else:
+        key = values.telnyx_api_key
+        if not key:
+            raise HTTPException(409, detail=NO_TELNYX_KEY)
+        preset, source = 'telnyx', carrier_source(lambda: key)
 
     def run():
-        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), carrier_source(lambda: key),
+        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), source, preset=preset,
                                        numbers=lambda: _trunk_numbers(values))
         return reconciler.run_now().as_dict()
     result = await _call(run)
-    return {**result, 'summary': _reconcile_summary(result)}
+    return {**result, 'summary': _reconcile_summary(result, source.label)}
 
 
 def _cost_view(cost):

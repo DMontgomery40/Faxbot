@@ -31,7 +31,7 @@ from .plan import route_label
 
 
 # Trunk presets whose carrier charges Faxbot reads, and the providers it asks itself.
-CARRIER_PRESETS = ('telnyx',)
+CARRIER_PRESETS = ('telnyx', 'signalwire')
 REPORTING_PROVIDERS = ('signalwire', 'sinch', 'phaxio')
 
 
@@ -426,7 +426,7 @@ class Spending:
                         'summary': f'{carrier_label(next(iter(carriers)))} charged {money_list_text(total)} for this call.'}
             if backend == 'sip':
                 return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
-            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+            return self._received_charge(inbound_id, backend)
         for row in rows:
             for charge in effective.get(row.id, []):
                 _add(total, charge['currency'], charge['amount_micros'])
@@ -444,3 +444,29 @@ class Spending:
             return {'state': 'unmatched', 'reported_cost': {},
                     'summary': f'Faxbot could not match this call to one {who} record, so its cost is unknown.'}
         return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
+
+    def _received_charge(self, inbound_id, backend):
+        """What Sinch or Phaxio reported for a fax it received (``billing.ReceivedChargeReconciler``, 0051)."""
+        from .billing import RECEIVED_PROVIDERS, ReceivedChargeStore
+        from .database import DeliveryStoreError
+        if backend not in RECEIVED_PROVIDERS:
+            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+        try:
+            store = ReceivedChargeStore(self.routes.engine)
+            reports, state = store.in_effect([inbound_id]).get(inbound_id, []), store.state(inbound_id)
+        except DeliveryStoreError:
+            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+        who = route_label(backend)
+        total = {}
+        for report in reports:
+            _add(total, report['currency'], report['amount_micros'])
+        if total:
+            return {'state': 'reported', 'reported_cost': total,
+                    'summary': f'{who} charged {money_list_text(total)} for this fax.'}
+        if state == 'unreported':
+            return {'state': 'none', 'reported_cost': {},
+                    'summary': f'{who} never reported a price for this fax, so its cost is unknown.'}
+        if state == 'waiting':
+            return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
+        # Received before Faxbot read received-fax charges, or not asked about yet.
+        return {'state': 'none', 'summary': None, 'reported_cost': {}}
