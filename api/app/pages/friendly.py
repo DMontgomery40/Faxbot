@@ -1,33 +1,39 @@
-"""Fax-friendly pages: light shading left out and specks removed before a page goes on the line.
+"""Fax-friendly pages: shaded areas kept with a pattern the fax codes quickly; light areas made white only on request.
 
 Faxes are coded line by line in runs of white and black (MH, MR, MMR). A
 page of black text on white is a few long runs per line; a gray area that
 Ghostscript draws as a halftone of dots is a short run for every dot, so a
 shaded table header or a tinted form field can cost more than all the text
-on the page. Measured with ``scripts/fax_friendly_benchmark.py`` on synthetic
-pages at 204 x 196 dots per inch (results in the benchmark's report):
+on the page. Measured with ``scripts/fax_friendly_benchmark.py`` and Codex's
+probe (``research/faxbot-next-experiments-2026-10-08``) on synthetic pages at
+204 x 196 dots per inch, MMR at 14,400 bit/s:
 
-- light shading (25% gray or lighter) is where the time goes, and leaving it
-  white saves most of it while every darker pixel stays exactly as it was:
-  in MMR at 14,400 bit/s a shaded table went from 61 to 12 seconds, a form
-  with tinted fields from 51 to 2, and a gray scan from 198 to 37;
-- thresholding every gray to black or white saves more but turns medium and
-  dark shading solid black (black text on it disappears), and error
-  diffusion costs 1.2 to 2.3 times today's halftone, so neither is used;
-- single specks cost a black-and-white scan about 9%;
-- the pages Faxbot draws itself are black text and do not change, and the
-  font moves a text page by 12% or less (no font is smallest in both MH
-  and MMR), so fonts stay as they are.
+- drawing the uniform inside of each shaded area with horizontal stripes
+  (``screens.py``), while every pixel near text, lines, edges and marks stays
+  exactly as Faxbot draws it today, took a shaded table from 61 to 27 seconds
+  and a form with tinted fields from 51 to 13; pale text stays pixel for pixel;
+- making every pixel that is 25% gray or lighter white saves more (61 to 12,
+  51 to 2) but erases pale text: the 15% and 25% gray text bands lost every
+  fax pixel, so it is only an opt-in (``fax_friendly_whiten``), with a warning;
+- removing specks (a lone black pixel with only light gray around it) also
+  removes the dots of pale text, so it goes only with that opt-in;
+- the pages Faxbot draws itself and the experimental encoded pages are never
+  changed.
+
+Which pages go: the layout chooser of each attempt (``conversion.choose_layout``)
+prices the pages as they are, the screened pages, and the whitened pages when
+the opt-in is on, each with its own coding, and keeps the most faithful of the
+ones whose expected bill is the lowest (``decision.choose``). A faster one wins
+at the same bill only for a named reason (``named_reason``): a send-by time
+within the hour, other faxes waiting for a line, or the administrator's choice
+(the setting or the recipient at Always). The fax's own files never change.
 
 How a page is changed: Ghostscript draws the page twice at the fax
-resolution, once as today's fax image and once in gray. A pixel whose gray
-is ``LIGHT_LEVEL`` or lighter becomes white; every other pixel keeps today's
-value exactly. With ``despeckle``, a black pixel that has no black pixel
-next to it and only light gray around it is a speck and becomes white; the
-halftone dots of darker shading always have darker gray around them, so
-they stay. When the two drawings do not line up (a pure black or pure white
-gray pixel that is not the same in today's image), the page goes exactly as
-it would have.
+resolution, once as today's fax image and once in gray, and (for the screen)
+once more with only its text, to find each mark. When the two drawings do not
+line up (a pure black or pure white gray pixel that is not the same in today's
+image), the page goes exactly as it would have. Every changed page is checked
+by ``fidelity.assess``; a screened page that would lose anything goes as it is.
 """
 from __future__ import annotations
 
@@ -54,6 +60,8 @@ LIGHT_LEVEL = 191
 _NEIGHBOURS = ImageFilter.Kernel((3, 3), [1, 1, 1, 1, 0, 1, 1, 1, 1], scale=1)
 
 SCOPES = ('drawn', 'documents')
+# 'screened': shaded areas kept with a pattern (nothing removed); 'whitened': light areas made white, specks removed.
+METHODS = ('screened', 'whitened')
 
 
 def _lut(predicate):
@@ -139,7 +147,8 @@ class PageChange:
 
 
 def friendly_page(gray, halftone, *, despeckle_page=True, level=LIGHT_LEVEL):
-    """The fax-friendly version of one page, or None when the two drawings do not line up (send it as it is).
+    """The whitened version of one page (light areas made white, and specks removed with ``despeckle_page``), or
+    None when the two drawings do not line up (send it as it is). Only with the whitening opt-in.
 
     ``gray`` is the page drawn in gray (mode "L"), ``halftone`` today's fax image of it (mode "1")."""
     dpi = halftone.info.get('dpi')
@@ -160,20 +169,23 @@ def friendly_page(gray, halftone, *, despeckle_page=True, level=LIGHT_LEVEL):
 
 @dataclass
 class Request:
-    """Asks ``conversion.pdf_to_tiff`` for fax-friendly pages; it fills in ``result``.
+    """Asks ``conversion.pdf_to_tiff`` (or ``lightened_pages``) for fax-friendly pages; ``result`` says what changed.
 
-    ``scope``: 'drawn' (pages Faxbot drew itself, from text and shapes; on by default) or 'documents' (your
-    documents, when ``decide`` says so for an attempt). ``despeckle``: also remove specks; on for your documents, off for
-    drawn pages (they have none, and a scan someone attached stays exactly as it is)."""
+    ``scope``: 'documents' (your documents) or 'drawn' (pages Faxbot drew itself: never changed). ``method``:
+    'screened' (the default: shaded areas kept with a pattern) or 'whitened' (light areas made white; only with
+    the opt-in). ``despeckle``: also remove specks; only ever with whitening."""
     scope: str = 'documents'
     despeckle: bool | None = None
+    method: str = 'screened'
     result: 'Result | None' = field(default=None)
 
     def __post_init__(self):
         if self.scope not in SCOPES:
             raise ValueError('Unsupported fax-friendly scope')
-        if self.despeckle is None:
-            self.despeckle = self.scope == 'documents'
+        if self.method not in METHODS:
+            raise ValueError('Unsupported fax-friendly method')
+        if self.despeckle is None or self.method != 'whitened':
+            self.despeckle = self.method == 'whitened' and self.scope == 'documents'
 
 
 @dataclass(frozen=True)
@@ -182,6 +194,9 @@ class Result:
     pages_changed: int
     bits_before: int  # MMR (Group 4) bits of every page, as Faxbot sends them
     bits_after: int
+    method: str = 'screened'
+    losses: tuple = ()  # what the changed pages lost (``fidelity.LOSSES``); always empty for screened pages
+    difference: float = 0.0  # how far the pages look from today's at reading distance (``fidelity``)
 
     @property
     def bits_saved(self):
@@ -194,6 +209,12 @@ def seconds_saved(result):
     return result.bits_saved // LINE_BITS_PER_SECOND
 
 
+def fidelity_of(result):
+    """The changed pages' ``fidelity.Fidelity`` as the layout chooser ranks them (kept, losses, difference)."""
+    from .fidelity import Fidelity
+    return Fidelity(not result.losses, tuple(result.losses), 0, result.difference)
+
+
 # The hook: conversion.pdf_to_tiff calls apply() after Ghostscript made today's fax image -------------------------
 
 def _render_gray(pdf_path, out_path, gs):
@@ -204,9 +225,9 @@ def _render_gray(pdf_path, out_path, gs):
         check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _changed_pages(gray_path, today, request):
-    """(pages, how many changed), or None when the gray drawing and today's image are not the same pages."""
-    pages, changed = [], 0
+def _gray_pages(gray_path, today):
+    """The gray drawing's pages on today's canvases, or None when they are not the same pages."""
+    pages = []
     with warnings.catch_warnings():
         warnings.simplefilter('error', Image.DecompressionBombWarning)
         with Image.open(gray_path) as gray:
@@ -217,28 +238,83 @@ def _changed_pages(gray_path, today, request):
                     return None
                 if gray.mode != 'L' or gray.height != frame.height:
                     return None
-                change = friendly_page(gray, frame, despeckle_page=request.despeckle)
-                if change is None:
-                    return None
-                pages.append(change.page if change.changed else frame)
-                changed += int(change.changed)
+                pages.append(fit(gray.copy(), frame.size))
             try:
                 gray.seek(len(today))
                 return None
             except EOFError:
                 pass
-    return pages, changed
+    return pages
+
+
+def _screened(pdf_path, grays, today, gs, folder):
+    """(pages, how many changed, Fidelity) with shaded areas screened, or None when a page does not line up.
+    A page the fidelity measure would not keep goes as it is."""
+    from . import fidelity, screens
+    masks = screens.object_masks(pdf_path, grays, gs, folder)
+    pages, changed, kept = [], 0, []
+    for gray, frame, mask in zip(grays, today, masks):
+        screened = screens.screen_page(gray, frame, objects=mask)
+        if screened is None:
+            return None
+        found = fidelity.assess(gray, frame, screened.page, frozen=screened.frozen)
+        if screened.changed and found.kept:
+            pages.append(screened.page)
+            changed += 1
+            kept.append(found)
+            continue
+        if screened.changed:
+            logging.getLogger(__name__).warning('A screened page would have lost %s; it goes as it is.',
+                                                ', '.join(found.losses))
+        pages.append(frame)
+        kept.append(fidelity.UNCHANGED)
+    return pages, changed, _overall(kept)
+
+
+def _whitened(grays, today, despeckle_page):
+    """(pages, how many changed, Fidelity) with light areas made white, or None when a page does not line up. The
+    measure records what whitening lost; the administrator chose it with its warning."""
+    from . import fidelity
+    pages, changed, found = [], 0, []
+    for gray, frame in zip(grays, today):
+        change = friendly_page(gray, frame, despeckle_page=despeckle_page)
+        if change is None:
+            return None
+        pages.append(change.page if change.changed else frame)
+        changed += int(change.changed)
+        found.append(fidelity.assess(gray, frame, change.page) if change.changed else fidelity.UNCHANGED)
+    return pages, changed, _overall(found)
+
+
+def _overall(pages):
+    from . import fidelity
+    losses = {name for page in pages for name in page.losses}
+    ordered = tuple(name for name in fidelity.LOSSES if name in losses)
+    difference = sum(page.difference for page in pages) / len(pages) if pages else 0.0
+    return fidelity.Fidelity(not ordered, ordered, sum(page.changed for page in pages), round(difference, 6))
+
+
+# Ghostscript, the image files and the drawing checks refuse in these ways; anything else is a bug and is raised.
+_REFUSED = (subprocess.SubprocessError, OSError, ValueError, Image.DecompressionBombError,
+            Image.DecompressionBombWarning)
+
+
+def _refusals():
+    from ..conversion import DocumentConversionError
+    from .screens import MasksUnavailable
+    return _REFUSED + (DocumentConversionError, MasksUnavailable)
 
 
 def apply(pdf_path, tiff_path, request, *, gs):
-    """Make the fax image Ghostscript just wrote at ``tiff_path`` (from ``pdf_path``, at 204 x 196) fax-friendly,
-    in place, and set ``request.result``; returns the Result or None. Never raises: when anything goes wrong, or
-    no page changes, or the pages would not be smaller, the image stays exactly as it was."""
+    """Make the fax image Ghostscript just wrote at ``tiff_path`` (from ``pdf_path``, at 204 x 196) fax-friendly
+    with ``request.method``, in place, and set ``request.result``; returns the Result or None. When Ghostscript or
+    the image refuses, or no page changes, or the pages would not be smaller, the image stays exactly as it was."""
     request.result = None
     try:
         result = _apply(pdf_path, tiff_path, request, gs)
-    except Exception:
-        logging.getLogger(__name__).warning('Fax-friendly pages could not be made; the pages go as they are.')
+    except _refusals():
+        logging.getLogger(__name__).warning('Fax-friendly pages could not be made; the pages go as they are.',
+                                            exc_info=True)
         return None
     request.result = result
     return result
@@ -247,39 +323,43 @@ def apply(pdf_path, tiff_path, request, *, gs):
 def _apply(pdf_path, tiff_path, request, gs):
     from .. import conversion
     folder = Path(tiff_path).parent
+    today = conversion.read_fax_frames(str(tiff_path))
+    if not today:
+        return None
+    if request.scope == 'drawn':
+        return Result(len(today), 0, 0, 0, request.method)  # pages Faxbot drew itself are never changed
     handle, gray_path = tempfile.mkstemp(prefix='.faxbot-friendly-', suffix='.tiff', dir=folder)
     os.close(handle)
     handle, out_path = tempfile.mkstemp(prefix='.faxbot-friendly-', suffix='.tiff', dir=folder)
     os.close(handle)
     try:
         _render_gray(pdf_path, gray_path, gs)
-        today = conversion.read_fax_frames(str(tiff_path))
-        if not today:
-            return None
-        found = _changed_pages(gray_path, today, request)
+        grays = _gray_pages(gray_path, today)
+        found = None
+        if grays is not None:
+            found = (_screened(pdf_path, grays, today, gs, folder) if request.method == 'screened'
+                     else _whitened(grays, today, request.despeckle))
         if found is None:
             # Said once per document, without its details, so a live check can see that it went unchanged.
             logging.getLogger(__name__).warning(
                 'Fax-friendly pages were not made: the gray drawing did not line up with the fax image.')
             return None
-        pages, changed = found
+        pages, changed, assessment = found
         if not changed:
-            return Result(len(today), 0, 0, 0)
+            return Result(len(today), 0, 0, 0, request.method)
         before, after = sum(conversion.frame_bits(today)), sum(conversion.frame_bits(pages))
         if after >= before:
-            return Result(len(today), 0, before, before)
+            return Result(len(today), 0, before, before, request.method)
         conversion.write_fax_tiff(pages, out_path)
         os.replace(out_path, tiff_path)
-        return Result(len(today), changed, before, after)
+        return Result(len(today), changed, before, after, request.method, assessment.losses, assessment.difference)
     finally:
         for path in (gray_path, out_path):
             Path(path).unlink(missing_ok=True)
 
 
-
-
 def lighten_image(pdf_path, tiff_path, out_path, request):
-    """A lightened copy of a fax image Faxbot made from ``pdf_path`` (``tiff_path``) at ``out_path``, for one
+    """A fax-friendly copy of a fax image Faxbot made from ``pdf_path`` (``tiff_path``) at ``out_path``, for one
     send; sets ``request.result``. The fax's own image is never changed; on any problem the copy is unchanged."""
     import shutil
     shutil.copyfile(tiff_path, out_path)
@@ -290,24 +370,29 @@ def lighten_image(pdf_path, tiff_path, out_path, request):
     return apply(pdf_path, out_path, request, gs=gs)
 
 
-# The lightened pages of a fax, made once and kept with the attempt files -----------------------------------------
+# The changed pages of a fax, made once for each method and kept with the attempt files ---------------------------
 
 CACHE = 'packed-friendly-'  # sending.PREFIX ('packed-'): the retention cleanup removes it with the attempt files
 _HEX32 = re.compile(r'[a-f0-9]{32}')
 
 
-def _cache_paths(root, job_id):
-    stem = Path(root) / f'{CACHE}{job_id}'
+def _cache_paths(root, job_id, method):
+    # Named by method: an earlier build's ``packed-friendly-<fax>.tiff`` holds whitened pages and is never read.
+    stem = Path(root) / f'{CACHE}{job_id}-{method}'
     return stem.with_suffix('.tiff'), stem.with_suffix('.json')
 
 
-def _cached(image, facts):
+def _cached(image, facts, method):
     """(Result, image or None) from the cache, or None when there is nothing usable."""
     try:
         known = json.loads(facts.read_text())
         result = Result(**{name: int(known[name]) for name in ('pages', 'pages_changed', 'bits_before',
-                                                                'bits_after')})
+                                                                'bits_after')},
+                        method=str(known['method']), losses=tuple(str(name) for name in known.get('losses', ())),
+                        difference=float(known.get('difference', 0.0)))
     except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if result.method != method:
         return None
     if not result.pages_changed:
         return result, None
@@ -317,26 +402,33 @@ def _cached(image, facts):
 
 
 def lightened_pages(root, job_id, pdf_path, tiff_path, request):
-    """The fax's lightened pages for one attempt: the path of the fax image to send, or None when no page changes
-    or they could not be made; ``request.result`` says which. Made once for each document (Faxbot's own image
-    when there is one, else its PDF drawn again) and kept as ``packed-friendly-<fax>`` beside the attempt files,
-    so a retry or a second attempt draws nothing again. The fax's own files are never changed."""
+    """The fax's changed pages for one attempt, made with ``request.method``: the path of the fax image to send, or
+    None when no page changes or they could not be made; ``request.result`` says which. Made once for each document
+    and method (Faxbot's own image when there is one, else its PDF drawn again) and kept as
+    ``packed-friendly-<fax>-<method>`` beside the attempt files, so a retry draws nothing again. The fax's own files
+    are never changed."""
     from .. import conversion
     request.result = None
     if not _HEX32.fullmatch(str(job_id)):
         return None
-    image, facts = _cache_paths(root, job_id)
-    found = _cached(image, facts)
+    image, facts = _cache_paths(root, job_id, request.method)
+    found = _cached(image, facts, request.method)
     if found is not None:
         request.result, path = found
         return path
     handle, temporary = tempfile.mkstemp(prefix='.faxbot-friendly-', suffix='.tiff', dir=str(root))
     os.close(handle)
     try:
-        if tiff_path is not None and Path(tiff_path).is_file():
-            lighten_image(str(pdf_path), str(tiff_path), temporary, request)
-        else:
-            conversion.pdf_to_tiff(str(pdf_path), temporary, friendly=request)
+        try:
+            if tiff_path is not None and Path(tiff_path).is_file():
+                lighten_image(str(pdf_path), str(tiff_path), temporary, request)
+            else:
+                conversion.pdf_to_tiff(str(pdf_path), temporary, friendly=request)
+        except (conversion.DocumentConversionError, OSError):
+            logging.getLogger(__name__).warning('Fax-friendly pages could not be made; the pages go as they are.',
+                                                exc_info=True)
+            request.result = None
+            return None
         result = request.result
         if result is None:
             return None
@@ -346,18 +438,15 @@ def lightened_pages(root, job_id, pdf_path, tiff_path, request):
         written.write_text(json.dumps(asdict(result)))
         os.replace(written, facts)
         return image if result.pages_changed else None
-    except Exception:
-        logging.getLogger(__name__).warning('Fax-friendly pages could not be made; the pages go as they are.')
-        request.result = None
-        return None
     finally:
         for path in (Path(temporary), Path(temporary).with_suffix('.json')):
             path.unlink(missing_ok=True)
 
 
 def call_lightener(engine, values, route, number, root, claim):
-    """For a shared call (batching/image.py): ``lighten(job_id)``, each fax's lightened image (or None), when this
-    call's route and recipient say so; else None. Each fax lightened is recorded for its own attempt."""
+    """For a shared call (batching/image.py): ``lighten(job_id)``, each fax's screened image (or None), when this
+    call's route and recipient say so; else None. A shared call carries several faxes and is not priced fax by
+    fax, so it gets the screen (nothing removed), never whitening. Each fax screened is recorded for its attempt."""
     lighten, _ = should_lighten(engine, values, route, number)
     if not lighten:
         return None
@@ -370,13 +459,13 @@ def call_lightener(engine, values, route, number, root, claim):
         if path is not None and job_id in attempts:
             try:
                 record_send(engine, job_id=job_id, attempt_id=attempts[job_id], request=request)
-            except Exception:
+            except sa.exc.SQLAlchemyError:
                 logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
         return path
     return lighten_member
 
 
-# When: the setting for your documents, each recipient's choice, and each attempt's route -------------------------
+# When: the setting for your documents, the whitening opt-in, each recipient's choice, and each attempt's route ----
 
 CHOICES = ('where_it_saves', 'always', 'never')
 RECIPIENT_CHOICES = ('always', 'never')
@@ -391,6 +480,12 @@ def documents_choice(values):
         return 'always' if value else 'never'
     value = _LEGACY.get(str(value).strip().lower(), str(value).strip().lower())
     return value if value in CHOICES else 'where_it_saves'
+
+
+def whiten_allowed(values):
+    """Whether the administrator opted in to making light areas white (``fax_friendly_whiten``; off by default).
+    It never applies while the setting for your documents is Never."""
+    return getattr(values, 'fax_friendly_whiten', False) is True and documents_choice(values) != 'never'
 
 
 PHONE_ROUTES = frozenset({'sip', 'freeswitch'})
@@ -410,24 +505,31 @@ def billed_by_time(card, route=None):
 
 
 def should_lighten(engine, values, route, number, *, card=..., ecm=...):
-    """``decide`` for one attempt by ``route`` to ``number``: (lighten, why). Never raises (then: no)."""
-    try:
-        if card is ...:
-            from ..routing.store import RouteStore
+    """``decide`` for one attempt by ``route`` to ``number``: (make candidates, why). A rate card or machine
+    record that cannot be read counts as unknown (logged), never as a reason."""
+    if card is ...:
+        from ..routing.store import RouteStore
+        try:
             card = RouteStore(engine).card_for(route)
-        if ecm is ...:
-            from .capability import records_for
+        except (sa.exc.SQLAlchemyError, ValueError):  # ValueError: costs.InvalidRateCard, a stored card it refuses
+            logging.getLogger(__name__).warning('The route rate card could not be read for fax-friendly pages.')
+            card = None
+    if ecm is ...:
+        from .capability import records_for
+        try:
             ecm = records_for(engine).capability(number).ecm
-        return decide(documents_choice(values), recipient_choice(engine, number),
-                      by_time=billed_by_time(card, route), ecm=ecm)
-    except Exception:
-        return False, None
+        except sa.exc.SQLAlchemyError:
+            logging.getLogger(__name__).warning('The fax machine record could not be read for fax-friendly pages.')
+            ecm = None
+    return decide(documents_choice(values), recipient_choice(engine, number), by_time=billed_by_time(card, route),
+                  ecm=ecm)
 
 
 def decide(choice, recipient, *, by_time, ecm):
-    """Whether one attempt's pages are lightened, and why: (True, 'recipient' | 'always' | 'time' | 'ecm') or
-    (False, None). A recipient's never always wins and its always beats the setting; "where it saves time"
-    lightens on a call billed by time or for a machine without error correction (``ecm`` False)."""
+    """Whether one attempt's changed pages are made and priced at all, and why: (True, 'recipient' | 'always' |
+    'time' | 'ecm') or (False, None). A recipient's never always wins and its always beats the setting; "where it
+    saves time" makes them for a call billed by time or a machine without error correction (``ecm`` False), and
+    the layout chooser keeps them only at a lower expected bill or for a named reason."""
     if recipient == 'never':
         return False, None
     if recipient == 'always':
@@ -443,7 +545,34 @@ def decide(choice, recipient, *, by_time, ecm):
     return False, None
 
 
-# The record (migration 0042): one row for each attempt whose pages were lightened, and recipients' choices -------
+# Named reasons for a faster page at the same expected bill (decision.choose): nothing else trades fidelity for time.
+REASONS = ('administrator', 'deadline', 'capacity')
+
+
+def named_reason(engine, values, job, route, why, *, now=None):
+    """The reason a faster candidate may win at the same expected bill, or None.
+
+    'administrator': the setting for your documents, or this recipient, is Always (``why``). 'deadline': the fax
+    has a send-by time within ``schedule.DEADLINE_FIRST`` (the hour in which the scheduler sends it first).
+    'capacity': it goes over your phone line while other faxes wait for a line (``capacity.waiting_for_line``)."""
+    if why in ('always', 'recipient'):
+        return 'administrator'
+    now = now or utcnow()
+    from ..routing.schedule import DEADLINE_FIRST
+    send_by = (job or {}).get('send_by')
+    if isinstance(send_by, datetime) and send_by.replace(tzinfo=None) - now <= DEADLINE_FIRST:
+        return 'deadline'
+    if route in PHONE_ROUTES and engine is not None:
+        from ..capacity import for_engine
+        try:
+            if for_engine(engine).waiting_for_line(values, now) > 0:
+                return 'capacity'
+        except sa.exc.SQLAlchemyError:
+            logging.getLogger(__name__).warning('Faxes waiting for a line could not be counted.')
+    return None
+
+
+# The record (migrations 0042 and 0058): one row for each attempt whose pages changed, and recipients' choices ------
 
 TABLE = 'fax_friendly_pages'
 RECIPIENTS = 'fax_friendly_recipients'
@@ -462,9 +591,11 @@ def _row(job_id, attempt_id, scope, result):
         raise ValueError('Unsupported fax-friendly record')
     if not (0 <= result.bits_before < 2 ** 31 and 0 <= result.bits_after < 2 ** 31):
         raise ValueError('Unsupported fax-friendly record')
+    if result.method not in METHODS:
+        raise ValueError('Unsupported fax-friendly record')
     return {'id': uuid4().hex, 'job_id': job_id, 'attempt_id': attempt_id, 'scope': scope, 'pages': result.pages,
             'pages_changed': result.pages_changed, 'bits_before': result.bits_before,
-            'bits_after': result.bits_after, 'seconds_saved': seconds_saved(result)}
+            'bits_after': result.bits_after, 'seconds_saved': seconds_saved(result), 'method': result.method}
 
 
 def _table(connection, name=TABLE):
@@ -472,7 +603,7 @@ def _table(connection, name=TABLE):
 
 
 def record_send(engine, *, job_id, attempt_id, request, now=None):
-    """Record the lightened pages one attempt sent; once per attempt. Returns the row's ID, or None."""
+    """Record the changed pages one attempt sent, and how; once per attempt. Returns the row's ID, or None."""
     result = getattr(request, 'result', None)
     if engine is None or result is None or result.pages_changed < 1:
         return None
@@ -483,6 +614,8 @@ def record_send(engine, *, job_id, attempt_id, request, now=None):
             table.c.job_id == job_id, table.c.attempt_id == attempt_id)).scalar()
         if found is not None:
             return found
+        if 'method' not in table.c:
+            raise ValueError('The fax-friendly pages table is older than migration 0058.')
         connection.execute(table.insert().values(**row, created_at=now or utcnow()))
     return row['id']
 
@@ -497,8 +630,8 @@ def _newest_attempt(connection, job_id):
 
 
 def run_for(engine, job_id):
-    """What the fax's newest attempt sent: its row when that attempt's pages were lightened, else None (the Sent
-    detail follows the attempt). Without attempt records, the newest row."""
+    """What the fax's newest attempt sent: its row when that attempt's pages changed, else None (the Sent detail
+    follows the attempt). Without attempt records, the newest row."""
     if engine is None or not _ID.fullmatch(str(job_id or '')):
         return None
     try:
@@ -544,20 +677,43 @@ def set_recipient_choice(engine, number, shading, *, actor=None, now=None):
     return recipient_choice(engine, number)
 
 
-# What people read ----------------------------------------------------------------------------------------------
+# What people read: the one source of the setting's words (console, command line, guided setup) ------------------
 
-SETTING_LABEL = 'Lighten shaded areas and remove specks on documents you send'
+SETTING_LABEL = 'Fax-friendly shading on documents you send'
 CHOICE_LABELS = {'where_it_saves': 'Where it saves time', 'always': 'Always', 'never': 'Never'}
+CHOICE_SENTENCES = {
+    'where_it_saves': ('Faxbot keeps shaded areas with a fax-friendly pattern when that makes the call cost less, or '
+                       'when a fax must go by its send-by time or others are waiting for your phone line. Text and '
+                       'marks stay exactly as they are.'),
+    'always': ('Faxbot keeps shaded areas with a fax-friendly pattern on every document whose pages it makes, '
+               'whenever that shortens the call. Text and marks stay exactly as they are.'),
+    'never': 'Faxbot sends the pages of your documents as they are.',
+}
 SETTING_SENTENCE = (
-    '"Where it saves time" changes pages only on calls billed by time, such as your phone line, and for fax '
-    'machines without error correction; providers that charge per page save nothing, so their pages go as they '
-    'are. "Always" changes every document whose pages Faxbot makes, and "Never" changes none. Shaded table rows, '
-    'tinted form fields and gray scan backgrounds take most of a page\'s time on the line: in Faxbot\'s tests a '
-    'page with a shaded table went from 61 to 12 seconds, and a gray scanned page from over 3 minutes to 37 '
-    'seconds. Shaded areas then print white and photographs lose their lightest parts; black text and anything '
-    'darker stay exactly as they were.')
-RECIPIENT_LABEL = 'Lighten shaded areas for this recipient'
+    'Shaded table rows, tinted form fields and highlights take most of a page\'s time on the line. Faxbot draws '
+    'their inside with fine stripes that the fax line sends quickly and leaves every letter, line and mark exactly '
+    'as it was: in Faxbot\'s tests a page with a shaded table went from 61 to 27 seconds, and pale text stayed as '
+    'it was.')
+WHITEN_LABEL = 'Also make light areas white'
+WHITEN_WARNING = 'This may erase pale text and light marks, such as faint handwriting, and removes specks.'
+WHITEN_SENTENCE = (
+    'Light shading then prints white where that makes the call cost less; in Faxbot\'s tests a shaded table went '
+    'from 61 to 12 seconds. ' + WHITEN_WARNING)
+RECIPIENT_LABEL = 'Fax-friendly shading for this recipient'
 WHERE = 'under Providers, In use, Delivery routes'
+
+
+def describe_setting():
+    """The setting as other screens describe it (guided setup reads its words here; keep this the one source).
+
+    ``default`` is the choice a new installation has, ``off`` the one that changes no page, and ``choices`` maps
+    each choice to its label (as Providers → In use shows it) and one sentence saying what it does. ``whiten`` is
+    the separate opt-in to make light areas white, off by default, with its warning.
+    """
+    return {'setting': 'fax_friendly_documents', 'label': SETTING_LABEL, 'default': 'where_it_saves', 'off': 'never',
+            'choices': {value: (CHOICE_LABELS[value], CHOICE_SENTENCES[value]) for value in CHOICES},
+            'whiten': {'setting': 'fax_friendly_whiten', 'label': WHITEN_LABEL, 'default': False,
+                       'warning': WHITEN_WARNING}}
 
 
 def recipient_view(engine, number, values):
@@ -606,14 +762,23 @@ def seconds_at(run, rate=None):
     return run.get('seconds_saved')
 
 
+def method_of(run):
+    """'screened' or 'whitened'; a row from before migration 0058 (no method) was whitened."""
+    return 'screened' if (run or {}).get('method') == 'screened' else 'whitened'
+
+
 def sent_sentence(run, rate=None):
     """The Sent detail's sentence for one row of fax_friendly_pages, or None. ``rate``: the speed the call went
     at (``call_rate``); without it the estimate is at full fax speed (14,400 bit/s)."""
     if not run:
         return None
     pages = _pages_text(run['pages_changed'], run['pages'])
-    head = (f'Shaded areas on {pages} were lightened and specks removed before sending' if run['scope'] == 'documents'
-            else f'Shaded areas on {pages} Faxbot drew were lightened before sending')
+    if run['scope'] != 'documents':
+        head = f'Shaded areas on {pages} Faxbot drew were lightened before sending'
+    elif method_of(run) == 'screened':
+        head = f'Shaded areas on {pages} were kept with a fax-friendly pattern'
+    else:
+        head = f'Light areas on {pages} were made white and specks removed before sending'
     known = rate in RATES and run.get('bits_before') is not None
     seconds = seconds_at(run, rate if known else None)
     if not seconds:
@@ -633,7 +798,7 @@ _LOCK = threading.Lock()
 
 
 def measure_document(pdf_path):
-    """What lightening would do to a fax's PDF, drawn as Faxbot draws it today: a Result, or None."""
+    """What the fax-friendly pattern would do to a fax's PDF, drawn as Faxbot draws it today: a Result, or None."""
     from .. import conversion
     request = Request('documents')
     with tempfile.TemporaryDirectory(prefix='.faxbot-friendly-check-', dir=str(Path(pdf_path).parent)) as folder:
@@ -666,8 +831,9 @@ def _recent_faxes(engine, since):
 
 
 def where_it_saves(engine):
-    """``saves(route, number)``: whether "Where it saves time" would lighten a fax by that route to that number
-    (a rate card that bills by time, or a machine without error correction). Answers are kept per call."""
+    """``saves(route, number)``: whether "Where it saves time" would make fax-friendly pages for a fax by that route
+    to that number (a rate card that bills by time, or a machine without error correction). Answers are kept per
+    call."""
     from ..routing.store import RouteStore
     from .capability import records_for
     cards, machines = {}, {}
@@ -727,18 +893,18 @@ def recommendation(engine, data_dir, *, choice, now=None, measure=None, saves=No
     faxes = 'Your last fax' if one else f'Your last {checked} faxes'
     if seconds >= MIN_SECONDS:
         view['recommend'] = True
-        which = ('it has shaded areas or specks' if one else
-                 f'{changed} of them {"has" if changed == 1 else "have"} shaded areas or specks')
+        which = ('it has shaded areas' if one else
+                 f'{changed} of them {"has" if changed == 1 else "have"} shaded areas')
         view['sentence'] = (f'{faxes} would have taken an estimated {duration(seconds)} less on the line with shaded '
-                            f'areas lightened and specks removed on calls billed by time; {which}.')
-        view['action'] = (f'Choose "{CHOICE_LABELS["where_it_saves"]}" for "{SETTING_LABEL}" {WHERE}. Shaded areas '
-                          'then print white on those calls, and photographs lose their lightest parts.')
+                            f'areas kept in a fax-friendly pattern on calls billed by time; {which}.')
+        view['action'] = (f'Choose "{CHOICE_LABELS["where_it_saves"]}" for "{SETTING_LABEL}" {WHERE}. Text and marks '
+                          'stay exactly as they are; only the inside of shaded areas is drawn differently.')
     elif shaded:
         view['sentence'] = (f'{faxes} went by providers that charge per page, to machines with error correction, so '
-                            'lightening shaded areas would have saved nothing.' if not one else
+                            'the fax-friendly pattern would have saved nothing.' if not one else
                             'Your last fax went by a provider that charges per page, to a machine with error '
-                            'correction, so lightening shaded areas would have saved nothing.')
+                            'correction, so the fax-friendly pattern would have saved nothing.')
     else:
-        view['sentence'] = (f'{faxes} {"has" if one else "have"} no shaded areas or specks that slow '
+        view['sentence'] = (f'{faxes} {"has" if one else "have"} no shaded areas that slow '
                             f'{"it" if one else "them"} down.')
     return view

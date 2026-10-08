@@ -293,11 +293,14 @@ class ConfigurationValues(BaseModel):
     plan_budgets: str = Field('', validation_alias='FAX_PLAN_BUDGETS', max_length=2000)
     # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
     local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
-    # Lighten shaded areas and remove specks on documents you send (pages/friendly.py): 'where_it_saves' (the
-    # default: only on calls billed by time and for machines without error correction), 'always' or 'never'.
-    # The earlier on and off values read as always and never.
+    # Fax-friendly shading on documents you send (pages/friendly.py): 'where_it_saves' (the default: shaded areas
+    # kept with a fax-friendly pattern when the attempt's expected bill is lower, or for a named reason), 'always'
+    # or 'never'. The earlier on and off values read as always and never.
     fax_friendly_documents: str = Field('where_it_saves', validation_alias='FAX_FRIENDLY_DOCUMENTS',
                                         pattern=r'^(where_it_saves|always|never)$')
+    # Also make light areas white (and remove specks): an opt-in, off by default, because it may erase pale text
+    # and light marks. Never applies while fax_friendly_documents is 'never'.
+    fax_friendly_whiten: bool = Field(False, validation_alias='FAX_FRIENDLY_WHITEN')
     # Default intake email connector; more connectors are managed in the console.
     intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
     intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')

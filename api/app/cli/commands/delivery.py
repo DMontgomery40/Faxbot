@@ -183,8 +183,8 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                    help='Leave out the blank bottom of pages when this machine has no error '
                                         'correction: on, off, or default for the setting all faxes use.'),
                                shading: str = typer.Option(None, '--shading', metavar='ON|OFF|DEFAULT',
-                                   help='Lighten shaded areas and remove specks on documents sent to this '
-                                        'recipient: on (always), off (never), or default for the setting all '
+                                   help='Fax-friendly shading on documents sent to this recipient: on (always '
+                                        'when it shortens the call), off (never), or default for the setting all '
                                         'faxes use.')):
     """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
     api = state.api()
@@ -724,12 +724,12 @@ def _read_friendly(api):
 
 
 def show_friendly(out, result):
-    """Lightening shaded areas and removing specks: with the setting at never, what it would have saved."""
+    """Fax-friendly shading: with the setting at never, what it would have saved."""
     choice = result.get('choice')
     if result.get('sentence'):
         out.line(result['sentence'])
     elif choice in ('where_it_saves', 'always'):
-        out.line('Nothing to suggest: shaded areas are lightened '
+        out.line('Nothing to suggest: shaded areas are kept with a fax-friendly pattern '
                  + ('where it saves time.' if choice == 'where_it_saves' else 'on every document.'))
     else:
         out.line('Faxbot has no recent faxes to check yet.')
@@ -747,7 +747,7 @@ RECOMMENDATION_SECTIONS = [
     ('partners', 'Partner candidates', _read_partners, show_partners),
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
-    ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
+    ('pages', 'Shaded areas', _read_friendly, show_friendly),
 ]
 
 recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
@@ -756,7 +756,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, and how much time lightening shaded areas would save. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, and how much time the fax-friendly shading pattern would save. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -800,8 +800,8 @@ for _name, _read, _show, _help in (
          "Show what your last 30 days of faxing would have cost at each carrier's published prices. Advice only: "
          'switching carriers means moving your numbers, and Faxbot never switches anything.'),
         ('shading', _read_friendly, show_friendly,
-         'Show how much time lightening shaded areas and removing specks saved, or would save, on your recent '
-         'faxes.')):
+         'Show how much time the fax-friendly shading pattern would save on your recent faxes, while the '
+         'setting is Never.')):
     recommendations.command(_name, help=_help)(_section(_read, _show))
 
 

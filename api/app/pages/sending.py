@@ -4,10 +4,13 @@ Called for each attempt before anything is dialed or uploaded
 (``outbound_transport.CapturedTransport.prepare``). The layout chooser
 (``conversion.choose_layout``) prices the pages as they are, dense pages and
 the experimental encoded pages (``codec/send.py``, only for a number whose
-recipient agreed) from the same pages, and keeps exactly one; the pages as
-they are and dense pages may also be lightened, trimmed or kept at standard
-resolution, encoded pages never are. It is decided again for every attempt,
-so a fax that moves to another route is decided for that route.
+recipient agreed) from the same pages, plus the fax-friendly renderings of
+them (``friendly.py``: shading kept with a pattern, and light areas made white
+only with the opt-in), and keeps exactly one: the cheapest expected bill, and
+the most faithful at that bill. The pages as they are and dense pages may also
+be trimmed or kept at standard resolution; encoded pages never are. It is
+decided again for every attempt, so a fax that moves to another route is
+decided for that route.
 
 The fax's own PDF and fax image are never changed: a changed send gets its
 own files beside them (``packed-<fax>-<attempt>.tiff`` / ``.pdf``), which the
@@ -15,7 +18,7 @@ usual retention cleanup removes. A provider that fetches the document from
 Faxbot gets that attempt's PDF at the fetch address (``fetched_pdf``).
 Anything that goes wrong here is logged and the fax goes exactly as it would
 have; this hook never stops or delays a send. Faxes sent together in one call
-are left alone (batching lightens each fax's own image for the shared call).
+are left alone (batching screens each fax's own image for the shared call).
 """
 from __future__ import annotations
 
@@ -133,32 +136,39 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                and records.trim_allowed(chosen))
     # A document that is really standard resolution goes at standard (lossless; Faxbot's own engines only).
     match_ok = mode == 'image'
-    # Lighten shaded areas and remove specks (pages/friendly.py), decided for this attempt: the setting for your
-    # documents, the recipient's own choice, whether this route's rate card bills by time, and whether the
-    # receiving machine has error correction.
+    # Fax-friendly shading (pages/friendly.py), decided for this attempt: the setting for your documents, the
+    # recipient's own choice, whether this route's rate card bills by time, and whether the receiving machine has
+    # error correction say whether the screened pages (and, with the opt-in, the whitened pages) are made at all;
+    # the layout chooser then keeps them only at a lower expected bill, or for a named reason.
     from . import friendly as fax_friendly
     route_card = _card(engine, route)
-    lighten, _ = fax_friendly.should_lighten(engine, values, route, number, card=route_card, ecm=cap.ecm)
+    lighten, why = fax_friendly.should_lighten(engine, values, route, number, card=route_card, ecm=cap.ecm)
     if lighten and chosen != number and fax_friendly.recipient_choice(engine, chosen) == 'never':
         lighten = False  # never for the recipient the person chose holds on an approved toll-free number too
-    friendly = fax_friendly.Request('documents') if lighten else None
+    requests = []
+    if lighten:
+        requests.append(fax_friendly.Request('documents'))
+        if fax_friendly.whiten_allowed(values):
+            requests.append(fax_friendly.Request('documents', method='whitened'))
     # Encoded pages (experimental): a candidate only when the dialed number, and the recipient the person chose,
     # agreed to them (codec/send.py). This read is cheap; nothing is drawn for a number that did not agree.
     codec_ok = setting_for(engine, number, chosen) is not None
-    if not packing_ok and not trim_ok and not match_ok and not codec_ok and friendly is None:
+    if not packing_ok and not trim_ok and not match_ok and not codec_ok and not requests:
         return None
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
     source = Path(str(tiff)) if mode == 'image' and tiff else None
     raster = None
     try:
-        # The lightened pages, made once for the fax and kept with the attempt files (a retry draws nothing again).
-        lightened_image = (fax_friendly.lightened_pages(root, job_id, pdf, source, friendly)
-                           if friendly is not None else None)
-        if lightened_image is not None:
-            source = lightened_image
-        elif not packing_ok and not trim_ok and not match_ok and not codec_ok:
+        # The changed pages, made once for the fax and each method and kept with the attempt files (a retry draws
+        # nothing again).
+        rendered = {}
+        for request in requests:
+            path = fax_friendly.lightened_pages(root, job_id, pdf, source, request)
+            if path is not None:
+                rendered[request.method] = (path, request)
+        if not rendered and not packing_ok and not trim_ok and not match_ok and not codec_ok:
             return None  # no page changed, and nothing else would change them
-        elif source is None:
+        if source is None:
             # A cloud provider takes a PDF: rasterize the fax's PDF to price and change its pages, then send them as
             # a PDF.
             raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
@@ -167,22 +177,36 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         frames = conversion.read_fax_frames(str(source))
         if not frames:
             return None
+        others = {}
+        for method, (path, _) in rendered.items():
+            pages = conversion.read_fax_frames(str(path))
+            if pages and len(pages) == len(frames):
+                others[method] = pages
         matched = standard_frames(frames) if match_ok else None
         if matched is not None:
             frames = matched
+            # A document that is really standard resolution goes at standard, losslessly: it was made from a
+            # standard image, which has no uniform gray to screen.
+            others = {}
         resolution = 'standard' if is_standard(frames) else 'fine'
         # Whether this call carries fine pages: the SSL Fax engine draws a fine page again at standard resolution
         # when the trunk or the receiving machine does not take fine.
         call_fine = cap.fine is not False and (mode != 'image' or _call_resolution(values) == 'fine')
         if mode == 'image' and resolution == 'fine' and not call_fine:
             packing_ok = trim_ok = False  # the pages would be drawn again: leave them alone
-        trimmed_pages = trimmed_rows = 0
+        # Each rendering with its blank page bottoms left out the same way: (pages, trimmed pages, trimmed rows).
+        trimmed = {method: (pages, 0, 0) for method, pages in [(None, frames)] + list(others.items())}
         if trim_ok:
             flags = rendered_pages(str(pdf))
             if flags is not None and len(flags) == len(frames):
-                frames, trimmed_pages, trimmed_rows = trim_frames(frames, flags)
-        # Exactly one layout: the pages as they are, packed onto long pages, or the experimental encoded pages,
-        # whichever the route's billing makes cheapest (conversion.choose_layout).
+                trimmed = {method: trim_frames(pages, flags) for method, (pages, _, _) in trimmed.items()}
+        frames, trimmed_pages, trimmed_rows = trimmed[None]
+        renderings = {method: (trimmed[method][0], fax_friendly.fidelity_of(rendered[method][1].result))
+                      for method in others}
+        faster = fax_friendly.named_reason(engine, values, job, route, why, now=now) if renderings else None
+        # Exactly one way to send: the pages as they are, packed onto long pages, the experimental encoded pages,
+        # or a fax-friendly rendering of them; the cheapest expected bill, and the most faithful at that bill
+        # (conversion.choose_layout).
         from .views import packed_sentence
 
         def describe_dense(original, sent):
@@ -198,15 +222,17 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
                                           dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                           card=route_card, boundary_seconds=cap.boundary_seconds,
-                                          describe_dense=describe_dense)
+                                          describe_dense=describe_dense, renderings=renderings, faster=faster)
         layout = None if choice['layout'] == 'normal' else choice['layout']
+        rendering = choice['rendering']
         encoded = layout == 'codec'
         if encoded:
-            # Encoded pages go exactly as the codec made them: nothing trimmed, kept at standard or lightened.
+            # Encoded pages go exactly as the codec made them: nothing trimmed, kept at standard or screened.
             trimmed_pages = trimmed_rows = 0
             matched = None
-        lightened = (not encoded and friendly is not None and friendly.result is not None
-                     and friendly.result.pages_changed > 0)
+        elif rendering is not None:
+            _, trimmed_pages, trimmed_rows = trimmed[rendering]
+        lightened = rendering is not None
         if layout is None and not trimmed_pages and matched is None and not lightened:
             return None
         pages = choice['pages']
@@ -235,7 +261,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         if encoded:
             _record_codec(engine, job_id, choice['codec'], now)
         if lightened:
-            fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=friendly, now=now)
+            fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=rendered[rendering][1],
+                                     now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
                              len(frames), len(pages), trimmed_pages)
     except BaseException:

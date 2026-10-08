@@ -47,8 +47,9 @@ MARK_RADIUS = 7
 MARK_CONTRAST = 16
 # Gray at or above this is pale (25% gray or lighter, the level AR's whitening made white).
 PALE_LEVEL = 191
-# Shading is checked in blocks this size (two stripe periods), where at least half the block is shading.
-BLOCK = 16
+# Shading is checked in blocks this size (four stripe periods: half a block always holds a stripe), where at least
+# half the block is shading.
+BLOCK = 32
 TONE_TOLERANCE = 0.15  # share of the block: the page's ink may differ from the shading's own darkness by this
 FADED_INK = 0.03  # share of a block: below this, a block has too little ink to say it faded
 BLUR = 2  # pixels: the reading-distance blur for ``difference``

@@ -672,42 +672,59 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
 
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
-                  boundary_seconds=None, predict=None, describe_dense=None):
-    """Price every way these pages may go and keep exactly one, the cheapest (``pages.decision.rank``).
+                  boundary_seconds=None, predict=None, describe_dense=None, renderings=None, faster=None):
+    """Price every way these pages may go and keep exactly one (``pages.decision.choose``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
     ``dense_allowed`` and the receiver's ``limit`` puts fewer pages on the call); ``codec`` (``codec(frames)``'s
     encoded pages, when it returns any). Each candidate is made from the same pages, so dense pages and the codec
-    never stack. Each is priced with the shared predictor through ``pages.decision`` for ``route`` and
-    ``destination``, at its own resolution; on a full tie the simpler layout wins (normal, dense, codec).
+    never stack. ``renderings`` (pages/friendly.py) are other renderings of the same pages, {'screened' or
+    'whitened': (pages, fidelity.Fidelity)}: each goes as it is or dense too, never encoded. Every candidate is
+    priced with the shared predictor through ``pages.decision`` for ``route`` and ``destination``, at its own
+    resolution. The cheapest expected bill wins; among candidates with the same expected bill the most faithful
+    does (the pages as they are first), then fewer pages billed, less time, the simpler layout. ``faster``: a
+    named reason ('administrator', 'deadline', 'capacity') that puts less time before fidelity at the same bill.
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
-    {layout: Prediction}, and ``codec``: what ``codec()`` returned when the codec was kept, else None.
+    {layout: Prediction} of the pages as they are, ``codec``: what ``codec()`` returned when the codec was kept,
+    else None, ``rendering``: None or the rendering kept, and ``faster``: the named reason when it decided.
     """
-    from .pages import decision, packing
-    candidates = {"normal": (list(frames), None, None)}
+    from .pages import decision, fidelity, packing
+    pieces = {("as_is", "normal"): (list(frames), None, None, fidelity.UNCHANGED.rank)}
+    sources = [("as_is", list(frames), fidelity.UNCHANGED.rank)]
+    for name, (pages, found) in (renderings or {}).items():
+        if name not in ("screened", "whitened") or not pages or len(pages) != len(frames):
+            raise ValueError("Unknown rendering")
+        sources.append((name, list(pages), found.rank))
+        pieces[(name, "normal")] = (list(pages), None, None, found.rank)
     if dense_allowed:
-        try:
-            layout = packing.layout_for(frames, limit)
-            if layout.pages < len(frames):
-                packed = packing.render(frames, layout)
-                reason = describe_dense(len(frames), len(packed)) if describe_dense else None
-                candidates["dense"] = (packed, reason, None)
-        except packing.NotPackable:
-            pass
+        for name, pages, faithful in sources:
+            try:
+                layout = packing.layout_for(pages, limit)
+                if layout.pages < len(pages):
+                    packed = packing.render(pages, layout)
+                    reason = describe_dense(len(pages), len(packed)) if describe_dense else None
+                    pieces[(name, "dense")] = (packed, reason, None, faithful)
+            except packing.NotPackable:
+                pass
     if codec is not None:
         encoded = codec(frames)
         if encoded and encoded[0]:
-            candidates["codec"] = (list(encoded[0]), encoded[1], encoded)
-    shapes = {name: decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), name, boundary_seconds)
-              for name, (pages, _, _) in candidates.items()}
-    names = list(candidates)
-    predictions = dict(zip(names, decision.price_all(route, destination, [shapes[name] for name in names],
-                                                     card=card, predict=predict)))
-    chosen = min(names, key=lambda name: decision.rank(predictions[name], shapes[name]))
-    normal, picked = predictions["normal"], predictions[chosen]
+            pieces[("as_is", "codec")] = (list(encoded[0]), encoded[1], encoded, fidelity.UNCHANGED.rank)
+    keys = list(pieces)
+    shapes = {key: decision.Shape(len(pieces[key][0]), frame_bits(pieces[key][0]), frames_resolution(pieces[key][0]),
+                                  key[1], boundary_seconds) for key in keys}
+    priced = dict(zip(keys, decision.price_all(route, destination, [shapes[key] for key in keys], card=card,
+                                               predict=predict)))
+    candidates = [decision.Candidate(key[0], key[1], priced[key], shapes[key], pieces[key][3],
+                                     decision.bill(priced[key], card=card, route=route)) for key in keys]
+    chosen, quicker = decision.choose(candidates, faster=faster)
+    key = (chosen.rendering, chosen.layout)
+    normal, picked = priced[("as_is", "normal")], priced[key]
     seconds = (math.floor(normal.seconds - picked.seconds)
                if normal.seconds is not None and picked.seconds is not None else None)
-    pages, reason, details = candidates[chosen]
-    return {"layout": chosen, "pages": pages, "reason": reason,
-            "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions,
-            "codec": details}
+    pages, reason, details, _ = pieces[key]
+    return {"layout": chosen.layout, "pages": pages, "reason": reason,
+            "seconds_saved": max(0, seconds) if seconds is not None else None,
+            "predictions": {layout: prediction for (name, layout), prediction in priced.items() if name == "as_is"},
+            "codec": details, "rendering": None if chosen.rendering == "as_is" else chosen.rendering,
+            "faster": faster if quicker else None}

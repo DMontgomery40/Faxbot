@@ -8,9 +8,15 @@ from ..output import local_time
 
 PAGES_PER_SHEET = {'machine': 'allow', 'never': 'never'}
 SWITCH = {'on': True, 'off': False, 'default': None}
-# Lighten shaded areas for this recipient (pages/friendly.py): always, never, or the setting for all faxes.
+# Fax-friendly shading for this recipient (pages/friendly.py): always, never, or the setting for all faxes.
 SHADING = {'on': 'always', 'off': 'never', 'default': None}
-SHADING_TEXT = {'where_it_saves': 'where it saves time', 'always': 'always', 'never': 'never'}
+
+
+def shading_text(choice):
+    """The setting's own label for a choice, as the console shows it (friendly.describe_setting), in lower case."""
+    from ...pages.friendly import describe_setting
+    choices = describe_setting()['choices']
+    return choices.get(choice, choices['where_it_saves'])[0].lower()
 
 
 def page_fields(view):
@@ -26,8 +32,8 @@ def page_fields(view):
             ('This machine', view.get('ecm_sentence') or 'error correction not known yet'),
             ('Pages per sheet', 'as the receiving machine allows' if view.get('packing') != 'never' else 'never'),
             ('Blank space at the bottom of pages', trim),
-            ('Lighten shaded areas', view.get('shading') or 'as set for all faxes ('
-             + SHADING_TEXT.get(view.get('shading_default'), 'where it saves time') + ')')]
+            ('Fax-friendly shading', view.get('shading') or 'as set for all faxes ('
+             + shading_text(view.get('shading_default')) + ')')]
 
 
 def recipient_page_body(pages_per_sheet, blank_space, shading=None):
