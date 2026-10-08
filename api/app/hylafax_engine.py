@@ -1155,15 +1155,17 @@ async def prepare_poll(values, ami, *, request_id, number, selective='', trunk=N
 def poll_outcome(payload: dict) -> tuple[str, str]:
     """(outcome, one sentence) for an engine poll job's result: 'received', 'nothing_waiting', 'refused',
     'failed' (nothing came: never dialed, or the call ended before any fax data) or 'uncertain' (a document
-    may have started arriving; it is never collected again by itself). faxq's own reasons for a poll job:
-    poll_no_document, poll_rejected, poll_failed (hylafax faxd/Job.c++)."""
+    may have started arriving; it is never collected again by itself). HylaFAX+ 7.0.11 defines poll_no_document,
+    poll_rejected and poll_failed (faxd/Job.h) but never sets them: a machine whose DIS does not say it holds a
+    document ends the job "done" with the notice "remote has no document to poll" (faxd/FaxSend.c++ sendPoll),
+    so the notice is read first."""
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     dials = max(_int(payload.get('dials')), _int(payload.get('total_dials')))
     status_text = _text64(payload, 'status_b64')
-    if why == 'done':
-        return 'received', 'The other fax server sent the fax it held for you.'
     if why == 'poll_no_document' or re.search(r'no document to poll', status_text, re.IGNORECASE):
         return 'nothing_waiting', 'The other fax server had no fax waiting for you.'
+    if why == 'done':
+        return 'received', 'The other fax server sent the fax it held for you.'
     if why == 'poll_rejected' or re.search(r'cannot be polled|E220|E266|DIS/DTC', status_text, re.IGNORECASE):
         return 'refused', 'The other fax machine does not let faxes be collected from it.'
     if dials == 0:

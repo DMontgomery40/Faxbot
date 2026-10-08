@@ -67,6 +67,8 @@ def b64(text):
 @pytest.mark.parametrize('payload, outcome', [
     ({'why': 'done', 'dials': 1}, 'received'),
     ({'why': 'poll_no_document', 'dials': 1}, 'nothing_waiting'),
+    # What HylaFAX+ 7.0.11 really reports for a machine whose DIS holds no document (faxd/FaxSend.c++ sendPoll).
+    ({'why': 'done', 'dials': 1, 'status_b64': b64('remote has no document to poll')}, 'nothing_waiting'),
     ({'why': 'poll_rejected', 'dials': 1}, 'refused'),
     # A stock HylaFAX+ answering a poll: it ends the call on DTC (Class1Recv.c++, E107); faxsend says the remote
     # cannot be polled (E220/E266) or the job fails with the remote's own words.
