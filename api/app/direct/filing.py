@@ -36,6 +36,12 @@ def received_text(record):
         if isinstance(name, str) and name and type(number) is int:
             return f'Delivered directly by {partner} as the form {name} (version {number}); no telephone call.'
         return f'Delivered directly by {partner} as a registered form; no telephone call.'
+    notice = report.get('notice') if isinstance(report.get('notice'), dict) else None
+    if notice is not None and notice.get('fax'):
+        # The original was never faxed: only its one-page notice was (direct/notice.py).
+        return f'Delivered directly by {partner} as the original document; only a one-page notice came by fax.'
+    if notice is not None:
+        return f'Delivered directly by {partner} as the original document; filed by hand without its notice fax.'
     return f'Delivered directly by {partner} as the original document; no telephone call.'
 
 
@@ -50,6 +56,18 @@ def _form_drawn(engine, message_id):
         logging.getLogger(__name__).warning('The form a partner delivered could not be named in Received.')
         return None
     return {'name': version.title, 'version': version.number} if version is not None else None
+
+
+def _notice_paired(engine, message_id, peer_id):
+    """The paired notice of a held original (notice.py), as Received describes it, or None."""
+    try:
+        from .notice import NoticeStore, code_text
+        row = NoticeStore(engine).find('receiver', message_id)
+    except Exception:
+        return None
+    if row is None or row['state'] != 'paired' or row['peer_id'] != peer_id:
+        return None
+    return {'code': code_text(row['notice_id']), 'fax': row['inbound_id'], 'matched_by': row['matched_by']}
 
 
 def account(peer_id):
@@ -81,6 +99,9 @@ class DirectFiling:
             report['fax'] = manifest['fax']
         elif kind == FORM:
             report['form'] = _form_drawn(self.store.engine, row['message_id'])
+        paired = _notice_paired(self.store.engine, row['message_id'], row['peer_id'])
+        if paired is not None:
+            report['notice'] = paired
         values = self.values()
         return self.store.intake.add_fax_image(
             ImportStore(resources), account=account(row['peer_id']), message_id=row['message_id'],

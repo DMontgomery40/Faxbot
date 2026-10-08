@@ -20,7 +20,7 @@ from ..routing.database import DeliveryStoreError
 from ..routing.submit import accept_generated_fax
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
-from .service import DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
+from .service import CERTIFICATE_CHANGED, DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
 from .store import DirectConflict, accepts_fax_images
 
 
@@ -116,7 +116,12 @@ def _peer_view(peer, now=None):
             'verified_at': peer['verified_at'], 'expires_at': peer['expires_at'], 'version': peer['version'],
             'receive_fax_images': accepts_fax_images(peer),
             'partner_receives_fax_images': _flag(peer.get('partner_receives_fax_images')),
-            'fax_images_text': fax_images_text(peer)}
+            'fax_images_text': fax_images_text(peer),
+            'notice_fax': _flag(peer.get('notice_fax')),
+            'notice_fax_text': ('Each document goes directly, with a one-page notice by fax for their fax intake.'
+                                if _flag(peer.get('notice_fax')) and peer['state'] != 'revoked' else None),
+            'certificate_changed': peer.get('certificate_changed_at') is not None,
+            'certificate_text': CERTIFICATE_CHANGED if peer.get('certificate_changed_at') is not None else None}
 
 
 # Operator routes ----------------------------------------------------------------

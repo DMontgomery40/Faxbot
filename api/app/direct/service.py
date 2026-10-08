@@ -325,12 +325,19 @@ class DirectService:
             handle.flush()
             os.fsync(handle.fileno())
 
+        # A document whose sender linked a notice fax to it first is held out of Received until that fax
+        # arrives (notice.py); its receipt says so. Stored and accepted is still accepted.
+        from .notice import NoticeReceiver
+        held = NoticeReceiver(self).held(peer, message_id, manifest['document']['sha256'])
+
         def receipt_for(local_id):
             receipt = {'type': 'receipt', 'message_id': message_id, 'status': 'accepted',
                        'document_sha256': manifest['document']['sha256'], 'recipient': manifest['recipient'],
                        'accepted_at': timestamp(), 'capabilities': self.offered(peer)}
             if kind == FAX_IMAGE:
                 receipt['kind'] = FAX_IMAGE
+            if held is not None:
+                receipt['held_for_notice'] = True
             return signed(identity, receipt)
         try:
             row, created_now = self.store.accept_inbound(message_id=message_id, peer=peer, manifest=manifest_bytes,
@@ -344,7 +351,7 @@ class DirectService:
                 return 409, self._withdrawn(identity, message_id, peer)
             if row['manifest'].encode('ascii') != manifest_bytes:
                 return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.', peer)
-        else:
+        elif held is None:
             try:
                 self.filing.file(row)
             except Exception:
@@ -529,17 +536,23 @@ class DirectRoute:
         pdf = Path(values.fax_data_dir) / (claim.job_id + '.pdf')
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None or pdf.is_symlink() or not pdf.is_file():
             raise DirectRefused('The fax document is unavailable for direct delivery.')
+        from . import notice
+        if await run_lifecycle_step(lambda: notice.is_notice_job(service.store.engine, claim.job_id)):
+            # The notice page exists for its fax event: it always goes by telephone.
+            raise DirectRefused('A notice fax always goes by telephone.')
         identity = await run_lifecycle_step(service.identity)
         # The partner's current record: what it last said it accepts decides the fax image.
         peer = await run_lifecycle_step(lambda: service.store.get_peer(plan.peer['id'])) or plan.peer
         route = faximage.peer_route(peer, preference=self.preference)
         if route is None and self.preference == faximage.NEVER_PEER:
             raise DirectRefused('A routing rule keeps this fax off direct delivery.')
+        # A partner whose intake needs a fax event gets the original directly and a one-page notice by fax.
+        with_notice = notice.wants_notice(peer)
         # An attempt prepared again (nothing was sent the first time) sends the same kind of document, and a fax
         # image keeps the time of its first preparation, so its bytes and digest stay those already recorded.
         earlier = await run_lifecycle_step(lambda: service.store.find('outbound', claim.attempt_id))
         wants_image = (earlier['kind'] == FAX_IMAGE if earlier is not None
-                       else route is not None and route.kind == FAX_IMAGE)
+                       else route is not None and route.kind == FAX_IMAGE and not with_notice)
         image, signed_at = None, None
         if wants_image:
             # The header's time is the manifest's signed time, so the image and its digest can be made again.
@@ -579,7 +592,8 @@ class DirectRoute:
             recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),
             manifest=manifest.decode('ascii'), kind=FAX_IMAGE if image is not None else None))
         yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext,
-                                hashlib.sha256(document).hexdigest())
+                                hashlib.sha256(document).hexdigest(),
+                                notice_job=claim.job_id if with_notice and image is None else None)
 
 
 async def _hear(service, peer, statement):
@@ -593,11 +607,32 @@ async def _hear(service, peer, statement):
 
 
 class _DirectSubmission:
-    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest):
+    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest, *, notice_job=None):
+        """``notice_job``: the original fax's ID when a notice fax goes with this document (notice.py)."""
         self.service, self.peer, self.message_id = service, peer, message_id
         self.manifest, self.signature, self.ciphertext, self.digest = manifest, signature, ciphertext, digest
+        self.notice_job = notice_job
 
     async def submit(self):
+        if self.notice_job is None:
+            return await self._submit()
+        from .notice import NoticeSender
+        notices = NoticeSender(self.service)
+        identity = await run_lifecycle_step(self.service.identity)
+        # The signed link goes first, so the partner holds the document until the notice fax arrives.
+        reason = await notices.announce(identity, self.peer, message_id=self.message_id, digest=self.digest,
+                                        job_id=self.notice_job)
+        if reason is not None:
+            await run_lifecycle_step(lambda: self.service.store.mark_outbound(self.message_id, 'refused'))
+            await run_lifecycle_step(lambda: notices.cancel(self.message_id))
+            raise DirectRefused(reason)
+        try:
+            return await self._submit()
+        except DirectRefused:
+            await run_lifecycle_step(lambda: notices.cancel(self.message_id))
+            raise
+
+    async def _submit(self):
         service, peer = self.service, self.peer
         from .transfer import TransferSender, TransferUnsupported
         if TransferSender.wanted(service, self.ciphertext):
@@ -731,6 +766,8 @@ class DirectReconciler:
             return 'accepted'
         if statement.get('status') == 'not_received':
             await run_lifecycle_step(lambda: service.store.mark_outbound(row['message_id'], 'refused'))
+            from .notice import NoticeSender
+            await run_lifecycle_step(lambda: NoticeSender(service).cancel(row['message_id']))
             await run_lifecycle_step(lambda: self.delivery.requeue_after_failure(
                 row['job_id'], attempt_id=row['attempt_id'], category='partner_not_received'))
             return 'not_received'

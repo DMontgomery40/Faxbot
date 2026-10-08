@@ -199,6 +199,14 @@ class DirectStore:
                 partner_said_at=said_at, version=peer['version'] + 1, updated_at=utcnow()))
             return True
 
+    def _notices(self):
+        if not hasattr(self, '_notice_table'):
+            try:
+                self._notice_table = reflect(self.engine, ('direct_notices',))['direct_notices']
+            except Exception:
+                self._notice_table = None
+        return self._notice_table
+
     # Pinned certificates -------------------------------------------------------
     def _pins(self):
         """Builder AT's ``direct_certificate_pins`` (0045), or None while that revision is not installed here."""
@@ -336,8 +344,13 @@ class DirectStore:
                                                imports.c.operation_id == d.c.message_id,
                                                imports.c.state.in_(('received', 'conflict', 'failed'))))
         # A document a partner sent for relaying is sent on as a fax here, never filed as received (relay.py).
+        # A document held for its notice fax is filed when the notice is paired (notice.py).
+        notices = self._notices()
+        held = (sa.exists(sa.select(1).where(notices.c.role == 'receiver', notices.c.message_id == d.c.message_id,
+                                             notices.c.peer_id == d.c.peer_id, notices.c.state != 'paired'))
+                if notices is not None else sa.false())
         query = (sa.select(d).where(d.c.direction == 'inbound', d.c.state == 'accepted', d.c.manifest != '',
-                                    d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d))
+                                    d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d), ~held)
                  .order_by(d.c.accepted_at, d.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
