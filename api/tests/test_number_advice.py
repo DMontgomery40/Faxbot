@@ -419,3 +419,15 @@ def test_the_site_whose_trunk_costs_less_for_a_states_numbers_is_named(database)
                                 'Lake City trunk (estimate).')
     assert 'sends from the Salt Lake City site' in item['action']
     assert advice['carriers'][0]['by_jurisdiction'] is True
+
+
+def test_a_us_site_takes_a_two_letter_state_and_nothing_else_does():
+    from api.app.rules.compile import document_problems
+
+    def state_problems(site):
+        return [problem for problem in document_problems('organization', {'sites': [site]})
+                if 'two-letter US state code' in problem.message]
+    assert state_problems({'key': 'denver', 'name': 'Denver', 'country': 'US', 'state': 'CO'}) == []
+    assert state_problems({'key': 'denver', 'name': 'Denver', 'state': 'CO'}) == []   # the installation's country
+    assert state_problems({'key': 'x', 'name': 'X', 'country': 'US', 'state': 'XX'})
+    assert state_problems({'key': 'leeds', 'name': 'Leeds', 'country': 'GB', 'state': 'CO'})
