@@ -16,11 +16,13 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from api.app.direct import faximage, reuse
 from api.app.direct.crypto import timestamp
 from api.app.direct.distribute import sent_texts
+from api.app.direct.service import DirectReconciler, DirectRoute
 from api.app.outbound_worker import OutboundWorker
 from api.tests.test_cli import cli, server  # noqa: F401 - fixtures
 from api.tests.test_direct_delivery import B_NUMBER, pdf_bytes
@@ -402,6 +404,109 @@ async def test_a_partner_that_does_not_know_fax_image_bodies_gets_the_whole_imag
     second, posts = await send(pair, tiff)
     assert posts == ['/direct/holdings', '/direct/deliveries']
     assert arrival(pair, second['message_id'])['digest'] == second['digest']
+
+
+# -- the upgrade to this strip layout ----------------------------------------------------------------------------
+
+def earlier_build(monkeypatch):
+    """The build before this one wrote each page in Pillow's default strips (band and body in one): the same pixels
+    as now, other bytes. ``switch['on']`` keeps it until the upgrade."""
+    from PIL import Image
+    real, switch = faximage.stamp, {'on': True}
+
+    def stamp(tiff, **kwargs):
+        data, facts = real(tiff, **kwargs)
+        if not switch['on']:
+            return data, facts
+        with Image.open(io.BytesIO(data)) as image:
+            pages = []
+            for page in range(image.n_frames):
+                image.seek(page)
+                pages.append(image.copy())
+        older = io.BytesIO()
+        pages[0].save(older, 'TIFF', compression='group4', save_all=True, append_images=pages[1:],
+                      dpi=(204, facts['y_dpi']))
+        assert faximage.layout(older.getvalue()) is None and pixels(older.getvalue()) == pixels(data)
+        return older.getvalue(), facts
+    monkeypatch.setattr(faximage, 'stamp', stamp)
+    return switch
+
+
+@pytest.mark.asyncio
+async def test_a_fax_prepared_before_the_upgrade_is_sent_once_and_a_lost_answer_is_settled(peer_pair, monkeypatch):
+    """Through the real worker: a preparation the earlier build left behind is never sent, and the fresh attempt
+    after the upgrade goes once; its lost answer is settled from the partner's signed receipt, never sent again."""
+    from types import SimpleNamespace
+    pair = peer_pair
+    opt_in(pair)
+    switch = earlier_build(monkeypatch)
+    job = accept_image(pair, engine_image(3, rows=1200))
+    claim = pair['delivery'].claim('worker-before-the-upgrade')
+    async with DirectRoute(pair['a']).prepare(claim, SimpleNamespace(peer=pair['b_on_a']),
+                                              {'pages': 3, 'to_number': B_NUMBER}):
+        pass  # the earlier build recorded this image, then stopped before sending anything
+    before = pair['a'].store.find('outbound', claim.attempt_id)
+    assert before['state'] == 'sending' and before['kind'] == 'fax_image'
+
+    switch['on'] = False  # upgraded; the worker's lease on the earlier attempt runs out
+    pair['delivery'].recover_expired(now=datetime.utcnow() + timedelta(minutes=5))
+    pair['to_b'].mode = 'lose_answer'
+    routed, conventional = transport(pair)
+    assert await OutboundWorker(pair['delivery'], routed).step() is True
+    row = pair['delivery'].get(job)
+    assert row['state'] == 'reconciliation_required' and row['attempt_id'] != claim.attempt_id
+    pair['to_b'].mode = 'normal'
+    (waiting,) = pair['a'].store.awaiting_partner()
+    assert waiting['message_id'] == row['attempt_id']
+    assert await DirectReconciler(pair['a'], pair['delivery']).reconcile(waiting) == 'accepted'
+    assert pair['delivery'].get(job)['state'] == 'success'
+    assert await OutboundWorker(pair['delivery'], routed).step() is False
+
+    # One POST ever reached B, by no other route; the earlier build's image was never sent.
+    assert pair['to_b'].posts == 1 and conventional.submissions == 0
+    assert pair['a'].store.find('outbound', claim.attempt_id)['state'] == 'sending'
+    (kept,) = rows(pair['b_engine'], "SELECT message_id, digest FROM direct_deliveries WHERE direction = 'inbound'")
+    sent = pair['a'].store.find('outbound', row['attempt_id'])
+    assert kept == {'message_id': row['attempt_id'], 'digest': sent['digest']} and sent['digest'] != before['digest']
+    assert faximage.layout(arrival(pair, row['attempt_id'])['data']) is not None
+
+
+@pytest.mark.asyncio
+async def test_one_attempt_prepared_on_both_sides_of_the_upgrade_stays_uncertain_and_is_never_sent_again(
+        peer_pair, monkeypatch):
+    """The same attempt prepared by the earlier build and again by this one (the worker itself starts a new attempt
+    instead) records the earlier image. Its lost answer cannot be matched to that record, so the fax waits as
+    uncertain: asked about again, never sent again by any route."""
+    from types import SimpleNamespace
+    pair = peer_pair
+    opt_in(pair)
+    switch = earlier_build(monkeypatch)
+    job = accept_image(pair, engine_image(3, rows=1200))
+    claim = pair['delivery'].claim('worker-across-the-upgrade')
+    route, plan, facts = DirectRoute(pair['a']), SimpleNamespace(peer=pair['b_on_a']), {'pages': 3, 'to_number': B_NUMBER}
+    async with route.prepare(claim, plan, facts) as first:
+        pass
+    switch['on'] = False
+    async with route.prepare(claim, plan, facts) as again:
+        assert again.digest != first.digest == pair['a'].store.find('outbound', claim.attempt_id)['digest']
+        assert pair['delivery'].begin_submission(claim)
+        pair['to_b'].mode = 'lose_answer'
+        with pytest.raises(httpx.ReadTimeout):  # B accepted it; its answer never came back
+            await again.submit()
+    pair['delivery'].record_uncertain(claim)
+    pair['to_b'].mode = 'normal'
+
+    reconciler = DirectReconciler(pair['a'], pair['delivery'])
+    routed, conventional = transport(pair)
+    for _ in range(3):
+        (waiting,) = pair['a'].store.awaiting_partner()
+        assert await reconciler.reconcile(waiting) is None  # B's receipt is for another image than the record
+        assert await OutboundWorker(pair['delivery'], routed).step() is False
+    assert pair['delivery'].get(job)['state'] == 'reconciliation_required'
+    assert pair['a'].store.find('outbound', claim.attempt_id)['state'] == 'uncertain'
+    assert pair['to_b'].posts == 1 and conventional.submissions == 0
+    (kept,) = rows(pair['b_engine'], "SELECT digest FROM direct_deliveries WHERE direction = 'inbound'")
+    assert kept['digest'] == again.digest
 
 
 # -- what the console and the command line show -------------------------------------------------------------------
