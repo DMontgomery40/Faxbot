@@ -45,7 +45,11 @@ Use the issue template and include the configuration details above.
 Describe your use case and why the feature would be valuable. Consider which backends it would apply to.
 
 ### Code Contributions
-1. Fork the repository
+New contributions require written authorization from David Montgomery and agreed contribution terms before submission. Contact [dmontg@gmail.com](mailto:dmontg@gmail.com). Do not assume that the historical MIT license applies to new work or that permission to contribute transfers anyone else's rights. Preserve all applicable third-party license notices.
+
+For authorized contributions:
+
+1. Use the repository access agreed with the owner
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
 4. Test across relevant backends (see [Testing](#testing))
