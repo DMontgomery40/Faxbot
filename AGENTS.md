@@ -4,6 +4,12 @@ Faxbot is one self-hosted fax product: a FastAPI backend, React Admin Console, p
 
 The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. This is documented future work; preserve the current Phase 1 and four-fix implementation scope.
 
+## Licensing
+
+- New Faxbot-owned work is proprietary and requires the owner's written permission under `LICENSE`. `LICENSE-MIT` preserves permissions for previously MIT-licensed material only. Do not add a new MIT grant or describe the current product as open source.
+- Before publishing new work from an existing development branch, incorporate the current licensing change from `main`. Being unmerged does not make an already public branch unreleased. Do not rewrite history or claim to revoke previous grants.
+- Keep the license notices in the server, MCP and SDK package directories identical to the root copies, and keep package metadata and API descriptions consistent. Preserve third-party licenses. Public package publication requires a separate owner decision.
+
 ## Who reads what Faxbot writes
 
 - At a company running Faxbot, staff never open the console or the docs; they get their faxes by email. Everyone who reads the console, the `faxbot` command line and the docs is the administrator who set Faxbot up and handles its exceptions, usually the same person who runs its server, network and provider accounts.
