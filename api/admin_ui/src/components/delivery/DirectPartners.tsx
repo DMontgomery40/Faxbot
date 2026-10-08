@@ -12,6 +12,7 @@ import { ConfirmDialog, EmptyState, FormDialog, StatusChip, useSmallScreens } fr
 import DirectCardDialog from './DirectCardDialog';
 import PartnerActivity from './PartnerActivity';
 import PartnerRelay from './PartnerRelay';
+import PartnerSendOnce from './PartnerSendOnce';
 import { DeliveryError, Notice } from './shared';
 
 const TONE: Record<DirectPartner['state'], 'success' | 'warning' | 'default'> = {
@@ -34,6 +35,8 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const [removing, setRemoving] = useState<DirectPartner | null>(null);
   // Partners → a partner → Relay: local calls through a partner, both ways (PartnerRelay).
   const [relaying, setRelaying] = useState<DirectPartner | null>(null);
+  // Partners → a partner → Send once: one copy to a partner's intake for several of its numbers (PartnerSendOnce).
+  const [sendingOnce, setSendingOnce] = useState<DirectPartner | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -97,6 +100,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const actions = (partner: DirectPartner) => partner.state !== 'revoked' && (
     <>
       <Button size="small" onClick={() => setRelaying(partner)} disabled={busy}>Relay</Button>
+      <Button size="small" onClick={() => setSendingOnce(partner)} disabled={busy}>Send once</Button>
       {canWrite && writeActions(partner)}
     </>
   );
@@ -197,6 +201,10 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
 
       {relaying && (
         <PartnerRelay client={client} partner={relaying} canWrite={canWrite} open onClose={() => setRelaying(null)} />
+      )}
+      {sendingOnce && (
+        <PartnerSendOnce client={client} partner={sendingOnce} canWrite={canWrite} open
+          onClose={() => setSendingOnce(null)} />
       )}
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />

@@ -446,6 +446,9 @@ def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help=
             out.line(counted)
         if result.get('sentence'):
             out.line(result['sentence'])
+        # Bytes partners did not need sent again: kept out of the money table, because they are not money.
+        if (result.get('direct_bytes') or {}).get('sentence'):
+            out.line('Bytes saved by reuse and patches: ' + result['direct_bytes']['sentence'])
     state.out().result(result, human)
 
 

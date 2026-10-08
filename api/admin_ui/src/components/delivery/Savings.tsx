@@ -19,12 +19,14 @@ export function countedFromSentence(packets: SavingsResult['case_packets']): str
   return `Counted from ${date}, when Faxbot started recording what each packet left out.`;
 }
 
-function Part({ title, sentence, note, testId }: { title: string; sentence: string; note?: string | null; testId: string }) {
+function Part({ title, sentence, note, testId, estimate = true }: {
+  title: string; sentence: string; note?: string | null; testId: string; estimate?: boolean;
+}) {
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid={testId}>
       <Box display="flex" alignItems="center" gap={1} sx={{ mb: 1 }}>
         <Typography variant="h6" component="h2">{title}</Typography>
-        <Chip size="small" variant="outlined" label="Estimate" />
+        {estimate && <Chip size="small" variant="outlined" label="Estimate" />}
       </Box>
       <Typography variant="body2">{sentence}</Typography>
       {note && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{note}</Typography>}
@@ -78,6 +80,11 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
           {data.own_numbers && <Part title="Faxes to your own numbers" sentence={data.own_numbers.sentence} testId="savings-own" />}
           {data.toll_free && <Part title="Approved toll-free numbers" sentence={data.toll_free.sentence} testId="savings-toll-free" />}
           {data.packing && <Part title="Pages saved by packing" sentence={data.packing.sentence} testId="savings-packing" />}
+          {/* Bytes, counted exactly, and never part of the money total above. */}
+          {data.direct_bytes && (
+            <Part title="Bytes saved by reuse and patches" sentence={data.direct_bytes.sentence} estimate={false}
+              testId="savings-bytes" />
+          )}
         </Stack>
       )}
     </Box>

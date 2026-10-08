@@ -249,8 +249,15 @@ class DirectService:
         fax_images, peer_calls, said_at = found
         return self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at)
 
-    def receive(self, manifest_bytes, signature, ciphertext, *, now=None):
-        """Verify, decrypt, store unchanged and queue one document; returns (status, body)."""
+    def receive(self, manifest_bytes, signature, ciphertext, *, now=None, routing=None, carriage=None):
+        """Verify, decrypt, store unchanged and queue one document; returns (status, body).
+
+        A document for another of this installation's numbers is accepted only under an active "send once"
+        agreement with that partner that covers it (``distribute.py``). ``routing`` is the signed list of every
+        recipient of such a send, as (statement, signature), sent with its first document. ``carriage`` is how the
+        bytes come when not as ``ciphertext`` (``reuse.Reference`` or ``reuse.Patch``); when the partner lacks what
+        it needs, the signed refusal records nothing, so the whole document may follow under the same message ID.
+        """
         now = now or utcnow()
         values, identity = self._enabled_identity()
         try:
@@ -270,7 +277,13 @@ class DirectService:
             own_number = normalize_number(values.direct_fax_number, country=values.fax_default_country)
         except InvalidNumber:
             own_number = None
-        if manifest['recipient']['signing_key'] != identity.signing_key or manifest['recipient']['fax_number'] != own_number:
+        intake = None
+        if manifest['recipient']['signing_key'] == identity.signing_key and manifest['recipient']['fax_number'] != own_number \
+                and kind_of(manifest) == 'original':
+            from .distribute import SendOnce
+            intake = SendOnce(self).covering_received(peer, manifest['recipient']['fax_number'])
+        if manifest['recipient']['signing_key'] != identity.signing_key or (
+                manifest['recipient']['fax_number'] != own_number and intake is None):
             return 403, self._refusal(identity, message_id, 'wrong_recipient', 'This document is addressed to another recipient.', peer)
         existing = self.store.find('inbound', message_id)
         if existing is not None and existing['state'] == 'refused':
@@ -290,10 +303,28 @@ class DirectService:
             return 409, self._refusal(identity, message_id, 'fax_images_off',
                                       'This installation does not accept fax images from you; send the original '
                                       'document instead.', peer)
-        try:
-            document = open_document(identity, manifest, ciphertext)
-        except DirectProtocolError as error:
-            return 400, self._refusal(identity, message_id, error.reason, str(error), peer)
+        routed = None
+        if routing is not None:
+            from .distribute import RoutingRefused, SendOnce
+            try:
+                routed = SendOnce(self).check_routing(identity, peer, manifest, routing)
+            except RoutingRefused as error:
+                return 409, self._refusal(identity, message_id, error.reason, str(error), peer)
+        if carriage is not None:
+            from .reuse import CarriageMiss
+            if kind != 'original':
+                return 400, self._refusal(identity, message_id, 'malformed', 'Only original documents can be sent '
+                                                                             'this way.', peer)
+            try:
+                document = carriage.document(self, identity, peer, manifest)
+            except CarriageMiss as error:
+                # Nothing is recorded: the whole document may come next under the same message ID.
+                return 409, self._refusal(identity, message_id, error.reason, str(error), peer)
+        else:
+            try:
+                document = open_document(identity, manifest, ciphertext)
+            except DirectProtocolError as error:
+                return 400, self._refusal(identity, message_id, error.reason, str(error), peer)
         if kind == RELAY:
             # A document to send as a local call for the partner: queued as this installation's own fax within
             # the partner's agreement, never filed as a received fax (relay.py).
@@ -329,6 +360,26 @@ class DirectService:
         # arrives (notice.py); its receipt says so. Stored and accepted is still accepted.
         from .notice import NoticeReceiver
         held = NoticeReceiver(self).held(peer, message_id, manifest['document']['sha256'])
+        # Filed at the intake for one of its numbers: the receipt says where its rules file it, and for a send's
+        # first document where they file every recipient (distribute.py).
+        intake_facts = None
+        if intake is not None or routed is not None:
+            from .distribute import SendOnce
+            send_once = SendOnce(self)
+            if routed is not None:
+                agreement, recipients = routed
+                placements = {number: send_once.placement(number, from_number=manifest['sender']['fax_number'],
+                                                          now=now) for number in recipients}
+                try:
+                    send_once.record_received(agreement=agreement, peer=peer, manifest=manifest, routing=routing,
+                                              recipients=recipients, placements=placements, now=now)
+                except Exception:
+                    path.unlink(missing_ok=True)
+                    raise
+                intake_facts = send_once.receipt_facts(peer, manifest, recipients=recipients, placements=placements,
+                                                       now=now)
+            else:
+                intake_facts = send_once.receipt_facts(peer, manifest, now=now)
 
         def receipt_for(local_id):
             receipt = {'type': 'receipt', 'message_id': message_id, 'status': 'accepted',
@@ -338,6 +389,12 @@ class DirectService:
                 receipt['kind'] = FAX_IMAGE
             if held is not None:
                 receipt['held_for_notice'] = True
+            if intake_facts:
+                receipt.update(intake_facts)
+            if carriage is not None:
+                receipt['carriage'] = carriage.kind
+                if getattr(carriage, 'base', None):
+                    receipt.update(base_sha256=carriage.base, delta_size=carriage.delta_size)
             return signed(identity, receipt)
         try:
             row, created_now = self.store.accept_inbound(message_id=message_id, peer=peer, manifest=manifest_bytes,
@@ -560,13 +617,22 @@ class DirectRoute:
         route = faximage.peer_route(peer, preference=self.preference)
         if route is None and self.preference == faximage.NEVER_PEER:
             raise DirectRefused('A routing rule keeps this fax off direct delivery.')
+        # One of the partner's other numbers, filed by its intake under a "send once" agreement (distribute.py):
+        # sealed for that number, always as the original document.
+        from .distribute import SendOnce
+        send_once = SendOnce(service)
+        to_number = job.get('to_number') or peer['phone_number']
+        agreement = await run_lifecycle_step(lambda: send_once.store.covering(peer['id'], to_number, role='sender'))
+        if agreement is None and to_number != peer['phone_number']:
+            raise DirectRefused("The partner's intake no longer takes faxes for this number.")
+        recipient_number = to_number if agreement is not None else peer['phone_number']
         # A partner whose intake needs a fax event gets the original directly and a one-page notice by fax.
-        with_notice = notice.wants_notice(peer)
+        with_notice = notice.wants_notice(peer) and agreement is None
         # An attempt prepared again (nothing was sent the first time) sends the same kind of document, and a fax
         # image keeps the time of its first preparation, so its bytes and digest stay those already recorded.
         earlier = await run_lifecycle_step(lambda: service.store.find('outbound', claim.attempt_id))
         wants_image = (earlier['kind'] == FAX_IMAGE if earlier is not None
-                       else route is not None and route.kind == FAX_IMAGE and not with_notice)
+                       else route is not None and route.kind == FAX_IMAGE and not with_notice and agreement is None)
         image, signed_at = None, None
         if wants_image:
             # The header's time is the manifest's signed time, so the image and its digest can be made again.
@@ -597,17 +663,41 @@ class DirectRoute:
         else:
             manifest, signature, ciphertext = seal(
                 identity, message_id=message_id, organization=values.direct_organization.strip() or 'Faxbot',
-                fax_number=sender_number, recipient_number=peer['phone_number'],
+                fax_number=sender_number, recipient_number=recipient_number,
                 recipient_signing_key=peer['signing_key'], recipient_exchange_key=peer['exchange_key'],
                 document=document, pages=image.pages if image is not None else job.get('pages'),
                 fax=image.facts if image is not None else None, created_at=signed_at)
+        digest = hashlib.sha256(document).hexdigest()
         await run_lifecycle_step(lambda: service.store.record_outbound(
             message_id=message_id, peer_id=peer['id'], job_id=claim.job_id, attempt_id=claim.attempt_id,
-            recipient_number=peer['phone_number'], digest=hashlib.sha256(document).hexdigest(), size=len(document),
+            recipient_number=recipient_number, digest=digest, size=len(document),
             manifest=manifest.decode('ascii'), kind=FAX_IMAGE if image is not None else None))
-        yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext,
-                                hashlib.sha256(document).hexdigest(),
-                                notice_job=claim.job_id if with_notice and image is None else None)
+        routing = None
+        if agreement is not None and image is None and staged is None:
+            # The first fax of a send carries the document and the signed list of every recipient; the others
+            # then send only a reference to it (reuse.py).
+            routing = await run_lifecycle_step(lambda: _first_of_send(
+                send_once, identity, peer, agreement, claim, recipient_number, digest, len(document), values))
+        yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext, digest,
+                                notice_job=claim.job_id if with_notice and image is None else None,
+                                routing=routing, job_id=claim.job_id,
+                                document=document if image is None and staged is None and not with_notice else None)
+
+
+def _first_of_send(send_once, identity, peer, agreement, claim, number, digest, size, values):
+    """The signed routing statement when this fax leads a send of several recipients; None otherwise."""
+    existing = send_once.store.send('sender', claim.attempt_id)
+    if existing is not None:
+        return {'statement': existing['routing_statement'], 'signature': existing['routing_signature']}
+    if send_once.store.live_send_for_job(claim.job_id) is not None:
+        return None  # named by a send that already went: this fax sends a reference to that copy
+    others = send_once.gather(job_id=claim.job_id, to_number=number, agreement=agreement, digest=digest,
+                              values=values)
+    if not others:
+        return None
+    _, envelope = send_once.start(identity=identity, peer=peer, agreement=agreement, message_id=claim.attempt_id,
+                                  job_id=claim.job_id, to_number=number, digest=digest, size=size, others=others)
+    return envelope
 
 
 async def _hear(service, peer, statement):
@@ -621,11 +711,14 @@ async def _hear(service, peer, statement):
 
 
 class _DirectSubmission:
-    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest, *, notice_job=None):
-        """``notice_job``: the original fax's ID when a notice fax goes with this document (notice.py)."""
+    def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest, *, notice_job=None,
+                 routing=None, job_id=None, document=None):
+        """``notice_job``: the original fax's ID when a notice fax goes with this document (notice.py).
+        ``routing``: the signed list of a send's recipients, sent with its first document (distribute.py).
+        ``document``: the original's bytes when it may go as a reference or as changes (reuse.py)."""
         self.service, self.peer, self.message_id = service, peer, message_id
         self.manifest, self.signature, self.ciphertext, self.digest = manifest, signature, ciphertext, digest
-        self.notice_job = notice_job
+        self.notice_job, self.routing, self.job_id, self.document = notice_job, routing, job_id, document
 
     async def submit(self):
         if self.notice_job is None:
@@ -648,6 +741,24 @@ class _DirectSubmission:
 
     async def _submit(self):
         service, peer = self.service, self.peer
+        if self.routing is not None:
+            # A send's first document, with every recipient: the partner's intake files each when its fax arrives.
+            outcome = await self.deliver('/direct/distributions', fallback=(), files={
+                'manifest': (None, self.manifest, 'application/json'),
+                'signature': (None, self.signature.encode('ascii'), 'text/plain'),
+                'routing': (None, self.routing['statement'].encode('ascii'), 'application/json'),
+                'routing_signature': (None, self.routing['signature'].encode('ascii'), 'text/plain'),
+                'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
+            if outcome is None:
+                await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
+                raise DirectRefused('The partner is not taking documents at its intake now; nothing was sent.')
+            return outcome
+        if self.document is not None:
+            # The partner may already hold this document, or an earlier version of it (reuse.py).
+            from .reuse import offer
+            outcome = await offer(self)
+            if outcome is not None:
+                return outcome
         from .transfer import TransferSender, TransferUnsupported
         if TransferSender.wanted(service, self.ciphertext):
             # A large document goes in pieces: preflight, only the pieces missing after a drop, one commit.
@@ -674,11 +785,22 @@ class _DirectSubmission:
             if outcome == 'refused':
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
                 raise DirectRefused(detail)
+        return await self.deliver('/direct/deliveries', optional=False, files={
+            'manifest': (None, self.manifest, 'application/json'),
+            'signature': (None, self.signature.encode('ascii'), 'text/plain'),
+            'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
+
+    async def deliver(self, path, *, fallback=(), optional=True, **request):
+        """POST this document to ``path`` and settle it from the partner's signed answer.
+
+        Returns the SubmissionReceipt once the partner accepted it, or None when it signed one of ``fallback``'s
+        reasons or (``optional``) has no such path: nothing was accepted, so the whole document may go now. Like
+        every direct send: nothing sent is a refusal, anything else unconfirmed is asked about later, never sent
+        again.
+        """
+        service, peer = self.service, self.peer
         try:
-            status, body = await service.http.request('POST', peer['endpoint_url'] + '/direct/deliveries', files={
-                'manifest': (None, self.manifest, 'application/json'),
-                'signature': (None, self.signature.encode('ascii'), 'text/plain'),
-                'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
+            status, body = await service.http.request('POST', peer['endpoint_url'] + path, **request)
         except PartnerUnreachable as error:
             await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
             if isinstance(error, (PartnerAddressRefused, CertificateChanged)):
@@ -691,6 +813,8 @@ class _DirectSubmission:
             statement = check_signed(body, peer['signing_key'])
         except DirectProtocolError:
             statement = None
+        if optional and statement is None and status in (404, 405):
+            return None  # This path is not there (direct delivery off, or an older Faxbot): nothing was accepted.
         await _hear(service, peer, statement)
         if statement is not None and statement.get('message_id') == self.message_id:
             if (status == 200 and statement.get('type') == 'receipt' and statement.get('status') == 'accepted'
@@ -699,6 +823,8 @@ class _DirectSubmission:
                 await self.accepted()
                 return SubmissionReceipt(None, 'success')
             if statement.get('type') == 'refusal' and 400 <= status < 500:
+                if statement.get('reason') in fallback:
+                    return None
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
                 raise DirectRefused(statement.get('detail') or 'The partner refused the document.')
         # The partner may have accepted it; ask instead of sending again.
@@ -717,6 +843,12 @@ async def accepted_followups(service, message_id):
         await run_lifecycle_step(lambda: NoticeSender(service).original_accepted(message_id))
     except Exception:
         logging.getLogger(__name__).warning('The notice fax for a document delivered directly is queued shortly.')
+    try:
+        # The bytes a reference or changes saved, from the partner's signed receipt (reuse.py).
+        from .reuse import record_from_receipt
+        await run_lifecycle_step(lambda: record_from_receipt(service, message_id))
+    except Exception:
+        logging.getLogger(__name__).warning('The bytes saved by a direct delivery could not be counted.')
 
 
 class DirectReconciler:

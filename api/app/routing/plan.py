@@ -270,7 +270,7 @@ class RoutePlanner:
         if pinned is None or pinned.allows(DIRECT):
             peer = None
             if getattr(values, 'direct_delivery_enabled', False) and self.direct_ready():
-                peer = self.store.verified_peer(destination)
+                peer = self.store.verified_peer(destination, covered=True)
                 if peer is not None:
                     candidates.insert(0, RouteCandidate(DIRECT, 'direct', DIRECT, None, peer_id=peer['id']))
         else:

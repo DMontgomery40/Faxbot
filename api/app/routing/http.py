@@ -537,7 +537,13 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
     from .savings import SENTENCE, savings as count_savings
     store = _store(request)
     result = await _call(lambda: count_savings(store, store.engine, days=days))
+
+    def direct_bytes():
+        # Bytes partners did not need sent again (a reference or only the changes): counted, never money.
+        from ..direct.reuse import savings_view
+        return savings_view(store.engine, since=result['since'], days=result['days'])
     return {'days': result['days'], 'since': result['since'], 'estimate': True, 'sentence': SENTENCE,
+            'direct_bytes': await _call(direct_bytes),
             # Signed: a negative amount is money that cost more than it saved, said so in total_sentence.
             'total_saved': _money(result['total']), 'total_sentence': result['total_sentence'],
             'sending_together': _saving_view(result['sending_together']),

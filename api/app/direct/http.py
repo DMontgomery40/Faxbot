@@ -242,10 +242,20 @@ async def list_deliveries(request: Request):
         except Exception:
             return set()
     notices = await run_lifecycle_step(noticed)
+
+    def sent_once():
+        # A fax that went to a partner's intake, or as a reference or changes (distribute.py, reuse.py).
+        from .distribute import sent_texts
+        try:
+            return sent_texts(service, rows)
+        except Exception:
+            return {}
+    texts = await run_lifecycle_step(sent_once)
     return {'deliveries': [{'message_id': row['message_id'], 'direction': row['direction'],
                             'partner': row['organization'], 'fax_number': row['recipient_number'],
                             'kind': row.get('kind') or 'original', 'job_id': row.get('job_id'),
                             'notice': row['message_id'] in notices,
+                            'send_once': texts.get(row['message_id']),
                             'state': row['state'], 'status': delivery_text(row, notice=row['message_id'] in notices),
                             'size_bytes': row['size_bytes'],
                             'created_at': row['created_at'], 'accepted_at': row['accepted_at']} for row in rows]}
