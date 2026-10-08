@@ -297,8 +297,14 @@ async def test_a_partner_that_turned_fax_images_off_gets_the_original_directly_a
                      id=fax['id'])
     assert stored['tiff_path'] is None and stored['sha256'] == sha(original)
     assert Path(stored['pdf_path']).read_bytes() == original
+    # The app's own Work worker (faxbot-work-queue: 2 s after start, then every 5 s) may create the item before
+    # this test does, so the test asserts the outcome, not which feeder made it. Forcing the worker first shows
+    # the feeders agree: the worker's step makes the one item, and a later feed adds none.
     from app.work.store import WorkStore
-    assert WorkStore(pair['b_engine']).feed() == 1
+    from app.work.worker import WorkWorker
+    WorkWorker(WorkStore(pair['b_engine']), control=lambda: main.app.state.access_runtime.control,
+               values=lambda: main.app.state.configuration_runtime.manager.store.read().active.values).step()
+    assert WorkStore(pair['b_engine']).feed() == 0
     assert [item['inbound_fax_id'] for item in client.get('/work', headers=ADMIN).json()['items']] == [fax['id']]
 
 
@@ -320,6 +326,41 @@ async def test_a_refused_fax_image_goes_by_fax_in_the_same_attempt_only_because_
     # B's signed refusal told A, so the next fax goes as the original.
     assert pair['a'].store.get_peer(pair['b_on_a']['id'])['partner_receives_fax_images'] is None
     assert received(pair) == [] and rows(pair['b_engine'], 'SELECT id FROM direct_deliveries') == []
+
+
+@pytest.mark.asyncio
+async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_its_original(peer_pair, monkeypatch):
+    """Encoded pages (experimental, codec/send.py) may replace a fax's engine image; a partner never gets them."""
+    import shutil
+    from api.app import conversion
+    from api.app.codec.store import record_send
+    from api.app.direct import service as direct_service
+    if shutil.which('gs') is None:
+        pytest.skip('Ghostscript renders the document')
+    pair = peer_pair
+    opt_in(pair)
+    signed_at = timestamp()
+    monkeypatch.setattr(direct_service, 'timestamp', lambda: signed_at)  # one header time for both faxes
+    digests = {}
+    for encoded in (False, True):
+        job = accept(pair, image=False)
+        conversion.pdf_to_tiff(str(pair['data'] / (job + '.pdf')), str(pair['data'] / (job + '.tiff')))
+        if encoded:
+            # Acceptance wrote the encoded pages over the engine image and recorded the send.
+            (pair['data'] / (job + '.tiff')).write_bytes(engine_image(1))
+            engine = pair['a'].store.engine
+            with engine.begin() as connection:
+                record_send(connection, engine, job, {
+                    'phone_number': B_NUMBER, 'provider_id': 'sip', 'layout': 'grid', 'resolution': 'fine',
+                    'fec': 'medium', 'pages_original': 1, 'pages_encoded': 1, 'document_sha256': '0' * 64,
+                    'encrypted': 0, 'format_version': 1}, datetime.utcnow())
+        row, conventional = await send(pair, job)
+        assert row['state'] == 'success' and conventional.submissions == 0
+        sent = pair['a'].store.find('outbound', row['attempt_id'])
+        assert sent['kind'] == 'fax_image'
+        digests[encoded] = sent['digest']
+    # The partner gets exactly the fax image a fax without encoded pages has.
+    assert digests[True] == digests[False]
 
 
 @pytest.mark.asyncio
@@ -372,9 +413,10 @@ async def test_an_arrival_accepted_just_before_a_crash_is_filed_once_by_the_fili
     job = accept(pair)
     row, _ = await send(pair, job)
     assert row['state'] == 'success' and received(pair) == []
-    monkeypatch.setattr(DirectFiling, 'file', original)
     service = direct_http.service_for(main.app)
+    # Checked while filing still fails, so the app's own filing step (every 60 s) cannot file it first.
     assert [item['message_id'] for item in service.store.unfiled()] == [row['attempt_id']]
+    monkeypatch.setattr(DirectFiling, 'file', original)
     service.filing.step()
     service.filing.step()
     assert [fax['status_text'] for fax in received(pair)] == [IMAGE_LABEL]

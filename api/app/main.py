@@ -85,6 +85,7 @@ from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
 from .engine_frames_http import router as fax_machines_router
 from .intake.http import router as intake_router
+from .intake.sources.http import router as intake_sources_router
 from .direct.http import router as direct_router
 from .cases.http import router as cases_router
 from .forms.http import router as forms_router
@@ -203,6 +204,7 @@ app.include_router(reply_number_router)
 app.include_router(screening_router)
 app.include_router(fax_machines_router)
 app.include_router(intake_router)
+app.include_router(intake_sources_router)
 app.include_router(direct_router)
 app.include_router(cases_router)
 app.include_router(forms_router)

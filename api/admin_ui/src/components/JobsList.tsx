@@ -43,6 +43,7 @@ import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
+import { FaxRequestedByItem } from './delivery/Connectors';
 
 
 interface JobsListProps {
@@ -754,6 +755,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               )}
               <FaxCostItem client={client} jobId={detailJob.id} />
               <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
+              <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <FaxEncodedItem client={client} jobId={detailJob.id} />
               <Divider />

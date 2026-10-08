@@ -1,4 +1,4 @@
-"""Actual 0040 to 0043 upgrade: the subaddress of receiving rules and received faxes (SQLite and PostgreSQL)."""
+"""Actual 0041 to 0043 upgrade: the subaddress of receiving rules and received faxes (SQLite and PostgreSQL)."""
 from datetime import datetime
 
 from alembic import command
@@ -13,8 +13,8 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 7, 9, 0)
-# The migration chain follows merge order: 0043 comes after 0040 (destination schedule).
-PRIOR = '0040_destination_schedule'
+# The migration chain follows merge order: 0043 comes after 0041 (intake connectors).
+PRIOR = '0041_intake_connectors'
 
 
 def _downgrade(engine, revision):
@@ -48,9 +48,9 @@ def _seed(engine):
     return tables
 
 
-def test_accounts_follow_the_destination_schedule():
+def test_accounts_follow_the_intake_connectors():
     assert schema_accounts.REVISION == '0043_accounts' == schema.HEAD
-    assert schema.SCHEDULE == PRIOR
+    assert schema.INTAKE_CONNECTORS == PRIOR
     assert schema_accounts.TABLES == frozenset()
 
 

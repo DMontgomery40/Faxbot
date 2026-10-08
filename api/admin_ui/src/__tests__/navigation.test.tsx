@@ -203,7 +203,8 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(43);  // with Providers → Rules, Numbers → Blocked senders and Faxes → Forms
+    // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders and Faxes → Forms.
+    expect(opened).toHaveLength(44);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);

@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0043_accounts'
 # Chained after the integration head when merged (revision numbers follow merge order, not number order).
-down_revision = '0040_destination_schedule'
+down_revision = '0041_intake_connectors'
 branch_labels = None
 depends_on = None
 

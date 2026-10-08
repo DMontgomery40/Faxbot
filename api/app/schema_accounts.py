@@ -20,7 +20,7 @@ placed. Runtime code reflects these tables; it never imports this metadata.
 """
 import sqlalchemy as sa
 
-from .schema_destination_schedule import frozen_metadata as previous_metadata
+from .schema_intake_sources import frozen_metadata as previous_metadata
 
 
 REVISION = '0043_accounts'
