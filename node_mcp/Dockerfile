@@ -3,6 +3,7 @@ FROM node:24-alpine
 WORKDIR /app
 
 COPY package*.json ./
+COPY LICENSE LICENSE-MIT ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY src ./src
