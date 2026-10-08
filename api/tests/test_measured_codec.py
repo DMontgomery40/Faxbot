@@ -221,12 +221,14 @@ def test_the_layout_chooser_prices_each_layout_with_its_measured_coding_on_the_r
     """No stand-in: conversion.choose_layout through pages.decision to routing.predict, synthetic facts only."""
     facts = predict.RouteFacts('sip', 'Telnyx', DestinationClass(LOCAL, 'US', '+1', NUMBER), RateTerms(card()))
     pages = frames('scan_8')
+    # No DIS on record: JBIG is left out (pages/coding.py JBIG_NOT_ON_RECORD), so MH, measured smallest, is priced.
     usable = coding.usable_codings(ecm=True, configured='jbig')
+    assert usable.left_out['JBIG'] == coding.JBIG_NOT_ON_RECORD
     with predict.facts_source(lambda route, destination, now=None: facts):
         chosen = conversion.choose_layout(pages, route='sip', destination=NUMBER, limit='a4', dense_allowed=False,
                                           usable=usable)
         before = conversion.choose_layout(pages, route='sip', destination=NUMBER, limit='a4', dense_allowed=False)
-    assert (chosen['coding'].coding, chosen['coding'].priced) == ('JBIG', 'MH') and before['coding'] is None
+    assert (chosen['coding'].coding, chosen['coding'].priced) == ('MH', 'MH') and before['coding'] is None
     measured, estimated = chosen['predictions']['normal'], before['predictions']['normal']
     assert 'from the measured size of each page in MH' in measured.basis
     assert 'with MR estimated from a fixed ratio to MMR' in estimated.basis
@@ -343,25 +345,18 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
     assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']
 
 
-def test_shading_to_an_unknown_machine_keeps_jbig_on_the_ssl_fax_engine_and_sends_mh_on_the_built_in_one(
+def test_shading_to_an_unknown_machine_leaves_jbig_out_and_asks_both_engines_for_mh(
         installation, database, tmp_path):  # noqa: F811
+    """No DIS on record for the machine: JBIG is left out (the lead's rule, 2026-10-08), so the time is never priced
+    at a JBIG size the machine may not take; MH, measured smallest, goes with the call on either engine."""
     from app.pages import sending
     changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
-    assert sending.unchanged(changed) and changed.coding.coding == 'JBIG'
-    assert (changed.coding.request('hylafax'), changed.coding.request('builtin')) == ('JBIG', 'MH')
+    assert sending.unchanged(changed) and changed.coding.coding == 'MH' and changed.coding.measured
+    assert (changed.coding.request('hylafax'), changed.coding.request('builtin')) == ('MH', 'MH')
     record = coding.newest_coding(database, JOB)
-    # The record keeps the fallback and its own sentence; the Sent detail words it for the engine that sent it.
-    assert (record['requested'], record['measured'], record['compared']) == ('JBIG', 0, 'MH')
-    assert record['reason'] == 'MH: 20% shorter than MMR for these pages.'
-    assert coding.sent_view(database, JOB)['sentence'] == (
-        'Sent with JBIG where the receiving machine takes it (not measured here), otherwise MH: 20% shorter than MMR '
-        'for these pages.')
-    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'JBIG'}) == (
-        'Sent with JBIG where the receiving machine takes it (not measured here), otherwise MH: 20% shorter than MMR '
-        'for these pages.')
-    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'MH'}).endswith('for these pages.')
-    assert coding.sent_sentence({**record, 'engine': 'hylafax', 'negotiated': 'MR'}).endswith(' The call used MR.')
-    add_frames(database, ATTEMPT, 'MH')  # the built-in engine sent it: no JBIG there
+    assert (record['requested'], record['measured'], record['compared']) == ('MH', 1, 'MMR')
+    assert coding.sent_view(database, JOB)['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'
+    add_frames(database, ATTEMPT, 'MH')
     view = coding.sent_view(database, JOB)
     assert (view['engine'], view['negotiated']) == ('builtin', 'MH')
     assert view['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'
@@ -369,13 +364,12 @@ def test_shading_to_an_unknown_machine_keeps_jbig_on_the_ssl_fax_engine_and_send
 
 def test_black_text_to_an_unknown_machine_goes_with_the_usual_settings_and_still_says_why(
         installation, database, tmp_path):  # noqa: F811
-    # MMR measured smallest: JBIG (not measured here) where the machine takes it, MMR otherwise and on the built-in
-    # engine, which is what both engines take anyway: nothing goes with the call.
+    # MMR measured smallest and JBIG is left out (no DIS on record): MMR is what both engines take anyway, so
+    # nothing goes with the call and the SSL Fax engine keeps its own negotiation (JBIG where the machine offers it).
     assert _send(database, tmp_path, pages=frames('drawn_text'), values=KEEP_SHADING) is None
     view = coding.sent_view(database, JOB)
-    assert view['requested'] == 'JBIG' and view['measured'] is False
-    assert view['sentence'] == ('Sent with JBIG where the receiving machine takes it (not measured here), otherwise '
-                                'MMR: 24% shorter than MR for these pages.')
+    assert view['requested'] == 'MMR' and view['measured'] is True
+    assert view['sentence'] == 'Sent with MMR: 24% shorter than MR for these pages.'
     add_frames(database, ATTEMPT, 'MMR')
     assert coding.sent_view(database, JOB)['sentence'] == 'Sent with MMR: 24% shorter than MR for these pages.'
 

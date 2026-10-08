@@ -18,7 +18,9 @@
 # "unlimited"), page_width ("A4", "B4" or "A3") and fine (1 when its best
 # vertical resolution is finer than 3.85 line/mm, else 0), remote_ecm (1 when
 # it offers error correction, else 0) and scan_ms (its minimum time per scan
-# line at 7.7 line/mm, from "REMOTE best ... ms/scanline"); and the time
+# line at 7.7 line/mm, from "REMOTE best ... ms/scanline"), remote_codings (the
+# codings it takes, from "REMOTE format support: MH, MR, MMR, JBIG", HylaFAX+
+# 7.0.11 faxd/FaxSend.c++ line 749: "MH,MR,MMR,JBIG" in that order); and the time
 # between pages: boundary_ms, the average milliseconds from each "SEND end
 # page" to the next "SEND begin page" (the end-of-page exchange and the next
 # training), over boundaries pages, never for SSL Fax. Faxbot packs pages for
@@ -79,6 +81,7 @@ function capability() {
   printf ",\"page_length\":%s,\"page_width\":%s,\"fine\":%s", quoted(page_length), quoted(page_width), (fine == "" ? "null" : fine)
   # Error correction and the scan line time are known only when the DIS was logged (its page length).
   printf ",\"remote_ecm\":%s,\"scan_ms\":%s", (page_length == "" ? "null" : (remote_ecm ? 1 : 0)), (page_length == "" || scan == "" ? "null" : scan)
+  printf ",\"remote_codings\":%s", quoted(codings)
   if (boundaries && !sslfax) printf ",\"boundary_ms\":%d,\"boundaries\":%d}", (boundary_total * 1000 / boundaries + 0.5), boundaries
   else printf ",\"boundary_ms\":null,\"boundaries\":null}"
 }
@@ -92,6 +95,14 @@ function seconds(clock,   part) {
   else if (text ~ /^REMOTE max .*page length/) page_length = length_of(substr(text, 12))
   else if (text ~ /^REMOTE best vres /) fine = (substr(text, 18) ~ /^(3\.85 line\/mm|200 x 100 dpi)$/) ? 0 : 1
   else if (text ~ /^REMOTE supports .*ECM$/ && text !~ /no ECM$/) remote_ecm = 1
+  else if (text ~ /^REMOTE format support: /) {
+    # Only the four codings Faxbot sends, in a fixed order; anything else in the line is left out.
+    listed = substr(text, 24)
+    codings = "MH"
+    if (listed ~ /(^|, )MR(,|$)/) codings = codings ",MR"
+    if (listed ~ /(^|, )MMR(,|$)/) codings = codings ",MMR"
+    if (listed ~ /(^|, )JBIG(,|$)/) codings = codings ",JBIG"
+  }
   else if (text ~ /^REMOTE best [0-9]+ ms.*\/scanline$/) {
     # "20 ms, 10 ms/scanline": the time at 3.85 line/mm, then at 7.7 line/mm; the last one is for fine pages.
     if (match(text, /[0-9]+ ms\/scanline$/)) scan = substr(text, RSTART, RLENGTH) + 0

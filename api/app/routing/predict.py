@@ -1,4 +1,4 @@
-"""One shared pre-dial predictor: what a fax would take and cost on a route, before dialing (M2, M4, M7).
+"""One shared pre-dial predictor: what a fax would take and cost on a route, before dialing (M2, M4).
 
 Dense pages (AF), the fax codec (AG), advice (AD), the dry run and Send a fax
 all ask the same question, "what would this fax cost on this route?", and get
@@ -120,12 +120,6 @@ LAYOUT_FACTOR = {'normal': 1.0, 'dense': 1.8}
 WIRE_FACTOR = {'MMR': 1.0, 'MR': 1.35, 'MH': 2.0, 'JBIG': 0.8}
 # Assumed until a call to the number shows its coding: 2-D coding, which nearly every fax machine accepts.
 DEFAULT_CODING = 'MR'
-# A halftone page (a scanned photo or grey background) compresses badly with T.6: under 4:1 against a page's
-# raw bits. JBIG does much better there (JBIG-KIT: often 2x or more); 0.5 is a cautious default.
-HALFTONE_RATIO = 4
-JBIG_HALFTONE_FACTOR = 0.5
-RAW_PAGE_BITS = {'standard': 1728 * 1143, 'fine': 1728 * 2287, 'superfine': 1728 * 4575, '300': 2592 * 3508,
-                 '400': 3456 * 4677}
 # Recorded calls needed before a learned figure replaces a default.
 MIN_CALLS = 3
 # The spread of a call's time after setup when the number has fewer than MIN_CALLS recorded calls: 15% shorter or
@@ -675,50 +669,6 @@ def boundary(card, seconds):
         return None, None
     billed = billed_seconds(card, seconds)
     return billed, max(0.0, billed - seconds)
-
-
-def halftone_pages(shape):
-    """How many pages look like halftones (scanned photos, grey backgrounds): T.6 compresses them under 4:1."""
-    if shape.page_bits is None:
-        return 0
-    raw = RAW_PAGE_BITS[shape.resolution]
-    return sum(1 for bits in shape.page_bits if bits * HALFTONE_RATIO > raw)
-
-
-@dataclass(frozen=True)
-class EngineChoice:
-    """JBIG on the SSL Fax engine against Faxbot's built-in coding for one fax (M7)."""
-    standard: Prediction
-    jbig: Prediction
-    faster: str                          # 'jbig' or 'standard'
-    sentence: str
-
-
-def jbig_choice(facts, shape):
-    """Both predictions and which is faster, for a fax with halftone pages to a number known to take JBIG.
-
-    None unless the route is the SSL Fax engine's (``sip``), a recorded call to
-    this number used JBIG, and the page sizes show halftone pages: Faxbot makes
-    no claim about JBIG otherwise.
-    """
-    if facts.route_key != 'sip' or not facts.link.jbig or shape.page_bits is None or not halftone_pages(shape):
-        return None
-    standard = predict_from(facts, shape)
-    raw = RAW_PAGE_BITS[shape.resolution]
-    jbig_bits = tuple(int(math.ceil(bits * (JBIG_HALFTONE_FACTOR if bits * HALFTONE_RATIO > raw
-                                            else WIRE_FACTOR['JBIG']))) for bits in shape.page_bits)
-    jbig_shape = Shape(shape.pages, jbig_bits, shape.resolution, shape.layout)
-    from dataclasses import replace
-    jbig = predict_from(replace(facts, link=replace(facts.link, coding='MMR')), jbig_shape)
-    faster = 'jbig' if (jbig.seconds or 0) < (standard.seconds or 0) else 'standard'
-    if faster == 'jbig':
-        saved = (standard.seconds or 0) - (jbig.seconds or 0)
-        sentence = (f"An earlier fax to this number used the coding that suits photos, which only Faxbot's fast fax "
-                    f'service sends; for the {_count(halftone_pages(shape), "photo-like page")} here it should save '
-                    f'{duration_text(saved)} on the line.')
-    else:
-        sentence = 'The coding that suits photos would not make this fax shorter, so Faxbot keeps its usual coding.'
-    return EngineChoice(standard, jbig, faster, sentence)
 
 
 def amount_text(prediction):

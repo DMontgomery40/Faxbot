@@ -38,7 +38,7 @@ def _row(**changes):
 
 
 def test_measured_codec_follows_invoices():
-    assert schema_measured_codec.REVISION == '0056_measured_codec' == schema.HEAD
+    assert schema_measured_codec.REVISION == '0056_measured_codec' == schema.MEASURED_CODEC
     assert schema.INVOICES == PRIOR
     assert schema_measured_codec.TABLES == frozenset({'fax_coding_choices'})
     assert schema_measured_codec.TABLES <= schema.STRICT_TABLES
