@@ -165,14 +165,14 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="Faxbot API",
     version="1.0.0",
-    description="The first and only open-source, self-hostable fax API. Send faxes with a single function call.",
+    description="A proprietary, self-hosted fax API. Send faxes with a single function call. Use requires written permission from the owner.",
     contact={
         "name": "Faxbot Support",
         "url": "https://faxbot.net",
         "email": "support@faxbot.net",
     },
     license_info={
-        "name": "MIT",
+        "name": "Proprietary - written permission required",
         "url": "https://github.com/dmontgomery40/faxbot/blob/main/LICENSE",
     },
     lifespan=lifespan,

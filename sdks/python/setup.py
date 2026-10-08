@@ -19,6 +19,7 @@ setuptools.setup(
     author="David Montgomery",
     author_email="dmontg@gmail.com",
     description="Faxbot API Client SDK for Python",
+    license="Proprietary - written permission required; see LICENSE",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/DMontgomery40/Faxbot",
@@ -28,7 +29,8 @@ setuptools.setup(
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
+        "License :: Other/Proprietary License",
+        "Private :: Do Not Upload",
         "Operating System :: OS Independent",
         "Topic :: Communications :: Fax",
         "Intended Audience :: Developers",
