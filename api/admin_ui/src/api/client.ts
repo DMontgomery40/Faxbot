@@ -85,6 +85,7 @@ import type {
   ReceivingRecommendations,
   PlanRecommendations,
   PlanContracts,
+  PlanAllocation,
   CarrierComparison,
   FaxMarkerAdvice,
   BillingSteps,
@@ -1591,6 +1592,12 @@ class AdminAPIClient {
   // Prices & plans). The budgets are the setting plan_budgets, saved with updateSettings.
   async getPlans(): Promise<PlanContracts> {
     return this.json('/routing/plans');
+  }
+
+  // Who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what is kept for
+  // faxes not sent yet (estimates; Costs → Prices & plans).
+  async getPlanAllocation(): Promise<PlanAllocation> {
+    return this.json('/routing/plans/allocation');
   }
 
   // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).

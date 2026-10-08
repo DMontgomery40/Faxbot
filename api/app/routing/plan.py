@@ -35,6 +35,8 @@ REASON_TEXT = {
     'cheapest_delivered': f'The cheapest route per delivered fax to this number over the last {WINDOW_DAYS} days.',
     'own_number': 'One of your own fax numbers: the fax goes straight into Received, with no phone call.',
     'rule': 'Your sending rule chose this account first.',
+    'plan_reserved': ("Your plan's last included pages or minutes go to faxes they save more on, so this fax goes by "
+                      'the next cheapest route.'),
 }
 
 
@@ -44,6 +46,8 @@ DECIDED_TEXT = {
     'unreliable': 'Faxes to this number often failed on this route, but no other route was available.',
     'unknown_cost': 'None of your routes had a price, so Faxbot used the first one in your list.',
     'own_number': 'This is one of your own fax numbers, so the fax went straight into Received without a phone call.',
+    'plan_reserved': ("Your plan's last included pages or minutes went to faxes they saved more on, so Faxbot sent "
+                      'this one by the next cheapest route.'),
 }
 
 
@@ -89,6 +93,29 @@ def _explain(choice, destination=None):
         return ('Your outbound fax provider; its cost is unknown.' if choice.route.bound
                 else 'First in your list of routes; its cost is unknown.')
     return REASON_TEXT[choice.reason]
+
+
+# A first route chosen by price may be first only because a plan's room is held for other faxes.
+_PRICED_FIRST = ('cheapest', 'known_cheapest', 'cheapest_delivered', 'configured')
+
+
+def _reserved(choices, prices):
+    """``(choices, held)``: the first route's reason becomes ``plan_reserved`` when a plan later in the order would
+    have cost this fax less with its whole room (``plan_allocation``); ``held`` keeps what was held, for the record."""
+    if not choices or not prices or choices[0].reason not in _PRICED_FIRST:
+        return choices, None
+    first = choices[0]
+    for choice in choices[1:]:
+        price = prices.get(choice.route.key)
+        hold = getattr(price, 'held', None)
+        if hold is None or hold.given or price.unheld_micros is None or price.unheld_over or not (
+                hold.others or hold.reserve):
+            continue  # a plan full of faxes already on their way is simply full
+        if first.estimated_cost_micros is None or price.unheld_micros < first.estimated_cost_micros:
+            from dataclasses import replace
+            return ([replace(first, reason='plan_reserved')] + list(choices[1:]),
+                    (hold, first.route.key, first.estimated_cost_micros))
+    return choices, None
 
 
 def extra_routes(values, bound):
@@ -175,6 +202,9 @@ class RoutePlan:
     unreliable: tuple = ()
     # The fax's routing decision (``routing.envelope.Pinned``), or None for a fax accepted before rules.
     pinned: object = None
+    # ``(plan_allocation.Hold, route key, estimated micros)`` when the first route is first only because a scarce
+    # plan's room is held for other faxes (reason ``plan_reserved``); kept with the attempt for Sent details.
+    held: object = None
 
     def number_for(self, key):
         return self.dialed.get(key, self.destination)
@@ -242,6 +272,7 @@ class RoutePlanner:
         """
         destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
         card_for = card_for or self.store.card_for
+        held = None
         alternate = (dial or {}).get('alternate')
         if (dial or {}).get('refused') or alternate == destination:
             alternate = None
@@ -341,12 +372,13 @@ class RoutePlanner:
                 preferred = pinned.envelope.preferred if pinned.automatic else None
             choices = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
                                    prices=prices)
+            choices, held = _reserved(choices, prices)
         held_back = {key for key, why in skipped if why != 'tried'}
         if not choices and (pinned is None or (pinned.allows(bound) and bound not in held_back)):
             choices = [RouteChoice(provider(bound, True), 'configured', None)]
         return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None,
                          {key: number for key, number in dialed.items() if number != destination},
-                         skipped=tuple(skipped), unreliable=unreliable, pinned=pinned)
+                         skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held)
 
     def _unusable(self, key, current, pinned, prices):
         """Why an allowed account cannot take this attempt now, or None: turned off, at its daily spending limit,

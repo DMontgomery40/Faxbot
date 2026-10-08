@@ -31,8 +31,9 @@ DIRECT = 'direct'
 # ``cheapest_delivered``: the lowest observed cost per delivered fax among routes with enough delivered faxes.
 # ``own_number``: one of the installation's own receiving numbers, delivered inside Faxbot without a call.
 # ``rule``: first in the list a sending rule gave (its order, not cost, decides).
+# ``plan_reserved``: first because a scarce plan's last pages are held for faxes they save more on (plan_allocation).
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
-           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule')
+           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule', 'plan_reserved')
 # A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
 CALLING = ('provider', 'relay')
 

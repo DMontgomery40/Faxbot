@@ -5446,7 +5446,7 @@ $ faxbot costs recommendations trunks [OPTIONS]
 
 ### `faxbot costs plans`
 
-Your plans: each plan&#x27;s budget or allowance this month and what is committed (show), setting a budget (budget), and the plans a fax service publishes (published, or name the service: faxbot costs plans efax).
+Your plans: each plan&#x27;s budget or allowance this month and what is committed (show), which waiting faxes get its last pages (allocation), setting a budget (budget), and the plans a fax service publishes (published, or name the service: faxbot costs plans efax).
 
 **Usage**:
 
@@ -5462,6 +5462,7 @@ $ faxbot costs plans [OPTIONS] COMMAND [ARGS]...
 
 * `published`: Show the price plans a fax service...
 * `show`: Show each plan&#x27;s normal-use budget or...
+* `allocation`: Show who gets each limited plan&#x27;s last...
 * `budget`: Set a plan&#x27;s monthly normal-use budget,...
 
 #### `faxbot costs plans published`
@@ -5496,6 +5497,20 @@ $ faxbot costs plans show [OPTIONS]
 **Options**:
 
 * `--by-day`: Also show the pages and faxes carried each day of this billing period.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs plans allocation`
+
+Show who gets each limited plan&#x27;s last pages or minutes: the waiting faxes they save the most on, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate.
+
+**Usage**:
+
+```console
+$ faxbot costs plans allocation [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot costs plans budget`

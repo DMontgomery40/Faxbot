@@ -520,6 +520,10 @@ def _cost_view(cost):
         from .plan import decided_text
         view['route_explanation'] = (decided_text(cost.get('route'), cost['route_reason'])
                                      if cost['route_reason'] else None)
+    if cost.get('plan_allocation'):
+        # It went another way than its plan: the amounts kept when it was sent (plan_allocation.explanation).
+        view['route_explanation'] = cost['plan_allocation']
+    view.pop('plan_allocation', None)
     return view
 
 
@@ -530,8 +534,10 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
     spending = _spending(request)
     from .provenance import dialed_view
+    from .plan_allocation import explanation
     return _cost_view(await _call(lambda: {**spending.job(job_id),
-                                           'dialed': dialed_view(spending.routes.engine, job_id)}))
+                                           'dialed': dialed_view(spending.routes.engine, job_id),
+                                           'plan_allocation': explanation(spending.routes.engine, job_id)}))
 
 
 @router.get('/inbound-costs')

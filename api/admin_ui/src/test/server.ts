@@ -689,6 +689,8 @@ const consoleHandlers = [
   // Plans this month (Prices & plans) and other carriers (Recommendations): no plan, and no faxes to compare yet.
   http.get('/routing/plans', () => json({ plans: [], estimate: true, plan_budgets: '',
     empty_sentence: 'You pay no monthly fee for a fax service and set no allowance or commitment, so there is no plan to show.' })),
+  http.get('/routing/plans/allocation', () => json({ plans: [], estimate: true,
+    empty_sentence: 'None of your plans has a limited allowance or a normal-use budget this month, so there is nothing to share out.' })),
   http.get('/routing/recommendations/carriers', () => json({ days: 30, estimate: true, advice_only: true, sent: 0,
     received: 0, sentence: 'You sent and received no faxes in the last 30 days, so there is nothing to compare yet.',
     switching_sentence: 'Changing carriers means moving (porting) your fax numbers to the new carrier and opening an '

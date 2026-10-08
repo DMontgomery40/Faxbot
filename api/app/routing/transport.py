@@ -158,7 +158,7 @@ class RoutedTransport:
         if pinned is not None:
             from .pricing import prices_for
             prices = prices_for(routes, revision.values, job['to_number'], job.get('pages'), pinned=pinned,
-                                bound=bound, dial=dial)
+                                bound=bound, dial=dial, job_id=claim.job_id)
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
                             pages=job.get('pages'), alternates=True, dial=dial,
                             tried=planner.tried(claim.job_id, claim.attempt_id),
@@ -276,6 +276,10 @@ class RoutedTransport:
         self.routes().record_decision(attempt_id=claim.attempt_id, job_id=claim.job_id,
                                       destination=plan.destination, route=ledger_key(choice.route.key),
                                       reason=choice.reason, provider_id=choice.route.provider_id)
+        if choice.reason == 'plan_reserved' and getattr(plan, 'held', None) is not None:
+            # Why this fax did not use its plan, with the amounts as they were, for Sent details (plan_allocation).
+            from .plan_allocation import record
+            record(self.routes().engine, attempt_id=claim.attempt_id, job_id=claim.job_id, held=plan.held)
 
     def _record_choice(self, claim, plan, choice):
         """The route this attempt was given, with what was skipped, before anything is sent (rules only).
