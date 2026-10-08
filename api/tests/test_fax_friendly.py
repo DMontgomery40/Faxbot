@@ -354,6 +354,7 @@ def attempt(database, tmp_path, configuration, *, attempt_id=ATTEMPT, choice='wh
 def test_a_trunk_attempt_is_lightened_and_a_per_page_attempt_is_not(installation, tmp_path, billed):
     assert attempt(installation, tmp_path, SINCH) is None
     assert friendly.run_for(installation, JOB) is None
+    before = (tmp_path / f'{JOB}.tiff').read_bytes()
     trunk = attempt(installation, tmp_path, TRUNK, attempt_id='d' * 32)
     assert trunk.pdf is None and trunk.tiff.endswith(f'packed-{JOB}-{"d" * 32}.tiff')
     sent = conversion.read_fax_frames(trunk.tiff)[0]
@@ -361,8 +362,8 @@ def test_a_trunk_attempt_is_lightened_and_a_per_page_attempt_is_not(installation
     assert sum(conversion.frame_bits([sent])) < sum(conversion.frame_bits([own])) / 2
     run = friendly.run_for(installation, JOB)
     assert run['attempt_id'] == 'd' * 32 and run['pages_changed'] == 1
-    # The fax's own image is never changed.
-    assert same_pages(tmp_path / f'{JOB}.tiff', tmp_path / f'{JOB}.tiff')
+    # The fax's own image is never changed: the lightened pages are the attempt's own file.
+    assert (tmp_path / f'{JOB}.tiff').read_bytes() == before
     assert not list(tmp_path.glob('*.source.tiff'))
 
 
