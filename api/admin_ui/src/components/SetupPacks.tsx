@@ -25,8 +25,10 @@ const EMPTY: SetupContext = { organization_name: '', country: '', mailboxes: {} 
 function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
-  } catch {
-    return code;
+  } catch (error) {
+    // Intl refuses a code it can't read with a RangeError; the code itself is then the name.
+    if (error instanceof RangeError) return code;
+    throw error;
   }
 }
 
