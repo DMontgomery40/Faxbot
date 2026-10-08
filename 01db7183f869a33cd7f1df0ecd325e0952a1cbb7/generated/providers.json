@@ -1,0 +1,114 @@
+{
+  "documo": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": false
+    }
+  },
+  "efax": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "none",
+      "needs_storage": true,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": true
+    }
+  },
+  "freeswitch": {
+    "declared_actions": [],
+    "kind": "self_hosted",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": true,
+      "supports_inbound": false
+    }
+  },
+  "humblefax": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": false
+    }
+  },
+  "phaxio": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "hmac",
+      "needs_storage": true,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": true
+    }
+  },
+  "signalwire": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": true,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": false
+    }
+  },
+  "sinch": {
+    "declared_actions": [],
+    "kind": "cloud",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "hmac",
+      "needs_storage": true,
+      "outbound_status_only": false,
+      "requires_ami": false,
+      "requires_ghostscript": true,
+      "requires_tiff": false,
+      "supports_inbound": true
+    }
+  },
+  "sip": {
+    "declared_actions": [],
+    "kind": "self_hosted",
+    "manifest_digest": null,
+    "traits": {
+      "inbound_verification": "internal_secret",
+      "needs_storage": true,
+      "outbound_status_only": false,
+      "requires_ami": true,
+      "requires_ghostscript": true,
+      "requires_tiff": true,
+      "supports_inbound": true
+    }
+  }
+}
