@@ -12,13 +12,13 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 8, 9, 0)
-# The migration chain follows merge order: 0065 comes after 0052 (digital routes) on this branch.
-PRIOR = '0052_digital_routes'
+# The migration chain follows merge order: 0065 comes after 0056 (measured coding).
+PRIOR = '0056_measured_codec'
 
 
-def test_fact_advice_follows_digital_routes():
+def test_fact_advice_follows_measured_coding():
     assert schema_fact_advice.REVISION == '0065_fact_advice' == schema.HEAD
-    assert schema.DIGITAL_ROUTES == PRIOR
+    assert schema.MEASURED_CODEC == PRIOR
     assert schema_fact_advice.TABLES <= schema.STRICT_TABLES and len(schema_fact_advice.TABLES) == 3
 
 

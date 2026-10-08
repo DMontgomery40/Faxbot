@@ -237,6 +237,9 @@ class RuleOptions(StrictInput):
     email_off: bool | None = None
     urgent: bool | None = None
     keep_days: Annotated[int, Field(ge=1, le=36500)] | None = None
+    # Only calls forwarded from this number (X4), and whether an unsigned or unchecked forwarding counts too.
+    diverted_from: Annotated[str, Field(max_length=40)] | None = None
+    diversion_unsigned: bool | None = None
 
 
 class RuleCreate(RuleOptions):
@@ -257,6 +260,9 @@ class ReceivedExplain(StrictInput):
     from_number: Annotated[str, Field(max_length=100)] | None = None
     account_key: ShortText | None = None
     subaddress: Annotated[str, Field(max_length=40)] | None = None
+    # A call forwarded from this number, and how far the forwarding was checked.
+    diverted_from: Annotated[str, Field(max_length=40)] | None = None
+    diversion: Literal['signed', 'unanchored', 'unchecked', 'failed', 'stated'] | None = None
     # A local time at this installation ("2026-10-07T18:30"), or now.
     at: Annotated[str, Field(max_length=32)] | None = None
 
@@ -740,7 +746,8 @@ async def explain_received(body: ReceivedExplain, request: Request):
     service = runtime(request)
     return await _read(lambda: explain(service.store, intake, values, to_number=body.to_number,
                                        from_number=body.from_number, account_key=body.account_key,
-                                       subaddress=body.subaddress, at=moment))
+                                       subaddress=body.subaddress, at=moment, diverted_from=body.diverted_from,
+                                       diversion=body.diversion))
 
 
 # -- audit --------------------------------------------------------------------------------------------

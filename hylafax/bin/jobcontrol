@@ -1,0 +1,26 @@
+#!/bin/sh
+# Per-job controls for faxq (HylaFAX+ 7.0.11 jobcontrol(1m)). faxq runs this
+# (as uucp, in the spool folder) with the job ID as its only argument, before
+# the job goes on the ready queue, and reads "param: value" lines back.
+#
+# Faxbot asks each job for the most compact fax coding it may use (JPARM
+# DATAFORMAT, kept as the job's desireddf): measured smallest on the fax's own
+# pages (api/app/pages/coding.py), or narrowed by engine learning. faxsend's
+# software conversion of the page coding (ModemSoftRTFCC, on by default) does
+# not read a job's own desireddf: it sends the most compact coding both
+# machines take, JBIG first (faxd/FaxSend.c++). Only a DesiredDF from these job
+# controls is honoured there, so a job that asks for MH (0), MR (1) or MMR (3)
+# gets it here. JBIG (4), the default, gets nothing and the engine keeps its
+# own choice. faxsend still uses the lower of this and what the receiving
+# machine takes, so a machine never gets a coding it lacks.
+set -u
+
+job=${1:-}
+case $job in
+  ''|*[!0-9]*) exit 0 ;;
+esac
+df=$(sed -n 's/^desireddf:\([013]\)$/\1/p' "sendq/q$job" 2>/dev/null | tail -n 1)
+if [ -n "$df" ]; then
+  printf 'DesiredDF: %s\n' "$df"
+fi
+exit 0

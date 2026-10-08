@@ -32,7 +32,7 @@ tables; it never imports this metadata.
 """
 import sqlalchemy as sa
 
-from .schema_digital_routes import frozen_metadata as previous_metadata
+from .schema_measured_codec import frozen_metadata as previous_metadata
 
 
 REVISION = '0065_fact_advice'

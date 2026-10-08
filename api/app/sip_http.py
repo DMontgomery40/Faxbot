@@ -388,7 +388,7 @@ def _applied(values):
     path = sip_trunk.configuration_path(values)
     try:
         current = path.read_bytes()
-        expected = sip_trunk.render_pjsip(values).encode()
+        expected = sip_trunk.rendered_configuration(values).encode()
     except (OSError, sip_trunk.TrunkConfigurationError):
         return False
     return hashlib.sha256(current).digest() == hashlib.sha256(expected).digest()

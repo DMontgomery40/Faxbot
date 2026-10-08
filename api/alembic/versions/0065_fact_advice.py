@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0065_fact_advice'
 # Chained after the integration head when merged (revision numbers follow merge order, not number order).
-down_revision = '0052_digital_routes'
+down_revision = '0056_measured_codec'
 branch_labels = None
 depends_on = None
 

@@ -215,6 +215,10 @@ def _check_then(then, kind, label, rule_id, problems, path, *, scope):
         if setting in then and then[setting] not in allowed:
             problems.error('shape', f'{label}: {setting.replace("_", " ")} must be one of {", ".join(allowed)}.',
                            rule_id, f'{path}.{setting}')
+    if 'subaddress' in then and not (isinstance(then['subaddress'], str)
+                                     and model.SUBADDRESS.fullmatch(then['subaddress'])):
+        problems.error('shape', f'{label}: a subaddress is up to 20 digits, such as 2001; it may also use +, # and *.',
+                       rule_id, f'{path}.subaddress')
 
 
 def _check_definitions(document, problems):

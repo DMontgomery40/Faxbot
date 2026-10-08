@@ -569,6 +569,36 @@ async def sync(ami, store, engine, values, *, now=None) -> dict:
     return changes
 
 
+# -- the subaddress a sent fax asked for (patch 0005) ----------------------------------------------
+
+def subaddress_carried(requested, frame) -> bool | None:
+    """Whether the subaddress a sent call asked for was carried.
+
+    spandsp 0.0.6 sends SUB only when the far end's DIS sets bit 49 (the replay proof in asterisk/tests shows it
+    sent with the bit and withheld without it), so: True when that DIS has the bit, False when it lacks it, None
+    when nothing was asked or the call reported no DIS.
+    """
+    if not requested:
+        return None
+    dis = decode_dis((frame or {}).get('dis'))
+    return None if dis is None else bool(dis['subaddress'])
+
+
+def subaddress_sentence(requested, frame) -> str | None:
+    """One sentence about the subaddress a sent call asked for, or None when it asked for none."""
+    carried = subaddress_carried(requested, frame)
+    if not requested:
+        return None
+    if carried is True:
+        return (f"This fax asked for subaddress {requested}; the far end's fax machine takes subaddresses, so it was "
+                'sent.')
+    if carried is False:
+        return (f"This fax asked for subaddress {requested}, but the far end's fax machine does not take "
+                'subaddresses, so it was not sent.')
+    return (f"This fax asked for subaddress {requested}; the call did not show whether the far end's fax machine "
+            'takes one.')
+
+
 # -- in words ---------------------------------------------------------------------------------
 
 def describe(row) -> list:
