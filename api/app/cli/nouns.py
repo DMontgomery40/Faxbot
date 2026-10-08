@@ -9,6 +9,7 @@ import typer
 
 from .commands import (access, accounts, admin, blocked, codec, delivery, fax, fax_machines, forms, operations, pages,
                        reply, rules, schedule, settings, setup, sslfax, trunk, work)
+from .commands import discovery
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -111,6 +112,11 @@ partners.command('confirm')(delivery.peers_confirm)
 partners.command('revoke')(delivery.peers_revoke)
 partners.command('fax-images')(delivery.peers_fax_images)
 partners.command('deliveries')(delivery.direct_deliveries)
+# Find partners: suggestions from calls, introductions and trusted directories, and publishing your number.
+partners.add_typer(discovery.discover, name='discover')
+partners.command('introduce')(discovery.introduce)
+partners.command('may-introduce')(discovery.may_introduce)
+partners.add_typer(discovery.publish, name='publish')
 recipients.add_typer(partners, name='partners')
 # The case group, with the commands case_commands adds (accept, repair, checklists ...).
 recipients.add_typer(case_commands.cases, name='cases')

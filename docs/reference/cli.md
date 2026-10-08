@@ -1889,6 +1889,10 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `revoke`: Remove a partner.
 * `fax-images`: Accept faxes from a partner as the exact...
 * `deliveries`: List recent faxes sent to and received...
+* `introduce`: Introduce two of your partners to each other.
+* `may-introduce`: Set whether a partner may be introduced to...
+* `discover`: Recipients that run Faxbot, found from...
+* `publish`: Publish your fax number in a directory you...
 
 #### `faxbot recipients partners card`
 
@@ -2020,6 +2024,242 @@ List recent faxes sent to and received from partners over the internet.
 ```console
 $ faxbot recipients partners deliveries [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners introduce`
+
+Introduce two of your partners to each other. Both must have agreed to be introduced.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners introduce [OPTIONS] {first} {second}
+```
+
+**Arguments**:
+
+* `first`: A partner: organization, fax number or id.  [required]
+* `second`: The partner to introduce them to.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners may-introduce`
+
+Set whether a partner may be introduced to your other partners (off by default).
+
+**Usage**:
+
+```console
+$ faxbot recipients partners may-introduce [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+* `on|off`: on once the partner agreed to be introduced to your other partners; off (the default) never introduces them.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners discover`
+
+Recipients that run Faxbot, found from your fax calls, introductions and directories you trust, and the settings for finding them.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List recipients that run Faxbot and could...
+* `lookup`: Look a fax number up now in the...
+* `enroll`: Add a suggested recipient as a partner.
+* `dismiss`: Stop suggesting a recipient.
+* `settings`: Show or change how Faxbot finds partners.
+
+##### `faxbot recipients partners discover list`
+
+List recipients that run Faxbot and could become partners, and the latest lookups.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners discover lookup`
+
+Look a fax number up now in the directories you trust.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover lookup [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number to look up, with its country code.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners discover enroll`
+
+Add a suggested recipient as a partner. Then send them a code by fax to confirm their number.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover enroll [OPTIONS] {suggestion}
+```
+
+**Arguments**:
+
+* `suggestion`: Suggested recipient: organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners discover dismiss`
+
+Stop suggesting a recipient.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover dismiss [OPTIONS] {suggestion}
+```
+
+**Arguments**:
+
+* `suggestion`: Suggested recipient: organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners discover settings`
+
+Show or change how Faxbot finds partners.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners discover settings [OPTIONS]
+```
+
+**Options**:
+
+* `--answer-lookups on|off`: Let Faxbots that fax you read your partner card (on by default).
+* `--from-calls on|off`: Look up the other side of your fax calls when it shows it runs Faxbot (on by default).
+* `--directory DOMAIN`: A directory you trust; repeat for several. Replaces the list.
+* `--no-directories`: Trust no directory.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners publish`
+
+Publish your fax number in a directory you control, so other Faxbots can find you.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners publish [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the fax numbers you published, with...
+* `add`: Make the signed record that publishes your...
+* `check`: Check that a directory&#x27;s DNS has the record.
+* `withdraw`: Stop publishing a fax number.
+
+##### `faxbot recipients partners publish list`
+
+List the fax numbers you published, with the record each directory needs.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners publish list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners publish add`
+
+Make the signed record that publishes your fax number in a directory. Add it to that domain&#x27;s DNS.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners publish add [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Your fax number: the one on your partner card.  [required]
+
+**Options**:
+
+* `--directory DOMAIN`: The directory domain you control, such as faxdirectory.example.org.  [required]
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners publish check`
+
+Check that a directory&#x27;s DNS has the record.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners publish check [OPTIONS] {publication}
+```
+
+**Arguments**:
+
+* `publication`: The directory, the fax number or the id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners publish withdraw`
+
+Stop publishing a fax number. Then delete its record from the directory&#x27;s DNS.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners publish withdraw [OPTIONS] {publication}
+```
+
+**Arguments**:
+
+* `publication`: The directory, the fax number or the id.  [required]
 
 **Options**:
 
