@@ -69,6 +69,11 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         # Whether the call ended before any fax data, by Documo's result code (routing/predata.py).
         from .routing.predata import documo as before_fax_data
         receipt['before_fax_data'] = before_fax_data(payload.get('resultCode'))
+        # Documo's own count of pages completed and in the fax (routing/continuation.py), kept as evidence.
+        from .routing.continuation import documo_pages
+        sent, total = documo_pages(payload)
+        if sent is not None:
+            receipt['pages_sent'], receipt['pages_total'] = sent, total
     return receipt
 
 

@@ -47,11 +47,19 @@ class OutboundPoller:
                 attempt_id=attempt_id, profile_id=profile.id, event_key=key))
         # The adapter's classification of a failed call: it ended before any fax data, or not, or it cannot say.
         ended = result.get('before_fax_data') if isinstance(result, dict) and receipt.status == 'failed' else None
-        return await run_lifecycle_step(lambda: self.store.observe(job_id,
+        observed = await run_lifecycle_step(lambda: self.store.observe(job_id,
             attempt_id=attempt_id, profile_id=profile.id, provider_sid=receipt.provider_sid,
             status=receipt.status, event_key=key, error=failure if isinstance(failure, str) else None,
             error_category=category if category in NO_FALLBACK_CATEGORIES else None,
             before_data=ended if isinstance(ended, bool) else None))
+        if receipt.status == 'failed' and not manifest:
+            # The service's own count of pages sent, kept once (evidence only) for sending only the rest of a
+            # broken fax (routing/continuation.py); it never changes the delivery.
+            from .routing.continuation import record_provider_report
+            await run_lifecycle_step(lambda: record_provider_report(
+                self.store.configuration.engine, job_id=job_id, attempt_id=attempt_id,
+                provider=configuration.provider_id, result=result))
+        return observed
 
     async def step(self):
         job_id = await run_lifecycle_step(self.store.reserve_poll)

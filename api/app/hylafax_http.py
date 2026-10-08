@@ -121,6 +121,10 @@ def _record_engine(request, job_id, attempt_id, payload, row):
     hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',
                            values=engine_values(payload.get('negotiation_b64')), job_id=job_id,
                            number=(row or {}).get('called'))
+    # The other machine's answer to each page, for sending only the rest of a broken fax (routing/continuation.py).
+    from .routing.continuation import record_engine_report
+    hylafax_records.safely(record_engine_report, engine, job_id=job_id, attempt_id=attempt_id,
+                           negotiation=payload.get('negotiation_b64'))
     # What the other machine said it accepts (its DIS): dense pages pack and trim from it.
     capability = page_capability(payload.get('negotiation_b64'))
     if capability:

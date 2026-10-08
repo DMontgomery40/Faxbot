@@ -351,6 +351,11 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         # Whether the call ended before any fax data, by HumbleFax's documented fields (routing/predata.py).
         from .routing.predata import humblefax as before_fax_data
         receipt['before_fax_data'] = before_fax_data(fax)
+        # The most pages any one HumbleFax attempt sent (routing/continuation.py), kept as evidence.
+        from .routing.continuation import humblefax_pages
+        sent, _ = humblefax_pages(fax)
+        if sent is not None:
+            receipt['pages_sent'] = sent
     sender = _account_number(fax.get('fromNumber'))
     if sender:
         receipt['from_number'] = sender
