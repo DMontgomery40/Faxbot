@@ -143,6 +143,12 @@ def relay_trio(request, isolated_installation, monkeypatch, tmp_path):
         monkeypatch.setenv(name, value)
     provider = Provider()
     monkeypatch.setattr('app.outbound_transport.service_from_profile', lambda profile: provider)
+
+    async def idle(self):
+        return False
+    # B's own background relay steps would race the steps each test runs itself; they are covered by those calls.
+    monkeypatch.setattr('app.direct.relay.RelayService.step', idle)
+    monkeypatch.setattr('app.direct.relay_route.RelayReconciler.step', idle)
     with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         engines = []
         for index, name in ((0, 'a'), (2, 'c')):
@@ -307,7 +313,7 @@ def test_an_agreement_is_offered_accepted_and_withdrawn_with_every_signed_statem
     assert active['state'] == 'active' and active['reply_number'] == '+441134960999'
     (on_b,) = trio.client.get('/direct/relay/agreements', headers=ADMIN).json()['agreements']
     assert on_b['state'] == 'active' and on_b['reply_number'] == '+441134960999'
-    assert on_b['status'] == 'In force: Leeds HQ can send faxes to numbers in Australia through you.'
+    assert on_b['status'] == 'Active: Leeds HQ can send faxes to numbers in Australia through you.'
     # Another organization: B is told what its carrier's terms make it responsible for.
     assert any(note.startswith('Because Leeds HQ is another organization') for note in on_b['notes'])
     (candidate,) = relay_candidates(DEST, Shape(1, None, 'fine', 'normal'), engine=a.engine)
@@ -384,7 +390,7 @@ async def test_a_relayed_fax_within_the_limits_goes_as_the_relays_own_fax_and_on
     b_sent(trio, relayed['job_id'])
     assert trio.provider.sent == [(relayed['job_id'], DEST)]
 
-    # Two more pages would pass the 2 pages a month: refused before anything was accepted, so A's own route
+    # Two more pages would go over the 2 pages a month: refused before anything was accepted, so A's own route
     # sends it in the same attempt, recorded as a fallback.
     second = queue(a, pages=2, number=OTHERS[0])
     conventional = await send(a)
@@ -392,7 +398,7 @@ async def test_a_relayed_fax_within_the_limits_goes_as_the_relays_own_fax_and_on
     refused = a.delivery.get(second)
     assert a.direct.store.find('outbound', refused['attempt_id'])['state'] == 'refused'
     (detail,) = [r['detail'] for r in rows(a.engine, "SELECT * FROM relay_faxes WHERE state = 'refused'")]
-    assert detail == ('This fax would pass the 2 pages a month Sydney office agreed to relay for you, so nothing was '
+    assert detail == ('This fax would go over the 2 pages a month Sydney office agreed to relay for you, so nothing was '
                       'accepted.')
     assert rows(a.engine, 'SELECT route FROM delivery_attempt_costs WHERE id = :id',
                 id=refused['attempt_id'])[0]['route'] == 'phaxio'
@@ -481,8 +487,37 @@ async def test_delivered_failed_before_data_and_uncertain_receipts_and_no_resend
 
 
 @pytest.mark.asyncio
-async def test_costs_on_both_sides(relay_trio):
+async def test_a_fax_that_failed_before_any_page_takes_the_senders_next_route_and_says_so(relay_trio, monkeypatch):
+    """With the installation's fallback rule (as the running app installs it), a definite failure before any page
+    lets the sender's next route send the fax, recorded with the relay's sentence; an uncertain one never does."""
+    from api.app.outbound_store import OutboundStore as SenderStore
     trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    failed, uncertain = queue(a), queue(a, number=OTHERS[0])
+    # Leeds HQ's rule finds another route for its own faxes (the relay's faxes keep their own rules).
+    monkeypatch.setattr(SenderStore, 'fallback_policy', lambda job_id, attempt_id: job_id in (failed, uncertain))
+    await send(a)
+    await send(a)
+    on_b = {row['destination']: row for row in rows(trio.b_engine, "SELECT * FROM relay_faxes WHERE role = 'relay'")}
+    await asyncio.to_thread(b_result, trio, on_b[DEST]['job_id'], 'failed')
+    await asyncio.to_thread(b_result, trio, on_b[OTHERS[0]]['job_id'], 'uncertain')
+    await asyncio.to_thread(b_report)
+    assert a.delivery.get(failed)['state'] == 'ready'
+    (moved,) = [event for event in a.delivery.history(failed) if event['kind'] == 'route_fallback']
+    assert json.loads(moved['details'])['reason'] == ("Sydney office's call failed before any page was sent: The fax "
+                                                      'machine was busy.')
+    assert a.delivery.get(uncertain)['state'] == 'reconciliation_required'
+    assert 'route_fallback' not in [event['kind'] for event in a.delivery.history(uncertain)]
+
+
+@pytest.mark.asyncio
+async def test_costs_on_both_sides(relay_trio):
+    from api.app.routing.costs import RateCard, parse_amount
+    from api.app.routing.store import RouteStore
+    trio, a = relay_trio, relay_trio.a
+    # The relay's own price for a local Australian call: 3 cents a page on its provider.
+    RouteStore(trio.b_engine).replace_cards([RateCard(None, 'phaxio', 'outbound', 'Phaxio', 'USD', 0,
+                                                      parse_amount('0.03'), 0, 60, 0, None, datetime(2026, 10, 7))])
     await asyncio.to_thread(agree, trio, a)
     queue(a, pages=2)
     await send(a)
@@ -498,9 +533,18 @@ async def test_costs_on_both_sides(relay_trio):
     (theirs,) = rows(trio.b_engine, "SELECT * FROM relay_faxes WHERE role = 'relay'")
     # The sender's cost comes from the relay's signed price; the relay's charge travels in its signed receipt.
     assert (mine['charge_micros'], mine['charge_currency']) == (theirs['charge_micros'], theirs['charge_currency'])
-    if mine['cost_micros'] is not None and mine['own_route_micros'] is not None \
-            and mine['cost_currency'] == mine['own_route_currency']:
-        assert 'against about' in a_costs['sentence'] and 'calling from the UK' in a_costs['sentence']
+    # Two pages at the relay's signed 3 cents, against Leeds HQ's own call abroad; amounts in US dollars are named
+    # as such on an installation outside the US, and never converted.
+    assert (mine['cost_micros'], mine['cost_currency']) == (60_000, 'USD')
+    assert mine['own_route_currency'] == 'USD' and mine['own_route_micros'] > mine['cost_micros']
+    own = relay_money(mine['own_route_micros'])
+    assert a_costs['sentence'] == f'Sent through Sydney office: 1 fax, 0.06 USD, against about {own} calling from the UK.'
+    assert b_costs['sentence'] == 'Relayed for Leeds HQ: 1 fax, 0.06 USD.'
+
+
+def relay_money(micros):
+    from api.app.direct.relay import money_for
+    return money_for(micros, 'USD', 'GB')
 
 
 # Off by default, and the suggestion ----------------------------------------------------------------------------
@@ -638,7 +682,7 @@ async def test_a_withdrawal_lets_accepted_faxes_finish_and_refuses_new_ones_befo
     row = a.delivery.get(second)
     assert a.direct.store.find('outbound', row['attempt_id'])['state'] == 'refused'
     (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE role = 'sender' AND state = 'refused'")
-    assert refused['detail'] == 'Sydney office has no relay agreement in force with you, so nothing was accepted.'
+    assert refused['detail'] == 'Sydney office has no active relay agreement with you, so nothing was accepted.'
     assert rows(a.engine, 'SELECT route, route_reason FROM delivery_attempt_costs WHERE id = :id',
                 id=row['attempt_id']) == [{'route': 'phaxio', 'route_reason': 'alternative'}]
     assert len(rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'relay'")) == 1

@@ -119,7 +119,7 @@ def _references(kind, document, organization, context, findings):
             return
         if model.is_relay(key):
             if context.relays is not None and key[len('relay:'):] not in context.relays:
-                findings.error('unknown_account', f'{_name(rule)} names a partner relay that is not in force; '
+                findings.error('unknown_account', f'{_name(rule)} names a partner relay that is not active; '
                                                   'accept a partner’s offer under Partners first.',
                                rule.get('id'), path)
             return

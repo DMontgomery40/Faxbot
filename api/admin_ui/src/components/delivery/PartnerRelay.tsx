@@ -13,7 +13,7 @@ import { DeliveryError, Notice } from './shared';
 const STATE: Record<RelayAgreement['state'], { label: string; tone: 'success' | 'warning' | 'default' | 'info' }> = {
   offered: { label: 'Offered', tone: 'info' },
   accepting: { label: 'Accepting', tone: 'warning' },
-  active: { label: 'In force', tone: 'success' },
+  active: { label: 'Active', tone: 'success' },
   withdrawn: { label: 'Ended', tone: 'default' },
 };
 
@@ -202,8 +202,9 @@ export default function PartnerRelay({ client, partner, canWrite, open, onClose 
             {marketing && (
               <Stack spacing={1.5} mt={1}>
                 <Typography variant="body2" color="text.secondary">
-                  Australia asks marketing faxes to name your business number, how to reach you and how to stop
-                  them; Faxbot prints these on the first page.
+                  Australian rules require marketing faxes to show your business number (ABN or your country's
+                  equivalent), how to reach you, the number the fax is sent to, and how to stop them. Faxbot prints
+                  these on the first page.
                 </Typography>
                 <TextField size="small" label="Business number, such as an ABN" value={businessNumber}
                   onChange={(e) => setBusinessNumber(e.target.value)} />

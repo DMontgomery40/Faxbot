@@ -68,7 +68,7 @@ class RelayRoute:
             raise DirectRefused('The relaying partner is not verified.')
         agreement = await run_lifecycle_step(lambda: self._agreement(peer_id, destination))
         if agreement is None:
-            raise DirectRefused(f"There is no relay agreement in force with {peer['organization']} for this number.")
+            raise DirectRefused(f"There is no active relay agreement with {peer['organization']} for this number.")
         identity = await run_lifecycle_step(service.identity)
         document = await run_lifecycle_step(pdf.read_bytes)
         from ..routing.numbers import InvalidNumber, normalize_number

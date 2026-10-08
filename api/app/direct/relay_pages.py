@@ -32,24 +32,42 @@ class RelayPagesError(ValueError):
     """The document could not be turned into fax pages; nothing was accepted."""
 
 
-def marketing_lines(marketing):
-    """The first page's extra lines for a marketing fax, or ()."""
+# Marketing details are printed at least 10 point, as Australia's standard asks: 30 rows at fine resolution
+# (196 lines an inch) is about 11 point, on a row 40 lines tall.
+MARKETING_FONT_PIXELS = 30
+MARKETING_ROWS_FINE = 40
+
+
+def marketing_lines(marketing, destination=None):
+    """The first page's extra lines for a marketing fax, or ().
+
+    The Telecommunications (Fax Marketing) Industry Standard 2021 (Australia) asks a marketing fax to show, on its
+    first page at least and in 10-point type or larger, the advertiser's name (the header line has it), its ABN or
+    a foreign equivalent, its contact details, the number the fax is sent to, and how to opt out (ACMA's summary at
+    donotcall.gov.au, read 2026-10-07).
+    """
     if not isinstance(marketing, dict):
         return ()
     parts = [('Business number', marketing.get('business_number')), ('Contact', marketing.get('contact')),
-             ('To stop these faxes', marketing.get('opt_out'))]
-    return tuple(f'{label}: {value}' for label, value in parts if isinstance(value, str) and value.strip())
+             ('Sent to', destination), ('To stop these faxes', marketing.get('opt_out'))]
+    found = tuple(f'{label}: {value}' for label, value in parts if isinstance(value, str) and value.strip())
+    return found if any(isinstance(marketing.get(key), str) and marketing[key].strip()
+                        for key in ('business_number', 'contact', 'opt_out')) else ()
 
 
-def _band(width, lines, y_dpi):
+def _band(width, lines, y_dpi, *, large=0):
+    """A band of text rows; the last ``large`` lines (marketing details) are printed larger."""
     from PIL import Image, ImageDraw, ImageFont
-    rows = BAND_ROWS_FINE * len(lines)
+    sizes = [(FONT_PIXELS, BAND_ROWS_FINE)] * (len(lines) - large) + [(MARKETING_FONT_PIXELS,
+                                                                        MARKETING_ROWS_FINE)] * large
+    rows = sum(height for _, height in sizes)
     fine = Image.new('1', (width, rows), 1)
     draw = ImageDraw.Draw(fine)
     draw.fontmode = '1'
-    font = ImageFont.load_default(size=FONT_PIXELS)
-    for index, text in enumerate(lines):
-        draw.text((16, 4 + index * BAND_ROWS_FINE), text, font=font, fill=0)
+    top = 0
+    for text, (pixels, height) in zip(lines, sizes):
+        draw.text((16, top + 4), text, font=ImageFont.load_default(size=pixels), fill=0)
+        top += height
     height = max(1, round(rows * y_dpi / 196))
     return fine if height == rows else fine.resize((width, height), Image.NEAREST)
 
@@ -68,7 +86,8 @@ def stamp_tiff(tiff, *, header, station, moment, zone_name='', first_page=()):
             frame = _fit_width(frame)
             line = header_line(moment, header=header, station=station, page=index + 1, zone_name=zone_name)
             first_line = first_line or line
-            band = _band(frame.size[0], (line, *(first_page if index == 0 else ())), y_dpi)
+            extra = tuple(first_page) if index == 0 else ()
+            band = _band(frame.size[0], (line, *extra), y_dpi, large=len(extra))
             page = Image.new('1', (frame.size[0], band.size[1] + frame.size[1]), 1)
             page.paste(band, (0, 0))
             page.paste(frame, (0, band.size[1]))

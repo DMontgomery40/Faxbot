@@ -55,7 +55,7 @@ function partnersHandlers(record: (request: Request) => Promise<void>, agreement
     }),
     http.post('/direct/relay/agreements/:id/accept', async ({ request }) => {
       await record(request);
-      return HttpResponse.json({ ...offered, state: 'active', detail: 'In force: your faxes can go through Sydney office.' });
+      return HttpResponse.json({ ...offered, state: 'active', detail: 'Active: your faxes can go through Sydney office.' });
     }),
     http.post('/direct/relay/agreements/:id/withdraw', async ({ request }) => {
       await record(request);
@@ -99,7 +99,7 @@ describe('Partners → Relay', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Accept' }));
     fireEvent.change(within(dialog).getByLabelText('Number for replies'), { target: { value: '+441134960999' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Accept the offer' }));
-    expect(await within(dialog).findByText('In force: your faxes can go through Sydney office.')).toBeTruthy();
+    expect(await within(dialog).findByText('Active: your faxes can go through Sydney office.')).toBeTruthy();
     expect(calls.find((call) => call.path.endsWith('/accept'))?.body).toEqual({
       reply_number: '+441134960999', together: true, same_organization: false, marketing: null,
     });
@@ -129,17 +129,18 @@ describe('Costs: partner relays', () => {
       http.get('/direct/relay/costs', () => HttpResponse.json({ days: 30, agreements: [
         { agreement_id: 'a1', role: 'sender', partner: 'Sydney office', faxes: 12, pages: 14,
           amounts: [{ amount: '0.84', currency: 'USD' }], own_route: [{ amount: '9.60', currency: 'USD' }],
-          sentence: 'Sent through Sydney office: 12 faxes, $0.84, against about $9.60 calling from the UK.' },
+          sentence: 'Sent through Sydney office: 12 faxes, 0.84 USD, against about 9.60 USD calling from the UK.' },
       ] })),
       http.get('/direct/relay/faxes', () => HttpResponse.json({ faxes: [
         { fax_id: 'f1', role: 'sender', partner: 'Sydney office', fax_number: '+61755501234', pages: 2, seconds: 41,
-          state: 'uncertain', shared: false, status: 'Sydney office cannot confirm whether the fax arrived; it is checking.',
+          state: 'uncertain', shared: false,
+          status: 'Sydney office cannot confirm whether the fax arrived. Check with the recipient before sending it again.',
           created_at: '2026-10-07T01:00:00' },
       ] })),
     );
     render(<RelayCosts client={client()} />);
-    expect(await screen.findByText('Sent through Sydney office: 12 faxes, $0.84, against about $9.60 calling from the UK.')).toBeTruthy();
-    expect(screen.getByText('Sydney office cannot confirm whether the fax arrived; it is checking.')).toBeTruthy();
+    expect(await screen.findByText('Sent through Sydney office: 12 faxes, 0.84 USD, against about 9.60 USD calling from the UK.')).toBeTruthy();
+    expect(screen.getByText('Sydney office cannot confirm whether the fax arrived. Check with the recipient before sending it again.')).toBeTruthy();
   });
 });
 

@@ -66,14 +66,19 @@ async def _call(operation):
         raise HTTPException(503, detail='Partner relay storage is unavailable.') from None
 
 
-TOLD = {'told': None, 'refused': '{partner} did not accept it; see their answer under Partners.',
+TOLD = {'told': None, 'refused': '{partner} did not accept it.',
         'unreachable': 'Saved. Faxbot could not reach {partner} just now and tells them as soon as it can.'}
 
 
 async def _tell(relay, row):
-    outcome = await relay.tell(row)
+    """The sentence after telling the partner: None when it has it, else why not, with the partner's own answer."""
+    outcome, answer = await relay.tell_answer(row)
     message = TOLD[outcome]
-    return None if message is None else message.format(partner=row.get('organization') or 'The partner')
+    if message is None:
+        return None
+    partner = row.get('organization') or 'The partner'
+    text = message.format(partner=partner)
+    return f'{text} {partner} answered: {answer}' if answer else text
 
 
 def _with_partner(relay, row):
@@ -144,7 +149,7 @@ class AcceptIn(BaseModel):
 @router.post('/agreements/{agreement_id}/accept')
 async def accept(agreement_id: str, payload: AcceptIn, request: Request,
                  identity=Depends(require_permission('settings:write'))):
-    """Accept a partner's offer to relay your faxes; it is in force once the partner records it."""
+    """Accept a partner's offer to relay your faxes; it is active once the partner records it."""
     relay = relay_for(request.app)
     name = await _actor_name(request, identity)
     row = await _call(lambda: _with_partner(relay, relay.accept(
@@ -152,7 +157,7 @@ async def accept(agreement_id: str, payload: AcceptIn, request: Request,
         same_organization=payload.same_organization, marketing=payload.marketing, actor_name=name)))
     detail = await _tell(relay, row)
     row = await _call(lambda: _with_partner(relay, relay.store.agreement(agreement_id)))
-    return {**relay.view(row), 'detail': detail or (f"In force: your faxes can go through {row['organization']}."
+    return {**relay.view(row), 'detail': detail or (f"Active: your faxes can go through {row['organization']}."
                                                     if row['state'] == 'active' else None)}
 
 
@@ -211,8 +216,18 @@ async def relay_recommendations(request: Request, days: int = Query(default=30, 
 FAX_TEXT = {'sending': 'Sending to {partner}.', 'accepted': '{partner} accepted it and is sending it.',
             'delivered': '{partner} delivered it as a local call.',
             'failed_before_data': "{partner}'s call failed before any page was sent.",
-            'uncertain': '{partner} cannot confirm whether it arrived; check with the recipient before sending again.',
+            'uncertain': '{partner} cannot confirm whether it arrived. Check with the recipient before sending it again.',
             'refused': '{partner} did not accept it, so it went by your own route or was not sent.'}
+CHECK_FIRST = 'Check with the recipient before sending it again.'
+
+
+def fax_status(row):
+    """One sentence for a relayed fax; an uncertain one always says what to do."""
+    if row['state'] in ('failed_before_data', 'uncertain') and row['detail']:
+        if row['state'] == 'uncertain' and CHECK_FIRST not in row['detail']:
+            return f"{row['detail']} {CHECK_FIRST}"
+        return row['detail']
+    return FAX_TEXT[row['state']].format(partner=row['organization'])
 
 
 @router.get('/faxes', dependencies=[Depends(require_permission('settings:read'))])
@@ -230,9 +245,7 @@ async def relayed_faxes(request: Request, days: int = Query(default=30, ge=1, le
     return {'faxes': [{'fax_id': row['job_id'], 'role': row['role'], 'partner': row['organization'],
                        'fax_number': row['destination'], 'pages': row['delivered_pages'] or row['pages'],
                        'seconds': row['seconds'], 'state': row['state'], 'shared': bool(row['shared']),
-                       'status': row['detail'] if row['state'] in ('failed_before_data', 'uncertain') and row['detail']
-                       else FAX_TEXT[row['state']].format(partner=row['organization']),
-                       'created_at': row['created_at']} for row in rows]}
+                       'status': fax_status(row), 'created_at': row['created_at']} for row in rows]}
 
 
 async def _actor_name(request, identity):

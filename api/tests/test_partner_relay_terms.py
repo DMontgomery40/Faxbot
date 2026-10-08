@@ -119,7 +119,9 @@ def test_relay_candidates_come_cheapest_first_with_unknown_prices_last(sender):
     found = relay_candidates(DEST, shape, NOW, engine=sender.engine)
     assert [candidate.peer_id for candidate in found] == [cheap, expensive, unpriced]
     assert found[0].cost == Money(40_000, 'USD') and found[0].key == 'relay:' + cheap
-    assert found[0].sentence == 'Through Sydney office as a local call there, about $0.04.'
+    # US dollars read as "$" only on a US installation; anywhere else (or not said) the currency is named.
+    assert found[0].sentence == 'Through Sydney office as a local call there, about 0.04 USD.'
+    assert relay_candidates(DEST, shape, NOW, engine=sender.engine, home='US')[0].sentence.endswith('about $0.04.')
     assert found[2].cost is None and found[2].sentence == "Through Hobart office as a local call there; its price is not known."
     assert found[0].ledger_key == 'relay.' + cheap == relay.ledger_key(found[0].key)
     # A rule's "never relay", or one relay named under never, removes candidates.
@@ -226,8 +228,9 @@ def test_marketing_details_go_on_the_first_page_only():
     output = io.BytesIO()
     frames[0].save(output, 'TIFF', compression='group4', save_all=True, append_images=frames[1:], dpi=(204, 196))
     lines = marketing_lines({'business_number': 'ABN 00 000 000 000', 'contact': '+441134960123',
-                             'opt_out': 'stop@example.com'})
-    assert lines == ('Business number: ABN 00 000 000 000', 'Contact: +441134960123',
+                             'opt_out': 'stop@example.com'}, DEST)
+    # ACMA's list for a marketing fax: business number, contact details, the number it is sent to, and opting out.
+    assert lines == ('Business number: ABN 00 000 000 000', 'Contact: +441134960123', 'Sent to: +61755501234',
                      'To stop these faxes: stop@example.com')
     stamped, pages, line = stamp_tiff(output.getvalue(), header='Leeds HQ', station='+441134960123', moment=NOW,
                                       zone_name='Australia/Sydney', first_page=lines)
@@ -237,6 +240,7 @@ def test_marketing_details_go_on_the_first_page_only():
         first = image.size[1]
         image.seek(1)
         second = image.size[1]
-    # One band row per line above each page: four lines on the first page, one on the next.
-    assert (first - 300, second - 300) == (128, 32)
-    assert marketing_lines(None) == () and marketing_lines({'contact': '  '}) == ()
+    # The header line's 32 rows above every page; on the first page the four marketing lines in larger type
+    # (at least 10 point) add 40 rows each.
+    assert (first - 300, second - 300) == (32 + 4 * 40, 32)
+    assert marketing_lines(None) == () and marketing_lines({'contact': '  '}, DEST) == ()

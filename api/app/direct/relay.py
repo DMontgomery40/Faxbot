@@ -116,6 +116,21 @@ class RelayRefused(RuntimeError):
 
 # Terms ---------------------------------------------------------------------------------------------------------
 
+def money_for(micros, currency, home=None):
+    """An amount for a sentence. "$0.84" only for US dollars read on a US installation; every other amount names
+    its currency ("0.84 USD", "80.00 AUD"), so a sender never mistakes a relay's currency for its own. Amounts
+    are never converted."""
+    from ..routing.costs import format_amount, money_text
+    if currency == 'USD' and home != 'US':
+        return f'{format_amount(micros)} USD'
+    return money_text(micros, currency)
+
+
+def money_list_for(amounts, home=None):
+    """{currency: micros} as one phrase, each amount in its own currency."""
+    return ' + '.join(money_for(micros, currency, home) for currency, micros in sorted(amounts.items()))
+
+
 def _minute(text):
     match = re.fullmatch(r'([01]?[0-9]|2[0-3]):([0-5][0-9])', str(text or '').strip())
     return None if match is None else int(match.group(1)) * 60 + int(match.group(2))
@@ -307,15 +322,14 @@ def places_text(terms):
     return names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
 
 
-def limits_text(terms):
-    """The agreement's limits as one clause: "up to 500 pages and 80 AUD a month, weekdays 8:00 AM to 6:00 PM"."""
-    from ..routing.costs import money_text
+def limits_text(terms, home=None):
+    """The agreement's limits as one clause: "up to 500 pages and 80.00 AUD a month, weekdays 8:00 AM to 6:00 PM"."""
     parts = []
     month = []
     if terms.get('monthly_pages'):
         month.append(f"{terms['monthly_pages']:,} pages")
     if terms.get('monthly_spend'):
-        month.append(money_text(terms['monthly_spend']['amount_micros'], terms['monthly_spend']['currency']))
+        month.append(money_for(terms['monthly_spend']['amount_micros'], terms['monthly_spend']['currency'], home))
     if month:
         parts.append('up to ' + ' and '.join(month) + ' a month')
     hours = terms.get('hours')
@@ -547,7 +561,7 @@ def _within_limits(store, row, terms, pages, cost, now):
     return True
 
 
-def relay_candidates(destination, shape, now=None, *, engine, job_id=None, never=()):
+def relay_candidates(destination, shape, now=None, *, engine, job_id=None, never=(), home=None):
     """The relays the route planner may use for a fax to ``destination`` now, cheapest first.
 
     For WP-C's planner (``routing/plan.py``): each ``RelayCandidate`` is an
@@ -556,7 +570,8 @@ def relay_candidates(destination, shape, now=None, *, engine, job_id=None, never
     price for ``shape`` (unknown when the statement is missing or expired, and
     then it sorts after every known cost). A fax that is itself relayed for a
     partner (``job_id``) is never relayed again, and ``never`` (a rule's
-    "never relay" or ``relay:<partner>`` keys) removes candidates.
+    "never relay" or ``relay:<partner>`` keys) removes candidates. ``home`` is the installation's country, for
+    how amounts read (``money_for``).
     """
     now = now or utcnow()
     if 'relay' in never:
@@ -575,9 +590,8 @@ def relay_candidates(destination, shape, now=None, *, engine, job_id=None, never
         if not _within_limits(store, row, terms, pages, cost, now):
             continue
         if cost is not None:
-            from ..routing.costs import money_text
             sentence = (f"Through {row['organization']} as a local call there, about "
-                        f'{money_text(cost.micros, cost.currency)}.')
+                        f'{money_for(cost.micros, cost.currency, home)}.')
         else:
             sentence = f"Through {row['organization']} as a local call there; its price is not known."
         result.append(RelayCandidate(key, row['peer_id'], row['id'], row['organization'], prediction, sentence))
@@ -682,7 +696,7 @@ class RelayService:
         now = now or utcnow()
         row = self.store.agreement(agreement_id)
         if row is None or row['role'] != 'relay' or row['state'] not in ('offered', 'active'):
-            raise RelayConflict('This relay agreement is not in force.')
+            raise RelayConflict('This relay agreement is not active.')
         peer = self._peer(row['peer_id'])
         terms = json.loads(row['terms'])
         revision, bound = self._bound()
@@ -696,7 +710,7 @@ class RelayService:
     # Sender side: accepting -----------------------------------------------------------------------------------
     def accept(self, agreement_id, *, reply_number=None, together=False, same_organization=False, marketing=None,
                actor_name=None, now=None):
-        """Accept a partner's offer; it is in force once the partner records our signed acceptance."""
+        """Accept a partner's offer; it is active once the partner records our signed acceptance."""
         from ..routing.numbers import InvalidNumber, normalize_number
         now = now or utcnow()
         row = self.store.agreement(agreement_id)
@@ -777,33 +791,38 @@ class RelayService:
     # Telling the partner ----------------------------------------------------------------------------------------
     async def tell(self, row):
         """Send the agreement's latest signed statement to the partner: ``told``, ``refused`` or ``unreachable``."""
+        return (await self.tell_answer(row))[0]
+
+    async def tell_answer(self, row):
+        """``tell``, with the partner's own sentence when it said no (None otherwise)."""
         statement_id = row['pending_statement_id']
         if not statement_id:
-            return 'told'
+            return 'told', None
         peer = await run_lifecycle_step(lambda: self.direct.store.get_peer(row['peer_id']))
         kept = await run_lifecycle_step(lambda: self.store.statement(statement_id))
         if peer is None or kept is None:
-            return 'unreachable'
+            return 'unreachable', None
         from .service import PartnerUnreachable
         try:
             status, body = await self.direct.http.request('POST', peer['endpoint_url'] + '/direct/relay/statements',
                                                           json=RelayStore.envelope(kept))
         except (PartnerUnreachable, httpx.HTTPError, OSError):
-            return 'unreachable'
+            return 'unreachable', None
         if status == 200 and isinstance(body, dict) and body.get('recorded') is True:
             await run_lifecycle_step(lambda: self.store.told(row['id'], statement_id))
             if kept['kind'] == 'acceptance':
                 await run_lifecycle_step(lambda: self.store.change(row['id'], expected_state=('accepting',),
                                                                    state='active'))
-            return 'told'
+            return 'told', None
         if 400 <= status < 500 and status not in (404, 405, 429):
             # The partner read it and said no; asking again would not change that.
             await run_lifecycle_step(lambda: self.store.told(row['id'], statement_id))
             if kept['kind'] == 'acceptance':
                 await run_lifecycle_step(lambda: self.store.change(row['id'], expected_state=('accepting',),
                                                                    state='offered'))
-            return 'refused'
-        return 'unreachable'
+            detail = body.get('detail') if isinstance(body, dict) and isinstance(body.get('detail'), str) else None
+            return 'refused', (detail[:300] if detail else None)
+        return 'unreachable', None
 
     async def tell_all(self):
         values = await run_lifecycle_step(self._values)
@@ -915,7 +934,7 @@ class RelayService:
             return 200, {'recorded': True}
         agreement_id, row = self._agreement_from(peer, body, 'sender')
         if row is None or row['state'] == 'withdrawn':
-            raise RelayConflict('There is no relay agreement in force for this price.')
+            raise RelayConflict('There is no active relay agreement for this price.')
         self.store.change(agreement_id, statement=envelope, kind='price', direction='received', now=now)
         return 200, {'recorded': True}
 
@@ -984,7 +1003,7 @@ class RelayService:
         relay = self._organization()
         row = self.store.agreement(facts['agreement'])
         if row is None or row['role'] != 'relay' or row['peer_id'] != peer['id'] or row['state'] != 'active':
-            raise RelayRefused('no_agreement', f'{relay} has no relay agreement in force with you, so nothing was '
+            raise RelayRefused('no_agreement', f'{relay} has no active relay agreement with you, so nothing was '
                                                'accepted.')
         terms = json.loads(row['terms'])
         if not covers(terms, facts['destination']):
@@ -996,18 +1015,17 @@ class RelayService:
             raise RelayRefused('destination', f'{relay} does not relay faxes to premium-rate numbers, so nothing was '
                                               'accepted.')
         if not hours_open(terms, now):
-            raise RelayRefused('outside_hours', f'It is outside the hours {relay} relays faxes, so nothing was '
+            raise RelayRefused('outside_hours', f'It is outside the hours when {relay} relays faxes, so nothing was '
                                                 'accepted.')
         return row, terms
 
     def _check_limits(self, row, terms, pages, cost, now, connection=None):
-        from ..routing.costs import money_text
         relay = self._organization()
         since = month_start(now, terms.get('time_zone'))
         used_pages, used_money = (self.store.usage_on(connection, row['id'], since) if connection is not None
                                   else self.store.usage(row['id'], since))
         if terms.get('monthly_pages') and used_pages + pages > terms['monthly_pages']:
-            raise RelayRefused('over_limit', f"This fax would pass the {terms['monthly_pages']:,} pages a month "
+            raise RelayRefused('over_limit', f"This fax would go over the {terms['monthly_pages']:,} pages a month "
                                              f'{relay} agreed to relay for you, so nothing was accepted.')
         spend = terms.get('monthly_spend')
         if spend:
@@ -1015,8 +1033,9 @@ class RelayService:
                 raise RelayRefused('cost_unknown', f'{relay} cannot tell what this fax would cost, and the agreement '
                                                    'has a spending limit, so nothing was accepted.')
             if used_money.get(spend['currency'], 0) + cost[0] > spend['amount_micros']:
-                limit = money_text(spend['amount_micros'], spend['currency'])
-                raise RelayRefused('over_limit', f'This fax would pass the {limit} a month {relay} agreed to spend '
+                # The partner reads this: its currency is always named.
+                limit = money_for(spend['amount_micros'], spend['currency'])
+                raise RelayRefused('over_limit', f'This fax would go over the {limit} a month {relay} agreed to spend '
                                                  'relaying for you, so nothing was accepted.')
 
     def _accept(self, identity, peer, manifest, document, now):
@@ -1043,7 +1062,7 @@ class RelayService:
             pdf, tiff, pages, _ = relay_pages.stamp(
                 document, header=peer['organization'], station=row['reply_number'] or peer['phone_number'],
                 moment=now, zone_name=getattr(values, 'time_zone', '') or '',
-                first_page=relay_pages.marketing_lines(marketing), folder=folder)
+                first_page=relay_pages.marketing_lines(marketing, destination), folder=folder)
         except relay_pages.RelayPagesError as error:
             raise RelayRefused('not_readable', str(error), 400) from None
         prediction, _ = own_prediction(self.engine, values, profile.configuration.provider_id, destination, pages,
@@ -1097,7 +1116,7 @@ class RelayService:
             return json.loads(existing['receipt'])
         except SystemSenderError:
             self._discard(paths, job_id)
-            raise RelayRefused('no_agreement', f'{self._organization()} has no relay agreement in force with you, '
+            raise RelayRefused('no_agreement', f'{self._organization()} has no active relay agreement with you, '
                                                'so nothing was accepted.') from None
         except RelayRefused:
             self._discard(paths, job_id)
@@ -1195,7 +1214,8 @@ class RelayService:
             partial = any(attempt['error_category'] in ('partly_sent', 'pages_unconfirmed') for attempt in tried)
             if partial:
                 return {'status': UNCERTAIN, 'pages': None, 'seconds': None, 'charge': self._charge(fax['job_id']),
-                        'shared': shared, 'detail': f"{relay}'s call ended after part of the fax may have arrived."}
+                        'shared': shared, 'detail': f"{relay}'s call ended partway, and part of the fax may have "
+                                                    'arrived. Check with the recipient before sending it again.'}
             reason = (job.error if job is not None and isinstance(job.error, str) and job.error else None)
             sentence = (f'{relay} cancelled it before dialing.' if state == 'cancelled' and not any(
                 attempt['submitted_at'] for attempt in tried) else
@@ -1204,7 +1224,8 @@ class RelayService:
                     'shared': shared, 'detail': sentence}
         if state == 'reconciliation_required':
             return {'status': UNCERTAIN, 'pages': None, 'seconds': None, 'charge': None, 'shared': shared,
-                    'detail': f"{relay} cannot confirm whether the fax arrived; it is checking."}
+                    'detail': f'{relay} cannot confirm whether the fax arrived. Check with the recipient before '
+                              'sending it again.'}
         return None
 
     def _shared(self, job_id):
@@ -1383,13 +1404,14 @@ class RelayService:
             partner = peer['organization'] if peer else 'The partner'
         own = self._organization()
         places = places_text(terms) if terms else 'the numbers it agreed'
-        limits = limits_text(terms) if terms else ''
+        home = getattr(self._values(), 'fax_default_country', None)
+        limits = limits_text(terms, home) if terms else ''
         if row['role'] == 'sender':
             relay, sender = partner, own
             summary = f'Send our faxes to {places} through {partner}, {limits}.'
             state = {'offered': f'{partner} offers to send your faxes to {places} as local calls; accept to use it.',
                      'accepting': f'Accepted; Faxbot is telling {partner}.',
-                     'active': f'In force: faxes to {places} can go through {partner}.',
+                     'active': f'Active: faxes to {places} can go through {partner}.',
                      'withdrawn': ('You ended this agreement.' if row['withdrawn_by'] == 'us'
                                    else f'{partner} ended this agreement.')}[row['state']]
         else:
@@ -1397,7 +1419,7 @@ class RelayService:
             summary = f'Let {partner} send faxes to {places} through us, {limits}.'
             state = {'offered': f'Offered; waiting for {partner} to accept.',
                      'accepting': f'Waiting for {partner} to accept.',
-                     'active': f'In force: {partner} can send faxes to {places} through you.',
+                     'active': f'Active: {partner} can send faxes to {places} through you.',
                      'withdrawn': ('You ended this agreement.' if row['withdrawn_by'] == 'us'
                                    else f'{partner} ended this agreement.')}[row['state']]
         same = terms.get('same_organization', False)
@@ -1417,14 +1439,14 @@ class RelayService:
                 'hours': terms.get('hours'), 'together': bool(terms.get('together')),
                 'send_together': bool(row['send_together']), 'same_organization': bool(same),
                 'reply_number': row['reply_number'], 'marketing': bool(row.get('marketing')),
-                'price': price_view(price), 'version': row['version']}
+                'price': price_view(price, home), 'version': row['version']}
 
     # Costs and recommendations -----------------------------------------------------------------------------------
     def costs(self, *, days=30, now=None):
         """Each agreement's relayed faxes and money over ``days``: what each side's Costs shows."""
-        from ..routing.costs import money_list_text
         now = now or utcnow()
         since = now - timedelta(days=days)
+        home = getattr(self._values(), 'fax_default_country', None)
         result = []
         for role in ('relay', 'sender'):
             groups = {}
@@ -1453,19 +1475,20 @@ class RelayService:
                     group['money'][currency] = group['money'].get(currency, 0) + int(micros)
             for agreement_id, group in groups.items():
                 count = f"{group['faxes']} fax{'es' if group['faxes'] != 1 else ''}"
-                money = money_list_text(group['money']) if group['money'] else None
+                money = money_list_for(group['money'], home) if group['money'] else None
                 if role == 'relay':
                     sentence = f"Relayed for {group['partner']}: {count}" + (f', {money}' if money else '')
                     if group['unknown']:
                         sentence += f" ({group['unknown']} not priced yet)"
                 else:
                     sentence = f"Sent through {group['partner']}: {count}" + (f', {money}' if money else '')
+                    own = money_list_for(group['own'], home)
+                    # Compared only in the same currency; amounts are never converted.
                     if group['own'] and not group['own_unknown'] and set(group['own']) == set(group['money']) \
                             and not group['unknown']:
-                        home = country_name(self._values().fax_default_country or 'US')
-                        sentence += f", against about {money_list_text(group['own'])} calling from {home}"
+                        sentence += f", against about {own} calling from {country_name(home or 'US')}"
                     elif group['own'] and not group['own_unknown']:
-                        sentence += f"; your own route would have cost about {money_list_text(group['own'])}"
+                        sentence += f"; your own route would have cost about {own}"
                 result.append({'agreement_id': agreement_id, 'role': role, 'partner': group['partner'],
                                'faxes': group['faxes'], 'pages': group['pages'], 'amounts': _amounts(group['money']),
                                'own_route': _amounts(group['own']) if role == 'sender' else [],
@@ -1479,9 +1502,9 @@ class RelayService:
         saving is in the same currency; nothing is relayed until both sides sign an agreement.
         """
         import sqlalchemy as sa
-        from ..routing.costs import money_text
         from ..routing.database import read_connection, reflect
         now = now or utcnow()
+        home = getattr(self._values(), 'fax_default_country', None)
         tables = reflect(self.engine, ('delivery_attempt_costs', 'fax_jobs'))
         costs, jobs = tables['delivery_attempt_costs'], tables['fax_jobs']
         with read_connection(self.engine) as connection:
@@ -1518,7 +1541,7 @@ class RelayService:
                             'agreement_state': agreement['state'] if agreement else None, 'faxes': count,
                             'saving': {'amount_micros': saving, 'currency': currency},
                             'sentence': (f'Faxes to numbers in {country_name(country)} would have cost about '
-                                         f'{money_text(saving, currency)} less through {label}.'),
+                                         f'{money_for(saving, currency, home)} less through {label}.'),
                             'action': (f'Accept {label}\'s offer under Partners to use it.' if agreement and
                                        agreement['state'] == 'offered' else
                                        f'Ask {label} to relay for you; they grant it under Partners, {label}, '
@@ -1610,11 +1633,10 @@ def _amounts(money):
     return [{'amount': format_amount(micros), 'currency': currency} for currency, micros in sorted(money.items())]
 
 
-def price_view(price):
+def price_view(price, home=None):
     """A signed price statement for people: each country's local price and when it was given."""
     if price is None:
         return None
-    from ..routing.costs import money_text
     entries = []
     for entry in price['routes']:
         terms = entry['terms']
@@ -1626,11 +1648,11 @@ def price_view(price):
         else:
             parts = []
             if terms['per_minute_micros']:
-                parts.append(f"{money_text(terms['per_minute_micros'], terms['currency'])} a minute")
+                parts.append(f"{money_for(terms['per_minute_micros'], terms['currency'], home)} a minute")
             if terms['per_page_micros']:
-                parts.append(f"{money_text(terms['per_page_micros'], terms['currency'])} a page")
+                parts.append(f"{money_for(terms['per_page_micros'], terms['currency'], home)} a page")
             if terms['per_call_micros']:
-                parts.append(f"{money_text(terms['per_call_micros'], terms['currency'])} a call")
+                parts.append(f"{money_for(terms['per_call_micros'], terms['currency'], home)} a call")
             text = ', '.join(parts) if parts else 'No charge.'
         kind = 'toll-free numbers' if entry['kind'] == 'toll_free' else 'numbers'
         entries.append({'country': entry['country'], 'kind': entry['kind'],
