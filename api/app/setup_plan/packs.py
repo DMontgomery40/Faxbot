@@ -218,30 +218,30 @@ def cost_pack(plan, price):
                      'Faxbot can lighten shaded areas and remove specks on the documents you send, only on calls '
                      'billed by time and for machines without error correction, where it shortens the call. '
                      'It is turned off now.',
-                     [{'name': 'Settings → Delivery', 'detail': 'Lighten shaded areas: never'}],
+                     [{'name': 'Providers → In use → Delivery routes', 'detail': 'Lighten shaded areas: never'}],
                      {'fax_friendly_documents': 'where_it_saves'})
     else:
         plan.item('cost', 'cost.fax-friendly', 'in_effect', 'Shaded areas are lightened where it saves time',
                   'Faxbot already lightens shaded areas and removes specks on the documents you send'
                   + (' on every fax.' if friendly == 'always' else ', where it shortens a call billed by time.'),
-                  [{'name': 'Settings → Delivery', 'detail': 'Lighten shaded areas'}])
+                  [{'name': 'Providers → In use → Delivery routes', 'detail': 'Lighten shaded areas'}])
     for found in facts.long_pages:
         if found['on']:
             plan.item('cost', f"cost.long-pages.{found['route']}", 'in_effect',
                       f"Long pages on {found['label']}",
                       f"Faxbot already packs several pages onto one long page on {found['label']} where the "
                       'receiving machine accepts long pages and it saves time.',
-                      [{'name': 'Providers → Long pages', 'detail': found['label']}])
+                      [{'name': 'Providers → In use → Delivery routes', 'detail': f"Long pages on {found['label']}"}])
         elif not found['set']:
             plan.item('cost', f"cost.long-pages.{found['route']}", 'step', f"Check long pages on {found['label']}",
                       f"Long pages save call time, but they are off for {found['label']} until you check that it "
                       'sends them unchanged. Send yourself a test fax with a long page, then turn them on.',
-                      [{'name': 'Providers → Long pages', 'detail': f"Off until checked for {found['label']}"}],
+                      [{'name': 'Providers → In use → Delivery routes', 'detail': f"Off until checked for {found['label']}"}],
                       link=IN_USE_PAGE, cli='faxbot providers long-pages')
     for found in facts.plan_budgets:
         plan.item('cost', f"cost.plan-budget.{found['route']}", 'in_effect', f"Plan budget for {found['label']}",
                   found['sentence'] + ' Faxbot uses your plan first and moves faxes to metered routes past it.',
-                  [{'name': 'Costs → Plans', 'detail': {'set': 'Your budget', 'published': 'The published plan',
+                  [{'name': 'Costs → Prices & plans', 'detail': {'set': 'Your budget', 'published': 'The published plan',
                                                         'default': 'Faxbot’s cautious start'}.get(found['source'],
                                                                                                   'Plan budget')}])
 
@@ -298,7 +298,7 @@ def partners_pack(plan):
         plan.item('partners', f"partners.discovered.{found['id']}", 'step', f'Enroll {name} as a direct partner',
                   f"{name} runs Faxbot at {found['number']}. Enrolling sends them a challenge fax; once they "
                   'answer it, your faxes go straight to them with no call.',
-                  [{'name': 'Partners → Suggestions', 'detail': 'Found from calls, an introduction or a directory'}],
+                  [{'name': 'Recipients → Partners → Find partners', 'detail': 'Found from calls, an introduction or a directory'}],
                   link=PARTNERS_PAGE, cli='faxbot recipients partners discover')
     for found in facts.relay_offers:
         saving = found.get('saving') or {}
@@ -310,7 +310,7 @@ def partners_pack(plan):
         plan.item('partners', f"partners.relay.{found['peer_id']}.{found['country']}", 'step',
                   f"Relay faxes to {country_name(found['country'])} through {found['partner']}",
                   f"{found['sentence']} {found['action']}",
-                  [{'name': 'Partners → Relay', 'detail': f"{found['partner']}’s signed price"}],
+                  [{'name': 'Recipients → Partners', 'detail': f"{found['partner']}’s signed price"}],
                   saving=view, link=PARTNERS_PAGE, cli='faxbot recipients partners relay')
     for found in facts.send_once_offers:
         numbers = _plural(len(found['numbers']), 'number')
@@ -320,7 +320,7 @@ def partners_pack(plan):
                   f"{found['partner']}’s intake{intake} offered to file what you send to {numbers} of theirs: one copy "
                   'crosses once and their intake files it for each number. Faxes to those numbers stop going by '
                   'telephone once you accept.',
-                  [{'name': 'Partners → Send once', 'detail': f"{found['partner']}’s signed offer"}],
+                  [{'name': 'Recipients → Partners', 'detail': f"{found['partner']}’s signed offer"}],
                   link=PARTNERS_PAGE, cli='faxbot recipients partners send-once')
 
 
@@ -385,13 +385,13 @@ def reliability_pack(plan):
             plan.item('reliability', f"reliability.busy.{found['number']}", 'in_effect',
                       f"Busy hours of {found['number']}",
                       f"Faxbot already waits these hours out on its own when a failed call would cost money: {hours}",
-                      [{'name': 'Recipients → Hours', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE)
+                      [{'name': 'Recipients → Details', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE)
         else:
             plan.item('reliability', f"reliability.busy.{found['number']}", 'step',
                       f"Let Faxbot learn the busy hours of {found['number']}",
                       f'This number is often busy at the same hours, but learning is turned off for it: {hours} '
                       'Turn learning back on so Faxbot waits those hours out.',
-                      [{'name': 'Recipients → Hours', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE,
+                      [{'name': 'Recipients → Details', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE,
                       cli='faxbot recipients schedule')
 
 

@@ -13,7 +13,7 @@ from ..output import local_time
 setup = typer.Typer(help='Suggested packs of rules and settings from what Faxbot already knows: preview a plan, '
                          'see it, and apply it in one step.', no_args_is_help=True)
 
-KINDS = {'rule': 'Sending rule', 'setting': 'Setting', 'step': 'Your step', 'in_effect': 'Already on'}
+KINDS = {'rule': 'Sending rule', 'setting': 'Setting', 'step': 'You do this', 'in_effect': 'Already on'}
 OWNERS = {'you': 'Your choice', 'faxbot': 'Not in Faxbot yet'}
 
 
@@ -55,7 +55,7 @@ def _human(plan):
             out.line('')
             out.table(['Who', 'What is missing', 'Affects', 'Status'],
                       [[OWNERS[entry['owner']], entry['sentence'], entry['operation'],
-                        'Blocks it' if entry['status'] == 'blocking' else 'Warning'] for entry in plan['missing']],
+                        'Holds it back' if entry['status'] == 'blocking' else 'Warning'] for entry in plan['missing']],
                       title="What's missing")
         if plan['mailboxes']:
             out.line('')
