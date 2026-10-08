@@ -209,6 +209,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [ ] Live eFax sign-off with a real eFax Corporate API account.
 - [ ] Live HumbleFax receiving: a fax to +13034265097 arrives in the partner Faxbot's Received within a check, and the document download works against HumbleFax's real API (redirects and file format are not yet seen live).
 - [ ] Live combined call over a real trunk for sending together, and live automatic audio switching after a failed T.38 call.
+- [ ] Live per-number fax memory: a real number whose fax over IP calls fail and whose next fax then goes through as audio fax. For received calls, a real carrier caller whose fax over IP calls to Faxbot fail and then succeed when Faxbot answers with audio fax; only that evidence would justify answering such callers with audio fax, which stays off until then.
 - [ ] Live sign-off of the Avaya IP Office, Avaya Aura, BT One Voice, Gamma and Telstra SIP Connect presets on real systems.
 - [ ] Live SSL Fax calls over a real trunk, sent and received, with a fax machine that offers SSL Fax.
 - [ ] Live route choice by cost per delivered fax, once a number has delivered faxes on two metered routes.

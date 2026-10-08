@@ -13,6 +13,9 @@ helps. This revision adds three tables and changes no stored row:
   it). Only calls made since the newest row count as evidence, so whatever
   Faxbot learned before a change is forgotten, and changing back later does
   not bring it back. ``trunk`` is the carrier preset and server, for people.
+  ``learned_through`` is the last change of the newest call record the
+  background work has learned from in that epoch (NULL: none yet), so a
+  restart reads no call again; it is the only column that ever changes.
 - ``fax_destination_memory``: append-only, one row per call that taught a
   negative fact about one number in one direction: ``t38_failed`` (the far
   fax machine answered over T.38 and the fax did not finish) or
@@ -77,6 +80,7 @@ def _definitions():
             sa.Column('engine_key', sa.String(300), nullable=False),
             sa.Column('trunk', sa.String(300), nullable=True),
             sa.Column('started_at', sa.DateTime(), nullable=False),
+            sa.Column('learned_through', sa.DateTime(), nullable=True),
             sa.PrimaryKeyConstraint('id', name='pk_fax_learning_epochs'),
         ),
         'fax_destination_memory': (

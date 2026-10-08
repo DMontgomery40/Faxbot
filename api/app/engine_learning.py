@@ -62,6 +62,7 @@ from .engine_frames import same_number
 LEARN_DAYS = engine_frames.LEARN_DAYS
 MEMORY_DAYS = 30
 MIN_CALLS = 3
+MARK_LAG = timedelta(seconds=10)
 COMPRESSION_FAILS = 2
 ECM_FAILS = 2
 # Most compact first; every one is lossless, so a later one sends the same pages in a little more time.
@@ -483,17 +484,33 @@ def inbound_audio_callers(db, values, *, now=None) -> set:
 
 
 def learn_recent(db, values, *, now=None) -> int:
-    """Background: keep what every recent failed call taught (received calls too); how many rows were added."""
+    """Background: keep what recent failed calls taught (received calls too); how many rows were added.
+
+    Only call records changed since the epoch's ``learned_through`` are read (a record changes when its result
+    arrives), and the mark moves to the newest one read, in the database, so a restart reads nothing again. A new
+    epoch has no mark: it learns from its own start, never from before it. The mark stays ``MARK_LAG`` behind the
+    clock, so a record written in the last seconds (a write still committing) is read again next time rather than
+    missed; keeping what it taught is idempotent.
+    """
     now = now or utcnow()
     epoch = current_epoch(db, values, now=now)
-    records = _tables(db)['sip_call_records']
-    since = evidence_since(epoch, now, MEMORY_DAYS)
+    tables = _tables(db)
+    records, epochs = tables['sip_call_records'], tables['fax_learning_epochs']
+    query = sa.select(records.c.direction, records.c.called, records.c.caller, records.c.updated_at).where(
+        records.c.started_at >= evidence_since(epoch, now, MEMORY_DAYS), records.c.fax_status == 'FAILED',
+        records.c.answered_at.is_not(None))
+    if epoch.get('learned_through') is not None:
+        query = query.where(records.c.updated_at > epoch['learned_through'])
     with db.connect() as connection:
-        rows = connection.execute(sa.select(records.c.direction, records.c.called, records.c.caller).where(
-            records.c.started_at >= since, records.c.fax_status == 'FAILED',
-            records.c.answered_at.is_not(None)).distinct()).all()
+        rows = connection.execute(query).all()
     numbers = {row.called if row.direction == 'outbound' else row.caller for row in rows}
-    return sum(learn_memories(db, values, number, epoch=epoch, now=now) for number in sorted(n for n in numbers if n))
+    added = sum(learn_memories(db, values, number, epoch=epoch, now=now) for number in sorted(n for n in numbers if n))
+    newest = max((row.updated_at for row in rows), default=None)
+    newest = min(newest, now - MARK_LAG) if newest is not None else None
+    if newest is not None and (epoch.get('learned_through') is None or newest > epoch['learned_through']):
+        with db.begin() as connection:
+            connection.execute(epochs.update().where(epochs.c.id == epoch['id']).values(learned_through=newest))
+    return added
 
 
 # -- the decision rule (T9) ----------------------------------------------------------------------

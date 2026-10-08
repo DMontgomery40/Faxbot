@@ -286,6 +286,41 @@ def test_a_call_placed_with_settings_other_than_those_in_force_never_resets_what
     assert engine_learning.decide(values(), NUMBER, db=db).audio
 
 
+def test_the_background_work_reads_each_call_once_and_a_reset_relearns_only_from_its_cut_off(db, monkeypatch):
+    """learn_recent keeps a mark (the newest call record it read, in the database): a second run, or one after a
+    restart, reads no old call. A trunk or engine change starts a new epoch with no mark, and it learns from that
+    cut-off, never from the calls before it."""
+    read = []
+    original = engine_learning.learn_memories
+
+    def spy(db_, values_, number, **kwargs):
+        read.append(number)
+        return original(db_, values_, number, **kwargs)
+    monkeypatch.setattr(engine_learning, 'learn_memories', spy)
+    record(db)
+    engine_learning.learn_recent(db, values())
+    assert read == [NUMBER] and len(memory_rows(db)) == 1
+    read.clear()
+    engine_learning._REFLECTED.clear()  # as after a restart: the mark is read back from the database
+    engine_learning.learn_recent(db, values())
+    assert read == []
+    # A later failure with another number is read; the old one is not read again.
+    record(db, number=OTHER, when=ago(hours=1))
+    engine_learning.learn_recent(db, values())
+    assert read == [OTHER]
+    # A trunk change: a new epoch, no mark. The calls before its cut-off are never read for it.
+    read.clear()
+    changed = values(SIP_TRUNK_HOST='new.example.test')
+    engine_learning.learn_recent(db, changed)
+    assert read == []
+    record(db, when=datetime.utcnow() + timedelta(seconds=1))
+    engine_learning.learn_recent(db, changed)
+    assert read == [NUMBER]
+    epoch = engine_learning.current_epoch(db, changed)
+    assert epoch['learned_through'] is not None and not epoch['first']
+    assert engine_learning.decide(changed, NUMBER, db=db).audio
+
+
 def test_a_received_t38_failure_is_kept_and_shown_but_its_caller_is_answered_as_usual(db, monkeypatch):
     """Answering with audio fax fails for a caller that waits about ten seconds before asking for T.38 (measured
     in test_t38_loopback.py's notes), so INBOUND_AUDIO is off: the memory is kept and shown, faxbot-inmode stays
