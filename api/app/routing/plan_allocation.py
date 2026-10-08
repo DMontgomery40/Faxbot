@@ -50,16 +50,23 @@ What this module does
 The allocation only changes which route a fax takes. It never makes a fax wait,
 so it cannot make one miss a send-by time, and it never changes a rule: a fax
 whose rules allow only the plan, or whose other routes are over a cost cap,
-turned off or unpriced, is forced onto the plan as before. A plan with no limit
-and no budget you set (``state == 'no_limit'``) gets no allocation and no
-reserve; a committed monthly spend is not allocated.
+turned off or unpriced, is forced onto the plan as before. Every route takes a
+fax the same time to send (``schedule.call_time``), so a send-by time never
+makes the plan feasible and another route not; it keeps the fax's pages from
+the reserve. A fax its sending rules hold (approval, a window, no allowed
+route) takes no room while it is held. A plan with no limit and no budget you
+set (``state == 'no_limit'``) gets no allocation and no reserve; a committed
+monthly spend is not allocated. Not handled: a fax a recipient's hours hold
+past the plan's renewal still counts as waiting now, and every waiting fax is
+worked out with the configuration of the fax being planned.
 
 Contract for callers
 --------------------
-- ``hold_for(routes, values, job_id, key, *, now=None, dial=None) -> Hold | None``:
-  what part of plan ``key``'s room this fax may not use (held for faxes already on
-  their way, faxes given the plan, and the reserve). None when the fax may use all
-  of it, the route has no scarce plan, or the fax is forced onto the plan.
+- ``hold_for(routes, values, job_id, keys, *, now=None, dial=None) -> {key: Hold}``:
+  for each plan among ``keys``, what part of its room this fax may not use (held
+  for faxes already on their way, faxes given the plan, and the reserve). A plan
+  is left out when the fax may use all of it, it is not scarce, or the fax is
+  forced onto it; storage errors leave every plan out (priced as before).
 - ``after_hold(left, hold) -> BudgetLeft``: the plan's budget as this fax sees it.
 - ``view(routes, values, now=None)``: the allocation screen and ``faxbot costs plans allocation``.
 """
@@ -72,8 +79,10 @@ import math
 import threading
 
 
-# Exact dynamic programming is used while the reachable room states of one layer stay under this.
-MAX_STATES = 60_000
+# Exact dynamic programming is used while the reachable room states of one layer stay under this, and the steps
+# it takes in all under ``MAX_WORK`` (each fax tried on each room state); past either, the greedy order answers.
+MAX_STATES = 20_000
+MAX_WORK = 200_000
 # Waiting faxes looked at, in the order the claim offers them (the fax being planned is always included).
 MAX_WAITING = 60
 # The reserve learns from at most this long before now, in stretches as long as the time left until renewal ...
@@ -86,7 +95,7 @@ Z = 1.645
 # Past faxes read for the reserve, newest first.
 HISTORY_READ = 400
 # Reserve sizes tried: this many steps of the room, plus the whole room.
-RESERVE_STEPS = 20
+RESERVE_STEPS = 10
 # How long a waiting fax's routes and a plan's reserve are kept before being worked out again.
 FEATURES_SECONDS = 120
 RESERVE_SECONDS = 3600
@@ -226,16 +235,21 @@ def _options(claimant, index, keep):
 def _exact(claimants, plans, flat, max_states, keep):
     """Forward dynamic programming over capped loads. Each state keeps its least ``(cost, choices)``, the choices
     read as a number in base ``B`` (one more than the number of plans): the least cost and, among equal costs, the
-    plan for the earlier fax."""
+    plan for the earlier fax. None when a layer passes ``max_states`` or the work passes ``MAX_WORK``."""
     index = {plan.route: p for p, plan in enumerate(plans)}
     base = len(plans) + 1
     n = len(claimants)
-    states = {tuple(0 for _ in flat): ((0, 0), ())}   # state -> ((cost, choice number), choices)
+    states = {tuple(0 for _ in flat): ((0, 0), None)}   # state -> ((cost, choice number), (choice, earlier) chain)
+    work = 0
     for position, claimant in enumerate(claimants):
         weight = base ** (n - 1 - position)
+        options = _options(claimant, index, keep)
+        work += len(states) * len(options)
+        if work > MAX_WORK:
+            return None
         layer = {}
-        for state, ((cost, key), choices) in states.items():
-            for digit, plan_index, forced in _options(claimant, index, keep):
+        for state, ((cost, key), chain) in states.items():
+            for digit, plan_index, forced in options:
                 if plan_index is None:
                     if claimant.alternative is None:
                         continue
@@ -248,11 +262,16 @@ def _exact(claimants, plans, flat, max_states, keep):
                 order = (cost + extra, key + digit * weight)
                 held = layer.get(new)
                 if held is None or order < held[0]:
-                    layer[new] = (order, choices + (plan_index,))
+                    layer[new] = (order, (plan_index, chain))
         if not layer or len(layer) > max_states:
             return None  # no fitting answer here, or too many room states: the greedy order answers
         states = layer
-    best_state, ((cost, _), choices) = min(states.items(), key=lambda item: item[1][0])
+    best_state, ((cost, _), chain) = min(states.items(), key=lambda item: item[1][0])
+    choices = []
+    while chain is not None:
+        choice, chain = chain
+        choices.append(choice)
+    choices.reverse()
     assigned = {claimant.job_id: (plans[choice].route if choice is not None else None)
                 for claimant, choice in zip(claimants, choices)}
     return assigned, cost, _loads(plans, flat, best_state)
@@ -581,11 +600,14 @@ def _tables(engine):
     return found[1]
 
 
-def waiting(engine, *, include=None, limit=MAX_WAITING):
+def waiting(engine, *, include=None, limit=MAX_WAITING, now=None):
     """Faxes ready to send, and claimed faxes with no route chosen yet, about in the order the claim offers them
-    (urgent first, then the nearest send-by time, then the oldest). ``include`` is always read."""
+    (urgent first, then the nearest send-by time, then the oldest). A fax its sending rules hold (approval, a time
+    window not open yet, no allowed route) is left out, as the claim leaves it out. ``include`` is always read."""
     import sqlalchemy as sa
-    from .database import read_connection
+    from . import envelope as envelopes
+    from .database import read_connection, utcnow
+    from .holds import blocking
     t = _tables(engine)
     d, j, c = t['outbound_deliveries'], t['fax_jobs'], t['delivery_attempt_costs']
     urgent = sa.func.coalesce(j.c.urgent, 0) if 'urgent' in j.c else sa.literal(0)
@@ -599,6 +621,9 @@ def waiting(engine, *, include=None, limit=MAX_WAITING):
             .where(sa.or_(sa.and_(d.c.state == 'ready', d.c.dispatch_mode == 'normal'), undecided)))
     order = [urgent.desc(), sa.case((send_by.is_(None), 1), else_=0), send_by, j.c.created_at, d.c.id]
     with read_connection(engine) as connection:
+        rules = envelopes.tables(connection)
+        if rules is not None:
+            base = base.where(d.c.id.not_in(blocking(rules, now or utcnow())))
         rows = list(connection.execute(base.order_by(*order).limit(limit)).all())
         if include and include not in {row.id for row in rows}:
             rows += connection.execute(base.where(d.c.id == include)).all()
@@ -632,12 +657,14 @@ def _seconds(routes, values, key, number, pages, now):
     from .predict import Shape, predict_from
     from .predict_facts import facts_for
     memo = (id(routes.engine), key, number, pages, int(now.timestamp()) // FEATURES_SECONDS)
-    if memo not in _SECONDS:
+    found = _SECONDS.get(memo, _SECONDS)
+    if found is _SECONDS:
         if len(_SECONDS) > 5000:
             _SECONDS.clear()
         facts = facts_for(key, number, now=now, engine=routes.engine, values=values)
-        _SECONDS[memo] = predict_from(facts, Shape(pages, None, 'standard', 'normal')).seconds
-    return _SECONDS[memo]
+        found = predict_from(facts, Shape(pages, None, 'standard', 'normal')).seconds
+        _SECONDS[memo] = found
+    return found
 
 
 def _units(routes, values, key, budget, unit, number, pages, now):
@@ -692,8 +719,9 @@ def feature(routes, values, fax, plans, now, *, dial=None):
     from .pricing import prices_for
     keys = tuple(plan.key for plan in plans)
     memo = (id(routes.engine), fax.job_id, keys, fax.alternate, int(now.timestamp()) // FEATURES_SECONDS)
-    if dial is None and memo in _FEATURES:
-        return _FEATURES[memo]
+    cached = _FEATURES.get(memo) if dial is None else None
+    if cached is not None:
+        return cached
     try:
         pinned = envelopes.load(routes.engine, fax.job_id)
     except envelopes.UnreadableDecision:
@@ -747,11 +775,14 @@ _CURVES = {}
 
 
 def history(routes, values, scarce, others, now):
-    """``[Past]`` for ``scarce``'s plan from the faxes before ``now``: each fax sent that the plan could have carried,
-    worth its cheapest other account's price today (capped by the plan's price past its allowance), and each fax
-    the plan received, worth that price past the allowance (received faxes use it whatever happens)."""
+    """``[Past]`` for ``scarce``'s plan from the faxes before ``now``. A fax sent another way is worth what its first
+    attempt was estimated to cost there; a fax the plan carried is worth its cheapest other account's price today.
+    Either is capped by the plan's price past its allowance, and a fax the plan cannot carry (a kind of number it
+    does not call, more pages than it takes) is left out. Each fax the plan received is worth that price past the
+    allowance: received faxes use it whatever happens."""
     import sqlalchemy as sa
     from .database import read_connection
+    from .plan import ledger_key
     from .plan_budget import records
     from .predict_facts import facts_for
     from .pricing import prices_for
@@ -760,34 +791,41 @@ def history(routes, values, scarce, others, now):
     start = now - LOOKBACK
     budget = scarce.left.budget
     overage = scarce.room.dims[0].overage
+    first = (sa.select(c.c.job_id, sa.func.min(c.c.created_at).label('at'))
+             .where(c.c.created_at >= start, c.c.created_at < now, c.c.outcome != 'pending')
+             .group_by(c.c.job_id).subquery())
     with read_connection(routes.engine) as connection:
         rows = connection.execute(
-            sa.select(c.c.job_id, sa.func.min(c.c.created_at).label('at'), sa.func.max(j.c.to_number).label('number'),
-                      sa.func.max(j.c.pages).label('pages'))
-            .select_from(c.join(j, j.c.id == c.c.job_id))
-            .where(c.c.created_at >= start, c.c.created_at < now, c.c.outcome != 'pending',
-                   c.c.route.not_in(('local', 'direct')), sa.not_(c.c.route.like('relay.%')))
-            .group_by(c.c.job_id).order_by(sa.desc('at')).limit(HISTORY_READ)).all()
-    memo, found = {}, []
+            sa.select(first.c.at, j.c.to_number, j.c.pages, c.c.route, c.c.estimated_cost_micros, c.c.currency)
+            .select_from(first.join(c, sa.and_(c.c.job_id == first.c.job_id, c.c.created_at == first.c.at))
+                         .join(j, j.c.id == first.c.job_id))
+            .where(c.c.route.not_in(('local', 'direct')), sa.not_(c.c.route.like('relay.%')))
+            .order_by(first.c.at.desc()).limit(HISTORY_READ)).all()
+    carries, priced, found = {}, {}, []
     for row in rows:
         pages = max(1, int(row.pages or 1))
-        key = (row.number, pages)
-        if key not in memo:
-            facts = facts_for(scarce.key, row.number, now=now, engine=routes.engine, values=values)
-            terms = facts.terms
-            if terms is None or facts.refused or (terms.max_pages_per_fax and pages > terms.max_pages_per_fax):
-                memo[key] = None
-            else:
-                units = _units(routes, values, scarce.key, budget, scarce.unit, row.number, pages, now)
-                known = [price.micros for price in prices_for(routes, values, row.number, pages, keys=list(others),
+        if row.to_number not in carries:
+            facts = facts_for(scarce.key, row.to_number, now=now, engine=routes.engine, values=values)
+            carries[row.to_number] = None if facts.terms is None or facts.refused else facts.terms
+        terms = carries[row.to_number]
+        if terms is None or (terms.max_pages_per_fax and pages > terms.max_pages_per_fax):
+            continue
+        units = _units(routes, values, scarce.key, budget, scarce.unit, row.to_number, pages, now)
+        if row.route != ledger_key(scarce.key) and row.estimated_cost_micros is not None \
+                and row.currency == scarce.currency:
+            value = int(row.estimated_cost_micros)
+        else:
+            key = (row.to_number, pages)
+            if key not in priced:
+                known = [price.micros for price in prices_for(routes, values, row.to_number, pages, keys=list(others),
                                                               now=now).values()
                          if price.micros is not None and price.currency == scarce.currency]
-                value = min(known) if known else None
-                if overage is not None:
-                    value = overage * units if value is None else min(value, overage * units)
-                memo[key] = None if value is None else (units, value)
-        if memo[key] is not None:
-            found.append(Past(row.at, *memo[key]))
+                priced[key] = min(known) if known else None
+            value = priced[key]
+        if overage is not None:
+            value = overage * units if value is None else min(value, overage * units)
+        if value is not None:
+            found.append(Past(row.at, units, value))
     if overage is not None and scarce.unit == 'pages':
         for at, direction, pages, _ in records(routes.engine, scarce.key, start, now,
                                                page_time_seconds=budget.page_time_seconds):
@@ -800,12 +838,14 @@ def curve_for(routes, values, scarce, others, now):
     """The reserve curve for ``scarce``'s plan, worked out at most once an hour."""
     room = max(0, scarce.room.dims[0].room)
     memo = (id(routes.engine), scarce.key, room, scarce.left.period.end, int(now.timestamp()) // RESERVE_SECONDS)
-    if memo not in _CURVES:
+    found = _CURVES.get(memo)
+    if found is None:
         if len(_CURVES) > 200:
             _CURVES.clear()
-        _CURVES[memo] = reserve_curve(history(routes, values, scarce, others, now), now, scarce.left.period.end,
-                                      reserve_sizes(room))
-    return _CURVES[memo]
+        found = reserve_curve(history(routes, values, scarce, others, now), now, scarce.left.period.end,
+                              reserve_sizes(room))
+        _CURVES[memo] = found
+    return found
 
 
 # The allocation ------------------------------------------------------------------------------------------------
@@ -905,7 +945,7 @@ def allocate(routes, values, now=None, *, include=None, dial=None):
     keys = [plan.key for plan in plans]
     others = [key for key in _sending_keys(values) if key not in keys]
     curves = {plan.key: curve_for(routes, values, plan, others, now) for plan in plans}
-    queue = waiting(routes.engine, include=include)
+    queue = waiting(routes.engine, include=include, now=now)
     reserve_possible = any(any(curve.lower) for curve in curves.values())
     if not reserve_possible and _fits(routes, values, plans, queue, now):
         # Every waiting fax fits in the room left: nothing to allocate, and each is priced exactly as before.
@@ -1173,7 +1213,9 @@ def view(routes, values, now=None):
                           'sentence': sentence})
         left_words = f'{room:,} {"included " if unit == "pages" and plan.left.budget.included_pages else ""}' \
                      f'{_unit_word(unit, room)}'
-        if found.solution is None and not reserve:
+        if not found.waiting and not reserve:
+            sentence = f'{label} has {left_words} left until {renews}, and no fax is waiting.'
+        elif found.solution is None and not reserve:
             sentence = (f'{label} has {left_words} left until {renews}, and every waiting fax that could use them '
                         'fits.')
         elif not faxes and not reserve:

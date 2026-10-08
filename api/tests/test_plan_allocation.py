@@ -489,8 +489,19 @@ def test_the_screen_and_the_reserve_read_only_earlier_faxes(allowance):  # noqa:
     assert small and large
 
 
-def sent_before(env, number, pages, when):
-    """One fax already sent by SignalWire at ``when`` (synthetic records; nothing waits)."""
+def test_a_fax_its_rules_hold_for_approval_takes_no_pages_while_it_waits(allowance):  # noqa: F811
+    env = allowance
+    publish(env, {'format': 1, 'limits': [rule('l-big', {'hold_for_approval': {'separate_approver': True}},
+                                                {'document': {'pages_over': 80}})], 'routes': []})
+    small, large = accept(env, to=SMALL, pages=60), accept(env, to=LARGE, pages=100)
+    assert [fax.job_id for fax in allocation.waiting(env.engine)] == [small]
+    found = allocation.allocate(env.routes, values_of(env))
+    assert found.solution is None and found.hold(small, 'phaxio') is None  # it fits: priced as before
+    assert large
+
+
+def sent_before(env, number, pages, when, cost=None):
+    """One fax already sent by SignalWire at ``when``, with its estimated cost (synthetic records; nothing waits)."""
     import sqlalchemy as sa
     job = accept(env, to=number, pages=pages)
     deliveries = sa.Table('outbound_deliveries', sa.MetaData(), autoload_with=env.engine)
@@ -500,20 +511,27 @@ def sent_before(env, number, pages, when):
                                                                created_at=when, submitted_at=when, completed_at=when))
         connection.execute(env.routes.costs.insert().values(
             id=job, job_id=job, destination=number, route='signalwire', route_reason='cheapest',
-            provider_id='signalwire', outcome='success', billing_checks=0, created_at=when, updated_at=when))
+            provider_id='signalwire', outcome='success', billing_checks=0, created_at=when, updated_at=when,
+            estimated_cost_micros=cost, currency='USD' if cost is not None else None))
     return job
 
 
 def test_the_reserve_learns_only_from_faxes_sent_before_now(allowance):  # noqa: F811
     env = allowance
     now = datetime.utcnow().replace(microsecond=0)
-    for days in (3, 10, 17):
+    for days in (3, 10):
         sent_before(env, SMALL, 20, now - timedelta(days=days))
+    # Recorded at $5: worth that, capped by what Phaxio charges for 20 pages past its allowance ($2).
+    sent_before(env, SMALL, 20, now - timedelta(days=17), cost=5 * DOLLAR)
     sent_before(env, LARGE, 50, now + timedelta(days=1))  # after now: never read
     scarce = allocation.scarce_plans(env.routes, values_of(env), now)[0]
-    found = allocation.history(env.routes, values_of(env), scarce, ['signalwire'], now)
-    assert sorted(item.units for item in found) == [20, 20, 20]
-    assert all(item.at < now and item.value == signalwire_cost(20) for item in found)
+    found = sorted(allocation.history(env.routes, values_of(env), scarce, ['signalwire'], now),
+                   key=lambda item: item.at)
+    assert [(item.units, item.value) for item in found] == [(20, 2 * DOLLAR), (20, signalwire_cost(20)),
+                                                            (20, signalwire_cost(20))]
+    assert all(item.at < now for item in found)
+    assert allocation.view(env.routes, values_of(env), now)['plans'][0]['sentence'].endswith(
+        'and no fax is waiting.')
 
 
 def test_the_allocation_over_http_and_its_permission(client):  # noqa: F811
