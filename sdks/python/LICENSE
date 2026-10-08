@@ -3,8 +3,8 @@ Faxbot Proprietary License Notice
 Copyright (c) 2025-2026 David Montgomery. All rights reserved.
 
 Beginning with the revision that introduces this notice, new Faxbot software
-and documentation (the "Software") owned by David Montgomery are proprietary. Except for the
-rights preserved below, no permission is granted to use, reproduce, modify,
+and documentation (the "Software") owned by David Montgomery are proprietary.
+Except for the rights preserved below, no permission is granted to use, reproduce, modify,
 distribute, sublicense, sell, or provide hosted access to this material without
 prior written permission from David Montgomery. Access to the source code does
 not by itself grant these permissions.
@@ -22,6 +22,8 @@ grant MIT permissions for new proprietary additions.
 Third-party software, dependencies, and other material remain subject to their
 own licenses and copyright notices. This notice does not claim ownership of
 third-party material, replace its license, or override rights granted by law.
+Changes to third-party code remain subject to applicable upstream license
+requirements.
 
 Disclaimer
 
