@@ -1168,6 +1168,45 @@ export interface PlanContracts {
   empty_sentence: string | null;
 }
 
+// GET /routing/plans/allocation: who gets each limited plan's last pages or minutes (estimates).
+export interface PlanAllocationFax {
+  job_id: string;
+  to: string;
+  pages: number;
+  units: number;
+  queued_at: string;
+  urgent: boolean;
+  send_by: string | null;
+  outcome: 'plan' | 'forced' | 'other';
+  route: string | null;
+  route_label: string | null;
+  cost: Money[];
+  sentence: string;
+}
+
+export interface PlanAllocationPlan {
+  route: string;
+  name: string;
+  unit: 'pages' | 'minutes';
+  room: number;
+  on_their_way: number;
+  renews_on: string;
+  reserve: number;
+  reserve_sentence: string;
+  sentence: string;
+  left_sentence: string;
+  saving: Money[];
+  saving_sentence: string | null;
+  bound_sentence: string | null;
+  faxes: PlanAllocationFax[];
+}
+
+export interface PlanAllocation {
+  plans: PlanAllocationPlan[];
+  estimate: true;
+  empty_sentence: string | null;
+}
+
 // GET /routing/recommendations/carriers: your last 30 days at each carrier's published prices. Advice only.
 export interface CarrierPrice {
   id: string;

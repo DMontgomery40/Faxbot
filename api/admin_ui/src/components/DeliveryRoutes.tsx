@@ -10,6 +10,7 @@ import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
 import FindPartners from './delivery/FindPartners';
 import PlanBudgets from './delivery/PlanBudgets';
+import PlanAllocation from './delivery/PlanAllocation';
 import RateCards from './delivery/RateCards';
 import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
@@ -118,6 +119,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
               <TollFreePrices items={tollFree} />
               <PlanBudgets client={client} canWrite={canWrite} />
+              <PlanAllocation client={client} />
             </>)}
           {shows('partners') && part('partners',
             <>

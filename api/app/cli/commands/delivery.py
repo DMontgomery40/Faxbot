@@ -1216,8 +1216,9 @@ class _PlansGroup(TyperGroup):
 
 
 plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or allowance this month and what is "
-                                          'committed (show), setting a budget (budget), and the plans a fax service '
-                                          'publishes (published, or name the service: faxbot costs plans efax).')
+                                          'committed (show), which waiting faxes get its last pages (allocation), '
+                                          'setting a budget (budget), and the plans a fax service publishes '
+                                          '(published, or name the service: faxbot costs plans efax).')
 plans.command('published')(routing_plans)
 
 
@@ -1303,6 +1304,39 @@ def plans_show(burn_down: bool = typer.Option(False, '--by-day', help='Also show
     """Show each plan's normal-use budget or allowance this billing period, what is committed, and faxes between your own accounts. Every figure is an estimate."""
     result = state.api().get('/routing/plans')
     state.out().result(result, lambda out: show_contract(out, result, burn_down=burn_down))
+
+
+_OUTCOMES = {'plan': 'Gets the plan', 'forced': 'Takes the plan', 'other': 'Goes another way'}
+
+
+def show_allocation(out, result):
+    """Each limited plan: what is left, which waiting faxes get it, what goes another way, what is kept for later."""
+    plans_ = result.get('plans') or []
+    if not plans_:
+        out.line(result.get('empty_sentence') or '')
+        return
+    for index, plan in enumerate(plans_):
+        if index:
+            out.line('')
+        out.line(plan['sentence'])
+        if plan.get('faxes'):
+            unit = 'Minutes' if plan.get('unit') == 'minutes' else 'Pages counted'
+            out.table(['To', 'Pages', unit, 'Waiting since', 'Outcome', 'Route', 'Cost (estimate)'],
+                      [[item['to'], _count(item['pages']), _count(item['units']), local_time(item.get('queued_at')),
+                        _OUTCOMES.get(item['outcome'], item['outcome']), item.get('route_label') or '-',
+                        money(item.get('cost'), empty='-')] for item in plan['faxes']],
+                      title=f"{plan['name']}, waiting faxes")
+        for sentence in (plan.get('saving_sentence'), plan.get('reserve_sentence'), plan.get('bound_sentence'),
+                         plan.get('left_sentence')):
+            if sentence:
+                out.line(sentence)
+
+
+@plans.command('allocation')
+def plans_allocation():
+    """Show who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate."""
+    result = state.api().get('/routing/plans/allocation')
+    state.out().result(result, lambda out: show_allocation(out, result))
 
 
 def _limit(value, name):
