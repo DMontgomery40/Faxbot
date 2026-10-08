@@ -289,7 +289,10 @@ def _extra(values, key, doc):
 
 
 def _is_extra(key, doc):
-    return isinstance(doc, dict) and bool(doc.get('provider')) and doc.get('provider') != key
+    # A digital account (a HISP account or FHIR client, ``digital/accounts.py``) shares the document but is never a
+    # fax account: it is not a sending account, a provider route or a receiving number.
+    return (isinstance(doc, dict) and bool(doc.get('provider')) and doc.get('provider') != key
+            and doc.get('kind') != 'digital')
 
 
 def all_accounts(values):
