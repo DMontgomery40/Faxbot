@@ -91,6 +91,8 @@ class RateTerms:
       many seconds on the line, and the bill counts the greater of the two (Fax.Plus: 60).
     - ``included_pages`` and ``overage_page_micros``: a plan's monthly page allowance and the price of
       each page past it.
+    - ``included_minutes``: a monthly minute allowance (a trunk bundle); minutes past it cost the card's
+      per-minute price.
     - ``max_pages_per_fax``: the most pages the route takes in one fax, when it publishes a limit.
     - ``published``: True for a shipped published price, False for a rate card saved in Faxbot.
     """
@@ -102,6 +104,7 @@ class RateTerms:
     overage_page_micros: int | None = None
     max_pages_per_fax: int | None = None
     published: bool = False
+    included_minutes: int | None = None
 
     def __post_init__(self):
         from .destinations import CLASSES, UNKNOWN
@@ -113,7 +116,8 @@ class RateTerms:
                 not isinstance(prefix, str) or re.fullmatch(r'\+[1-9][0-9]{0,6}', prefix) is None
                 for prefix in self.prefixes):
             raise InvalidRateCard('Write each number prefix with its country code, such as +44.')
-        for name, highest in (('page_time_seconds', 3600), ('included_pages', 1_000_000), ('max_pages_per_fax', 10_000)):
+        for name, highest in (('page_time_seconds', 3600), ('included_pages', 1_000_000), ('max_pages_per_fax', 10_000),
+                              ('included_minutes', 1_000_000)):
             value = getattr(self, name)
             if value is not None and (type(value) is not int or not 1 <= value <= highest):
                 raise InvalidRateCard('Page and time limits are whole numbers above zero.')

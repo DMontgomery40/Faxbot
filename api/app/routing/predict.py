@@ -175,6 +175,7 @@ class PlanUse:
     pages: int | None = None
     faxes: int | None = None
     page_budget: int | None = None       # a fair-use budget the administrator set, if any
+    minutes: int | None = None           # minutes on the line this month, for a minute allowance
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,8 @@ def _plan(facts, shape, seconds, how):
     card = terms.card
     fee = plan_fee_text(card.monthly_fee_micros, card.currency) if card.monthly_fee_micros else None
     named = f'your {label} plan' + (f' ({fee} a month)' if fee else '')
+    if terms.included_minutes and not terms.included_pages:
+        return _minutes(terms, plan, named, seconds, how)
     if terms.included_pages:
         if plan.pages is None:
             return Prediction(None, seconds, None, _sentence(
@@ -321,6 +324,29 @@ def _plan(facts, shape, seconds, how):
                       _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
 
 
+def _minutes(terms, plan, named, seconds, how):
+    """A minute allowance: this fax is free while its minutes fit, and minutes past it cost the per-minute price."""
+    card = terms.card
+    if seconds is None:
+        return Prediction(None, None, None, _sentence(
+            f'{named} includes {terms.included_minutes} minutes a month, and the time on the line is unknown, so '
+            'whether this fax costs extra is unknown', how), True)
+    if plan.minutes is None:
+        return Prediction(None, seconds, None, _sentence(
+            f'{named} includes {terms.included_minutes} minutes a month, and Faxbot has no count of the minutes '
+            'used this month, so whether this fax costs extra is unknown', how), True)
+    minutes = math.ceil(seconds / 60)
+    before = max(0, plan.minutes - terms.included_minutes)
+    over = max(0, plan.minutes + minutes - terms.included_minutes) - before
+    room = f'{plan.minutes} of its {terms.included_minutes} included minutes used this month'
+    if not over:
+        return Prediction(0, seconds, Money(0, card.currency),
+                          _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
+    return Prediction(0, seconds, Money(over * card.per_minute_micros, card.currency), _sentence(
+        f'{_count(over, "minute")} past what {named} includes, at {money_text(card.per_minute_micros, card.currency)} '
+        'a minute', room, how), True)
+
+
 def predict_from(facts, shape):
     """The prediction from gathered facts. Pure: the same facts and shape always give the same answer."""
     if not isinstance(shape, Shape):
@@ -344,7 +370,7 @@ def predict_from(facts, shape):
         return Prediction(None, seconds, None, _sentence(
             f'{facts.label} takes at most {terms.max_pages_per_fax} pages in one fax, so this fax cannot go this '
             'way as one fax'), False)
-    if terms.card.flat_plan or terms.included_pages:
+    if terms.card.flat_plan or terms.included_pages or terms.included_minutes:
         return _plan(facts, shape, seconds, how)
     billed_pages, micros = terms_cost(terms, seconds=seconds, pages=shape.pages)
     if micros is None:

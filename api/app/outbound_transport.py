@@ -14,6 +14,21 @@ from .outbound_worker import PreparationFailure, SubmissionReceipt
 from .provider_execution import service_from_profile, ProviderExecutionError
 
 
+def _layout_rule(engine, job_id):
+    """``pages.capability.long_pages_allowed``'s rule from the fax's envelope: 'allow', 'never' or None."""
+    if engine is None:
+        return None
+    from .routing import envelope as envelopes
+    try:
+        pinned = envelopes.load(engine, job_id)
+    except envelopes.UnreadableDecision:
+        return 'never'  # the pages go as they are
+    except Exception:
+        return None
+    layout = pinned.envelope.page_layout if pinned is not None else None
+    return {'as_receiver_allows': 'allow', 'one_per_sheet': 'never'}.get(layout)
+
+
 def normalize_status(value):
     if not isinstance(value, str):
         raise ValueError('Unusable provider status.')
@@ -242,8 +257,11 @@ class CapturedTransport:
         # correction. The fax's own files never change; this never stops a send.
         from .pages import sending as page_sending
         store_engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
+        # The page layout the fax's sending rules chose (routing/envelope.py): "as the receiver allows" turns long
+        # pages on, "one per sheet" keeps every page on its own sheet; with no rule, Faxbot's own default applies.
+        layout_rule = await run_lifecycle_step(lambda: _layout_rule(store_engine, claim.job_id))
         changed = await run_lifecycle_step(lambda: page_sending.prepare(
-            store_engine, values, configuration, claim, job, pdf, tiff))
+            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule))
         if changed is not None:
             pdf = Path(changed.pdf) if changed.pdf else pdf
             tiff = Path(changed.tiff) if changed.tiff else tiff

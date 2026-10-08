@@ -135,6 +135,20 @@ def submit(access, runtime, store, source, submission, token):
     now = datetime.utcnow()
     job = {'id': job_id, 'to_number': submission.to_number, 'file_name': file_name[:255], 'tiff_path': tiff,
            'status': 'queued', 'pages': pages, 'created_at': now, 'updated_at': now}
+    # The organization's sending rules decide its route envelope exactly as for POST /fax.
+    try:
+        from ...routing.rules_acceptance import recorder_for
+        rules = recorder_for(runtime.manager.store.engine, revision, actor, job_id=job_id,
+                             destination=submission.to_number, pages=pages, document_path=pdf,
+                             control=getattr(access, 'control', None))
+    except Exception:
+        documents.discard(pdf, tiff)
+        raise Retry('Waiting: Faxbot could not read your sending rules just now; it tries again.') from None
+    guarded = also
+
+    def also(connection, now):
+        rules(connection, now)
+        guarded(connection, now)
     try:
         access.outbound.accept(actor, revision, job, request_identity=identity, also=also)
     except IdempotentReplay as replay:

@@ -92,8 +92,11 @@ class SignalWireFaxService:
         if not isinstance(sid, str) or not isinstance(status, str) or not status.strip():
             raise RuntimeError('Unexpected SignalWire status response.') from None
         status = status.lower()
+        from .routing.predata import signalwire as before_fax_data
+        # Whether a failed call ended before any fax data, by SignalWire's documented statuses and messages.
         return {'provider_sid': sid,
-                'status': self._map_status_str(status), 'provider_status': status}
+                'status': self._map_status_str(status), 'provider_status': status,
+                'before_fax_data': before_fax_data(status, j.get('error_message'))}
 
     async def handle_status_callback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sid = payload.get('FaxSid') or payload.get('sid') or payload.get('MessageSid')

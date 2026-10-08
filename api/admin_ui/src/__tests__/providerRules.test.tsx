@@ -157,6 +157,8 @@ describe('Providers → Rules: the other tabs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try it' }));
     expect(await screen.findByText('Sinch (UK) first, because the rule ‘UK numbers go through Sinch’ matched.')).toBeTruthy();
     expect(screen.getByText('About $0.031')).toBeTruthy();
+    expect(screen.getByText('In your plan')).toBeTruthy();
+    expect(screen.queryByText('About $0.00')).toBeNull();
     expect(screen.getByText('Not priced yet')).toBeTruthy();
     expect(screen.getByText('Number is in recipient group did not match.')).toBeTruthy();
     expect(screen.getByText("The recipient's preferred route")).toBeTruthy();

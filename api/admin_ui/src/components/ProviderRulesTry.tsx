@@ -95,7 +95,7 @@ export function ExplainAnswer({ result }: { result: ExplainResult }) {
               {result.routes.map((route) => (
                 <TableRow key={route.account} sx={{ opacity: route.usable ? 1 : 0.6 }}>
                   <TableCell>{route.label}</TableCell>
-                  <TableCell>{route.quote ? `About ${formatMoney(route.quote)}` : NOT_PRICED}</TableCell>
+                  <TableCell>{route.quote_text ?? (route.quote ? `About ${formatMoney(route.quote)}` : NOT_PRICED)}</TableCell>
                   <TableCell>{route.origin ?? '-'}</TableCell>
                   <TableCell>{route.sentence}</TableCell>
                 </TableRow>

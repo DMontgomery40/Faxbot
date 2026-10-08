@@ -45,10 +45,13 @@ class OutboundPoller:
             # exactly as for the fax engine's own calls.
             return await run_lifecycle_step(lambda: self.store.record_unconfirmed(job_id,
                 attempt_id=attempt_id, profile_id=profile.id, event_key=key))
+        # The adapter's classification of a failed call: it ended before any fax data, or not, or it cannot say.
+        ended = result.get('before_fax_data') if isinstance(result, dict) and receipt.status == 'failed' else None
         return await run_lifecycle_step(lambda: self.store.observe(job_id,
             attempt_id=attempt_id, profile_id=profile.id, provider_sid=receipt.provider_sid,
             status=receipt.status, event_key=key, error=failure if isinstance(failure, str) else None,
-            error_category=category if category in NO_FALLBACK_CATEGORIES else None))
+            error_category=category if category in NO_FALLBACK_CATEGORIES else None,
+            before_data=ended if isinstance(ended, bool) else None))
 
     async def step(self):
         job_id = await run_lifecycle_step(self.store.reserve_poll)

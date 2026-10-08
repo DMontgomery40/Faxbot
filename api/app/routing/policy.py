@@ -5,7 +5,11 @@ repeated; it only orders the routes a delivery may try for one destination.
 The first route's reason says what decided it: a route whose cost is unknown
 is never called the cheapest, and a flat monthly plan is "included".
 
-Rate cards rank routes until there is evidence. When at least two reliable
+Rate cards rank routes until there is evidence. A caller may pass ``prices``
+instead (``routing.pricing``): what one more fax adds on each route, from the
+shared predictor and each plan's budget. A route past its normal-use budget
+then goes after every route within budget; then known cost before unknown,
+cheaper first; between equal costs a route that uses no plan budget first. When at least two reliable
 routes each have ``min_delivered`` delivered faxes to the destination in the
 window, every attempt priced and one currency, those routes are ranked by what
 they really cost per delivered fax (``delivered.py``), failed and repeated calls
@@ -26,13 +30,16 @@ DIRECT = 'direct'
 # ``unknown_cost``: no route has a known price, so the configured order decides.
 # ``cheapest_delivered``: the lowest observed cost per delivered fax among routes with enough delivered faxes.
 # ``own_number``: one of the installation's own receiving numbers, delivered inside Faxbot without a call.
+# ``rule``: first in the list a sending rule gave (its order, not cost, decides).
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
-           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number')
+           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule')
+# A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
+CALLING = ('provider', 'relay')
 
 
 @dataclass(frozen=True)
 class RouteCandidate:
-    """``key`` is ``local``, ``direct`` or a provider identity; one candidate per key."""
+    """``key`` is ``local``, ``direct``, a provider account or a partner relay; one candidate per key."""
     key: str
     kind: str
     provider_id: str
@@ -44,7 +51,7 @@ class RouteCandidate:
     doubt: int = 0
 
     def __post_init__(self):
-        if self.kind not in {'local', 'direct', 'provider'}:
+        if self.kind not in {'local', 'direct', 'provider', 'relay'}:
             raise ValueError('Unknown route kind.')
 
 
@@ -87,21 +94,27 @@ class RoutePolicy:
     def observed(self, candidates, delivered):
         """Keys of the candidates ranked by cost per delivered fax: none unless at least two qualify."""
         found = [candidate.key for candidate in candidates
-                 if candidate.kind == 'provider' and not getattr(candidate.card, 'flat_plan', False)
+                 if candidate.kind in CALLING and not getattr(candidate.card, 'flat_plan', False)
                  and delivered.get(candidate.key) is not None
                  and delivered[candidate.key].comparable(self.min_delivered)]
         if len(found) < 2 or len({delivered[key].currency for key in found}) != 1:
             return []
         return found
 
-    def order(self, candidates, *, stats=None, preferred=None, pages=1, delivered=None):
-        """``delivered`` maps a route key to its ``DeliveredCost`` at this destination, if known."""
+    def order(self, candidates, *, stats=None, preferred=None, pages=1, delivered=None, prices=None):
+        """``delivered`` maps a route key to its ``DeliveredCost`` at this destination, if known.
+
+        ``prices`` maps a route key to its ``routing.pricing.Price`` (what one more fax adds there); without it
+        the rate card's estimate ranks, exactly as before.
+        """
         stats = stats or {}
         delivered = delivered or {}
+        prices = prices or {}
         keys = [candidate.key for candidate in candidates]
         if len(set(keys)) != len(keys):
             raise ValueError('Each route may appear once.')
-        estimates = {candidate.key: (estimate_cost(candidate.card, pages) if candidate.card is not None else None)
+        estimates = {candidate.key: (prices[candidate.key].micros if candidate.key in prices else
+                                     estimate_cost(candidate.card, pages) if candidate.card is not None else None)
                      for candidate in candidates}
         position = {key: index for index, key in enumerate(keys)}
         chosen = []
@@ -112,7 +125,7 @@ class RoutePolicy:
 
         local = next((c for c in candidates if c.kind == 'local'), None)
         direct = next((c for c in candidates if c.kind == 'direct'), None)
-        providers = [c for c in candidates if c.kind == 'provider']
+        providers = [c for c in candidates if c.kind in CALLING]
         override = next((c for c in providers if preferred is not None and c.key == preferred), None)
         # An explicit provider preference is an operator override, ahead of every
         # other route; otherwise one of the installation's own numbers is delivered
@@ -129,13 +142,20 @@ class RoutePolicy:
 
         def cost_rank(candidate):
             estimate = estimates[candidate.key]
-            # Unknown cost sorts after known cost; ties keep configured order,
-            # which puts the job's own provider first.
-            return (estimate is None, estimate if estimate is not None else 0, candidate.doubt,
+            price = prices.get(candidate.key)
+            # A plan past its normal-use budget goes last; unknown cost sorts after known cost; between equal
+            # costs a route that uses no plan budget first; ties keep configured order, which puts the job's own
+            # provider first.
+            over = bool(price is not None and price.over_budget)
+            uses = bool(price is not None and price.uses_budget)
+            return (over, estimate is None, estimate if estimate is not None else 0, uses, candidate.doubt,
                     not candidate.bound, position[candidate.key])
 
         def first_reason(candidate):
             estimate = estimates[candidate.key]
+            price = prices.get(candidate.key)
+            if price is not None and price.in_plan:
+                return 'included'
             if estimate is None:
                 return 'reliable' if doubtful else 'unknown_cost'
             if getattr(candidate.card, 'flat_plan', False):

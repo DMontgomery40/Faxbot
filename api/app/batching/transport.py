@@ -39,6 +39,16 @@ class BatchingTransport:
                                  preset=getattr(revision.values, 'sip_trunk_preset', None))
         if not verdict.saves or not choice.route.bound:
             raise BatchSplit()
+        # Sending rules: every fax in the call must still have the trunk first in its envelope; else each goes alone.
+        from ..routing import envelope as envelopes
+        from ..routing.rules_acceptance import first_route_is_bound
+        for member in claim.everyone:
+            try:
+                pinned = envelopes.load(self.store.configuration.engine, member.job_id)
+            except envelopes.UnreadableDecision:
+                raise BatchSplit() from None
+            if pinned is not None and not first_route_is_bound(pinned.decision, 'sip'):
+                raise BatchSplit()
         if not policy.header_identifies_sender(revision.values):
             from .store import call_members
             members = call_members(self.store.configuration.engine, claim.attempt_id)

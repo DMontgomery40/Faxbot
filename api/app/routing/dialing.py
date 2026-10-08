@@ -11,7 +11,9 @@ publishes about such calls: whether it reaches them, its price (its own,
 the same as its sending card, or not published) and the caller ID it needs.
 Nothing here places a call or changes a setting:
 
-- ``number_class``: ``toll_free`` or ``standard``.
+- ``number_class``: ``toll_free`` or ``standard``, from ``destinations.classify`` (the one classifier). The
+  toll-free terms here are North American, so only a North American toll-free number reads as toll-free:
+  a UK 0800 number is never priced at a US carrier's free toll-free rate.
 - ``reaches``: whether a route may call a number. A route that publishes that
   it refuses toll-free numbers, or whose caller-ID rule this installation
   cannot meet, may not; a route that publishes nothing may (useful options
@@ -33,20 +35,26 @@ from .seed import _date, _increment, default_path
 
 TOLL_FREE = 'toll_free'
 STANDARD = 'standard'
-# NANP toll-free codes in service; an exchange code never starts with 0 or 1.
-_NANP_TOLL_FREE = re.compile(r'\+18(?:00|33|44|55|66|77|88)[2-9][0-9]{6}')
 REACHES = ('yes', 'no', 'not_published')
 PRICING = ('own', 'same_as_card', 'not_published')
 CALLER_ID = ('account_number', 'local_number', 'set')
 
 
-def number_class(number):
-    """``toll_free`` for a North American toll-free number in E.164, else ``standard``."""
-    return TOLL_FREE if isinstance(number, str) and _NANP_TOLL_FREE.fullmatch(number) else STANDARD
+def number_class(number, home_country='US'):
+    """``toll_free`` for a North American toll-free number in E.164 (``destinations.classify``), else ``standard``.
+
+    ``home_country`` is the installation's country: a North American toll-free number is toll-free from the US
+    and Canada only. The toll-free terms this module prices are North American, so other countries' toll-free
+    numbers read as standard here.
+    """
+    if not isinstance(number, str) or not number.startswith('+1'):
+        return STANDARD
+    from .destinations import TOLL_FREE as CLASS_TOLL_FREE, classify
+    return TOLL_FREE if classify(number, home_country).kind == CLASS_TOLL_FREE else STANDARD
 
 
-def is_toll_free(number):
-    return number_class(number) == TOLL_FREE
+def is_toll_free(number, home_country='US'):
+    return number_class(number, home_country) == TOLL_FREE
 
 
 def display_number(number):
@@ -164,7 +172,7 @@ def caller_id_problem(values, provider_id, terms=None):
 
 def reaches(provider_id, number, values, *, sip_preset=None, terms=None):
     """Whether a route may call ``number``: every route calls standard numbers."""
-    if not is_toll_free(number):
+    if not is_toll_free(number, getattr(values, 'fax_default_country', 'US') or 'US'):
         return True
     preset = getattr(values, 'sip_trunk_preset', '') if sip_preset is None else sip_preset
     found = terms_for(provider_id, preset or '', terms)
