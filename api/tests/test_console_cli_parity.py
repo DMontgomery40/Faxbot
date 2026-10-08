@@ -68,6 +68,7 @@ NOT_OPERATOR = {
     ('POST', '/direct/holdings'): 'partner protocol: a signed question about which documents are still held',
     ('POST', '/direct/references'): 'partner protocol: a signed manifest for a copy the partner already holds',
     ('POST', '/direct/patches'): 'partner protocol: the signed changes to an earlier version the partner holds',
+    ('POST', '/direct/regions'): "partner protocol: a fax image's signed new header regions around a body it holds",
     ('POST', '/direct/calls/pages'): 'partner protocol: a signed question about the pages of a broken call',
     ('GET', '/digital/jwks/{key}'): "recipient's system: a FHIR client's public keys it reads to register the client",
     ('POST', '/mobile/pair'): 'device: the phone exchanges its pairing code',
