@@ -50,36 +50,104 @@ class PartnerAddressRefused(PartnerUnreachable):
     """Nothing was sent: the partner's address is not a public Internet address."""
 
 
+class CertificateChanged(PartnerUnreachable):
+    """Nothing was sent: the partner's certificate is not the one pinned for it (checked at the handshake)."""
+
+    def __init__(self, seen):
+        super().__init__(CERTIFICATE_CHANGED)
+        self.seen = seen
+
+
+CERTIFICATE_CHANGED = ("This partner's certificate is not the one it had when you enrolled it, so Faxbot sent it "
+                       'nothing. Check with the partner that they replaced it.')
+
+
 class HttpClient:
     """Production transport to partner installations.
 
     Unless private partners are allowed, each request first checks that the
     partner's host resolves only to public addresses, then connects to the
     address it checked (see addresses.py).
+
+    A partner on your own network may use its own certificate instead of one
+    from a trusted authority; Builder AT's discovery keeps its SHA-256 as a pin
+    (``direct_certificate_pins``). ``pins(host)`` returns that pin, or None.
+    A pinned host is accepted with exactly that certificate, compared right
+    after the TLS handshake and before a single byte of the request is
+    written, so a changed certificate means nothing was sent. Every other host
+    is verified normally against trusted authorities; there is never a
+    request without verification. ``changed(host, seen)`` hears about a
+    pinned host whose certificate changed (seen is None when it matched again).
     """
 
-    def __init__(self, *, timeout=60.0, allow_private=lambda: False, resolver=resolve):
+    def __init__(self, *, timeout=60.0, allow_private=lambda: False, resolver=resolve, pins=lambda host: None,
+                 changed=lambda host, seen: None):
         self.timeout = timeout
         self.allow_private = allow_private
         self.resolver = resolver
+        self.pins = pins
+        self.changed = changed
 
     async def request(self, method, url, **kwargs):
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        pin = await asyncio.to_thread(self.pins, parts.hostname) if parts.hostname else None
+        if pin is not None and parts.scheme != 'https':
+            raise PartnerAddressRefused("This partner's certificate is pinned, but its address does not use HTTPS.")
         if not self.allow_private():
             try:
                 address = await asyncio.to_thread(checked_address, url, resolver=self.resolver)
             except PartnerAddressError as error:
                 raise PartnerAddressRefused(str(error)) from None
             url, kwargs = pinned_request(url, address, kwargs)
+        verify = True
+        if pin is not None:
+            verify, kwargs = _pinned_certificate(pin, kwargs)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, verify=verify,
+                                         trust_env=False) as client:
                 response = await client.request(method, url, **kwargs)
+        except CertificateChanged as error:
+            await asyncio.to_thread(self.changed, parts.hostname, error.seen)
+            raise
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.UnsupportedProtocol, httpx.InvalidURL):
             raise PartnerUnreachable() from None
+        if pin is not None:
+            await asyncio.to_thread(self.changed, parts.hostname, None)
         try:
             body = response.json()
         except ValueError:
             body = None
         return response.status_code, body
+
+
+def _pinned_certificate(pin, kwargs):
+    """The TLS settings and request options that accept exactly the certificate whose SHA-256 is ``pin``.
+
+    The chain and name are not checked (a partner's own certificate has no trusted authority); instead the
+    httpcore ``trace`` hook reads the certificate the handshake received and refuses any other one before the
+    request is written.
+    """
+    import ssl
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    async def trace(event, info):
+        if event != 'connection.start_tls.complete':
+            return
+        stream = info.get('return_value')
+        ssl_object = stream.get_extra_info('ssl_object') if stream is not None else None
+        der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+        seen = hashlib.sha256(der).hexdigest() if der else None
+        if seen != pin:
+            try:
+                await stream.aclose()
+            finally:
+                raise CertificateChanged(seen)
+    options = dict(kwargs)
+    options['extensions'] = {**(kwargs.get('extensions') or {}), 'trace': trace}
+    return context, options
 
 
 def _flag(value):
@@ -96,7 +164,8 @@ class DirectService:
         self.values = values
         self.environment = environment or {}
         self.resolver = resolver
-        self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver)
+        self.http = http or HttpClient(allow_private=self._allow_private, resolver=resolver,
+                                       pins=self.store.certificate_pin, changed=self.store.note_certificate)
         self.filing = DirectFiling(self.store, resources or (lambda: None), values=values)
 
     def _allow_private(self):
@@ -402,7 +471,7 @@ class DirectService:
         try:
             status, body = await self.http.request('POST', peer['endpoint_url'] + '/direct/verifications', json={
                 'statement': statement.decode('ascii'), 'signature': identity.sign(statement)})
-        except PartnerAddressRefused as error:
+        except (PartnerAddressRefused, CertificateChanged) as error:
             raise DirectConflict(str(error)) from None
         except PartnerUnreachable:
             raise DirectConflict('Faxbot could not reach the partner; check their address and try again.') from None
@@ -531,7 +600,7 @@ class _DirectSubmission:
                 'document': ('document.bin', self.ciphertext, 'application/octet-stream')})
         except PartnerUnreachable as error:
             await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
-            if isinstance(error, PartnerAddressRefused):
+            if isinstance(error, (PartnerAddressRefused, CertificateChanged)):
                 raise DirectRefused(str(error)) from None
             raise DirectRefused('The partner could not be reached; nothing was sent.') from None
         except BaseException:

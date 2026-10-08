@@ -199,6 +199,64 @@ class DirectStore:
                 partner_said_at=said_at, version=peer['version'] + 1, updated_at=utcnow()))
             return True
 
+    # Pinned certificates -------------------------------------------------------
+    def _pins(self):
+        """Builder AT's ``direct_certificate_pins`` (0045), or None while that revision is not installed here."""
+        if not hasattr(self, '_pin_table'):
+            try:
+                self._pin_table = reflect(self.engine, ('direct_certificate_pins',))['direct_certificate_pins']
+            except Exception:
+                self._pin_table = None
+        return self._pin_table
+
+    def certificate_pin(self, host):
+        """The SHA-256 of the one certificate accepted for ``host``: the newest pin of an enrolled partner whose
+        address is that host, or None (verified normally)."""
+        pins = self._pins()
+        if pins is None or not host:
+            return None
+        from urllib.parse import urlsplit
+        host = host.lower()
+        with read_connection(self.engine) as connection:
+            rows = connection.execute(
+                sa.select(pins.c.peer_id, pins.c.certificate_sha256, self.peers.c.endpoint_url)
+                .select_from(pins.join(self.peers, self.peers.c.id == pins.c.peer_id))
+                .where(sa.func.lower(pins.c.host) == host, self.peers.c.state != 'revoked')
+                .order_by(pins.c.created_at.desc(), pins.c.id.desc())).all()
+        for _, certificate, endpoint in rows:
+            if (urlsplit(endpoint).hostname or '').lower() == host:
+                return str(certificate).lower()
+        return None
+
+    def note_certificate(self, host, seen, *, now=None):
+        """Keep, on each enrolled partner at ``host``, the certificate it presented when it was not its pinned
+        one (``seen``), or clear it once the pinned certificate is presented again (``seen`` None)."""
+        from urllib.parse import urlsplit
+        now = now or utcnow()
+        host = (host or '').lower()
+        with write_transaction(self.engine) as connection:
+            for peer in connection.execute(sa.select(self.peers).where(self.peers.c.state != 'revoked')).mappings():
+                if (urlsplit(peer['endpoint_url']).hostname or '').lower() != host:
+                    continue
+                if seen is None and peer['certificate_changed_at'] is None:
+                    continue
+                if seen is not None and peer['certificate_changed_sha256'] == seen:
+                    continue
+                connection.execute(self.peers.update().where(self.peers.c.id == peer['id']).values(
+                    certificate_changed_sha256=seen, certificate_changed_at=now if seen is not None else None,
+                    version=peer['version'] + 1, updated_at=now))
+
+    def set_notice_fax(self, peer_id, on):
+        """Pair every original sent to this partner with a one-page notice fax (on), or not (off)."""
+        now = utcnow()
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if peer is None or peer['state'] == 'revoked':
+                raise DirectConflict('This partner is not enrolled.')
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                notice_fax=1 if on else None, version=peer['version'] + 1, updated_at=now))
+            return self.get_peer(peer_id, connection)
+
     def revoke(self, peer_id):
         now = utcnow()
         with write_transaction(self.engine) as connection:
