@@ -27,6 +27,7 @@ cost (when known) is not higher.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
 
 from ..routing.costs import ESTIMATE_SETUP_SECONDS, Money, attempt_cost
@@ -120,7 +121,9 @@ def price_all(route_key, destination, shapes, *, card=None, predict=None):
         try:
             return [shared(route_key, destination, shape) for shape in shapes]
         except (ValueError, TypeError):
-            pass
+            # Said in the log, never quietly: a shape the shared predictor refuses is a bug to fix.
+            logging.getLogger(__name__).warning('The shared predictor refused these pages; the rate card prices '
+                                                'them instead.', exc_info=True)
     return [stand_in_predict(route_key, destination, shape, card=card) for shape in shapes]
 
 
@@ -144,6 +147,8 @@ def decide(route_key, destination, normal, dense, *, card=None, predict=None):
         try:
             before, after = shared(route_key, destination, normal), shared(route_key, destination, dense)
         except (ValueError, TypeError):
+            logging.getLogger(__name__).warning('The shared predictor refused these pages; the rate card prices '
+                                                'them instead.', exc_info=True)
             before = after = None
     if before is None or after is None:
         before = stand_in_predict(route_key, destination, normal, card=card)
