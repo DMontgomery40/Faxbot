@@ -267,6 +267,51 @@ async def test_a_withdrawn_agreement_sends_by_telephone_and_an_unheard_one_is_re
     assert conventional.submissions == 1 and len(intake['paths']) == before
 
 
+def accept_ruled(pair, document, number):
+    """Accept a fax under the published sending rules, as POST /fax does: the decision is kept with the fax."""
+    from types import SimpleNamespace
+    from api.app.routing import rules_acceptance
+    actor = SimpleNamespace(principal_id='person-anne', credential=None)
+    configuration = pair['configuration']
+    plan = rules_acceptance.prepare(configuration.engine, pair['snapshot'].active, actor=actor, destination=number,
+                                    pages=1, document_sha256=hashlib.sha256(document).hexdigest())
+    job, now = uuid4().hex, datetime.utcnow()
+    (pair['data'] / f'{job}.pdf').write_bytes(document)
+    with configuration._locked() as connection:
+        configuration._accept_outbound_on(connection, pair['snapshot'].active, {
+            'id': job, 'to_number': number, 'file_name': 'referral.pdf', 'tiff_path': '', 'status': 'queued',
+            'pages': 1, 'created_at': now, 'updated_at': now})
+        rules_acceptance.recorder(plan, job, actor)(connection, now)
+    return job
+
+
+@pytest.mark.asyncio
+async def test_a_rule_that_requires_direct_delivery_accepts_a_number_the_intake_files(intake):
+    from api.app.routing import envelope as envelopes
+    from api.app.rules.store import RuleStore
+    rules = RuleStore(intake['configuration'].engine)
+    draft = rules.save_draft('organization', '', {'format': 1, 'limits': [
+        {'id': 'l-direct', 'name': 'Only directly', 'on': True, 'when': {}, 'then': {'require_direct': True}}]},
+        expected_version=0)
+    rules.publish('organization', '', expected_active_revision=None, expected_draft_version=draft['version'])
+    # Before the agreement, B2 has no partner: the rule holds the fax, and nothing is sent.
+    held = accept_ruled(intake, pdf_bytes('Only directly, before'), B2)
+    pinned = envelopes.load(intake['configuration'].engine, held)
+    assert (pinned.decision.outcome, pinned.decision.reason) == ('blocked', 'needs_partner')
+    # With the agreement, a fax to B2 is accepted under the same rule and goes to B's intake, never by telephone.
+    await agree(intake)
+    document = pdf_bytes('Only directly, after')
+    job = accept_ruled(intake, document, B2)
+    pinned = envelopes.load(intake['configuration'].engine, job)
+    assert pinned.decision.outcome == 'route' and pinned.envelope.require_direct
+    conventional = await run(intake, 1)
+    assert conventional.submissions == 0 and intake['delivery'].get(job)['state'] == 'success'
+    assert intake['routes'].decision(intake['delivery'].get(job)['attempt_id'])['route'] == 'direct'
+    _, statement = receipt_of(intake, job)
+    assert statement['placement'] == {'fax_number': B2, 'mailbox': 'Billing', 'held': None}
+    assert [(to, label, data) for to, label, _, data in received()] == [(B2, 'Billing', document)]
+
+
 def _b_service():
     from api.app.direct.http import service_for
     return service_for(main.app)
