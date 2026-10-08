@@ -284,7 +284,7 @@ def test_asterisk_gets_exactly_what_its_start_script_and_dialplan_read():
                'FAXBOT_PUBLIC_ADDRESS_BIN', 'FAXBOT_ASTERISK_COMMAND', 'FAXBOT_ASTERISK_CONTROL',
                'FAXBOT_LOGIN_CHECK_SECONDS', 'FAXBOT_MEDIA_PORTS', 'FAXBOT_PHONE_SYSTEM_ADDRESS',
                'FAXBOT_MANAGER_PERMIT', 'FAXBOT_DATA_DIR', 'FAXBOT_API_URL', 'FAXBOT_NOTIFY_RETRY_SECONDS',
-               'FAXBOT_PUBLIC_ADDRESS_FILE'}
+               'FAXBOT_PUBLIC_ADDRESS_FILE', 'FAXBOT_ENGINE_VERSION_FILE'}
     assert read - builtin <= names, sorted(read - builtin - names)
 
 
