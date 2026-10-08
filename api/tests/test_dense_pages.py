@@ -386,10 +386,12 @@ def test_each_sent_call_adds_one_observation_and_the_newest_one_counts(installat
 def test_settings_default_on_and_the_rules_engine_can_ask(installation, database):
     assert installation.recipient_settings(PEER) == {'packing': 'allow', 'trim_blank': None}
     assert capability.long_pages_allowed(database, 'sip', PEER) == (True, 'route')
-    # Cloud routes stay off until someone checks the provider; a rule may turn them on, never a link route.
+    # Cloud routes stay off until someone checks the provider, a route that fetches its PDF from Faxbot included
+    # (it fetches the attempt's own pages); a rule may turn them on.
     assert capability.long_pages_allowed(database, 'sinch', PEER) == (False, 'route_off')
     assert capability.long_pages_allowed(database, 'sinch', PEER, rule='allow') == (True, 'rule')
-    assert capability.long_pages_allowed(database, 'phaxio', PEER, rule='allow') == (False, 'route_cannot')
+    assert capability.long_pages_allowed(database, 'phaxio', PEER) == (False, 'route_off')
+    assert capability.long_pages_allowed(database, 'phaxio', PEER, rule='allow') == (True, 'rule')
     installation.set_route_settings('sinch', long_pages=True, actor='person-1')
     assert capability.long_pages_allowed(database, 'sinch', PEER) == (True, 'route')
     installation.set_recipient_settings(PEER, packing='never', actor='person-1')
@@ -405,8 +407,9 @@ def test_settings_default_on_and_the_rules_engine_can_ask(installation, database
     table = sa.Table('recipient_page_settings', sa.MetaData(), autoload_with=database)
     with database.connect() as connection:
         assert connection.execute(sa.select(sa.func.count()).select_from(table)).scalar() == 0
+    assert installation.set_route_settings('phaxio', long_pages=True)['long_pages'] is True
     with pytest.raises(ValueError):
-        installation.set_route_settings('phaxio', long_pages=True)
+        installation.set_route_settings('not a route', long_pages=True)
 
 
 # Lossless resolution matching -----------------------------------------------------------------------------------
@@ -554,7 +557,9 @@ def test_a_send_the_codec_makes_cheapest_records_the_codec_alone(installation, d
     assert len(conversion.read_fax_frames(changed.tiff)) == 1
     view = views.sent_view(database, JOB)
     assert view['layout'] == 'codec'
-    assert view['sentences'] == ['Sent as 1 encoded page instead of 5; the receiving Faxbot decodes it.']
+    # The record keeps the codec's own sentence; the Sent detail words the layout for the attempt's state.
+    assert _change(database)['reason'] == 'Sent as 1 encoded page instead of 5; the receiving Faxbot decodes it.'
+    assert view['sentences'] == ['Sent as 1 encoded page instead of 5 (experimental).']
 
 
 def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, database, tmp_path):
@@ -586,6 +591,12 @@ def _new_attempt(database, attempt_id, sequence):
     with database.begin() as connection:
         connection.execute(attempts.insert().values(**_filled(attempts, {
             'id': attempt_id, 'job_id': JOB, 'sequence': sequence, 'phase': 'prepared', 'created_at': NOW})))
+
+
+def _phase(database, attempt_id, phase):
+    attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=database)
+    with database.begin() as connection:
+        connection.execute(attempts.update().where(attempts.c.id == attempt_id).values(phase=phase))
 
 
 def opt_in(database, *numbers):
@@ -696,7 +707,11 @@ def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it
     _new_attempt(database, first, 1)
     with priced(sinch=card('sinch', per_page='0.045'), sip=card('sip', per_minute='0.005', increment=1)):
         assert _send(database, tmp_path, route='sinch', attempt=first).sent_pages == 1  # encoded, on Sinch
-        assert views.sent_view(database, JOB)['sentences'] == ['Sent as 1 encoded page instead of 5 (experimental).']
+        # One sentence for each state of the attempt.
+        assert views.sent_view(database, JOB)['sentences'] == ['Going as 1 encoded page instead of 5 (experimental).']
+        _phase(database, first, 'failed')
+        assert views.sent_view(database, JOB)['sentences'] == [
+            'Tried as 1 encoded page instead of 5; the call failed.']
         _new_attempt(database, second, 2)
         retried = _send(database, tmp_path, attempt=second)  # the same fax over the phone line, billed by time
     assert (retried.original_pages, retried.sent_pages) == (5, 2)
@@ -704,7 +719,15 @@ def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it
     # The codec's details stay those of the first attempt; the Sent detail follows the second.
     assert send_for(database, JOB)['provider_id'] == 'sinch'
     assert views.sent_view(database, JOB)['sentences'] == [
+        'Going as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
+    _phase(database, second, 'success')
+    assert views.sent_view(database, JOB)['sentences'] == [
         'Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
+    _phase(database, second, 'failed')
+    assert views.sent_view(database, JOB)['sentences'] == ['Tried as 2 long pages instead of 5; the call failed.']
+    _phase(database, second, 'cancelled')
+    assert views.sent_view(database, JOB)['sentences'] == [
+        'Prepared as 2 long pages instead of 5; the fax was cancelled.']
 
 
 def test_encoded_pages_are_never_lightened(installation, database, tmp_path, monkeypatch):
@@ -807,7 +830,13 @@ def test_cloud_routes_send_a_packed_pdf_only_once_turned_on(installation, databa
     changed = _send(database, tmp_path, route='sinch')
     assert changed.tiff is None and changed.pdf.endswith('.pdf') and changed.sent_pages == 2
     assert conversion.validate_pdf(changed.pdf) == 2
-    assert _send(database, tmp_path, route='phaxio') is None  # Phaxio fetches the PDF: it never takes long pages
+    # Phaxio fetches the PDF from Faxbot, which serves the attempt's own pages: off until turned on, like Sinch.
+    assert _send(database, tmp_path, route='phaxio') is None
+    installation.set_route_settings('phaxio', long_pages=True)
+    fetched = _send(database, tmp_path, route='phaxio', attempt='c' * 32)
+    assert fetched.pdf.endswith(f'packed-{JOB}-{"c" * 32}.pdf') and fetched.sent_pages == 2
+    assert sending.fetched_pdf(tmp_path / f'{JOB}.pdf', JOB, f'https://x/fax/{JOB}/pdf?token=t&attempt={"c" * 32}') \
+        == tmp_path / f'packed-{JOB}-{"c" * 32}.pdf'
 
 
 def test_savings_count_packed_pages_on_delivered_sends_per_billing_model(installation, database, tmp_path):
@@ -915,8 +944,13 @@ def test_the_console_and_command_line_read_and_change_page_settings(monkeypatch,
         assert client.get('/routing/destinations/not-a-number/pages', headers=admin).status_code == 400
         routes = {item['route']: item for item in client.get('/routing/page-routes', headers=admin).json()['routes']}
         assert routes['sip']['long_pages'] and routes['sip']['trim_blank'] is True
-        assert not routes['sinch']['long_pages'] and not routes['phaxio']['long_pages_possible']
-        assert client.put('/routing/page-routes/phaxio', headers=admin, json={'long_pages': True}).status_code == 400
+        assert not routes['sinch']['long_pages'] and not routes['phaxio']['long_pages']
+        # Phaxio fetches the document from Faxbot, which serves the attempt's own pages: off until checked.
+        assert routes['phaxio']['long_pages_possible'] and routes['phaxio']['sentence'] == (
+            'Off until you check that Phaxio sends long pages without shrinking them: turn it on, fax a few pages '
+            'to one of your own numbers on your phone line, and compare what arrives.')
+        turned = client.put('/routing/page-routes/phaxio', headers=admin, json={'long_pages': True})
+        assert turned.status_code == 200 and turned.json()['long_pages'] is True
         assert client.put('/routing/page-routes/unknown', headers=admin, json={'long_pages': True}).status_code == 404
         cli = Cli(client)
         result = cli('recipients', 'set', PEER, '--pages-per-sheet', 'machine', '--blank-space', 'off')
@@ -927,5 +961,5 @@ def test_the_console_and_command_line_read_and_change_page_settings(monkeypatch,
         result = cli('providers', 'long-pages', 'sinch', '--long-pages', 'on')
         assert result.exit_code == 0 and 'Sinch gets several pages on one long page' in result.stdout
         listed = ' '.join(cli('providers', 'long-pages').stdout.split())
-        assert 'sinch' in listed and 'fetches the document from Faxbot itself' in listed
+        assert 'sinch' in listed and 'Phaxio gets several pages on one long page' in listed
         assert cli('providers', 'long-pages', 'sinch', '--long-pages', 'maybe').exit_code != 0

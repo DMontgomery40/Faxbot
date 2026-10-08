@@ -17,20 +17,37 @@ def _pages(count, word='page'):
     return f'{count} {word}' if count == 1 else f'{count} {word}s'
 
 
-def packed_sentence(change):
-    """"Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length." or None."""
-    if not change or change.get('layout') is None:
+def packed_sentence(change, phase=None):
+    """One sentence for the layout an attempt kept (dense pages or the experimental encoded pages), for the
+    attempt's state, or None for the pages' own layout:
+
+    - delivered (``phase`` 'success', or not known): "Sent as 2 long pages instead of 5; the receiving machine
+      accepts unlimited length." / "Sent as 1 encoded page instead of 5 (experimental).";
+    - failed: "Tried as 2 long pages instead of 5; the call failed.";
+    - cancelled: "Prepared as 2 long pages instead of 5; the fax was cancelled.";
+    - any other state (on its way, or its outcome not known yet): "Going as …", worded as when delivered.
+    """
+    if not change or change.get('layout') not in ('dense', 'codec'):
         return None
-    if change.get('reason'):
-        return change['reason']
-    if change['layout'] != 'dense' or change['sent_pages'] >= change['original_pages']:
-        return f"Sent as {_pages(change['sent_pages'])} instead of {change['original_pages']}." 
-    head = f"Sent as {_pages(change['sent_pages'], 'long page')} instead of {change['original_pages']}"
-    limit = change.get('page_limit') or capabilities.DEFAULT_LIMIT
-    if change.get('limit_learned_at') is None:
-        return (f"{head}; the receiving machine's longest page is not known yet, so Faxbot kept to "
-                f"{LIMIT_TEXT[limit]}.")
-    return f'{head}; the receiving machine accepts {LIMIT_TEXT[limit]}.'
+    sent, original = change['sent_pages'], change['original_pages']
+    if change['layout'] == 'codec':
+        what, tail = _pages(sent, 'encoded page'), ' (experimental).'
+    elif sent >= original:
+        what, tail = _pages(sent), '.'
+    else:
+        what = _pages(sent, 'long page')
+        limit = change.get('page_limit') or capabilities.DEFAULT_LIMIT
+        if change.get('limit_learned_at') is None:
+            tail = (f"; the receiving machine's longest page is not known yet, so Faxbot kept to "
+                    f"{LIMIT_TEXT[limit]}.")
+        else:
+            tail = f'; the receiving machine accepts {LIMIT_TEXT[limit]}.'
+    if phase == 'failed':
+        return f'Tried as {what} instead of {original}; the call failed.'
+    if phase == 'cancelled':
+        return f'Prepared as {what} instead of {original}; the fax was cancelled.'
+    verb = 'Sent as' if phase in (None, 'success') else 'Going as'
+    return f'{verb} {what} instead of {original}{tail}'
 
 
 def trimmed_sentence(change):
@@ -49,26 +66,30 @@ def newest_attempt_change(engine, job_id):
     """The page change of the fax's newest attempt, or None when that attempt sent its pages as they were.
 
     The Sent detail follows the attempt, as the lightened pages' line does (``friendly.run_for``): a fax that
-    went as encoded pages and then as its own pages on another route shows the second attempt. Without attempt
-    records, the newest change."""
+    went as encoded pages and then as its own pages on another route shows the second attempt. The change
+    carries that attempt's state as ``attempt_phase``. Without attempt records, the newest change (state not
+    known)."""
     records = records_for(engine)
     table = records.table('fax_page_changes')
 
     def read(connection):
         query = sa.select(table).where(table.c.job_id == job_id)
+        newest = None
         try:
             attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
         except sa.exc.NoSuchTableError:
             attempts = None
         if attempts is not None:
-            newest = connection.execute(sa.select(attempts.c.id).where(attempts.c.job_id == job_id).order_by(
-                attempts.c.sequence.desc()).limit(1)).scalar()
+            newest = connection.execute(sa.select(attempts.c.id, attempts.c.phase).where(
+                attempts.c.job_id == job_id).order_by(attempts.c.sequence.desc()).limit(1)).first()
             if newest is not None:
-                query = query.where(table.c.attempt_id == newest)
-        return connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)
-                                  ).mappings().first()
-    row = records._read(read)
-    return dict(row) if row is not None else None
+                query = query.where(table.c.attempt_id == newest[0])
+        row = connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)
+                                 ).mappings().first()
+        if row is None:
+            return None
+        return {**dict(row), 'attempt_phase': newest[1] if newest is not None else None}
+    return records._read(read)
 
 
 def sent_view(engine, job_id, root=None):
@@ -85,7 +106,8 @@ def sent_view(engine, job_id, root=None):
     from .friendly import call_rate, run_for, seconds_at, sent_sentence
     lightened = run_for(engine, job_id)
     rate = call_rate(engine, job_id) if lightened else None
-    sentences = [text for text in (packed_sentence(change), trimmed_sentence(change),
+    sentences = [text for text in (packed_sentence(change, (change or {}).get('attempt_phase')),
+                                   trimmed_sentence(change),
                                    RESOLUTION_SENTENCE if resolution == 'standard' else None,
                                    sent_sentence(lightened, rate)) if text]
     if not sentences:
@@ -132,7 +154,7 @@ def recipient_view(engine, number):
 
 def route_sentence(view, label):
     if not view['long_pages_possible']:
-        return f'{label} fetches the document from Faxbot itself, so long pages cannot be sent through it.'
+        return f'Long pages cannot be sent through {label}.'
     if view['route'] in capabilities.IMAGE_ROUTES:
         return ('Faxbot puts several pages on one long page when the receiving machine takes long pages and it '
                 'saves pages or time.')

@@ -41,14 +41,14 @@ describe('Dense pages on the Recipients, Delivery routes and Savings screens', (
     expect(writes).toEqual([{ packing: 'never', trim_blank: false, shading: null }]);
   });
 
-  it('turns long pages on for a cloud route and keeps a route that fetches its own document off', async () => {
+  it('turns long pages on for cloud routes, a route that fetches its document from Faxbot included', async () => {
     const routes = [
       { route: 'sip', label: 'Telnyx', long_pages: true, long_pages_chosen: false, long_pages_possible: true,
         trim_blank: true, sentence: 'Faxbot puts several pages on one long page when the receiving machine takes long pages and it saves pages or time.' },
       { route: 'sinch', label: 'Sinch', long_pages: false, long_pages_chosen: false, long_pages_possible: true,
         trim_blank: null, sentence: 'Off until you check that Sinch sends long pages without shrinking them.' },
-      { route: 'phaxio', label: 'Phaxio', long_pages: false, long_pages_chosen: false, long_pages_possible: false,
-        trim_blank: null, sentence: 'Phaxio fetches the document from Faxbot itself, so long pages cannot be sent through it.' },
+      { route: 'phaxio', label: 'Phaxio', long_pages: false, long_pages_chosen: false, long_pages_possible: true,
+        trim_blank: null, sentence: 'Off until you check that Phaxio sends long pages without shrinking them.' },
     ];
     const writes: unknown[] = [];
     server.use(
@@ -62,9 +62,11 @@ describe('Dense pages on the Recipients, Delivery routes and Savings screens', (
     render(<RoutePagesPanel client={client()} canWrite routes={['sip', 'sinch', 'phaxio']} />);
     const panel = await screen.findByTestId('route-pages');
     const phaxio = within(panel).getByLabelText('Phaxio: several pages on one long page');
-    expect(phaxio).toHaveProperty('disabled', true);
+    expect(phaxio).toHaveProperty('disabled', false);
     fireEvent.click(within(panel).getByLabelText('Sinch: several pages on one long page'));
     await waitFor(() => expect(writes).toEqual([{ route: 'sinch', long_pages: true }]));
+    fireEvent.click(phaxio);
+    await waitFor(() => expect(writes).toContainEqual({ route: 'phaxio', long_pages: true }));
     fireEvent.click(within(panel).getByLabelText(
       'Blank space at the bottom of pages: leave it out for machines without error correction'));
     await waitFor(() => expect(writes).toContainEqual({ route: 'sip', trim_blank: false }));
