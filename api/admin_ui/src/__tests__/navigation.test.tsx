@@ -204,7 +204,7 @@ describe('the console shell', () => {
       }
     }
     // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders and Faxes → Forms.
-    expect(opened).toHaveLength(44);
+    expect(opened).toHaveLength(46);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);
