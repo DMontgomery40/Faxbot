@@ -77,9 +77,20 @@ def is_relay(key):
     return isinstance(key, str) and RELAY_KEY.fullmatch(key) is not None
 
 
+# Every Direct message and FHIR route at once (``digital/``): "never: [digital]", "try_in_order: [digital, sip]".
+DIGITAL = 'digital'
+# One recipient's confirmed Direct address or FHIR endpoint (``digital_addresses.id``).
+DIGITAL_KEY = re.compile(r'(dsm|fhir):[a-f0-9]{32}')
+
+
+def is_digital(key):
+    """Whether ``key`` names a digital route: one recipient's (``dsm:<id>``, ``fhir:<id>``) or all of them."""
+    return isinstance(key, str) and (key == DIGITAL or DIGITAL_KEY.fullmatch(key) is not None)
+
+
 def route_key(key):
-    """Whether ``key`` can name a route in a rule: an account key or a partner relay."""
-    return isinstance(key, str) and (ACCOUNT_KEY.fullmatch(key) is not None or is_relay(key))
+    """Whether ``key`` can name a route in a rule: an account key, a partner relay or a digital route."""
+    return isinstance(key, str) and (ACCOUNT_KEY.fullmatch(key) is not None or is_relay(key) or is_digital(key))
 # Keys of lists, regions, sites, workflows and rules in a document.
 DEFINITION_KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
 

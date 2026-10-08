@@ -56,6 +56,11 @@ def is_relay(key):
     return isinstance(key, str) and (key == RELAY or key.startswith(RELAY + ':') or key.startswith(RELAY + '.'))
 
 
+def is_digital(key):
+    """A digital route key in its rule form (``dsm:<id>``, ``fhir:<id>``) or its ledger form (``dsm.<id>``)."""
+    return isinstance(key, str) and model.DIGITAL_KEY.fullmatch(key.replace('.', ':', 1)) is not None
+
+
 @dataclass(frozen=True)
 class Pinned:
     """The current decision for one fax, as dispatch reads it."""
@@ -99,6 +104,12 @@ class Pinned:
             return self.local_allowed()
         if key == model.DIRECT:
             return self.direct_allowed()
+        if is_digital(key):
+            # A recipient's Direct address or FHIR endpoint (digital/): named by its key or by the group "digital".
+            named = key.replace('.', ':', 1)
+            if self.envelope.require_direct or self._never(model.DIGITAL) or self._never(named):
+                return False
+            return self.automatic or named in self.envelope.accounts or model.DIGITAL in self.envelope.accounts
         if is_relay(key):
             if self.envelope.require_direct or self.envelope.require_encryption or self._never(RELAY):
                 return False

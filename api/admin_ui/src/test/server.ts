@@ -720,6 +720,12 @@ const consoleHandlers = [
   // A recipient's toll-free number: none on file.
   http.get('/routing/destinations/:number/toll-free', ({ params }) => json({ number: String(params.number), current: null,
     history: [], approved_alternate: null, sentence: null })),
+  // Direct messages and FHIR: no account, no address on file, no message sent or received.
+  http.get('/digital/accounts', () => json({ generation: 1, accounts: [], kinds: [], presets: [] })),
+  http.get('/digital/recipients/:number', ({ params }) => json({ number: String(params.number), addresses: [],
+    accounts: [], sentence: 'Faxes to this number go only by fax until you confirm a Direct address or FHIR endpoint.' })),
+  http.get('/digital/messages', () => json({ messages: [] })),
+  http.get('/digital/faxes/:job', ({ params }) => json({ job_id: String(params.job), messages: [] })),
   // Caller-name lookup at Telnyx: nothing to show until a test says otherwise.
   http.get('/admin/sip/telnyx/names', () => json({ applies: false, numbers: [], text: null,
     price: { text: '$0.40 a month for each number', monthly: { currency: 'USD', amount: '0.40' },

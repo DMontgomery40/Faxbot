@@ -111,14 +111,48 @@ def _installation_relay_route(inner):
         return None
 
 
+def _installation_digital_route(inner):
+    """The installation's Direct message and FHIR route (``digital/routes.py``), built like the relay route."""
+    runtime = getattr(inner, 'runtime', None)
+    store = getattr(getattr(runtime, 'manager', None), 'store', None)
+    if store is None:
+        return None
+    from ..digital.routes import DigitalRoute
+    return DigitalRoute(store.engine, values=lambda: store.read().active.values)
+
+
+class _DigitalOperation:
+    """A Direct message or FHIR document, with the fax's own route behind it when nothing left Faxbot."""
+
+    def __init__(self, transport, claim, plan, digital, conventional):
+        self.transport, self.claim, self.plan = transport, claim, plan
+        self.digital, self.conventional = digital, conventional
+
+    async def submit(self):
+        from ..outbound_worker import SubmissionReceipt
+        try:
+            return await self.digital.submit()
+        except DirectRefused as refusal:
+            if self.conventional is not None:
+                # Nothing reached the HISP or FHIR server, so the fax route is a first send.
+                await run_lifecycle_step(lambda: self.transport.record_fallback(self.claim, self.plan))
+                return await self.conventional.submit()
+            # A definite refusal is a failure, never an uncertain attempt; the fax may go by its next route.
+            sentence = (str(refusal) or 'The digital route did not take this fax; nothing was sent.')[:200]
+            return SubmissionReceipt(None, 'failed', error=sentence)
+
+
 class RoutedTransport:
-    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None, relay=_AUTOMATIC):
+    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None, relay=_AUTOMATIC,
+                 digital=_AUTOMATIC):
         """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``);
-        ``relay`` sends a fax through a partner's relay when the plan chose ``relay:<partner>``."""
+        ``relay`` sends a fax through a partner's relay when the plan chose ``relay:<partner>``; ``digital``
+        sends it as a Direct message or FHIR document when the plan chose ``dsm:<id>`` or ``fhir:<id>``."""
         self.inner = inner
         self.store = inner.store
         self.direct = _installation_direct_route(inner) if direct is _AUTOMATIC else direct
         self.relay = _installation_relay_route(inner) if relay is _AUTOMATIC else relay
+        self.digital = _installation_digital_route(inner) if digital is _AUTOMATIC else digital
         self.local = local
         self._route_store = route_store
 
@@ -217,7 +251,7 @@ class RoutedTransport:
         skipped = list(_skipped(plan))
         for place, choice in enumerate(plan.choices):
             route = choice.route
-            if route.kind in ('direct', 'local', 'relay'):
+            if route.kind in ('direct', 'local', 'relay', 'digital'):
                 return self._chosen(plan, choice, skipped), claim
             # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).
             if (route.provider_id == 'sip' or self._limited(revision, route.key)) and not self._trunk_has_room(
@@ -399,6 +433,7 @@ class RoutedTransport:
             return
         if choice is not None and plan is not None and _pinned(plan) is not None and (
                 (choice.route.kind == 'relay' and self.relay is None)
+                or (choice.route.kind == 'digital' and self.digital is None)
                 or (choice.route.kind == 'direct' and self.direct is None)) \
                 and not await run_lifecycle_step(lambda: self._bound_allowed(claim)):
             # The route the rules allow cannot be prepared here, and the fax's own account is not allowed.
@@ -429,6 +464,32 @@ class RoutedTransport:
                     yield conventional
                     return
                 yield _RoutedOperation(self, claim, plan, relayed, conventional)
+            return
+        if choice is not None and choice.route.kind == 'digital' and self.digital is not None:
+            # A Direct message or FHIR document: a definite refusal (nothing left Faxbot) lets the fax's own route
+            # send it in the same attempt, recorded as a fallback; anything that may have arrived is uncertain.
+            async with AsyncExitStack() as stack:
+                conventional = None
+                if any(c.route.bound for c in plan.choices):
+                    try:
+                        conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                    except PreparationFailure:
+                        conventional = None
+                try:
+                    sending = await stack.enter_async_context(self.digital.prepare(
+                        claim, plan, job, choice, revision_values=revision.values))
+                except DirectRefused as refusal:
+                    logging.getLogger(__name__).info('A digital route could not start: %s', refusal)
+                    if conventional is None and _pinned(plan) is not None:
+                        await run_lifecycle_step(lambda: self._hold(claim, plan, (
+                            'The Direct or FHIR route your rules chose could not take this fax, and no other account '
+                            'your rules allow could. It waits for you in Sent; nothing was sent.')))
+                    if conventional is None:
+                        raise PreparationFailure('provider_unavailable') from None
+                    await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
+                    yield conventional
+                    return
+                yield _DigitalOperation(self, claim, plan, sending, conventional)
             return
         if choice is None or choice.route.kind != 'direct' or self.direct is None:
             async with AsyncExitStack() as stack:

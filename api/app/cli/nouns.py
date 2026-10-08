@@ -14,6 +14,7 @@ from .commands import send_once
 from .commands import charges as charge_commands
 from .commands import setup_plan
 from .commands import number_advice
+from .commands import digital
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -144,6 +145,7 @@ recipients.add_typer(partners, name='partners')
 recipients.add_typer(case_commands.cases, name='cases')
 recipients.add_typer(delivery.toll_free, name='toll-free')
 recipients.command('check')(number_advice.recipient_check)
+recipients.add_typer(digital.recipients, name='digital')
 
 # -- providers -----------------------------------------------------------------------
 
@@ -166,6 +168,7 @@ humblefax.command('check')(settings.humblefax_check)
 providers.add_typer(humblefax, name='humblefax')
 providers.add_typer(trunk.trunk, name='trunk')
 providers.add_typer(accounts.accounts, name='accounts')
+providers.add_typer(digital.accounts, name='digital')
 providers.add_typer(rules.rules, name='rules')
 
 # -- costs ---------------------------------------------------------------------------

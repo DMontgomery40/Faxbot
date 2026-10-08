@@ -27,6 +27,7 @@ class CheckContext:
     prices: dict = field(default_factory=dict)  # account -> (micros for one page, currency), or None when unknown
     matches_30_days: dict | None = None        # rule ID -> faxes it matched in the last 30 days
     relays: frozenset | None = None            # partner IDs that relay for this installation (direct/relay.py)
+    digital: frozenset | None = None           # confirmed Direct address and FHIR endpoint IDs (digital/)
 
 
 class _Findings:
@@ -116,6 +117,13 @@ def _references(kind, document, organization, context, findings):
 
     def account(rule, key, path, *, sending=True):
         if key in model.RESERVED_KEYS:
+            return
+        if model.is_digital(key):
+            if key != model.DIGITAL and context.digital is not None and key.split(':', 1)[1] not in context.digital:
+                kind = 'a Direct address' if key.startswith('dsm:') else 'a FHIR endpoint'
+                findings.error('unknown_account', f'{_name(rule)} names {kind} that is no longer confirmed; confirm '
+                                                  'it again under Recipients, or name digital for every one.',
+                               rule.get('id'), path)
             return
         if model.is_relay(key):
             if context.relays is not None and key[len('relay:'):] not in context.relays:

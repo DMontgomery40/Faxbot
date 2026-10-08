@@ -34,12 +34,14 @@ DIRECT = 'direct'
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
            'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule')
 # A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
-CALLING = ('provider', 'relay')
+# Ranked by cost against each other: provider accounts, partner relays and digital routes (Direct, FHIR).
+CALLING = ('provider', 'relay', 'digital')
 
 
 @dataclass(frozen=True)
 class RouteCandidate:
-    """``key`` is ``local``, ``direct``, a provider account or a partner relay; one candidate per key."""
+    """``key`` is ``local``, ``direct``, a provider account, a partner relay or a digital route (``dsm:``/``fhir:``);
+    one candidate per key."""
     key: str
     kind: str
     provider_id: str
@@ -51,7 +53,7 @@ class RouteCandidate:
     doubt: int = 0
 
     def __post_init__(self):
-        if self.kind not in {'local', 'direct', 'provider', 'relay'}:
+        if self.kind not in {'local', 'direct', 'provider', 'relay', 'digital'}:
             raise ValueError('Unknown route kind.')
 
 

@@ -29,10 +29,11 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
-    'partly_sent', 'pages_unconfirmed', 'local_not_delivered'})
+    'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing'})
 # A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
-# failed or waiting for a person, never resent automatically (no other route takes it).
-NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed'})
+# failed or waiting for a person, never resent automatically (no other route takes it). ``notice_missing``: a
+# Direct message the recipient's HISP never confirmed within the wait (digital/direct_message.py).
+NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
@@ -1026,12 +1027,14 @@ class OutboundStore:
 
     def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key, category='pages_unconfirmed',
                            now=None):
-        """A shared call ended without a confirmed page count: this fax may have arrived.
+        """A shared call ended without a confirmed page count, or a Direct message's notice never came
+        (``notice_missing``): this fax may have arrived.
 
         The fax waits for a person, exactly like an unacknowledged submission;
         nothing is sent again. A repeated report has no further effect.
         """
-        if category != 'pages_unconfirmed' or not isinstance(event_key, str) or not event_key or len(event_key) > 512:
+        if category not in ('pages_unconfirmed', 'notice_missing') or not isinstance(event_key, str) or not event_key \
+                or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
@@ -1265,7 +1268,8 @@ class OutboundStore:
         profile_id = connection.scalar(sa.select(self.attempts.c.profile_id).where(
             self.attempts.c.id == member.attempt_id))
         no_call = choice is not None and (choice['account_key'] in ('local', 'direct')
-                                          or envelopes.is_relay(choice['account_key']))
+                                          or envelopes.is_relay(choice['account_key'])
+                                          or envelopes.is_digital(choice['account_key']))
         if choice is None or not pinned.allows(choice['account_key']) or (not no_call and profile_id == bound.id):
             return ('Faxbot could not confirm that this fax was going by a route your rules allow, so nothing was '
                     'sent. It waits for you in Sent.')

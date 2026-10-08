@@ -39,6 +39,7 @@ import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import { FaxCertaintyItem } from './work/SentCertainty';
 import { SentContinuation } from './work/SentContinuation';
+import { DigitalFaxOutcome } from './delivery/DigitalMessages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
@@ -834,6 +835,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           {reviewRequired && !detailBusy && !deliveryError && !jobActionError && <Alert severity="warning" sx={{ mb: 2 }}>
             Select Reload to see the latest details before confirming receipt.
           </Alert>}
+          {selectedJob && <DigitalFaxOutcome client={client} jobId={selectedJob.id} />}
           {delivery && <>
             {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>

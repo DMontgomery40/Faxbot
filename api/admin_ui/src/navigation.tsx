@@ -65,6 +65,8 @@ import Connectors from './components/delivery/Connectors';
 import ProvidersInUse from './components/ProvidersInUse';
 import ProviderRules, { type NumberRuleSummary } from './components/ProviderRules';
 import ProviderAccounts from './components/ProviderAccounts';
+import DigitalAccounts from './components/DigitalAccounts';
+import { DigitalReceived } from './components/delivery/DigitalMessages';
 import { MailboxSendingRulesPicker } from './components/MailboxSendingRules';
 import { rulesApiFor } from './components/ProviderRulesApi';
 import { currencyFor } from './components/ProviderRulesText';
@@ -250,12 +252,15 @@ export const NAVIGATION: NavArea[] = [
     id: 'faxes', label: 'Faxes', icon: <FaxIcon />,
     pages: [
       { id: 'received', label: 'Received', icon: <InboxIcon />, gate: { navigation: ['inbox', 'work'] }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx, <Received client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
-          onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions}
-          canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
-          show={readFilter(ctx.params.get('show'))}
-          onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
-          onSendFax={sendFax(ctx)} onOpenSentFax={ctx.openJob} />) },
+        render: (ctx) => whenContextReady(ctx, <>
+          <Received client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
+            onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions}
+            canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
+            show={readFilter(ctx.params.get('show'))}
+            onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
+            onSendFax={sendFax(ctx)} onOpenSentFax={ctx.openJob} />
+          {ctx.permissions.has('settings:read') && <DigitalReceived client={ctx.client} />}
+        </>) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
         render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
@@ -340,6 +345,8 @@ export const NAVIGATION: NavArea[] = [
             <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
             <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
               currency={currency(ctx)} onNavigate={ctx.navigate} />
+            {ctx.permissions.has('providers:read') && <DigitalAccounts client={ctx.client}
+              canWrite={ctx.permissions.has('providers:write')} />}
             {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
             {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
           </>) },

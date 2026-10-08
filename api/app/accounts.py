@@ -29,7 +29,8 @@ import sqlalchemy as sa
 
 
 KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
-RESERVED = ('local', 'direct')
+# 'digital' names every Direct message and FHIR route in sending rules (rules.model.DIGITAL).
+RESERVED = ('local', 'direct', 'digital')
 # Providers an extra account can be added for, with the settings each asks for: (name, the provider's own
 # configuration field, label, required for an extra account, help). Secrets are the fields the configuration
 # model marks secret; they are write-only.
@@ -300,7 +301,10 @@ def _extra(values, key, doc):
 
 
 def _is_extra(key, doc):
-    return isinstance(doc, dict) and bool(doc.get('provider')) and doc.get('provider') != key
+    # A digital account (a HISP account or FHIR client, ``digital/accounts.py``) shares the document but is never a
+    # fax account: it is not a sending account, a provider route or a receiving number.
+    return (isinstance(doc, dict) and bool(doc.get('provider')) and doc.get('provider') != key
+            and doc.get('kind') != 'digital')
 
 
 def all_accounts(values):

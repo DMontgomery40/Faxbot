@@ -234,6 +234,16 @@ def decide(compiled, facts, accounts):
             elif key not in order:
                 order.append(key)
             continue
+        if model.is_digital(key):
+            # A Direct message or a FHIR document (digital/): no call, encrypted on the way, but not a verified Faxbot
+            # partner, so it never meets "direct only". Which recipients have one is known only at dispatch.
+            if model.DIGITAL in limits.never:
+                excluded.append(Excluded(key, 'never', limits.never[model.DIGITAL]))
+            elif limits.require_direct is not None:
+                excluded.append(Excluded(key, 'direct_required', limits.require_direct))
+            elif key not in order:
+                order.append(key)
+            continue
         if account is None:
             excluded.append(Excluded(key, 'unknown_account', route))
         elif not account.sends:
@@ -248,6 +258,10 @@ def decide(compiled, facts, accounts):
             order.append(key)
     capped = []
     for key in order:
+        if model.is_digital(key):
+            # Priced at dispatch, where the recipient's addresses are known; a cap is checked there (routing/plan.py).
+            capped.append(key)
+            continue
         quote = _quote(facts, key, quoted)
         for cap, mandatory in limits.caps.values():
             if quote is None or quote.micros is None or quote.currency != cap.currency:

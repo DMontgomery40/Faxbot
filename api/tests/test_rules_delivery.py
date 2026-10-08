@@ -996,6 +996,35 @@ def test_the_planner_ranks_partner_relays_with_its_own_routes_by_cost(sender):
     assert all(choice.route.kind != 'relay' for choice in direct_only.choices)
 
 
+@pytest.mark.parametrize('mode, accounts', [('one', ('relay:{cheap}',)),
+                                            ('ordered', ('relay:{cheap}', 'phaxio')),
+                                            ('ordered', ('phaxio', 'relay:{cheap}')),
+                                            # Ranked by cost: the relay's 4 cents beat Phaxio's 20. Before the fix the
+                                            # relay was listed twice and the policy refused to rank.
+                                            ('cheapest', ('relay:{cheap}', 'phaxio'))])
+def test_a_rule_naming_a_relay_puts_the_relay_itself_where_the_rule_lists_it(sender, mode, accounts):
+    """``use: relay:<partner>`` and ``try_in_order: [relay:<partner>, ...]``: the relay is the route at its place in
+    the rule's order, never a provider account that the transport then skips as unavailable."""
+    from api.app.rules import model
+    from api.tests.test_partner_relay_terms import DEST, NOW
+    cheap = sender.partner('Sydney office', '+61255501234', 20_000)
+    accounts = tuple(item.format(cheap=cheap) for item in accounts)
+    routes = RouteStore(sender.engine)
+    routes.replace_cards([card('phaxio', page='0.10')])
+    values = SimpleNamespace(fax_default_country='US', sip_trunk_preset='', outbound_route_providers=(),
+                             direct_delivery_enabled=False, route_min_success_percent=80, sip_trunk_did_list=(),
+                             local_delivery_enabled=False)
+    decision = model.Decision(outcome='route', envelope=model.Envelope(mode=mode, accounts=accounts),
+                              route=model.Source('rule', scope='organization', rule_id='r-relay'),
+                              facts_digest='0' * 64)
+    pinned = envelopes.Pinned('decision-1', 1, decision, model.Facts(DEST, '2026-10-07T03:00:00'))
+    plan = RoutePlanner(routes).plan(to_number=DEST, bound='phaxio', values=values, pages=2, alternates=True,
+                                     now=NOW, pinned=pinned)
+    assert [(choice.route.key, choice.route.kind) for choice in plan.choices] == [
+        (key, 'relay' if key.startswith('relay:') else 'provider') for key in accounts]
+    assert plan.choices[0].reason == ('cheapest' if mode == 'cheapest' else 'rule') and plan.skipped == ()
+
+
 # The trunk's engine down ----------------------------------------------------------------------------------------------
 
 TRUNK = {**BASE, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': 'signalwire', 'SIP_TRUNK_PRESET': 'telnyx',

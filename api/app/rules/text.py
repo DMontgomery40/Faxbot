@@ -42,6 +42,9 @@ def account_label(key, accounts=()):
         return 'Partner relays'
     if model.is_relay(key):
         return relay_label(key)
+    if model.is_digital(key):
+        from ..digital.text import route_label as digital_label
+        return digital_label(key)
     try:
         from ..routing.plan import route_label
         return route_label(key)
