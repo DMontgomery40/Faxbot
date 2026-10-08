@@ -168,16 +168,3 @@ def combine(*steps):
         for step in present:
             step(connection, now)
     return run
-
-
-def sentence(row, status='success'):
-    """The fax detail line for a fax sent (or going) as payload pages, or None."""
-    if not row:
-        return None
-    count, original = row['pages_encoded'], row['pages_original']
-    pages = f'{count} encoded page{"s" if count != 1 else ""} instead of {original} (experimental).'
-    if status == 'success':
-        return 'Sent as ' + pages
-    if status in ('failed', 'cancelled'):
-        return 'Prepared as ' + pages
-    return 'Going as ' + pages

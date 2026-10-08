@@ -1,8 +1,9 @@
 """HTTP surface of the experimental payload codec.
 
-Per-number settings use the settings permissions. A sent fax's encoded-pages
-line needs read access to that fax; a received fax's decode result and its
-decoded original need access to that fax's document.
+Per-number settings use the settings permissions. A received fax's decode
+result and its decoded original need access to that fax's document. A sent
+fax's encoded pages are said in its page line (``pages.views.sent_view``, the
+Sent detail), because each attempt chooses its pages' layout.
 """
 from datetime import timezone
 
@@ -16,8 +17,8 @@ from ..audit import audit_event
 from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine
 from ..routing.numbers import InvalidNumber, normalize_number
-from . import receive, send
-from .store import (CodecConflict, CodecInputError, CodecSettings, CodecStoreError, KeySeal, receipt_for, send_for)
+from . import receive
+from .store import CodecConflict, CodecInputError, CodecSettings, CodecStoreError, KeySeal, receipt_for
 
 router = APIRouter(prefix='/codec', tags=['Encoded pages (experimental)'])
 
@@ -144,39 +145,6 @@ async def put_number(number: str, payload: NumberSetting, request: Request,
 @router.delete('/numbers/{number}')
 async def delete_number(number: str, request: Request, identity=Depends(require_permission('settings:write'))):
     return await _save(request, identity, _number(number, request), NumberSetting(enabled=False))
-
-
-def _send_view(engine, job_id, status):
-    """Whether the fax's newest attempt sent encoded pages, and how. Each attempt chooses its own layout
-    (``pages/sending.py``), so a fax that later went as its own pages on another route says encoded False.
-    The Sent detail shows the attempt's sentence once, in its page line (``pages.views.sent_view``)."""
-    from ..pages.capability import PageRecordError
-    from ..pages.views import newest_attempt_change
-    try:
-        change = newest_attempt_change(engine, job_id)
-    except PageRecordError:
-        raise CodecStoreError('Page records are unavailable.') from None
-    if change is None or change.get('layout') != 'codec':
-        return {'encoded': False, 'sentence': None}
-    row = send_for(engine, job_id)
-    # The codec's details were kept from the fax's first attempt with encoded pages; they describe this attempt
-    # only when it went by the same route.
-    same = row is not None and row['provider_id'] == change['route']
-    counts = {'pages_original': change['original_pages'], 'pages_encoded': change['sent_pages']}
-    return {'encoded': True, 'sentence': send.sentence(counts, status), **counts,
-            'layout': row['layout'] if same else None, 'provider': change['route'],
-            'encrypted': bool(row['encrypted']) if same else None,
-            'seconds_original': row['seconds_original'] if same else None,
-            'seconds_encoded': row['seconds_encoded'] if same else None, 'experimental': True}
-
-
-@router.get('/faxes/{job_id}')
-async def fax(job_id: str, request: Request, identity=Depends(require_identity)):
-    service = access_runtime(request)
-    job = await run_lifecycle_step(private_operation(lambda: service.queries.job(identity.actor, job_id)))
-    engine, _ = _engine(request)
-    status = (job or {}).get('status') or 'queued'
-    return await _call(lambda: _send_view(engine, job_id, status))
 
 
 def _receipt_view(receipt):

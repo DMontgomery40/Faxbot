@@ -686,7 +686,6 @@ def test_a_shared_key_that_cannot_be_read_never_sends_the_document_unencrypted(i
 
 
 def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it(installation, database, tmp_path):
-    from app.codec.http import _send_view
     from app.codec.store import send_for
     if not shutil.which('gs'):
         pytest.skip('Ghostscript renders the PDF for a cloud route')
@@ -697,16 +696,15 @@ def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it
     _new_attempt(database, first, 1)
     with priced(sinch=card('sinch', per_page='0.045'), sip=card('sip', per_minute='0.005', increment=1)):
         assert _send(database, tmp_path, route='sinch', attempt=first).sent_pages == 1  # encoded, on Sinch
-        assert _send_view(database, JOB, 'queued')['sentence'] == 'Going as 1 encoded page instead of 5 (experimental).'
+        assert views.sent_view(database, JOB)['sentences'] == ['Sent as 1 encoded page instead of 5 (experimental).']
         _new_attempt(database, second, 2)
         retried = _send(database, tmp_path, attempt=second)  # the same fax over the phone line, billed by time
     assert (retried.original_pages, retried.sent_pages) == (5, 2)
     assert (_change(database, first)['layout'], _change(database, second)['layout']) == ('codec', 'dense')
-    # The codec's details stay those of the first attempt; the Sent detail and the codec's view follow the second.
+    # The codec's details stay those of the first attempt; the Sent detail follows the second.
     assert send_for(database, JOB)['provider_id'] == 'sinch'
     assert views.sent_view(database, JOB)['sentences'] == [
         'Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
-    assert _send_view(database, JOB, 'success') == {'encoded': False, 'sentence': None}
 
 
 def test_encoded_pages_are_never_lightened(installation, database, tmp_path, monkeypatch):

@@ -220,7 +220,7 @@ def test_acceptance_changes_nothing_and_a_fetching_provider_gets_its_attempts_en
     from types import SimpleNamespace
     import sqlalchemy as sa
     from api.tests.test_dense_pages import card, priced
-    from app.pages import sending, views
+    from app.pages import sending
     from app.routing.background import installation_engine
     assert client.put(f'/codec/numbers/{NUMBER}', headers=ADMIN,
                       json={'enabled': True, 'recipient_agreed': True}).status_code == 200
@@ -232,7 +232,7 @@ def test_acceptance_changes_nothing_and_a_fetching_provider_gets_its_attempts_en
     original = (root / f'{job}.pdf').read_bytes()
     # Acceptance keeps the document as it is and decides nothing about encoded pages.
     assert not list(root.glob(f'{job}.payload-*')) and not list(root.glob('packed-*'))
-    assert client.get(f'/codec/faxes/{job}', headers=ADMIN).json() == {'encoded': False, 'sentence': None}
+    assert client.get(f'/admin/fax-jobs/{job}', headers=ADMIN).json()['page_layout'] is None
     # An attempt by Phaxio, which bills per page: one or two encoded pages beat every page of the letter.
     engine, _ = installation_engine(main.app)
     attempt, other = 'c' * 32, 'e' * 32
@@ -242,12 +242,12 @@ def test_acceptance_changes_nothing_and_a_fetching_provider_gets_its_attempts_en
                                   SimpleNamespace(job_id=job, attempt_id=attempt, members=()), {'to_number': NUMBER},
                                   root / f'{job}.pdf', None)
     assert changed.pdf == str(root / f'packed-{job}-{attempt}.pdf') and changed.sent_pages < pages
-    detail = client.get(f'/codec/faxes/{job}', headers=ADMIN).json()
-    encoded = detail['pages_encoded']
+    # The Sent detail says it once, in its page line.
+    detail = client.get(f'/admin/fax-jobs/{job}', headers=ADMIN).json()['page_layout']
+    encoded = changed.sent_pages
     noun = 'page' if encoded == 1 else 'pages'
-    assert detail['sentence'] == f'Going as {encoded} encoded {noun} instead of {pages} (experimental).'
-    assert views.sent_view(engine, job)['sentences'] == [f'Sent as {encoded} encoded {noun} instead of {pages} '
-                                                         '(experimental).']
+    assert detail['layout'] == 'codec' and detail['sentences'] == [
+        f'Sent as {encoded} encoded {noun} instead of {pages} (experimental).']
 
     def grant(attempt_id):
         token = 'synthetic-media-token-' + attempt_id[:4]
