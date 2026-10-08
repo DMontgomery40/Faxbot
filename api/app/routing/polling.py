@@ -55,7 +55,7 @@ _HEX32 = re.compile(r'[a-f0-9]{32}', re.ASCII)
 _TABLES = weakref.WeakKeyDictionary()
 
 NOT_ON = 'Turn on collecting faxes from this number first.'
-NOT_SENT = "Faxbot's fast fax service could not take the call, so nothing was dialed."
+NOT_SENT = "Faxbot's fax engine could not take the call, so nothing was dialed."
 WAITING = 'Faxbot is calling the other fax server to collect the fax it holds for you.'
 ADVICE_NOTE = ('Collecting works only when the other fax server holds the fax for you to collect. Turn it on only '
                "for your organization's own sites, and only after the other site has set its fax server to hold "
@@ -248,7 +248,7 @@ async def collect(engine, values, ami, number, *, actor=None, actor_name=None, n
         raise PollRefused(NOT_ON)
     choice = await hylafax_engine.choose(values, ami=ami)
     if choice.engine != 'hylafax':
-        raise PollRefused(f"Faxbot collects faxes with its fast fax service, which cannot take the call now: "
+        raise PollRefused(f"Faxbot collects faxes with its fax engine, which cannot take the call now: "
                           f"{choice.reason}")
     request_id = uuid.uuid4().hex
     now = now or datetime.utcnow()
@@ -277,7 +277,7 @@ async def collect(engine, values, ami, number, *, actor=None, actor_name=None, n
     except Exception:
         # The engine may have the job: uncertain, never asked for again by itself.
         await asyncio.to_thread(record_result, engine, request_id, 'uncertain',
-                                "Faxbot's fast fax service did not confirm the call; check Received before "
+                                "Faxbot's fax engine did not confirm the call; check Received before "
                                 'collecting again.', now=now)
         raise
     finally:

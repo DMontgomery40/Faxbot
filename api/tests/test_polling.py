@@ -167,7 +167,7 @@ def test_an_engine_that_cannot_take_the_call_dials_nothing_and_says_so(installat
     async def not_running(values, **_):
         return hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
     monkeypatch.setattr(hylafax_engine, 'choose', not_running)
-    with pytest.raises(polling.PollRefused, match="fast fax service, which cannot take the call now"):
+    with pytest.raises(polling.PollRefused, match="fax engine, which cannot take the call now"):
         asyncio.run(polling.collect(installation, SimpleNamespace(), Ami(), NUMBER))
 
     async def running(values, **_):
@@ -263,10 +263,10 @@ def test_cli_and_api_show_turn_on_and_refuse_a_collection_the_engine_cannot_take
     assert (saved['enabled'], saved['label'], saved['selective']) == (True, 'Denver office', '12')
     printed = ' '.join(cli('recipients', 'polling', NUMBER).stdout.split())
     assert 'Collecting On' in printed and 'Other site Denver office' in printed
-    # The fast fax service is not set up here: refused, nothing dialed, and said in one sentence.
+    # The fax engine is not set up here: refused, nothing dialed, and said in one sentence.
     assert cli('recipients', 'collect', NUMBER).exit_code != 0
     answer = cli.client.post(route + '/collect', headers=admin)
-    assert answer.status_code == 409 and answer.json()['detail'].startswith('Faxbot collects faxes with its fast')
+    assert answer.status_code == 409 and answer.json()['detail'].startswith('Faxbot collects faxes with its fax engine, which cannot take the call now: ')
     assert cli.json('recipients', 'polling', NUMBER, '--off')['enabled'] is False
     sender = cli.client.post('/admin/api-keys', headers=admin, json={'name': 'synthetic', 'scopes': ['fax:send']})
     key = {'X-API-Key': sender.json()['token']}
