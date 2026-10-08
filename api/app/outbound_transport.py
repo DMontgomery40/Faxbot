@@ -61,6 +61,8 @@ class PreparedSubmission:
     engine_choice: object = field(default=None, repr=False)
     call: object = field(default=None, repr=False)
     records: object = field(default=None, repr=False)
+    # The trunk account a SIP fax goes over (its key); None is the first trunk (sip_trunk.py).
+    trunk: str | None = None
 
     def _record_engine(self):
         """The engine record for this attempt; evidence only, never stops the fax."""
@@ -110,7 +112,7 @@ class PreparedSubmission:
         if pid == 'sip':
             await asyncio.to_thread(self._record_engine)
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
-                attempt_id=self.claim.attempt_id, call=self.call)
+                attempt_id=self.claim.attempt_id, call=self.call, trunk=self.trunk)
             return SubmissionReceipt(self.claim.job_id, 'in_progress')
         if pid == 'freeswitch':
             from .freeswitch_service import originate_txfax
@@ -130,6 +132,8 @@ class CapturedTransport:
         values = revision.values
         configuration = profile.configuration
         pid = configuration.provider_id
+        # A trunk account after the first names itself in its settings; its calls use its own endpoint.
+        trunk = configuration.settings.get('trunk') if pid == 'sip' else None
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None:
             raise PreparationFailure('artifact_unavailable')
         root = Path(values.fax_data_dir)
@@ -189,7 +193,7 @@ class CapturedTransport:
                 if pid == 'sip':
                     from .ami import originate_fields_for
                     originate_fields_for(values, claim.job_id, job['to_number'], str(tiff) if tiff else None,
-                        attempt_id=claim.attempt_id)
+                        attempt_id=claim.attempt_id, trunk=trunk)
                 else:
                     from .freeswitch_service import build_originate_command
                     build_originate_command(job['to_number'], str(tiff) if tiff else None, claim.job_id,
@@ -249,11 +253,11 @@ class CapturedTransport:
             tiff = Path(changed.tiff) if changed.tiff else tiff
         engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
-            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff)
+            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff, trunk=trunk)
         try:
             with self.runtime.frame(revision):
                 yield PreparedSubmission(claim, profile, job, str(pdf), str(tiff) if tiff else None,
-                                         service, media_url, self.ami, engine_job, choice, call, records)
+                                         service, media_url, self.ami, engine_job, choice, call, records, trunk)
         finally:
             if engine_job is not None:
                 await self._finish_engine(engine_job)
@@ -271,7 +275,7 @@ class CapturedTransport:
         self.store.record_dialed(claim, number, dial['approvals'] if number != recipient else None)
         return number
 
-    async def _prepare_engine(self, values, claim, job, tiff):
+    async def _prepare_engine(self, values, claim, job, tiff, trunk=None):
         """(engine job or None, engine choice, call settings, engine records) for this trunk fax.
 
         Runs before the durable marker: the call plan and the engine job exist,
@@ -279,6 +283,12 @@ class CapturedTransport:
         engine places the call; the attempt's engine record says why.
         """
         from . import hylafax_engine, hylafax_records
+        from .ami import trunk_values
+        full_values = values
+        try:
+            values, _ = trunk_values(values, trunk)  # this trunk's own T.38 and number settings
+        except ValueError:
+            raise PreparationFailure('preparation_failed') from None
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
         records = hylafax_records.records_for(engine) if engine is not None else None
         recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
@@ -287,8 +297,9 @@ class CapturedTransport:
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
             call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
             try:
-                engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
-                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
+                engine_job = await hylafax_engine.prepare_job(full_values, self.ami, job_id=claim.job_id,
+                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call,
+                    trunk=trunk)
                 return engine_job, choice, call, records
             except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError):
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)

@@ -287,7 +287,7 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
         request, str(payload.get('uniqueid') or ''), success=payload.get('faxstatus') == 'SUCCESS',
         pages=pages, station=hylafax_engine._text64(call, 'remote_station_id_b64', 40),
         reason=hylafax_engine._text64(payload, 'reason_b64', 64), did=payload.get('to_number'),
-        caller=payload.get('from_number'), inbound_fax_id=answer.get('id')))
+        caller=payload.get('from_number'), inbound_fax_id=answer.get('id'), trunk=payload.get('trunk')))
     from .sip_calls import engine_audio_check
     engine_audio_check(row)
     return answer
@@ -303,7 +303,13 @@ def _engine_receive(request, call_id, **fields):
         records = sip_calls.SipCallRecords(engine)
         for name in ('did', 'caller'):
             fields[name] = received_number(fields.get(name))
-        row_id = records.record_engine_receive(call_id, preset=settings.sip_trunk_preset, **fields)
+        # The trunk the call came in on (a trunk after the first names itself), and that trunk's carrier.
+        from .sip_trunk import trunk_for
+        trunk = fields.get('trunk') if isinstance(fields.get('trunk'), str) else None
+        found = trunk_for(settings, trunk) if trunk else None
+        fields['trunk'] = trunk if found is not None else None
+        preset = found.values.sip_trunk_preset if found is not None else settings.sip_trunk_preset
+        row_id = records.record_engine_receive(call_id, preset=preset, **fields)
         row = records.call(row_id) if row_id else None
     except Exception:
         import logging
@@ -329,7 +335,7 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
     row = await run_lifecycle_step(lambda: _engine_receive(
         request, call_id, success=False, pages=0, station=None,
         reason=hylafax_engine._text64(payload, 'reason_b64', 64) or 'fax failed',
-        did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None))
+        did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None, trunk=payload.get('trunk')))
     from . import hylafax_records
     from .routing.background import installation_engine
     # The key is <communication id>-<time bin/sessions reported the call>: a new engine container starts its

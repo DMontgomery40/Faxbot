@@ -89,6 +89,17 @@ FIELDS = {
         ('password', 'sip_trunk_password', 'Password', False, None),
         ('caller_id', 'sip_trunk_caller_id', 'Caller ID', False, None),
         ('outbound_proxy', 'sip_trunk_outbound_proxy', 'Outbound proxy', False, None),
+        # Each trunk's own fax and number settings (WP-T), so a second trunk never inherits the first one's.
+        ('t38', 'sip_t38_enabled', 'Fax over IP (T.38)', False,
+         'Leave it on unless this carrier turns fax calls into audio itself.'),
+        ('codecs', 'sip_trunk_codecs', 'Audio codecs', False,
+         "ulaw, alaw or both in order; leave it empty for the carrier's usual order."),
+        ('dial_format', 'sip_trunk_dial_format', 'Number format', False,
+         'e164 for +44 numbers, or local to dial numbers the way a phone here dials them.'),
+        ('dial_prefix', 'sip_trunk_dial_prefix', 'Outside-line prefix', False,
+         'Only with the local number format, such as 9.'),
+        ('api_key', 'telnyx_api_key', 'Telnyx API key', False,
+         "Only for a Telnyx trunk: Faxbot reads this trunk's numbers' fax over IP settings with it."),
     ),
 }
 # The order primary accounts are listed in after the default and listed routes.

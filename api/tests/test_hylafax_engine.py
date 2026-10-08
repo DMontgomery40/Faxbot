@@ -147,9 +147,13 @@ def test_dialplan_places_engine_calls_only_from_a_stored_plan_and_never_reports_
     section = text[start:text.index('[faxbot-inbound]')]
     assert '${DB_DELETE(faxbot-engine/${FAXBOT_TAG})}' in section
     assert 'GotoIf($["${FAXBOT_PLAN}" = ""]?refuse)' in section
-    assert 'Dial(PJSIP/${FAXBOT_DIAL}@trunk-endpoint' in section
+    # The plan's trunk (a seventh field after the first trunk), else the first trunk's endpoint; only a loaded
+    # endpoint named trunk-...-endpoint is dialed.
+    assert 'Dial(PJSIP/${FAXBOT_DIAL}@${FAXBOT_ENDPOINT}' in section
+    assert '${CUT(FAXBOT_PLAN,/,7)}' in section and '?trunk-endpoint:${FAXBOT_ENDPOINT}' in section
+    assert 'GotoIf($["${PJSIP_ENDPOINT(${FAXBOT_ENDPOINT},context)}" = ""]?refuse)' in section
     # T.38 on the trunk: the fax gateway joins the engine's audio to T.38; off: audio end to end.
-    assert 'PJSIP_ENDPOINT(trunk-endpoint,t38_udptl)' in section and 'Set(FAXOPT(gateway)=yes)' in section
+    assert 'PJSIP_ENDPOINT(${FAXBOT_ENDPOINT},t38_udptl)' in section and 'Set(FAXOPT(gateway)=yes)' in section
     # The delivery result comes from the engine, never from this dialplan.
     assert 'UserEvent(FaxResult' not in section and 'UserEvent(FaxEngineCall,' in section
     assert 'SendFAX' not in section and 'ReceiveFAX' not in section

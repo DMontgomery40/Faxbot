@@ -501,31 +501,186 @@ def _uri(trunk: Trunk, user: str = ''):
     return f'sip:{user + "@" if user else ""}{target}{suffix}'
 
 
-def render_pjsip(values) -> str:
-    """Complete pjsip.conf text for the active settings; contains the SIP password."""
-    trunk = effective_trunk(values)
-    preset = trunk.preset
-    transport, transport_lines = _transport_section(trunk)
+# -- several trunks (provider-rules design §3.6) -------------------------------------------------------------
+#
+# Each trunk is a provider account with provider ``sip``. The first trunk (key ``sip``) is read from the flat
+# ``sip_trunk_*`` settings and keeps the section names it always had, so an installation with one trunk renders
+# exactly the file it rendered before. Every other trunk gets ``trunk-<key>-endpoint``, ``-aor``, ``-auth``,
+# ``-identify`` and ``-reg``, and its endpoint sets FAXBOT_TRUNK=<key> on every call it carries (``set_var``), so
+# the dialplan and the hand-over know which trunk a call came in on. All trunks share Asterisk's transports,
+# media ports and published address.
+
+PRIMARY = 'sip'
+TRUNK_KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
+# Endpoint identifiers Asterisk tries, in order, once a second trunk signs in: a call that came down one
+# registration is matched to that registration's trunk first, before the carrier's address is.
+IDENTIFIER_ORDER = 'line,ip,username,anonymous'
+
+
+def endpoint_name(key=None) -> str:
+    """The PJSIP endpoint a trunk's calls use: ``trunk-endpoint`` for the first trunk, else ``trunk-<key>-endpoint``."""
+    if not key or key == PRIMARY:
+        return ENDPOINT
+    if TRUNK_KEY.fullmatch(key) is None:
+        raise ValueError('Unsupported trunk key')
+    return f'trunk-{key}-endpoint'
+
+
+def _section_names(key):
+    if not key or key == PRIMARY:
+        return {'aor': 'trunk-aor', 'auth': 'trunk-auth', 'endpoint': ENDPOINT, 'identify': 'trunk-identify',
+                'registration': 'trunk-registration'}
+    base = f'trunk-{key}'
+    return {'aor': f'{base}-aor', 'auth': f'{base}-auth', 'endpoint': f'{base}-endpoint',
+            'identify': f'{base}-identify', 'registration': f'{base}-reg'}
+
+
+@dataclass(frozen=True)
+class TrunkAccount:
+    """One trunk Faxbot renders: its account key, its name, and the settings as that trunk sees them."""
+    key: str
+    label: str
+    values: object = field(repr=False)
+    primary: bool = False
+
+    @property
+    def endpoint(self):
+        return endpoint_name(self.key)
+
+
+def extra_trunks(values) -> list:
+    """The trunk accounts after the first that are on and filled in, in account order."""
+    from . import accounts
+    found = []
+    try:
+        listed = accounts.extra_accounts(values)
+    except Exception:
+        return found
+    for account in listed:
+        if account.provider != 'sip' or not account.enabled or TRUNK_KEY.fullmatch(account.key) is None:
+            continue
+        try:
+            own = accounts.account_values(values, account.key)
+        except accounts.AccountsError:
+            continue
+        if configured(own):
+            found.append(TrunkAccount(account.key, account.label, own))
+    return found
+
+
+def trunk_accounts(values) -> list:
+    """Every trunk account Faxbot may render, the first trunk first (when it is set up)."""
+    found = []
+    if configured(values):
+        from .provider_labels import trunk_name
+        found.append(TrunkAccount(PRIMARY, trunk_name(values.sip_trunk_preset or None), values, primary=True))
+    return found + extra_trunks(values)
+
+
+def trunk_for(values, key=None) -> TrunkAccount | None:
+    """The trunk account ``key`` (None or ``sip``: the first trunk), or None when it is not set up."""
+    key = key or PRIMARY
+    return next((trunk for trunk in trunk_accounts(values) if trunk.key == key), None)
+
+
+def _identify_matches(trunk: Trunk):
+    return tuple(trunk.preset.signaling_addresses or (trunk.host,))
+
+
+def _rendered(values):
+    """[(TrunkAccount, Trunk, identify matches)] for every trunk in the file, and {key: why not} for the rest.
+
+    The first trunk raises as it always has; a trunk after it that cannot be rendered is left out, with a
+    sentence, so a half-finished second trunk never stops the first one. A carrier's addresses already
+    matched by an earlier trunk are not matched again: Asterisk could not tell the two apart, so Faxbot
+    decides those calls by the number they called (``shared_addresses``)."""
+    rendered, problems, claimed = [], {}, set()
+    if configured(values):
+        trunk = effective_trunk(values)
+        first = TrunkAccount(PRIMARY, trunk.preset.label, values, primary=True)
+        rendered.append((first, trunk, _identify_matches(trunk)))
+        claimed.update(_identify_matches(trunk))
+    kinds = {}
+    for account, trunk, _ in rendered:
+        kinds[trunk.transport] = trunk.preset.phone_system
+    for account in extra_trunks(values):
+        try:
+            trunk = effective_trunk(account.values)
+        except TrunkConfigurationError:
+            problems[account.key] = f'{account.label} is not loaded yet: fill in its settings.'
+            continue
+        if trunk.transport in kinds and kinds[trunk.transport] != trunk.preset.phone_system:
+            problems[account.key] = (f'{account.label} is not loaded: a phone system and a carrier cannot share one '
+                                     f'{trunk.transport.upper()} connection. Choose another connection type for it.')
+            continue
+        kinds.setdefault(trunk.transport, trunk.preset.phone_system)
+        matches = tuple(address for address in _identify_matches(trunk) if address not in claimed)
+        claimed.update(matches)
+        rendered.append((account, trunk, matches))
+    return rendered, problems
+
+
+def trunk_problems(values) -> dict:
+    """{trunk key: one sentence} for trunk accounts that are on but not in Asterisk's file, and why."""
+    try:
+        return _rendered(values)[1]
+    except TrunkConfigurationError:
+        return {}
+
+
+def rendered_endpoints(values) -> tuple:
+    """The endpoint of every trunk in Asterisk's file, the first trunk's first: the only ones Faxbot dials."""
+    try:
+        rendered, _ = _rendered(values)
+    except TrunkConfigurationError:
+        return ()
+    return tuple(account.endpoint for account, _, _ in rendered)
+
+
+def shared_addresses(values) -> list:
+    """Groups of trunk keys whose carrier addresses overlap: Asterisk matches such a call to the first of them,
+    so the number it called decides the trunk (each number belongs to one trunk account)."""
+    try:
+        rendered, _ = _rendered(values)
+    except TrunkConfigurationError:
+        return []
+    groups = []
+    for account, trunk, _ in rendered:
+        addresses = set(_identify_matches(trunk))
+        joined = [group for group in groups if group[1] & addresses]
+        keys, found = {account.key}, set(addresses)
+        for group in joined:
+            keys |= group[0]
+            found |= group[1]
+            groups.remove(group)
+        groups.append((keys, found))
+    return [sorted(keys) for keys, _ in groups if len(keys) > 1]
+
+
+def trunk_numbers(values) -> dict:
+    """{trunk key: the numbers the carrier sends to that trunk}, E.164 as stored."""
+    found = {}
+    for trunk in trunk_accounts(values):
+        found[trunk.key] = tuple(trunk.values.sip_trunk_did_list)
+    return found
+
+
+def _trunk_lines(trunk: Trunk, values, names, transport, matches, key=None):
+    """One trunk's sections: AOR, credentials, endpoint, identify and registration."""
     registration = trunk.auth == 'registration'
     udp = trunk.transport == 'udp'
-    lines = [
-        f'; Faxbot SIP trunk for {preset.label}, written by Faxbot from its settings.',
-        '; Change the trunk in Faxbot settings; edits to this file are replaced.',
-        # Every flow starts from Faxbot's side and is kept alive from it, so no
-        # router port has to be opened: keepalives on the TCP/TLS connection,
-        # carrier checks every 25 s on UDP (under common 30 s NAT timeouts).
-        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', 'keep_alive_interval=30', '',
-        *transport_lines, '',
-        '[trunk-aor]', 'type=aor', f'contact={_uri(trunk)}', f'qualify_frequency={25 if udp else 30}',
-        'qualify_timeout=3.0', '',
-    ]
+    lines = [f'[{names["aor"]}]', 'type=aor', f'contact={_uri(trunk)}', f'qualify_frequency={25 if udp else 30}',
+             'qualify_timeout=3.0', '']
     if registration:
-        lines += ['[trunk-auth]', 'type=auth', 'auth_type=userpass',
+        lines += [f'[{names["auth"]}]', 'type=auth', 'auth_type=userpass',
                   f'username={trunk.username}', f'password={trunk.password}', '']
-    lines += [f'[{ENDPOINT}]', 'type=endpoint', f'transport={transport}', 'aors=trunk-aor']
+    lines += [f'[{names["endpoint"]}]', 'type=endpoint', f'transport={transport}', f'aors={names["aor"]}']
     if registration:
-        lines.append('outbound_auth=trunk-auth')
+        lines.append(f'outbound_auth={names["auth"]}')
     lines += [f'context={INBOUND_CONTEXT}', 'disallow=all', 'allow=' + ','.join(trunk.codecs)]
+    if key is not None:
+        # Every call over this trunk, in and out, carries the trunk's account key to the dialplan.
+        lines.append(f'set_var=FAXBOT_TRUNK={key}')
     if trunk.t38:
         # Fax settings: T.38 error correction and the largest packet the carrier accepts.
         options = fax_options(values)
@@ -541,21 +696,59 @@ def render_pjsip(values) -> str:
     if trunk.outbound_proxy:
         lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
     lines.append('')
-    lines += ['[trunk-identify]', 'type=identify', f'endpoint={ENDPOINT}']
-    lines += [f'match={address}' for address in (preset.signaling_addresses or (trunk.host,))]
-    lines.append('')
+    if matches:
+        lines += [f'[{names["identify"]}]', 'type=identify', f'endpoint={names["endpoint"]}']
+        lines += [f'match={address}' for address in matches]
+        lines.append('')
     if registration:
-        lines += ['[trunk-registration]', 'type=registration', f'transport={transport}',
-                  'outbound_auth=trunk-auth', f'server_uri={_uri(trunk)}',
+        lines += [f'[{names["registration"]}]', 'type=registration', f'transport={transport}',
+                  f'outbound_auth={names["auth"]}', f'server_uri={_uri(trunk)}',
                   f'client_uri={_uri(trunk, trunk.username)}', f'contact_user={trunk.username}',
                   # Re-register often enough to refresh a UDP mapping; never give up
                   # on an unattended fax server (max_retries=0 would mean no retries).
                   f'expiration={120 if udp else 300}', 'retry_interval=60', 'forbidden_retry_interval=600',
                   'fatal_retry_interval=120', 'max_retries=10000', 'auth_rejection_permanent=no',
-                  'line=yes', f'endpoint={ENDPOINT}']
+                  'line=yes', f'endpoint={names["endpoint"]}']
         if trunk.outbound_proxy:
             lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
         lines.append('')
+    return lines
+
+
+def render_pjsip(values) -> str:
+    """Complete pjsip.conf text for the active settings; contains the SIP passwords.
+
+    One section set per trunk account; with one trunk the file is exactly what it has always been.
+    """
+    rendered, _ = _rendered(values)
+    if not rendered:
+        raise TrunkConfigurationError(['sip_trunk_preset'])
+    first_account, first, _ = rendered[0]
+    transport, transport_lines = _transport_section(first)
+    transports = {first.transport: transport}
+    extra_transports = []
+    for _, trunk, _ in rendered[1:]:
+        if trunk.transport not in transports:
+            name, section = _transport_section(trunk)
+            transports[trunk.transport] = name
+            extra_transports += ['', *section]
+    registrations = any(trunk.auth == 'registration' for _, trunk, _ in rendered[1:])
+    lines = [
+        f'; Faxbot SIP trunk for {first.preset.label}, written by Faxbot from its settings.',
+        '; Change the trunk in Faxbot settings; edits to this file are replaced.',
+        # Every flow starts from Faxbot's side and is kept alive from it, so no
+        # router port has to be opened: keepalives on the TCP/TLS connection,
+        # carrier checks every 25 s on UDP (under common 30 s NAT timeouts).
+        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', 'keep_alive_interval=30',
+        *([f'endpoint_identifier_order={IDENTIFIER_ORDER}'] if registrations else []), '',
+        *transport_lines, *extra_transports, '',
+    ]
+    for account, trunk, matches in rendered:
+        primary = account.primary
+        if not primary:
+            lines += [f'; Trunk {account.key}: {trunk.preset.label}.']
+        lines += _trunk_lines(trunk, account.values, _section_names(None if primary else account.key),
+                              transports[trunk.transport], matches, key=None if primary else account.key)
     return '\n'.join(lines)
 
 

@@ -15,12 +15,27 @@ TRANSPORTS = {'tls': 'Encrypted (TLS)', 'tcp': 'TCP', 'udp': 'UDP'}
 KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system'}
 SIGN_IN = {'registration': 'Username and password', 'ip': 'IP address'}
 NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it'}
+# Several trunks: which trunk account a command is about (its key from 'faxbot providers accounts list').
+ACCOUNT = typer.Option(None, '--account', metavar='KEY',
+                       help="Which trunk, by its key from 'faxbot providers accounts list'; the first trunk when left "
+                            'out.')
+
+
+def _account(account):
+    return {'account': account.strip()} if account and account.strip() else None
 
 
 def _status_lines(out, result):
     out.line(result.get('message') or '')
+    for problem in (result.get('trunk_problems') or {}).values():
+        out.line(problem)
     if not result.get('configured'):
         return
+    trunks = result.get('trunks') or []
+    if len(trunks) > 1:
+        current = next((item['label'] for item in trunks if item['key'] == result.get('account')), 'the first trunk')
+        others = ', '.join(f"{item['label']} ({item['key']})" for item in trunks if item['key'] != result.get('account'))
+        out.line(f'This is {current}. Your other trunks: {others}. Add --account KEY to see one of them.')
     phone = result.get('kind') == 'phone_system'
     out.fields([('Phone system' if phone else 'Carrier', result.get('preset_label')),
                 ('Transport', TRANSPORTS.get(result.get('registration_transport') or result.get('transport'))),
@@ -59,9 +74,9 @@ def _status_lines(out, result):
 
 
 @trunk.command('status')
-def trunk_status():
+def trunk_status(account: str = ACCOUNT):
     """Check the SIP trunk: registration with the carrier, Faxbot's public IP address, and the last call."""
-    result = state.api().get('/admin/sip/status')
+    result = state.api().get('/admin/sip/status', params=_account(account))
     state.out().result(result, lambda out: _status_lines(out, result))
 
 
@@ -297,18 +312,20 @@ def _telnyx_lines(out, result):
 
 
 @telnyx.command('status')
-def telnyx_status():
+def telnyx_status(account: str = ACCOUNT):
     """Show whether Telnyx has fax over IP (T.38) turned on for each trunk number, from the last check."""
-    result = state.api().get('/admin/sip/telnyx')
+    result = state.api().get('/admin/sip/telnyx', params=_account(account))
     state.out().result(result, lambda out: _telnyx_lines(out, result))
 
 
 @telnyx.command('t38-on')
 def telnyx_t38_on(number: str = typer.Argument(..., metavar='NUMBER',
-                                               help='The trunk number, for example +17208565062.')):
+                                               help='The trunk number, for example +17208565062.'),
+                  account: str = ACCOUNT):
     """Turn on fax over IP (T.38) at Telnyx for one trunk number. Only that setting changes."""
     from urllib.parse import quote
-    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/t38')
+    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/t38',
+                              params=_account(account))
     state.out().result(result, lambda out: _telnyx_lines(out, result))
 
 

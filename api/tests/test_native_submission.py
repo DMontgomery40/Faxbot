@@ -940,7 +940,11 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
                             "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
-                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION"}, variable
+                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION", "FAXBOT_FAR_SUB",
+                            "FAXBOT_TRUNK"}, variable
+    # The subaddress (hex) and the trunk key reach the shell only through FILTER.
+    assert "${FILTER(0123456789abcdef,${FAXBOT_FAR_SUB})}" in command
+    assert "trunk=${FILTER(abcdefghijklmnopqrstuvwxyz0123456789_-,${FAXBOT_TRUNK})}" in command
     for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
                 "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw

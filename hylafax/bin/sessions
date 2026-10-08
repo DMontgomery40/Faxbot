@@ -57,16 +57,18 @@ scan() {
   # CallID: '<caller>' '<Asterisk's call name: token.called>' '<dialed>'
   callid=$(grep -m1 'CallID:' "$log")
   caller=$(printf '%s' "$callid" | sed -n "s/.*CallID: '\([^']*\)'.*/\1/p" | tr -cd '0-9+' | cut -c1-20)
-  name=$(printf '%s' "$callid" | sed -n "s/.*CallID: '[^']*' '\([^']*\)'.*/\1/p" | tr -cd '0-9.' | cut -c1-80)
+  name=$(printf '%s' "$callid" | sed -n "s/.*CallID: '[^']*' '\([^']*\)'.*/\1/p" | tr -cd '0-9a-z._-' | cut -c1-90)
   token=${name%%.*}
-  called=''
+  called='' trunk=''
   case $name in *.*) called=${name#*.} ;; esac
+  case $called in *.*) trunk=${called#*.}; called=${called%%.*} ;; esac
   called=$(printf '%s' "$called" | tr -cd '0-9' | cut -c1-20)
+  trunk=$(printf '%s' "$trunk" | tr -cd 'a-z0-9_-' | cut -c1-32)
   token=$(printf '%s' "$token" | tr -cd '0-9' | cut -c1-40)
   key=$commid-$(date +%s)
   report=$(mktemp "$outbox/.received.XXXXXX") || exit 1
-  printf '{"engine_id":"%s","commid":"%s","key":"%s","token":"%s","caller":"%s","called":"%s","reason_b64":"%s"}\n' \
-    "$engine" "$commid" "$key" "$token" "$caller" "$called" "$(b64 "${reason:-fax failed}")" > "$report" \
+  printf '{"engine_id":"%s","commid":"%s","key":"%s","token":"%s","caller":"%s","called":"%s","trunk":"%s","reason_b64":"%s"}\n' \
+    "$engine" "$commid" "$key" "$token" "$caller" "$called" "$trunk" "$(b64 "${reason:-fax failed}")" > "$report" \
     && mv -f "$report" "$outbox/$(date +%s)-recv$commid-failed.report" || { rm -f "$report"; exit 1; }
   mark "$commid"
   return 0

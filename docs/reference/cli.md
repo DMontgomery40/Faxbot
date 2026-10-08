@@ -3483,6 +3483,7 @@ $ faxbot providers trunk status [OPTIONS]
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk apply`
@@ -3722,6 +3723,7 @@ $ faxbot providers trunk telnyx status [OPTIONS]
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 ##### `faxbot providers trunk telnyx t38-on`
@@ -3740,6 +3742,7 @@ $ faxbot providers trunk telnyx t38-on [OPTIONS] {NUMBER}
 
 **Options**:
 
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 ##### `faxbot providers trunk telnyx names`

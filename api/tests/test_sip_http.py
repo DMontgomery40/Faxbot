@@ -83,6 +83,7 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
     body = bare_client.get('/admin/sip/status', headers=ADMIN).json()
     assert body == {'configured': False, 'applied': False, 'asterisk_connected': False,
+                    'account': 'sip', 'trunks': [], 'trunk_problems': {},
                     'registration': 'unknown', 'registration_transport': None,
                     'registration_text': 'Registration status is not available.',
                     'reachability': 'unknown',
