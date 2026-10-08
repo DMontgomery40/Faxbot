@@ -52,7 +52,7 @@ sender the relayed cost the signed price statement gives, with what its own
 route would have cost.
 """
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 import json
 import logging
 import re
@@ -62,8 +62,8 @@ import httpx
 
 from ..config_runtime import run_lifecycle_step
 from ..routing.database import utcnow
-from .crypto import DirectProtocolError, check_signed, canonical, parse_timestamp, signed, timestamp, verify
-from .relay_store import COUNTED, RelayConflict, RelayStore, digest
+from .crypto import DirectProtocolError, check_signed, parse_timestamp, signed, timestamp, verify
+from .relay_store import COUNTED, RelayConflict, RelayStore
 
 
 KEY_PREFIX = 'relay:'

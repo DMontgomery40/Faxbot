@@ -31,7 +31,7 @@ from api.app.outbound_worker import OutboundWorker
 from api.app.routing.predict import Shape
 from api.app.routing.transport import RoutedTransport
 from api.app.schema import create_database_engine, upgrade_schema
-from api.tests.test_direct_delivery import Conventional, ToB, pdf_bytes
+from api.tests.test_direct_delivery import Conventional, ToB
 from api.tests.test_peer_fax import _namespaces, rows
 from api.tests.test_routing_http import ADMIN, BOOTSTRAP
 
