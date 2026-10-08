@@ -1730,6 +1730,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
 * `toll-free`: A recipient&#x27;s toll-free fax number, used...
+* `digital`: A recipient&#x27;s Direct address or FHIR...
 
 ### `faxbot recipients list`
 
@@ -3172,6 +3173,168 @@ $ faxbot recipients toll-free lookup [OPTIONS] {number}
 * `--state <str>`: Two-letter state, with --name.
 * `--help`: Show this message and exit.
 
+### `faxbot recipients digital`
+
+A recipient&#x27;s Direct address or FHIR endpoint: put one on file, confirm it, withdraw it, or look one up in the NPI registry.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show a recipient&#x27;s Direct address and FHIR...
+* `add`: Put a recipient&#x27;s Direct address or FHIR...
+* `confirm`: Confirm an address, so faxes to this...
+* `withdraw`: Stop using a confirmed address; faxes go...
+* `dismiss`: Dismiss a suggested address you do not want.
+* `nppes`: Ask the NPI registry for this provider&#x27;s...
+* `messages`: List Direct messages and FHIR documents...
+
+#### `faxbot recipients digital show`
+
+Show a recipient&#x27;s Direct address and FHIR endpoint, and whether Faxbot may use them.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital show [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital add`
+
+Put a recipient&#x27;s Direct address or FHIR endpoint on file. Faxbot uses it only once confirmed.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital add [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+
+**Options**:
+
+* `--direct <str>`: The recipient&#x27;s Direct address.
+* `--fhir <str>`: The recipient&#x27;s FHIR server base address (https).
+* `--account <str>`: The HISP account or FHIR client to use; the first one if left out.
+* `--organization <str>`: Who it belongs to.
+* `--confirm`: Confirm it now, so faxes may go this way.
+* `--note <str>`: Where the recipient gave it, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital confirm`
+
+Confirm an address, so faxes to this number may go that way when it is the better route.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital confirm [OPTIONS] {NUMBER} {ADDRESS}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+* `ADDRESS`: The Direct address or FHIR address, as shown.  [required]
+
+**Options**:
+
+* `--note <str>`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital withdraw`
+
+Stop using a confirmed address; faxes go by fax again.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital withdraw [OPTIONS] {NUMBER} {ADDRESS}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+* `ADDRESS`: The Direct address or FHIR address, as shown.  [required]
+
+**Options**:
+
+* `--note <str>`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital dismiss`
+
+Dismiss a suggested address you do not want.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital dismiss [OPTIONS] {NUMBER} {ADDRESS}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+* `ADDRESS`: The Direct address or FHIR address, as shown.  [required]
+
+**Options**:
+
+* `--note <str>`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital nppes`
+
+Ask the NPI registry for this provider&#x27;s Direct address and FHIR endpoint, as suggestions to check.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital nppes [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The fax number.  [required]
+
+**Options**:
+
+* `--npi <str>`: The recipient&#x27;s ten-digit NPI.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients digital messages`
+
+List Direct messages and FHIR documents sent and received, newest first, with what happened to each.
+
+**Usage**:
+
+```console
+$ faxbot recipients digital messages [OPTIONS]
+```
+
+**Options**:
+
+* `--received`: Show messages received.
+* `--sent`: Show messages sent.
+* `--limit <int range>`: How many to show.  [default: 50; 1&lt;=x&lt;=200]
+* `--help`: Show this message and exit.
+
 ## `faxbot providers`
 
 The fax services Faxbot sends and receives with, their settings, and your own phone line for faxing.
@@ -3201,6 +3364,7 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `humblefax`: HumbleFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
 * `accounts`: The provider accounts Faxbot sends and...
+* `digital`: Direct messages and FHIR: the HISP account...
 * `rules`: Sending rules: which provider account...
 
 ### `faxbot providers list`
@@ -3976,6 +4140,164 @@ $ faxbot providers accounts health [OPTIONS] [KEY]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot providers digital`
+
+Direct messages and FHIR: the HISP account and FHIR clients Faxbot delivers faxes with instead of calling, when a recipient can take them.
+
+**Usage**:
+
+```console
+$ faxbot providers digital [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the HISP account and FHIR clients and...
+* `show`: Show one account: its settings, its plan...
+* `add`: Add a HISP account or a FHIR client.
+* `update`: Change an account&#x27;s name, settings or...
+* `signing-key`: Make a new signing key for a FHIR client.
+* `public-keys`: Print a FHIR client&#x27;s public key set, for...
+* `trust-bundle`: Load the trust bundle your HISP belongs...
+
+#### `faxbot providers digital list`
+
+List the HISP account and FHIR clients and whether each is ready.
+
+**Usage**:
+
+```console
+$ faxbot providers digital list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital show`
+
+Show one account: its settings, its plan and what it still needs.
+
+**Usage**:
+
+```console
+$ faxbot providers digital show [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital add`
+
+Add a HISP account or a FHIR client. Asks for the HISP password unless you give it another way.
+
+**Usage**:
+
+```console
+$ faxbot providers digital add [OPTIONS]
+```
+
+**Options**:
+
+* `--kind <str>`: hisp for Direct messages, fhir for a FHIR client.  [required]
+* `--key <str>`: A short key, such as hisp or fhir-epic.  [required]
+* `--label <str>`: Its name, such as &quot;Direct through Inpriva&quot;.
+* `--setting NAME=VALUE`: A setting that is not secret (repeat it). &#x27;show&#x27; lists them.
+* `--file NAME=PATH`: Read a setting or secret from a file, such as certificate=cert.pem or private_key=key.pem.
+* `--secret NAME`: A secret to enter; Faxbot asks for its value.
+* `--secrets-from-stdin`: Read secrets as NAME=VALUE lines from standard input instead of asking for each one.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital update`
+
+Change an account&#x27;s name, settings or secrets, or turn it on or off.
+
+**Usage**:
+
+```console
+$ faxbot providers digital update [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--label <str>`: A new name.
+* `--on / --off`: Turn it on or off.
+* `--setting NAME=VALUE`: A setting that is not secret (repeat it). &#x27;show&#x27; lists them.
+* `--file NAME=PATH`: Read a setting or secret from a file, such as certificate=cert.pem or private_key=key.pem.
+* `--secret NAME`: A secret to enter; Faxbot asks for its value.
+* `--secrets-from-stdin`: Read secrets as NAME=VALUE lines from standard input instead of asking for each one.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital signing-key`
+
+Make a new signing key for a FHIR client. Register its public key set with the recipient&#x27;s system.
+
+**Usage**:
+
+```console
+$ faxbot providers digital signing-key [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The FHIR client&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--algorithm <str>`: RS384 (an RSA key) or ES384 (an elliptic-curve key).
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital public-keys`
+
+Print a FHIR client&#x27;s public key set, for a recipient&#x27;s system that asks for it pasted in.
+
+**Usage**:
+
+```console
+$ faxbot providers digital public-keys [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The FHIR client&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers digital trust-bundle`
+
+Load the trust bundle your HISP belongs to, so Faxbot can check recipients&#x27; certificates.
+
+**Usage**:
+
+```console
+$ faxbot providers digital trust-bundle [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The HISP account&#x27;s key or name.  [required]
+
+**Options**:
+
+* `--url <str>`: The trust bundle&#x27;s web address (https).
+* `--file <path>`: A trust bundle file (.p7b or PEM).
 * `--help`: Show this message and exit.
 
 ### `faxbot providers rules`

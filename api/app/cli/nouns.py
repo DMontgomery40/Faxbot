@@ -10,6 +10,7 @@ import typer
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import discovery
+from .commands import digital
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -123,6 +124,7 @@ recipients.add_typer(partners, name='partners')
 # The case group, with the commands case_commands adds (accept, repair, checklists ...).
 recipients.add_typer(case_commands.cases, name='cases')
 recipients.add_typer(delivery.toll_free, name='toll-free')
+recipients.add_typer(digital.recipients, name='digital')
 
 # -- providers -----------------------------------------------------------------------
 
@@ -145,6 +147,7 @@ humblefax.command('check')(settings.humblefax_check)
 providers.add_typer(humblefax, name='humblefax')
 providers.add_typer(trunk.trunk, name='trunk')
 providers.add_typer(accounts.accounts, name='accounts')
+providers.add_typer(digital.accounts, name='digital')
 providers.add_typer(rules.rules, name='rules')
 
 # -- costs ---------------------------------------------------------------------------
