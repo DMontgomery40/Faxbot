@@ -1,7 +1,9 @@
 <div class="home-hero" align="center" markdown>
 <img src="assets/images/faxbot_full_logo_banner.png" alt="Faxbot" style="max-width: 980px; width: 100%; height: auto;" />
 
-Open‑source, self‑hostable fax API with modular backends, a mobile‑ready Admin Console, and AI assistant tooling.
+Proprietary, self‑hosted fax API with modular backends, a mobile‑ready Admin Console, and AI assistant tooling.
+
+New Faxbot-owned work requires prior written permission from David Montgomery for use, modification, distribution, resale, or hosting. Previously released MIT versions retain their existing permissions. Third-party components keep their own licenses. See the [license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
 
 [:material-rocket-launch: Get Started](getting-started.md){ .md-button .md-button--primary }
 [:material-monitor-dashboard: Admin Console](admin-console.md){ .md-button }
