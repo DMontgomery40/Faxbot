@@ -268,6 +268,43 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
         assert not item['turn_on'] or (not item['enabled']['on'] and item['works']['here']), item['key']
 
 
+def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation):
+    """Defaults on: when Faxbot turned something off itself, the map says why and offers the way that fixes it."""
+    from types import SimpleNamespace
+    from app import sip_fax_mode
+    with installation.start(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID,
+                            SIP_T38_ENABLED='false') as client:
+        where = SimpleNamespace(fax_data_dir=installation.base['FAX_DATA_DIR'])
+
+        def item(key):
+            response = client.get('/routing/savings/mechanisms', headers=ADMIN)
+            assert response.status_code == 200, response.text
+            return _by_key(response.json())[key]
+
+        # The network changes port numbers: T.38 cannot work here, so there is nothing to turn on.
+        sip_fax_mode.write(where, 'audio', sip_fax_mode.NETWORK)
+        t38 = item('fax_over_ip')
+        assert (t38['enabled']['label'], t38['works']['label'], t38['turn_on']) == ('Off', 'Not here', False)
+        assert t38['works']['sentence'] == ('Your network changes port numbers, so fax over IP (T.38) cannot work; '
+                                            'Faxbot sends audio fax until the network is fixed.')
+        # One call got no fax data back: it works here, and Turn on leads to the trunk page's "Try T.38 again".
+        sip_fax_mode.write(where, 'audio', sip_fax_mode.NO_DATA_BACK)
+        t38 = item('fax_over_ip')
+        assert (t38['works']['here'], t38['turn_on'], t38['page']) == (True, True, 'providers/trunk')
+        assert t38['enabled']['sentence'] == ('Off: a T.38 fax got no fax data back on this network, so Faxbot uses '
+                                              'audio fax.')
+
+        # Page marks agreed, but the header text is still Faxbot's own: separator pages for now, and the way to
+        # turn page marks on is the header text on Sender identity.
+        agreed = client.put(f'/batching/numbers/{AGREED}', headers=ADMIN, json={
+            'enabled': True, 'recipient_agreed': True, 'boundaries': 'page_headers', 'boundaries_agreed': True})
+        assert agreed.status_code == 200, agreed.text
+        marks = item('separator_pages')
+        assert (marks['enabled']['on'], marks['works']['here'], marks['turn_on']) == (False, True, True)
+        assert (marks['page'], marks['page_label']) == ('numbers/identity', 'Numbers → Sender identity')
+        assert marks['enabled']['sentence'].startswith('Marks at the top of every page need your header text')
+
+
 def test_the_command_and_the_console_show_the_same_sentences_as_the_server():
     """savingsMap.json is one evaluated answer: the command prints exactly its lines, the console's map test renders
     the same answer, and its catalogue fields are the catalogue's own, so neither surface can drift."""

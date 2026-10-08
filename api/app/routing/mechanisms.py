@@ -67,6 +67,8 @@ class State:
     works: bool
     on_sentence: str | None = None
     works_sentence: str | None = None
+    # When what turns it on is set elsewhere this time (header text for page marks): that page and its name.
+    page: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -361,13 +363,16 @@ def separator_pages(here):
         sentence = f'On for {_recipients(len(working))} who agreed.'
     elif not layouts:
         sentence = 'No recipient has agreed to an index page or page marks yet.'
+    page = None
     if marks_wait:
-        # Faxbot falls back to separator pages by itself (batching.policy.HEADER_NEEDS), and says why.
+        # Faxbot falls back to separator pages by itself (batching.policy.HEADER_NEEDS), and says why; what turns
+        # page marks on then is the header text, on Sender identity.
         sentence = ((sentence + ' ') if working else '') + (
             'Marks at the top of every page need your header text and sending number set in Numbers > Sender '
             'identity, so faxes to those recipients use separator pages for now.')
+        page = ('numbers/identity', 'Numbers → Sender identity')
     why = _shared_calls(here)
-    return State(bool(working), why is None, sentence, why)
+    return State(bool(working), why is None, sentence, why, page=page)
 
 
 def sslfax(here):
@@ -404,13 +409,20 @@ def fax_over_ip(here):
     from .. import sip_fax_mode
     from ..provider_labels import trunk_name
     on = bool(getattr(here.values, 'sip_t38_enabled', True))
-    sentence = None
+    sentence = why = None
     record = None if on else sip_fax_mode.read(here.values)
-    if record and record.get('mode') == 'audio':
-        # Faxbot switched to audio fax by itself for a network or carrier reason, and says which (sip_fax_mode).
-        sentence = sip_fax_mode.off_sentence(record.get('reason'),
-                                             carrier=trunk_name(getattr(here.values, 'sip_trunk_preset', '')))
-    why = None if here.trunk_sends or here.trunk_receives else f'Needs your own SIP trunk; {here.through()}.'
+    reason = record.get('reason') if record and record.get('mode') == 'audio' else None
+    if reason in (sip_fax_mode.NETWORK, sip_fax_mode.CARRIER):
+        # Faxbot switched to audio fax by itself because T.38 cannot work on this network or carrier: it does not
+        # work here, and there is nothing to turn on until that changes (it turns T.38 back on by itself).
+        said = sip_fax_mode.off_sentence(reason, carrier=trunk_name(getattr(here.values, 'sip_trunk_preset', '')))
+        said = said.removeprefix('Off: ')
+        why = said[:1].upper() + said[1:]
+    elif reason == sip_fax_mode.NO_DATA_BACK:
+        # One call got no fax data back; the trunk page's "Try T.38 again" is the way back.
+        sentence = sip_fax_mode.off_sentence(reason)
+    if not here.trunk_sends and not here.trunk_receives:
+        why = f'Needs your own SIP trunk; {here.through()}.'
     return State(on, why is None, sentence, why)
 
 
@@ -687,8 +699,8 @@ def _view(mechanism, here):
                   'sentence': state.works_sentence},
         'evidence': {'level': mechanism.evidence, 'label': EVIDENCE[mechanism.evidence]},
         'here': {'used': count, 'sentence': used},
-        'part': mechanism.part, 'page': mechanism.page,
-        'page_label': _label(mechanism.page, mechanism.page_label, here.values),
+        'part': mechanism.part, 'page': state.page[0] if state.page else mechanism.page,
+        'page_label': state.page[1] if state.page else _label(mechanism.page, mechanism.page_label, here.values),
         # Where selecting it leads: its part on Costs → Savings, or the page with its own figures or advice.
         'link': mechanism.destination,
         'link_label': 'Costs → Savings' if mechanism.part else (
