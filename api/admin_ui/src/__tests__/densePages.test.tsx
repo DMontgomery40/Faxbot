@@ -38,7 +38,7 @@ describe('Dense pages on the Recipients, Delivery routes and Savings screens', (
     fireEvent.click(await screen.findByRole('option', { name: 'Off' }));
     fireEvent.click(save);
     expect(await screen.findByText('Saved for the next fax.')).toBeTruthy();
-    expect(writes).toEqual([{ packing: 'never', trim_blank: false }]);
+    expect(writes).toEqual([{ packing: 'never', trim_blank: false, shading: null }]);
   });
 
   it('turns long pages on for a cloud route and keeps a route that fetches its own document off', async () => {

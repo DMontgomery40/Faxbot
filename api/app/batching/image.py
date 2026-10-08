@@ -367,7 +367,21 @@ def index_tiff(folder, heading, summary, entries):
     return data, 0
 
 
-def build_call_image(root, call_id, members, *, index=None, marks=None):
+def _lightened(lighten, job_id, pages):
+    """The fax's lightened pages for this call (pages/friendly.py), or None to send its own image as it is."""
+    if lighten is None:
+        return None
+    try:
+        path = lighten(job_id)
+        if path is None:
+            return None
+        data = Path(path).read_bytes()
+        return data if len(_read_ifds(data)) == pages else None
+    except Exception:
+        return None
+
+
+def build_call_image(root, call_id, members, *, index=None, marks=None, lighten=None):
     """Write ``batch-<call_id>.tiff`` in ``root`` and return its path.
 
     ``members`` lists, in call order, ``(job_id, pages, separator line)``.
@@ -378,6 +392,9 @@ def build_call_image(root, call_id, members, *, index=None, marks=None):
     ``marks`` (for each fax, the ``page_mark`` line of each of its pages)
     every page gets its line above it and no page is added. The image's
     page count is checked against the layout before it is used.
+    ``lighten(job_id)`` (pages/friendly.py): a fax's lightened pages for this
+    call's route, used instead of its own image when it gives them; separator,
+    index and mark lines never change.
     """
     from ..conversion import DocumentConversionError, pdf_to_tiff
     root = Path(root)
@@ -394,7 +411,7 @@ def build_call_image(root, call_id, members, *, index=None, marks=None):
                 raise MemberUnusable(job_id)
         except (OSError, ValueError, struct.error):
             raise MemberUnusable(job_id) from None
-        images.append(data)
+        images.append(_lightened(lighten, job_id, pages) or data)
     if index is not None:
         return _index_call(root, call_id, members, images, index)
     if marks is not None:

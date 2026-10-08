@@ -312,6 +312,9 @@ export interface Settings {
     min_success_percent: number;
     // Faxes to the installation's own numbers become received faxes here, with no call.
     local_delivery?: boolean;
+    // Lighten shaded areas and remove specks on documents you send: where it saves time (the default), always
+    // or never.
+    fax_friendly_documents?: 'where_it_saves' | 'always' | 'never';
   };
   intake?: {
     email_enabled: boolean;

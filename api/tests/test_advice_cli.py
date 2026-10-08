@@ -6,7 +6,8 @@ Phaxio install and no history: every section says it has nothing to advise yet.
 from api.tests.test_cli import cli, server  # noqa: F401  (fixtures)
 
 
-SECTIONS = {'sending', 'receiving', 'plans', 'fax_marker', 'billing_steps', 'partners', 'toll_free', 'carriers'}
+SECTIONS = {'sending', 'receiving', 'plans', 'fax_marker', 'billing_steps', 'partners', 'toll_free', 'carriers',
+            'pages'}
 
 
 def test_recommendations_alone_shows_every_section_and_each_has_its_own_command(cli):  # noqa: F811
@@ -16,7 +17,7 @@ def test_recommendations_alone_shows_every_section_and_each_has_its_own_command(
     assert result['partners']['state'] == 'none' and result['toll_free']['state'] == 'none'
     human = ' '.join(cli('costs', 'recommendations').stdout.split())
     for heading in ('Sending', 'Receiving', 'Plans', 'Fax marker', 'Billing steps', 'Partner candidates',
-                    'Toll-free numbers', 'Other carriers'):
+                    'Toll-free numbers', 'Other carriers', 'Shaded areas and specks'):
         assert heading in human
     assert ('Faxbot placed no calls over your carrier line in the last 90 days, so there is nothing to compare yet.'
             in human)
@@ -27,6 +28,9 @@ def test_recommendations_alone_shows_every_section_and_each_has_its_own_command(
         assert alone.exit_code == 0, alone.stdout
         expected = result[key].get('sentence') or result[key].get('empty_sentence')
         assert expected in ' '.join(alone.stdout.split())
+    shading = cli('costs', 'recommendations', 'shading')
+    assert shading.exit_code == 0 and 'Nothing to suggest: shaded areas are lightened where it saves time.' in ' '.join(
+        shading.stdout.split())
     services = ' '.join(cli('costs', 'recommendations', 'service-numbers').stdout.split())
     assert 'Faxbot knows no fax service number besides your carrier line.' in services
 

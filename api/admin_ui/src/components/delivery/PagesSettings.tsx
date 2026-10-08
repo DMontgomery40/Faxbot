@@ -10,6 +10,11 @@ import { DeliveryError } from './shared';
 // setting for blank space at the bottom of pages.
 
 const TRIM_LABEL = 'Blank space at the bottom of pages';
+// Fax-friendly pages (pages/friendly.py): this recipient's own choice beats the setting for all faxes.
+const SHADING_LABEL = 'Lighten shaded areas for this recipient';
+const SHADING_DEFAULT: Record<string, string> = {
+  where_it_saves: 'where it saves time', always: 'always', never: 'never',
+};
 const TRIM_HELP = 'Machines without error correction take time for every line of a page, even a blank one. '
   + 'Faxbot leaves out the blank bottom of pages it made from your documents, never of scans or pictures.';
 
@@ -26,6 +31,7 @@ export function RecipientPagesPanel({ client, number, canWrite }: {
   const [view, setView] = useState<RecipientPages | null>(null);
   const [packing, setPacking] = useState<'allow' | 'never'>('allow');
   const [trim, setTrim] = useState('');
+  const [shading, setShading] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -34,6 +40,7 @@ export function RecipientPagesPanel({ client, number, canWrite }: {
     setView(loaded);
     setPacking(loaded.packing);
     setTrim(loaded.trim_blank === null ? '' : loaded.trim_blank ? 'on' : 'off');
+    setShading(loaded.shading ?? '');
   };
 
   useEffect(() => {
@@ -48,14 +55,18 @@ export function RecipientPagesPanel({ client, number, canWrite }: {
 
   if (!view) return error ? <DeliveryError error={error} onClose={() => setError(null)} /> : null;
 
-  const changed = packing !== view.packing || trim !== (view.trim_blank === null ? '' : view.trim_blank ? 'on' : 'off');
+  const changed = packing !== view.packing || trim !== (view.trim_blank === null ? '' : view.trim_blank ? 'on' : 'off')
+    || shading !== (view.shading ?? '');
 
   const save = async () => {
     setBusy(true);
     setError(null);
     setSaved(false);
     try {
-      show(await client.saveRecipientPages(number, { packing, trim_blank: trim === '' ? null : trim === 'on' }));
+      show(await client.saveRecipientPages(number, {
+        packing, trim_blank: trim === '' ? null : trim === 'on',
+        shading: shading === '' ? null : shading as 'always' | 'never',
+      }));
       setSaved(true);
     } catch (failure) {
       setError(failure);
@@ -87,6 +98,12 @@ export function RecipientPagesPanel({ client, number, canWrite }: {
           <MenuItem value="">{`As set for all faxes (${view.trim_blank_default ? 'on' : 'off'})`}</MenuItem>
           <MenuItem value="on">On for machines without error correction</MenuItem>
           <MenuItem value="off">Off</MenuItem>
+        </TextField>
+        <TextField select size="small" label={SHADING_LABEL} value={shading} sx={{ minWidth: 300 }}
+          disabled={!canWrite || busy} onChange={(event) => setShading(event.target.value)}>
+          <MenuItem value="">{`As set for all faxes (${SHADING_DEFAULT[view.shading_default ?? 'where_it_saves']})`}</MenuItem>
+          <MenuItem value="always">Always</MenuItem>
+          <MenuItem value="never">Never</MenuItem>
         </TextField>
       </Stack>
       {canWrite && (

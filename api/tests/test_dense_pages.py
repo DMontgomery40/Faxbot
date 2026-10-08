@@ -563,7 +563,7 @@ def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, data
     assert sending.prepare(database, SimpleNamespace(), SimpleNamespace(provider_id='sip', manifest=None, traits={}),
                            SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=('x',)), {'to_number': PEER},
                            tmp_path / 'x.pdf', None) is None
-    assert not list(tmp_path.glob('packed-*'))
+    assert not [path for path in tmp_path.glob('packed-*') if not path.name.startswith('packed-friendly-')]
 
 
 def _encoded_send(database, route):
@@ -622,7 +622,7 @@ def test_page_settings_of_the_chosen_recipient_follow_an_approved_toll_free_dial
     # The machine at the toll-free number takes unlimited length, but the person chose never for the recipient.
     installation.set_recipient_settings(PEER, packing='never')
     assert _send(database, tmp_path, number=toll_free, recipient=PEER) is None
-    assert not list(tmp_path.glob('packed-*'))
+    assert not list(tmp_path.glob('packed-*.tiff'))  # nothing packed (lightening keeps its own record)
     # Never on the toll-free number itself counts too; with neither set, the call is packed.
     installation.set_recipient_settings(PEER, packing='allow')
     installation.set_recipient_settings(toll_free, packing='never')

@@ -112,6 +112,25 @@ describe('Settings delivery routes', () => {
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
   });
+
+  it('lightens shaded areas where it saves time by default, explains the choices and saves another', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves' };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const choice = within(routes).getByLabelText(
+      'Lighten shaded areas and remove specks on documents you send') as HTMLSelectElement;
+    expect(choice.value).toBe('where_it_saves');
+    expect([...choice.querySelectorAll('option')].map((option) => option.textContent)).toEqual(
+      ['Where it saves time', 'Always', 'Never']);
+    expect(routes.textContent).toContain('changes pages only on calls billed by time');
+    expect(routes.textContent).toContain('a page with a shaded table went from 61 to 12 seconds');
+    fireEvent.change(choice, { target: { value: 'never' } });
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: 'never' });
+  });
 });
 
 describe('Settings direct delivery', () => {

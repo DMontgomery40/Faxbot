@@ -77,6 +77,7 @@ import type {
   TollFreeState,
   TollFreeChange,
   TollFreeSuggestions,
+  FaxFriendlyRecommendation,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -1085,7 +1086,9 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/pages`);
   }
 
-  async saveRecipientPages(number: string, body: { packing?: 'allow' | 'never'; trim_blank?: boolean | null }): Promise<RecipientPages> {
+  async saveRecipientPages(number: string, body: {
+    packing?: 'allow' | 'never'; trim_blank?: boolean | null; shading?: 'always' | 'never' | null;
+  }): Promise<RecipientPages> {
     return this.json(`/routing/destinations/${id(number)}/pages`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
@@ -1398,6 +1401,11 @@ class AdminAPIClient {
   async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
     : Promise<TollFreeSuggestions> {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
+  }
+
+  // Whether lightening shaded areas and removing specks would have saved time on recent faxes, or what it saved.
+  async getFaxFriendlyRecommendation(): Promise<FaxFriendlyRecommendation> {
+    return this.json('/routing/recommendations/fax-friendly');
   }
 
   // The newest cases this installation sent packets for, with recipient and counts.

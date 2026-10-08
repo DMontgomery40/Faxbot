@@ -48,6 +48,9 @@ export interface RecipientPages {
   trim_blank_default: boolean;
   capability_sentence: string;
   ecm_sentence: string | null;
+  // Lighten shaded areas for this recipient: always, never, or null for the setting all faxes use.
+  shading?: 'always' | 'never' | null;
+  shading_default?: 'where_it_saves' | 'always' | 'never';
 }
 
 // Providers: long pages for one route. trim_blank is the installation's setting, on the phone line's row only.

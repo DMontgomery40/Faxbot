@@ -51,6 +51,7 @@ config.attributes["schema_case_ledger"] = importlib.import_module(package + ".sc
 config.attributes["schema_forms"] = importlib.import_module(package + ".schema_forms")
 config.attributes["schema_destination_schedule"] = importlib.import_module(package + ".schema_destination_schedule")
 config.attributes["schema_intake_sources"] = importlib.import_module(package + ".schema_intake_sources")
+config.attributes["schema_friendly_pages"] = importlib.import_module(package + ".schema_friendly_pages")
 
 
 def migrate(connection):

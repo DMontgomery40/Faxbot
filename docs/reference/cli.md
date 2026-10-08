@@ -1761,7 +1761,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, or how faxes sent together to it mark each document.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -1785,6 +1785,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--separator-pages`: Go back to a separator page before each document sent together to this number.
 * `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
+* `--shading ON|OFF|DEFAULT`: Lighten shaded areas and remove specks on documents sent to this recipient: on (always), off (never), or default for the setting all faxes use.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`
@@ -4429,6 +4430,7 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `service-numbers`: Show quiet numbers at your carrier and at...
 * `toll-free`: Show recipients with a toll-free fax...
 * `carriers`: Show what your last 30 days of faxing...
+* `shading`: Show how much time lightening shaded areas...
 
 #### `faxbot costs recommendations sending`
 
@@ -4550,6 +4552,20 @@ Show what your last 30 days of faxing would have cost at each carrier&#x27;s pub
 
 ```console
 $ faxbot costs recommendations carriers [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations shading`
+
+Show how much time lightening shaded areas and removing specks saved, or would save, on your recent faxes.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations shading [OPTIONS]
 ```
 
 **Options**:

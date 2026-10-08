@@ -8,6 +8,9 @@ from ..output import local_time
 
 PAGES_PER_SHEET = {'machine': 'allow', 'never': 'never'}
 SWITCH = {'on': True, 'off': False, 'default': None}
+# Lighten shaded areas for this recipient (pages/friendly.py): always, never, or the setting for all faxes.
+SHADING = {'on': 'always', 'off': 'never', 'default': None}
+SHADING_TEXT = {'where_it_saves': 'where it saves time', 'always': 'always', 'never': 'never'}
 
 
 def page_fields(view):
@@ -22,12 +25,18 @@ def page_fields(view):
     return [('Longest page', capability),
             ('This machine', view.get('ecm_sentence') or 'error correction not known yet'),
             ('Pages per sheet', 'as the receiving machine allows' if view.get('packing') != 'never' else 'never'),
-            ('Blank space at the bottom of pages', trim)]
+            ('Blank space at the bottom of pages', trim),
+            ('Lighten shaded areas', view.get('shading') or 'as set for all faxes ('
+             + SHADING_TEXT.get(view.get('shading_default'), 'where it saves time') + ')')]
 
 
-def recipient_page_body(pages_per_sheet, blank_space):
-    """The body for PUT /routing/destinations/{number}/pages, or {} when neither option was given."""
+def recipient_page_body(pages_per_sheet, blank_space, shading=None):
+    """The body for PUT /routing/destinations/{number}/pages, or {} when no option was given."""
     body = {}
+    if shading is not None:
+        if shading not in SHADING:
+            raise CliError('Choose on, off or default for --shading.')
+        body['shading'] = SHADING[shading]
     if pages_per_sheet is not None:
         if pages_per_sheet not in PAGES_PER_SHEET:
             raise CliError("Choose machine (as the receiving machine allows) or never for --pages-per-sheet.")
