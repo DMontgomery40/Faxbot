@@ -386,7 +386,7 @@ describe('console and command line offer the same rule conditions', () => {
   });
 
   it('writes every action and route setting the faxbot command writes', () => {
-    const settings = { when_busy: 'next', page_layout: 'one_per_sheet', alternate_number: 'only' } as const;
+    const settings = { when_busy: 'next', page_layout: 'one_per_sheet', alternate_number: 'only', subaddress: '2001' } as const;
     const written = new Set<string>();
     for (const method of ['use', 'try_in_order', 'cheapest_reliable', 'site_accounts', 'automatic'] as const) {
       Object.keys(routeActions(method, { ...settings })).forEach((key) => written.add(key));

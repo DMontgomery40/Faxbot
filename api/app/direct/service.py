@@ -515,6 +515,14 @@ class DirectService:
         peer = await run_lifecycle_step(lambda: self.store.set_receive_fax_images(peer_id, accept))
         return peer, await self.tell_partner(peer)
 
+    async def set_peer_calls(self, peer_id, accept, address):
+        """Take peer fax calls from a partner or stop, with its address inside the tunnel; returns (partner, ``told``,
+        ``unreachable`` or ``unsupported``). The address must be private (``peer_call.tunnel_address``)."""
+        from .peer_call import tunnel_address
+        text = tunnel_address(address) if address else None
+        peer = await run_lifecycle_step(lambda: self.store.set_peer_calls(peer_id, accept=accept, address=text))
+        return peer, await self.tell_partner(peer)
+
     def confirm(self, statement, signature, *, now=None):
         """A partner submits the code from our challenge fax, signed with its key."""
         now = now or utcnow()

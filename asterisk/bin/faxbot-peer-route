@@ -1,0 +1,20 @@
+#!/bin/sh
+# Which network interface this container would send a call to one address
+# through, and that interface's kind, for a peer fax call to an enrolled
+# partner (api/app/direct/peer_call.py). Faxbot asks before every such call,
+# through the dialplan's [faxbot-peer-route] (SHELL), so the answer comes from
+# the network the fax call's packets start in. A peer fax call goes only when
+# the kind is wireguard (an encrypted tunnel).
+#
+# Prints one line: "<interface>/<kind>" (kind "none" when the kernel names
+# none), or "none" when no route or no usable address. Never fails.
+set -u
+
+address=$(printf '%s' "${1:-}" | tr -cd '0-9A-Fa-f.:' | cut -c1-45)
+[ -n "$address" ] || { echo none; exit 0; }
+device=$(ip -o route get "$address" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n 1)
+case $device in
+  ''|*[!A-Za-z0-9_.:-]*) echo none; exit 0 ;;
+esac
+kind=$(sed -n 's/^DEVTYPE=//p' "/sys/class/net/$device/uevent" 2>/dev/null | head -n 1 | tr -cd 'a-z0-9_')
+printf '%s/%s\n' "$device" "${kind:-none}"

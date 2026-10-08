@@ -447,6 +447,12 @@ export interface DirectPartner {
   receive_fax_images?: boolean;
   partner_receives_fax_images?: boolean;
   fax_images_text?: string | null;
+  // Fax calls inside an encrypted tunnel (peer fax calls): whether you take the partner's, whether it said, signed,
+  // that it takes yours, its address inside the tunnel, and one sentence; optional for older servers.
+  receive_peer_calls?: boolean;
+  partner_peer_calls?: boolean;
+  peer_call_address?: string | null;
+  peer_calls_text?: string | null;
   // Notice fax: each document goes directly with a one-page notice by fax (for an intake that needs a fax event).
   notice_fax?: boolean;
   notice_fax_text?: string | null;
@@ -515,6 +521,15 @@ export interface DirectRepair {
 
 // POST /direct/peers/{id}/fax-images: the partner as it now stands, the sentence to show and whether it was told now.
 export type DirectFaxImagesResult = DirectPartner & { detail: string; partner_told: boolean };
+
+// POST /direct/peers/{id}/peer-calls/check: whether a fax to the partner would go inside the tunnel now.
+export interface DirectTunnelCheck {
+  applies: boolean;
+  reason: string;
+  sentence: string;
+  tunnel: string | null;
+  note: string;
+}
 
 // GET /direct/relay/agreements: partner relays both ways. ``role`` 'relay' means this installation sends the
 // partner's faxes; 'sender' means the partner sends ours. Every text field is one sentence from the server.

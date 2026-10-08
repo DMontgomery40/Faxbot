@@ -85,6 +85,7 @@ from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
 from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
+from .inbound.trust_http import router as forwarded_trust_router
 from .engine_frames_http import router as fax_machines_router
 from .intake.http import router as intake_router
 from .intake.sources.http import router as intake_sources_router
@@ -215,6 +216,7 @@ app.include_router(routing_charges_router)
 app.include_router(rules_router)
 app.include_router(reply_number_router)
 app.include_router(screening_router)
+app.include_router(forwarded_trust_router)
 app.include_router(fax_machines_router)
 app.include_router(intake_router)
 app.include_router(intake_sources_router)
@@ -2441,6 +2443,11 @@ class InboundFaxOut(BaseModel):
     account_label: Optional[str] = None
     # The subaddress the sender stated (T.33 SUB): it chose the mailbox, it proves nothing about the sender.
     subaddress: Optional[str] = None
+    # A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+    # failed or stated) and one sentence saying so. A diversion is the network's statement, not proof of the sender.
+    diverted_from: Optional[str] = None
+    diversion: Optional[str] = None
+    diversion_text: Optional[str] = None
     # A receiving rule marked the fax urgent.
     urgent: bool = False
 

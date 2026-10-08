@@ -110,6 +110,34 @@ def prepare_handover(manager, values) -> bool:
     return True
 
 
+# A forwarded call's headers (inbound/diversion.py) are read at its hand-over and then removed; one whose call left
+# no fax, or whose hand-over never came, is removed after this long by the recovery scan.
+HEADERS_KEPT = timedelta(days=1)
+_HEADERS = re.compile(r'[0-9]{1,40}\.sip')
+
+
+def prune_headers(directory: Path, now: datetime) -> int:
+    """Remove forwarded calls' header files older than HEADERS_KEPT; how many were removed."""
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:
+        return 0
+    removed = 0
+    for entry in entries:
+        if not _HEADERS.fullmatch(entry.name):
+            continue
+        try:
+            if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                continue
+            modified = datetime.fromtimestamp(entry.stat(follow_symlinks=False).st_mtime, timezone.utc).replace(tzinfo=None)
+            if now - modified >= HEADERS_KEPT:
+                os.unlink(entry.path)
+                removed += 1
+        except FileNotFoundError:
+            continue
+    return removed
+
+
 @dataclass(frozen=True)
 class Recovered:
     found: int
@@ -150,6 +178,7 @@ def recover(store, engine, values, *, now=None) -> Recovered:
     if not values.inbound_enabled or not receives_over_trunk(values):
         return Recovered(0, (), 0)
     directory = Path(values.fax_data_dir) / 'inbound'
+    prune_headers(directory, now)
     records = sip_calls.SipCallRecords(engine)
     ended = records.unclaimed_inbound_calls()
     imports = store.imports

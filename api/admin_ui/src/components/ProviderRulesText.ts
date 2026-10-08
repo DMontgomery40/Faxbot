@@ -239,6 +239,7 @@ export function settingSentences(then: Actions): string[] {
     sentences.push("Faxbot dials only the recipient's approved alternate number, and holds the fax when there is none.");
   }
   if (then.alternate_number === 'never') sentences.push('Faxbot always dials the number the sender gave.');
+  if (then.subaddress) sentences.push(`The fax asks for subaddress ${then.subaddress} at the recipient's number.`);
   return sentences;
 }
 
@@ -271,6 +272,9 @@ export function receivingSentence(rule: { to_number: string; mailbox_label: stri
   names: { account: (key: string) => string; connector: (id: string) => string; site?: (key: string) => string }): string {
   let sentence = rule.any_number || !rule.to_number ? 'Faxes to any of your numbers' : `Faxes to ${rule.to_number}`;
   if (rule.subaddress) sentence += ` with subaddress ${rule.subaddress}`;
+  if (rule.diverted_from) {
+    sentence += ` forwarded from ${rule.diverted_from}${rule.diversion_unsigned ? ' (verified or not)' : ''}`;
+  }
   if (rule.account_key) sentence += ` received on ${names.account(rule.account_key)}`;
   else if (rule.site_key) sentence += ` received on an account of ${names.site ? names.site(rule.site_key) : rule.site_key}`;
   const from = (rule.from_numbers ?? []).map((entry) => (entry.endsWith('*')
@@ -319,6 +323,16 @@ export const ENCRYPTION_NOTE = 'SSL Fax encrypts the call, but it cannot confirm
 
 export const ALTERNATE_NOTE = 'An approved alternate number is one the recipient confirmed. When it is a toll-free '
   + 'number, the recipient pays for the call.';
+
+export const FORWARDED_HELP = 'Only calls the network says were forwarded to this number from that one. Faxbot '
+  + 'cannot yet check who issued a carrier\'s signature, so a forwarding is not verified and counts only if you tick '
+  + 'the box below.';
+export const FORWARDED_UNSIGNED_LABEL = 'Also take a forwarding that is not verified (never one whose signature failed)';
+
+export const SUBADDRESS_NOTE = 'A department or mailbox behind the recipient\'s fax number, if they gave you one. '
+  + 'Their fax machine must take subaddresses; each call shows whether it did.';
+// A subaddress as a fax carries it: up to 20 digits, also +, # and *.
+export const SUBADDRESS_PATTERN = /^[0-9#*+]{1,20}$/;
 
 export const LAYOUT_NOTE = 'Several pages on one sheet saves pages and call time. Faxbot stacks whole pages only as '
   + 'far as the receiving machine says it can print, and marks them so a receiving Faxbot can split them again.';

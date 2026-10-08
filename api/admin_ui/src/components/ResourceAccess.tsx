@@ -56,7 +56,7 @@ import type { Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import { providerLabel } from '../providerLabels';
 import { NO_RECEIVING_OPTIONS, rulesApiFor, type ReceivingOptions } from './ProviderRulesApi';
-import { ReceivedTry, ReceivingOptionsFields, type Named } from './ProviderRulesReceiving';
+import { ForwardedTrustPanel, ReceivedTry, ReceivingOptionsFields, type Named } from './ProviderRulesReceiving';
 import { receivingSentence } from './ProviderRulesText';
 
 const OPTION_KEYS = Object.keys(NO_RECEIVING_OPTIONS) as Array<keyof ReceivingOptions>;
@@ -404,11 +404,12 @@ export const NO_MAILBOX = 'No mailbox: received faxes are visible to people with
 
 interface NumberRow { number: string; rule: InboundRule | null; carriers: CarriedNumber[] }
 
-function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
+function NumbersSection({ client, canManage, canReadSettings, canWriteSettings = false, onNavigate }: {
   client: AdminAPIClient;
   canManage: boolean;
   // Carried numbers come from the settings document, read with settings:read.
   canReadSettings: boolean;
+  canWriteSettings?: boolean;
   onNavigate?: (destination: AdminDestination) => void;
 }) {
   const fetcher = useCallback(async () => {
@@ -618,6 +619,11 @@ function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
           <ReceivedTry api={rulesApiFor(client)} accounts={receivingAccounts} timeZone={timeZone} />
         </Box>
       )}
+      {state === 'ready' && canReadSettings && (
+        <Box sx={{ mt: 3 }}>
+          <ForwardedTrustPanel client={client} canWrite={canWriteSettings} />
+        </Box>
+      )}
       {!canReadSettings && state === 'ready' && (
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
           Numbers without a mailbox are shown only to people who can see settings.
@@ -668,7 +674,8 @@ export default function ResourceAccess({ client, me, section, onNavigate }: {
       {section === 'assignments' && <AssignmentsSection client={client} canManage={permissions.has('grants:manage')} />}
       {section === 'mailboxes' && <MailboxesSection client={client} canManage={permissions.has('mailboxes:manage')} />}
       {section === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')}
-        canReadSettings={permissions.has('settings:read')} onNavigate={onNavigate} />}
+        canReadSettings={permissions.has('settings:read')} canWriteSettings={permissions.has('settings:write')}
+        onNavigate={onNavigate} />}
     </Box>
   );
 }

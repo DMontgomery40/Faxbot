@@ -10,6 +10,11 @@ from .config import settings
 
 
 LOGIN_TIMEOUT_SECONDS = 10.0
+# How long a peer fax call's route check inside Asterisk may take (peer_route).
+PEER_ROUTE_TIMEOUT_SECONDS = 5.0
+PEER_ADDRESS = re.compile(r"[0-9A-Fa-f.:]{2,45}")
+# A partner's peer fax call endpoint (direct/peer_call.py); never a trunk's, so neither path can reach the other.
+PEER_ENDPOINT = re.compile(r"peer-[a-f0-9]{32}-endpoint")
 ORIGINATE_RESPONSE_TIMEOUT_SECONDS = 10.0
 STATUS_TIMEOUT_SECONDS = 5.0
 AMI_MAX_LINE_BYTES = 1024
@@ -63,6 +68,36 @@ def _validate_headers(fields: Dict[str, str]):
 # escaped form arrives as the literal header value *;+sip.fax="t38".
 FAX_PREFERENCE_VARIABLE = 'PJSIP_HEADER(add,Accept-Contact)=*;+sip.fax=\\"t38\\"'
 
+# A T.33 subaddress as the built-in engine sends it (patch 0005's faxbot_sub_clean): digits and +, # and *, at
+# most 20, spaces dropped. The same characters a receiving rule accepts (access/receiving_rules.py).
+SUBADDRESS = re.compile(r"[0-9#*+]{1,20}")
+SUBADDRESS_VARIABLE = re.compile(r"(?:^|,)FAXBOT_TX_SUB=([0-9#*+]{1,20})(?=,|$)")
+
+
+def subaddress_text(value) -> Optional[str]:
+    """``value`` as the engine sends it, or None when a fax subaddress cannot hold it."""
+    if not isinstance(value, str):
+        return None
+    text = value.replace(" ", "")
+    return text if SUBADDRESS.fullmatch(text) else None
+
+
+def peer_route_fields(token: str, address: str) -> Dict[str, str]:
+    """The Originate that runs one peer fax call route check in Asterisk ([faxbot-peer-route]); nothing is dialed."""
+    if not isinstance(address, str) or not PEER_ADDRESS.fullmatch(address):
+        raise ValueError("Unsupported peer address")
+    if not re.fullmatch(r"[0-9a-f]{32}", token or ""):
+        raise ValueError("Unsupported check")
+    return {"Action": "Originate", "ActionID": "faxbot-route:" + token, "Channel": "Local/s@faxbot-peer-route",
+            "Application": "Wait", "Data": "1", "Async": "true",
+            "Variable": f"FAXBOT_CHECK={token},FAXBOT_PEER_ADDRESS={address}"}
+
+
+def requested_subaddress(fields: Dict[str, str]) -> Optional[str]:
+    """The subaddress an Originate's fields ask for, or None."""
+    found = SUBADDRESS_VARIABLE.search(fields.get("Variable", ""))
+    return found.group(1) if found else None
+
 
 def prepare_originate_fields(
     job_id: str,
@@ -81,6 +116,8 @@ def prepare_originate_fields(
     iaf: Optional[str] = None,
     audio: bool = False,
     endpoint: str = "trunk-endpoint",
+    subaddress: Optional[str] = None,
+    peer: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -94,6 +131,13 @@ def prepare_originate_fields(
     initial INVITE: a property of the route, never a reason to call again.
     ``endpoint`` is the trunk the call goes over (``sip_trunk.endpoint_name``);
     the caller checks it is one Faxbot rendered.
+    ``subaddress`` is the T.33 subaddress (SUB) this fax asks the far end's
+    machine for (patch 0005, ``FAXBOT_TX_SUB``): digits and +, # and *, at most
+    20. It is requested, never promised: the engine sends it only when the far
+    end's machine says it takes one.
+    ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
+    direct/peer_call.py): the call goes there, inside the tunnel, instead of
+    over ``endpoint``. The caller checked the tunnel first.
     Async Originate ignores PreDialGoSub in Asterisk 22, so the header is set
     as an Originate variable, which Asterisk applies to the new channel before
     the INVITE is sent.
@@ -113,6 +157,8 @@ def prepare_originate_fields(
         station_id = caller_id
     if not isinstance(endpoint, str) or not re.fullmatch(r"trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint", endpoint):
         raise ValueError("Unsupported AMI trunk")
+    if peer is not None and (not isinstance(peer, str) or not PEER_ENDPOINT.fullmatch(peer)):
+        raise ValueError("Unsupported AMI partner")
     if not isinstance(fax_preference, bool):
         raise ValueError("Unsupported AMI fax preference")
     if not isinstance(tiff_path, str) or not re.fullmatch(
@@ -151,6 +197,12 @@ def prepare_originate_fields(
         raise ValueError("Unsupported AMI fax mode")
     if audio:
         variables["FAXBOT_AUDIO"] = "yes"
+    # Patch 0005: the subaddress this fax asks for (a notice fax's notice ID, or one your sending rules chose).
+    if subaddress is not None:
+        clean = subaddress_text(subaddress)
+        if clean is None:
+            raise ValueError("Unsupported AMI subaddress")
+        variables["FAXBOT_TX_SUB"] = clean
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -159,7 +211,7 @@ def prepare_originate_fields(
         "ActionID": (
             f"faxbot:{job_id}:{attempt_id}" if attempt_id is not None else str(uuid4())
         ),
-        "Channel": f"PJSIP/{dial}@{endpoint}",
+        "Channel": f"PJSIP/{dial}@{peer or endpoint}",
         "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
@@ -219,6 +271,52 @@ def sender_identity(job_id):
     return header, station
 
 
+_NOTICE_MODULE = f"{__package__}.direct.notice"
+_notice_missing_logged = False
+
+
+def notice_subaddress(job_id) -> Optional[str]:
+    """The 20-digit notice ID a notice fax to an enrolled partner asks for as its subaddress (``direct/notice.py``,
+    ``subaddress_for``), or None for every other fax.
+
+    Notice faxes come with the notice work (builder AU, ent/notice-repair). Until that module is part of this
+    installation there is no notice fax, so its absence alone means None, logged once; any other import failure,
+    and anything ``subaddress_for`` raises, is not hidden here.
+    """
+    global _notice_missing_logged
+    try:
+        from .direct.notice import subaddress_for
+    except ModuleNotFoundError as error:
+        if error.name != _NOTICE_MODULE:
+            raise
+        if not _notice_missing_logged:
+            _notice_missing_logged = True
+            logging.getLogger(__name__).info("No notice faxes on this installation (%s); none asks for a subaddress.",
+                                             error)
+        return None
+    engine = _database()
+    return subaddress_for(engine, job_id) if engine is not None else None
+
+
+def rule_subaddress(job_id) -> Optional[str]:
+    """The subaddress the fax's sending rules chose (``routing/envelope.py``, the envelope's ``subaddress``), or
+    None. A fax accepted before rules, or whose decision can no longer be read, asks for none."""
+    engine = _database()
+    if engine is None:
+        return None
+    from .routing import envelope as envelopes
+    try:
+        pinned = envelopes.load(engine, job_id)
+    except envelopes.UnreadableDecision:
+        return None
+    return getattr(pinned.envelope, "subaddress", None) if pinned is not None else None
+
+
+def fax_subaddress(job_id) -> Optional[str]:
+    """The subaddress this fax asks for: a notice fax's notice ID first, then one its sending rules chose."""
+    return notice_subaddress(job_id) or rule_subaddress(job_id)
+
+
 def learned_options(learned):
     """Originate keyword arguments for what Faxbot learned about the number (engine_learning.Decision):
     audio fax, T.38 at once and Internet Aware Fax. Speed and error correction come with the call."""
@@ -275,11 +373,12 @@ def trunk_values(values, trunk=None):
 
 
 def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None, mailbox_id=None,
-                         choice=None, trunk=None):
+                         choice=None, trunk=None, peer=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     ``trunk`` is the trunk account the fax goes over (its key); None or ``sip`` is the first trunk. The call
-    then uses that trunk's caller ID, number format and endpoint.
+    then uses that trunk's caller ID, number format and endpoint. ``peer`` (direct/peer_call.PeerCall) sends it
+    to an enrolled partner's Asterisk inside the tunnel instead, with Internet Aware Fax.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
@@ -306,6 +405,14 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     # A fax relayed for a partner shows the partner's header text and station ID; caller ID is unchanged.
     identity = sender_identity(job_id)
     header = identity[0] if identity is not None else values.fax_header
+    # The subaddress this fax asks for (patch 0005): a notice fax's notice ID, or one its sending rules chose.
+    subaddress = fax_subaddress(job_id)
+    if subaddress:
+        limits["subaddress"] = subaddress
+    if peer is not None:
+        # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
+        # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
+        limits.update(peer=peer.endpoint, iaf="peer")
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=header, attempt_id=attempt_id,
@@ -315,7 +422,8 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
         header=header, attempt_id=attempt_id,
         station_id=identity[1] if identity is not None else (choice.number or None),
-        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, endpoint=endpoint, **limits)
+        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest),
+        fax_preference=trunk.fax_preference and peer is None, endpoint=endpoint, **limits)
 
 
 async def _login(
@@ -366,6 +474,8 @@ class AMIClient:
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
         self._queries: Dict[str, Dict[str, object]] = {}
+        # Peer fax call route checks waiting for their FaxPeerRoute event, by check token (peer_route).
+        self._route_waiters: Dict[str, asyncio.Future] = {}
         # Why the last connection attempt failed ("login_rejected" or
         # "unreachable"); None after a successful login or before any attempt.
         self.problem: Optional[str] = None
@@ -533,6 +643,10 @@ class AMIClient:
             self._emit("FaxScreened", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxframes":
             self._emit("FaxFrames", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxpeerroute":
+            waiter = self._route_waiters.get(fields.get("check", ""))
+            if waiter is not None and not waiter.done():
+                waiter.set_result(fields.get("route", ""))
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -597,6 +711,32 @@ class AMIClient:
             raise PermissionError("AMI peer list refused")
         return sum(1 for event in events if str(event.get("ObjectName", "")).startswith(prefix)
                    and str(event.get("Status", "")).upper().startswith("OK"))
+
+    async def peer_route(self, address: str):
+        """(interface, kind) the route from Asterisk's own network to ``address`` leaves through, or None.
+
+        Asked inside the Asterisk container, where the fax call's packets start (direct/peer_call.py): a Local
+        channel runs ``[faxbot-peer-route]``, which runs ``faxbot-peer-route`` and reports a FaxPeerRoute event,
+        then hangs up. Nothing is dialed. None when Asterisk cannot say within PEER_ROUTE_TIMEOUT_SECONDS; raises
+        ConnectionError or TimeoutError when the manager connection refuses the check.
+        """
+        token = uuid4().hex
+        fields = peer_route_fields(token, address)
+        waiter = asyncio.get_running_loop().create_future()
+        self._route_waiters[token] = waiter
+        try:
+            await self._send_action(fields)
+            try:
+                async with asyncio.timeout(PEER_ROUTE_TIMEOUT_SECONDS):
+                    route = await waiter
+            except TimeoutError:
+                return None
+        finally:
+            self._route_waiters.pop(token, None)
+            if not waiter.done():
+                waiter.cancel()
+        parts = str(route).strip().split("/")
+        return (parts[0], parts[1]) if len(parts) == 2 and parts[0] and parts[0] != "none" else None
 
     async def db_put(self, family: str, key: str, value: str):
         """Store one value in Asterisk's database (the SSL Fax engine's call plans); raises when not stored."""
@@ -688,14 +828,24 @@ class AMIClient:
         the action is written, so an unacknowledged call still leaves a record.
         ``trunk`` is the trunk account the fax goes over (None: the first trunk).
         """
+        # A fax to an enrolled partner whose Faxbot takes peer fax calls goes inside the encrypted tunnel when the
+        # tunnel is up (checked in Asterisk's own network just now); otherwise by the carrier, as before.
+        from .direct import peer_call
+        peer = await peer_call.call_for(self, settings, _database(), dest)
         fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call,
-                                      trunk=trunk)
+                                      trunk=trunk, peer=peer)
         own, _ = trunk_values(settings, trunk)
         submission = {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
             "CallerID": fields["CallerID"], "Preset": own.sip_trunk_preset or "",
             "FaxPreference": "yes" if FAX_PREFERENCE_VARIABLE in fields["Variable"] else "no",
         }
+        # The subaddress this call asks for, recorded as requested (carried only if the far end takes one).
+        subaddress = requested_subaddress(fields)
+        if subaddress:
+            submission["Subaddress"] = subaddress
+        if peer is not None:
+            submission["Peer"] = peer.peer_id
         if trunk and trunk != "sip":
             submission["Trunk"] = trunk
         learned = getattr(call, "learned", None)

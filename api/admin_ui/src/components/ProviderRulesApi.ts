@@ -74,6 +74,8 @@ export interface Actions {
   when_busy?: 'wait' | 'next';
   page_layout?: PageLayout;
   alternate_number?: AlternateNumber;
+  // The subaddress the fax asks for at the recipient's number (up to 20 digits; also +, # and *).
+  subaddress?: string;
   // Limits.
   never?: string[];
   require_direct?: boolean;
@@ -290,6 +292,7 @@ export interface ExplainResult {
   holds: string[];
   dial: { number: string; sentence: string } | null;
   page_layout: string | null;
+  subaddress?: string | null;
   trace: TraceStep[];
 }
 
@@ -454,12 +457,16 @@ export interface ReceivingOptions {
   urgent: boolean;
   // How long the received fax is kept before cleanup removes it. Not a legal hold.
   keep_days: number | null;
+  // Only calls forwarded to this number from diverted_from, as the network signed it; diversion_unsigned also takes
+  // a forwarding the network did not sign or whose signature Faxbot could not check (never a failed one).
+  diverted_from?: string | null;
+  diversion_unsigned?: boolean;
 }
 
 export const NO_RECEIVING_OPTIONS: ReceivingOptions = {
   position: null, enabled: true, any_number: false, account_key: null, site_key: null, subaddress: null,
   from_numbers: [], days: [], start_minute: null, end_minute: null, email_connector_id: null, email_off: false,
-  urgent: false, keep_days: null,
+  urgent: false, keep_days: null, diverted_from: null, diversion_unsigned: false,
 };
 
 export interface ReceivedExplainRequest {
@@ -468,6 +475,8 @@ export interface ReceivedExplainRequest {
   account_key: string | null;
   // The subaddress the sender's machine stated, if any.
   subaddress?: string | null;
+  // A call forwarded from this number, as the network signed it.
+  diverted_from?: string | null;
   // A local time to try ("2026-10-07T18:30"), or now.
   at: string | null;
 }

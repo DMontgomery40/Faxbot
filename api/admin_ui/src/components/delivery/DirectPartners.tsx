@@ -40,6 +40,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tunnelAddress, setTunnelAddress] = useState<Record<string, string>>({});
 
   const run = async (operation: () => Promise<string | null>) => {
     setBusy(true);
@@ -92,6 +93,15 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   // The partner activity lists reload after every change made here.
   const [refresh, setRefresh] = useState(0);
 
+  const setTunnelCalls = (partner: DirectPartner, accept: boolean) => void run(async () => (
+    await client.setDirectTunnelCalls(partner.id, accept,
+      (tunnelAddress[partner.id] ?? partner.peer_call_address ?? '').trim() || null)).detail);
+
+  const checkTunnel = (partner: DirectPartner) => void run(async () => {
+    const found = await client.checkDirectTunnel(partner.id);
+    return found.applies ? found.sentence : `${found.sentence} ${found.note}`;
+  });
+
   const remove = async () => {
     if (!removing) return;
     if (await run(async () => { await client.removeDirectPartner(removing.id); return null; })) setRemoving(null);
@@ -138,6 +148,36 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       )}
       {partner.certificate_text && (
         <Typography variant="body2" color="error">{partner.certificate_text}</Typography>
+      )}
+      {tunnelCalls(partner)}
+    </Box>
+  );
+
+  // Fax calls inside an encrypted tunnel: a real fax call straight to the partner's Faxbot, with no carrier.
+  const tunnelCalls = (partner: DirectPartner) => partner.state === 'verified' && (
+    <Box mt={1} aria-label={`Fax calls inside a tunnel with ${partner.organization}`} role="group">
+      {canWrite && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+          <TextField size="small" label="Their address inside the tunnel" placeholder="10.20.0.2"
+            value={tunnelAddress[partner.id] ?? partner.peer_call_address ?? ''} disabled={busy}
+            onChange={(event) => setTunnelAddress({ ...tunnelAddress, [partner.id]: event.target.value })} />
+          <FormControlLabel
+            control={<Switch size="small" checked={Boolean(partner.receive_peer_calls)} disabled={busy}
+              onChange={(event) => setTunnelCalls(partner, event.target.checked)} />}
+            label="Take their fax calls inside the tunnel" />
+          <Button size="small" onClick={() => setTunnelCalls(partner, Boolean(partner.receive_peer_calls))}
+            disabled={busy}>Save address</Button>
+          <Button size="small" onClick={() => checkTunnel(partner)} disabled={busy}>Check the tunnel</Button>
+        </Stack>
+      )}
+      {partner.peer_calls_text && (
+        <Typography variant="body2" color="text.secondary">{partner.peer_calls_text}</Typography>
+      )}
+      {canWrite && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          Set up a WireGuard tunnel to this partner on the fax engine's network yourself; Faxbot only places calls
+          through it.
+        </Typography>
       )}
     </Box>
   );

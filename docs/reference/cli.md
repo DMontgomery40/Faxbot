@@ -1102,6 +1102,7 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `blocked`: Junk senders whose calls are turned away...
 * `connectors`: Email mailboxes and folders that bring...
 * `npi`: Your NPI numbers, so Faxbot can tell you...
+* `forwarded-trust`: Certificate authorities you trust to...
 
 ### `faxbot numbers list`
 
@@ -1147,6 +1148,8 @@ $ faxbot numbers add [OPTIONS] {number}
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
+* `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, when the forwarding is verified (add --forwarded-unsigned to take one that is not). &quot;&quot; removes the condition.
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate whose issuer Faxbot cannot check yet, not checked, or unsigned (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers update`
@@ -1179,6 +1182,8 @@ $ faxbot numbers update [OPTIONS] {number}
 * `--any-number / --this-number-only`: Use the rule for faxes to any of your numbers.
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
+* `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, when the forwarding is verified (add --forwarded-unsigned to take one that is not). &quot;&quot; removes the condition.
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate whose issuer Faxbot cannot check yet, not checked, or unsigned (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers explain`
@@ -1917,6 +1922,78 @@ $ faxbot numbers npi check [OPTIONS]
 
 * `--help`: Show this message and exit.
 
+### `faxbot numbers forwarded-trust`
+
+Certificate authorities you trust to verify that a carrier forwarded a call (STIR/SHAKEN STI-CAs). A forwarding is verified only when it chains to one.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the certificate authorities you trust...
+* `add`: Trust certificate authorities for...
+* `remove`: Stop trusting one certificate authority...
+
+#### `faxbot numbers forwarded-trust list`
+
+List the certificate authorities you trust for forwarded calls.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers forwarded-trust add`
+
+Trust certificate authorities for forwarded calls: from a file of PEM certificates, or from a list at an
+address. Only certificate authorities are kept, each once.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust add [OPTIONS] [FILE]
+```
+
+**Arguments**:
+
+* `[FILE]`: PEM certificates of the certificate authorities, or &#x27;-&#x27; for standard input.
+
+**Options**:
+
+* `--url ADDRESS`: Read the list from this https:// address instead, once, now (a list you can reach, such as one your carrier gives you).
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers forwarded-trust remove`
+
+Stop trusting one certificate authority for forwarded calls.
+
+**Usage**:
+
+```console
+$ faxbot numbers forwarded-trust remove [OPTIONS] {fingerprint}
+```
+
+**Arguments**:
+
+* `fingerprint`: The start of its fingerprint, as the list shows it (at least 8 characters).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `faxbot recipients`
 
 Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and case packets.
@@ -2364,6 +2441,8 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `confirm`: Enter the code from a partner&#x27;s check fax...
 * `revoke`: Remove a partner.
 * `fax-images`: Accept faxes from a partner as the exact...
+* `tunnel-calls`: Fax calls with a partner inside an...
+* `tunnel-check`: Check now whether a fax to a partner would...
 * `deliveries`: List recent faxes sent to and received...
 * `notice-fax`: Send each document to a partner directly...
 * `notices`: List notice faxes sent and received, and...
@@ -2494,6 +2573,47 @@ $ faxbot recipients partners fax-images [OPTIONS] {partner} {on|off}
 
 * `partner`: Partner organization, fax number or id.  [required]
 * `on|off`: on (the default) accepts the partner&#x27;s faxes as the exact fax image, filed like any received fax; off accepts only original documents.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners tunnel-calls`
+
+Fax calls with a partner inside an encrypted tunnel, with no carrier. You set up the WireGuard tunnel yourself,
+inside the fax engine&#x27;s network; Faxbot only places and takes calls through it.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners tunnel-calls [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
+* `on|off`: on takes the partner&#x27;s fax calls inside your encrypted tunnel; off stops taking them.  [required]
+
+**Options**:
+
+* `--address ADDRESS`: The partner&#x27;s address inside the tunnel, such as 10.20.0.2 or 10.20.0.2:5070. Faxes to them go there when the tunnel is up.
+* `--check`: Also check now whether a fax to them would go inside the tunnel.
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners tunnel-check`
+
+Check now whether a fax to a partner would go inside the encrypted tunnel, as the fax engine&#x27;s network sees
+it. Places no call.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners tunnel-check [OPTIONS] {partner}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization, fax number or id.  [required]
 
 **Options**:
 
@@ -4917,6 +5037,7 @@ $ faxbot providers rules add [OPTIONS] {name}
 * `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
 * `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
 * `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--subaddress DIGITS`: The department or mailbox to ask for at the recipient&#x27;s number (a subaddress, up to 20 digits). Their fax machine must take subaddresses. A setting of a rule that says how to send: add --automatic to keep the usual route.
 * `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
 * `--before RULE`: Put it before this rule.
 * `--off`: Add it switched off.
@@ -4961,6 +5082,7 @@ $ faxbot providers rules update [OPTIONS] {RULE}
 * `--when-busy wait|next`: When every line is busy: wait for a free line, or use the next account.
 * `--pages-per-sheet as-allowed|one`: Pages per sheet: as many as the receiving machine allows, or one.
 * `--alternate use|never|only`: Dial the recipient&#x27;s approved alternate number: when there is one, never, or only (hold the fax when there is none).
+* `--subaddress DIGITS`: The department or mailbox to ask for at the recipient&#x27;s number (a subaddress, up to 20 digits). Their fax machine must take subaddresses. A setting of a rule that says how to send: add --automatic to keep the usual route.
 * `--mandatory / --not-mandatory`: Organization rules only: mailbox and workflow rules cannot replace a mandatory routing rule, and no one can send a fax anyway around a mandatory limit.
 * `--help`: Show this message and exit.
 

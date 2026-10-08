@@ -33,9 +33,9 @@ RUN curl --fail --location --retry 3 --output asterisk.tar.gz \
 WORKDIR /usr/src/asterisk-22.11.0
 # Faxbot's own changes to Asterisk, each explained at the top of its file. Every hunk must apply
 # exactly (--fuzz=0): a patch that no longer fits a new Asterisk stops the build instead of landing
-# in the wrong place. faxbot_t38_gateway.h holds the spandsp steps 0002, 0003 and 0004 call (T.38
-# gateway fixes, far-end frames, Internet Aware Fax), with the spandsp version guard; the replay proofs
-# in tests/ compile the same file.
+# in the wrong place. faxbot_t38_gateway.h holds the spandsp steps 0002 to 0006 call (T.38 gateway
+# fixes, far-end frames, Internet Aware Fax, the subaddress, the measured coding), with the spandsp
+# version guard; the replay proofs in tests/ compile the same file.
 COPY patches/ /usr/src/patches/
 RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward --fuzz=0 < "$change" || exit 1; done \
     && cp /usr/src/patches/faxbot_t38_gateway.h res/
@@ -103,10 +103,10 @@ WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
-COPY bin/faxbot-inbound-notify bin/faxbot-public-address /usr/local/bin/
+COPY bin/faxbot-inbound-notify bin/faxbot-public-address bin/faxbot-peer-route /usr/local/bin/
 # What Asterisk writes is its own; its configuration stays root's, readable by its group
 # (start.sh renders the rest of it as root at every start).
-RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address \
+RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address /usr/local/bin/faxbot-peer-route \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
     && chown -R asterisk:asterisk /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk \
     && chown -R root:asterisk /etc/asterisk && chmod -R u=rwX,g=rX,o= /etc/asterisk \

@@ -1,6 +1,6 @@
 /*
  * Faxbot: what its changes add to spandsp 0.0.6, in one place: the two T.38 gateway steps (patches 0002 and
- * 0003), and the far-end frame capture and Internet Aware Fax steps of patch 0004.
+ * 0003), the far-end frame capture and Internet Aware Fax steps of patch 0004, and patch 0005's subaddress check.
  *
  * res_fax_spandsp.c includes this file (the image build copies it next to that file), and so do the replay
  * proofs asterisk/tests/t38_gateway_replay.c and t38_terminal_replay.c, so the proofs run exactly the steps
@@ -288,6 +288,80 @@ static inline int faxbot_iaf_send_ahead(t38_terminal_state_t *terminal)
 	fe->samples = fe->next_tx_samples;
 	t38_terminal_send_timeout(terminal, 0);
 	return 1;
+}
+
+/*
+ * Patch 0005: the T.33 subaddress (SUB) a fax Faxbot sends asks for, from the channel variable FAXBOT_TX_SUB
+ * (ami.py sets it for a notice fax's notice ID or a subaddress your sending rules chose). spandsp 0.0.6 sends SUB
+ * with its DCS only when the far end's DIS sets the subaddressing bit (DIS bit 49), so Faxbot records a subaddress
+ * as requested, and as carried only when that bit was set (engine_frames.py); the replay proof in asterisk/tests
+ * shows both. A SUB's field holds at most 20 characters (T.30 5.3.6.2.4).
+ *
+ * The other side: spandsp 0.0.6's own DIS leaves bit 49 clear (its default T.30 features have no subaddressing),
+ * so a sending machine that honours the DIS never sent the built-in engine a SUB, and receiving rules by subaddress
+ * and notice pairing by SUB could not work there. faxbot_receive_subaddress sets it for a fax Faxbot receives.
+ */
+#define FAXBOT_SUB_MAX 20
+
+/*! \brief Patch 0005: a fax Faxbot receives says, in its DIS, that it takes a subaddress (T.30 DIS bit 49). */
+static inline void faxbot_receive_subaddress(t30_state_t *t30)
+{
+	t30_set_supported_t30_features(t30, t30->supported_t30_features | T30_SUPPORT_SUB_ADDRESSING);
+}
+
+/*!
+ * \brief The subaddress in \p value as Faxbot sends it: digits and +, # and * (spaces dropped), at most
+ * FAXBOT_SUB_MAX, into \p out (at least FAXBOT_SUB_MAX + 1 bytes). Any other character, or a longer value, gives an
+ * empty \p out: nothing is sent rather than part of an address. The same characters receiving_rules.py accepts.
+ */
+static inline void faxbot_sub_clean(const char *value, char *out, size_t size)
+{
+	size_t used = 0;
+
+	if (!out || !size) {
+		return;
+	}
+	out[0] = '\0';
+	if (!value) {
+		return;
+	}
+	for (; *value; value++) {
+		if (*value == ' ') {
+			continue;
+		}
+		if (!((*value >= '0' && *value <= '9') || *value == '+' || *value == '#' || *value == '*')
+			|| used >= FAXBOT_SUB_MAX || used + 1 >= size) {
+			out[0] = '\0';
+			return;
+		}
+		out[used++] = *value;
+	}
+	out[used] = '\0';
+}
+
+/*
+ * Patch 0006 (builder CA): the most compact coding a sent fax may use, from FAXBOT_COMPRESSION ("mh", "mr" or
+ * "mmr"), measured on the fax's own pages (api/app/pages/coding.py). It is a ceiling on what the sender offers:
+ * spandsp still takes the best coding the receiving machine also has, and T.6 (MMR) only with error correction
+ * (t30.c, process_rx_dis_dtc), so a machine never gets a coding it lacks. Error correction is not changed.
+ */
+
+/*! \brief The T.30 compressions a sent fax offers for \p coding; 0 (keep Asterisk's own set) for anything else. */
+static inline int faxbot_compressions(const char *coding)
+{
+	if (!coding) {
+		return 0;
+	}
+	if (!strcmp(coding, "mh")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mmr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION | T30_SUPPORT_T6_COMPRESSION;
+	}
+	return 0;
 }
 
 #endif /* FAXBOT_T38_GATEWAY_H */

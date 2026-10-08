@@ -21,6 +21,7 @@ from ..routing.submit import accept_generated_fax
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
 from .service import CERTIFICATE_CHANGED, DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
+from .peer_call import peer_calls_text
 from .store import DirectConflict, accepts_fax_images
 
 
@@ -121,7 +122,12 @@ def _peer_view(peer, now=None):
             'notice_fax_text': ('Each document goes directly, with a one-page notice by fax for their fax intake.'
                                 if _flag(peer.get('notice_fax')) and peer['state'] != 'revoked' else None),
             'certificate_changed': peer.get('certificate_changed_at') is not None,
-            'certificate_text': CERTIFICATE_CHANGED if peer.get('certificate_changed_at') is not None else None}
+            'certificate_text': CERTIFICATE_CHANGED if peer.get('certificate_changed_at') is not None else None,
+            # Peer fax calls inside an encrypted tunnel (direct/peer_call.py).
+            'receive_peer_calls': _flag(peer.get('receive_peer_calls')),
+            'partner_peer_calls': _flag(peer.get('partner_peer_calls')),
+            'peer_call_address': peer.get('peer_call_address'),
+            'peer_calls_text': peer_calls_text(peer)}
 
 
 # Operator routes ----------------------------------------------------------------
@@ -220,6 +226,54 @@ async def set_fax_images(peer_id: str, payload: FaxImagesIn, request: Request):
         detail = (f'Saved. Faxbot could not reach {name} just now; it tells them as soon as it can, and with its '
                   'answer to their next delivery.')
     return {**_peer_view(peer), 'detail': detail, 'partner_told': told == 'told'}
+
+
+class PeerCallsIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    accept: bool
+    address: str | None = Field(default=None, max_length=64)
+
+
+@router.post('/peers/{peer_id}/peer-calls', dependencies=[Depends(require_permission('settings:write'))])
+async def set_peer_calls(peer_id: str, payload: PeerCallsIn, request: Request):
+    """Take fax calls from this partner inside the encrypted tunnel, or stop, and its address inside the tunnel.
+
+    The tunnel itself is set up outside Faxbot. The partner is told your choice with a signed statement. The
+    trunk page's Apply writes the partner's endpoint into Asterisk's file (sip_trunk.rendered_configuration) and
+    loads it; until then the trunk page says its settings are not applied.
+    """
+    from .. import sip_trunk
+    service = service_for(request.app)
+    try:
+        peer, told = await service.set_peer_calls(peer_id, payload.accept, (payload.address or '').strip() or None)
+    except DirectConflict as error:
+        raise HTTPException(409, detail=str(error)) from None
+    except IdentityUnavailable:
+        raise HTTPException(503, detail='Direct delivery keys are unavailable on this installation.') from None
+    except DeliveryStoreError:
+        raise HTTPException(503, detail='Direct delivery storage is unavailable.') from None
+    trunk = sip_trunk.configured(request.scope['faxbot.configuration'].active.values)
+    name = peer['organization']
+    detail = ('Saved. Press Apply on the SIP trunk page so the fax engine loads it.' if trunk
+              else 'Saved. Set up a SIP trunk first: fax calls inside the tunnel go through its fax engine.')
+    if told == 'unreachable':
+        detail += f' Faxbot could not reach {name} just now; it tells them as soon as it can.'
+    return {**_peer_view(peer), 'detail': detail, 'partner_told': told == 'told'}
+
+
+@router.post('/peers/{peer_id}/peer-calls/check', dependencies=[Depends(require_permission('settings:read'))])
+async def check_peer_calls(peer_id: str, request: Request):
+    """Whether a fax to this partner would go inside the tunnel now, checked in the fax engine's own network."""
+    from . import peer_call
+    service = service_for(request.app)
+    peer = await _call(lambda: service.store.get_peer(peer_id))
+    if peer is None or peer['state'] == 'revoked':
+        raise HTTPException(409, detail='This partner is not enrolled.')
+    from ..ami import ami_client
+    values = request.scope['faxbot.configuration'].active.values
+    decision = await peer_call.check(ami_client, values, peer)
+    return {'applies': decision.applies, 'reason': decision.reason, 'sentence': decision.sentence,
+            'tunnel': decision.tunnel.interface if decision.tunnel else None, 'note': peer_call.TUNNEL_NOTE}
 
 
 @router.post('/peers/{peer_id}/revoke', dependencies=[Depends(require_permission('settings:write'))])
