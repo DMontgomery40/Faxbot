@@ -162,6 +162,67 @@ def partner_repair(engine, *, since, days):
     return result
 
 
+# Each side of the fax over IP comparison needs this many answered calls with a known length and pages.
+MIN_CALLS = 10
+
+
+def _per_page(seconds, pages):
+    return round(seconds / pages) if pages else None
+
+
+def fax_over_ip(engine, *, since, days):
+    """Seconds a page on fax over IP (T.38) calls against audio fax calls, from the trunk's own call records.
+
+    Measured, not priced: answered calls with a result, sent and received, divided by the pages they confirmed
+    (as Recent calls' negotiation summary does). The comparison is said only when each side has ``MIN_CALLS``.
+    """
+    table = reflect(engine, ('sip_call_records',))['sip_call_records']
+    with read_connection(engine) as connection:
+        rows = connection.execute(sa.select(table.c.t38, table.c.connected_seconds, table.c.pages).where(
+            table.c.started_at >= since, table.c.answered_at.is_not(None), table.c.fax_status.is_not(None),
+            table.c.t38.in_(('yes', 'no')))).all()
+    sides = {'yes': {'calls': 0, 'measured': 0, 'seconds': 0, 'pages': 0},
+             'no': {'calls': 0, 'measured': 0, 'seconds': 0, 'pages': 0}}
+    for row in rows:
+        side = sides[row.t38]
+        side['calls'] += 1
+        if row.connected_seconds is not None and row.pages:
+            side['measured'] += 1
+            side['seconds'] += row.connected_seconds
+            side['pages'] += row.pages
+    t38, audio = sides['yes'], sides['no']
+    result = {'calls': t38['calls'], 'audio_calls': audio['calls'],
+              'seconds_per_page': _per_page(t38['seconds'], t38['pages']),
+              'audio_seconds_per_page': _per_page(audio['seconds'], audio['pages']), 'saved': {}}
+    if not t38['calls']:
+        result['sentence'] = f'No fax over IP (T.38) calls in the last {days} days.'
+        return result
+    if t38['measured'] >= MIN_CALLS and audio['measured'] >= MIN_CALLS:
+        result['sentence'] = (
+            f"Fax over IP (T.38) took about {result['seconds_per_page']} seconds a page over "
+            f"{_plural(t38['measured'], 'call')}, and audio fax about {result['audio_seconds_per_page']} seconds a "
+            f"page over {_plural(audio['measured'], 'call')}.")
+        return result
+    fewer = 'audio fax' if audio['measured'] < MIN_CALLS else 'fax over IP'
+    result['sentence'] = (f"{_plural(t38['calls'], 'call')} used fax over IP (T.38) in the last {days} days; there "
+                          f'are too few {fewer} calls to compare seconds a page (each side needs {MIN_CALLS}).')
+    return result
+
+
+def digital(engine, *, since, days):
+    """Faxes delivered as Direct messages or to FHIR servers (ledger routes ``dsm.<id>``, ``fhir.<id>``)."""
+    costs = reflect(engine, ('delivery_attempt_costs',))['delivery_attempt_costs']
+    with read_connection(engine) as connection:
+        jobs = connection.execute(sa.select(costs.c.job_id).where(
+            costs.c.outcome == 'success', costs.c.created_at >= since,
+            sa.or_(costs.c.route.like('dsm.%'), costs.c.route.like('fhir.%'))).distinct()).scalars().all()
+    result = {'faxes': len(jobs), 'saved': {}}
+    result['sentence'] = (
+        f"{_faxes(result['faxes'])} went as Direct messages or to FHIR servers instead of a fax call."
+        if result['faxes'] else f'No fax went as a Direct message or to a FHIR server in the last {days} days.')
+    return result
+
+
 def blocked_calls(engine, *, since, days):
     """Calls from blocked senders that Asterisk turned away before answering (``screened_call_rejections``)."""
     table = reflect(engine, ('screened_call_rejections',))['screened_call_rejections']

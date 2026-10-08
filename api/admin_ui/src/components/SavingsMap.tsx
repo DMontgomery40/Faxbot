@@ -1,0 +1,142 @@
+// Overview → How Faxbot saves money: every way Faxbot saves money, drawn along the path a fax takes.
+// The stages run left to right (top to bottom on a phone), each with its mechanisms as small cards; the advice
+// that saves money once you act on it sits below the path. A card shows three statuses at a glance (On or Off,
+// Works here or Not here, and how it is tested) with the reason where a status is negative. Selecting a card
+// opens its part on Costs → Savings, the only place amounts appear, or the page with its own advice or
+// figures; the map never shows money. Every sentence comes from the server (GET /routing/savings/mechanisms),
+// and `faxbot costs mechanisms` prints the same ones (__tests__/savingsMap.json).
+import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
+import {
+  ArrowDownward as ArrowDownIcon,
+  ArrowForward as ArrowRightIcon,
+  Science as TestedIcon,
+} from '@mui/icons-material';
+import type { SavingsMechanism, SavingsMechanisms } from '../api/deliveryTypes';
+import type { AdminDestination } from '../navigation';
+
+const STATUS_CHIP = { size: 'small', variant: 'outlined', sx: { height: 22, fontSize: '0.75rem' } } as const;
+
+type Navigate = (destination: AdminDestination) => void;
+
+// On a wide screen a stage with many mechanisms takes two columns, so no stage runs far below the others.
+function span(count: number): number {
+  return count > 6 ? 2 : 1;
+}
+
+function MechanismCard({ item, onNavigate }: { item: SavingsMechanism; onNavigate?: Navigate }) {
+  const link = item.link;
+  const open = link && onNavigate ? () => onNavigate(link as AdminDestination) : undefined;
+  const reasons = [item.enabled.sentence, item.works.sentence].filter((sentence): sentence is string => Boolean(sentence));
+  return (
+    <Paper variant="outlined" data-testid={`savings-map-${item.key}`}
+      role={open ? 'link' : undefined} tabIndex={open ? 0 : undefined}
+      aria-label={open ? `${item.name}: open ${item.link_label}` : undefined}
+      onClick={open}
+      onKeyDown={open ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } } : undefined}
+      sx={{
+        p: 1.5, borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 0.75, minWidth: 0,
+        ...(open ? {
+          cursor: 'pointer', transition: 'all 0.2s ease-in-out',
+          '&:hover, &:focus-visible': { borderColor: 'primary.main', backgroundColor: 'rgba(59, 160, 255, 0.08)' },
+        } : {}),
+      }}>
+      <Typography variant="subtitle2" component="h4" sx={{ lineHeight: 1.3, overflowWrap: 'anywhere' }}>{item.name}</Typography>
+      <Box display="flex" flexWrap="wrap" gap={0.5}>
+        <Chip {...STATUS_CHIP} label={item.enabled.label} color={item.enabled.on ? 'success' : 'default'} />
+        <Chip {...STATUS_CHIP} label={item.works.label} color={item.works.here ? 'success' : 'warning'} />
+      </Box>
+      {reasons.map((sentence) => (
+        <Typography key={sentence} variant="caption" color="text.secondary" sx={{ lineHeight: 1.35 }}>{sentence}</Typography>
+      ))}
+      <Box display="flex" alignItems="flex-start" gap={0.5}>
+        <TestedIcon sx={{ fontSize: 14, mt: '2px', color: item.evidence.level === 'built' ? 'text.disabled' : 'info.main' }} />
+        <Typography variant="caption" sx={{ lineHeight: 1.35 }}>
+          {item.evidence.label}. <Box component="span" color="text.secondary">{item.here.sentence}</Box>
+        </Typography>
+      </Box>
+      {item.turn_on && onNavigate && (
+        <Button size="small" variant="text" sx={{ alignSelf: 'flex-start', px: 0.5, minWidth: 0 }}
+          onClick={(event) => { event.stopPropagation(); onNavigate(item.page as AdminDestination); }}
+          aria-label={`Turn on ${item.name} in ${item.page_label}`}>
+          Turn on
+        </Button>
+      )}
+    </Paper>
+  );
+}
+
+function StageTitle({ number, title }: { number: number; title: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderRadius: 2,
+      bgcolor: 'action.selected', border: 1, borderColor: 'divider' }}>
+      <Box component="span" aria-hidden sx={{ flex: '0 0 auto', width: 22, height: 22, borderRadius: '50%', display: 'grid',
+        placeItems: 'center', bgcolor: 'primary.main', color: 'primary.contrastText', fontSize: '0.75rem', fontWeight: 700 }}>
+        {number}
+      </Box>
+      <Typography variant="subtitle2" component="h3" sx={{ lineHeight: 1.2 }}>{title}</Typography>
+    </Box>
+  );
+}
+
+export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanisms; onNavigate?: Navigate }) {
+  const path = data.stages.filter((stage) => stage.path && stage.mechanisms.length > 0);
+  const beside = data.stages.filter((stage) => !stage.path && stage.mechanisms.length > 0);
+  if (path.length === 0 && beside.length === 0) return null;
+  return (
+    <Box component="section" aria-labelledby="savings-map-title" data-testid="savings-map" sx={{ mt: { xs: 3, md: 4 } }}>
+      <Typography id="savings-map-title" variant="h5" component="h2" gutterBottom>{data.title}</Typography>
+      <Typography variant="body2" color="text.secondary">
+        {data.sentence} Select one to see what it saved, or its advice.
+      </Typography>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 0.5, md: 2 }} sx={{ mt: 1.5, mb: 2 }}
+        data-testid="savings-map-legend">
+        {data.legend.map((entry) => (
+          <Typography key={entry.label} variant="caption" color="text.secondary">
+            <Box component="span" fontWeight="bold" color="text.primary">{entry.label}:</Box> {entry.sentence}
+          </Typography>
+        ))}
+      </Stack>
+      <Box sx={{ display: 'grid', gap: { xs: 0, md: 2 },
+        gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: `repeat(${path.length}, minmax(0, 1fr))`,
+          lg: path.map((stage) => `minmax(0, ${span(stage.mechanisms.length)}fr)`).join(' ') } }}>
+        {path.map((stage, index) => {
+          const last = index === path.length - 1;
+          const columns = span(stage.mechanisms.length);
+          return (
+            <Box key={stage.key} data-testid={`savings-map-stage-${stage.key}`} sx={{ minWidth: 0 }}>
+              <Box sx={{ position: 'relative', mb: 1.5 }}>
+                <StageTitle number={index + 1} title={stage.title} />
+                {!last && (
+                  // The path goes on to the next stage: to the right on a wide screen.
+                  <ArrowRightIcon aria-hidden fontSize="small" color="action"
+                    sx={{ display: { xs: 'none', md: 'block' }, position: 'absolute', top: '50%', right: -18,
+                      transform: 'translateY(-50%)' }} />
+                )}
+              </Box>
+              <Box sx={{ display: 'grid', gap: 1, alignItems: 'start',
+                gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: `repeat(${columns}, minmax(0, 1fr))` } }}>
+                {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} onNavigate={onNavigate} />)}
+              </Box>
+              {!last && (
+                // And downwards on a narrow one.
+                <Box sx={{ display: { xs: 'flex', md: 'none' }, justifyContent: 'center', py: 1 }}>
+                  <ArrowDownIcon aria-hidden color="action" />
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Box>
+      {beside.map((stage) => (
+        <Box key={stage.key} data-testid={`savings-map-stage-${stage.key}`} sx={{ mt: 3 }}>
+          <Box sx={{ mb: 1.5, maxWidth: { md: 360 } }}><StageTitle number={path.length + 1} title={stage.title} /></Box>
+          <Box sx={{ display: 'grid', gap: 1,
+            gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))',
+              lg: 'repeat(4, minmax(0, 1fr))' } }}>
+            {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} onNavigate={onNavigate} />)}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}

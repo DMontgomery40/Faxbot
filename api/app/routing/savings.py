@@ -280,7 +280,9 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS, home=None):
              'relay': more.relay(engine, since=since, days=days, home=home),
              'continuation': more.continuation(engine, since=since, days=days),
              'partner_repair': more.partner_repair(engine, since=since, days=days),
-             'blocked_calls': more.blocked_calls(engine, since=since, days=days)}
+             'blocked_calls': more.blocked_calls(engine, since=since, days=days),
+             't38': more.fax_over_ip(engine, since=since, days=days),
+             'digital': more.digital(engine, since=since, days=days)}
     total = {}
     for part in (together, index, direct, fax_images, packets, sslfax, own, toll_free, packing, encoding,
                  *added.values()):

@@ -621,14 +621,14 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             # Pages saved by the experimental encoded pages (pages/views.encoding_sentence).
             'encoding': _saving_view(result['encoding']),
             # The parts the savings map added (routing/mechanism_parts.py). Lightened pages are an estimate of time
-            # and the relay is priced from its own records; the rest are exact counts with no money.
+            # and the relay is priced from its own records; the rest are exact counts or measurements, no money.
             'fax_friendly': _saving_view(result['fax_friendly']),
             'relay': _saving_view(result['relay']),
             **{key: _count_view(result[key]) for key in COUNTED_PARTS}}
 
 
-# Savings parts that count what a mechanism did, exactly, and carry no money.
-COUNTED_PARTS = ('cheapest_route', 'plan_first', 'continuation', 'partner_repair', 'blocked_calls')
+# Savings parts that count or measure what a mechanism did, exactly, and carry no money.
+COUNTED_PARTS = ('cheapest_route', 'plan_first', 'continuation', 'partner_repair', 'blocked_calls', 't38', 'digital')
 
 
 def _count_view(part):

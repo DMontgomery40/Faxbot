@@ -689,6 +689,9 @@ const consoleHandlers = [
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.
   http.get('/routing/savings', () => json(emptySavings())),
+  // The Overview's savings map: an answer with no mechanisms draws no map.
+  http.get('/routing/savings/mechanisms', () => json({ days: 30, title: 'How Faxbot saves money',
+    sentence: 'Every way Faxbot saves money, in the order a fax meets them.', legend: [], stages: [] })),
   // Sending recommendations: no number has enough delivered faxes on two routes yet.
   http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),

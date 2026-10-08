@@ -435,7 +435,8 @@ SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'S
                 ('encoding', 'Pages saved by encoding (experimental)'), ('fax_friendly', 'Shaded pages lightened'),
                 ('cheapest_route', 'Cheapest route per delivered fax'), ('plan_first', 'Faxes through your plan'),
                 ('relay', 'Partner relays'), ('continuation', 'Only the missing pages'),
-                ('partner_repair', 'Missing pages to partners'), ('blocked_calls', 'Junk callers turned away'))
+                ('partner_repair', 'Missing pages to partners'), ('blocked_calls', 'Junk callers turned away'),
+                ('t38', 'Fax over IP (T.38)'), ('digital', 'Direct messages and FHIR'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
@@ -477,6 +478,9 @@ def mechanism_lines(result):
                     lines.append(f'    {sentence}')
             if item['turn_on']:
                 lines.append(f"    Turn it on in {item['page_label']}.")
+            # Advice and charge checks keep their own figures elsewhere; savings are all in faxbot costs savings.
+            if not item['part'] and item.get('command'):
+                lines.append(f"    See: {item['command']}")
     lines.append('')
     lines += [f"{entry['label']}: {entry['sentence']}" for entry in result['legend']]
     lines.append('What each one saved: faxbot costs savings')

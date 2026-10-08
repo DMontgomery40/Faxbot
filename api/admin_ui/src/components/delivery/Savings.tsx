@@ -140,6 +140,15 @@ export default function Savings({ client, focus = null }: { client: AdminAPIClie
             <Part part="partner_repair" title="Missing pages to partners" sentence={data.partner_repair.sentence}
               estimate={false} testId="savings-partner-repair" focus={focus} />
           )}
+          {/* Measured on the trunk's own calls: seconds a page each way, compared only with enough calls. */}
+          {data.t38 && (
+            <Part part="t38" title="Fax over IP (T.38)" sentence={data.t38.sentence} estimate={false}
+              testId="savings-t38" focus={focus} />
+          )}
+          {data.digital && (
+            <Part part="digital" title="Direct messages and FHIR" sentence={data.digital.sentence} estimate={false}
+              testId="savings-digital" focus={focus} />
+          )}
           {data.blocked_calls && (
             <Part part="blocked_calls" title="Junk callers turned away" sentence={data.blocked_calls.sentence}
               estimate={false} testId="savings-blocked-calls" focus={focus} />

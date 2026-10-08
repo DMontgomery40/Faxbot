@@ -245,7 +245,8 @@ export const NAVIGATION: NavArea[] = [
     id: 'overview', label: 'Overview', icon: <DashboardIcon />,
     pages: [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
-        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)} /> },
+        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)}
+          canReadSettings={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {
@@ -383,10 +384,10 @@ export const NAVIGATION: NavArea[] = [
       { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
       { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Savings client={ctx.client} /> },
+        render: (ctx) => <Savings client={ctx.client} focus={ctx.params.get('part')} /> },
       { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
-          onNavigate={ctx.navigate} /> },
+          onNavigate={ctx.navigate} focus={ctx.params.get('section')} /> },
     ],
   },
   {

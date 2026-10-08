@@ -24,7 +24,8 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus, WorkCounts } from '../api/types';
-import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/deliveryTypes';
+import type { DirectPartner, IntakeCounts, RouteCostsResponse, SavingsMechanisms } from '../api/deliveryTypes';
+import SavingsMap from './SavingsMap';
 import type { SipCallRecord } from '../api/sipTypes';
 import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
@@ -198,9 +199,11 @@ interface DashboardProps {
   canSetUp?: boolean;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
+  // May this account read settings? Only then does the savings map at the bottom appear.
+  canReadSettings?: boolean;
 }
 
-function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: DashboardProps) {
+function Dashboard({ client, onNavigate, canSetUp = false, onSendFax, canReadSettings = false }: DashboardProps) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
@@ -215,9 +218,11 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   const [work, setWork] = useState<CardData<WorkCounts>>({ kind: 'loading' });
   const [network, setNetwork] = useState<CardData<SipNetworkReport>>({ kind: 'loading' });
   const [missedCall, setMissedCall] = useState<string | null>(null);
+  const [mechanisms, setMechanisms] = useState<CardData<SavingsMechanisms>>({ kind: 'loading' });
 
-  // Delivery cards load on entry and on Refresh, not on every health poll.
+  // Delivery cards and the savings map load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
+    if (canReadSettings) void settle(client.getSavingsMechanisms()).then(setMechanisms);
     const [costs, queue, peers, calls, counts, check] = await Promise.all([
       settle(client.getRouteCosts()),
       settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
@@ -583,6 +588,15 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
             </Card>
           </Grid>
         </Grid>
+      )}
+
+      {/* Every way Faxbot saves money, along a fax's path; outside the health cards, so a person who reads
+          settings but not diagnostics sees it too. Nothing shows for a person who may not read settings. */}
+      {canReadSettings && mechanisms.kind === 'ready' && <SavingsMap data={mechanisms.data} onNavigate={onNavigate} />}
+      {canReadSettings && mechanisms.kind === 'error' && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }} data-testid="savings-map-error">
+          The map of how Faxbot saves money could not load. Select Refresh to try again.
+        </Typography>
       )}
     </Box>
   );

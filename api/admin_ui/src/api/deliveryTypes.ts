@@ -758,6 +758,11 @@ export interface Savings {
   continuation?: CountedPart & { faxes: number; pages_not_resent: number };
   partner_repair?: CountedPart & { faxes: number; pages_not_resent: number };
   blocked_calls?: CountedPart & { calls: number };
+  // Seconds a page on fax over IP (T.38) calls against audio fax calls, measured on the trunk's own calls.
+  t38?: CountedPart & {
+    calls: number; audio_calls: number; seconds_per_page: number | null; audio_seconds_per_page: number | null;
+  };
+  digital?: CountedPart & { faxes: number };
 }
 
 // A Savings part that counts exactly and carries no money.
@@ -777,11 +782,16 @@ export interface SavingsMechanism {
   works: { here: boolean; label: string; sentence: string | null };
   evidence: { level: 'live' | 'lab' | 'built'; label: string };
   here: { used: number; sentence: string };
-  // Its part on Costs → Savings (the address costs/savings?part=…), or null when it has none.
+  // Its part on Costs → Savings, or null when it has none.
   part: string | null;
   // The console page that holds its setting ('recipients/list'), and that page's name.
   page: string;
   page_label: string;
+  // Where selecting it leads ('costs/savings?part=sslfax', 'costs/recommendations?section=plans'), or null,
+  // with that page's name; and the command that prints the same.
+  link: string | null;
+  link_label: string | null;
+  command: string | null;
   // Off and works here: the map offers to turn it on at its page.
   turn_on: boolean;
 }
@@ -791,7 +801,8 @@ export interface SavingsMechanisms {
   title: string;
   sentence: string;
   legend: Array<{ label: string; sentence: string }>;
-  stages: Array<{ key: string; title: string; mechanisms: SavingsMechanism[] }>;
+  // `path`: a stage on a fax's own path, drawn with arrows; advice sits beside it.
+  stages: Array<{ key: string; title: string; path: boolean; mechanisms: SavingsMechanism[] }>;
 }
 
 // GET /direct/send-once: "send once" agreements both ways, and the bytes reuse and changes saved.

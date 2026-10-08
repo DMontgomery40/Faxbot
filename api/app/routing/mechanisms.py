@@ -28,9 +28,12 @@ from .database import read_connection, reflect, utcnow
 from .store import WINDOW_DAYS
 
 
-# A fax's path, in the order a fax meets each stage.
+# A fax's path, in the order a fax meets each stage, then the advice that saves money once you act on it.
 STAGES = (('document', 'Preparing the document'), ('route', 'Choosing the route'), ('call', 'On the call'),
-          ('after', 'After the call'), ('receiving', 'Receiving'))
+          ('after', 'After the call'), ('receiving', 'Receiving'), ('advice', 'Advice you act on'))
+# The stages on a fax's own path; advice sits beside it.
+PATH = ('document', 'route', 'call', 'after', 'receiving')
+ADVICE_HERE = 'Advice only: nothing changes until you act on it.'
 
 # How far Faxbot has proven a mechanism; the lower level whenever the roadmap is in doubt.
 EVIDENCE = {
@@ -52,6 +55,8 @@ LEGEND = (
 # The reason is the map's "on this installation" sentence for that mechanism.
 NO_PART = {
     'busy_hours': 'Faxbot works these hours out afresh each time and keeps no count of the faxes that waited.',
+    'free_line': 'Faxbot works out free lines from its delivery records each time and keeps no count of the faxes '
+                 'that waited.',
 }
 
 
@@ -83,6 +88,17 @@ class Mechanism:
     # What its Savings part counts: (key in the part, one, many).
     counts: tuple = ('faxes', 'fax', 'faxes')
     verb: str = 'Worked on'
+    # For an entry with no Savings part: where its own figures or advice already are (a console address, its
+    # name, and the command that prints them), and the sentence that stands for what happened here.
+    link: str | None = None
+    link_label: str | None = None
+    command: str | None = None
+    here: str | None = None
+
+    @property
+    def destination(self):
+        """Where selecting it leads: its part on Costs → Savings, else its own page, else nowhere."""
+        return f'costs/savings?part={self.part}' if self.part else self.link
 
 
 class Installation:
@@ -272,21 +288,26 @@ def toll_free(here):
     return State(on, bool(here.sending), sentence, _needs_sending(here))
 
 
-def cheapest_route(here):
+def _compare_why(here):
+    """Why routes cannot be compared by cost here, or None when two sending routes charge for each fax."""
     priced, plans, unpriced = [], [], []
     for account in here.sending:
         card = here.card(account)
         (unpriced if card is None else plans if card.flat_plan else priced).append(account.label)
-    why = None
     if len(here.sending) < 2:
-        why = f'Needs a second sending route to compare with; {here.through()}.'
-    elif len(priced) < 2:
+        return f'Needs a second sending route to compare with; {here.through()}.'
+    if len(priced) < 2:
         reasons = []
         if plans:
             reasons.append(f"{' and '.join(plans)} {'is a monthly plan' if len(plans) == 1 else 'are monthly plans'}")
         if unpriced:
             reasons.append(f"Faxbot has no prices for {' and '.join(unpriced)}")
-        why = f"Needs two sending routes that charge for each fax; {'; '.join(reasons)}."
+        return f"Needs two sending routes that charge for each fax; {'; '.join(reasons)}."
+    return None
+
+
+def cheapest_route(here):
+    why = _compare_why(here)
     return State(True, why is None, 'On; a preferred route for a number still comes first.', why)
 
 
@@ -379,6 +400,114 @@ def blocked_senders(here):
     return State(on, why is None, sentence, why)
 
 
+def fax_over_ip(here):
+    from .. import sip_fax_mode
+    from ..provider_labels import trunk_name
+    on = bool(getattr(here.values, 'sip_t38_enabled', True))
+    sentence = None
+    record = None if on else sip_fax_mode.read(here.values)
+    if record and record.get('mode') == 'audio':
+        # Faxbot switched to audio fax by itself for a network or carrier reason, and says which (sip_fax_mode).
+        sentence = sip_fax_mode.off_sentence(record.get('reason'),
+                                             carrier=trunk_name(getattr(here.values, 'sip_trunk_preset', '')))
+    why = None if here.trunk_sends or here.trunk_receives else f'Needs your own SIP trunk; {here.through()}.'
+    return State(on, why is None, sentence, why)
+
+
+def digital_routes(here):
+    from ..digital.accounts import digital_accounts
+    from ..digital.store import DigitalStore
+    accounts = [account for account in digital_accounts(here.values) if account.enabled]
+    on, sentence = _agreed(len(DigitalStore(here.engine).confirmed_ids()),
+                           'No recipient has a confirmed Direct address or FHIR server yet.', who='addresses',
+                           what='you confirmed')
+    why = None if accounts else 'Needs a Direct messaging (HISP) or FHIR account; none is set up yet.'
+    return State(on, why is None, sentence, why)
+
+
+def free_line(here):
+    return State(True, bool(here.sending), 'On; each number takes one call at a time unless you allow more.',
+                 _needs_sending(here))
+
+
+def charge_checks(here):
+    why = None if here.sending or here.receiving_names else 'Needs a fax provider; none is set up yet.'
+    return State(True, why is None, None, why)
+
+
+# -- advice: each section of Costs → Recommendations, and the advice kept on its own page ---------------------------
+
+def _always(here):
+    return State(True, True)
+
+
+def _sends(here):
+    return State(True, bool(here.sending), None, _needs_sending(here))
+
+
+def _compares(here):
+    return State(True, _compare_why(here) is None, None, _compare_why(here))
+
+
+def _receives(here):
+    why = None if here.receiving_names else 'Needs a number this Faxbot receives faxes on; it receives none yet.'
+    return State(True, why is None, None, why)
+
+
+def _has_plan(here):
+    from ..accounts import all_accounts
+    plans = [account for account in all_accounts(here.values) if account.enabled and (account.sends or account.receives)
+             and (card := here.card(account)) is not None and card.monthly_fee_micros]
+    why = None if plans else 'Needs a monthly plan; none of your fax services has one.'
+    return State(True, bool(plans), None, why)
+
+
+def _on_trunk(here):
+    why = None if here.trunk_sends or here.trunk_receives else f'Needs your own SIP trunk; {here.through()}.'
+    return State(True, why is None, None, why)
+
+
+def _sends_on_trunk(here):
+    why = None if here.trunk_sends else f'Needs your own SIP trunk for sending; {here.through()}.'
+    return State(True, why is None, None, why)
+
+
+def _two_trunks(here):
+    from ..accounts import all_accounts
+    trunks = [account for account in all_accounts(here.values) if account.provider == 'sip' and account.enabled]
+    why = None if len(trunks) >= 2 else (
+        'Needs two or more trunks to compare; you have one.' if trunks else
+        f'Needs two or more trunks to compare; {here.through()}.')
+    return State(True, why is None, None, why)
+
+
+def _with_partner(here):
+    why = _partner_needed(here)
+    return State(True, why is None, None, why)
+
+
+def _in_the_us(here):
+    country = getattr(here.values, 'fax_default_country', 'US')
+    why = _needs_sending(here) or (None if country == 'US' else 'Prices by state are for calls within the US.')
+    return State(True, why is None, None, why)
+
+
+def _telnyx_numbers(here):
+    preset = getattr(here.values, 'sip_trunk_preset', '')
+    why = None
+    if preset != 'telnyx':
+        why = 'Needs a Telnyx trunk; this lookup is a Telnyx charge.'
+    elif not getattr(here.values, 'telnyx_api_key', ''):
+        why = 'Needs your Telnyx key saved on the Telnyx page.'
+    return State(True, why is None, None, why)
+
+
+def _advice(key, name, sentence, section, command, check):
+    return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Costs → Recommendations',
+                     check, link=f'costs/recommendations?section={section}', link_label='Costs → Recommendations',
+                     command=command, here=ADVICE_HERE)
+
+
 # -- the catalogue --------------------------------------------------------------------------------------------------
 # Evidence: the README roadmap's own words for each (cited by entry in the savings-map report). Only sending
 # together (a local T.38 test line) and SSL Fax (the loopback proof) have run in the test lab; none has run live.
@@ -436,6 +565,17 @@ CATALOGUE = (
     Mechanism('busy_hours', 'Calls at the right hour',
               "Waits out a number's usual busy hours when a failed call there could be charged.",
               'route', 'built', None, 'recipients/list', 'Recipients → Details', busy_hours),
+    Mechanism('free_line', 'Wait for a free line',
+              'Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.',
+              'route', 'built', None, 'recipients/list', 'Recipients → Details', free_line),
+    Mechanism('digital_routes', 'Direct messages and FHIR',
+              "Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
+              'route', 'built', 'digital', 'recipients/list', 'Recipients → Details', digital_routes),
+    Mechanism('fax_over_ip', 'Fax over IP (T.38)',
+              'Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls '
+              'are shorter.',
+              'call', 'live', 't38', 'providers/trunk', 'Providers → Carrier trunk', fax_over_ip,
+              settings=('sip_t38_enabled',), counts=('calls', 'call', 'calls')),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
               'call', 'lab', 'sending_together', 'recipients/list', 'Recipients → Details', sending_together),
@@ -455,25 +595,91 @@ CATALOGUE = (
               'After a broken call to a partner, sends only the pages the partner is missing, with no new call.',
               'after', 'built', 'partner_repair', 'recipients/partners', 'Recipients → Partners', partner_repair,
               settings=('direct_delivery_enabled',)),
+    Mechanism('charge_checks', 'Charge checks',
+              'Matches what your carriers and fax services billed against your faxes, and points out charges and '
+              "invoice amounts your faxes don't explain.",
+              'after', 'built', None, 'costs/charges', 'Costs → Charges', charge_checks,
+              link='costs/charges', link_label='Costs → Charges', command='faxbot costs charges',
+              here='Its figures are on Costs → Charges and Costs → Invoices.'),
     Mechanism('blocked_senders', 'Junk callers turned away',
               'Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.',
               'receiving', 'built', 'blocked_calls', 'numbers/blocked', 'Numbers → Blocked senders',
               blocked_senders, counts=('calls', 'call', 'calls'), verb='Turned away'),
+    _advice('advice_sending', 'Cheaper routes per number',
+            'Names numbers whose usual route cost more per delivered fax than another, with a button to switch.',
+            'sending', 'faxbot costs recommendations sending', _compares),
+    _advice('advice_plans', 'Plans worth their fee',
+            'Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.',
+            'plans', 'faxbot costs recommendations plans', _has_plan),
+    _advice('advice_receiving', 'Receiving lines and numbers',
+            'Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep '
+            'than they bring in.',
+            'receiving', 'faxbot costs recommendations receiving', _receives),
+    _advice('advice_carriers', "Other carriers' prices",
+            "Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching "
+            'would change.',
+            'carriers', 'faxbot costs recommendations carriers', _sends),
+    _advice('advice_billing_steps', 'Calls just past a billed minute',
+            'Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would '
+            'cost less.',
+            'steps', 'faxbot costs recommendations billing-steps', _on_trunk),
+    _advice('advice_partners', 'Partner candidates',
+            'Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.',
+            'partners', 'faxbot costs recommendations partners', _sends),
+    _advice('advice_discovery', 'Recipients that run Faxbot',
+            'Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.',
+            'discovery', 'faxbot recipients partners discover', _sends_on_trunk),
+    _advice('advice_relays', 'Partners that could relay',
+            "Names partners whose signed local price would have cost less than your own calls.",
+            'relays', 'faxbot recipients partners relay', _with_partner),
+    _advice('advice_toll_free', 'Toll-free numbers on file',
+            'Lists recipients with a toll-free fax number, so you can record their approval and stop paying for '
+            'those calls.',
+            'tollFree', 'faxbot costs recommendations toll-free', _sends),
+    _advice('advice_fax_marker', 'Fax marker on calls',
+            'Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.',
+            'marker', 'faxbot costs recommendations fax-marker', _sends_on_trunk),
+    _advice('advice_shading', 'Time lighter shading would save',
+            'While Lighter shading is set to Never, measures your recent faxes and says how much time it would '
+            'have saved.',
+            'pages', 'faxbot costs recommendations shading', _sends),
+    _advice('advice_trunks', 'Your trunks compared',
+            "Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
+            'trunks', 'faxbot costs recommendations trunks', _two_trunks),
+    _advice('advice_numbers', 'Where each number should live',
+            'Says where each of your fax numbers costs least to receive on, and the steps to move it.',
+            'numbers', 'faxbot costs recommendations numbers', _receives),
+    _advice('advice_sites', 'Calls by state',
+            "Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+            'sites', 'faxbot costs recommendations sites', _in_the_us),
+    Mechanism('advice_caller_names', 'Caller-name lookup',
+              'Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can '
+              'turn it off.',
+              'advice', 'built', None, 'providers/trunk', 'Providers → Carrier trunk', _telnyx_numbers,
+              link='providers/trunk', link_label='Providers → Carrier trunk',
+              command='faxbot providers trunk telnyx names', here=ADVICE_HERE),
+    Mechanism('advice_setup_packs', 'Suggested packs',
+              'Gathers the settings and rules that would save money here into packs you review and apply.',
+              'advice', 'built', None, 'system/setup', 'System → Setup', _always,
+              link='system/setup', link_label='System → Setup', command='faxbot system setup plan', here=ADVICE_HERE),
 )
 BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
 
-def _page_label(mechanism, values):
-    """The page's name as the console shows it; the trunk page is named after its carrier ("Providers → Telnyx")."""
-    if mechanism.page == 'providers/trunk':
+def _label(page, label, values):
+    """A page's name as the console shows it; the trunk page is named after its carrier ("Providers → Telnyx")."""
+    if page == 'providers/trunk':
         from ..provider_labels import trunk_name
         return f"Providers → {trunk_name(getattr(values, 'sip_trunk_preset', ''))}"
-    return mechanism.page_label
+    return label
 
 
 def _view(mechanism, here):
     state = mechanism.check(here)
-    count, used = here.used(mechanism) if mechanism.part else (0, NO_PART[mechanism.key])
+    if mechanism.part:
+        count, used = here.used(mechanism)
+    else:
+        count, used = 0, NO_PART.get(mechanism.key) or mechanism.here
     return {
         'key': mechanism.key, 'name': mechanism.name, 'sentence': mechanism.sentence,
         'enabled': {'on': state.on, 'label': 'On' if state.on else 'Off', 'sentence': state.on_sentence},
@@ -481,7 +687,13 @@ def _view(mechanism, here):
                   'sentence': state.works_sentence},
         'evidence': {'level': mechanism.evidence, 'label': EVIDENCE[mechanism.evidence]},
         'here': {'used': count, 'sentence': used},
-        'part': mechanism.part, 'page': mechanism.page, 'page_label': _page_label(mechanism, here.values),
+        'part': mechanism.part, 'page': mechanism.page,
+        'page_label': _label(mechanism.page, mechanism.page_label, here.values),
+        # Where selecting it leads: its part on Costs → Savings, or the page with its own figures or advice.
+        'link': mechanism.destination,
+        'link_label': 'Costs → Savings' if mechanism.part else (
+            _label(mechanism.link, mechanism.link_label, here.values) if mechanism.link else None),
+        'command': 'faxbot costs savings' if mechanism.part else mechanism.command,
         # "Turn on" leads to the setting's page only when the mechanism is off and works here.
         'turn_on': not state.on and state.works,
     }
@@ -498,7 +710,8 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
     return {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
         'legend': [{'label': label, 'sentence': sentence} for label, sentence in LEGEND],
-        'stages': [{'key': key, 'title': title,
+        # ``path``: a stage on the fax's own path (drawn with arrows), or advice beside it.
+        'stages': [{'key': key, 'title': title, 'path': key in PATH,
                     'mechanisms': [_view(mechanism, here) for mechanism in CATALOGUE if mechanism.stage == key]}
                    for key, title in STAGES],
     }
