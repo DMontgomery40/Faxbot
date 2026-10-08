@@ -4812,6 +4812,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
+* `rate-rows`: Replace the prices by where calls start...
 * `predict`: Show what a fax to a number would take and...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
@@ -4914,6 +4915,25 @@ $ faxbot costs rate-cards [OPTIONS]
 **Options**:
 
 * `--replace FILE`: Replace all rate cards with the cards in this JSON file ({&quot;cards&quot;: [...]}, or &#x27;-&#x27; for standard input).
+* `--help`: Show this message and exit.
+
+### `faxbot costs rate-rows`
+
+Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history.
+
+**Usage**:
+
+```console
+$ faxbot costs rate-rows [OPTIONS] {ROUTE}
+```
+
+**Arguments**:
+
+* `ROUTE`: The sending card&#x27;s route, as &#x27;faxbot costs rate-cards&#x27; lists it, such as sip-gamma or sinch-uk.  [required]
+
+**Options**:
+
+* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).  [required]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs predict`

@@ -84,6 +84,49 @@ describe('send-only numbers', () => {
   });
 });
 
+describe('prices by where calls start that you enter', () => {
+  it('adds a row for a site and keeps the rows you entered before, never the published ones', async () => {
+    const sent: unknown[] = [];
+    const client = {
+      call: async (request: Request) => {
+        if (request.method === 'GET') {
+          return { generation: 1, default_sending: null, default_receiving: null, accounts: [], providers: [],
+            sites: [{ key: 'leeds', name: 'Leeds office' }] };
+        }
+        sent.push(request);
+        return { rows: [] };
+      },
+    } as unknown as AdminAPIClient;
+    let saved = 0;
+    const existing = [
+      { origin_label: 'United Kingdom', origin: 'country:GB', destination_prefix: '+44', currency: 'GBP',
+        per_minute: '0.006', per_page: '0', per_call: '0', billing_increment_seconds: 60, minimum_seconds: 60,
+        source_url: null, captured_on: '2026-10-08', published: false },
+      { origin_label: 'Anywhere', origin: 'any', destination_prefix: '+447', currency: 'GBP', per_minute: '0.12',
+        per_page: '0', per_call: '0', billing_increment_seconds: 1, minimum_seconds: 1,
+        source_url: 'https://www.anveo.com/anveodirect.standard.csv', captured_on: '2026-10-08', published: true },
+    ];
+    const { default: OriginRateRows } = await import('../components/delivery/OriginRateRows');
+    render(<OriginRateRows client={client} route="sip-gamma" label="Gamma" existing={existing}
+      onSaved={() => { saved += 1; }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a price by where calls start' }));
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Calls from' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Leeds office' }));
+    fireEvent.change(screen.getByLabelText('To numbers starting with'), { target: { value: '+44113' } });
+    fireEvent.change(screen.getByLabelText('A minute'), { target: { value: '0.004' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Add a price by where calls start' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saved).toBe(1);
+    expect(sent).toEqual([{ method: 'PUT', path: '/routing/rate-cards/sip-gamma/rows', body: { rows: [
+      { origin: 'country:GB', destination_prefix: '44', per_minute: '0.006', per_page: '0', per_call: '0',
+        billing_increment_seconds: 60, minimum_seconds: 60 },
+      { origin: 'leeds', destination_prefix: '+44113', per_minute: '0.004', per_page: '0', per_call: '0',
+        billing_increment_seconds: 60, minimum_seconds: 0 },
+    ] } }]);
+  });
+});
+
 describe('trunk advice', () => {
   it('compares the trunks and says what moving one would save', async () => {
     const client = {

@@ -18,6 +18,7 @@ from api.app.routing.destinations import classify
 from api.app.routing.origin_rates import ANY, OriginRate, best, origins
 from api.app.schema import upgrade_schema
 from api.tests.test_schema import database  # noqa: F401 (fixture)
+from api.tests.test_cli import cli, server  # noqa: F401 (fixtures: the command line against a local server)
 
 
 def row(origin, prefix, minute, *, published=False, route='sip-gamma'):
@@ -78,6 +79,35 @@ def test_the_predictor_prices_a_uk_mobile_and_a_uk_landline_by_their_own_rows():
     assert predict_from(mobile, shape).cost.micros > 40 * predict_from(landline, shape).cost.micros
     # A toll-free number keeps its own class's price, never a row's.
     assert facts_for('sip', '+18005550100', values=values, engine=None).origin is None
+
+
+def test_rows_you_enter_are_saved_listed_and_quoted_through_the_command_line(cli, tmp_path):
+    import json
+    cards = tmp_path / 'cards.json'
+    cards.write_text(json.dumps({'cards': [{'provider_id': 'sip-gamma', 'direction': 'outbound', 'label': 'Gamma',
+                                            'currency': 'GBP', 'per_minute': '0.010', 'per_page': '0',
+                                            'per_call': '0', 'billing_increment_seconds': 60, 'minimum_seconds': 60,
+                                            'captured_on': '2026-10-03T00:00:00'}]}))
+    assert cli('costs', 'rate-cards', '--replace', cards).exit_code == 0
+    rows = tmp_path / 'rows.json'
+    rows.write_text(json.dumps({'rows': [
+        {'origin': 'country:GB', 'destination_prefix': '+44', 'per_minute': '0.006', 'billing_increment_seconds': 60,
+         'minimum_seconds': 60, 'captured_on': '2026-10-08T00:00:00'},
+        {'origin': 'any', 'destination_prefix': '1', 'per_minute': '0.02'}]}))
+    saved = cli.json('costs', 'rate-rows', 'sip-gamma', '--replace', rows)
+    assert [(row['origin_label'], row['destination_prefix'], row['per_minute']) for row in saved['rows']] == [
+        ('Anywhere', '+1', '0.02'), ('United Kingdom', '+44', '0.006')]
+    listed = {card['provider_id']: card for card in cli.json('costs', 'rate-cards')['cards']}
+    assert [row['origin'] for row in listed['sip-gamma']['rows']] == ['any', 'country:GB']
+    shown = cli('costs', 'rate-cards')
+    assert shown.exit_code == 0 and 'Gamma: prices by where calls start' in shown.stdout
+    bad = tmp_path / 'bad.json'
+    bad.write_text(json.dumps({'rows': [{'origin': 'Not A Site!', 'destination_prefix': '44'}]}))
+    refused = cli('costs', 'rate-rows', 'sip-gamma', '--replace', bad)
+    assert refused.exit_code != 0 and 'Where calls start is a site' in refused.stdout + refused.stderr
+    assert cli('costs', 'rate-rows', 'no-such-card', '--replace', rows).exit_code != 0
+    advice = cli('costs', 'recommendations', 'trunks')
+    assert advice.exit_code == 0, advice.stdout + advice.stderr
 
 
 def _card(provider, minute='0.010', currency='GBP'):

@@ -983,6 +983,12 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
                else _monthly(card) if card.get('monthly_fee') else '-'),
               _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
              for card in result.get('cards', [])], empty='No rate cards.')
+        # Each sending card's prices by where calls start (origin-rated rows), with source and date.
+        from .accounts import origin_rows
+        for card in result.get('cards', []):
+            if card.get('rows'):
+                out.line()
+                origin_rows(out, card)
         # What each sending route publishes about calling a recipient's approved toll-free number.
         if result.get('toll_free'):
             out.line()
@@ -991,6 +997,27 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
                         item.get('caller_id_text') or '-', local_date(item['advertised_on'])]
                        for item in result['toll_free']], title='Calls to toll-free numbers')
     state.out().result(result, human)
+
+
+@routing.command('rate-rows')
+def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
+                                                  help="The sending card's route, as 'faxbot costs rate-cards' lists "
+                                                       'it, such as sip-gamma or sinch-uk.'),
+                      replace: str = typer.Option(..., '--replace', metavar='FILE',
+                                                  help='Your prices by where calls start for that card, from this JSON '
+                                                       'file ({"rows": [...]}, or \'-\' for standard input).')):
+    """Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history."""
+    try:
+        document = json.loads(_read_document(replace))
+    except ValueError:
+        raise CliError('The file is not valid JSON.') from None
+    if isinstance(document, list):
+        document = {'rows': document}
+    from urllib.parse import quote
+    result = state.api().put(f'/routing/rate-cards/{quote(route.strip(), safe="")}/rows', json=document)
+    from .accounts import origin_rows
+    state.out().result(result, lambda out: origin_rows(out, {'label': route.strip(), 'rows': result.get('rows') or []})
+                       if result.get('rows') else out.line('No prices by where calls start for this card.'))
 
 
 # -- routing batching --------------------------------------------------------------------

@@ -800,6 +800,51 @@ async def list_rate_cards(request: Request):
                        else []} for card in cards], 'toll_free': terms_view(values)}
 
 
+class RateRowIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    origin: str = Field(max_length=40)
+    destination_prefix: str = Field(max_length=16)
+    per_minute: str | int = '0'
+    per_page: str | int = '0'
+    per_call: str | int = '0'
+    billing_increment_seconds: int = 60
+    minimum_seconds: int = 0
+    source_url: str | None = Field(default=None, max_length=512)
+    captured_on: datetime | None = None
+
+
+class RateRowsIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    rows: list[RateRowIn] = Field(max_length=500)
+
+
+@router.put('/rate-cards/{provider_id}/rows', dependencies=[Depends(require_permission('settings:write'))])
+async def put_rate_rows(provider_id: str, payload: RateRowsIn, request: Request):
+    """Replace the prices by where calls start that you entered for one sending card; earlier rows are kept as
+    history (superseded), never changed. Shipped published rows are not affected."""
+    from .origin_rates import OriginRate, card_rows, organization_sites, save_rows
+    store = _store(request)
+    identity = provider_id.strip().lower()[:64]
+
+    def save():
+        card = next((item for item in store.current_cards() if item.provider_id == identity
+                     and item.direction == 'outbound'), None)
+        if card is None or card.id is None:
+            raise HTTPException(404, detail='Save a sending rate card for this route first; rows belong to a card.')
+        try:
+            rows = [OriginRate(identity, item.origin.strip(), item.destination_prefix.strip().lstrip('+'),
+                               card.currency, parse_amount(str(item.per_minute)), parse_amount(str(item.per_page)),
+                               parse_amount(str(item.per_call)), item.billing_increment_seconds, item.minimum_seconds,
+                               item.source_url or None,
+                               item.captured_on.replace(tzinfo=None) if item.captured_on else None)
+                    for item in payload.rows]
+            save_rows(store.engine, card.id, rows)
+        except InvalidRateCard as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return {'rows': card_rows(identity, store.engine, organization_sites(store.engine))}
+    return await _call(save)
+
+
 @router.get('/published-plans', dependencies=[Depends(require_permission('settings:read'))])
 async def published_plans(provider_id: str, request: Request):
     """A provider's published plans for the installation country, where its API has no published price."""
