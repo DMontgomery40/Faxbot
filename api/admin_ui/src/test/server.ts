@@ -726,6 +726,11 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // Partner relays: none until a test offers one.
+  http.get('/direct/relay/agreements', () => json({ agreements: [] })),
+  http.get('/direct/relay/costs', () => json({ days: 30, agreements: [] })),
+  http.get('/direct/relay/recommendations', () => json({ days: 30, recommendations: [] })),
+  http.get('/direct/relay/faxes', () => json({ faxes: [] })),
   http.get('/forms', () => json({ forms: [], renderer: 'faxbot-forms-1' })),
   http.get('/forms/received', () => json({ received: [] })),
   http.get('/forms/deliveries', () => json({ deliveries: [] })),

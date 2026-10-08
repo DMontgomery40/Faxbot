@@ -52,6 +52,12 @@ import type {
   DirectDeliveryRecord,
   DirectPartner,
   DirectFaxImagesResult,
+  RelayAcceptance,
+  RelayAgreement,
+  RelayCost,
+  RelayedFax,
+  RelayGrant,
+  RelayRecommendation,
   EmailConnector,
   EmailConnectorInput,
   FaxCost,
@@ -1244,6 +1250,43 @@ class AdminAPIClient {
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Partner relays: a partner sends your faxes as local calls in its country, or you send theirs.
+  async listRelayAgreements(partnerId?: string): Promise<{ agreements: RelayAgreement[] }> {
+    return this.json(partnerId ? `/direct/relay/agreements?partner=${id(partnerId)}` : '/direct/relay/agreements');
+  }
+
+  async offerRelay(grant: RelayGrant): Promise<RelayAgreement> {
+    return this.json('/direct/relay/agreements', { method: 'POST', body: JSON.stringify(grant) });
+  }
+
+  async acceptRelay(agreementId: string, acceptance: RelayAcceptance): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/accept`, { method: 'POST', body: JSON.stringify(acceptance) });
+  }
+
+  async withdrawRelay(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/withdraw`, { method: 'POST', body: '{}' });
+  }
+
+  async refreshRelayPrice(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/price`, { method: 'POST', body: '{}' });
+  }
+
+  async askRelayQuote(partnerId: string, countries: string[]): Promise<{ detail: string }> {
+    return this.json(`/direct/relay/partners/${id(partnerId)}/quote`, { method: 'POST', body: JSON.stringify({ countries }) });
+  }
+
+  async getRelayCosts(days = 30): Promise<{ days: number; agreements: RelayCost[] }> {
+    return this.json(`/direct/relay/costs?days=${days}`);
+  }
+
+  async getRelayRecommendations(days = 30): Promise<{ days: number; recommendations: RelayRecommendation[] }> {
+    return this.json(`/direct/relay/recommendations?days=${days}`);
+  }
+
+  async listRelayedFaxes(days = 30): Promise<{ faxes: RelayedFax[] }> {
+    return this.json(`/direct/relay/faxes?days=${days}`);
   }
 
   // Work queue
