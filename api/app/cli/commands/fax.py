@@ -295,7 +295,7 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # call from what it learned about the number, with why (engine learning).
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
     changes = (job.get('fax_engine') or {}).get('changes') or []
-    # The coding the newest attempt asked for, measured on its pages, and what the receiving machine took.
+    # The coding the newest attempt asked for, measured on its pages, and what the call used.
     coded = (job.get('coding') or {}).get('sentence')
 
     def human(out):

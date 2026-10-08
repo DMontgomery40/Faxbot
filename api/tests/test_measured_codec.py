@@ -317,14 +317,14 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
     view = coding.sent_view(database, JOB)
     assert view['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'
     assert view['measured_sentence'].startswith('Measured on these pages at 14,400 bit/s: MH about 49 seconds, MR ')
-    # What the call took, from the built-in engine's frames; a machine that took another coding is named.
+    # What the call used, from the built-in engine's frames; another coding than asked for is said as a fact.
     add_frames(database, ATTEMPT, 'MH')
     assert coding.sent_view(database, JOB)['negotiated'] == 'MH'
     assert coding.sent_sentence({**record, 'negotiated': 'MH'}, 'failed') == (
         'Tried with MH: 20% shorter than MMR for these pages.')
     assert coding.sent_sentence({**record, 'requested': 'MR', 'reason': 'MR: 5% shorter than MH for these pages.',
                                  'negotiated': 'MH'}, 'sending') == (
-        'Going with MR: 5% shorter than MH for these pages. The receiving machine took MH.')
+        'Going with MR: 5% shorter than MH for these pages. The call used MH.')
     # Recorded once per attempt: deciding the same attempt again keeps the first row.
     _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
     assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']

@@ -97,7 +97,7 @@ export interface FaxJob extends DeliveryMetadata {
   } | null;
   // Pages Faxbot packed onto long pages, blank space it left out, or standard resolution it kept; one sentence each.
   page_layout?: SentPages | null;
-  // The fax coding the newest attempt asked for, measured on its pages, and what the receiving machine took.
+  // The fax coding the newest attempt asked for, measured on its pages, and what the call used.
   coding?: SentCoding | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;

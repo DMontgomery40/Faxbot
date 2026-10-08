@@ -501,6 +501,8 @@ def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
     assert routes['sip']['finish_sentence'].startswith('9 in 10 such calls should finish within about ')
     assert 'an assumed spread of 15% either way until this number has 3 faxes of its own' in \
         routes['sip']['finish_sentence']
+    # A fax service never learns a number's calls here: its spread stays assumed, and says only that.
+    assert routes['phaxio']['finish_sentence'].endswith(', from an assumed spread of 15% either way.')
 
 
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')

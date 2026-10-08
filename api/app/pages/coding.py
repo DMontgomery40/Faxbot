@@ -551,7 +551,8 @@ def newest_coding(engine, job_id):
 def sent_sentence(record, phase=None) -> str | None:
     """The Sent detail's coding line for the attempt's state: "Sent with MH: 20% shorter than MMR for these
     pages." (delivered, or not known), "Going with ..." (on its way), "Tried with ..." (the call failed),
-    "Prepared with ..." (cancelled); and, when the receiving machine took another coding, which one."""
+    "Prepared with ..." (cancelled); and, when the call used another coding, which one ("The call used MMR."),
+    as a fact without a cause: the machine, or an engine that does not yet take the request, may be why."""
     if not record:
         return None
     reason = str(record.get('reason') or '').strip()
@@ -563,7 +564,7 @@ def sent_sentence(record, phase=None) -> str | None:
             'cancelled': 'Prepared with'}.get(phase, 'Going with')
     sentence = f'{verb} {reason}'
     if agreed and agreed != requested and not (requested == 'JBIG' and agreed == 'MMR'):
-        sentence += f' The receiving machine took {agreed}.'
+        sentence += f' The call used {agreed}.'
     return sentence
 
 
