@@ -58,7 +58,12 @@ offered=''
 refused=false
 transfer=''
 session=''
+remote_address=''
 if [ -n "$log" ]; then
+  # The other machine's own SSL Fax address (its CSA), as host:port only: everything up to the last "@"
+  # (a passcode, hidden in the log anyway) is dropped. Faxbot asks that host once whether it runs Faxbot.
+  remote_address=$(grep -E 'REMOTE CSA "ssl://' "$log" | head -1 | sed -E 's/.*REMOTE CSA "ssl:\/\/([^"]*)".*/\1/' \
+    | sed -E 's/.*@//' | grep -E '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$' | head -1)
   # The other machine takes SSL Fax: it said so when it answered, or named its own connection.
   if grep -q -E 'REMOTE supports internet fax|REMOTE (CSA|TSA) "ssl://' "$log"; then
     offered=true
@@ -91,11 +96,11 @@ case $offered in true|false) ;; *) offered=null ;; esac
 # What the call negotiated over the whole call (bin/negotiation; base64 JSON), for measurement only.
 negotiation=''
 [ -n "$log" ] && negotiation=$(sh "$(dirname "$0")/negotiation" "$log" | tr -cd 'A-Za-z0-9+/=')
-body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s,"negotiation_b64":"%s"}' \
+body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s,"negotiation_b64":"%s","remote_address_b64":"%s"}' \
   "$tag" "$engine" "$commid" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
   "$(number "$ndials")" "$(number "$totdials")" "$(number "$tottries")" "$(b64 "$status_text")" "$status_code" \
   "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
-  "$(number "$transfer")" "$(number "$session")" "$negotiation")
+  "$(number "$transfer")" "$(number "$session")" "$negotiation" "$(b64 "$remote_address")")
 
 # Keep the report, then send it once now; the engine sends whatever is left every few seconds.
 temporary=$(mktemp "$outbox/.report.XXXXXX") || fail 'report not kept'

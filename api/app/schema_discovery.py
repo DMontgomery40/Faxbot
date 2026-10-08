@@ -15,8 +15,9 @@ authentication. This revision adds seven tables and changes no stored row:
   address (its CSA on a sent call, its TSA on a received one), keyed by where
   it was read (``frames``: the built-in engine's ``fax_call_frames`` row;
   ``engine``: the SSL Fax engine's attempt). Only the host and port are kept,
-  never the passcode the address carries. ``lookup_id`` is set once, when the
-  hint is answered by a lookup.
+  never the passcode the address carries. ``lookup_id`` is set once: the
+  lookup that answered the hint, or ``skipped`` when none was needed (its
+  number is already a partner's, or not a number Faxbot can read).
 - ``direct_discovery_lookups``: append-only, one row per lookup of a host
   (``call``), a partner's introduction (``introduction``) or a directory
   record (``directory``): what was asked, the outcome, the verified card when
