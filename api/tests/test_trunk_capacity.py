@@ -179,6 +179,18 @@ def test_trunks_faxbot_cannot_tell_apart_are_kept_separate_and_it_says_so(databa
                      "calls at once add up against Telnyx's limit of 2."]
 
 
+def test_a_later_trunk_that_is_the_default_sending_account_counts_the_faxes_stored_as_the_trunks(  # noqa: F811
+        database, tmp_path):
+    """A fax accepted while a trunk after the first was the default sending account is stored with backend 'sip';
+    with the first trunk not in use, that trunk's room counts it (the real accounts.default_sending_key)."""
+    env = installation(database, tmp_path, {**BASE, 'FAX_OUTBOUND_ROUTES': ''})
+    env.snapshot = env.configuration.apply(env.snapshot, env.snapshot.active.values, restart_required=False,
+                                           actor='test', accounts=ConfigurationDocument(
+                                               {'sip-leeds': {**LEEDS, 'default_sending': True}}))
+    limited = limited_accounts(values(env))
+    assert 'sip' not in limited and limited['sip-leeds'].backend == 'sip'
+
+
 def test_an_account_with_a_faxes_at_once_limit_holds_that_many_faxes(database, tmp_path):  # noqa: F811
     env = installation(database, tmp_path, {**BASE, 'FAX_OUTBOUND_ROUTES': ''})
     env.snapshot = env.configuration.apply(env.snapshot, env.snapshot.active.values, restart_required=False,

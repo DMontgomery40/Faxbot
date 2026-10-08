@@ -65,8 +65,8 @@ def _receiving_elsewhere(values, number):
     except Exception:
         plain = values
     from .own_numbers import receiving_numbers
+    from ..accounts import all_accounts
     try:
-        from ..accounts import all_accounts
         for account in all_accounts(plain):
             if number in account.numbers and account.receives:
                 return account.label

@@ -54,8 +54,8 @@ class TrunkUse:
 
 
 def _tables(engine):
+    from .database import reflect
     try:
-        from .database import reflect
         return reflect(engine, ('sip_call_records', 'delivery_attempt_costs', 'fax_jobs'))
     except Exception:
         return None

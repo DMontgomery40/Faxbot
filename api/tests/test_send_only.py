@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 
+from api.app.config_profiles import ConfigurationDocument
 from api.app.config_values import ConfigurationValues
 from api.app.routing import local, own_numbers, reply_number, send_only
 from api.app.schema import upgrade_schema
@@ -47,6 +48,12 @@ def test_saving_refuses_a_number_an_account_receives_on_and_reads_every_other_nu
     with pytest.raises(send_only.SendOnlyRefused, match='not a fax number Faxbot can read'):
         send_only.checked(values(), ['not a number'])
     assert send_only.numbers(values(FAX_SEND_ONLY_NUMBERS=f'{OFFICE},{OFFICE}')) == (OFFICE,)
+    # A later account that receives on the number is named by its own label (the real accounts.all_accounts).
+    leeds = values().with_provider_accounts(ConfigurationDocument({'sip-leeds': {
+        'provider': 'sip', 'label': 'Leeds trunk', 'receives': True, 'numbers': ['+441132000000'],
+        'settings': {'preset': 'gamma', 'auth': 'ip', 'host': '192.0.2.40'}}}))
+    with pytest.raises(send_only.SendOnlyRefused, match='receives faxes on Leeds trunk, so it cannot be send-only'):
+        send_only.checked(leeds, ['+441132000000'])
 
 
 def test_where_a_send_only_number_shows_and_what_the_carrier_requires():

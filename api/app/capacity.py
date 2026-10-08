@@ -206,15 +206,15 @@ def limited_accounts(values):
     from . import sip_trunk
     found = {}
     default_trunk = None
+    from .accounts import default_sending_key
     try:
-        from .accounts import default_sending_key
         default_trunk = default_sending_key(values)
     except Exception:
         default_trunk = None
     if trunk_in_use(values):
         # Named only when there are several trunks (room_sentence); the first trunk's account name.
+        from .accounts import account_named
         try:
-            from .accounts import account_named
             label = getattr(account_named(values, TRUNK), 'label', None) or 'your phone line'
         except Exception:
             label = 'your phone line'
@@ -224,8 +224,8 @@ def limited_accounts(values):
         backend = TRUNK if default_trunk == trunk.key and TRUNK not in found else None
         found[trunk.key] = Limited(trunk.key, trunk.label, True, trunk_calls_at_once(trunk.values),
                                    calls_per_second(trunk.values), backend)
+    from .accounts import all_accounts
     try:
-        from .accounts import all_accounts
         listed = all_accounts(values)
     except Exception:
         listed = ()

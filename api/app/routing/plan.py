@@ -150,8 +150,8 @@ def _own_trunks(values, destination):
     only calls itself back. The first trunk's numbers count whether or not it is set up, as before."""
     country = getattr(values, 'fax_default_country', 'US')
     found = {'sip'} if destination in _trunk_numbers(values) else set()
+    from ..sip_trunk import trunk_numbers
     try:
-        from ..sip_trunk import trunk_numbers
         listed = trunk_numbers(values)
     except Exception:
         listed = {}

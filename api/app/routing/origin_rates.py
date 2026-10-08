@@ -121,8 +121,8 @@ def shipped(path=None) -> tuple:
 # -- the saved rows -----------------------------------------------------------------------------------------------
 
 def _tables(engine):
+    from .database import reflect
     try:
-        from .database import reflect
         return reflect(engine, ('provider_rate_rows', 'provider_rate_cards'))
     except Exception:
         return None
@@ -184,8 +184,8 @@ def organization_sites(engine) -> dict:
     """{site key: Site} from the organization's active rules document; {} without one."""
     if engine is None:
         return {}
+    from ..rules.store import RuleStore
     try:
-        from ..rules.store import RuleStore
         active = RuleStore(engine).active('organization', '')
     except Exception:
         return {}
@@ -204,8 +204,8 @@ def organization_sites(engine) -> dict:
 
 def account_site(values, account_key, sites=None):
     """The site an account's calls start from: the account's own ``site``, else the site that lists it."""
+    from ..accounts import account_named
     try:
-        from ..accounts import account_named
         account = account_named(values, account_key)
     except Exception:
         account = None

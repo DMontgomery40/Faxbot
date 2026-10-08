@@ -19,6 +19,7 @@ from api.app.routing.origin_rates import ANY, OriginRate, best, origins
 from api.app.schema import upgrade_schema
 from api.tests.test_schema import database  # noqa: F401 (fixture)
 from api.tests.test_cli import cli, server  # noqa: F401 (fixtures: the command line against a local server)
+from api.tests.test_rules_delivery_http import ADMIN, US, client, publish  # noqa: F401 (fixture: the HTTPS stack)
 
 
 def row(origin, prefix, minute, *, published=False, route='sip-gamma'):
@@ -147,3 +148,23 @@ def test_a_row_you_save_for_a_sites_trunk_prices_its_calls_and_the_quote_says_wh
     with pytest.raises(Exception):
         origin_rates.save_rows(database, 'no-such-card', [])
     assert classify('+441132000000', 'US').kind == 'international'
+
+
+def test_a_quote_from_a_site_prices_each_account_from_that_site_and_names_it(client):  # noqa: F811
+    """GET /routing/quote?site= (``faxbot costs fax --from-site``) prices each allowed account as a call from the
+    site, with the site's name from the organization's rules: the price and the name come only from the real
+    pricing and the real rules store, never from a fallback."""
+    publish(client, {'format': 1, 'sites': [{'key': 'leeds', 'name': 'Leeds office', 'country': 'GB',
+                                              'time_zone': 'Europe/London'}]})
+    saved = client.put('/routing/rate-cards/phaxio/rows', headers=ADMIN, json={'rows': [
+        {'origin': 'leeds', 'destination_prefix': '1', 'per_page': '0.05'}]})
+    assert saved.status_code == 200, saved.text
+    assert [row['origin_label'] for row in saved.json()['rows']] == ['Leeds office']
+    plain = client.get('/routing/quote', headers=ADMIN, params={'to': US, 'pages': 2})
+    phaxio = {item['account']: item for item in plain.json()['quotes']}['phaxio']
+    assert phaxio['estimate'] == {'currency': 'USD', 'amount': '0.14'} and phaxio['origin'] is None
+    quoted = client.get('/routing/quote', headers=ADMIN, params={'to': US, 'pages': 2, 'site': 'leeds'})
+    assert quoted.status_code == 200, quoted.text
+    phaxio = {item['account']: item for item in quoted.json()['quotes']}['phaxio']
+    assert phaxio['estimate'] == {'currency': 'USD', 'amount': '0.10'}
+    assert (phaxio['origin'], phaxio['origin_label']) == ('leeds', 'Leeds office')

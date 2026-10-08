@@ -353,8 +353,8 @@ def _extra_trunk(values, account):
     """Settings as an extra trunk account sees them (its own carrier and numbers), or None for anything else."""
     if not account or account == 'sip' or values is None:
         return None
+    from ..sip_trunk import trunk_for
     try:
-        from ..sip_trunk import trunk_for
         found = trunk_for(values, account)
     except Exception:
         return None
@@ -396,8 +396,8 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     origin = None
     if refusal is None and (card is None or not card.flat_plan):
         # Prices by where the call starts (design §3.7): the account's site or country, the longest prefix.
+        from .origin_rates import rated_terms
         try:
-            from .origin_rates import rated_terms
             rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
                                      account_key=account, engine=engine, site=site)
         except Exception:
