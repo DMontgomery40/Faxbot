@@ -567,17 +567,22 @@ def test_costs_come_from_the_pages_each_attempt_actually_sent(ruled):
         connection.execute(pages.insert().values(id=uuid4().hex, job_id=dense_job, attempt_id=dense, number=TO,
                                                  route='phaxio', original_pages=3, sent_pages=1, layout='dense',
                                                  pages_saved=2, created_at=now))
+        # Each attempt chooses its own layout (pages/sending.py): one that sent encoded pages has its own row.
+        connection.execute(pages.insert().values(id=uuid4().hex, job_id=codec_job, attempt_id=codec, number=TO,
+                                                 route='phaxio', original_pages=3, sent_pages=2, layout='codec',
+                                                 pages_saved=1, created_at=now))
         connection.execute(sends.insert().values(id=codec_job, provider_id='phaxio', pages_encoded=2,
                                                  document_sha256='a' * 64, **codec_row))
-        # Encoded pages made for another route: this attempt sent the original pages.
-        connection.execute(sends.insert().values(id=other_job, provider_id='signalwire', pages_encoded=1,
+        # An earlier attempt of this fax sent encoded pages by the same provider; this one sent the original pages.
+        connection.execute(sends.insert().values(id=other_job, provider_id='phaxio', pages_encoded=1,
                                                  document_sha256='b' * 64, **codec_row))
     targets, costs = _captured(ruled)
     assert [(targets[item].pages, targets[item].pages_source) for item in (dense, codec, original)] == [
-        (1, 'sent'), (2, 'codec'), (3, 'original')]
+        (1, 'sent'), (2, 'sent'), (3, 'original')]
     assert [(costs[item]['billed_pages'], costs[item]['estimated_cost_micros']) for item in (dense, codec, original)] \
         == [(1, 70_000), (2, 140_000), (3, 210_000)]
     # Spending and the dense pages' savings line agree: the cost is what was sent, the saving what was not.
+    # Encoded pages are not "saved by packing".
     from api.app.pages.views import savings
     saved = savings(ruled.routes, ruled.engine, since=now - timedelta(days=1), days=1)
     assert saved['saved'] == {'USD': 140_000}

@@ -3,6 +3,7 @@ cut where its limit falls, marked so a receiving Faxbot splits them back; the de
 each machine accepts, parsed from synthetic HylaFAX session logs; blank page bottoms left out for machines
 without error correction; standard-resolution documents kept standard. SQLite and PostgreSQL. All synthetic."""
 import base64
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 import json
 import random
@@ -256,8 +257,7 @@ def test_the_layout_chooser_keeps_exactly_one_layout_the_cheapest():
     chosen = conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
                                       dense_allowed=True, card=sinch, describe_dense=lambda a, b: f'{b} of {a}')
     assert chosen['layout'] == 'dense' and len(chosen['pages']) == 2 and chosen['reason'] == '2 of 5'
-    assert set(chosen['predictions']) == {'normal', 'dense'}  # the codec hook returns nothing yet
-    assert conversion.codec_pages(originals) is None
+    assert set(chosen['predictions']) == {'normal', 'dense'} and chosen['codec'] is None  # no codec candidate
     # A codec that sends fewer pages wins alone: its pages are made from the originals, never from packed pages.
     seen = []
 
@@ -268,6 +268,12 @@ def test_the_layout_chooser_keeps_exactly_one_layout_the_cheapest():
                                       dense_allowed=True, codec=codec, card=sinch)
     assert seen == [5] and chosen['layout'] == 'codec' and len(chosen['pages']) == 1
     assert chosen['reason'] == 'Sent as 1 encoded page instead of 5.'
+    # Encoded pages that cost more than the long pages are priced and left out: the long pages go alone.
+    chosen = conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
+                                      dense_allowed=True, card=sinch,
+                                      codec=lambda pages: ([page(97), page(96), page(95)], 'Three encoded pages.'))
+    assert chosen['layout'] == 'dense' and set(chosen['predictions']) == {'normal', 'dense', 'codec'}
+    assert chosen['codec'] is None and len(chosen['pages']) == 2
     # Not allowed, or no saving under the limit: the pages go as they are.
     assert conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
                                     dense_allowed=False, card=sinch)['layout'] == 'normal'
@@ -501,14 +507,14 @@ def test_only_pages_drawn_from_text_or_shapes_may_be_trimmed(tmp_path):
 
 # The send-time hook ---------------------------------------------------------------------------------------------
 
-def _send(database, tmp_path, *, route='sip', pages=None, number=PEER, values=None, recipient=None):
+def _send(database, tmp_path, *, route='sip', pages=None, number=PEER, values=None, recipient=None, attempt=ATTEMPT):
     pages = pages or [page(seed) for seed in range(5)]
     pdf, tiff = tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff'
     conversion.write_fax_tiff(pages, str(tiff))
     conversion.tiff_to_pdf(str(tiff), str(pdf))
     configuration = SimpleNamespace(provider_id=route, manifest=None,
                                     traits={'requires_tiff': route in ('sip', 'freeswitch')})
-    claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
+    claim = SimpleNamespace(job_id=JOB, attempt_id=attempt, members=())
     job = {'to_number': number, **({'recipient_number': recipient} if recipient else {})}
     return sending.prepare(database, values or SimpleNamespace(sip_fax_fine=True), configuration, claim,
                            job, pdf, tiff if route in ('sip', 'freeswitch') else None, now=NOW)
@@ -540,6 +546,7 @@ def test_a_trunk_send_to_an_unlimited_machine_goes_packed_and_says_so(installati
 
 def test_a_send_the_codec_makes_cheapest_records_the_codec_alone(installation, database, tmp_path, monkeypatch):
     _learn(installation)
+    opt_in(database, PEER)  # the codec is a candidate only for a number whose recipient agreed
     monkeypatch.setattr(conversion, 'codec_pages', lambda pages, **_: (
         [page(98, height=600)], 'Sent as 1 encoded page instead of 5; the receiving Faxbot decodes it.'))
     changed = _send(database, tmp_path)
@@ -566,52 +573,163 @@ def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, data
     assert not [path for path in tmp_path.glob('packed-*') if not path.name.startswith('packed-friendly-')]
 
 
-def _encoded_send(database, route):
-    """The fax's experimental encoded pages, made at acceptance for ``route`` (codec/send.py)."""
-    from app.codec.store import record_send
+def _fax_row(database, route='sip', pages=5):
     jobs = sa.Table('fax_jobs', sa.MetaData(), autoload_with=database)
     with database.begin() as connection:
         connection.execute(jobs.insert().values(**_filled(jobs, {
-            'id': JOB, 'to_number': PEER, 'status': 'queued', 'created_at': NOW, 'updated_at': NOW, 'pages': 5,
+            'id': JOB, 'to_number': PEER, 'status': 'queued', 'created_at': NOW, 'updated_at': NOW, 'pages': pages,
             'backend': route})))
-        record_send(connection, database, JOB, {
-            'phone_number': PEER, 'provider_id': route, 'layout': 'grid', 'resolution': 'fine', 'fec': 'medium',
-            'pages_original': 5, 'pages_encoded': 2, 'document_sha256': '0' * 64, 'encrypted': 0,
-            'format_version': 1}, NOW)
 
 
-def test_encoded_pages_are_never_packed_trimmed_or_given_a_page_line(installation, database, tmp_path):
-    from app.codec import send as codec_send
+def _new_attempt(database, attempt_id, sequence):
+    attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=database)
+    with database.begin() as connection:
+        connection.execute(attempts.insert().values(**_filled(attempts, {
+            'id': attempt_id, 'job_id': JOB, 'sequence': sequence, 'phase': 'prepared', 'created_at': NOW})))
+
+
+def opt_in(database, *numbers):
+    """The recipient of each number agreed to encoded pages (codec/store.py)."""
+    from app.codec.store import CodecSettings
+    for number in numbers:
+        CodecSettings(database).save(number, enabled=True, recipient_agreed=True, actor='principal:synthetic', now=NOW)
+
+
+@contextmanager
+def priced(**cards):
+    """The real shared predictor (routing/predict.py) on synthetic facts: one rate card per route, nothing learned."""
+    from app.routing import predict
+    from app.routing.costs import RateTerms
+    from app.routing.destinations import LOCAL, DestinationClass
+    facts = {route: predict.RouteFacts(route, route.title(), DestinationClass(LOCAL, 'US', '+1', PEER),
+                                       RateTerms(rates))
+             for route, rates in cards.items()}
+    with predict.facts_source(lambda route, destination, now=None: facts[route]):
+        yield
+
+
+def _change(database, attempt_id=ATTEMPT):
+    table = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=database)
+    with database.connect() as connection:
+        row = connection.execute(sa.select(table).where(table.c.attempt_id == attempt_id)).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def test_encoded_pages_win_alone_when_they_cost_least_and_are_never_packed_or_trimmed(installation, database,
+                                                                                      tmp_path):
+    """The real codec and the real shared predictor: on a per-page route, one encoded page beats two long pages."""
+    from app import codec
+    from app.codec.store import send_for
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript renders the PDF for a cloud route')
+    from app.routing.store import RouteStore
+    _learn(installation)  # takes unlimited length: two long pages are possible
+    installation.set_route_settings('sinch', long_pages=True)
+    RouteStore(database, sip_preset=lambda: '').replace_cards([card('sinch', per_page='0.045')])
+    _fax_row(database, 'sinch')
+    opt_in(database, PEER)
+    with priced(sinch=card('sinch', per_page='0.045')):
+        changed = _send(database, tmp_path, route='sinch')
+    assert (changed.original_pages, changed.sent_pages, changed.trimmed_pages) == (5, 1, 0)
+    # What Sinch gets is the encoded page itself, which turns back into exactly the fax's own PDF.
+    document, _ = codec.decode_images(codec.read_images(changed.pdf))
+    assert document.data == (tmp_path / f'{JOB}.pdf').read_bytes()
+    row = _change(database)
+    assert (row['layout'], row['sent_pages'], row['original_pages'], row['billing']) == ('codec', 1, 5, 'per_page')
+    assert row['trimmed_pages'] is None and row['resolution'] is None and row['page_limit'] is None
+    details = send_for(database, JOB)
+    assert (details['provider_id'], details['pages_encoded'], details['layout']) == ('sinch', 1, 'grid')
+    assert details['cost_encoded_micros'] < details['cost_original_micros']
+    # One sentence on the Sent detail, for the layout the attempt kept.
+    assert views.sent_view(database, JOB)['sentences'] == ['Sent as 1 encoded page instead of 5 (experimental).']
+
+
+def test_dense_pages_win_when_encoded_ones_would_cost_more_and_nothing_is_encoded(installation, database, tmp_path):
+    """Per minute, the encoded page carries more bits than the two long pages: dense pages go, never both."""
     from app.codec.store import send_for
     _learn(installation)
-    _encoded_send(database, 'sip')
-    # Over the trunk the encoded pages are the fax image itself; any image route sends them as they are.
-    assert _send(database, tmp_path) is None
-    assert _send(database, tmp_path, route='freeswitch') is None
-    assert not list(tmp_path.glob('packed-*'))
-    # The Sent detail says only how the encoded pages went (AG), never a page layout line (AF).
-    assert views.sent_view(database, JOB, str(tmp_path)) is None
-    assert codec_send.sentence(send_for(database, JOB)) == 'Sent as 2 encoded pages instead of 5 (experimental).'
-
-
-def test_a_payload_pdf_made_for_a_cloud_route_goes_as_made(installation, database, tmp_path):
-    from app.codec.send import payload_pdf_path
-    _learn(installation)
-    installation.set_route_settings('sinch', long_pages=True)
-    _encoded_send(database, 'sinch')
-    payload_pdf_path(tmp_path, JOB, 'sinch').write_bytes(b'%PDF-1.4 encoded pages')
-    assert _send(database, tmp_path, route='sinch') is None
-    assert not list(tmp_path.glob('packed-*'))
-
-
-def test_another_route_than_the_encoded_pages_were_made_for_still_packs(installation, database, tmp_path):
-    from app.codec.send import payload_pdf_path
-    _learn(installation)
-    _encoded_send(database, 'sinch')
-    payload_pdf_path(tmp_path, JOB, 'sinch').write_bytes(b'%PDF-1.4 encoded pages')
-    # The trunk sends the fax's own image, which the payload PDF for Sinch never touched.
-    changed = _send(database, tmp_path)
+    _fax_row(database)
+    opt_in(database, PEER)
+    with priced(sip=card('sip', per_minute='0.005', increment=1)):
+        changed = _send(database, tmp_path)
     assert (changed.original_pages, changed.sent_pages) == (5, 2)
+    assert len(unpack.split_frames(conversion.read_fax_frames(changed.tiff))) == 5  # long pages, not encoded ones
+    assert _change(database)['layout'] == 'dense' and send_for(database, JOB) is None
+
+
+def test_a_number_that_did_not_agree_never_gets_encoded_pages(installation, database, tmp_path):
+    toll_free = '+18005550199'
+    _fax_row(database, 'sinch')
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript renders the PDF for a cloud route')
+    with priced(sinch=card('sinch', per_page='0.045')):
+        assert _send(database, tmp_path, route='sinch') is None  # nobody agreed: nothing is even drawn
+        # An approved toll-free number dialed for a recipient who agreed: both must agree.
+        opt_in(database, PEER)
+        assert _send(database, tmp_path, route='sinch', number=toll_free, recipient=PEER) is None
+        opt_in(database, toll_free)
+        changed = _send(database, tmp_path, route='sinch', number=toll_free, recipient=PEER)
+    assert changed.sent_pages == 1 and _change(database)['layout'] == 'codec'
+
+
+def test_a_shared_key_that_cannot_be_read_never_sends_the_document_unencrypted(installation, database, tmp_path,
+                                                                                 monkeypatch):
+    from app.codec import send as codec_send
+    _learn(installation)
+    _fax_row(database)
+    opt_in(database, PEER)
+    real = codec_send.CodecSettings.get
+    monkeypatch.setattr(codec_send.CodecSettings, 'get', lambda self, number: {**real(self, number), 'has_key': True})
+    with priced(sip=card('sip', per_page='0.045')):
+        changed = _send(database, tmp_path)  # no key seal: the key cannot be opened
+    assert changed.sent_pages == 2 and _change(database)['layout'] == 'dense'
+
+
+def test_a_retry_onto_another_route_decides_again_and_the_sent_detail_follows_it(installation, database, tmp_path):
+    from app.codec.http import _send_view
+    from app.codec.store import send_for
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript renders the PDF for a cloud route')
+    first, second = '1' * 32, '2' * 32
+    _learn(installation)
+    _fax_row(database, 'sinch')
+    opt_in(database, PEER)
+    _new_attempt(database, first, 1)
+    with priced(sinch=card('sinch', per_page='0.045'), sip=card('sip', per_minute='0.005', increment=1)):
+        assert _send(database, tmp_path, route='sinch', attempt=first).sent_pages == 1  # encoded, on Sinch
+        assert _send_view(database, JOB, 'queued')['sentence'] == 'Going as 1 encoded page instead of 5 (experimental).'
+        _new_attempt(database, second, 2)
+        retried = _send(database, tmp_path, attempt=second)  # the same fax over the phone line, billed by time
+    assert (retried.original_pages, retried.sent_pages) == (5, 2)
+    assert (_change(database, first)['layout'], _change(database, second)['layout']) == ('codec', 'dense')
+    # The codec's details stay those of the first attempt; the Sent detail and the codec's view follow the second.
+    assert send_for(database, JOB)['provider_id'] == 'sinch'
+    assert views.sent_view(database, JOB)['sentences'] == [
+        'Sent as 2 long pages instead of 5; the receiving machine accepts unlimited length.']
+    assert _send_view(database, JOB, 'success') == {'encoded': False, 'sentence': None}
+
+
+def test_encoded_pages_are_never_lightened(installation, database, tmp_path, monkeypatch):
+    """The pages as they are would be lightened on a call billed by time; encoded pages win and go as made."""
+    from app.pages import friendly
+    _learn(installation)
+    _fax_row(database)
+    opt_in(database, PEER)
+    lightened = []
+
+    def lighten(root, job_id, pdf, source, request):
+        lightened.append(job_id)
+        request.result = friendly.Result(5, 2, 1_000_000, 500_000)
+        return source  # the same pages, said to be lightened
+    monkeypatch.setattr(friendly, 'lightened_pages', lighten)
+    monkeypatch.setattr(friendly, 'should_lighten', lambda *args, **kwargs: (True, 'always'))
+    monkeypatch.setattr(conversion, 'codec_pages', lambda pages, **_: (
+        [page(98, height=600)], 'Sent as 1 encoded page instead of 5 (experimental).'))
+    with priced(sip=card('sip', per_page='0.045')):
+        changed = _send(database, tmp_path)
+    assert lightened == [JOB] and changed.sent_pages == 1 and _change(database)['layout'] == 'codec'
+    assert friendly.run_for(database, JOB) is None  # no lightened attempt is recorded
+    assert views.sent_view(database, JOB)['sentences'] == ['Sent as 1 encoded page instead of 5 (experimental).']
 
 
 def test_page_settings_of_the_chosen_recipient_follow_an_approved_toll_free_dial(installation, database, tmp_path):
@@ -655,21 +773,6 @@ def test_blank_space_off_for_the_chosen_recipient_keeps_page_bottoms_on_a_toll_f
     assert send().trimmed_pages == 1
 
 
-def test_encoded_pages_rendered_from_a_document_keep_their_blank_bottom(installation, database, tmp_path):
-    _learn(installation, max_length='a4', ecm=0, scan_ms=10)
-    _encoded_send(database, 'sip')
-    (tmp_path / 'note.txt').write_text('\n'.join(f'line {number}' for number in range(20)) + '\n')
-    conversion.txt_to_pdf(str(tmp_path / 'note.txt'), str(tmp_path / f'{JOB}.pdf'))
-    if not shutil.which('gs'):
-        pytest.skip('Ghostscript renders the text page')
-    conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
-    configuration = SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True})
-    claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
-    assert sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration, claim, {'to_number': PEER},
-                           tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff', now=NOW) is None
-    assert not list(tmp_path.glob('packed-*'))
-
-
 def test_a_machine_without_error_correction_gets_rendered_pages_without_their_blank_bottom(installation, database,
                                                                                            tmp_path):
     _learn(installation, max_length='a4', ecm=0, scan_ms=10)
@@ -706,7 +809,7 @@ def test_cloud_routes_send_a_packed_pdf_only_once_turned_on(installation, databa
     changed = _send(database, tmp_path, route='sinch')
     assert changed.tiff is None and changed.pdf.endswith('.pdf') and changed.sent_pages == 2
     assert conversion.validate_pdf(changed.pdf) == 2
-    assert _send(database, tmp_path, route='phaxio') is None  # Phaxio fetches the fax's own PDF
+    assert _send(database, tmp_path, route='phaxio') is None  # Phaxio fetches the PDF: it never takes long pages
 
 
 def test_savings_count_packed_pages_on_delivered_sends_per_billing_model(installation, database, tmp_path):

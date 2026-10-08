@@ -56,6 +56,8 @@ async def test_transport_uses_accepted_profile_and_persists_media_grant_before_s
     runtime = Runtime()
     await OutboundWorker(store, CapturedTransport(store, runtime)).step()
     assert len(calls) == 1 and profiles[0].configuration.credentials['api_key'] == 'old-key'
+    # The fetch link names its attempt, so Faxbot serves the pages that attempt chose (pages/sending.fetched_pdf).
+    assert calls[0][1].endswith('&attempt=' + calls[0][3])
     assert runtime.revisions == [snapshot.active.id]
     assert store.get(job)['state'] == 'in_progress'
 

@@ -471,19 +471,24 @@ def test_never_for_the_chosen_recipient_holds_when_an_approved_toll_free_number_
 
 
 @needs_gs
-def test_encoded_pages_are_never_lightened(installation, tmp_path, billed):
-    """Encoded pages (experimental, codec/send.py) go exactly as made: no lightening either."""
-    from app.codec.store import record_send
-    jobs = sa.Table('fax_jobs', sa.MetaData(), autoload_with=installation)
-    with installation.begin() as connection:
-        connection.execute(jobs.insert().values(id=JOB, to_number=PEER, status='queued', file_name='a.pdf',
-                                                tiff_path='', backend='sip', pages=1, created_at=NOW, updated_at=NOW))
-        record_send(connection, installation, JOB, {
-            'phone_number': PEER, 'provider_id': 'sip', 'layout': 'grid', 'resolution': 'fine', 'fec': 'medium',
-            'pages_original': 1, 'pages_encoded': 1, 'document_sha256': '0' * 64, 'encrypted': 0,
-            'format_version': 1}, NOW)
-    assert attempt(installation, tmp_path, TRUNK, choice='always') is None
-    assert friendly.run_for(installation, JOB) is None and not list(tmp_path.glob('packed-*'))
+def test_encoded_pages_are_never_lightened(installation, tmp_path, billed, monkeypatch):
+    """When the experimental encoded pages win an attempt (codec/send.py), they go exactly as the codec made them:
+    the lightened pages were only the pages as they are, so nothing lightened is sent or recorded for it."""
+    from api.tests.test_dense_pages import opt_in
+    opt_in(installation, PEER)
+    blank = Image.new('1', (1728, 40), 1)
+    blank.info['dpi'] = (204.0, 196.0)
+    monkeypatch.setattr(conversion, 'codec_pages', lambda pages, **_: (
+        [blank], 'Sent as 1 encoded page instead of 1 (experimental).'))
+    sent = attempt(installation, tmp_path, TRUNK, choice='always')
+    assert sent is not None and conversion.read_fax_frames(sent.tiff)[0].size == (1728, 40)
+    assert friendly.run_for(installation, JOB) is None
+    assert views.sent_view(installation, JOB)['sentences'] == ['Sent as 1 encoded page instead of 1 (experimental).']
+    # Without the recipient's agreement the same attempt is lightened, as before.
+    from app.codec.store import CodecSettings
+    CodecSettings(installation).save(PEER, enabled=False, recipient_agreed=False, actor='principal:synthetic', now=NOW)
+    assert attempt(installation, tmp_path, TRUNK, attempt_id='e' * 32, choice='always') is not None
+    assert friendly.run_for(installation, JOB)['attempt_id'] == 'e' * 32
 
 
 @needs_gs
@@ -581,7 +586,7 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
         shaded = path.stem in identities[:3]
         return friendly.Result(1, 1 if shaded else 0, 870_000 if shaded else 0, 170_000 if shaded else 0)
     friendly._MEASURED.clear()
-    view = friendly.recommendation(installation, tmp_path, choice='never', how_sent='image', now=NOW,
+    view = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                    measure=measure, saves=lambda route, number: route == 'sip')
     assert view['recommend'] is True and (view['faxes_checked'], view['faxes_changed']) == (10, 3)
     assert view['seconds_saved'] == 3 * (700_000 // 14400)
@@ -592,11 +597,11 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
                               'you send" under Providers, In use, Delivery routes. Shaded areas then print white on '
                               'those calls, and photographs lose their lightest parts.')
     assert len(measured) == 10
-    friendly.recommendation(installation, tmp_path, choice='never', how_sent='image', now=NOW, measure=measure,
+    friendly.recommendation(installation, tmp_path, choice='never', now=NOW, measure=measure,
                             saves=lambda route, number: True)
     assert len(measured) == 10  # each fax is measured once
     # Faxes by a provider that charges per page would have saved nothing.
-    per_page = friendly.recommendation(installation, tmp_path, choice='never', how_sent='pdf_upload', now=NOW,
+    per_page = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                        measure=measure, saves=lambda route, number: False)
     assert per_page['recommend'] is False and per_page['sentence'] == (
         'Your last 10 faxes went by providers that charge per page, to machines with error correction, so lightening '
@@ -606,7 +611,7 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
 def test_any_other_choice_has_nothing_to_recommend(installation, tmp_path):
     _jobs(installation, tmp_path, 2)
     for choice in ('where_it_saves', 'always'):
-        view = friendly.recommendation(installation, tmp_path, choice=choice, how_sent='image', now=NOW,
+        view = friendly.recommendation(installation, tmp_path, choice=choice, now=NOW,
                                        measure=lambda path: friendly.Result(1, 1, 900_000, 100_000))
         assert view['sentence'] is None and view['recommend'] is False and view['faxes_checked'] == 0
 
@@ -626,24 +631,18 @@ def test_where_it_saves_follows_the_rate_card_and_the_machine(installation):
         store.RouteStore.card_for = original
 
 
-def test_the_recommendation_stays_quiet_when_nothing_would_change_or_the_provider_draws_the_pages(installation,
-                                                                                                   tmp_path):
+def test_the_recommendation_stays_quiet_when_nothing_would_change(installation, tmp_path):
     _jobs(installation, tmp_path, 2, pages=1)
     friendly._MEASURED.clear()
-    plain = friendly.recommendation(installation, tmp_path, choice='never', how_sent='image', now=NOW,
+    plain = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                     measure=lambda path: friendly.Result(1, 0, 0, 0), saves=lambda *_: True)
     assert plain['recommend'] is False
     assert plain['sentence'] == 'Your last 2 faxes have no shaded areas or specks that slow them down.'
-    fetched = friendly.recommendation(installation, tmp_path, choice='never', how_sent='pdf_url', now=NOW)
-    assert fetched['recommend'] is False and fetched['sentence'] == (
-        'Your fax provider fetches each document from Faxbot and draws its pages itself, so Faxbot cannot lighten '
-        'them.')
-    nothing = friendly.recommendation(installation, tmp_path / 'empty', choice='never', how_sent='image', now=NOW,
+    nothing = friendly.recommendation(installation, tmp_path / 'empty', choice='never', now=NOW,
                                       saves=lambda *_: True)
     assert nothing['recommend'] is False and nothing['sentence'] is None and nothing['faxes_checked'] == 0
-    later = friendly.recommendation(installation, tmp_path, choice='never', how_sent='image',
-                                    now=NOW + timedelta(days=60), saves=lambda *_: True,
-                                    measure=lambda path: friendly.Result(1, 1, 900_000, 100_000))
+    later = friendly.recommendation(installation, tmp_path, choice='never', now=NOW + timedelta(days=60),
+                                    saves=lambda *_: True, measure=lambda path: friendly.Result(1, 1, 900_000, 100_000))
     assert later['faxes_checked'] == 0
 
 
@@ -656,7 +655,7 @@ def test_one_recent_fax_reads_as_one(installation, tmp_path, shaded, sentence):
     _jobs(installation, tmp_path, 1)
     friendly._MEASURED.clear()
     result = friendly.Result(1, 1, 800_000, 100_000) if shaded else friendly.Result(1, 0, 0, 0)
-    view = friendly.recommendation(installation, tmp_path, choice='never', how_sent='image', now=NOW,
+    view = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                    measure=lambda path: result, saves=lambda *_: True)
     assert view['sentence'] == sentence and view['recommend'] is shaded
 
@@ -664,7 +663,7 @@ def test_one_recent_fax_reads_as_one(installation, tmp_path, shaded, sentence):
 def test_one_recent_fax_by_a_per_page_provider_reads_as_one(installation, tmp_path):
     _jobs(installation, tmp_path, 1, backend='sinch')
     friendly._MEASURED.clear()
-    view = friendly.recommendation(installation, tmp_path, choice='never', how_sent='pdf_upload', now=NOW,
+    view = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                    measure=lambda path: friendly.Result(1, 1, 800_000, 100_000),
                                    saves=lambda *_: False)
     assert view['sentence'] == ('Your last fax went by a provider that charges per page, to a machine with error '
@@ -674,7 +673,7 @@ def test_one_recent_fax_by_a_per_page_provider_reads_as_one(installation, tmp_pa
 def test_a_fax_too_long_for_one_look_is_left_out_rather_than_half_measured(installation, tmp_path):
     _jobs(installation, tmp_path, 1, pages=friendly.PAGE_BUDGET + 1)
     friendly._MEASURED.clear()
-    view = friendly.recommendation(installation, tmp_path, choice='never', how_sent='image', now=NOW,
+    view = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                    measure=lambda path: friendly.Result(1, 1, 900_000, 100_000),
                                    saves=lambda *_: True)
     assert view['faxes_checked'] == 0 and view['recommend'] is False
@@ -713,10 +712,11 @@ def test_the_settings_the_recipient_choice_and_the_recommendation_over_http_and_
         assert cli('recipients', 'set', PEER, '--shading', 'default').exit_code == 0
         shown = ' '.join(cli('recipients', 'show', PEER).stdout.split())
         assert 'Lighten shaded areas as set for all faxes (never)' in shown
-        # The recommendation needs settings permission; this installation's Phaxio fetches each document itself.
+        # The recommendation needs settings permission. This installation's Phaxio fetches each document from
+        # Faxbot, which serves the attempt's own (lightened) pages, so it is measured like any route: no faxes yet.
         assert client.get('/routing/recommendations/fax-friendly').status_code in (401, 403)
         view = client.get('/routing/recommendations/fax-friendly', headers=admin).json()
-        assert view['choice'] == 'never' and view['sentence'].startswith('Your fax provider fetches each document')
+        assert view['choice'] == 'never' and view['faxes_checked'] == 0 and view['sentence'] is None
         result = cli('costs', 'recommendations')
         assert result.exit_code == 0 and 'Shaded areas and specks' in result.stdout
 

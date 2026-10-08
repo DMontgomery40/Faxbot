@@ -330,30 +330,38 @@ async def test_a_refused_fax_image_goes_by_fax_in_the_same_attempt_only_because_
 
 @pytest.mark.asyncio
 async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_its_original(peer_pair, monkeypatch):
-    """Encoded pages (experimental, codec/send.py) may replace a fax's engine image; a partner never gets them."""
+    """Encoded pages (experimental) are one attempt's own files (pages/sending.py): the fax's engine image stays
+    the original's, so a partner whose number also agreed to encoded pages gets exactly the original's image."""
     import shutil
+    from types import SimpleNamespace
     from api.app import conversion
-    from api.app.codec.store import record_send
+    from api.app.codec.store import CodecSettings
     from api.app.direct import service as direct_service
+    from api.app.pages import sending
     if shutil.which('gs') is None:
         pytest.skip('Ghostscript renders the document')
     pair = peer_pair
     opt_in(pair)
+    engine = pair['a'].store.engine
     signed_at = timestamp()
     monkeypatch.setattr(direct_service, 'timestamp', lambda: signed_at)  # one header time for both faxes
     digests = {}
     for encoded in (False, True):
         job = accept(pair, image=False)
-        conversion.pdf_to_tiff(str(pair['data'] / (job + '.pdf')), str(pair['data'] / (job + '.tiff')))
+        image = pair['data'] / (job + '.tiff')
+        conversion.pdf_to_tiff(str(pair['data'] / (job + '.pdf')), str(image))
         if encoded:
-            # Acceptance wrote the encoded pages over the engine image and recorded the send.
-            (pair['data'] / (job + '.tiff')).write_bytes(engine_image(1))
-            engine = pair['a'].store.engine
-            with engine.begin() as connection:
-                record_send(connection, engine, job, {
-                    'phone_number': B_NUMBER, 'provider_id': 'sip', 'layout': 'grid', 'resolution': 'fine',
-                    'fec': 'medium', 'pages_original': 1, 'pages_encoded': 1, 'document_sha256': '0' * 64,
-                    'encrypted': 0, 'format_version': 1}, datetime.utcnow())
+            # An earlier attempt over the phone line went as encoded pages: its own file, never the engine image.
+            CodecSettings(engine).save(B_NUMBER, enabled=True, recipient_agreed=True, actor='principal:synthetic')
+            blank = _blank_page(40)
+            monkeypatch.setattr(conversion, 'codec_pages', lambda pages, **_: (
+                [blank], 'Sent as 1 encoded page instead of 1 (experimental).'))
+            before = image.read_bytes()
+            changed = sending.prepare(engine, SimpleNamespace(sip_fax_fine=True, fax_friendly_documents='never'),
+                                      SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True}),
+                                      SimpleNamespace(job_id=job, attempt_id='f' * 32, members=()),
+                                      {'to_number': B_NUMBER}, pair['data'] / (job + '.pdf'), image)
+            assert changed is not None and changed.sent_pages == 1 and image.read_bytes() == before
         row, conventional = await send(pair, job)
         assert row['state'] == 'success' and conventional.submissions == 0
         sent = pair['a'].store.find('outbound', row['attempt_id'])
@@ -361,6 +369,14 @@ async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_it
         digests[encoded] = sent['digest']
     # The partner gets exactly the fax image a fax without encoded pages has.
     assert digests[True] == digests[False]
+
+
+def _blank_page(height):
+    """A blank fine-resolution page: the stand-in encoded page."""
+    from PIL import Image
+    page = Image.new('1', (1728, height), 1)
+    page.info['dpi'] = (204.0, 196.0)
+    return page
 
 
 @pytest.mark.asyncio

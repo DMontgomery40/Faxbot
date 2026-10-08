@@ -1,12 +1,21 @@
-"""The attempt-time hook: the pages one send carries, packed and trimmed when that is allowed and saves.
+"""The attempt-time hook: the one layout the pages of one send take, and the changes that go with it.
 
 Called for each attempt before anything is dialed or uploaded
-(``outbound_transport.CapturedTransport.prepare``). The fax's own PDF and fax
-image are never changed: a changed send gets its own files beside them
-(``packed-<fax>-<attempt>.tiff`` / ``.pdf``), which the usual retention
-cleanup removes. Anything that goes wrong here is logged and the fax goes
-exactly as it would have; this hook never stops or delays a send. Faxes sent
-together in one call are left alone for now (batching packs a batch later).
+(``outbound_transport.CapturedTransport.prepare``). The layout chooser
+(``conversion.choose_layout``) prices the pages as they are, dense pages and
+the experimental encoded pages (``codec/send.py``, only for a number whose
+recipient agreed) from the same pages, and keeps exactly one; the pages as
+they are and dense pages may also be lightened, trimmed or kept at standard
+resolution, encoded pages never are. It is decided again for every attempt,
+so a fax that moves to another route is decided for that route.
+
+The fax's own PDF and fax image are never changed: a changed send gets its
+own files beside them (``packed-<fax>-<attempt>.tiff`` / ``.pdf``), which the
+usual retention cleanup removes. A provider that fetches the document from
+Faxbot gets that attempt's PDF at the fetch address (``fetched_pdf``).
+Anything that goes wrong here is logged and the fax goes exactly as it would
+have; this hook never stops or delays a send. Faxes sent together in one call
+are left alone (batching lightens each fax's own image for the shared call).
 """
 from __future__ import annotations
 
@@ -50,20 +59,6 @@ def paths(root, job_id, attempt_id):
     return stem.with_suffix('.tiff'), stem.with_suffix('.pdf')
 
 
-def _encoded(engine, job_id, route, mode, root):
-    """Whether this attempt sends the experimental encoded pages made for the fax at acceptance (codec/send.py):
-    a payload PDF made for this route, or encoded pages written over the fax image every image route sends."""
-    from ..codec.send import payload_pdf_path
-    from ..codec.store import send_for
-    if payload_pdf_path(root, job_id, route).is_file():
-        return True
-    made = send_for(engine, job_id)
-    if made is None:
-        return False
-    return made['provider_id'] == route or (
-        mode == 'image' and not payload_pdf_path(root, job_id, made['provider_id']).is_file())
-
-
 def _call_resolution(values):
     """Whether the trunk sends fine pages (the SSL Fax engine re-images a page at any other resolution)."""
     try:
@@ -98,17 +93,20 @@ def _trim_seconds(rows, cap, resolution):
     return math.floor(rows * per_row)
 
 
-def prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, now=None):
-    """PreparedPages for this attempt, or None when its pages go as they are. Never raises."""
+def prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, seal=None, now=None):
+    """PreparedPages for this attempt, or None when its pages go as they are. Never raises.
+
+    ``seal`` opens the shared key of a number whose encoded pages are encrypted (``codec.store.KeySeal``)."""
     try:
-        return _prepare(engine, values, configuration, claim, job, pdf, tiff, rule=rule, now=now)
+        return _prepare(engine, values, configuration, claim, job, pdf, tiff, rule=rule, seal=seal, now=now)
     except Exception:
-        logging.getLogger(__name__).warning('Fax pages could not be packed; they go as they are.')
+        logging.getLogger(__name__).warning('Fax pages could not be prepared; they go as they are.', exc_info=True)
         return None
 
 
-def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, now=None):
+def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, seal=None, now=None):
     from .. import conversion
+    from ..codec.send import setting_for
     from .decision import LINE_BITS_PER_SECOND
     from .resolution import is_standard, standard_frames
     from .trim import rendered_pages, trim_frames
@@ -118,11 +116,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     if not (_HEX32.fullmatch(str(job_id)) and _HEX32.fullmatch(str(attempt_id))):
         return None
     route, number, mode = configuration.provider_id, job.get('to_number'), how_sent(configuration)
-    if mode == 'pdf_url':
-        return None
     root = Path(str(pdf)).parent
-    if _encoded(engine, job_id, route, mode, root):
-        return None  # the experimental encoded pages go exactly as made (codec/send.py); never packed or trimmed
     records = capabilities.records_for(engine)
     # The machine that answers is the dialed number's; the person's page settings are also read for the recipient
     # they chose (an approved toll-free number is dialed instead, routing/alternates.py): the stricter one wins.
@@ -144,7 +138,10 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     if lighten and chosen != number and fax_friendly.recipient_choice(engine, chosen) == 'never':
         lighten = False  # never for the recipient the person chose holds on an approved toll-free number too
     friendly = fax_friendly.Request('documents') if lighten else None
-    if not packing_ok and not trim_ok and not match_ok and friendly is None:
+    # Encoded pages (experimental): a candidate only when the dialed number, and the recipient the person chose,
+    # agreed to them (codec/send.py). This read is cheap; nothing is drawn for a number that did not agree.
+    codec_ok = setting_for(engine, number, chosen) is not None
+    if not packing_ok and not trim_ok and not match_ok and not codec_ok and friendly is None:
         return None
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
     source = Path(str(tiff)) if mode == 'image' and tiff else None
@@ -155,10 +152,11 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                            if friendly is not None else None)
         if lightened_image is not None:
             source = lightened_image
-        elif not packing_ok and not trim_ok and not match_ok:
+        elif not packing_ok and not trim_ok and not match_ok and not codec_ok:
             return None  # no page changed, and nothing else would change them
         elif source is None:
-            # A cloud provider takes a PDF: rasterize the fax's PDF to pack its pages, then send them as a PDF.
+            # A cloud provider takes a PDF: rasterize the fax's PDF to price and change its pages, then send them as
+            # a PDF.
             raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
             conversion.pdf_to_tiff(str(pdf), str(raster))
             source = raster
@@ -169,15 +167,17 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         if matched is not None:
             frames = matched
         resolution = 'standard' if is_standard(frames) else 'fine'
-        if mode == 'image' and resolution == 'fine' and (_call_resolution(values) != 'fine' or cap.fine is False):
-            # The SSL Fax engine would draw these pages again at standard resolution: leave them alone.
-            packing_ok = trim_ok = False
+        # Whether this call carries fine pages: the SSL Fax engine draws a fine page again at standard resolution
+        # when the trunk or the receiving machine does not take fine.
+        call_fine = cap.fine is not False and (mode != 'image' or _call_resolution(values) == 'fine')
+        if mode == 'image' and resolution == 'fine' and not call_fine:
+            packing_ok = trim_ok = False  # the pages would be drawn again: leave them alone
         trimmed_pages = trimmed_rows = 0
         if trim_ok:
             flags = rendered_pages(str(pdf))
             if flags is not None and len(flags) == len(frames):
                 frames, trimmed_pages, trimmed_rows = trim_frames(frames, flags)
-        # Exactly one layout: the pages as they are, packed onto long pages, or the experimental codec,
+        # Exactly one layout: the pages as they are, packed onto long pages, or the experimental encoded pages,
         # whichever the route's billing makes cheapest (conversion.choose_layout).
         from .views import packed_sentence
 
@@ -186,12 +186,23 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                                     'page_limit': cap.limit, 'limit_learned_at': cap.learned_at})
 
         def codec(pages):
-            return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap)
+            # Encoded pages carry the original document; ``pages`` are what they are priced against.
+            return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap,
+                                          pdf_path=str(pdf), seal=seal, recipient=chosen,
+                                          exact_raster=mode == 'image',
+                                          resolution='fine' if call_fine else 'standard')
         choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
-                                          dense_allowed=packing_ok, codec=codec, card=route_card,
-                                          boundary_seconds=cap.boundary_seconds, describe_dense=describe_dense)
+                                          dense_allowed=packing_ok, codec=codec if codec_ok else None,
+                                          card=route_card, boundary_seconds=cap.boundary_seconds,
+                                          describe_dense=describe_dense)
         layout = None if choice['layout'] == 'normal' else choice['layout']
-        lightened = friendly is not None and friendly.result is not None and friendly.result.pages_changed > 0
+        encoded = layout == 'codec'
+        if encoded:
+            # Encoded pages go exactly as the codec made them: nothing trimmed, kept at standard or lightened.
+            trimmed_pages = trimmed_rows = 0
+            matched = None
+        lightened = (not encoded and friendly is not None and friendly.result is not None
+                     and friendly.result.pages_changed > 0)
         if layout is None and not trimmed_pages and matched is None and not lightened:
             return None
         pages = choice['pages']
@@ -217,6 +228,8 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                 trimmed_pages=trimmed_pages or None, trimmed_rows=trimmed_rows or None,
                 resolution='standard' if matched is not None else None, seconds_saved=seconds, layout=layout,
                 reason=choice['reason'], now=now)
+        if encoded:
+            _record_codec(engine, job_id, choice['codec'], now)
         if lightened:
             fax_friendly.record_send(engine, job_id=job_id, attempt_id=attempt_id, request=friendly, now=now)
         return PreparedPages(str(out_pdf) if mode != 'image' else None, str(out_tiff) if mode == 'image' else None,
@@ -234,6 +247,38 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
                 raster.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def _record_codec(engine, job_id, details, now):
+    """The codec's details for the fax (``codec_sends``), once; the attempt's own record is its page change."""
+    import sqlalchemy as sa
+    from ..codec.send import record_attempt
+    row = getattr(details, 'row', None)
+    if not row:
+        return
+    try:
+        record_attempt(engine, job_id, row, now or datetime.utcnow())
+    except sa.exc.SQLAlchemyError:
+        logging.getLogger(__name__).warning('The details of the encoded pages could not be recorded for this fax.')
+
+
+def fetched_pdf(pdf_path, job_id, media_url):
+    """The PDF a provider fetching ``media_url`` gets: the pages chosen for the attempt that made that link
+    (``packed-<fax>-<attempt>.pdf``) when that attempt changed them, else the fax's own PDF (``pdf_path``).
+
+    The attempt is read from the link stored with the fax's current token (``outbound_store.grant_pdf``), never
+    from the request, so a token only ever opens its own attempt's pages."""
+    from urllib.parse import parse_qs, urlsplit
+    try:
+        attempt = parse_qs(urlsplit(str(media_url or '')).query).get('attempt', [''])[0]
+    except ValueError:
+        return pdf_path
+    if not (_HEX32.fullmatch(str(job_id or '')) and _HEX32.fullmatch(attempt)):
+        return pdf_path
+    _, chosen = paths(Path(pdf_path).parent, job_id, attempt)
+    if chosen.is_file() and not chosen.is_symlink():
+        return chosen
+    return pdf_path
 
 
 def cleanup(root, cutoff):

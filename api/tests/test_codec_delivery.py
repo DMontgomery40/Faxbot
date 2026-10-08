@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import codec, main
-from app.codec import decision, receive, send
+from app.codec import decision, receive
 from app.conversion import tiff_to_pdf
 
 BOOTSTRAP = 'synthetic-codec-bootstrap'
@@ -83,6 +83,23 @@ def test_run_coded_pages_are_a_candidate_only_after_ecm_and_fine_were_seen():
                                  page_bits_original=[40_000] * 40, exact_raster=True, ecm_and_fine_seen=False,
                                  provider_renders=False, tools=tools)
     assert never_seen.use and never_seen.layout == 'grid' and never_seen.pages_encoded > seen_before.pages_encoded
+
+
+def test_the_real_shared_predictor_prices_encoded_pages():
+    """routing.predict itself on synthetic facts, not fake tools: page bits go as whole-number tuples and costs
+    are compared as money in one currency."""
+    from api.tests.test_dense_pages import card, priced
+    with priced(sinch=card('sinch', per_page='0.045')):
+        choice = decision.choose(_document(12_000), route_key='sinch', destination=NUMBER, pages_original=23,
+                                 page_bits_original=[40_000] * 23, exact_raster=False, ecm_and_fine_seen=False,
+                                 provider_renders=True)
+    assert choice.use and choice.pages_encoded == 1
+    assert (choice.original.cost.micros, choice.encoded.cost.micros) == (23 * 45_000, 45_000)
+    with priced(sip=card('sip', per_minute='0.005', increment=1)):
+        slower = decision.choose(_document(60_000), route_key='sip', destination=NUMBER, pages_original=2,
+                                 page_bits_original=[30_000, 30_000], exact_raster=True, ecm_and_fine_seen=True,
+                                 provider_renders=False)
+    assert not slower.use and slower.original.cost is not None
 
 
 def test_without_the_shared_predictor_nothing_is_encoded(monkeypatch):
@@ -197,31 +214,56 @@ def test_a_number_opts_in_only_with_the_recipients_agreement_and_keeps_its_histo
     assert [change['action'] for change in gone.json()['history']] == ['off', 'on']
 
 
-def test_an_opted_in_fax_on_a_per_page_route_goes_as_one_encoded_page(client, monkeypatch, tmp_path):
-    tools, _ = per_page()
-    monkeypatch.setattr(decision, 'predictor', lambda: tools)
+def test_acceptance_changes_nothing_and_a_fetching_provider_gets_its_attempts_encoded_pages(client):
+    """Each attempt chooses its pages (pages/sending.py); Phaxio fetches them from Faxbot with its attempt's link."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import sqlalchemy as sa
+    from api.tests.test_dense_pages import card, priced
+    from app.pages import sending, views
+    from app.routing.background import installation_engine
     assert client.put(f'/codec/numbers/{NUMBER}', headers=ADMIN,
                       json={'enabled': True, 'recipient_agreed': True}).status_code == 200
     body = '\n'.join(f'Synthetic line {index} of a long letter.' for index in range(400)).encode()
     sent = client.post('/fax', headers=ADMIN, data={'to': NUMBER}, files={'file': ('letter.txt', body, 'text/plain')})
     assert sent.status_code == 202, sent.text
-    job = sent.json()['id']
-    detail = client.get(f'/codec/faxes/{job}', headers=ADMIN)
-    assert detail.status_code == 200, detail.text
-    pages, encoded = sent.json()['pages'], detail.json()['pages_encoded']
-    assert 1 <= encoded < pages
-    # Held (FAX_DISABLED) faxes have not gone yet.
-    assert detail.json()['sentence'] == f'Going as {encoded} encoded pages instead of {pages} (experimental).'
-    assert send.sentence({'pages_encoded': 1, 'pages_original': 23}) == (
-        'Sent as 1 encoded page instead of 23 (experimental).')
+    job, pages = sent.json()['id'], sent.json()['pages']
     root = Path(main.settings.fax_data_dir)
     original = (root / f'{job}.pdf').read_bytes()
-    payload = root / f'{job}.payload-phaxio.pdf'
-    assert payload.is_file() and payload.read_bytes() != original
-    assert send.transmitted_pdf(str(root / f'{job}.pdf'), job, 'phaxio') == str(payload)
-    assert send.transmitted_pdf(str(root / f'{job}.pdf'), job, 'sinch') == str(root / f'{job}.pdf')
-    back, _ = codec.decode_images(codec.read_images(payload.read_bytes()))
-    assert back.data == original  # the recipient gets exactly the accepted document
+    # Acceptance keeps the document as it is and decides nothing about encoded pages.
+    assert not list(root.glob(f'{job}.payload-*')) and not list(root.glob('packed-*'))
+    assert client.get(f'/codec/faxes/{job}', headers=ADMIN).json() == {'encoded': False, 'sentence': None}
+    # An attempt by Phaxio, which bills per page: one or two encoded pages beat every page of the letter.
+    engine, _ = installation_engine(main.app)
+    attempt, other = 'c' * 32, 'e' * 32
+    phaxio = SimpleNamespace(provider_id='phaxio', manifest=None, traits={})
+    with priced(phaxio=card('phaxio', per_page='0.07')):
+        changed = sending.prepare(engine, SimpleNamespace(sip_fax_fine=True), phaxio,
+                                  SimpleNamespace(job_id=job, attempt_id=attempt, members=()), {'to_number': NUMBER},
+                                  root / f'{job}.pdf', None)
+    assert changed.pdf == str(root / f'packed-{job}-{attempt}.pdf') and changed.sent_pages < pages
+    detail = client.get(f'/codec/faxes/{job}', headers=ADMIN).json()
+    encoded = detail['pages_encoded']
+    noun = 'page' if encoded == 1 else 'pages'
+    assert detail['sentence'] == f'Going as {encoded} encoded {noun} instead of {pages} (experimental).'
+    assert views.sent_view(engine, job)['sentences'] == [f'Sent as {encoded} encoded {noun} instead of {pages} '
+                                                         '(experimental).']
+
+    def grant(attempt_id):
+        token = 'synthetic-media-token-' + attempt_id[:4]
+        with engine.begin() as connection:
+            jobs = sa.Table('fax_jobs', sa.MetaData(), autoload_with=connection)
+            connection.execute(jobs.update().where(jobs.c.id == job).values(
+                pdf_url=f'https://testserver/fax/{job}/pdf?token={token}&attempt={attempt_id}', pdf_token=token,
+                pdf_token_expires_at=datetime.utcnow() + timedelta(minutes=5)))
+        return token
+    # The fetch link names the attempt that made it; the stored link decides, never the request.
+    fetched = client.get(f'/fax/{job}/pdf', params={'token': grant(attempt), 'attempt': other})
+    assert fetched.status_code == 200 and fetched.content != original
+    back, _ = codec.decode_images(codec.read_images(fetched.content))
+    assert back.data == original  # the recipient's Faxbot gets exactly the accepted document
+    # A later attempt whose pages went as they are serves the fax's own PDF.
+    assert client.get(f'/fax/{job}/pdf', params={'token': grant(other)}).content == original
 
 
 def test_codec_routes_need_their_permissions(client):

@@ -638,13 +638,37 @@ def frame_bits(frames) -> Tuple[int, ...]:
     return tuple(8 * len(_g4_data(frame) or b"") for frame in frames)
 
 
-def codec_pages(frames, *, engine=None, number=None, route=None, capability=None):
-    """The experimental fax codec's pages for this send: (pages, reason sentence), or None.
+def frames_resolution(frames) -> str:
+    """'standard' when every page is at standard resolution (under 150 lines per inch), else 'fine'."""
+    return "standard" if frames and all(
+        0 < float((frame.info.get("dpi") or (0, 0))[1]) < 150 for frame in frames) else "fine"
 
-    A hook: the lead wires it to Builder AG's ``payload_pages`` at integration, and the recipient's opt-in
-    is checked there. Until then it returns None, so the codec is never a candidate.
+
+def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, seal=None, recipient=None,
+                exact_raster=False, resolution=None, tools=None):
+    """The experimental codec's encoded pages for this attempt, as (pages, sentence[, details]), or None.
+
+    ``frames`` are the pages this attempt would otherwise send (the same pages ``choose_layout`` prices as
+    normal); the codec encodes the fax's original document at ``pdf_path`` instead. None, quickly, unless the
+    number's recipient agreed to encoded pages (``codec/send.py``); None when the codec's own check says they
+    would not save on ``route`` or the document cannot be encoded. Writes nothing. A programming error is
+    not hidden here: it reaches the attempt hook, which logs it and sends the pages as they are.
     """
-    return None
+    from .codec import CodecError
+    from .codec import send as codec_send
+    setting = codec_send.setting_for(engine, number, recipient)
+    if setting is None or not frames:
+        return None
+    if resolution is None:
+        resolution = "standard" if capability is not None and capability.fine is False else "fine"
+    try:
+        return codec_send.attempt_pages(engine, setting, frames=frames, page_bits=frame_bits(frames), number=number,
+                                        route=route, pdf_path=pdf_path, seal=seal, exact_raster=exact_raster,
+                                        resolution=resolution, tools=tools)
+    except (CodecError, DocumentConversionError, OSError):
+        import logging
+        logging.getLogger(__name__).warning('Encoded pages could not be made for this attempt; it sends other pages.')
+        return None
 
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
@@ -652,33 +676,30 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     """Price every way these pages may go and keep exactly one, the cheapest (``pages.decision.rank``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
-    ``dense_allowed`` and the receiver's ``limit`` puts fewer pages on the call); ``codec`` (``codec()``'s
-    pages, when it returns any). Dense pages and the codec never stack: each candidate starts from the same
-    pages. Each is priced with the shared predictor through ``pages.decision`` for ``route`` and
-    ``destination``; on a full tie the simpler layout wins (normal, dense, codec). Returns a dict: layout,
-    pages, reason (one sentence, None for normal), seconds_saved, predictions {layout: Prediction}.
+    ``dense_allowed`` and the receiver's ``limit`` puts fewer pages on the call); ``codec`` (``codec(frames)``'s
+    encoded pages, when it returns any). Each candidate is made from the same pages, so dense pages and the codec
+    never stack. Each is priced with the shared predictor through ``pages.decision`` for ``route`` and
+    ``destination``, at its own resolution; on a full tie the simpler layout wins (normal, dense, codec).
+    Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
+    {layout: Prediction}, and ``codec``: what ``codec()`` returned when the codec was kept, else None.
     """
     from .pages import decision, packing
-    resolution = "standard" if frames and all(
-        0 < float((frame.info.get("dpi") or (0, 0))[1]) < 150 for frame in frames) else "fine"
-    candidates = {"normal": (list(frames), None)}
+    candidates = {"normal": (list(frames), None, None)}
     if dense_allowed:
         try:
             layout = packing.layout_for(frames, limit)
             if layout.pages < len(frames):
                 packed = packing.render(frames, layout)
                 reason = describe_dense(len(frames), len(packed)) if describe_dense else None
-                candidates["dense"] = (packed, reason)
+                candidates["dense"] = (packed, reason, None)
         except packing.NotPackable:
             pass
     if codec is not None:
         encoded = codec(frames)
-        if encoded:
-            pages, reason = encoded
-            if pages:
-                candidates["codec"] = (list(pages), reason)
-    shapes = {name: decision.Shape(len(pages), frame_bits(pages), resolution, name, boundary_seconds)
-              for name, (pages, _) in candidates.items()}
+        if encoded and encoded[0]:
+            candidates["codec"] = (list(encoded[0]), encoded[1], encoded)
+    shapes = {name: decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), name, boundary_seconds)
+              for name, (pages, _, _) in candidates.items()}
     names = list(candidates)
     predictions = dict(zip(names, decision.price_all(route, destination, [shapes[name] for name in names],
                                                      card=card, predict=predict)))
@@ -686,16 +707,7 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     normal, picked = predictions["normal"], predictions[chosen]
     seconds = (math.floor(normal.seconds - picked.seconds)
                if normal.seconds is not None and picked.seconds is not None else None)
-    pages, reason = candidates[chosen]
+    pages, reason, details = candidates[chosen]
     return {"layout": chosen, "pages": pages, "reason": reason,
-            "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions}
-
-
-def payload_pages(engine, **plan):
-    """Experimental fax payload codec (Builder AG): encoded pages for one fax when its recipient agreed and they save.
-
-    Returns (choice, acceptance step) from ``codec.send.plan_for_fax``; the
-    original PDF is never changed.
-    """
-    from .codec.send import plan_for_fax
-    return plan_for_fax(engine, **plan)
+            "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions,
+            "codec": details}

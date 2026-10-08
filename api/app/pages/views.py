@@ -45,11 +45,41 @@ def trimmed_sentence(change):
 RESOLUTION_SENTENCE = 'Sent at standard resolution, as received.'
 
 
+def newest_attempt_change(engine, job_id):
+    """The page change of the fax's newest attempt, or None when that attempt sent its pages as they were.
+
+    The Sent detail follows the attempt, as the lightened pages' line does (``friendly.run_for``): a fax that
+    went as encoded pages and then as its own pages on another route shows the second attempt. Without attempt
+    records, the newest change."""
+    records = records_for(engine)
+    table = records.table('fax_page_changes')
+
+    def read(connection):
+        query = sa.select(table).where(table.c.job_id == job_id)
+        try:
+            attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+        except sa.exc.NoSuchTableError:
+            attempts = None
+        if attempts is not None:
+            newest = connection.execute(sa.select(attempts.c.id).where(attempts.c.job_id == job_id).order_by(
+                attempts.c.sequence.desc()).limit(1)).scalar()
+            if newest is not None:
+                query = query.where(table.c.attempt_id == newest)
+        return connection.execute(query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)
+                                  ).mappings().first()
+    row = records._read(read)
+    return dict(row) if row is not None else None
+
+
 def sent_view(engine, job_id, root=None):
-    """The Sent detail's page block, or None when Faxbot sent the pages as they were."""
+    """The Sent detail's page block for the fax's newest attempt, or None when it sent the pages as they were.
+
+    One sentence says which layout the attempt kept (dense pages, or the experimental encoded pages), then what
+    else changed on the pages as they are or dense pages: blank space left out, standard resolution, shading
+    lightened. Encoded pages never have those."""
     if engine is None or not _HEX32.fullmatch(str(job_id or '')):
         return None
-    change = records_for(engine).change_for_job(job_id)
+    change = newest_attempt_change(engine, job_id)
     resolution = (change or {}).get('resolution')
     # Shaded areas lightened and specks removed (pages/friendly.py, migration 0042).
     from .friendly import call_rate, run_for, seconds_at, sent_sentence
@@ -145,7 +175,9 @@ def savings(routes, engine, *, since, days):
             changes.c.route, changes.c.original_pages, changes.c.sent_pages, changes.c.pages_saved,
             changes.c.trimmed_pages, changes.c.seconds_saved, costs.c.billed_seconds,
         ).join(costs, costs.c.id == changes.c.attempt_id).where(
-            costs.c.outcome == 'success', changes.c.created_at >= since)).all()
+            costs.c.outcome == 'success', changes.c.created_at >= since,
+            # Encoded pages (experimental) are not packing; their own line is the Sent detail's.
+            sa.or_(changes.c.layout.is_(None), changes.c.layout != 'codec'))).all()
     result = {'faxes': 0, 'pages_saved': 0, 'trimmed_pages': 0, 'seconds_saved': 0, 'priced': 0, 'in_plan': 0,
               'plan_pages': 0, 'unpriced': 0, 'saved': {}}
     cards = {}

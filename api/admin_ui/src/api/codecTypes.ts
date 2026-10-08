@@ -35,13 +35,6 @@ export interface CodecSave {
   version?: number;
 }
 
-export interface CodecFax {
-  encoded: boolean;
-  sentence: string | null;
-  pages_original?: number;
-  pages_encoded?: number;
-}
-
 export interface CodecReceived {
   encoded: boolean;
   state: 'decoded' | 'failed' | null;

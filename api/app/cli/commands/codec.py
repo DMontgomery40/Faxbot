@@ -74,14 +74,6 @@ def encoded_off(number: str = typer.Argument(..., help='Fax number.')):
     state.out().result(view, lambda out: out.line(view['state_sentence']))
 
 
-def sent_line(api, fax_id):
-    """'Sent as 1 encoded page instead of 23 (experimental).' for a sent fax, or None."""
-    try:
-        return api.get('/codec/faxes/' + segment(fax_id)).get('sentence')
-    except CliError:
-        return None
-
-
 def received_line(api, inbound_id):
     """The decode result of a received fax that carried encoded pages, or None."""
     try:

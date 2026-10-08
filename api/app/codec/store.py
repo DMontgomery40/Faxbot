@@ -194,7 +194,7 @@ class CodecSettings:
 
 
 def record_send(connection, engine, job_id, row, now):
-    """Insert the send row inside the fax's acceptance transaction."""
+    """Insert the fax's one send row (``send.record_attempt``: from its first attempt with encoded pages)."""
     t = tables(engine)['codec_sends']
     connection.execute(t.insert().values(id=job_id, created_at=now, **row))
 

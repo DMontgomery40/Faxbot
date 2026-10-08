@@ -142,24 +142,17 @@ async def fax_friendly_recommendation(request: Request):
     """Costs, Recommendations: whether lightening shaded areas and removing specks would have saved time on your
     recent faxes (pages/friendly.py), or what it saved when it is on."""
     from . import friendly
-    from .sending import how_sent
     configuration = request.scope['faxbot.configuration'].active
 
     def build():
         from ..routing.background import installation_engine
-        engine, runtime = installation_engine(request.app)
+        engine, _ = installation_engine(request.app)
         if engine is None:
             raise HTTPException(503, detail='Installation configuration is not ready.')
         values = configuration.values
-        mode = None
-        try:
-            profile_id = configuration.profile_id('outbound')
-            if profile_id is not None:
-                mode = how_sent(runtime.manager.store.read_profile(profile_id).configuration)
-        except Exception:
-            mode = None
-        return friendly.recommendation(engine, values.fax_data_dir, choice=friendly.documents_choice(values),
-                                       how_sent=mode)
+        # Every route's pages can be lightened now, a provider that fetches the document included (it fetches
+        # the attempt's own pages, pages/sending.fetched_pdf), so how the route sends changes nothing here.
+        return friendly.recommendation(engine, values.fax_data_dir, choice=friendly.documents_choice(values))
     try:
         return await run_lifecycle_step(build)
     except sa.exc.SQLAlchemyError:

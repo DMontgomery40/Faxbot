@@ -37,7 +37,6 @@ import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
 import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
-import { FaxEncodedItem } from './delivery/EncodedPages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
@@ -762,7 +761,6 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
               <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
-              <FaxEncodedItem client={client} jobId={detailJob.id} />
               <Divider />
               <ListItem>
                 <ListItemText

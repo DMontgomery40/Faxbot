@@ -295,8 +295,6 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # call from what it learned about the number, with why (engine learning).
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
     changes = (job.get('fax_engine') or {}).get('changes') or []
-    from .codec import sent_line
-    encoded = sent_line(api, fax_id)  # "Sent as 1 encoded page instead of 23 (experimental)."
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -308,12 +306,11 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                    + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:
             out.line(line)
-        if encoded:
-            out.line(encoded)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
         if (job.get('fax_engine') or {}).get('sentence'):
             out.line(job['fax_engine']['sentence'])
-        # Pages packed onto long pages, blank space left out, or standard resolution kept.
+        # The layout the newest attempt kept (long pages, or the experimental encoded pages), then blank space left
+        # out, standard resolution kept or shading lightened.
         for sentence in (job.get('page_layout') or {}).get('sentences') or []:
             out.line(sentence)
     state.out().result(job, human)
