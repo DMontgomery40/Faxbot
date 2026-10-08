@@ -318,9 +318,10 @@ class CapturedTransport:
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
             call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
-            # A notice fax to an enrolled partner also carries its notice ID as the T.33 subaddress (direct/notice.py).
-            from .direct.notice import subaddress_for
-            subaddress = await asyncio.to_thread(subaddress_for, engine, claim.job_id) if engine is not None else None
+            # The T.33 subaddress the fax asks for, as on the built-in engine (ami.fax_subaddress): a notice fax's
+            # notice ID first (direct/notice.py), then one its sending rules chose.
+            from .ami import fax_subaddress
+            subaddress = await asyncio.to_thread(fax_subaddress, claim.job_id)
             try:
                 engine_job = await hylafax_engine.prepare_job(full_values, self.ami, job_id=claim.job_id,
                     attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call,

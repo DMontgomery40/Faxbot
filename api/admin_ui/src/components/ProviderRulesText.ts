@@ -324,9 +324,14 @@ export const ENCRYPTION_NOTE = 'SSL Fax encrypts the call, but it cannot confirm
 export const ALTERNATE_NOTE = 'An approved alternate number is one the recipient confirmed. When it is a toll-free '
   + 'number, the recipient pays for the call.';
 
-export const FORWARDED_HELP = 'Only calls the network says were forwarded to this number from that one. Faxbot '
-  + 'cannot yet check who issued a carrier\'s signature, so a forwarding is not verified and counts only if you tick '
-  + 'the box below.';
+// Whether a forwarding can be verified depends on the certificate authorities you trust for forwarded calls
+// (Numbers → Forwarded calls you can verify).
+export const forwardedHelp = (trustsAnchors: boolean) => 'Only calls the network says were forwarded to this number '
+  + 'from that one. ' + (trustsAnchors
+  ? 'A forwarding counts here when it is verified: signed with a certificate from a certificate authority you trust. '
+    + 'Tick the box below to also take ones that are not verified.'
+  : 'You trust no certificate authority for forwarded calls yet, so a forwarding counts here only if you tick the box '
+    + 'below.');
 export const FORWARDED_UNSIGNED_LABEL = 'Also take a forwarding that is not verified (never one whose signature failed)';
 
 export const SUBADDRESS_NOTE = 'A department or mailbox behind the recipient\'s fax number, if they gave you one. '

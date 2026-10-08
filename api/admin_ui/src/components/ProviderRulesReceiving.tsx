@@ -12,7 +12,7 @@ import type { ForwardedTrust } from '../api/types';
 import type { ReceivedExplainResult, ReceivingOptions, RulesApi } from './ProviderRulesApi';
 import { TimeEditor } from './ProviderRulesEditor';
 import {
-  FORWARDED_HELP, FORWARDED_UNSIGNED_LABEL, KEEP_DAYS_NOTE, minutesText, textMinutes,
+  FORWARDED_UNSIGNED_LABEL, KEEP_DAYS_NOTE, forwardedHelp, minutesText, textMinutes,
 } from './ProviderRulesText';
 
 export interface Named { key: string; label: string }
@@ -37,7 +37,9 @@ export const SUBADDRESS_HELP = 'Up to 20 digits some fax machines send with a fa
   + 'never gives anyone access.';
 
 // The options of one number rule, as fields; the Numbers dialog saves them with the rule.
-export function ReceivingOptionsFields({ value, onChange, accounts, connectors, timeZone, sites = [] }: {
+export function ReceivingOptionsFields({
+  value, onChange, accounts, connectors, timeZone, sites = [], trustsAnchors = false,
+}: {
   value: ReceivingOptions;
   onChange: (value: ReceivingOptions) => void;
   // Accounts that receive faxes.
@@ -47,6 +49,8 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
   timeZone: string;
   // Sites (Providers → Rules), for faxes that arrive on an account of one site.
   sites?: Named[];
+  // Whether you trust a certificate authority for forwarded calls, so a forwarding can be verified.
+  trustsAnchors?: boolean;
 }) {
   const [fromText, setFromText] = useState(value.from_numbers.join(', '));
   const set = (patch: Partial<ReceivingOptions>) => onChange({ ...value, ...patch });
@@ -74,7 +78,7 @@ export function ReceivingOptionsFields({ value, onChange, accounts, connectors, 
         helperText={SUBADDRESS_HELP} inputProps={{ maxLength: 20 }}
         onChange={(event) => set({ subaddress: event.target.value.trim() || null })} />
       <TextField size="small" label="Only calls forwarded from" value={value.diverted_from ?? ''}
-        placeholder="+13035550100" helperText={FORWARDED_HELP} inputProps={{ maxLength: 40 }}
+        placeholder="+13035550100" helperText={forwardedHelp(trustsAnchors)} inputProps={{ maxLength: 40 }}
         onChange={(event) => set({ diverted_from: event.target.value.trim() || null })} />
       {Boolean(value.diverted_from) && (
         <FormControlLabel label={FORWARDED_UNSIGNED_LABEL} control={
@@ -173,19 +177,24 @@ export function ReceivedTry({ api, accounts, timeZone }: { api: RulesApi; accoun
 // Certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs). A forwarding is verified only when the
 // carrier's signing certificate chains to one; the "Only calls forwarded from" condition takes only verified ones
 // unless its box says otherwise.
-export function ForwardedTrustPanel({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
+export function ForwardedTrustPanel({ client, canWrite, onChange }: {
+  client: AdminAPIClient; canWrite: boolean;
+  // Told the trusted certificate authorities whenever they are read or changed (the rule fields' help follows them).
+  onChange?: (trust: ForwardedTrust) => void;
+}) {
   const [trust, setTrust] = useState<ForwardedTrust | null>(null);
   const [pem, setPem] = useState('');
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const show = (result: ForwardedTrust) => { setTrust(result); onChange?.(result); };
   useEffect(() => {
-    client.listForwardedTrust().then(setTrust).catch(setError);
+    client.listForwardedTrust().then(show).catch(setError);
   }, [client]);
   const change = (action: () => Promise<ForwardedTrust>) => {
     setBusy(true);
     setError(null);
-    action().then((result) => { setTrust(result); setPem(''); setUrl(''); })
+    action().then((result) => { show(result); setPem(''); setUrl(''); })
       .catch(setError).finally(() => setBusy(false));
   };
   return (

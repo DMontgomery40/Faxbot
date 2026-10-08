@@ -424,6 +424,7 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
   // Accounts that receive faxes and the installation's time zone, for the receiving options.
   const [receivingAccounts, setReceivingAccounts] = useState<Named[]>([]);
   const [sites, setSites] = useState<Named[]>([]);
+  const [trustsAnchors, setTrustsAnchors] = useState(false);
   const [timeZone, setTimeZone] = useState("Faxbot's time zone");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -621,7 +622,8 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
       )}
       {state === 'ready' && canReadSettings && (
         <Box sx={{ mt: 3 }}>
-          <ForwardedTrustPanel client={client} canWrite={canWriteSettings} />
+          <ForwardedTrustPanel client={client} canWrite={canWriteSettings}
+            onChange={(trust) => setTrustsAnchors(trust.anchors.length > 0)} />
         </Box>
       )}
       {!canReadSettings && state === 'ready' && (
@@ -645,7 +647,7 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
             {showOptions && (
               <Box sx={{ mt: 1 }}>
                 <ReceivingOptionsFields value={draft.options} onChange={(options) => setDraft({ ...draft, options })}
-                  accounts={receivingAccounts} timeZone={timeZone} sites={sites}
+                  accounts={receivingAccounts} timeZone={timeZone} sites={sites} trustsAnchors={trustsAnchors}
                   connectors={(connectors ?? []).map((connector) => ({ key: connector.id, label: connector.name }))} />
               </Box>
             )}

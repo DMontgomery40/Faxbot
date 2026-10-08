@@ -271,29 +271,10 @@ def sender_identity(job_id):
     return header, station
 
 
-_NOTICE_MODULE = f"{__package__}.direct.notice"
-_notice_missing_logged = False
-
-
 def notice_subaddress(job_id) -> Optional[str]:
     """The 20-digit notice ID a notice fax to an enrolled partner asks for as its subaddress (``direct/notice.py``,
-    ``subaddress_for``), or None for every other fax.
-
-    Notice faxes come with the notice work (builder AU, ent/notice-repair). Until that module is part of this
-    installation there is no notice fax, so its absence alone means None, logged once; any other import failure,
-    and anything ``subaddress_for`` raises, is not hidden here.
-    """
-    global _notice_missing_logged
-    try:
-        from .direct.notice import subaddress_for
-    except ModuleNotFoundError as error:
-        if error.name != _NOTICE_MODULE:
-            raise
-        if not _notice_missing_logged:
-            _notice_missing_logged = True
-            logging.getLogger(__name__).info("No notice faxes on this installation (%s); none asks for a subaddress.",
-                                             error)
-        return None
+    ``subaddress_for``), or None for every other fax."""
+    from .direct.notice import subaddress_for
     engine = _database()
     return subaddress_for(engine, job_id) if engine is not None else None
 

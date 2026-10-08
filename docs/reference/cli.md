@@ -1149,7 +1149,7 @@ $ faxbot numbers add [OPTIONS] {number}
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
 * `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, when the forwarding is verified (add --forwarded-unsigned to take one that is not). &quot;&quot; removes the condition.
-* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate whose issuer Faxbot cannot check yet, not checked, or unsigned (never one whose signature failed).
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate from no certificate authority you trust, not checked, or unsigned (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers update`
@@ -1183,7 +1183,7 @@ $ faxbot numbers update [OPTIONS] {number}
 * `--subaddress DIGITS`: Only faxes whose sender&#x27;s machine gives this subaddress, such as a department&#x27;s 2001. It chooses the mailbox and never gives anyone access.
 * `--site SITE`: Only faxes received on an account of this site.
 * `--forwarded-from NUMBER`: Only calls forwarded to this number from NUMBER, when the forwarding is verified (add --forwarded-unsigned to take one that is not). &quot;&quot; removes the condition.
-* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate whose issuer Faxbot cannot check yet, not checked, or unsigned (never one whose signature failed).
+* `--forwarded-unsigned / --forwarded-signed-only`: Also take a forwarding that is not verified: signed with a certificate from no certificate authority you trust, not checked, or unsigned (never one whose signature failed).
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers explain`

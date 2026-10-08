@@ -1689,8 +1689,8 @@ NUMBER_FORWARDED = typer.Option(None, '--forwarded-from', metavar='NUMBER',
                                      'condition.')
 NUMBER_FORWARDED_UNSIGNED = typer.Option(None, '--forwarded-unsigned/--forwarded-signed-only',
                                          help='Also take a forwarding that is not verified: signed with a '
-                                              "certificate whose issuer Faxbot cannot check yet, not checked, or "
-                                              'unsigned (never one whose signature failed).')
+                                              'certificate from no certificate authority you trust, not checked, '
+                                              'or unsigned (never one whose signature failed).')
 
 
 def receiving_options(api, *, account=None, from_numbers=None, days=None, between=None, email=None, no_email=False,
