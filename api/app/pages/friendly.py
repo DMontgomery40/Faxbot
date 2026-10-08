@@ -32,8 +32,9 @@ it would have.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 import os
 from pathlib import Path
@@ -289,6 +290,92 @@ def lighten_image(pdf_path, tiff_path, out_path, request):
     return apply(pdf_path, out_path, request, gs=gs)
 
 
+# The lightened pages of a fax, made once and kept with the attempt files -----------------------------------------
+
+CACHE = 'packed-friendly-'  # sending.PREFIX ('packed-'): the retention cleanup removes it with the attempt files
+_HEX32 = re.compile(r'[a-f0-9]{32}')
+
+
+def _cache_paths(root, job_id):
+    stem = Path(root) / f'{CACHE}{job_id}'
+    return stem.with_suffix('.tiff'), stem.with_suffix('.json')
+
+
+def _cached(image, facts):
+    """(Result, image or None) from the cache, or None when there is nothing usable."""
+    try:
+        known = json.loads(facts.read_text())
+        result = Result(**{name: int(known[name]) for name in ('pages', 'pages_changed', 'bits_before',
+                                                                'bits_after')})
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if not result.pages_changed:
+        return result, None
+    if image.is_file() and not image.is_symlink():
+        return result, image
+    return None
+
+
+def lightened_pages(root, job_id, pdf_path, tiff_path, request):
+    """The fax's lightened pages for one attempt: the path of the fax image to send, or None when no page changes
+    or they could not be made; ``request.result`` says which. Made once for each document (Faxbot's own image
+    when there is one, else its PDF drawn again) and kept as ``packed-friendly-<fax>`` beside the attempt files,
+    so a retry or a second attempt draws nothing again. The fax's own files are never changed."""
+    from .. import conversion
+    request.result = None
+    if not _HEX32.fullmatch(str(job_id)):
+        return None
+    image, facts = _cache_paths(root, job_id)
+    found = _cached(image, facts)
+    if found is not None:
+        request.result, path = found
+        return path
+    handle, temporary = tempfile.mkstemp(prefix='.faxbot-friendly-', suffix='.tiff', dir=str(root))
+    os.close(handle)
+    try:
+        if tiff_path is not None and Path(tiff_path).is_file():
+            lighten_image(str(pdf_path), str(tiff_path), temporary, request)
+        else:
+            conversion.pdf_to_tiff(str(pdf_path), temporary, friendly=request)
+        result = request.result
+        if result is None:
+            return None
+        if result.pages_changed:
+            os.replace(temporary, image)
+        written = Path(temporary).with_suffix('.json')
+        written.write_text(json.dumps(asdict(result)))
+        os.replace(written, facts)
+        return image if result.pages_changed else None
+    except Exception:
+        logging.getLogger(__name__).warning('Fax-friendly pages could not be made; the pages go as they are.')
+        request.result = None
+        return None
+    finally:
+        for path in (Path(temporary), Path(temporary).with_suffix('.json')):
+            path.unlink(missing_ok=True)
+
+
+def call_lightener(engine, values, route, number, root, claim):
+    """For a shared call (batching/image.py): ``lighten(job_id)``, each fax's lightened image (or None), when this
+    call's route and recipient say so; else None. Each fax lightened is recorded for its own attempt."""
+    lighten, _ = should_lighten(engine, values, route, number)
+    if not lighten:
+        return None
+    attempts = {member.job_id: member.attempt_id for member in getattr(claim, 'everyone', ())}
+
+    def lighten_member(job_id):
+        folder = Path(root)
+        request = Request('documents')
+        path = lightened_pages(folder, job_id, folder / f'{job_id}.pdf', folder / f'{job_id}.tiff', request)
+        if path is not None and job_id in attempts:
+            try:
+                record_send(engine, job_id=job_id, attempt_id=attempts[job_id], request=request)
+            except Exception:
+                logging.getLogger(__name__).warning('Fax-friendly pages could not be recorded for this fax.')
+        return path
+    return lighten_member
+
+
 # When: the setting for your documents, each recipient's choice, and each attempt's route -------------------------
 
 CHOICES = ('where_it_saves', 'always', 'never')
@@ -306,12 +393,35 @@ def documents_choice(values):
     return value if value in CHOICES else 'where_it_saves'
 
 
-def billed_by_time(card):
-    """Whether a route's rate card bills a call by its time (per minute or per second), from the card itself; a
-    flat plan, a per-page price or no card at all is not."""
+PHONE_ROUTES = frozenset({'sip', 'freeswitch'})
+
+
+def billed_by_time(card, route=None):
+    """Whether a route bills a call by its time (per minute or per second).
+
+    A phone line (``sip``, ``freeswitch``, and phone systems through them) bills by the minute or second whether
+    or not Faxbot knows its price: it does unless its rate card has a per-page rate. A cloud provider follows its
+    card: a per-minute price is billed by time; a per-page price, a flat plan or no card at all is not."""
+    if route in PHONE_ROUTES:
+        return not (card is not None and getattr(card, 'per_page_micros', 0))
     if card is None or getattr(card, 'flat_plan', None):
         return False
     return bool(getattr(card, 'per_minute_micros', 0))
+
+
+def should_lighten(engine, values, route, number, *, card=..., ecm=...):
+    """``decide`` for one attempt by ``route`` to ``number``: (lighten, why). Never raises (then: no)."""
+    try:
+        if card is ...:
+            from ..routing.store import RouteStore
+            card = RouteStore(engine).card_for(route)
+        if ecm is ...:
+            from .capability import records_for
+            ecm = records_for(engine).capability(number).ecm
+        return decide(documents_choice(values), recipient_choice(engine, number),
+                      by_time=billed_by_time(card, route), ecm=ecm)
+    except Exception:
+        return False, None
 
 
 def decide(choice, recipient, *, by_time, ecm):
@@ -565,7 +675,7 @@ def where_it_saves(engine):
     def saves(route, number):
         if route not in cards:
             try:
-                cards[route] = billed_by_time(RouteStore(engine).card_for(route)) if route else False
+                cards[route] = billed_by_time(RouteStore(engine).card_for(route), route) if route else False
             except Exception:
                 cards[route] = False
         if cards[route]:

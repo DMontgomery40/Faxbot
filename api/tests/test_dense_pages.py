@@ -556,7 +556,7 @@ def test_nothing_changes_when_unknown_refused_or_not_worth_it(installation, data
     assert sending.prepare(database, SimpleNamespace(), SimpleNamespace(provider_id='sip', manifest=None, traits={}),
                            SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=('x',)), {'to_number': PEER},
                            tmp_path / 'x.pdf', None) is None
-    assert not list(tmp_path.glob('packed-*'))
+    assert not [path for path in tmp_path.glob('packed-*') if not path.name.startswith('packed-friendly-')]
 
 
 def test_a_machine_without_error_correction_gets_rendered_pages_without_their_blank_bottom(installation, database,

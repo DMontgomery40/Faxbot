@@ -117,9 +117,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     # receiving machine has error correction.
     from . import friendly as fax_friendly
     route_card = _card(engine, route)
-    lighten, _ = fax_friendly.decide(fax_friendly.documents_choice(values),
-                                     fax_friendly.recipient_choice(engine, number),
-                                     by_time=fax_friendly.billed_by_time(route_card), ecm=cap.ecm)
+    lighten, _ = fax_friendly.should_lighten(engine, values, route, number, card=route_card, ecm=cap.ecm)
     friendly = fax_friendly.Request('documents') if lighten else None
     if not packing_ok and not trim_ok and not match_ok and friendly is None:
         return None
@@ -128,15 +126,17 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     source = Path(str(tiff)) if mode == 'image' and tiff else None
     raster = None
     try:
-        if source is None:
+        # The lightened pages, made once for the fax and kept with the attempt files (a retry draws nothing again).
+        lightened_image = (fax_friendly.lightened_pages(root, job_id, pdf, source, friendly)
+                           if friendly is not None else None)
+        if lightened_image is not None:
+            source = lightened_image
+        elif not packing_ok and not trim_ok and not match_ok:
+            return None  # no page changed, and nothing else would change them
+        elif source is None:
             # A cloud provider takes a PDF: rasterize the fax's PDF to pack its pages, then send them as a PDF.
             raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
-            conversion.pdf_to_tiff(str(pdf), str(raster), friendly=friendly)
-            source = raster
-        elif friendly is not None:
-            # Faxbot's own engines: a lightened copy of the fax image for this send; the fax's own image stays.
-            raster = out_tiff.with_name(out_tiff.stem + '.source.tiff')
-            fax_friendly.lighten_image(str(pdf), str(source), str(raster), friendly)
+            conversion.pdf_to_tiff(str(pdf), str(raster))
             source = raster
         frames = conversion.read_fax_frames(str(source))
         if not frames:

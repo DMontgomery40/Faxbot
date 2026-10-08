@@ -320,11 +320,19 @@ def card(provider, *, per_page='0', per_minute='0', monthly=None):
                     60, 0, None, NOW, parse_amount(monthly) if monthly else None)
 
 
-def test_a_route_bills_by_time_only_when_its_rate_card_says_so():
-    assert friendly.billed_by_time(card('sip', per_minute='0.007'))
-    assert not friendly.billed_by_time(card('sinch', per_page='0.03'))
-    assert not friendly.billed_by_time(card('humblefax', monthly='19.95'))
-    assert not friendly.billed_by_time(None)
+def test_a_cloud_route_bills_by_time_only_when_its_rate_card_says_so():
+    assert friendly.billed_by_time(card('signalwire', per_minute='0.007'), 'signalwire')
+    assert not friendly.billed_by_time(card('sinch', per_page='0.03'), 'sinch')
+    assert not friendly.billed_by_time(card('humblefax', monthly='19.95'), 'humblefax')
+    assert not friendly.billed_by_time(None, 'documo')
+
+
+def test_a_phone_line_bills_by_time_unless_its_card_has_a_per_page_rate():
+    # The Sinch trunk preset ships with no published price: still a phone line billed by the minute.
+    assert friendly.billed_by_time(card('sip-sinch'), 'sip')
+    assert friendly.billed_by_time(None, 'sip') and friendly.billed_by_time(None, 'freeswitch')
+    assert friendly.billed_by_time(card('sip', monthly='20'), 'sip')
+    assert not friendly.billed_by_time(card('sip', per_page='0.01'), 'sip')
 
 
 CARDS = {'sip': card('sip', per_minute='0.007'), 'sinch': card('sinch', per_page='0.03')}
@@ -338,7 +346,7 @@ def billed(monkeypatch):
     monkeypatch.setattr(sending, '_card', lambda engine, route: CARDS.get(route))
 
 
-def attempt(database, tmp_path, configuration, *, attempt_id=ATTEMPT, choice='where_it_saves'):
+def attempt(database, tmp_path, configuration, *, attempt_id=ATTEMPT, choice='where_it_saves', now=NOW):
     """One attempt of the shaded fax JOB by ``configuration``'s route (the fax's own PDF and fax image)."""
     pdf, tiff = tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff'
     if not pdf.exists():
@@ -347,7 +355,7 @@ def attempt(database, tmp_path, configuration, *, attempt_id=ATTEMPT, choice='wh
     image = configuration.provider_id in ('sip', 'freeswitch')
     return sending.prepare(database, SimpleNamespace(sip_fax_fine=True, fax_friendly_documents=choice),
                            configuration, SimpleNamespace(job_id=JOB, attempt_id=attempt_id, members=()),
-                           {'to_number': PEER}, pdf, tiff if image else None, now=NOW)
+                           {'to_number': PEER}, pdf, tiff if image else None, now=now)
 
 
 @needs_gs
@@ -365,6 +373,61 @@ def test_a_trunk_attempt_is_lightened_and_a_per_page_attempt_is_not(installation
     # The fax's own image is never changed: the lightened pages are the attempt's own file.
     assert (tmp_path / f'{JOB}.tiff').read_bytes() == before
     assert not list(tmp_path.glob('*.source.tiff'))
+
+
+@needs_gs
+def test_a_trunk_with_no_published_price_is_lightened_by_default(installation, tmp_path, monkeypatch):
+    # The Sinch trunk preset's card has no price at all; Phaxio-style per-page cards stay untouched.
+    monkeypatch.setattr(sending, '_card', lambda engine, route: card('sip-sinch') if route == 'sip' else None)
+    assert attempt(installation, tmp_path, TRUNK) is not None
+    assert friendly.run_for(installation, JOB)['attempt_id'] == ATTEMPT
+    assert attempt(installation, tmp_path, SINCH, attempt_id='d' * 32) is None  # no card: not billed by time
+
+
+@needs_gs
+def test_a_second_attempt_draws_nothing_again_and_retention_removes_the_kept_pages(installation, tmp_path, billed,
+                                                                                    monkeypatch):
+    first = attempt(installation, tmp_path, TRUNK)
+    kept = sorted(path.name for path in tmp_path.glob(friendly.CACHE + '*'))
+    assert kept == [f'{friendly.CACHE}{JOB}.json', f'{friendly.CACHE}{JOB}.tiff']
+
+    def drawn_again(*args, **kwargs):
+        raise AssertionError('Ghostscript ran again')
+    monkeypatch.setattr(friendly, 'apply', drawn_again)
+    monkeypatch.setattr(conversion, 'pdf_to_tiff', drawn_again)
+    second = attempt(installation, tmp_path, TRUNK, attempt_id='d' * 32, now=NOW + timedelta(minutes=1))
+    assert same_pages(first.tiff, second.tiff)
+    assert friendly.run_for(installation, JOB)['attempt_id'] == 'd' * 32
+    # The kept pages are attempt files: the retention cleanup removes them with the rest.
+    assert sending.cleanup(tmp_path, datetime.utcnow() + timedelta(days=1))
+    assert not list(tmp_path.glob(friendly.CACHE + '*'))
+
+
+@needs_gs
+def test_faxes_sent_together_on_the_trunk_are_lightened_and_their_separators_stay(installation, tmp_path):
+    from app.batching.image import build_call_image, separator_line
+    jobs = [('7' * 32, '8' * 32), ('9' * 32, 'a' * 32)]
+    for job_id, _ in jobs:
+        shaded_pdf(tmp_path / f'{job_id}.pdf')
+        conversion.pdf_to_tiff(str(tmp_path / f'{job_id}.pdf'), str(tmp_path / f'{job_id}.tiff'))
+    claim = SimpleNamespace(everyone=tuple(SimpleNamespace(job_id=job, attempt_id=attempt_id)
+                                           for job, attempt_id in jobs))
+    members = [(job, 1, separator_line(number, 2, 'Faxbot 7f3a9c21', 1, 'Front Desk'))
+               for number, (job, _) in enumerate(jobs, start=1)]
+    values = SimpleNamespace(fax_friendly_documents='where_it_saves')
+    # No rate card for the phone line: still billed by the minute, so the call's faxes are lightened.
+    lighten = friendly.call_lightener(installation, values, 'sip', PEER, tmp_path, claim)
+    together = conversion.read_fax_frames(str(build_call_image(tmp_path, 'b' * 32, members, lighten=lighten)))
+    plain = conversion.read_fax_frames(str(build_call_image(tmp_path, 'c' * 32, members)))
+    assert len(together) == len(plain) == 4
+    assert pixels(together[0]) == pixels(plain[0]) and pixels(together[2]) == pixels(plain[2])  # separators
+    for index in (1, 3):
+        assert sum(conversion.frame_bits([together[index]])) < sum(conversion.frame_bits([plain[index]])) / 2
+    for job_id, attempt_id in jobs:
+        assert friendly.run_for(installation, job_id)['attempt_id'] == attempt_id
+    # A recipient's never: the call goes as it is.
+    friendly.set_recipient_choice(installation, PEER, 'never')
+    assert friendly.call_lightener(installation, values, 'sip', PEER, tmp_path, claim) is None
 
 
 @needs_gs

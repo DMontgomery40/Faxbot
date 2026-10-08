@@ -183,13 +183,29 @@ def page_count(path):
         return getattr(image, 'n_frames', 1)
 
 
-def build_call_image(root, call_id, members):
+def _lightened(lighten, job_id, pages):
+    """The fax's lightened pages for this call (pages/friendly.py), or None to send its own image as it is."""
+    if lighten is None:
+        return None
+    try:
+        path = lighten(job_id)
+        if path is None:
+            return None
+        data = Path(path).read_bytes()
+        return data if len(_read_ifds(data)) == pages else None
+    except Exception:
+        return None
+
+
+def build_call_image(root, call_id, members, *, lighten=None):
     """Write ``batch-<call_id>.tiff`` in ``root`` and return its path.
 
     ``members`` lists, in call order, ``(job_id, pages, separator line)``.
     Each fax's ``<job_id>.tiff`` must hold exactly its pages; otherwise
     ``MemberUnusable`` names it. The image's page count is checked against
-    one separator plus each fax's pages before it is used.
+    one separator plus each fax's pages before it is used. ``lighten(job_id)``
+    (pages/friendly.py): a fax's lightened pages for this call's route, used
+    instead of its own image when it gives them; the separators never change.
     """
     from ..conversion import DocumentConversionError, pdf_to_tiff
     root = Path(root)
@@ -206,7 +222,7 @@ def build_call_image(root, call_id, members):
                 raise MemberUnusable(job_id)
         except (OSError, ValueError, struct.error):
             raise MemberUnusable(job_id) from None
-        images.append(data)
+        images.append(_lightened(lighten, job_id, pages) or data)
     separators = []
     with tempfile.TemporaryDirectory(prefix='faxbot-separators-', dir=str(root)) as folder:
         lines = [line for _, _, line in members]

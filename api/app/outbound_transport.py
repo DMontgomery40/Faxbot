@@ -136,7 +136,11 @@ class CapturedTransport:
                 raise PreparationFailure('preparation_failed')
             # One call carries every fax in the claim: separator pages and each fax's own image.
             from .batching.transport import call_image
-            tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim))
+            from .pages.friendly import call_lightener
+            # Each fax's shaded areas lightened when this call's route and recipient say so (pages/friendly.py).
+            tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim, lighten=call_lightener(
+                getattr(getattr(self.store, 'configuration', None), 'engine', None), values, pid,
+                job.get('to_number'), root, claim)))
         from .routing.numbers import InvalidNumber, accepted_destination
         try:
             # Every adapter below receives this canonical number and only formats it.
