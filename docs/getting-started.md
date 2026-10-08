@@ -25,13 +25,15 @@ Welcome to Faxbot! This section will help you get up and running quickly.
 
 ## What is Faxbot?
 
-Faxbot is a proprietary, self-hosted fax API. Use, modification, distribution and hosting need written permission from the owner (see the LICENSE file in the repository). It combines:
+Faxbot is a proprietary, self-hosted fax API. It combines:
 
 - Simple REST API for sending faxes
 - Multiple backend options (cloud and self‑hosted)
 - AI assistant integration via MCP
 - Installation-local configuration, access controls and audit settings
 - Developer SDKs for Node.js and Python
+
+New Faxbot-owned work requires prior written permission from David Montgomery for use, modification, distribution, resale, or hosting. Previously released MIT versions retain their existing permissions. Third-party components keep their own licenses. See the [license](https://github.com/DMontgomery40/Faxbot/blob/main/LICENSE).
 
 ## Launch Faxbot
 
