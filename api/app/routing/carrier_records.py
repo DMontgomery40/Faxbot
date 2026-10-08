@@ -39,6 +39,8 @@ class Published:
 
 
 READ_ON = '2026-10-08'
+# Tests replace this with an ``httpx.MockTransport``; production uses the network.
+_TRANSPORT = None
 
 PUBLISHED = {
     'telnyx': Published(
@@ -108,7 +110,8 @@ class SignalWireCallRecords:
         self.credentials = credentials
         self.timeout = timeout
         self.max_pages = max_pages
-        self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False))
+        self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False,
+                                                                      transport=_TRANSPORT))
 
     def _account(self):
         try:

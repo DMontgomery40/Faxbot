@@ -51,6 +51,8 @@ WINDOW = timedelta(days=3)
 EVERY = timedelta(hours=6)
 NEAR = timedelta(hours=1)
 MAX_DAYS = 31
+# Tests replace this with an ``httpx.MockTransport``; production uses the network.
+_TRANSPORT = None
 _ID = re.compile(r'[A-Za-z0-9_-]{1,100}', re.ASCII)
 _CURRENCY = re.compile(r'[A-Za-z]{3}', re.ASCII)
 _HOST = re.compile(r'[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?', re.ASCII)
@@ -124,7 +126,8 @@ class _Listing:
         self.own = own
         self.timeout = timeout
         self.max_pages = max_pages
-        self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False))
+        self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False,
+                                                                      transport=_TRANSPORT))
 
     def _get(self, client, url, *, params=None, auth=None):
         try:
@@ -575,13 +578,13 @@ class ProviderSweep:
                 for account in accounts]
 
     def sweep_account(self, account, values, start, now_end, *, now, store=None):
-        store = store or SweepStore(self.engine)
         end = min(now_end, now - self.grace)
         listing = listing_for(account, values, client_factory=self.client_factory)
         label = account.label
         if listing is None:
             sentence = UNSUPPORTED.get(account.provider) or f'{label} publishes no list of faxes Faxbot can read.'
             return SweepResult(account.key, account.provider, label, 'unsupported', sentence=sentence)
+        store = store or SweepStore(self.engine)
         if not listing.ready():
             return SweepResult(account.key, account.provider, label, 'unavailable',
                                sentence=f'{label} is not fully set up, so Faxbot could not list its faxes.')
