@@ -35,7 +35,8 @@ htmlcov/
 !.env.example
 
 # Node / JavaScript
-node_modules/
+# No trailing slash: a node_modules symlink (a worktree pointing at the main checkout) is ignored too.
+node_modules
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*

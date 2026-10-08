@@ -36,6 +36,20 @@ const routeLabel = (id: string) => providerLabel(id);
 
 // One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
 export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
+// Fax-friendly pages (pages/friendly.py): "Where it saves time" by default, decided for each attempt; the measured
+// saving comes from Faxbot's benchmark (scripts/fax_friendly_benchmark.py).
+export const FRIENDLY_LABEL = 'Lighten shaded areas and remove specks on documents you send';
+export const FRIENDLY_OPTIONS = [
+  { value: 'where_it_saves', label: 'Where it saves time' }, { value: 'always', label: 'Always' },
+  { value: 'never', label: 'Never' },
+];
+export const FRIENDLY_HELP = '"Where it saves time" changes pages only on calls billed by time, such as your phone '
+  + 'line, and for fax machines without error correction; providers that charge per page save nothing, so their '
+  + 'pages go as they are. "Always" changes every document whose pages Faxbot makes, and "Never" changes none. '
+  + 'Shaded table rows, tinted form fields and gray scan backgrounds take most of a page\'s time on the line: in '
+  + 'Faxbot\'s tests a page with a shaded table went from 61 to 12 seconds, and a gray scanned page from over 3 '
+  + 'minutes to 37 seconds. Shaded areas then print white and photographs lose their lightest parts; black text and '
+  + 'anything darker stay exactly as they were.';
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
@@ -54,6 +68,7 @@ export function deliveryEditorValues(data: Settings): Values {
     values.outbound_routes = parseRoutes(data.routing.outbound_routes).join(',');
     values.route_min_success_percent = data.routing.min_success_percent;
     values.local_delivery_enabled = data.routing.local_delivery ?? true;
+    values.fax_friendly_documents = data.routing.fax_friendly_documents ?? 'where_it_saves';
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -236,6 +251,11 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
             onChange={(checked) => onChange('local_delivery_enabled', checked)}
             helper={LOCAL_DELIVERY_HELP} />
+          <ResponsiveSettingItem icon={<SettingsIcon />} label={FRIENDLY_LABEL}
+            value={String(loaded.fax_friendly_documents ?? '')}
+            editValue={String(form.fax_friendly_documents ?? 'where_it_saves')}
+            onChange={(value) => onChange('fax_friendly_documents', value)}
+            type="select" options={FRIENDLY_OPTIONS} helperText={FRIENDLY_HELP} showCurrentValue={showCurrentValue} />
           <RoutePagesPanel client={client} canWrite={canWrite}
             routes={[outbound, ...parseRoutes(form.outbound_routes)]} />
         </ResponsiveFormSection>

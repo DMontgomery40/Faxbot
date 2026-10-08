@@ -12,6 +12,7 @@ import PlanBudgets from './delivery/PlanBudgets';
 import RateCards from './delivery/RateCards';
 import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
+import RelayCosts from './delivery/RelayCosts';
 
 export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners';
 
@@ -96,8 +97,11 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
       {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} /> : (
         <>
           {shows('spending') && part('spending',
-            <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
-              onChanged={() => void load()} />)}
+            <>
+              <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
+                onChanged={() => void load()} />
+              <RelayCosts client={client} />
+            </>)}
           {shows('numbers') && part('numbers',
             <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
               partners={section === 'numbers' ? partners : null} />)}

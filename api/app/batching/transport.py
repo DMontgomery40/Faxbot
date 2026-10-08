@@ -82,8 +82,9 @@ class BatchingTransport:
             yield operation
 
 
-def call_image(store, root, claim):
-    """Make the one image a shared call sends; ``BatchSplit`` when it cannot be made."""
+def call_image(store, root, claim, lighten=None):
+    """Make the one image a shared call sends; ``BatchSplit`` when it cannot be made. ``lighten``: each fax's
+    lightened pages for this call (pages/friendly.py call_lightener), or None."""
     from .image import (CallImageError, MemberUnusable, build_call_image, index_entry, index_heading, page_mark,
                         separator_line)
     from .store import call_members
@@ -105,7 +106,7 @@ def call_image(store, root, claim):
                             member['reference'], member['sender_name']) for page in range(1, member['pages'] + 1)]
                  for member in members]
     try:
-        return build_call_image(root, claim.attempt_id, lines, index=index, marks=marks)
+        return build_call_image(root, claim.attempt_id, lines, index=index, marks=marks, lighten=lighten)
     except MemberUnusable as error:
         # That fax goes on its own (and fails there if its document is really gone); the rest go together.
         raise BatchSplit({error.job_id}) from None

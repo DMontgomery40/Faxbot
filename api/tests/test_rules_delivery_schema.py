@@ -1,4 +1,4 @@
-"""Actual 0041 to 0032 upgrade and downgrade with existing rows (SQLite and PostgreSQL).
+"""Actual 0044 to 0032 upgrade and downgrade with existing rows (SQLite and PostgreSQL).
 
 0032 gives the built-in Owner and Administrator roles "Approve faxes", and
 records on each delivery attempt whether its call ended before any fax data.
@@ -20,7 +20,7 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 7, 12, 0)
-PRIOR = '0041_intake_connectors'
+PRIOR = '0044_partner_relay'
 
 
 def _downgrade(engine, revision):
@@ -38,7 +38,7 @@ def _rows(engine, query):
 
 def test_approve_faxes_is_in_the_catalogue_and_held_by_owner_and_administrator():
     assert schema.HEAD == schema_rules_delivery.REVISION == '0032_rules_delivery'
-    assert schema.INTAKE_SOURCES == PRIOR
+    assert schema.PARTNER_RELAY == PRIOR
     assert 'fax:approve' in PERMISSIONS
     assert {role for role, granted in BUILTIN_ROLE_PERMISSIONS.items() if 'fax:approve' in granted} == {
         'role_owner', 'role_administrator'}

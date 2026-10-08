@@ -25,7 +25,7 @@ from dataclasses import replace
 from .alternates import attempt_number, claim_dial_state
 from .dialing import reaches
 from .policy import RouteCandidate
-from .plan import RoutePlanner, ledger_key
+from .plan import RoutePlan, RoutePlanner, ledger_key
 from .routes import RouteUnavailable, ensure_route_artifact, route_ready
 from .store import RouteStore
 from . import envelope as envelopes, holds as hold_store
@@ -37,6 +37,15 @@ class RouteHeld(CapacityWait):
 
     def __init__(self):
         super().__init__(seconds=5)
+
+
+def _pinned(plan):
+    """The plan's routing decision (``routing.envelope.Pinned``), or None for a fax without one."""
+    return getattr(plan, 'pinned', None)
+
+
+def _skipped(plan):
+    return tuple(getattr(plan, 'skipped', ()) or ())
 
 
 def _account_route_configuration(revision, key):
@@ -84,12 +93,32 @@ def _installation_direct_route(inner):
         return None
 
 
+def _installation_relay_route(inner):
+    """The installation's partner relay route (``direct/relay_route.py``), built like the direct route."""
+    runtime = getattr(inner, 'runtime', None)
+    store = getattr(getattr(runtime, 'manager', None), 'store', None)
+    if store is None:
+        return None
+    try:
+        from ..direct.relay_route import RelayRoute
+        from ..direct.service import DirectService
+        from ..outbound_store import OutboundStore
+        return RelayRoute(DirectService(store.engine, values=lambda: store.read().active.values,
+                                        environment=getattr(runtime, 'environment', {})),
+                          delivery=lambda: OutboundStore(store))
+    except Exception:
+        logging.getLogger(__name__).warning('Partner relays are unavailable; faxes use their providers.')
+        return None
+
+
 class RoutedTransport:
-    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None):
-        """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``)."""
+    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None, relay=_AUTOMATIC):
+        """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``);
+        ``relay`` sends a fax through a partner's relay when the plan chose ``relay:<partner>``."""
         self.inner = inner
         self.store = inner.store
         self.direct = _installation_direct_route(inner) if direct is _AUTOMATIC else direct
+        self.relay = _installation_relay_route(inner) if relay is _AUTOMATIC else relay
         self.local = local
         self._route_store = route_store
 
@@ -172,8 +201,8 @@ class RoutedTransport:
         busy (``when_busy: next``). What could not be used is kept on the plan's
         ``skipped`` list for the attempt's record.
         """
-        pinned = plan.pinned
-        skipped = list(plan.skipped)
+        pinned = _pinned(plan)
+        skipped = list(_skipped(plan))
         for place, choice in enumerate(plan.choices):
             route = choice.route
             if route.kind in ('direct', 'local', 'relay'):
@@ -195,7 +224,7 @@ class RoutedTransport:
                 chosen = self._chosen(plan, choice, skipped)
                 return chosen, self.store.assign_route(claim, configuration, account_key=route.key, choice={
                     'place': self._place(plan, route.key), 'skipped': tuple(skipped),
-                    'unreliable': plan.unreliable})
+                    'unreliable': getattr(plan, 'unreliable', ())})
             except RouteUnavailable:
                 skipped.append((route.key, 'unavailable'))
                 continue
@@ -208,10 +237,11 @@ class RoutedTransport:
 
     @staticmethod
     def _place(plan, key):
-        accounts = plan.pinned.envelope.accounts if plan.pinned is not None else ()
+        accounts = _pinned(plan).envelope.accounts if _pinned(plan) is not None else ()
         return accounts.index(key) if key in accounts else 0
 
     def _record(self, claim, plan, choice):
+        # The ledger's grammar has no colon: a partner relay is recorded as relay.<partner> (direct.relay.ledger_key).
         self.routes().record_decision(attempt_id=claim.attempt_id, job_id=claim.job_id,
                                       destination=plan.destination, route=ledger_key(choice.route.key),
                                       reason=choice.reason, provider_id=choice.route.provider_id)
@@ -223,11 +253,11 @@ class RoutedTransport:
         direct delivery and a partner relay. Without the record, a fax whose rules exclude its own account is
         refused at the submission marker: nothing goes out unrecorded.
         """
-        if plan.pinned is None:
+        if _pinned(plan) is None:
             return
         key = choice.route.key
         self.store.record_route_choice(claim, account_key=key, place=self._place(plan, key),
-                                       skipped=plan.skipped, unreliable=plan.unreliable)
+                                       skipped=_skipped(plan), unreliable=getattr(plan, 'unreliable', ()))
 
     def _bound_allowed(self, claim):
         """Whether the fax may go by its own account: no rules, or its rules allow it. False when unreadable."""
@@ -244,7 +274,7 @@ class RoutedTransport:
         """Hold the fax in Sent: nothing its rules allow can take it now. Raises RouteHeld."""
         if reason is None:
             labels = {}
-            if plan is not None and plan.pinned is not None:
+            if plan is not None and _pinned(plan) is not None:
                 try:
                     from ..accounts import sending_accounts
                     revision, _ = self.store.configuration.outbound_context(claim.job_id)
@@ -252,13 +282,13 @@ class RoutedTransport:
                 except Exception:
                     labels = {}
             reason = hold_store.no_route_sentence(lambda key: labels.get(key) or key,
-                                                  plan.skipped if plan is not None else ())
-        self.store.hold_no_route(claim, reason=reason, skipped=plan.skipped if plan is not None else ())
+                                                  _skipped(plan) if plan is not None else ())
+        self.store.hold_no_route(claim, reason=reason, skipped=_skipped(plan) if plan is not None else ())
         raise RouteHeld()
 
     def _restore_bound(self, claim, plan, revision):
         """An extra route failed local preparation; use the fax's own provider instead, when its rules allow it."""
-        if plan is not None and plan.pinned is not None and not plan.pinned.allows(
+        if plan is not None and _pinned(plan) is not None and not _pinned(plan).allows(
                 self._bound_key(revision, self.store.attempt_context(claim.job_id, claim.attempt_id)[1])):
             self._hold(claim, plan, 'The account your rules chose could not prepare this fax, and no other account '
                                     'your rules allow could take it. It waits for you in Sent; nothing was sent.')
@@ -287,10 +317,11 @@ class RoutedTransport:
         assigned = claim
         try:
             plan, job, revision = await run_lifecycle_step(lambda: self._plan(claim))
-            self._skipped = plan.skipped
+            self._skipped = _skipped(plan)
             choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision))
             # What this attempt could not use, for its record and for "send anyway" on a held fax.
-            plan = replace(plan, skipped=self._skipped)
+            if isinstance(plan, RoutePlan):
+                plan = replace(plan, skipped=self._skipped)
             if choice is not None:
                 dial = claim_dial_state(self.store, claim, job.get('dial'))
                 await run_lifecycle_step(lambda: self._record_dialed(claim, plan, choice.route, dial, revision.values))
@@ -307,7 +338,7 @@ class RoutedTransport:
                     'you in Sent; check again in a moment.')))
             logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')
             plan = choice = None
-        if choice is None and plan is not None and plan.pinned is not None and \
+        if choice is None and plan is not None and _pinned(plan) is not None and \
                 not await run_lifecycle_step(lambda: self._bound_allowed(claim)):
             await run_lifecycle_step(lambda: self._hold(claim, plan))
         if choice is not None:
@@ -335,6 +366,39 @@ class RoutedTransport:
                     operation = await stack.enter_async_context(self.inner.prepare(claim))
                 yield operation
             return
+        if choice is not None and plan is not None and _pinned(plan) is not None and (
+                (choice.route.kind == 'relay' and self.relay is None)
+                or (choice.route.kind == 'direct' and self.direct is None)) \
+                and not await run_lifecycle_step(lambda: self._bound_allowed(claim)):
+            # The route the rules allow cannot be prepared here, and the fax's own account is not allowed.
+            await run_lifecycle_step(lambda: self._hold(claim, plan, (
+                'The route your rules chose for this fax is not available on this Faxbot, and no other account your '
+                'rules allow could take it. It waits for you in Sent; nothing was sent.')))
+        if choice is not None and choice.route.kind == 'relay' and self.relay is not None:
+            # A partner relays it as a local call; a signed refusal (nothing accepted) lets the fax's own
+            # route send it in the same attempt, recorded as a fallback.
+            async with AsyncExitStack() as stack:
+                conventional = None
+                if any(c.route.bound for c in plan.choices):
+                    try:
+                        conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                    except PreparationFailure:
+                        conventional = None
+                try:
+                    relayed = await stack.enter_async_context(self.relay.prepare(claim, plan, job, choice))
+                except Exception:
+                    if conventional is None and _pinned(plan) is not None:
+                        # Nothing was sent: under sending rules the fax waits in Sent rather than failing.
+                        await run_lifecycle_step(lambda: self._hold(claim, plan, (
+                            'The partner relay your rules chose could not take this fax, and no other account '
+                            'your rules allow could. It waits for you in Sent; nothing was sent.')))
+                    if conventional is None:
+                        raise PreparationFailure('provider_unavailable') from None
+                    await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
+                    yield conventional
+                    return
+                yield _RoutedOperation(self, claim, plan, relayed, conventional)
+            return
         if choice is None or choice.route.kind != 'direct' or self.direct is None:
             async with AsyncExitStack() as stack:
                 try:
@@ -357,6 +421,10 @@ class RoutedTransport:
                 direct = await stack.enter_async_context(self.direct.prepare(claim, plan, job))
             except Exception:
                 # Nothing was sent; the conventional route is still a first send.
+                if conventional is None and _pinned(plan) is not None:
+                    await run_lifecycle_step(lambda: self._hold(claim, plan, (
+                        'Direct delivery to the partner could not start, and your rules allow no call for this fax. '
+                        'It waits for you in Sent; nothing was sent.')))
                 if conventional is None:
                     raise PreparationFailure('provider_unavailable') from None
                 await run_lifecycle_step(lambda: self.record_fallback(claim, plan))

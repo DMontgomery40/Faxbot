@@ -10,6 +10,7 @@ import AdminAPIClient from '../../api/client';
 import type { DirectPartner } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, FormDialog, StatusChip, useSmallScreens } from '../access/AccessViews';
 import DirectCardDialog from './DirectCardDialog';
+import PartnerRelay from './PartnerRelay';
 import { DeliveryError, Notice } from './shared';
 
 const TONE: Record<DirectPartner['state'], 'success' | 'warning' | 'default'> = {
@@ -30,6 +31,8 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const [confirming, setConfirming] = useState<DirectPartner | null>(null);
   const [code, setCode] = useState('');
   const [removing, setRemoving] = useState<DirectPartner | null>(null);
+  // Partners → a partner → Relay: local calls through a partner, both ways (PartnerRelay).
+  const [relaying, setRelaying] = useState<DirectPartner | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -84,7 +87,14 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
     if (await run(async () => { await client.removeDirectPartner(removing.id); return null; })) setRemoving(null);
   };
 
-  const actions = (partner: DirectPartner) => canWrite && partner.state !== 'revoked' && (
+  const actions = (partner: DirectPartner) => partner.state !== 'revoked' && (
+    <>
+      <Button size="small" onClick={() => setRelaying(partner)} disabled={busy}>Relay</Button>
+      {canWrite && writeActions(partner)}
+    </>
+  );
+
+  const writeActions = (partner: DirectPartner) => (
     <>
       {partner.state === 'pending' && (
         <Button size="small" onClick={() => sendCode(partner)} disabled={busy}>Send code by fax</Button>
@@ -162,6 +172,10 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      {relaying && (
+        <PartnerRelay client={client} partner={relaying} canWrite={canWrite} open onClose={() => setRelaying(null)} />
       )}
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />

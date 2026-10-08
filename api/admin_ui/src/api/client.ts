@@ -53,6 +53,12 @@ import type {
   DirectDeliveryRecord,
   DirectPartner,
   DirectFaxImagesResult,
+  RelayAcceptance,
+  RelayAgreement,
+  RelayCost,
+  RelayedFax,
+  RelayGrant,
+  RelayRecommendation,
   EmailConnector,
   EmailConnectorInput,
   FaxCost,
@@ -77,6 +83,7 @@ import type {
   TollFreeState,
   TollFreeChange,
   TollFreeSuggestions,
+  FaxFriendlyRecommendation,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -1085,7 +1092,9 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/pages`);
   }
 
-  async saveRecipientPages(number: string, body: { packing?: 'allow' | 'never'; trim_blank?: boolean | null }): Promise<RecipientPages> {
+  async saveRecipientPages(number: string, body: {
+    packing?: 'allow' | 'never'; trim_blank?: boolean | null; shading?: 'always' | 'never' | null;
+  }): Promise<RecipientPages> {
     return this.json(`/routing/destinations/${id(number)}/pages`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
@@ -1288,6 +1297,43 @@ class AdminAPIClient {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
   }
 
+  // Partner relays: a partner sends your faxes as local calls in its country, or you send theirs.
+  async listRelayAgreements(partnerId?: string): Promise<{ agreements: RelayAgreement[] }> {
+    return this.json(partnerId ? `/direct/relay/agreements?partner=${id(partnerId)}` : '/direct/relay/agreements');
+  }
+
+  async offerRelay(grant: RelayGrant): Promise<RelayAgreement> {
+    return this.json('/direct/relay/agreements', { method: 'POST', body: JSON.stringify(grant) });
+  }
+
+  async acceptRelay(agreementId: string, acceptance: RelayAcceptance): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/accept`, { method: 'POST', body: JSON.stringify(acceptance) });
+  }
+
+  async withdrawRelay(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/withdraw`, { method: 'POST', body: '{}' });
+  }
+
+  async refreshRelayPrice(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/price`, { method: 'POST', body: '{}' });
+  }
+
+  async askRelayQuote(partnerId: string, countries: string[]): Promise<{ detail: string }> {
+    return this.json(`/direct/relay/partners/${id(partnerId)}/quote`, { method: 'POST', body: JSON.stringify({ countries }) });
+  }
+
+  async getRelayCosts(days = 30): Promise<{ days: number; agreements: RelayCost[] }> {
+    return this.json(`/direct/relay/costs?days=${days}`);
+  }
+
+  async getRelayRecommendations(days = 30): Promise<{ days: number; recommendations: RelayRecommendation[] }> {
+    return this.json(`/direct/relay/recommendations?days=${days}`);
+  }
+
+  async listRelayedFaxes(days = 30): Promise<{ faxes: RelayedFax[] }> {
+    return this.json(`/direct/relay/faxes?days=${days}`);
+  }
+
   // Work queue
   async listWork(params: { view?: WorkView; mailbox?: string; limit?: number } = {}): Promise<{ items: WorkItem[] }> {
     return this.json(`/work${query(params)}`);
@@ -1398,6 +1444,11 @@ class AdminAPIClient {
   async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
     : Promise<TollFreeSuggestions> {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
+  }
+
+  // Whether lightening shaded areas and removing specks would have saved time on recent faxes, or what it saved.
+  async getFaxFriendlyRecommendation(): Promise<FaxFriendlyRecommendation> {
+    return this.json('/routing/recommendations/fax-friendly');
   }
 
   // The newest cases this installation sent packets for, with recipient and counts.

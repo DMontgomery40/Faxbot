@@ -709,6 +709,10 @@ const consoleHandlers = [
   http.get('/admin/sip/telnyx/names', () => json({ applies: false, numbers: [], text: null,
     price: { text: '$0.40 a month for each number', monthly: { currency: 'USD', amount: '0.40' },
       source_url: 'https://support.telnyx.com/en/articles/4366901-your-number-lookup-guide', read_on: '2026-10-07' } })),
+  // Shaded areas and specks: lightened where it saves time, so nothing to recommend.
+  http.get('/routing/recommendations/fax-friendly', () => json({ choice: 'where_it_saves',
+    label: 'Lighten shaded areas and remove specks on documents you send', measured_sentence: '', days: 30,
+    recommend: false, faxes_checked: 0, faxes_changed: 0, seconds_saved: 0, sentence: null, action: null })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.
@@ -728,6 +732,11 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // Partner relays: none until a test offers one.
+  http.get('/direct/relay/agreements', () => json({ agreements: [] })),
+  http.get('/direct/relay/costs', () => json({ days: 30, agreements: [] })),
+  http.get('/direct/relay/recommendations', () => json({ days: 30, recommendations: [] })),
+  http.get('/direct/relay/faxes', () => json({ faxes: [] })),
   http.get('/forms', () => json({ forms: [], renderer: 'faxbot-forms-1' })),
   http.get('/forms/received', () => json({ received: [] })),
   http.get('/forms/deliveries', () => json({ deliveries: [] })),

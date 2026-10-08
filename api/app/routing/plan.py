@@ -99,7 +99,8 @@ def extra_routes(values, bound):
 
 def ledger_key(key):
     """The key the delivery ledger records a route under: a partner relay's ``relay:<id>`` as ``relay.<id>``."""
-    return key.replace(':', '.', 1) if isinstance(key, str) and key.startswith('relay:') else key
+    from ..direct.relay import ledger_key as relay_ledger_key
+    return relay_ledger_key(key)
 
 
 def _accounts(values):
@@ -277,7 +278,12 @@ class RoutePlanner:
         if (pinned is None or pinned.allows(local_delivery.LOCAL)) and self.local_ready() and \
                 local_delivery.applies(values, destination, by_call=by_call):
             candidates.insert(0, RouteCandidate(local_delivery.LOCAL, 'local', local_delivery.LOCAL, None))
-        candidates += self._relays(destination, pages, pinned, job_id, now)
+        relays, relay_prices = self._relays(destination, pages, pinned, job_id, now,
+                                            home=getattr(values, 'fax_default_country', None))
+        candidates += relays
+        if relay_prices:
+            # A relay is ranked by its partner's signed price like any account; an unknown price sorts last.
+            prices = {**(prices or {}), **relay_prices}
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
         if tried:
             done = {(route, number or destination) for route, number in tried}
@@ -347,24 +353,34 @@ class RoutePlanner:
                     return 'over_cap'
         return None
 
-    def _relays(self, destination, pages, pinned, job_id, now):
-        """Partner relays (``direct.relay``) the decision allows, ranked like any account; none when unavailable."""
+    def _relays(self, destination, pages, pinned, job_id, now, *, home=None):
+        """Partner relays (``direct.relay.relay_candidates``) the decision allows, with their signed prices.
+
+        A fax this installation is itself relaying for a partner (``job_id``) is never relayed again, and a rule's
+        "never relay" (or ``never: [relay:<partner>]``) removes them. Direct-only and encrypted-only faxes never
+        go through a relay: its call is an ordinary call at the partner, who sees the pages.
+        """
+        from ..direct.relay import relay_candidates
+        from .pricing import Price
+        from .predict import Shape
         if pinned is not None and (pinned.envelope.require_direct or pinned.envelope.require_encryption):
-            return []
-        try:
-            from ..direct import relay
-            candidates_for = relay.relay_candidates
-        except (ImportError, AttributeError):
-            return []
+            return [], {}
         never = ()
         if pinned is not None:
             never = tuple(item.account for item in pinned.decision.excluded
                           if item.why == 'never' and (item.account == 'relay' or item.account.startswith('relay:')))
         try:
-            from .predict import Shape
             shape = Shape(max(int(pages or 1), 1), None, 'standard', 'normal')
-            found = candidates_for(destination, shape, now, engine=self.store.engine, job_id=job_id, never=never)
+            found = relay_candidates(destination, shape, now, engine=self.store.engine, job_id=job_id, never=never,
+                                     home=home)
         except Exception:
-            return []
-        return [RouteCandidate(item.key, 'relay', 'relay', None, peer_id=item.peer_id) for item in found
-                if pinned is None or pinned.allows(item.key)]
+            return [], {}  # relay records unreadable: the fax goes by its own routes
+        candidates, prices = [], {}
+        for item in found:
+            if pinned is not None and not pinned.allows(item.key):
+                continue
+            candidates.append(RouteCandidate(item.key, 'relay', 'relay', None, peer_id=item.peer_id))
+            cost = item.cost
+            prices[item.key] = Price(item.key, cost.micros if cost is not None else None,
+                                     cost.currency if cost is not None else None, sentence=item.sentence)
+        return candidates, prices

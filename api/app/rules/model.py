@@ -63,9 +63,23 @@ import typing
 FORMAT = 1
 LOCAL = 'local'
 DIRECT = 'direct'
-RESERVED_KEYS = (LOCAL, DIRECT)
+# "never: [relay]" keeps a fax off every partner relay (direct/relay.py).
+RELAY = 'relay'
+RESERVED_KEYS = (LOCAL, DIRECT, RELAY)
 # A provider account's key, inside the route grammar of routing/store.py.
 ACCOUNT_KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
+# One partner's relay, named like an account: ``relay:`` and the partner's enrollment ID.
+RELAY_KEY = re.compile(r'relay:[a-f0-9]{32}')
+
+
+def is_relay(key):
+    """Whether ``key`` names one partner's relay (``relay:<partner>``)."""
+    return isinstance(key, str) and RELAY_KEY.fullmatch(key) is not None
+
+
+def route_key(key):
+    """Whether ``key`` can name a route in a rule: an account key or a partner relay."""
+    return isinstance(key, str) and (ACCOUNT_KEY.fullmatch(key) is not None or is_relay(key))
 # Keys of lists, regions, sites, workflows and rules in a document.
 DEFINITION_KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
 

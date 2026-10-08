@@ -25,7 +25,7 @@ never imports this metadata.
 import sqlalchemy as sa
 
 from .schema_access import _identity
-from .schema_intake_sources import frozen_metadata as previous_metadata
+from .schema_partner_relay import frozen_metadata as previous_metadata
 
 
 REVISION = '0032_rules_delivery'

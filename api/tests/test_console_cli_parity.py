@@ -50,6 +50,8 @@ NOT_OPERATOR = {
     ('POST', '/direct/capabilities'): 'partner protocol: a signed statement of what the partner accepts',
     ('GET', '/forms/partner/holdings'): 'partner protocol: a signed question about which forms are held',
     ('GET', '/forms/partner/forms/{address}'): 'partner protocol: a signed fetch of one form by address',
+    ('POST', '/direct/relay/statements'): 'partner protocol: a signed relay offer, acceptance, withdrawal, price or receipt',
+    ('GET', '/direct/relay/outcomes/{message_id}'): 'partner protocol: a signed question about a relayed fax',
     ('POST', '/mobile/pair'): 'device: the phone exchanges its pairing code',
     ('POST', '/fax'): 'public fax API for SDKs and integrations',
     ('GET', '/fax/{job_id}'): 'public fax API for SDKs and integrations',

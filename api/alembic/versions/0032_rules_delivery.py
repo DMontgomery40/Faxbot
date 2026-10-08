@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0032_rules_delivery'
 # Chained after the integration head at this branch's base; the integrator rewires it in merge order.
-down_revision = '0041_intake_connectors'
+down_revision = '0044_partner_relay'
 branch_labels = None
 depends_on = None
 

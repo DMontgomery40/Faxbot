@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from api.tests.test_schema import database  # noqa: F401 (fixture)
 from api.tests.test_plan_budget import plans  # noqa: F401 (fixture)
 from api.tests.test_routing_multiprovider import multi  # noqa: F401 (fixture)
+from api.tests.test_partner_relay_terms import sender  # noqa: F401 (fixture)
 from api.app.schema import upgrade_schema
 from api.app.config_store import ConfigurationStore
 from api.app.config_values import ConfigurationValues
@@ -752,3 +753,37 @@ def test_a_later_publish_leaves_a_queued_fax_alone_while_turning_an_account_off_
     plan = planner.plan(to_number=TO, bound='phaxio', values=revision.values, pages=3, alternates=True,
                         pinned=pinned, current=turned_off)
     assert plan.choices == () and plan.skipped == (('signalwire', 'turned_off'),)
+
+
+# Partner relays in the real planner (AS's relay_candidates) ----------------------------------------------------------
+
+def test_the_planner_ranks_partner_relays_with_its_own_routes_by_cost(sender):
+    """No-call routes first, then every priced route by cost (relays and own alike), unknown prices last; a rule's
+    "never relay" and a direct-only rule keep relays out."""
+    from api.app.rules import model
+    from api.tests.test_partner_relay_terms import DEST, NOW
+    cheap = sender.partner('Sydney office', '+61255501234', 20_000)
+    unpriced = sender.partner('Hobart office', '+61355501234', None)
+    routes = RouteStore(sender.engine)
+    routes.replace_cards([card('phaxio', page='0.10')])
+    values = SimpleNamespace(fax_default_country='US', sip_trunk_preset='', outbound_route_providers=('sinch',),
+                             direct_delivery_enabled=False, route_min_success_percent=80, sip_trunk_did_list=(),
+                             local_delivery_enabled=False)
+    planner = RoutePlanner(routes)
+    plan = planner.plan(to_number=DEST, bound='phaxio', values=values, pages=2, alternates=True, now=NOW)
+    keys = [choice.route.key for choice in plan.choices]
+    assert keys[:2] == ['relay:' + cheap, 'phaxio'] and set(keys[2:]) == {'relay:' + unpriced, 'sinch'}
+    assert plan.choices[0].route.kind == 'relay' and plan.choices[0].estimated_cost_micros == 40_000
+
+    def pinned(**envelope):
+        decision = model.Decision(outcome='route', envelope=model.Envelope(mode='automatic',
+                                                                          accounts=('phaxio', 'sinch'), **envelope),
+                                  route=model.AUTOMATIC, facts_digest='0' * 64,
+                                  excluded=(model.Excluded('relay', 'never'),) if not envelope else ())
+        return envelopes.Pinned('decision-1', 1, decision, model.Facts(DEST, '2026-10-07T03:00:00'))
+    never = planner.plan(to_number=DEST, bound='phaxio', values=values, pages=2, alternates=True, now=NOW,
+                         pinned=pinned())
+    assert [choice.route.key for choice in never.choices] == ['phaxio', 'sinch']
+    direct_only = planner.plan(to_number=DEST, bound='phaxio', values=values, pages=2, alternates=True, now=NOW,
+                               pinned=pinned(require_direct=True, direct=True))
+    assert all(choice.route.kind != 'relay' for choice in direct_only.choices)

@@ -10,12 +10,16 @@ import { BillingStepsSection, FaxMarkerSection, PartnersSection, TollFreeSection
 import OtherCarriers from './OtherCarriers';
 import PlanRecommendations from './PlanRecommendations';
 import ReceivingRecommendations from './ReceivingRecommendations';
+import RelayRecommendations from './RelayRecommendations';
 import SendingRecommendations from './SendingRecommendations';
+import FaxFriendlyRecommendation from './FaxFriendlyRecommendation';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
-type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'tollFree';
-const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'tollFree'];
+type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'tollFree' | 'pages'
+  | 'relays';
+const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'tollFree',
+  'pages', 'relays'];
 
 export default function Recommendations({ client, canWrite = false, onNavigate }: {
   client: AdminAPIClient;
@@ -46,8 +50,10 @@ export default function Recommendations({ client, canWrite = false, onNavigate }
         <OtherCarriers client={client} onCount={callbacks.carriers} />
         <BillingStepsSection client={client} onCount={callbacks.steps} />
         <PartnersSection client={client} onCount={callbacks.partners} onNavigate={onNavigate} />
+        <RelayRecommendations client={client} onCount={callbacks.relays} />
         <TollFreeSection client={client} onCount={callbacks.tollFree} onNavigate={onNavigate} />
         <FaxMarkerSection client={client} onCount={callbacks.marker} />
+        <FaxFriendlyRecommendation client={client} onCount={callbacks.pages} />
       </Stack>
     </Box>
   );

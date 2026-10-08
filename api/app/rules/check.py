@@ -26,6 +26,7 @@ class CheckContext:
     alternates: frozenset = frozenset()        # numbers with an approved alternate number
     prices: dict = field(default_factory=dict)  # account -> (micros for one page, currency), or None when unknown
     matches_30_days: dict | None = None        # rule ID -> faxes it matched in the last 30 days
+    relays: frozenset | None = None            # partner IDs that relay for this installation (direct/relay.py)
 
 
 class _Findings:
@@ -115,6 +116,12 @@ def _references(kind, document, organization, context, findings):
 
     def account(rule, key, path, *, sending=True):
         if key in model.RESERVED_KEYS:
+            return
+        if model.is_relay(key):
+            if context.relays is not None and key[len('relay:'):] not in context.relays:
+                findings.error('unknown_account', f'{_name(rule)} names a partner relay that is not active; '
+                                                  'accept a partner’s offer under Partners first.',
+                               rule.get('id'), path)
             return
         found = accounts.get(key)
         if found is None:
