@@ -140,6 +140,34 @@ async def test_preparation_failure_is_definitive_and_never_submits(installation)
 
 
 @pytest.mark.asyncio
+async def test_an_unexpected_error_before_anything_is_sent_fails_the_fax_definitely_with_its_cause(installation,
+                                                                                                   caplog):
+    """A trunk call's fields are built while the fax is being prepared (CapturedTransport runs
+    originate_fields_for before the durable marker), so an error there, such as a database without the routing
+    decision table, means no call was placed. The fax fails as a preparation failure, its cause logged, and is
+    never claimed again; it does not go round claim, lease and recovery for ever."""
+    configuration, store, _ = installation
+    job = accept(installation)
+    transport = Transport()
+
+    async def missing_table(claim):
+        raise sa.exc.ProgrammingError('SELECT', {}, Exception('relation "fax_job_rule_decisions" does not exist'))
+    transport.preparing = missing_table
+    with caplog.at_level('ERROR'):
+        assert await OutboundWorker(store, transport).step() is True
+    assert store.get(job)['state'] == 'failed' and transport.submissions == 0
+    assert f'Fax {job} could not be prepared; nothing was sent.' in caplog.text
+    assert 'fax_job_rule_decisions' in caplog.text
+    assert await OutboundWorker(store, transport).step() is False
+    # Sent and `faxbot faxes sent show` read the category and a plain sentence; the cause is in the log only.
+    with configuration.engine.connect() as connection:
+        error = connection.execute(sa.select(configuration.jobs.c.error).where(configuration.jobs.c.id == job)).scalar()
+        category = connection.execute(sa.select(store.attempts.c.error_category).where(
+            store.attempts.c.job_id == job)).scalar()
+    assert (error, category) == ('Fax preparation failed before submission.', 'preparation_failed')
+
+
+@pytest.mark.asyncio
 async def test_timeout_or_unusable_receipt_requires_reconciliation(installation):
     _, store, _ = installation
     async def timeout():
