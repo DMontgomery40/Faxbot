@@ -666,7 +666,7 @@ class CertaintyService:
         if send is None or store is None:
             raise CertaintyConflict('Sending only the remaining pages is not available here.')
         with self.access_store.transaction() as connection:
-            offer = offer_on(store, connection, row['job_id'], data_dir=self._data_dir())
+            offer = offer_on(store, connection, row['job_id'], data_dir=self._data_dir(), resume=True)
         if offer is None or offer.attempt_id != row['attempt_id']:
             raise CertaintyConflict('This fax did not break part way through a call, so there are no remaining pages '
                                     'to send.')

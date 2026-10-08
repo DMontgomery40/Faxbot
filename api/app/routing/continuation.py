@@ -85,7 +85,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import io
 import json
@@ -166,11 +166,15 @@ def _pages(number):
 
 @dataclass(frozen=True)
 class Confirmed:
-    """The first ``pages`` pages the receiving machine confirmed (None: unknown), whose report says so, and how."""
+    """The first ``pages`` pages the receiving machine confirmed (None: unknown), whose report says so, and how.
+
+    ``reported`` is the raw page count the engine or service gave (the call record's, or the service's pages
+    sent), which says the call broke part way even when the pages cannot be trusted."""
     pages: int | None
     source: str | None
     sentence: str
     total: int | None = None
+    reported: int | None = None
 
 
 def dcs_ecm(dcs_hex):
@@ -527,18 +531,22 @@ def confirmed_on(store, connection, attempt, job):
     if provider in ('sip', 'freeswitch'):
         call = _call_record(store, connection, attempt['id'])
         pages = call.get('pages') if call is not None else None
+        reported = pages if type(pages) is int else None
         engine_call = _engine_call(store, connection, attempt['id'])
         if engine_call is not None:
             report = store.report_on(connection, attempt['id'], 'hylafax') or {}
-            return hylafax_confirmed(pages, ecm=engine_call.get('ecm'), clean_pages=report.get('clean_pages'),
-                                     flagged_page=report.get('flagged_page'))
+            return replace(hylafax_confirmed(pages, ecm=engine_call.get('ecm'), clean_pages=report.get('clean_pages'),
+                                             flagged_page=report.get('flagged_page')), reported=reported)
         if provider == 'freeswitch':
             return Confirmed(None, None, 'This fax line does not report which pages the receiving machine '
-                                         'confirmed.')
+                                         'confirmed.', reported=reported)
         frames = _frames(store, connection, attempt['id']) or {}
-        return builtin_confirmed(pages, ecm=dcs_ecm(frames.get('dcs_last')), trainings=frames.get('trainings'))
+        return replace(builtin_confirmed(pages, ecm=dcs_ecm(frames.get('dcs_last')), trainings=frames.get('trainings')),
+                       reported=reported)
     report = store.report_on(connection, attempt['id'], provider) if provider in REPORT_SOURCES else None
-    return provider_confirmed(provider, report)
+    found = provider_confirmed(provider, report)
+    return replace(found, reported=(report or {}).get('pages_sent') if type((report or {}).get('pages_sent')) is int
+                   else None)
 
 
 def _shared_call(store, connection, attempt):
@@ -594,9 +602,12 @@ class Offer:
     item: dict | None = None
 
 
-def offer_on(store, connection, job_id, *, data_dir):
+def offer_on(store, connection, job_id, *, data_dir, resume=False):
     """The continuation a person may send for this fax, why it cannot be offered, or None when the fax did not
-    break part way through a call (nothing to say: an ordinary fax, a delivered one, an uncertain one)."""
+    break part way through a call (nothing to say: an ordinary fax, a delivered one, an uncertain one).
+
+    ``resume``: a person's send, which may finish a continuation already queued under its fax ID whose link was
+    not kept (the request stopped between the two); a view never offers it again."""
     job = store.job_on(connection, job_id)
     delivery = store._one(connection, sa.select(store.deliveries).where(store.deliveries.c.id == job_id))
     if job is None or delivery is None or delivery['state'] != 'failed' or not delivery['attempt_id']:
@@ -606,8 +617,10 @@ def offer_on(store, connection, job_id, *, data_dir):
         return None
     confirmed = confirmed_on(store, connection, attempt, job)
     total = job.get('pages')
+    # The call broke part way: the engine or service said so, or its own page count stops short of the fax.
     partly = attempt.get('error_category') == 'partly_sent' or (
-        type(confirmed.pages) is int and confirmed.pages > 0 and type(total) is int and confirmed.pages < total)
+        type(confirmed.reported) is int and confirmed.reported > 0 and type(total) is int
+        and confirmed.reported < total)
     if not partly or delivery.get('dispatch_mode') not in (None, 'normal'):
         return None
     item = _item(store, connection, attempt['id'])
@@ -632,6 +645,8 @@ def offer_on(store, connection, job_id, *, data_dir):
             connection, item['resend_job_id']) is None else 'The remaining pages of this fax were already sent.')
     if item is not None and item.get('state') == 'settled' and item.get('outcome') == 'delivered':
         return no('This fax was settled as delivered.')
+    if not resume and store.job_on(connection, continuation_id(attempt['id'])) is not None:
+        return no('The remaining pages of this fax are already on their way as a new fax.')
     if confirmed.pages is None:
         return no(confirmed.sentence)
     if confirmed.total is not None and confirmed.total != total:
@@ -853,7 +868,7 @@ class ContinuationService:
             resource = self._visible(connection, actor, job_id, now)
             if self.store.link_for_original(connection, job_id) is not None:
                 raise ContinuationConflict('The remaining pages of this fax were already sent.')
-            offer = offer_on(self.store, connection, job_id, data_dir=self._data_dir())
+            offer = offer_on(self.store, connection, job_id, data_dir=self._data_dir(), resume=True)
             if offer is None:
                 raise ContinuationConflict('This fax did not break part way through a call, so there are no '
                                            'remaining pages to send.')

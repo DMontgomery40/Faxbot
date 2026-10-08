@@ -242,12 +242,15 @@ def table(name):
     return sa.Table(name, sa.MetaData(), autoload_with=engine())
 
 
-def broken(client, *, headers=ADMIN, pages=20, confirmed=7, dcs=DCS_ECM, trainings=1, category='partly_sent',
-           route='sip', state='failed'):
-    """A fax of ``pages`` pages through POST /fax whose only call broke after ``confirmed`` confirmed pages.
+def broken(client, *, headers=ADMIN, pages=20, confirmed=7, route='sip', engine_name='builtin', dcs=DCS_ECM,
+           trainings=1, ecm='on', report=None, category=None, state='failed'):
+    """A fax of ``pages`` pages through POST /fax whose only attempt broke part way, as each path records it.
 
-    Test mode holds every fax; this one is made an ordinary fax whose call went out on the built-in engine (or
-    ``route``) and failed part way, with the call record and T.30 frames that engine keeps.
+    Test mode holds every fax; this one is made an ordinary fax that went out and failed. On the trunk
+    (``route`` sip) the call record has the engine's confirmed pages: the built-in engine's result carries no
+    error category (``main._handle_fax_result``) and keeps the call's T.30 frames; the SSL Fax engine's is
+    ``partly_sent`` (``hylafax_engine.result_outcome``) with its engine record (and ``report``, its session
+    log's (clean pages, flagged page)). A cloud service's ``report`` is its (pages sent, pages in the fax).
     """
     sent = client.post('/fax', headers=headers, data={'to': NUMBER},
                        files={'file': ('referral.pdf', synthetic_document(pages), 'application/pdf')})
@@ -255,6 +258,8 @@ def broken(client, *, headers=ADMIN, pages=20, confirmed=7, dcs=DCS_ECM, trainin
     job = sent.json()['id']
     attempt = 'attempt-' + job[:24]
     now = datetime.utcnow()
+    if category is None and route == 'sip' and engine_name == 'hylafax':
+        category = 'partly_sent'
     with engine().begin() as connection:
         connection.execute(table('outbound_attempts').insert().values(
             id=attempt, job_id=job, sequence=1, phase='failed' if state == 'failed' else 'uncertain',
@@ -264,14 +269,27 @@ def broken(client, *, headers=ADMIN, pages=20, confirmed=7, dcs=DCS_ECM, trainin
             state=state, dispatch_mode='normal', attempt_id=attempt), {'job': job})
         connection.execute(table('fax_jobs').update().where(sa.text('id = :job')).values(
             backend=route, outbound_backend=route, status='failed' if state == 'failed' else 'queued'), {'job': job})
-        connection.execute(table('sip_call_records').insert().values(
-            id='call-' + job[:24], direction='outbound', call_id='call-' + job[:24], job_id=job, attempt_id=attempt,
-            started_at=now - timedelta(minutes=5), answered_at=now - timedelta(minutes=5), ended_at=now,
-            disposition='answered', connected_seconds=240, t38='yes', pages=confirmed, fax_status='FAILED',
-            fax_preference=0, created_at=now, updated_at=now))
-        connection.execute(table('fax_call_frames').insert().values(
-            id=f'out:{attempt}', direction='out', job_id=job, attempt_id=attempt, dcs_last=dcs, dcs_sent=1,
-            trainings=trainings, ftt=0, t38_now=0, created_at=now))
+        if route == 'sip':
+            connection.execute(table('sip_call_records').insert().values(
+                id='call-' + job[:24], direction='outbound', call_id='call-' + job[:24], job_id=job,
+                attempt_id=attempt, started_at=now - timedelta(minutes=5), answered_at=now - timedelta(minutes=5),
+                ended_at=now, disposition='answered', connected_seconds=240, t38='yes', pages=confirmed,
+                fax_status='FAILED', fax_preference=0, created_at=now, updated_at=now))
+        if route == 'sip' and engine_name == 'builtin':
+            connection.execute(table('fax_call_frames').insert().values(
+                id=f'out:{attempt}', direction='out', job_id=job, attempt_id=attempt, dcs_last=dcs, dcs_sent=1,
+                trainings=trainings, ftt=0, t38_now=0, created_at=now))
+        if route == 'sip' and engine_name == 'hylafax':
+            connection.execute(table('fax_engine_calls').insert().values(
+                id='engine-' + job[:24], direction='outbound', call_key=attempt, job_id=job, engine='hylafax',
+                negotiation_by='hylafax', ecm=ecm, created_at=now, updated_at=now))
+        if report is not None:
+            first, second = report
+            values = ({'clean_pages': first, 'flagged_page': second} if route == 'sip'
+                      else {'pages_sent': first, 'total_pages': second})
+            connection.execute(table('fax_page_reports').insert().values(
+                id='report-' + job[:24], job_id=job, attempt_id=attempt, created_at=now,
+                source='hylafax' if route == 'sip' else route, **values))
     return job, attempt
 
 
@@ -340,10 +358,18 @@ def test_unknown_means_no_offer_only_the_whole_fax_again(client):
     # The built-in engine without error correction, on a call that trained once: no damaged page, so it counts.
     clean, _ = broken(client, dcs=DCS_PLAIN, trainings=1, confirmed=4, pages=6)
     assert client.get(f'/continuations/faxes/{clean}', headers=ADMIN).json()['offer']['first_page'] == 5
-    # Phaxio reports no pages sent for a failed fax.
+    # The SSL Fax engine without error correction and without its session log's page answers.
+    unread, _ = broken(client, engine_name='hylafax', ecm='off')
+    offer = client.get(f'/continuations/faxes/{unread}', headers=ADMIN).json()['offer']
+    assert offer['available'] is False and offer['reason'].startswith("Faxbot could not read the receiving machine's")
+    # A Sinch fax "partly sent" whose page count was never kept says so.
+    quiet, _ = broken(client, route='sinch', category='partly_sent')
+    offer = client.get(f'/continuations/faxes/{quiet}', headers=ADMIN).json()['offer']
+    assert offer['available'] is False
+    assert offer['reason'] == 'Sinch did not report how many pages it sent before this fax failed.'
+    # Phaxio reports no pages sent for a failed fax, so its failure says nothing about pages at all.
     cloud, _ = broken(client, route='phaxio')
-    offer = client.get(f'/continuations/faxes/{cloud}', headers=ADMIN).json()['offer']
-    assert offer['available'] is False and offer['reason'].startswith('Phaxio does not report')
+    assert client.get(f'/continuations/faxes/{cloud}', headers=ADMIN).json()['offer'] is None
     # An uncertain call: nothing is offered here; it waits for a person.
     uncertain, _ = broken(client, category='pages_unconfirmed', state='reconciliation_required')
     assert client.get(f'/continuations/faxes/{uncertain}', headers=ADMIN).json()['offer'] is None
@@ -362,6 +388,24 @@ def test_unknown_means_no_offer_only_the_whole_fax_again(client):
             id='event-shared', job_id=shared, attempt_id=shared_attempt, kind='sent_together', details='{}',
             created_at=datetime.utcnow()))
     assert client.get(f'/continuations/faxes/{shared}', headers=ADMIN).json()['offer']['available'] is False
+
+
+def test_a_continuation_queued_without_its_link_is_never_offered_twice_and_a_send_finishes_it(client):
+    job, attempt = broken(client)
+    new_fax = continuation_id(attempt)
+    with engine().begin() as connection:  # the request stopped after queuing the fax, before keeping the link
+        connection.execute(sa.text('INSERT INTO fax_jobs (id, to_number, file_name, tiff_path, status, backend, pages, '
+                                   'created_at, updated_at) VALUES (:id, :to, :name, :tiff, :status, :backend, '
+                                   ':pages, :now, :now)'),
+                           {'id': new_fax, 'to': NUMBER, 'name': 'continuation-pages-8-20.pdf', 'tiff': '',
+                            'status': 'queued', 'backend': 'phaxio', 'pages': 13, 'now': datetime.utcnow()})
+    offer = client.get(f'/continuations/faxes/{job}', headers=ADMIN).json()['offer']
+    assert offer['available'] is False
+    assert offer['reason'] == 'The remaining pages of this fax are already on their way as a new fax.'
+    before = fax_ids()
+    finished = client.post(f'/continuations/faxes/{job}', headers=ADMIN, json={'first_page': 8})
+    assert finished.status_code == 200, finished.text
+    assert fax_ids() == before and finished.json()['continued_by']['fax_id'] == new_fax
 
 
 def publish_rules(client, document):
@@ -387,8 +431,25 @@ def test_the_continuation_goes_through_the_sending_rules_which_may_hold_it(clien
     assert holds[new_fax]['kind'] == 'approval'
 
 
+def test_the_engines_and_services_that_count_pages_offer_the_rest(client):
+    # The SSL Fax engine without error correction: only the pages answered "received fine" before page 5's RTN.
+    engine_fax, _ = broken(client, engine_name='hylafax', ecm='off', confirmed=9, report=(4, 5))
+    offer = client.get(f'/continuations/faxes/{engine_fax}', headers=ADMIN).json()['offer']
+    assert (offer['first_page'], offer['basis']) == (5, 'The receiving machine reported damaged lines on page 5, so '
+                                                        'only the first 4 pages count as confirmed.')
+    for route, verb in (('sinch', 'sent successfully'), ('documo', 'completed'), ('humblefax', 'sent')):
+        cloud, _ = broken(client, route=route, category='partly_sent' if route == 'sinch' else None,
+                          report=(7, 20 if route != 'humblefax' else None))
+        offer = client.get(f'/continuations/faxes/{cloud}', headers=ADMIN).json()['offer']
+        assert offer['first_page'] == 8 and offer['basis'].endswith(f'pages {verb}.'), (route, offer)
+    # A service that counted a different number of pages than the document has: unknown.
+    other, _ = broken(client, route='sinch', category='partly_sent', report=(7, 21))
+    offer = client.get(f'/continuations/faxes/{other}', headers=ADMIN).json()['offer']
+    assert offer['available'] is False and offer['reason'].startswith('Sinch counted 21 pages in this fax, not 20')
+
+
 def test_on_the_uncertain_item_it_sits_beside_send_again_and_settles_the_item(client):
-    job, attempt = broken(client)
+    job, attempt = broken(client, engine_name='hylafax')
     assert CertaintyStore(engine()).feed(main.app.state.access_runtime.control) == 1
     [item] = client.get(f'/certainty/faxes/{job}', headers=ADMIN).json()['items']
     assert 'continue' in item['actions'] and item['continuation']['state'] == 'offered'
@@ -416,7 +477,7 @@ def test_on_the_uncertain_item_it_sits_beside_send_again_and_settles_the_item(cl
 
 
 def test_the_item_refuses_both_sends_at_once_and_send_again_after_a_continuation(client):
-    job, _ = broken(client)
+    job, _ = broken(client, engine_name='hylafax')
     CertaintyStore(engine()).feed(main.app.state.access_runtime.control)
     [item] = client.get(f'/certainty/faxes/{job}', headers=ADMIN).json()['items']
     from app.work.certainty_service import CertaintyInputError, CertaintyService
@@ -428,7 +489,7 @@ def test_the_item_refuses_both_sends_at_once_and_send_again_after_a_continuation
 
 
 def test_it_needs_a_person_who_may_see_the_fax(client):
-    job, attempt = broken(client)
+    job, attempt = broken(client, engine_name='hylafax')
     before = fax_ids()
     # Nothing in the background sends it: the uncertain-fax worker runs, the offer stays an offer.
     store = CertaintyStore(engine())

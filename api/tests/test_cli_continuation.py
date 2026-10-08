@@ -41,7 +41,7 @@ def test_continue_shows_the_pages_left_and_sends_only_those_once(cli):
 
 
 def test_a_fax_waiting_to_be_settled_needs_a_reason_and_is_settled_by_it(cli):
-    job, attempt = broken(cli.client, headers=KEY)
+    job, attempt = broken(cli.client, headers=KEY, engine_name='hylafax')
     assert CertaintyStore(main_module.app.state.configuration_runtime.manager.store.engine).feed(
         main_module.app.state.access_runtime.control) == 1
     before = fax_ids()
@@ -56,8 +56,11 @@ def test_a_fax_waiting_to_be_settled_needs_a_reason_and_is_settled_by_it(cli):
 
 
 def test_unknown_pages_say_why_and_send_nothing(cli):
-    job, _ = broken(cli.client, headers=KEY, route='phaxio')
+    job, _ = broken(cli.client, headers=KEY, route='sinch', category='partly_sent')
     shown = cli('sent', 'continue', job)
-    assert shown.exit_code == 0 and shown.stdout.startswith('Phaxio does not report how many pages it sent')
+    assert shown.exit_code == 0
+    assert shown.stdout.startswith('Sinch did not report how many pages it sent before this fax failed.')
+    ordinary, _ = broken(cli.client, headers=KEY, route='phaxio')
+    assert cli('sent', 'continue', ordinary).stdout.startswith('This fax did not break part way through a call')
     refused = cli('sent', 'continue', job, '--send')
     assert refused.exit_code != 0
