@@ -81,13 +81,34 @@ export interface FaxMachineCall {
   iaf: string | null;
   sentences: string[];
   subaddress: string | null;
+  // Joined from the call record and the engine's own report, for calls on either fax engine.
+  engine?: 'builtin' | 'hylafax' | null;
+  engine_label?: string | null;
+  mode_label?: string | null;
+  outcome?: string | null;
+  changes?: string[];
+}
+
+// What failed with this number, per direction, with when Faxbot stops counting it.
+export interface FaxMachineMemory {
+  direction: 'outbound' | 'inbound';
+  kind: 't38_failed' | 'audio_failed';
+  learned_at: string;
+  expires_at: string;
+  active: boolean;
+  ended: 'forgotten' | 'expired' | 'went_through' | null;
 }
 
 export interface FaxMachineView {
   number: string;
   sentence: string;
   calls: FaxMachineCall[];
-  learned: { t38_now: boolean; max_rate: number | null; inbound_rate: number | null; sentences: string[] };
+  learned: {
+    t38_now: boolean; max_rate: number | null; inbound_rate: number | null; sentences: string[];
+    audio?: boolean; compression?: string | null; ecm_on?: boolean; notes?: string[]; since?: string | null;
+  };
+  memory?: FaxMachineMemory[];
+  can_forget?: boolean;
   iaf: 'peer' | 'endpoint' | null;
 }
 

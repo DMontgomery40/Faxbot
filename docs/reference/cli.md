@@ -1577,7 +1577,7 @@ $ faxbot recipients limits [OPTIONS] {number}
 
 ### `faxbot recipients fax-machine`
 
-What a number&#x27;s fax machine said on recent calls, and what Faxbot learned from them.
+What a number&#x27;s fax machine said on recent calls, what Faxbot learned from them, and what it changes.
 
 **Usage**:
 
@@ -1591,6 +1591,7 @@ $ faxbot recipients fax-machine [OPTIONS] {number}
 
 **Options**:
 
+* `--forget`: Forget that fax over IP or audio fax failed with this number, so its next calls use the usual settings.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients schedule`
@@ -2831,7 +2832,7 @@ $ faxbot providers trunk calls [OPTIONS]
 
 #### `faxbot providers trunk negotiation`
 
-Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot only measures these; it changes nothing because of them.
+Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot changes speed or compression for one number only after its own calls to it fail the same way more than once, and never turns error correction off.
 
 **Usage**:
 

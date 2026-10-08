@@ -92,12 +92,18 @@ static inline int faxbot_gateway_end_empty_training(t38_gateway_state_t *gw)
  * the FIF. FCFs here are spandsp 0.0.6's: DIS 0x80, DTC 0x81, DCS 0x82, NSF 0x20, CSA 0x24, TSA 0x62, SUB 0xC2,
  * CFR 0x84, FTT 0x44; the low bit of every FCF but DIS/DTC's is the X bit (whether a DIS was received), so it is
  * masked off. Each kept frame is cut at FAXBOT_FRAME_MAX octets, so a long NSF never grows a variable or a log line.
+ * A SUB fits: its FIF is at most 20 digits (T.30 5.3.6.2.4), 23 octets in all. The internet address frames (CSA,
+ * TSA) are kept whole up to FAXBOT_ADDRESS_MAX: their FIF is a sequence octet, a type octet, a length octet and at
+ * most 77 address octets (T.30 5.3.6.2.12, as spandsp's own decode_url_msg checks), so with the address, control
+ * and FCF octets 83 in all. An SSL Fax address ("ssl://<passcode>@<address>:<port>") is often longer than 32.
+ * Nothing logs these two frames; the NOTICE line names only the DIS.
  */
 #define FAXBOT_FRAME_MAX 32
+#define FAXBOT_ADDRESS_MAX (2 + 4 + 77)
 #define FAXBOT_RATES_MAX 16
 
 typedef struct {
-	uint8_t frame[FAXBOT_FRAME_MAX];
+	uint8_t frame[FAXBOT_ADDRESS_MAX];
 	int len;
 } faxbot_frame_t;
 
@@ -115,10 +121,15 @@ typedef struct {
 	unsigned int dcs, cfr, ftt;	/* DCS frames (trainings), confirmations and failures to train */
 } faxbot_frames_t;
 
+static inline void faxbot_frame_keep_at_most(faxbot_frame_t *kept, const uint8_t *msg, int len, int most)
+{
+	kept->len = len < most ? len : most;
+	memcpy(kept->frame, msg, kept->len);
+}
+
 static inline void faxbot_frame_keep(faxbot_frame_t *kept, const uint8_t *msg, int len)
 {
-	kept->len = len < FAXBOT_FRAME_MAX ? len : FAXBOT_FRAME_MAX;
-	memcpy(kept->frame, msg, kept->len);
+	faxbot_frame_keep_at_most(kept, msg, len, FAXBOT_FRAME_MAX);
 }
 
 /*! \brief Patch 0004: keep one T.30 frame; \p received is 1 for a frame from the far end. */
@@ -152,14 +163,14 @@ static inline void faxbot_frames_record(faxbot_frames_t *frames, int received, c
 	case 0x44:	/* FTT */
 		frames->ftt++;
 		break;
-	case 0x24:	/* CSA */
+	case 0x24:	/* CSA: whole, up to the longest address T.30 allows */
 		if (received) {
-			faxbot_frame_keep(&frames->csa, msg, len);
+			faxbot_frame_keep_at_most(&frames->csa, msg, len, FAXBOT_ADDRESS_MAX);
 		}
 		break;
-	case 0x62:	/* TSA */
+	case 0x62:	/* TSA: the same */
 		if (received) {
-			faxbot_frame_keep(&frames->tsa, msg, len);
+			faxbot_frame_keep_at_most(&frames->tsa, msg, len, FAXBOT_ADDRESS_MAX);
 		}
 		break;
 	case 0xC2:	/* SUB */
@@ -191,13 +202,13 @@ static inline int faxbot_dcs_rate(uint8_t code)
 	return 0;
 }
 
-/*! \brief Lower-case hex of \p len octets into \p out (at least 2 * FAXBOT_FRAME_MAX + 1 bytes); empty for none. */
+/*! \brief Lower-case hex of \p len octets into \p out (at least 2 * FAXBOT_ADDRESS_MAX + 1 bytes); empty for none. */
 static inline void faxbot_hex(const uint8_t *buf, int len, char *out)
 {
 	static const char digits[] = "0123456789abcdef";
 	int i;
 
-	for (i = 0; i < len && i < FAXBOT_FRAME_MAX; i++) {
+	for (i = 0; i < len && i < FAXBOT_ADDRESS_MAX; i++) {
 		out[2 * i] = digits[buf[i] >> 4];
 		out[2 * i + 1] = digits[buf[i] & 0x0F];
 	}

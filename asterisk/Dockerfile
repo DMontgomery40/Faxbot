@@ -55,6 +55,13 @@ RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedi
     && test -f /opt/install/usr/lib/asterisk/modules/func_base64.so \
     && test -f /opt/install/usr/lib/asterisk/modules/chan_pjsip.so
 
+# The engine's build, for what Faxbot learns from its calls (api/app/engine_learning.py): the Asterisk
+# release and a digest of every file in patches/, so a changed patch starts that learning again. After the
+# compile on purpose, so it never invalidates the cached build. start.sh copies it to Faxbot's data folder.
+RUN mkdir -p /opt/install/usr/share/faxbot \
+    && printf 'Asterisk 22.11.0 patches %s\n' "$(cat /usr/src/patches/* | sha256sum | cut -c1-16)" \
+       > /opt/install/usr/share/faxbot/engine-version
+
 # Debian links /var/run to /run. BuildKit will not copy a real directory over
 # that link, so the installed run directory moves to where the link points,
 # and the build stops if any other installed directory would land on a link.

@@ -303,11 +303,17 @@ class FaxEngineRecords:
             sentence = reason
         elif row['sslfax'] == 1 and row['transfer_seconds'] is not None and pages:
             sentence = sslfax_sentence(row['transfer_seconds'], pages)
-        # What the call negotiated (measurement only), once the call has a result.
+        # What the call negotiated, once the call has a result.
         from .fax_negotiation import call_view
         negotiation = call_view(row, call) if (call or {}).get('fax_status') is not None else None
+        # What Faxbot changed for this call from what it learned about the number, with why (engine_learning).
+        from . import engine_learning
+        try:
+            changes = engine_learning.choice_sentences(engine_learning.choice_for_attempt(self.engine, row['call_key']))
+        except sa.exc.SQLAlchemyError:
+            changes = []
         return {'engine': engine, 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
-                'sentence': sentence, 'negotiation': negotiation}
+                'sentence': sentence, 'negotiation': negotiation, 'changes': changes}
 
     def recipient_detail(self, number):
         """Recipients, Details: whether the number takes SSL Fax (and since when) and its own fax limits."""

@@ -7,7 +7,8 @@ it trained at, not its internet address (CSA) or the subaddress it was given
 the replay proof in asterisk/tests compiles as well:
 
 1. Far-end frames. spandsp's real-time frame handler keeps, bounded to 32
-   octets each, the far end's DIS (or DTC), the session's first and last DCS
+   octets each (83 for the CSA and TSA: the longest internet address T.30
+   5.3.6.2.12 allows), the far end's DIS (or DTC), the session's first and last DCS
    and which side sent it, each DCS's speed code, the CSA, TSA, SUB and NSF
    it received, and how many trainings and failures to train there were.
    When the session ends (phase E), they go on the channel as FAXBOT_FAR_DIS,
@@ -140,7 +141,7 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the frames.
 + * \brief Faxbot (0004): what the far end's fax machine said, on the channel when the session ends, logged once.
 + *
 + * The dialplan's FaxFrames event carries these to Faxbot (engine_frames.py), for sent and received faxes alike.
-+ * Hex T.30 frames, at most FAXBOT_FRAME_MAX octets each, empty when not seen: FAXBOT_FAR_DIS (its DIS or DTC),
++ * Hex T.30 frames, at most FAXBOT_FRAME_MAX octets (CSA, TSA: FAXBOT_ADDRESS_MAX), empty when not seen: FAXBOT_FAR_DIS,
 + * FAXBOT_DCS_FIRST and FAXBOT_DCS_LAST, FAXBOT_FAR_CSA, FAXBOT_FAR_TSA, FAXBOT_FAR_SUB and FAXBOT_FAR_NSF. Then
 + * FAXBOT_DCS_SENT (1 when this side sent the DCS), FAXBOT_DCS_RATES (each DCS's speed code, dot separated),
 + * FAXBOT_TRAININGS, FAXBOT_FTT (failures to train) and FAXBOT_IAF_USED (peer, endpoint or empty).
@@ -156,7 +157,7 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the frames.
 +		{ "FAXBOT_FAR_CSA", &f->csa }, { "FAXBOT_FAR_TSA", &f->tsa }, { "FAXBOT_FAR_SUB", &f->sub },
 +		{ "FAXBOT_FAR_NSF", &f->nsf },
 +	};
-+	char hex[2 * FAXBOT_FRAME_MAX + 1];
++	char hex[2 * FAXBOT_ADDRESS_MAX + 1];
 +	char rates[3 * FAXBOT_RATES_MAX + 1];
 +	char count[12];
 +	int i, first = 0, lowest = 0, rate;

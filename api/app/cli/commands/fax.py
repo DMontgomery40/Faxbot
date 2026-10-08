@@ -291,8 +291,10 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
-    # What the phone call negotiated (speed, compression, error correction), measured only.
+    # What the phone call negotiated (speed, compression, error correction), and what Faxbot changed for this
+    # call from what it learned about the number, with why (engine learning).
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
+    changes = (job.get('fax_engine') or {}).get('changes') or []
     from .codec import sent_line
     encoded = sent_line(api, fax_id)  # "Sent as 1 encoded page instead of 23 (experimental)."
 
@@ -302,7 +304,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                                                                           'Reference on its separator page')
         out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
-                   + ([('How the call went', negotiation)] if negotiation else []))
+                   + ([('How the call went', negotiation)] if negotiation else [])
+                   + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:
             out.line(line)
         if encoded:

@@ -1,7 +1,8 @@
-"""faxbot recipients fax-machine and faxbot recipients iaf: what a number's fax machine said, and Internet Aware Fax.
+"""faxbot recipients fax-machine and faxbot recipients iaf: what a number's fax machine said, what Faxbot learned
+and changes for it, and Internet Aware Fax.
 
-The console's Recipients → Details, "Their fax machine". Reading needs settings:read; approving or
-removing a fax server for Internet Aware Fax needs settings:write.
+The console's Recipients → Details, "Their fax machine". Reading needs settings:read; forgetting what failed
+with a number, and approving or removing a fax server for Internet Aware Fax, need settings:write.
 """
 import typer
 
@@ -16,18 +17,36 @@ iaf = typer.Typer(help='Internet Aware Fax to fax servers that receive over the 
 KINDS = {'faxbot': 'peer', 'server': 'endpoint'}
 
 
-def fax_machine(number: str = typer.Argument(..., help='A fax number you send to or receive from.')):
-    """What a number's fax machine said on recent calls, and what Faxbot learned from them."""
-    data = state.api().get('/fax-machines/numbers/' + segment(number))
+def fax_machine(number: str = typer.Argument(..., help='A fax number you send to or receive from.'),
+                forget: bool = typer.Option(False, '--forget', help='Forget that fax over IP or audio fax failed with '
+                                                                   'this number, so its next calls use the usual '
+                                                                   'settings.')):
+    """What a number's fax machine said on recent calls, what Faxbot learned from them, and what it changes."""
+    api = state.api()
+    if forget:
+        result = api.post('/fax-machines/numbers/' + segment(number) + '/forget')
+        state.out().result(result, lambda out: out.line(result['sentence']))
+        return
+    data = api.get('/fax-machines/numbers/' + segment(number))
+    directions = {'out': 'Sent', 'in': 'Received'}
 
     def human(out):
         out.line(data['sentence'])
-        for call in data['calls'][:1]:
-            out.line(f"Last call, {local_time(call['when'])}:")
-            for text in call['sentences']:
+        for call in data['calls'][:5]:
+            what = ', '.join(part for part in (directions.get(call['direction']), call.get('mode_label'),
+                                               call.get('engine_label')) if part)
+            out.line(f"{local_time(call['when'])}: {what}." + (f" {call['outcome']}" if call.get('outcome') else ''))
+            for text in call['sentences'] + call.get('changes', []):
                 out.line('  ' + text)
-        for text in data['learned']['sentences']:
+        learned = data['learned']
+        if learned['sentences']:
+            out.line('What Faxbot changes for this number:')
+            for text in learned['sentences']:
+                out.line('  ' + text)
+        for text in learned.get('notes', []) + ([learned['since']] if learned.get('since') else []):
             out.line(text)
+        if data.get('can_forget'):
+            out.line(f"To forget what failed with this number: faxbot recipients fax-machine {data['number']} --forget")
         if data['iaf']:
             out.line('Faxes to and from this number go as Internet Aware Fax.')
     state.out().result(data, human)

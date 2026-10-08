@@ -752,6 +752,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   <ListItemText primary="How the call went" secondary={detailJob.fax_engine.negotiation.sentence} />
                 </ListItem>
               )}
+              {detailJob.fax_engine?.changes?.length ? (
+                <ListItem data-testid="job-call-changes">
+                  <ListItemText primary="Changed for this call" secondary={detailJob.fax_engine.changes.join(' ')} />
+                </ListItem>
+              ) : null}
               <FaxCostItem client={client} jobId={detailJob.id} />
               <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />

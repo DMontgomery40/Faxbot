@@ -1280,8 +1280,8 @@ def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was
     out = ' '.join(summary.stdout.split())
     for words in ('Measured on 1 call in the last 7 days; the engine reported nothing for 1 more call.',
                   '9600 bit/s on the last page', 'Not reported by this engine', 'Calls per delivered fax',
-                  'Faxbot only measures these for now; it does not change speed, compression or error correction '
-                  'because of them.'):
+                  'Faxbot starts slower or uses a more robust compression only after its own calls to that number '
+                  'fail the same way more than once; it never turns error correction off or lowers resolution.'):
         assert words in out, words
     assert '14400' not in out  # spandsp's starting speed on a call that confirmed no page is not a measurement
     assert trunk_cli.json('providers', 'trunk', 'negotiation')['days'] == 30

@@ -13,6 +13,13 @@ screen can say it in one sentence:
 - ``carrier``: a new trunk with a carrier that turns T.38 into audio fax inside
   its own network (BT One Voice), so audio fax is what reaches the far end.
 
+Per number, Faxbot also remembers T.38 or audio fax failing (``engine_learning``):
+a call on which the far fax machine answered over T.38 and the fax did not
+finish makes only that number's new calls use audio fax, for a while. A call
+whose T.38 data never came back is the network's problem and moves the whole
+trunk here instead; it teaches nothing about the number, so once the network
+is fixed and T.38 is back on, every number gets T.38 again.
+
 A person's own choice (the switch, "Try T.38 again", ``faxbot trunk mode``)
 is recorded as ``chosen`` with what the network allowed at that moment, and
 the network rule leaves it alone until the network changes. Every record

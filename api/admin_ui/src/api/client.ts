@@ -1418,6 +1418,11 @@ class AdminAPIClient {
     return this.json(`/fax-machines/numbers/${id(number)}`);
   }
 
+  // Forget that fax over IP or audio fax failed with this number; its next calls use the usual settings.
+  async forgetFaxMachine(number: string): Promise<{ ok: true; forgotten: number; sentence: string }> {
+    return this.json(`/fax-machines/numbers/${id(number)}/forget`, { method: 'POST' });
+  }
+
   async listIafServers(): Promise<{ servers: IafServer[]; partners: string[] }> {
     return this.json('/fax-machines/iaf');
   }
