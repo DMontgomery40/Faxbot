@@ -112,6 +112,10 @@ def _record_engine(request, job_id, attempt_id, payload, row):
         return
     hylafax_records.safely(records.record_result, direction='outbound', call_key=attempt_id, details=details,
                            job_id=job_id, number=(row or {}).get('called'))
+    # The far end's SSL Fax address, kept as a hint for finding partners; no network here (direct/discovery.py).
+    from .direct.discovery import record_engine_hint
+    hylafax_records.safely(record_engine_hint, engine, attempt_id=attempt_id, job_id=job_id,
+                           number=(row or {}).get('called'), payload=payload)
     # What the call negotiated, from the call's session log (measurement only).
     from .fax_negotiation import engine_values, page_capability
     hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',

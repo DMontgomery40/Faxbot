@@ -40,6 +40,8 @@ OWN_AUTHENTICATION = {
     ("POST", "/direct/capabilities"): "signed partner statement of what it accepts",
     ("POST", "/direct/relay/statements"): "signed partner relay statement (offer, acceptance, withdrawal, price, receipt)",
     ("GET", "/direct/relay/outcomes/{message_id}"): "signed partner request: the outcome of a fax it relayed here",
+    ("POST", "/direct/introductions"): "signed partner introduction (a hint; the challenge fax still decides)",
+    ("GET", "/.well-known/faxbot-direct"): "public partner card, by design; 404 while direct delivery or it is off",
     ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
     ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",
     ("GET", "/openapi.json"): "API description",
