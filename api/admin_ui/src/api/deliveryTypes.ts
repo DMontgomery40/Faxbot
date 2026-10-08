@@ -412,6 +412,70 @@ export interface DirectPartner {
   receive_fax_images?: boolean;
   partner_receives_fax_images?: boolean;
   fax_images_text?: string | null;
+  // Notice fax: each document goes directly with a one-page notice by fax (for an intake that needs a fax event).
+  notice_fax?: boolean;
+  notice_fax_text?: string | null;
+  // A partner on your own network presented a certificate other than the one pinned for it; one sentence.
+  certificate_changed?: boolean;
+  certificate_text?: string | null;
+}
+
+// POST /direct/peers/{id}/notice-fax: the partner as it now stands, and the sentence to show.
+export type DirectNoticeFaxResult = DirectPartner & { detail: string };
+
+// GET /direct/notices: notice faxes sent and received. ``status`` is one sentence; ``code`` is the page's code.
+export interface DirectNotice {
+  id: string;
+  direction: 'outbound' | 'inbound';
+  partner: string | null;
+  state: 'announced' | 'queued' | 'waiting' | 'paired' | 'cancelled';
+  status: string;
+  code: string;
+  matched_by: 'sub' | 'barcode' | 'person' | null;
+  fax_id: string | null;
+  original_fax_id: string | null;
+  paired_by: string | null;
+  created_at: string;
+  paired_at: string | null;
+}
+
+// GET /direct/notices/{id}/faxes: received faxes of one or two pages a held document may be paired with.
+export interface DirectNoticeCandidate {
+  id: string;
+  from_number: string | null;
+  pages: number | null;
+  received_at: string;
+}
+
+// POST /direct/notices/{id}/pair: the notice as it now stands and the sentence to show.
+export type DirectNoticePaired = DirectNotice & { detail: string; partner_told: boolean };
+
+// GET /direct/transfers: documents sent in pieces, with how many pieces the receiving side holds.
+export interface DirectTransfer {
+  message_id: string;
+  direction: 'outbound' | 'inbound';
+  partner: string | null;
+  state: 'open' | 'committed' | 'refused' | 'abandoned';
+  status: string;
+  pieces: number;
+  confirmed: number;
+  size_bytes: number;
+  created_at: string;
+  finished_at: string | null;
+}
+
+// GET /direct/repairs: fax calls with partners that broke part way, and how each was completed directly.
+export interface DirectRepair {
+  id: string;
+  direction: 'outbound' | 'inbound';
+  partner: string | null;
+  state: 'confirmed' | 'sent' | 'completed' | 'offered' | 'expired';
+  status: string;
+  fax_id: string | null;
+  pages_held: number;
+  total_pages: number;
+  error_correction: boolean | null;
+  created_at: string;
 }
 
 // POST /direct/peers/{id}/fax-images: the partner as it now stands, the sentence to show and whether it was told now.
@@ -514,8 +578,12 @@ export interface DirectDeliveryRecord {
   partner: string | null;
   fax_number: string;
   state: 'sending' | 'accepted' | 'refused' | 'uncertain';
-  // 'fax_image' when the exact fax image went directly (never "faxed"); optional for older servers.
-  kind?: 'original' | 'fax_image';
+  // 'fax_image' when the exact fax image went directly (never "faxed"); 'repair' for the pages missing after a
+  // broken call; optional for older servers.
+  kind?: 'original' | 'fax_image' | 'relay' | 'form' | 'repair';
+  // The sent fax this record belongs to, and whether a one-page notice went by fax with the original.
+  job_id?: string | null;
+  notice?: boolean;
   status: string;
   size_bytes: number;
   created_at: string;
