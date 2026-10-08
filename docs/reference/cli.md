@@ -5857,6 +5857,7 @@ $ faxbot costs predict [OPTIONS]
 * `--pages <int range>`: Pages in the fax.  [default: 1; 1&lt;=x&lt;=1000]
 * `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
 * `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
+* `--file <file>`: Price this document (PDF or plain text) instead: Faxbot measures each fax coding on its own pages. --pages, --layout and --resolution then come from the document.
 * `--help`: Show this message and exit.
 
 ### `faxbot costs recommendations`

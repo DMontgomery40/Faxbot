@@ -672,7 +672,7 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
 
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
-                  boundary_seconds=None, predict=None, describe_dense=None):
+                  boundary_seconds=None, predict=None, describe_dense=None, usable=None, measure_cache=None):
     """Price every way these pages may go and keep exactly one, the cheapest (``pages.decision.rank``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
@@ -680,9 +680,16 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     encoded pages, when it returns any). Each candidate is made from the same pages, so dense pages and the codec
     never stack. Each is priced with the shared predictor through ``pages.decision`` for ``route`` and
     ``destination``, at its own resolution; on a full tie the simpler layout wins (normal, dense, codec).
+
+    ``usable`` (``pages.coding.Usable``, Faxbot's own engines only): each candidate's codings are measured on its
+    own pages (kept in ``measure_cache`` with the attempt's files) and it is priced with the smallest coding the
+    call may use, so the layout and the coding are chosen together.
+
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
-    {layout: Prediction}, and ``codec``: what ``codec()`` returned when the codec was kept, else None.
+    {layout: Prediction}, ``codec``: what ``codec()`` returned when the codec was kept, else None, and
+    ``coding``: the chosen candidate's ``pages.coding.CodingChoice`` (None without ``usable``).
     """
+    from .pages import coding as codings
     from .pages import decision, packing
     candidates = {"normal": (list(frames), None, None)}
     if dense_allowed:
@@ -698,8 +705,20 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
         encoded = codec(frames)
         if encoded and encoded[0]:
             candidates["codec"] = (list(encoded[0]), encoded[1], encoded)
-    shapes = {name: decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), name, boundary_seconds)
-              for name, (pages, _, _) in candidates.items()}
+    choices, shapes = {}, {}
+    for name, (pages, _, _) in candidates.items():
+        if usable is None:
+            shapes[name] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), name,
+                                          boundary_seconds)
+            continue
+        measured = (codings.measure_cached(pages, measure_cache) if measure_cache is not None
+                    else codings.measure(pages))
+        choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured)
+        choices[name] = choice
+        # A JBIG request that could not be measured is priced at its fallback's measured size (codings.best_coding).
+        shapes[name] = decision.Shape(len(pages), tuple(measured["MMR"]), frames_resolution(pages), name,
+                                      boundary_seconds, measured=measured,
+                                      coding=choice.priced)
     names = list(candidates)
     predictions = dict(zip(names, decision.price_all(route, destination, [shapes[name] for name in names],
                                                      card=card, predict=predict)))
@@ -710,4 +729,4 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     pages, reason, details = candidates[chosen]
     return {"layout": chosen, "pages": pages, "reason": reason,
             "seconds_saved": max(0, seconds) if seconds is not None else None, "predictions": predictions,
-            "codec": details}
+            "codec": details, "coding": choices.get(chosen)}

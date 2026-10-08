@@ -67,6 +67,7 @@ config.attributes["schema_setup_plans"] = importlib.import_module(package + ".sc
 config.attributes["schema_number_advice"] = importlib.import_module(package + ".schema_number_advice")
 config.attributes["schema_digital_routes"] = importlib.import_module(package + ".schema_digital_routes")
 config.attributes["schema_engine_extras"] = importlib.import_module(package + ".schema_engine_extras")
+config.attributes["schema_measured_codec"] = importlib.import_module(package + ".schema_measured_codec")
 
 
 def migrate(connection):
