@@ -80,6 +80,7 @@ from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
 from .routing.schedule_http import router as routing_schedule_router
+from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
 from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
@@ -205,6 +206,7 @@ app.include_router(routing_router)
 app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
 app.include_router(routing_schedule_router)
+app.include_router(routing_charges_router)
 app.include_router(rules_router)
 app.include_router(reply_number_router)
 app.include_router(screening_router)

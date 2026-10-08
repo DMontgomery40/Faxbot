@@ -5,6 +5,7 @@ import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './net
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
+import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type {
   CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
   ChecklistBuildRequest, ChecklistItem,
@@ -1079,6 +1080,44 @@ class AdminAPIClient {
   // Ask the SIP trunk carrier now what each open call cost; never changes a delivery.
   async reconcileCharges(): Promise<ReconcileResult> {
     return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
+  }
+
+  // Costs → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
+  async getCharges(days = 30): Promise<ChargesView> {
+    return this.json(`/routing/charges${query({ days })}`);
+  }
+
+  // List one account's (or every account's) faxes at its provider now; read only, never changes a fax.
+  async sweepCharges(account?: string | null, days = 7): Promise<SweepResponse> {
+    return this.json('/routing/charges/sweep', { method: 'POST', body: JSON.stringify({ account: account || null, days }) });
+  }
+
+  // Costs → Invoices: each invoice entered, with the part your faxes don't explain.
+  async listInvoices(): Promise<InvoicesView> {
+    return this.json('/routing/invoices');
+  }
+
+  async getInvoice(invoiceId: string): Promise<InvoiceDetail> {
+    return this.json(`/routing/invoices/${id(invoiceId)}`);
+  }
+
+  // Enter an invoice total; entering the same period again adds a corrected version and keeps the earlier one.
+  async addInvoice(input: InvoiceInput): Promise<Invoice> {
+    const formData = new FormData();
+    formData.append('account', input.account);
+    formData.append('total', input.total);
+    formData.append('currency', input.currency);
+    if (input.month) formData.append('month', input.month);
+    if (input.firstDay) formData.append('first_day', input.firstDay);
+    if (input.lastDay) formData.append('last_day', input.lastDay);
+    if (input.note) formData.append('note', input.note);
+    if (input.file) formData.append('file', input.file);
+    return this.json('/routing/invoices', { method: 'POST', body: formData });
+  }
+
+  async downloadInvoiceFile(invoiceId: string): Promise<Blob> {
+    const res = await this.fetch(`/routing/invoices/${id(invoiceId)}/file`);
+    return res.blob();
   }
 
   async getFaxCost(jobId: string): Promise<FaxCost> {

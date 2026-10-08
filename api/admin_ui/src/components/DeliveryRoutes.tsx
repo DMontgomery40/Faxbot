@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import AdminAPIClient from '../api/client';
-import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts, TollFreeTerms } from '../api/deliveryTypes';
+import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts, ReceivedFaxCosts, TollFreeTerms } from '../api/deliveryTypes';
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
@@ -47,6 +47,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [providers, setProviders] = useState<ProviderCosts[]>([]);
   const [received, setReceived] = useState<ReceivedCosts[]>([]);
+  const [receivedFaxes, setReceivedFaxes] = useState<ReceivedFaxCosts[]>([]);
   const [carrier, setCarrier] = useState<CarrierChargeStatus | null>(null);
   const [cards, setCards] = useState<RateCard[]>([]);
   const [tollFree, setTollFree] = useState<TollFreeTerms[]>([]);
@@ -71,6 +72,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
       if (costs) {
         setProviders(costs.providers);
         setReceived(costs.received ?? []);
+        setReceivedFaxes(costs.received_faxes ?? []);
         setCarrier(costs.carrier_charges ?? null);
       }
       if (rates) {
@@ -103,7 +105,8 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
         <>
           {shows('spending') && part('spending',
             <>
-              <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
+              <Spending client={client} providers={providers} received={received} receivedFaxes={receivedFaxes}
+                carrier={carrier} canWrite={canWrite}
                 onChanged={() => void load()} />
               <RelayCosts client={client} />
             </>)}

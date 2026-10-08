@@ -342,7 +342,8 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
     start = since or (utcnow() - timedelta(days=WINDOW_DAYS))
     spending = _spending(request)
     values = request.scope['faxbot.configuration'].active.values
-    outbound, received = await _call(lambda: (spending.outbound(start), spending.received(start)))
+    outbound, received, received_faxes = await _call(lambda: (spending.outbound(start), spending.received(start),
+                                                              spending.received_faxes(start)))
 
     def carrier(entry):
         names = sorted(entry['carriers'])
@@ -360,11 +361,11 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
                 'period_days': entry['plan_days']}
 
     grand = {}
-    for entry in [*outbound, *received]:
+    for entry in [*outbound, *received, *received_faxes]:
         for currency, micros in entry['total_micros'].items():
             grand[currency] = grand.get(currency, 0) + micros
     # Faxes and calls with no charge and no estimate: left out of every total, never counted as $0.
-    not_priced = sum(entry['unpriced'] for entry in [*outbound, *received])
+    not_priced = sum(entry['unpriced'] for entry in [*outbound, *received, *received_faxes])
     # Calls the carrier priced only in part by the give-up time: their priced part is in the totals.
     never_priced = sum(entry['never_priced'] for entry in [*outbound, *received])
     return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand),
@@ -393,7 +394,33 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
             'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
             **_unrecorded_view(entry), 'total_cost': _money(entry['total_micros'])}
-            for entry in received]}
+            for entry in received],
+        # Faxes each cloud provider received (Sinch, Phaxio, HumbleFax…), apart from the trunk's received calls.
+        'received_faxes': [{
+            'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']), 'faxes': entry['faxes'],
+            'reported_cost': _money(entry['reported_cost_micros']), 'faxes_with_reported_cost': entry['reported'],
+            'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
+            'faxes_without_reported_cost': entry['unreported'], 'faxes_not_priced': entry['unpriced'],
+            'faxes_included_in_plan': entry['included'], 'total_cost': _money(entry['total_micros']),
+            'summary': received_faxes_sentence(entry)} for entry in received_faxes]}
+
+
+def received_faxes_sentence(entry):
+    """One line per cloud provider, such as: Received faxes: Sinch $0.42 for 6 faxes, 1 more not priced yet."""
+    from .costs import money_list_text
+    label = route_label(entry['provider_id'])
+    word = lambda count: 'fax' if count == 1 else 'faxes'  # noqa: E731
+    known = entry['faxes'] - entry['unpriced'] - entry['included']
+    if known:
+        text = f"{money_list_text(entry['total_micros'])} for {known} {word(known)}"
+        more = ([f"{entry['unpriced']} more not priced yet"] if entry['unpriced'] else []) + (
+            [f"{entry['included']} more included in the plan"] if entry['included'] else [])
+    elif entry['included']:
+        text = f"{entry['included']} {word(entry['included'])}, included in the plan"
+        more = [f"{entry['unpriced']} more not priced yet"] if entry['unpriced'] else []
+    else:
+        text, more = f"{entry['unpriced']} {word(entry['unpriced'])}, not priced yet", []
+    return f"Received faxes: {label} {', '.join([text, *more])}."
 
 
 def _unrecorded_view(entry):
@@ -419,32 +446,35 @@ def _carrier_status(values):
     preset = values.sip_trunk_preset
     if preset not in CARRIER_PRESETS:
         return {'carrier': carrier_label(preset) if preset else None, 'readable': False, 'supported': False}
-    return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
+    from .carrier_records import trunk_records  # what to set, in one sentence, for this carrier
+    found = trunk_records(values)
+    return {'carrier': carrier_label(preset), 'supported': True, 'readable': found['readable'],
+            'sentence': found['sentence']}
 
 
 NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
                  'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
 
 
-def _reconcile_summary(result):
+def _reconcile_summary(result, label='Telnyx'):
     # The same split as the Spending card: a record matched to a received fax is not "no record of".
     attached = result.get('unrecorded_matched_to_faxes', 0)
     unattached = result.get('unrecorded_calls', 0) - attached
-    extra = (f" Telnyx billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
+    extra = (f" {label} billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
              if unattached else '')
     if attached:
         extra += (f" {attached} {'call' if attached == 1 else 'calls'} came in that Faxbot did not record at the time; "
                   f"{'its fax is' if attached == 1 else 'their faxes are'} in Received.")
     if result['carrier_unavailable'] and not result['checked']:
-        return 'Telnyx could not be reached; Faxbot will ask again later.'
+        return f'{label} could not be reached; Faxbot will ask again later.'
     if not result['checked']:
         return 'No calls are waiting for a charge.' + extra
     recorded = result['charges_recorded']
     parts = [f"{recorded} new {'charge' if recorded == 1 else 'charges'} recorded"]
     if result['waiting']:
-        parts.append(f"{result['waiting']} still waiting for the Telnyx bill")
+        parts.append(f"{result['waiting']} still waiting for the {label} bill")
     if result['ambiguous']:
-        parts.append(f"{result['ambiguous']} could not be matched to one Telnyx record")
+        parts.append(f"{result['ambiguous']} could not be matched to one {label} record")
     calls = f"{result['checked']} {'call' if result['checked'] == 1 else 'calls'}"
     return f'Checked {calls}: ' + ', '.join(parts) + '.' + extra
 
@@ -455,18 +485,30 @@ async def reconcile(request: Request):
     engine, _ = installation_engine(request.app)
     if engine is None:
         raise HTTPException(503, detail='Installation configuration is not ready.')
-    key = request.scope['faxbot.configuration'].active.values.telnyx_api_key
-    if not key:
-        raise HTTPException(409, detail=NO_TELNYX_KEY)
-
     values = request.scope['faxbot.configuration'].active.values
+    from .carrier_records import READERS, reader_for, trunk_records
+    preset = values.sip_trunk_preset
+    if preset in READERS:
+        # Another carrier that publishes its call records (carrier_records.PUBLISHED).
+        source = reader_for(preset, values)
+        if not source.ready():
+            raise HTTPException(409, detail=trunk_records(values)['sentence'])
+    else:
+        key = values.telnyx_api_key
+        if not key:
+            raise HTTPException(409, detail=NO_TELNYX_KEY)
+        preset, source = 'telnyx', carrier_source(lambda: key)
 
     def run():
-        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), carrier_source(lambda: key),
+        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), source, preset=preset,
                                        numbers=lambda: _trunk_numbers(values))
         return reconciler.run_now().as_dict()
     result = await _call(run)
-    return {**result, 'summary': _reconcile_summary(result)}
+    if result['carrier_unavailable'] and getattr(source, 'preparing', False):
+        # Flowroute prepares its call records as an export; the next check reads the same one.
+        return {**result, 'summary': f'{source.label} is still preparing its call records; Faxbot reads them '
+                                     'within a few minutes, or select Check again.'}
+    return {**result, 'summary': _reconcile_summary(result, source.label)}
 
 
 def _cost_view(cost):

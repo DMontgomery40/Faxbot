@@ -1,6 +1,6 @@
 // One reading of GET /routing/costs for every place that shows spending (Tools → Delivery routes and the
 // Dashboard card), so the two can never disagree: plans, charges, estimates, received calls and unmatched records.
-import type { Money, ProviderCosts, ReceivedCosts, RouteCostsResponse } from '../../api/deliveryTypes';
+import type { Money, ProviderCosts, ReceivedCosts, ReceivedFaxCosts, RouteCostsResponse } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { NOT_PRICED, formatMoney, formatMoneyList, fromMicros, toMicros } from './shared';
 
@@ -85,24 +85,35 @@ function withNotPriced(value: string, open: string | null): string {
   return open && value !== NO_PUBLISHED_PRICE && value !== NOT_PRICED ? `${value}, ${open}` : value;
 }
 
+// A cloud provider's received faxes: "$0.42 for 6 faxes, 1 more not priced yet" (the server's line without its label).
+export function receivedFaxesValue(entry: ReceivedFaxCosts): string {
+  const prefix = `Received faxes: ${entry.label} `;
+  const text = entry.summary.startsWith(prefix) ? entry.summary.slice(prefix.length) : entry.summary;
+  return text.replace(/\.$/, '');
+}
+
+type Costs = Pick<RouteCostsResponse, 'providers' | 'received' | 'received_faxes'>;
+
 export interface SpendingLine {
   key: string;
   label: string;
   value: string;
 }
 
-export function spendingLines(costs: Pick<RouteCostsResponse, 'providers' | 'received'>): SpendingLine[] {
+export function spendingLines(costs: Costs): SpendingLine[] {
   return [
     ...costs.providers.map((provider) => ({ key: `sent-${provider.provider_id}`, label: providerLabel(provider.provider_id),
       value: withNotPriced(sentCost(provider), openCounts(provider.attempts_not_priced, provider.attempts_never_priced, 'fax')) })),
     ...(costs.received ?? []).map((entry) => ({ key: `received-${entry.carrier ?? entry.provider_id}`, label: receivedLabel(entry),
       value: withNotPriced(receivedCost(entry), openCounts(entry.calls_not_priced, entry.calls_never_priced, 'call')) })),
+    ...(costs.received_faxes ?? []).map((entry) => ({ key: `received-faxes-${entry.provider_id}`,
+      label: `Received faxes: ${entry.label}`, value: receivedFaxesValue(entry) })),
   ];
 }
 
 // "2 faxes and 1 call not priced yet" across every route (none of them is in the total), then "1 call never
 // priced in full" (only its priced part is), or null.
-export function notPricedTotal(costs: Pick<RouteCostsResponse, 'providers' | 'received'>): string | null {
+export function notPricedTotal(costs: Costs): string | null {
   const counted = (faxes: number, calls: number, words: string) => {
     const parts = [...(faxes ? [countOf(faxes, 'fax')] : []), ...(calls ? [countOf(calls, 'call')] : [])];
     return parts.length ? [`${parts.join(' and ')} ${words}`] : [];
@@ -110,7 +121,8 @@ export function notPricedTotal(costs: Pick<RouteCostsResponse, 'providers' | 're
   const sum = (values: (number | undefined)[]) => values.reduce<number>((total, value) => total + (value ?? 0), 0);
   const received = costs.received ?? [];
   const phrases = [
-    ...counted(sum(costs.providers.map((provider) => provider.attempts_not_priced)),
+    ...counted(sum([...costs.providers.map((provider) => provider.attempts_not_priced),
+      ...(costs.received_faxes ?? []).map((entry) => entry.faxes_not_priced)]),
       sum(received.map((entry) => entry.calls_not_priced)), 'not priced yet'),
     ...counted(sum(costs.providers.map((provider) => provider.attempts_never_priced)),
       sum(received.map((entry) => entry.calls_never_priced)), 'never priced in full'),
@@ -119,7 +131,7 @@ export function notPricedTotal(costs: Pick<RouteCostsResponse, 'providers' | 're
 }
 
 // The Total line: the known total and what it leaves out, never a $0 for faxes with no price.
-export function spendingTotalText(costs: Pick<RouteCostsResponse, 'providers' | 'received' | 'total_cost'>): string {
+export function spendingTotalText(costs: Costs & Pick<RouteCostsResponse, 'total_cost'>): string {
   const total = spendingTotal(costs);
   const open = notPricedTotal(costs);
   if (total.length === 0) return open ? open.charAt(0).toUpperCase() + open.slice(1) : NO_PUBLISHED_PRICE;
@@ -127,10 +139,11 @@ export function spendingTotalText(costs: Pick<RouteCostsResponse, 'providers' | 
 }
 
 // Everything spent in the period: the server's total when it sends one (it counts each plan fee once per 30 days).
-export function spendingTotal(costs: Pick<RouteCostsResponse, 'providers' | 'received' | 'total_cost'>): Money[] {
+export function spendingTotal(costs: Costs & Pick<RouteCostsResponse, 'total_cost'>): Money[] {
   if (costs.total_cost) return costs.total_cost;
   const totals = new Map<string, bigint>();
   for (const provider of costs.providers) add(totals, sentTotal(provider));
   for (const entry of costs.received ?? []) add(totals, entry.total_cost ?? entry.reported_cost);
+  for (const entry of costs.received_faxes ?? []) add(totals, entry.total_cost);
   return moneyOf(totals);
 }

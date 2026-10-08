@@ -11,6 +11,7 @@ from .commands import (access, accounts, admin, blocked, codec, connectors, deli
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import certainty, discovery
 from .commands import send_once
+from .commands import charges as charge_commands
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -175,6 +176,8 @@ costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('rate-rows')(delivery.routing_rate_rows)
 costs.add_typer(delivery.plans, name='plans')
 costs.command('predict')(delivery.routing_predict)
+costs.add_typer(charge_commands.charges, name='charges')
+costs.add_typer(charge_commands.invoices, name='invoices')
 
 # -- access --------------------------------------------------------------------------
 

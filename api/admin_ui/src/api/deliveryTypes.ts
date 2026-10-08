@@ -207,6 +207,23 @@ export interface ProviderCosts {
   total_cost?: Money[];
 }
 
+// Faxes one cloud provider received (Sinch, Phaxio, HumbleFax…), apart from the trunk's received calls.
+export interface ReceivedFaxCosts {
+  provider_id: string;
+  label: string;
+  faxes: number;
+  reported_cost: Money[];
+  faxes_with_reported_cost: number;
+  estimated_cost_not_reported: Money[];
+  faxes_without_reported_cost: number;
+  // Of faxes_without_reported_cost, those with no estimate either: never in the total, never $0.
+  faxes_not_priced: number;
+  faxes_included_in_plan: number;
+  total_cost: Money[];
+  // "Received faxes: Sinch $0.42 for 6 faxes, 1 more not priced yet."
+  summary: string;
+}
+
 export interface ReceivedCosts {
   provider_id: string;
   label: string;
@@ -238,12 +255,15 @@ export interface CarrierChargeStatus {
   carrier: string | null;
   supported: boolean;
   readable: boolean;
+  // What to set so Faxbot can read this carrier's call charges, in one sentence.
+  sentence?: string;
 }
 
 export interface RouteCostsResponse {
   since: string;
   providers: ProviderCosts[];
   received?: ReceivedCosts[];
+  received_faxes?: ReceivedFaxCosts[];
   carrier_charges?: CarrierChargeStatus;
   total_cost?: Money[];
   // Sent faxes and received calls with no charge and no estimate: left out of total_cost.

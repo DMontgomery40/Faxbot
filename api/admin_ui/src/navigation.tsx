@@ -22,6 +22,8 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import SettingsPhoneIcon from '@mui/icons-material/SettingsPhone';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import SavingsIcon from '@mui/icons-material/Savings';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
@@ -69,6 +71,8 @@ import { currencyFor } from './components/ProviderRulesText';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import CasePackets from './components/delivery/CasePackets';
 import Savings from './components/delivery/Savings';
+import Charges from './components/delivery/Charges';
+import Invoices from './components/delivery/Invoices';
 import Recommendations from './components/delivery/Recommendations';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import UncertainSettingsPanel from './components/work/UncertainSettingsPanel';
@@ -359,6 +363,12 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'spending', label: 'Spending', icon: <ReceiptLongIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="spending" /> },
+      // What each provider charged, and faxes a provider billed that Faxbot has no record of.
+      { id: 'charges', label: 'Charges', icon: <ReceiptIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Charges client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      // Monthly invoice totals, and the part your faxes don't explain.
+      { id: 'invoices', label: 'Invoices', icon: <RequestQuoteIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Invoices client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
       { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },

@@ -286,8 +286,10 @@ def _not_billed(item, unreported):
 
 
 def _not_priced_line(result):
-    """How many sent faxes and received calls have no charge and no estimate, so no total counts them."""
-    sent = sum(item.get('attempts_not_priced') or 0 for item in result.get('providers') or [])
+    """How many faxes (sent, or received from a cloud provider) and received calls have no charge and no estimate,
+    so no total counts them."""
+    sent = sum(item.get('attempts_not_priced') or 0 for item in result.get('providers') or []) + sum(
+        item.get('faxes_not_priced') or 0 for item in result.get('received_faxes') or [])
     calls = sum(item.get('calls_not_priced') or 0 for item in result.get('received') or [])
     parts = ([f"{sent} {'fax' if sent == 1 else 'faxes'}"] if sent else []) + (
         [f"{calls} {'call' if calls == 1 else 'calls'}"] if calls else [])
@@ -353,6 +355,8 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
                         money(item['reported_cost']), _not_billed(item, 'calls_without_reported_cost'),
                         item.get('calls_not_priced', 0), item['awaiting_carrier_bill'], item['unmatched_charges']]
                        for item in received])
+        for item in result.get('received_faxes') or []:
+            out.line(item['summary'])  # "Received faxes: Sinch $0.42 for 6 faxes."
         _unrecorded_lines(out, [*result.get('providers', []), *received])
         if result.get('total_cost'):
             out.line(f"Total: {money(result['total_cost'])} (charges, estimates for faxes not billed yet, and plan fees "
@@ -363,9 +367,11 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
         _never_priced_lines(out, result)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
-            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
-                     f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
-                     "--secret telnyx_api_key.")
+            # Another carrier's sentence names what it needs; Telnyx's text names the command that saves its key.
+            out.line(carrier['sentence'] if carrier.get('sentence') and carrier['carrier'] != 'Telnyx' else (
+                f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
+                f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
+                "--secret telnyx_api_key."))
     state.out().result(result, human)
 
 

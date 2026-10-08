@@ -208,3 +208,107 @@ class PhaxioCharges(_ByIdCharges):
         if not isinstance(fax, dict) or str(fax.get('id')) != sid:
             raise RuntimeError('Provider charge lookup returned an unusable response.')
         return self._charge(sid, parse_phaxio_charge(fax))
+
+
+# Received faxes ---------------------------------------------------------------------------------------------
+#
+# Sinch's fax resource carries ``price`` for a received fax as for a sent one:
+# ``GET /v3/projects/{projectId}/faxes/{id}`` with ``direction`` "INBOUND"
+# (Fax API v3 reference, read 2026-10-07 and 2026-10-08). Phaxio's
+# ``GET /v2.1/faxes/{id}`` reports ``cost`` in cents for a fax whose
+# ``direction`` is "received" (Phaxio Fax Object, read 2026-10-07). Each is
+# asked only with the account that received the fax, and only while that
+# account is still the one the fax came in on: a changed project or key is
+# never asked about another account's fax.
+
+class _ReceivedCharges:
+    """Ask the account a fax came in on what the provider charged for it."""
+
+    provider_id = None
+
+    def __init__(self, values, *, timeout=10.0, client_factory=None):
+        """``values()`` returns the active configuration values."""
+        self.values = values
+        self.timeout = timeout
+        self.client_factory = client_factory or (lambda: httpx.Client(timeout=self.timeout, follow_redirects=False))
+
+    def _own(self, row):
+        """The account's configuration values, or None when the account is gone or can't be read."""
+        from ..accounts import AccountsError, account_values
+        values = self.values()
+        if values is None:
+            return None
+        try:
+            return account_values(values, row.get('account_key') or self.provider_id)
+        except AccountsError:
+            return None
+
+    def _read(self, url, auth):
+        return _ByIdCharges._read(self, url, auth)
+
+    @staticmethod
+    def _charge(sid, parsed, raw):
+        if parsed is None:
+            return []  # Not priced yet, or still going: unknown stays unknown.
+        micros, currency, _ = parsed
+        return [{'charge_id': sid, 'amount_micros': micros, 'currency': currency, 'raw_amount': raw}]
+
+
+class SinchReceivedCharges(_ReceivedCharges):
+    provider_id = 'sinch'
+
+    def __call__(self, row):
+        from ..inbound.acquisition import account_identity
+        from ..inbound.fetch import FetchError, SINCH_HOSTS, require_host
+        from ..sinch_service import SinchFaxService
+        sid = row.get('operation_id')
+        if not isinstance(sid, str) or not _SID.fullmatch(sid):
+            return []
+        own = self._own(row)
+        if own is None:
+            return []
+        project = str(own.sinch_project_id or '').strip()
+        key, secret = str(own.sinch_api_key or '').strip(), str(own.sinch_api_secret or '').strip()
+        if not (re.fullmatch(r'[A-Za-z0-9-]{1,64}', project, re.ASCII) and key and secret):
+            return []
+        if account_identity('sinch', project) != row.get('account'):
+            return []  # The account now names another project; that project is never asked about this fax.
+        base = str(own.sinch_base_url or SinchFaxService.DEFAULT_BASES[0]).strip().rstrip('/')
+        url = f'{base}/projects/{project}/faxes/{sid}'
+        try:
+            require_host(url, SINCH_HOSTS, 'Sinch')
+        except FetchError:
+            return []
+        payload = self._read(url, (key, secret))
+        fax = payload.get('data', payload)
+        if not isinstance(fax, dict) or fax.get('id') != sid:
+            raise RuntimeError('Provider charge lookup returned an unusable response.')
+        if str(fax.get('direction') or '').upper() != 'INBOUND':
+            return []
+        price = fax.get('price') if isinstance(fax.get('price'), dict) else {}
+        return self._charge(sid, parse_sinch_charge(fax), str(price.get('amount') or '')[:32])
+
+
+class PhaxioReceivedCharges(_ReceivedCharges):
+    provider_id = 'phaxio'
+    URL = 'https://api.phaxio.com/v2.1/faxes/{id}'
+
+    def __call__(self, row):
+        from ..inbound.acquisition import account_identity
+        sid = row.get('operation_id')
+        if not isinstance(sid, str) or not _PHAXIO_ID.fullmatch(sid):
+            return []
+        own = self._own(row)
+        if own is None:
+            return []
+        key, secret = str(own.phaxio_api_key or '').strip(), str(own.phaxio_api_secret or '').strip()
+        if not (key and secret) or account_identity('phaxio', key) != row.get('account'):
+            return []  # The account now holds another key; that account is never asked about this fax.
+        payload = self._read(self.URL.format(id=sid), (key, secret))
+        fax = payload.get('data') if payload.get('success') is True else None
+        if not isinstance(fax, dict) or str(fax.get('id')) != sid:
+            raise RuntimeError('Provider charge lookup returned an unusable response.')
+        if fax.get('direction') != 'received':
+            return []
+        parsed = parse_phaxio_charge(fax)
+        return self._charge(sid, parsed, f"{fax.get('cost')} cents" if parsed is not None else '')
