@@ -33,7 +33,7 @@ reflects these tables; it never imports this metadata.
 """
 import sqlalchemy as sa
 
-from .schema_accounts import frozen_metadata as previous_metadata
+from .schema_notice_repair import frozen_metadata as previous_metadata
 
 
 REVISION = '0047_certainty'

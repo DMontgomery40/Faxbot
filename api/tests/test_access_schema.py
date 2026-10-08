@@ -51,6 +51,8 @@ def migrated_id(domain, *parts):
 WORK = {'work:read', 'work:manage', 'work:export', 'work:import'}
 # Removed by 0019: they guard no route any more.
 RETIRED = {'host:actions', 'tunnels:read', 'tunnels:manage'}
+# 0032 adds Approve faxes to the catalogue, held by the Owner and Administrator roles.
+APPROVE = {'fax:approve'}
 
 
 def _memberships(rows):
@@ -79,17 +81,17 @@ def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(
     rows = snapshot(database)
     assert TABLES <= rows.keys()
     assert rows['alembic_version'] == [{'version_num': HEAD}]
-    # 0011 adds the four work permissions to the catalogue and the built-in roles; 0019 removes three.
-    assert {r['id'] for r in rows['access_permissions']} == (PERMISSIONS | WORK) - RETIRED
-    assert len((PERMISSIONS | WORK) - RETIRED) == 37
+    # 0011 adds the four work permissions to the catalogue and the built-in roles; 0019 removes three; 0032 adds one.
+    assert {r['id'] for r in rows['access_permissions']} == (PERMISSIONS | WORK | APPROVE) - RETIRED
+    assert len((PERMISSIONS | WORK | APPROVE) - RETIRED) == 38
     assert {r['id'] for r in rows['access_roles']} == {
         'role_owner', 'role_administrator', 'role_fax_operator',
         'role_fax_viewer', 'role_auditor', 'role_host_operator',
     }
     assert _memberships(rows) == {
         **builtin,
-        'role_owner': (PERMISSIONS | WORK) - RETIRED,
-        'role_administrator': (builtin['role_administrator'] | WORK) - RETIRED,
+        'role_owner': (PERMISSIONS | WORK | APPROVE) - RETIRED,
+        'role_administrator': (builtin['role_administrator'] | WORK | APPROVE) - RETIRED,
         'role_fax_operator': builtin['role_fax_operator'] | {'work:read', 'work:manage'},
         'role_fax_viewer': builtin['role_fax_viewer'] | {'work:read'},
         'role_auditor': builtin['role_auditor'] | {'work:read', 'work:export'},

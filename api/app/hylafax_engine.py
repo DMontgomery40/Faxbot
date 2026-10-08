@@ -777,12 +777,14 @@ _DATA_FORMATS = {'mh': 'G31D', 'mr': 'G32D', 'mmr': 'G4', 'jbig': 'JBIG'}
 
 
 def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str, header: str = '',
-               settings: CallSettings | None = None, station: str | None = None,
+               settings: CallSettings | None = None, station: str | None = None, subaddress: str | None = None,
                host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
     """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking).
 
     ``station``: this job's station ID (TSI), the reply number (routing/reply_number.py); the engine sends
     it, and prints it in the header line, because its modems run with UseJobTSI. None keeps the engine's own.
+    ``subaddress``: digits sent as the T.33 subaddress (SUB, hfaxd's ``JPARM SUBADDR``); HylaFAX sends it only
+    when the far end's DIS says it takes one, so it is requested, not promised.
     """
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported fax engine job')
@@ -824,6 +826,8 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
         if station is not None:
             station = re.sub(r'[^+0-9 ]', '', station)[:20]
             commands.append(f'JPARM TSI {_quote(station)}')
+        if subaddress:
+            commands.append(f'JPARM SUBADDR {_quote(re.sub(r"[^0-9]", "", subaddress)[:20])}')
         if settings is not None:
             # This call's highest speed (code 0-5), error correction and best compression.
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
@@ -846,7 +850,7 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
         raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
 
 
-async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
+async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None, subaddress=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
     from .ami import reply_choice, sender_identity
@@ -863,7 +867,7 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
                                       tiff_path=tiff_path, header=header, settings=settings,
-                                      station=station)
+                                      station=station, **({'subaddress': subaddress} if subaddress else {}))
     except BaseException:
         await forget_plan(ami, tag)
         raise

@@ -375,6 +375,12 @@ def price_entry(country, facts):
     return entry
 
 
+def signed_time(moment):
+    """``crypto.timestamp`` of a naive UTC time (``utcnow``): marked UTC first, because ``timestamp`` reads a naive
+    time as the server's local time and would shift it by the server's offset whenever TZ is not UTC."""
+    return timestamp(moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment)
+
+
 def price_body(engine, values, bound, countries, *, now=None):
     """The relay's price statement body for calls to ``countries`` over the route its planner would choose."""
     from ..routing.plan import RoutePlanner
@@ -399,7 +405,7 @@ def price_body(engine, values, bound, countries, *, now=None):
                 logging.getLogger(__name__).warning('A relay price could not be worked out for one country.')
                 continue
             entries.append(price_entry(country, facts))
-    return {'priced_at': timestamp(now), 'valid_until': timestamp(now + PRICE_LIFETIME),
+    return {'priced_at': signed_time(now), 'valid_until': signed_time(now + PRICE_LIFETIME),
             'home': getattr(values, 'fax_default_country', 'US') or 'US', 'routes': entries}
 
 
@@ -1084,7 +1090,7 @@ class RelayService:
                 handle.write(data)
         receipt = signed(identity, {'type': 'receipt', 'message_id': manifest['message_id'], 'status': 'accepted',
                                     'kind': 'relay', 'document_sha256': manifest['document']['sha256'],
-                                    'recipient': manifest['recipient'], 'accepted_at': timestamp(now),
+                                    'recipient': manifest['recipient'], 'accepted_at': signed_time(now),
                                     'capabilities': self.direct.offered(peer)})
         hold = self._hold(row, facts, revision, profile, destination, pages)
         job = {'id': job_id, 'to_number': destination, 'file_name': 'relayed.pdf',

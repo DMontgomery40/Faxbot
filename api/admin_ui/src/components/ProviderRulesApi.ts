@@ -276,6 +276,9 @@ export interface ExplainRoute {
   label: string;
   sentence: string;
   quote: Money | null;
+  // "In your plan" (or "In your plan; over your normal-use budget") for a fax a monthly plan carries, "Price
+  // unknown", or "No charge" for no call; null when `quote` has the amount. A plan's fax never reads "$0.00".
+  quote_text?: string | null;
   origin: string | null;
   usable: boolean;
 }
@@ -333,6 +336,8 @@ export interface RouteAttempt {
   page_layout: string | null;
   sentence: string;
   estimate: Money | null;
+  // "In your plan" for an attempt a monthly plan carried, instead of an amount.
+  estimate_text?: string | null;
 }
 
 // What approving or refusing changed, with the server's own sentence for what happens next.

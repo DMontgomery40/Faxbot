@@ -83,8 +83,8 @@ class CertaintyWorld(World):
             return connection.execute(sa.select(sa.func.count()).select_from(self.tables['fax_jobs'])).scalar()
 
     def accept(self, sender):
-        """A stand-in for the authorized acceptance: records the fax as queued for ``sender``."""
-        def accept(job_id, to_number, document, file_name, pages):
+        """A stand-in for ``accept_generated_fax`` bound to ``sender``: records the fax as queued for them."""
+        def accept(*, to_number, document, file_name, pages, job_id):
             if any(entry[0] == job_id for entry in self.accepted):
                 return False
             self.accepted.append((job_id, to_number, document, file_name, pages))
@@ -270,12 +270,12 @@ def test_the_receipt_query_goes_only_when_a_person_sends_it_and_only_once(cw):
     assert document.startswith(b'%PDF') and name == f"receipt-query-{item['reference']}.pdf"
     assert cw.job_count() == 1  # drafting sends nothing: the original is the only fax
     accept = cw.accept('dana')
-    sent = cw.service.send_query(dana, item['id'], version=1, accept=accept)
+    sent = cw.service.send_query(dana, item['id'], version=1, send=accept)
     assert sent['query_fax_id'] == query_id(item['id']) and len(cw.accepted) == 1
     job_id, to_number, page, file_name, pages = cw.accepted[0]
     assert (to_number, pages) == (NUMBER, 1) and b'synthetic referral' not in page
     with pytest.raises(CertaintyConflict, match='already sent'):
-        cw.service.send_query(dana, item['id'], version=sent['version'], accept=accept)
+        cw.service.send_query(dana, item['id'], version=sent['version'], send=accept)
     assert len(cw.accepted) == 1
     query = cw.service.detail(dana, item['id'])['checks'][2]
     assert query['result'] == 'sent' and query['fax_id'] == job_id
@@ -295,9 +295,9 @@ def test_not_delivered_send_again_is_a_new_fax_linked_to_the_first(cw):
     item = cw.item_for('fax-1')
     with pytest.raises(CertaintyInputError, match='Only a fax that did not arrive'):
         cw.service.settle(dana, item['id'], outcome='delivered', reason='they have it', version=1, send_again=True,
-                          accept=cw.accept('dana'))
+                          send=cw.accept('dana'))
     settled = cw.service.settle(dana, item['id'], outcome='not_delivered', reason='Front desk says no fax came',
-                                version=1, send_again=True, accept=cw.accept('dana'))
+                                version=1, send_again=True, send=cw.accept('dana'))
     new_id = resend_id(item['id'])
     assert settled['resend_fax_id'] == new_id and settled['outcome'] == 'not_delivered'
     assert settled['state_text'] == 'Settled as not delivered by dana. The fax was sent again as a new fax.'
@@ -397,7 +397,7 @@ def test_send_again_is_refused_once_the_fax_is_already_on_its_way_again(cw):
     assert view['suggestion'] is None
     with pytest.raises(CertaintyConflict, match='already sending this fax again'):
         cw.service.settle(dana, item['id'], outcome='not_delivered', reason='Partner said no', version=1,
-                          send_again=True, accept=cw.accept('dana'))
+                          send_again=True, send=cw.accept('dana'))
     assert cw.accepted == []
     settled = cw.service.settle(dana, item['id'], outcome='not_delivered', reason='Partner said no; resent by Faxbot',
                                 version=1)
@@ -419,7 +419,7 @@ def test_a_fax_sent_again_names_the_earlier_fax_only_to_people_who_may_read_it(c
     cw.feed()
     item = cw.item_for('fax-1')
     cw.service.settle(dana, item['id'], outcome='not_delivered', reason='No fax came', version=1, send_again=True,
-                      accept=cw.accept('dana'))
+                      send=cw.accept('dana'))
     new_id = resend_id(item['id'])
     # Someone who may read only the new fax (its own resource) learns nothing about the earlier one.
     cw.user('ola')

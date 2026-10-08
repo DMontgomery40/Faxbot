@@ -10,8 +10,10 @@ needs the version the person last saw.
 
 Sending anything to the recipient (the receipt query page, or the fax again)
 needs the person's request and their own ``fax:send``: the caller passes
-``accept``, which queues one fax under a fax ID derived from the item and
-reports whether an earlier request already queued it.
+``send``, ``routing/submit.accept_generated_fax`` bound to the person and the
+active configuration, so the fax goes through the same acceptance as any other
+(the sending rules decide its route, and may hold it). Its fax ID is derived
+from the item, so a repeated request returns the fax already queued.
 """
 from io import BytesIO
 import json
@@ -482,7 +484,7 @@ class CertaintyService:
                                     details={'actor_name': name}, dedupe_key='drafted')
             return document, f"receipt-query-{row['reference']}.pdf", row
 
-    def send_query(self, actor, item_id, *, version, accept):
+    def send_query(self, actor, item_id, *, version, send):
         """Send the receipt query page to the recipient, once, at this person's request."""
         with self.access_store.transaction() as connection:
             row = self._require(connection, actor, item_id, self.clock(), act=True)
@@ -493,7 +495,7 @@ class CertaintyService:
                 raise CertaintyConflict('The receipt query for this fax was already sent.')
         document, name, row = self.draft(actor, item_id)
         job_id = query_id(item_id)
-        accept(job_id, row['to_number'], document, name, 1)
+        send(to_number=row['to_number'], document=document, file_name=name, pages=1, job_id=job_id)
         with self.access_store.transaction() as connection:
             now = self.clock()
             row = self._require(connection, actor, item_id, now, act=True)
@@ -504,7 +506,7 @@ class CertaintyService:
             return self._change(connection, actor, row, {'query_job_id': job_id}, kind='query_sent',
                                 details={'fax_id': job_id}, now=now)
 
-    def settle(self, actor, item_id, *, outcome, reason, version, send_again=False, accept=None):
+    def settle(self, actor, item_id, *, outcome, reason, version, send_again=False, send=None):
         """A person decides what happened: delivered, not delivered (and maybe send again), or can't tell."""
         if outcome not in OUTCOMES:
             raise CertaintyInputError("Choose delivered, not delivered or can't tell.")
@@ -523,7 +525,7 @@ class CertaintyService:
             if row['state'] != 'open':
                 raise CertaintyConflict('This fax is already settled.')
         if send_again:
-            if accept is None:
+            if send is None:
                 raise CertaintyConflict('Sending again is not available here.')
             with self.access_store.transaction() as connection:
                 moved = moved_on(self._delivery(connection, row['job_id']), row)
@@ -535,7 +537,8 @@ class CertaintyService:
                 raise CertaintyConflict('The document of this fax is no longer kept, so it cannot be sent again '
                                         'from here; send it from Send a fax.')
             resend = resend_id(item_id)
-            accept(resend, row['to_number'], source.read_bytes(), row['file_name'] or 'fax.pdf', row['pages'])
+            send(to_number=row['to_number'], document=source.read_bytes(), file_name=row['file_name'] or 'fax.pdf',
+                 pages=row['pages'], job_id=resend)
         with self.access_store.transaction() as connection:
             now = self.clock()
             row = self._require(connection, actor, item_id, now, act=True)

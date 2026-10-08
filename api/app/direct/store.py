@@ -85,6 +85,13 @@ class DirectStore:
         with read_connection(self.engine) as conn:
             return read(conn)
 
+    def verified_peer_for(self, number):
+        """The verified partner that owns a fax number, or None."""
+        with read_connection(self.engine) as connection:
+            row = connection.execute(sa.select(self.peers).where(
+                self.peers.c.phone_number == number, self.peers.c.state == 'verified')).mappings().first()
+        return dict(row) if row is not None else None
+
     def add_peer(self, card, *, own_signing_key):
         if card['signing_key'] == own_signing_key:
             raise DirectConflict("This card belongs to this installation.")
@@ -199,6 +206,72 @@ class DirectStore:
                 partner_said_at=said_at, version=peer['version'] + 1, updated_at=utcnow()))
             return True
 
+    def _notices(self):
+        if not hasattr(self, '_notice_table'):
+            try:
+                self._notice_table = reflect(self.engine, ('direct_notices',))['direct_notices']
+            except Exception:
+                self._notice_table = None
+        return self._notice_table
+
+    # Pinned certificates -------------------------------------------------------
+    def _pins(self):
+        """Builder AT's ``direct_certificate_pins`` (0045), or None while that revision is not installed here."""
+        if not hasattr(self, '_pin_table'):
+            try:
+                self._pin_table = reflect(self.engine, ('direct_certificate_pins',))['direct_certificate_pins']
+            except Exception:
+                self._pin_table = None
+        return self._pin_table
+
+    def certificate_pin(self, host):
+        """The SHA-256 of the one certificate accepted for ``host``: the newest pin of an enrolled partner whose
+        address is that host, or None (verified normally)."""
+        pins = self._pins()
+        if pins is None or not host:
+            return None
+        from urllib.parse import urlsplit
+        host = host.lower()
+        with read_connection(self.engine) as connection:
+            rows = connection.execute(
+                sa.select(pins.c.peer_id, pins.c.certificate_sha256, self.peers.c.endpoint_url)
+                .select_from(pins.join(self.peers, self.peers.c.id == pins.c.peer_id))
+                .where(sa.func.lower(pins.c.host) == host, self.peers.c.state != 'revoked')
+                .order_by(pins.c.created_at.desc(), pins.c.id.desc())).all()
+        for _, certificate, endpoint in rows:
+            if (urlsplit(endpoint).hostname or '').lower() == host:
+                return str(certificate).lower()
+        return None
+
+    def note_certificate(self, host, seen, *, now=None):
+        """Keep, on each enrolled partner at ``host``, the certificate it presented when it was not its pinned
+        one (``seen``), or clear it once the pinned certificate is presented again (``seen`` None)."""
+        from urllib.parse import urlsplit
+        now = now or utcnow()
+        host = (host or '').lower()
+        with write_transaction(self.engine) as connection:
+            for peer in connection.execute(sa.select(self.peers).where(self.peers.c.state != 'revoked')).mappings():
+                if (urlsplit(peer['endpoint_url']).hostname or '').lower() != host:
+                    continue
+                if seen is None and peer['certificate_changed_at'] is None:
+                    continue
+                if seen is not None and peer['certificate_changed_sha256'] == seen:
+                    continue
+                connection.execute(self.peers.update().where(self.peers.c.id == peer['id']).values(
+                    certificate_changed_sha256=seen, certificate_changed_at=now if seen is not None else None,
+                    version=peer['version'] + 1, updated_at=now))
+
+    def set_notice_fax(self, peer_id, on):
+        """Pair every original sent to this partner with a one-page notice fax (on), or not (off)."""
+        now = utcnow()
+        with write_transaction(self.engine) as connection:
+            peer = self.get_peer(peer_id, connection)
+            if peer is None or peer['state'] == 'revoked':
+                raise DirectConflict('This partner is not enrolled.')
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                notice_fax=1 if on else None, version=peer['version'] + 1, updated_at=now))
+            return self.get_peer(peer_id, connection)
+
     def revoke(self, peer_id):
         now = utcnow()
         with write_transaction(self.engine) as connection:
@@ -278,8 +351,13 @@ class DirectStore:
                                                imports.c.operation_id == d.c.message_id,
                                                imports.c.state.in_(('received', 'conflict', 'failed'))))
         # A document a partner sent for relaying is sent on as a fax here, never filed as received (relay.py).
+        # A document held for its notice fax is filed when the notice is paired (notice.py).
+        notices = self._notices()
+        held = (sa.exists(sa.select(1).where(notices.c.role == 'receiver', notices.c.message_id == d.c.message_id,
+                                             notices.c.peer_id == d.c.peer_id, notices.c.state != 'paired'))
+                if notices is not None else sa.false())
         query = (sa.select(d).where(d.c.direction == 'inbound', d.c.state == 'accepted', d.c.manifest != '',
-                                    d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d))
+                                    d.c.document_path.is_not(None), ~legacy, ~settled, _not_relay(d), ~held)
                  .order_by(d.c.accepted_at, d.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]

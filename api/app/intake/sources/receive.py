@@ -40,6 +40,7 @@ class Arrival:
     pages: int | None = None
     report: dict | None = None
     mailbox_label: str | None = None
+    mailbox_id: str | None = None  # the connector's mailbox, for a document with no fax number
 
 
 def file_document(access, values, store, source, arrival):
@@ -54,7 +55,7 @@ def file_document(access, values, store, source, arrival):
             return existing, 'conflict'
         store.seen_again(existing)
         return existing, 'duplicate'
-    if not arrival.to_number:
+    if not arrival.to_number and not arrival.mailbox_id:
         item, created = store.record(source.id, 'receive', arrival.operation_id, arrival.part, state='failed',
                                      reason=text.NO_MAILBOX, **fields)
         return item, 'failed' if created else 'duplicate'
@@ -73,9 +74,11 @@ def file_document(access, values, store, source, arrival):
               'source_received_at': (arrival.received_at.isoformat(timespec='seconds') + 'Z'
                                      if arrival.received_at else None), **(arrival.report or {})}
     try:
+        # No fax number: straight into the connector's mailbox, with Faxbot itself as the importer.
         status, import_id, inbound_id = record_import(access, values, account=account(source.id), manifest=manifest,
                                                       path=path, digest=pdf_digest, report=report,
-                                                      compare=not converted)
+                                                      compare=not converted,
+                                                      mailbox_id=None if arrival.to_number else arrival.mailbox_id)
     except ImportConflict:
         item, created = store.record(source.id, 'receive', arrival.operation_id, arrival.part, state='conflict',
                                      reason=text.CONFLICT, **fields)

@@ -177,6 +177,9 @@ export class FakeRules {
       return { outcome: 'route', sentence: 'Sinch (UK) first, because the rule ‘UK numbers go through Sinch’ matched.',
         routes: [{ account: 'sinch-uk', label: 'Sinch (UK)', sentence: 'First in the rule.', quote: { currency: 'USD', amount: '0.031' },
           origin: 'Leeds office', usable: true },
+        // A monthly plan's fax reads "In your plan", never $0.00.
+        { account: 'humblefax-2', label: 'HumbleFax (second)', sentence: 'Used if the accounts above it are not available.',
+          quote: null, quote_text: 'In your plan', origin: null, usable: true },
         { account: 'humblefax', label: 'HumbleFax', sentence: 'Skipped: the limit ‘Never send UK faxes by HumbleFax’ applies.',
           quote: null, origin: null, usable: false }],
         holds: [], dial: null, page_layout: 'as_receiver_allows',

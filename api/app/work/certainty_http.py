@@ -5,7 +5,6 @@ each fax inside the service; settings routes also declare
 ``settings:read``/``settings:write``. The background tasks make items and
 record what the automatic checks find; they never send anything.
 """
-import os
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -86,52 +85,19 @@ async def call(operation):
         raise HTTPException(503, detail=UNAVAILABLE) from None
 
 
-def accept_once(request, actor):
-    """Queue one Faxbot-made fax under a fixed fax ID for this person; an earlier request's fax is kept as is.
+def sender(request, actor):
+    """``routing/submit.accept_generated_fax`` for this person under the active configuration.
 
-    The same as ``routing/submit.accept_generated_fax`` (the person must be allowed to send, the fax is bound to
-    the active provider and appears in Sent), except that a fax ID already taken means an earlier click queued
-    it: nothing is written and nothing is removed.
+    A Faxbot-made fax (the receipt query, or the fax sent again) is accepted exactly as POST /fax accepts one:
+    the person must be allowed to send, the sending rules decide its route and may hold it, and a fax ID that is
+    already queued returns that fax untouched (``GeneratedFaxBusy`` while another request is queuing it).
     """
+    from functools import partial
     from ..access.http import runtime as access_runtime
+    from ..routing.submit import accept_generated_fax
     _, runtime = installation_engine(request.app)
     revision = request.scope['faxbot.configuration'].active
-    access = access_runtime(request)
-
-    def accept(job_id, to_number, document, file_name, pages):
-        from datetime import datetime
-        profile_id = revision.profile_id('outbound')
-        if profile_id is None:
-            raise RuntimeError('Outbound fax delivery is turned off, so nothing can be sent.')
-        configuration = runtime.manager.store.read_profile(profile_id).configuration
-        root = revision.values.fax_data_dir
-        pdf, tiff = os.path.join(root, job_id + '.pdf'), ''
-        try:
-            handle = open(pdf, 'xb')
-        except FileExistsError:
-            return False  # an earlier request queued this fax
-        try:
-            with handle:
-                handle.write(document)
-            if ((configuration.manifest is None and configuration.provider_id in {'sip', 'freeswitch'})
-                    or configuration.traits.get('requires_tiff') is True):
-                from ..conversion import pdf_to_tiff
-                tiff = os.path.join(root, job_id + '.tiff')
-                pdf_to_tiff(pdf, tiff)
-            now = datetime.utcnow()
-            access.outbound.accept(actor, revision, {
-                'id': job_id, 'to_number': to_number, 'file_name': file_name[:255], 'tiff_path': tiff,
-                'status': 'queued', 'pages': pages, 'created_at': now, 'updated_at': now})
-        except BaseException:
-            for path in (pdf, tiff):
-                if path:
-                    try:
-                        os.unlink(path)
-                    except OSError:
-                        pass
-            raise
-        return True
-    return accept
+    return partial(accept_generated_fax, runtime, access_runtime(request), actor, revision)
 
 
 class Strict(BaseModel):
@@ -233,19 +199,19 @@ async def draft_query(item_id: str, request: Request, identity=Depends(require_i
 @router.post('/items/{item_id}/receipt-query', summary='Send the one-page receipt query to the recipient')
 async def send_query(item_id: str, body: VersionIn, request: Request, identity=Depends(require_identity)):
     service = certainty_service(request)
-    accept = accept_once(request, identity.actor)
+    send = sender(request, identity.actor)
     try:
-        return await call(lambda: service.send_query(identity.actor, item_id, version=body.version, accept=accept))
-    except RuntimeError as error:  # outbound delivery refused the fax, in a plain sentence
+        return await call(lambda: service.send_query(identity.actor, item_id, version=body.version, send=send))
+    except RuntimeError as error:  # outbound delivery refused the fax, or it is being queued: a plain sentence
         raise HTTPException(409, detail=str(error)) from None
 
 
 @router.post('/items/{item_id}/settle', summary='Settle what happened: delivered, not delivered, or can\'t tell')
 async def settle(item_id: str, body: SettleIn, request: Request, identity=Depends(require_identity)):
     service = certainty_service(request)
-    accept = accept_once(request, identity.actor) if body.send_again else None
+    send = sender(request, identity.actor) if body.send_again else None
     try:
         return await call(lambda: service.settle(identity.actor, item_id, outcome=body.outcome, reason=body.reason,
-                                                 version=body.version, send_again=body.send_again, accept=accept))
+                                                 version=body.version, send_again=body.send_again, send=send))
     except RuntimeError as error:
         raise HTTPException(409, detail=str(error)) from None

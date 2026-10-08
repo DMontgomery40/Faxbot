@@ -114,3 +114,44 @@ def test_people_without_access_see_nothing_and_settings_need_settings_permission
     saved = client.put('/certainty/settings', headers=ADMIN, json={'settle_hours': 4, 'version': 0})
     assert saved.status_code == 200 and saved.json()['settle_hours'] == 4 and saved.json()['version'] == 1
     assert client.put('/certainty/settings', headers=ADMIN, json={'settle_hours': 4, 'version': 0}).status_code == 409
+
+
+def publish_rules(client, document):
+    """Publish the organization's sending rules, as Providers → Rules does."""
+    current = client.get('/routing/rules', headers=ADMIN).json()
+    saved = client.put('/routing/rules/draft', headers=ADMIN, json={
+        'document': document, 'expected_version': current['draft']['version'] if current['draft'] else 0})
+    assert saved.status_code == 200, saved.text
+    active = current['active']['number'] if current['active'] else None
+    published = client.post('/routing/rules/publish', headers=ADMIN, json={
+        'expected_active_revision': active, 'expected_draft_version': saved.json()['version'], 'note': 'Synthetic'})
+    assert published.status_code == 200, published.text
+
+
+def decisions(job_id):
+    with engine().connect() as connection:
+        return connection.execute(sa.text('SELECT outcome FROM fax_job_rule_decisions WHERE job_id = :job'),
+                                  {'job': job_id}).scalars().all()
+
+
+def test_the_receipt_query_and_a_fax_sent_again_go_through_the_sending_rules(client):
+    job = uncertain(client)
+    # Every fax waits for approval: a rule holds the receipt query and the new fax like any other fax.
+    publish_rules(client, {'format': 1, 'limits': [{'id': 'l-all', 'name': 'Rule l-all', 'on': True, 'when': {},
+                                                    'then': {'hold_for_approval': {}}}]})
+    [item] = client.get(f'/certainty/faxes/{job}', headers=ADMIN).json()['items']
+    queried = client.post(f"/certainty/items/{item['id']}/receipt-query", headers=ADMIN,
+                          json={'version': item['version']})
+    assert queried.status_code == 200, queried.text
+    query = query_id(item['id'])
+    assert decisions(query) == ['held']
+    holds = {hold['job_id']: hold for hold in client.get('/routing/holds', headers=ADMIN).json()['holds']}
+    assert holds[query]['kind'] == 'approval'
+    settled = client.post(f"/certainty/items/{item['id']}/settle", headers=ADMIN, json={
+        'outcome': 'not_delivered', 'reason': 'Their front desk has no fax', 'send_again': True,
+        'version': queried.json()['version']})
+    assert settled.status_code == 200, settled.text
+    new_fax = resend_id(item['id'])
+    assert decisions(new_fax) == ['held']
+    holds = {hold['job_id']: hold for hold in client.get('/routing/holds', headers=ADMIN).json()['holds']}
+    assert holds[new_fax]['kind'] == 'approval'

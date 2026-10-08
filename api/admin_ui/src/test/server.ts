@@ -660,13 +660,14 @@ const consoleHandlers = [
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
   // One fax's cost: nothing to say for a fax that placed no call.
   http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
-  // Provider rules (tests of their screens use providerRulesFake.ts): nothing held, no per-fax route answer,
-  // and no provider accounts yet.
+  // Provider rules (tests of their screens use providerRulesFake.ts): nothing held, a fax with no routing
+  // decision to explain, and no provider accounts yet.
   http.get('/routing/holds', () => json({ holds: [] })),
   http.get('/routing/rules', () => json({ scope: { kind: 'organization', name: 'Organization' }, active: null, draft: null,
     organization: null, matches_30_days: {}, can_write: true, time_zone: 'America/Denver',
     choices: { accounts: [], people: [], keys: [], groups: [], mailboxes: [] } })),
-  http.get('/routing/faxes/:jobId/route', () => json({ detail: 'Not Found' }, 404)),
+  http.get('/routing/faxes/:jobId/route', ({ params }) => json({ job_id: params.jobId, sentence: null, attempts: [],
+    hold: null, trace: [] })),
   http.get('/admin/providers/accounts', () => json({ generation: 1, default_sending: null, default_receiving: null,
     accounts: [], providers: [], sites: [] })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
@@ -731,6 +732,10 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // Notice faxes, documents sent in pieces and repaired calls: none until a test adds them.
+  http.get('/direct/notices', () => json({ notices: [], notice_text: null })),
+  http.get('/direct/transfers', () => json({ transfers: [] })),
+  http.get('/direct/repairs', () => json({ repairs: [] })),
   // Partner relays: none until a test offers one.
   http.get('/direct/relay/agreements', () => json({ agreements: [] })),
   http.get('/direct/relay/costs', () => json({ days: 30, agreements: [] })),

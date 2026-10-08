@@ -61,7 +61,16 @@ def _background(app):
             ('faxbot-carrier-charges', repeat(carriers.step, interval=60.0, initial_delay=45.0,
                                               warning='Carrier call charges are temporarily unavailable.')),
             ('faxbot-route-fallback', repeat(fallback.step, interval=3.0, initial_delay=3.0,
-                                             warning='Fax route fallback is temporarily unavailable.'))]
+                                             warning='Fax route fallback is temporarily unavailable.')),
+            # Time windows your rules hold faxes for open by themselves; this marks them released for the history.
+            ('faxbot-route-holds', repeat(_holds_step(delivery), interval=30.0, initial_delay=10.0,
+                                          warning='Held faxes could not be checked.'))]
+
+
+def _holds_step(delivery):
+    from .holds import HoldStore
+    store = HoldStore(delivery)
+    return lambda: bool(store.release_due())
 
 
 def _add_shipped_cards(app, routes, shipped, runtime):
@@ -270,11 +279,12 @@ async def get_destination(number: str, request: Request, pages: int = Query(defa
 async def sending_recommendations(request: Request):
     """Numbers where another route cost less per delivered fax than the one Faxbot uses first now."""
     from .delivered import MIN_DELIVERED
-    from .recommendations import NO_SENDING, sending_recommendations as recommend
+    from .recommendations import NO_SENDING, country_rules, public_items, sending_recommendations as recommend
     store = _store(request)
     revision, bound = await run_lifecycle_step(lambda: _active(request))
     items = await _call(lambda: recommend(store, revision, bound))
-    return {'window_days': WINDOW_DAYS, 'min_delivered': MIN_DELIVERED, 'items': items, 'empty_sentence': NO_SENDING}
+    return {'window_days': WINDOW_DAYS, 'min_delivered': MIN_DELIVERED, 'items': public_items(items),
+            'country_rules': country_rules(items), 'empty_sentence': NO_SENDING}
 
 
 @router.get('/recommendations/plans', dependencies=[Depends(require_permission('settings:read'))])
@@ -808,3 +818,214 @@ async def put_rate_cards(payload: RateCardsIn, request: Request):
     store = _store(request)
     saved = await _call(lambda: store.replace_cards(cards))
     return {'cards': [_card_view(card) for card in saved]}
+
+
+# Sending rules in delivery: held faxes, why a fax took its route, quotes, and applying the rules again ---------
+
+def _delivery(request):
+    _, runtime = installation_engine(request.app)
+    if runtime is None:
+        raise HTTPException(503, detail='Installation configuration is not ready.')
+    from ..outbound_store import OutboundStore
+    return OutboundStore(runtime.manager.store)
+
+
+def _hold_store(request):
+    from .holds import HoldStore
+    access = getattr(request.app.state, 'access_runtime', None)
+    return HoldStore(_delivery(request), access_store=access.store if access is not None else None)
+
+
+def _approver(request, identity):
+    """Whether this person holds "Approve faxes" at the installation."""
+    from ..access.types import ResourceRef
+    service = request.app.state.access_runtime
+    with service.store.transaction() as connection:
+        service.store.require_lock_on(connection)
+        return service.control.authorize_on(connection, identity.actor, 'fax:approve', ResourceRef('installation'),
+                                            now=utcnow()).allowed
+
+
+def _person_name(request, identity):
+    import sqlalchemy as sa
+    principal = getattr(identity.actor, 'principal_id', None)
+    engine, _ = installation_engine(request.app)
+    if not principal or engine is None:
+        return None
+    principals = sa.table('access_principals', sa.column('id'), sa.column('display_name'))
+    with engine.connect() as connection:
+        return connection.execute(sa.select(principals.c.display_name).where(principals.c.id == principal)
+                                  ).scalar_one_or_none()
+
+
+async def _hold_call(operation):
+    from .holds import HoldConflict, HoldForbidden, HoldInputError
+    try:
+        return await run_lifecycle_step(operation)
+    except HoldInputError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except HoldForbidden as error:
+        raise HTTPException(403, detail=str(error)) from None
+    except HoldConflict as error:
+        raise HTTPException(409, detail=str(error)) from None
+    except DeliveryStoreError:
+        raise HTTPException(503, detail='Held faxes are unavailable.') from None
+
+
+@router.get('/holds')
+async def list_holds(request: Request, state: str = Query(default='open', pattern='^(open|released|refused|all)$'),
+                     identity=Depends(require_identity)):
+    """Faxes your rules held: everyone's for someone with Approve faxes, else the ones you sent."""
+    store = _hold_store(request)
+    approver = await run_lifecycle_step(lambda: _approver(request, identity))
+    zone = request.scope['faxbot.configuration'].active.values.time_zone
+
+    def read():
+        rows = store.holds(state=None if state == 'all' else state, every=approver,
+                           principal_id=getattr(identity.actor, 'principal_id', None))
+        return {'holds': [store.view(row, identity.actor, approver=approver, zone_name=zone) for row in rows],
+                'can_approve': approver}
+    return await _hold_call(read)
+
+
+class HoldDecisionIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: int = Field(ge=1)
+    account: str | None = Field(default=None, max_length=64)
+
+
+class HoldRefusalIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post('/holds/{hold_id}/approve')
+async def approve_hold(hold_id: str, payload: HoldDecisionIn, request: Request,
+                       identity=Depends(require_permission('fax:approve'))):
+    """Approve a held fax, or send a fax with no allowed route by an account anyway. Audited."""
+    store, name = _hold_store(request), await run_lifecycle_step(lambda: _person_name(request, identity))
+    return await _hold_call(lambda: store.approve(hold_id, version=payload.version, actor=identity.actor,
+                                                  actor_name=name, account=payload.account))
+
+
+@router.post('/holds/{hold_id}/refuse')
+async def refuse_hold(hold_id: str, payload: HoldRefusalIn, request: Request,
+                      identity=Depends(require_permission('fax:approve'))):
+    """Refuse a held fax: it fails with your name and reason, and nothing is sent. Audited."""
+    store, name = _hold_store(request), await run_lifecycle_step(lambda: _person_name(request, identity))
+    return await _hold_call(lambda: store.refuse(hold_id, version=payload.version, actor=identity.actor,
+                                                 actor_name=name, reason=payload.reason))
+
+
+@router.post('/holds/{hold_id}/check-again')
+async def check_hold_again(hold_id: str, payload: HoldDecisionIn, request: Request,
+                           identity=Depends(require_identity)):
+    """Let Faxbot try the accounts a no-route fax's rules allow again (its sender, or someone with Approve faxes)."""
+    store = _hold_store(request)
+    approver = await run_lifecycle_step(lambda: _approver(request, identity))
+
+    def run():
+        rows = store.holds(state='open', every=approver, principal_id=getattr(identity.actor, 'principal_id', None))
+        if not any(row['id'] == hold_id for row in rows):
+            from .holds import HoldInputError
+            raise HoldInputError('There is no such held fax.')
+        return store.check_again(hold_id, version=payload.version, actor=identity.actor)
+    return await _hold_call(run)
+
+
+@router.get('/faxes/{job_id}/route')
+async def fax_route(job_id: str, request: Request, identity=Depends(require_identity)):
+    """Why a sent fax took its route, for anyone who may read that fax."""
+    runtime = request.app.state.access_runtime
+    await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
+    delivery, store = _delivery(request), _hold_store(request)
+    approver = await run_lifecycle_step(lambda: _approver(request, identity))
+    zone = request.scope['faxbot.configuration'].active.values.time_zone
+
+    def read():
+        from ..rules.store import RuleStore
+        from .route_view import fax_route as route_view
+        engine = delivery.configuration.engine
+        try:
+            rules = RuleStore(engine)
+        except DeliveryStoreError:
+            rules = None
+        rows = store.holds(state='open', job_id=job_id)
+        hold = store.view(rows[0], identity.actor, approver=approver, zone_name=zone) if rows else None
+        return route_view(engine, delivery.configuration, job_id, rules=rules, hold_view=hold)
+    return await _hold_call(read)
+
+
+@router.post('/rules/apply-to-waiting')
+async def apply_rules_to_waiting(request: Request, identity=Depends(require_permission('settings:write'))):
+    """Re-decide faxes not yet sent under the active rules; never a fax already submitted or uncertain. Audited."""
+    from ..rules.store import RuleStore
+    from .route_view import apply_to_waiting
+    delivery = _delivery(request)
+    access = getattr(request.app.state, 'access_runtime', None)
+    name = await run_lifecycle_step(lambda: _person_name(request, identity))
+    rules = await _call(lambda: RuleStore(delivery.configuration.engine))
+    return await _hold_call(lambda: apply_to_waiting(delivery, rules, actor=identity.actor, actor_name=name,
+                                                     access_store=access.store if access is not None else None))
+
+
+@router.get('/quote')
+async def quote(request: Request, to: str = Query(max_length=64), pages: int = Query(default=1, ge=1, le=1000),
+                site: str | None = Query(default=None, max_length=64),
+                identity=Depends(require_permission('settings:read'))):
+    """What one fax would cost by each account your rules allow, from where its calls start. Sends nothing.
+
+    A fax a monthly plan carries reads "In your plan", never $0.00; an unknown price says so.
+    """
+    from ..accounts import all_accounts, sending_accounts
+    from ..rules.evaluate import decide
+    from ..rules.explain import FactsReader
+    from ..rules.store import RuleStore
+    from .pricing import plan_text
+    from .rules_acceptance import alternate_lookup, sender_of
+    values = request.scope['faxbot.configuration'].active.values
+    number = _number(to, request)
+    store = _store(request)
+
+    def run():
+        accounts = sending_accounts(values)
+        principal, kind, key_id = sender_of(identity.actor)
+        facts = FactsReader(store.engine, values, store, alternates=alternate_lookup(store.engine)).read(
+            to_number=number, accounts=accounts, pages=pages, principal_id=principal, sender_kind=kind,
+            key_id=key_id)
+        decision = decide(RuleStore(store.engine).compiled_active(), facts, accounts)
+        envelope = decision.envelope
+        quoted = 'alternate' if envelope.dial is not None else 'original'
+        by_key = {account.key: account for account in all_accounts(values)}
+        keys = list(envelope.accounts)
+        if site:
+            keys.sort(key=lambda key: getattr(by_key.get(key), 'site', None) != site)
+        found = []
+        for key in keys:
+            item = next((q for q in facts.quotes if q.account == key and q.number == quoted), None)
+            account = by_key.get(key)
+            in_plan = item is not None and item.plan is not None
+            found.append({
+                'account': key, 'label': account.label if account is not None else route_label(key),
+                'site': getattr(account, 'site', None), 'origin_label': getattr(account, 'site', None),
+                'estimate': (None if item is None or in_plan or item.micros is None
+                             else {'currency': item.currency, 'amount': format_amount(item.micros)}),
+                'estimate_text': plan_text(item.plan if item else None, item.micros if item else None),
+                'in_plan': in_plan, 'over_budget': bool(item is not None and item.plan == 'over_budget'),
+                'sentence': _quote_sentence(item)})
+        return {'to': number, 'pages': pages, 'quotes': found,
+                'sentence': None if found else 'No account your rules allow can send to this number.'}
+    return await _call(run)
+
+
+def _quote_sentence(item):
+    if item is None:
+        return 'Faxbot could not price this account.'
+    if item.plan == 'over_budget':
+        return 'Your monthly plan covers it, but this month is past the normal-use budget you set for it.'
+    if item.plan == 'included':
+        return 'Your monthly plan covers it; this fax adds nothing to the bill.'
+    if item.micros is None:
+        return 'Its price for this number is not published, so the cost is unknown.'
+    return 'An estimate from its price for this number and the usual time on the line.'

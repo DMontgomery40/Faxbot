@@ -137,7 +137,8 @@ const categoryLabels: Record<string, string> = {
 // fax after a refusal has the direct attempt among its earlier events.
 type DirectOutcome = { text: string; severity: 'success' | 'info' | 'warning'; hideFaxId: boolean };
 
-function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliveryRecord[] | null): DirectOutcome | null {
+function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliveryRecord[] | null,
+  jobId: string | null = null): DirectOutcome | null {
   if (!delivery || !records) return null;
   const current = delivery.attempt?.id ?? null;
   const attempts = new Set([current, ...delivery.events.map((event) => event.attempt_id)].filter(Boolean));
@@ -145,12 +146,19 @@ function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliver
   const forCurrent = sent.find((record) => record.message_id === current);
   const partner = (record: DirectDeliveryRecord) => record.partner || 'the partner';
   if (forCurrent?.state === 'accepted') {
-    // A fax image went directly, with no telephone call; it is never called "faxed".
+    // A fax image went directly, with no telephone call; it is never called "faxed". Nor is an original that
+    // went with a one-page notice fax: only the notice page was faxed.
     const text = forCurrent.kind === 'fax_image'
       ? `Delivered directly as a fax image to ${partner(forCurrent)}; no telephone call.`
-      : `Delivered directly to ${partner(forCurrent)}.`;
+      : forCurrent.notice
+        ? `Delivered directly to ${partner(forCurrent)}; only a one-page notice went by fax.`
+        : `Delivered directly to ${partner(forCurrent)}.`;
     return { text, severity: 'success', hideFaxId: true };
   }
+  // A call that broke part way, completed by sending only the missing pages directly to the partner.
+  const repaired = records.find((record) => record.direction === 'outbound' && record.kind === 'repair'
+    && record.state === 'accepted' && jobId !== null && record.job_id === jobId);
+  if (repaired) return { text: repaired.status, severity: 'success', hideFaxId: false };
   if (forCurrent && (forCurrent.state === 'sending' || forCurrent.state === 'uncertain')) {
     return { text: "Waiting for the partner's answer.", severity: 'info', hideFaxId: true };
   }
@@ -446,7 +454,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
     } finally { finishDetailAction(selection, action); }
   };
 
-  const direct = directOutcome(delivery, directRecords);
+  const direct = directOutcome(delivery, directRecords, selectedJob?.id ?? null);
   const canAttachFaxId = Boolean(delivery?.can_bind_provider_identity) && !direct?.hideFaxId;
 
   const detailJob = selectedJob && delivery

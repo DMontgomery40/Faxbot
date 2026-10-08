@@ -54,6 +54,12 @@ import type {
   DirectDeliveryRecord,
   DirectPartner,
   DirectFaxImagesResult,
+  DirectNotice,
+  DirectNoticeCandidate,
+  DirectNoticeFaxResult,
+  DirectNoticePaired,
+  DirectRepair,
+  DirectTransfer,
   RelayAcceptance,
   RelayAgreement,
   RelayCost,
@@ -1295,6 +1301,36 @@ class AdminAPIClient {
   // Accept fax images from a partner, or stop; the partner is told with a signed statement.
   async setDirectFaxImages(partnerId: string, accept: boolean): Promise<DirectFaxImagesResult> {
     return this.json(`/direct/peers/${id(partnerId)}/fax-images`, { method: 'POST', body: JSON.stringify({ accept }) });
+  }
+
+  // Notice fax: each document goes directly with a one-page notice by fax (direct/notice.py).
+  async setDirectNoticeFax(partnerId: string, on: boolean): Promise<DirectNoticeFaxResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/notice-fax`, { method: 'POST', body: JSON.stringify({ on }) });
+  }
+
+  async listDirectNotices(): Promise<{ notices: DirectNotice[] }> {
+    return this.json('/direct/notices');
+  }
+
+  // The notice a received fax was paired as, with the sentence for its Received detail.
+  async getDirectNoticeForFax(faxId: string): Promise<{ notices: DirectNotice[]; notice_text: string | null }> {
+    return this.json(`/direct/notices?fax=${encodeURIComponent(faxId)}`);
+  }
+
+  async listDirectNoticeFaxes(noticeId: string): Promise<{ faxes: DirectNoticeCandidate[] }> {
+    return this.json(`/direct/notices/${id(noticeId)}/faxes`);
+  }
+
+  async pairDirectNotice(noticeId: string, pairing: { code?: string; fax_id?: string }): Promise<DirectNoticePaired> {
+    return this.json(`/direct/notices/${id(noticeId)}/pair`, { method: 'POST', body: JSON.stringify(pairing) });
+  }
+
+  async listDirectTransfers(): Promise<{ transfers: DirectTransfer[] }> {
+    return this.json('/direct/transfers');
+  }
+
+  async listDirectRepairs(): Promise<{ repairs: DirectRepair[] }> {
+    return this.json('/direct/repairs');
   }
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {

@@ -25,17 +25,23 @@ def without_work_catalogue(name, rows):
 
 
 def without_later_access_changes(name, rows):
-    """Rows without what 0018 to 0021, 0030 and 0040 change, so both sides of an upgrade compare.
+    """Rows without what 0018 to 0021, 0030, 0040 and 0032 change, so both sides of an upgrade compare.
 
     0018 removes the Host Operator's terminal row; 0019 removes three permissions, every role row and
-    key limit naming them, and records that in one audit row.
+    key limit naming them, and records that in one audit row; 0032 adds Approve faxes to the Owner and
+    Administrator roles, and whether each delivery attempt ended before any fax data.
     """
-    from api.app import schema_retired_permissions as retired, schema_terminal
+    from api.app import schema_retired_permissions as retired, schema_rules_delivery, schema_terminal
     if name == 'access_permissions':
-        return [row for row in rows if row['id'] not in retired.PERMISSIONS]
+        return [row for row in rows if row['id'] not in retired.PERMISSIONS
+                and row['id'] != schema_rules_delivery.PERMISSION]
     if name == 'access_role_permissions':
         return [row for row in rows if row['id'] != schema_terminal.ROW_ID
-                and row['permission_id'] not in retired.PERMISSIONS]
+                and row['permission_id'] not in retired.PERMISSIONS
+                and row['permission_id'] != schema_rules_delivery.PERMISSION]
+    if name == 'outbound_attempts':
+        # 0032 adds a nullable column to every attempt; existing rows hold NULL.
+        return [{key: value for key, value in row.items() if key != 'ended_before_data'} for row in rows]
     if name == 'access_key_grants':
         return [row for row in rows if row['permission_id'] not in retired.PERMISSIONS]
     if name == 'access_audit':
@@ -76,6 +82,15 @@ def add_work_catalogue(engine):
                                            'VALUES (:id, :role, :permission)'),
                                    {'id': _identity('role_permission', role_id, permission), 'role': role_id,
                                     'permission': permission})
+        # 0032: Approve faxes, held by the Owner and Administrator roles.
+        from api.app import schema_rules_delivery as delivery
+        connection.execute(sa.text('INSERT INTO access_permissions (id, description) VALUES (:id, :d)'),
+                           {'id': delivery.PERMISSION, 'd': delivery.DESCRIPTION})
+        for role_id in delivery.ROLES:
+            connection.execute(sa.text('INSERT INTO access_role_permissions (id, role_id, permission_id) '
+                                       'VALUES (:id, :role, :permission)'),
+                               {'id': _identity('role_permission', role_id, delivery.PERMISSION), 'role': role_id,
+                                'permission': delivery.PERMISSION})
 
 
 def test_work_items_are_head_after_inbound_imports():

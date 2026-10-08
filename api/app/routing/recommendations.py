@@ -2,7 +2,11 @@
 
 Advice only: nothing here changes a route or sends anything. "Use this route"
 in the console and ``faxbot recipients set --preferred-route`` set a number's
-preferred route through the destination endpoint.
+preferred route through the destination endpoint. Each recommendation also
+carries a sending rule ("Add as rule"), and ``country_rules`` suggests one rule
+for a whole country when the same account was cheaper for several of its
+numbers. A suggested rule is only ever a draft: it takes effect when the
+administrator checks and publishes it on Providers → Rules.
 """
 from .costs import format_amount
 from .delivered import MIN_DELIVERED, WINDOW_DAYS, short_money_text
@@ -136,8 +140,54 @@ def sending_recommendations(store, revision, bound):
             'preferred_route': row.get('preferred_route'), 'chosen_by_you': chosen, 'kind': kind,
             # ``current`` is None when the route used now has no faxes to this number in the window.
             'current_label': route_label(first.route.key), 'current': route_view(current) if current else None,
-            'suggested': route_view(best), 'saving_per_fax': saving, 'sentence': sentence})
+            'suggested': route_view(best), 'saving_per_fax': saving, 'sentence': sentence,
+            # "Add as rule": a draft routing rule for this number; it never publishes itself.
+            'rule_suggestion': {'name': f'Faxes to {row.get("display_name") or number} go by {route_label(best.route)}',
+                                'when': {'destination': {'numbers': [number]}}, 'then': {'use': best.route}},
+            '_delivered': best.delivered, '_saving_micros': (current.per_delivered_micros - best.per_delivered_micros
+                                                             if kind == 'cheaper_route' else None)})
     return items
+
+
+def country_rules(items, *, minimum=2):
+    """One suggested rule per country where the same account was cheaper for at least ``minimum`` of its numbers.
+
+    "Faxes to +44 numbers cost about $0.031 less each through Sinch over the last 30 days (38 delivered faxes).
+    Add as a rule?" The rule is a draft until you publish it; numbers and money are what the items say.
+    """
+    from .destinations import classify, country_name
+    groups = {}
+    for item in items:
+        if item.get('kind') != 'cheaper_route' or item.get('_saving_micros') is None:
+            continue
+        where = classify(item['number'], 'ZZ')
+        if not where.region:
+            continue
+        route = item['suggested']['route']
+        group = groups.setdefault((where.region, where.prefix, route, item['saving_per_fax']['currency']),
+                                  {'numbers': 0, 'delivered': 0, 'saved': 0})
+        group['numbers'] += 1
+        group['delivered'] += item['_delivered'] or 0
+        group['saved'] += item['_saving_micros']
+    found = []
+    for (region, prefix, route, currency), group in sorted(groups.items()):
+        if group['numbers'] < minimum:
+            continue
+        each = group['saved'] // group['numbers']
+        found.append({
+            'country': region, 'route': route, 'numbers': group['numbers'], 'delivered': group['delivered'],
+            'saving_per_fax': _money(each, currency),
+            'sentence': (f'Faxes to {prefix} numbers cost about {short_money_text(each, currency)} less each through '
+                         f'{route_label(route)} over the last {WINDOW_DAYS} days ({group["delivered"]} delivered '
+                         f'faxes to {group["numbers"]} numbers). Add as a rule?'),
+            'rule_suggestion': {'name': f'Numbers in {country_name(region)} go by {route_label(route)}',
+                                'when': {'destination': {'countries': [region]}}, 'then': {'use': route}}})
+    return found
+
+
+def public_items(items):
+    """The items without the figures kept only for ``country_rules``."""
+    return [{key: value for key, value in item.items() if not key.startswith('_')} for item in items]
 
 
 def _plan_sentence(plan, current):

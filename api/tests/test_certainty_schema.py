@@ -1,4 +1,4 @@
-"""Actual 0043 to 0047 upgrade: owned records for uncertain sent faxes (SQLite and PostgreSQL)."""
+"""Actual 0046 to 0047 upgrade: owned records for uncertain sent faxes (SQLite and PostgreSQL)."""
 from datetime import datetime
 
 from alembic import command
@@ -13,8 +13,8 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 7, 9, 0)
-# The migration chain follows merge order: 0047 comes after 0043 (accounts).
-PRIOR = '0043_accounts'
+# The migration chain follows merge order: 0047 comes after 0046 (notice faxes and repairs).
+PRIOR = '0046_notice_repair'
 
 
 def _downgrade(engine, revision):
@@ -46,10 +46,10 @@ def _seed_item(engine):
             state='open', due_hours=24, version=1, created_at=NOW, updated_at=NOW))
 
 
-def test_certainty_follows_accounts():
+def test_certainty_follows_notice_repair():
     assert schema_certainty.REVISION == '0047_certainty'
     assert schema.HEAD == schema_certainty.REVISION
-    assert schema.ACCOUNTS == PRIOR
+    assert schema.NOTICE_REPAIR == PRIOR
     assert schema_certainty.TABLES == {'certainty_items', 'certainty_events', 'certainty_settings'}
 
 

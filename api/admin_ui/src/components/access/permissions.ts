@@ -7,6 +7,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'fax:document': 'Open sent fax documents',
   'fax:refresh': 'Refresh fax status',
   'fax:reconcile': 'Resolve uncertain faxes',
+  'fax:approve': 'Approve faxes',
   'inbound:list': 'List received faxes',
   'inbound:read': 'See received fax details',
   'inbound:document': 'Open received fax documents',

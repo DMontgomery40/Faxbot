@@ -349,9 +349,15 @@ def quote_command(to: str = typer.Option(..., '--to', metavar='NUMBER', help='Th
     result = state.api().get('/routing/quote', params={'to': to, 'pages': pages, 'site': from_site})
     state.out().result(result, lambda out: out.table(
         ['Account', 'Calls from', 'Estimate', 'How it is priced'],
-        [[item['label'], item.get('origin_label') or '-',
-          f"About {money_amount(item['estimate'])}" if item.get('estimate') else 'Not priced yet', item.get('sentence') or '-']
+        [[item['label'], item.get('origin_label') or '-', _estimate_text(item), item.get('sentence') or '-']
          for item in result.get('quotes') or []], empty='No account your rules allow can send to this number.'))
+
+
+def _estimate_text(item):
+    """'About $0.07', or the server's words for a plan's fax ('In your plan') or an unknown price; never $0.00."""
+    if item.get('estimate_text'):
+        return item['estimate_text']
+    return f"About {money_amount(item['estimate'])}" if item.get('estimate') else 'Not priced yet'
 
 
 def billing_text(row):

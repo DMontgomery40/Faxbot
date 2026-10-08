@@ -57,6 +57,13 @@ NOT_OPERATOR = {
     ('GET', '/direct/relay/outcomes/{message_id}'): 'partner protocol: a signed question about a relayed fax',
     ('POST', '/direct/introductions'): 'partner protocol: a signed introduction of another partner (a hint only)',
     ('GET', '/.well-known/faxbot-direct'): 'partner protocol: the public partner card that partners and directories read',
+    ('POST', '/direct/transfers'): 'partner protocol: a signed preflight before a document is sent in pieces',
+    ('PUT', '/direct/transfers/{message_id}/pieces/{sequence}'): 'partner protocol: one signed piece of a document',
+    ('GET', '/direct/transfers/{message_id}'): 'partner protocol: a signed question about the pieces held',
+    ('POST', '/direct/transfers/{message_id}/commit'): 'partner protocol: a signed commit of a document sent in pieces',
+    ('POST', '/direct/notices'): 'partner protocol: a signed link between a notice fax and its original',
+    ('POST', '/direct/notices/paired'): 'partner protocol: a signed statement that a notice fax was paired',
+    ('POST', '/direct/calls/pages'): 'partner protocol: a signed question about the pages of a broken call',
     ('POST', '/mobile/pair'): 'device: the phone exchanges its pairing code',
     ('POST', '/fax'): 'public fax API for SDKs and integrations',
     ('GET', '/fax/{job_id}'): 'public fax API for SDKs and integrations',
@@ -96,6 +103,9 @@ CONSOLE_ONLY = {
 
 # The command line only, by design.
 CLI_ONLY = {
+    ('GET', '/routing/quote'): (
+        'one fax priced by each account your rules allow, for faxbot costs fax --to; the console shows the same '
+        'price for each allowed account in Providers -> Rules -> Try a fax (POST /routing/explain)'),
     ('GET', '/routing/inbound/{inbound_id}/cost'): (
         "one received fax's cost for faxbot costs received <id>; the console reads the costs of the received faxes "
         'on screen in one request (GET /routing/inbound-costs)'),

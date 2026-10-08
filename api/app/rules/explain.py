@@ -86,23 +86,12 @@ class FactsReader:
                                     .limit(1)).scalar_one_or_none()
         return newest == 1
 
-    def quotes(self, accounts, pages, alternate):
-        from ..routing.costs import estimate_cost
-        found = []
-        for account in accounts:
-            if not account.sends:
-                continue
-            card = self.routes.card_for(account.key) or (self.routes.card_for(account.provider)
-                                                          if account.provider != account.key else None)
-            micros = estimate_cost(card, max(pages, 1)) if card is not None else None
-            quote = model.Quote(account.key, micros, card.currency if micros is not None else None,
-                                pages=max(pages, 1))
-            found.append(quote)
-            if alternate is not None:
-                # Origin- and number-rated prices arrive with WP-T; until then the alternate is priced the same.
-                found.append(model.Quote(account.key, quote.micros, quote.currency, number='alternate',
-                                         pages=quote.pages))
-        return tuple(found)
+    def quotes(self, accounts, pages, alternate, destination=None, moment=None):
+        """A quote per account from the shared predictor and each plan's budget (``routing.pricing``): the same
+        figures dispatch ranks by and checks caps against. Origin-rated rows arrive with WP-T."""
+        from ..routing.pricing import quotes_for
+        return quotes_for(self.routes, self.values, accounts, destination, max(int(pages or 1), 1), alternate,
+                          now=moment)
 
     def read(self, *, to_number, accounts, pages=1, size_bytes=0, principal_id=None, sender_kind=None,
              key_id=None, mailbox_id=None, workflow=None, labels=(), urgent=False, by_call=False, case_packet=False,
@@ -135,12 +124,20 @@ class FactsReader:
             labels=tuple(sorted(set(labels or ()))), pages=max(int(pages or 0), 0),
             size_bytes=max(int(size_bytes or 0), 0), case_packet=case_packet, urgent=urgent, by_call=by_call,
             time_zone=getattr(self.values, 'time_zone', '') or '',
-            quotes=self.quotes(accounts, int(pages or 1), alternate))
+            quotes=self.quotes(accounts, int(pages or 1), alternate, destination, moment))
 
 
-def _money(micros, currency):
+def _money(micros, currency, plan=None):
+    """An amount for the API; a plan's own fax has none ("In your plan", never "$0.00"), nor has an unknown price."""
     from ..routing.costs import format_amount
-    return None if micros is None else {'currency': currency, 'amount': format_amount(micros)}
+    return None if micros is None or plan is not None else {'currency': currency, 'amount': format_amount(micros)}
+
+
+def _quote_text(quote):
+    from ..routing.pricing import plan_text
+    if quote is None:
+        return plan_text(None, None)
+    return plan_text(quote.plan, quote.micros)
 
 
 def _step_view(step, scope_names=None):
@@ -166,11 +163,11 @@ def explanation(decision, facts, accounts, *, scope_names=None):
     if envelope.local:
         routes.append({'account': model.LOCAL, 'label': text.account_label(model.LOCAL), 'usable': True,
                        'sentence': 'Delivered straight into Received, with no phone call.', 'quote': None,
-                       'origin': None})
+                       'quote_text': 'No charge', 'origin': None})
     if envelope.direct and facts.partner:
         routes.append({'account': model.DIRECT, 'label': text.account_label(model.DIRECT), 'usable': True,
                        'sentence': 'Delivered straight to the verified partner, with no fax call.', 'quote': None,
-                       'origin': None})
+                       'quote_text': 'No charge', 'origin': None})
     for position, key in enumerate(envelope.accounts):
         quote = next((q for q in facts.quotes if q.account == key and q.number == quoted), None)
         if envelope.mode == 'ordered':
@@ -182,8 +179,8 @@ def explanation(decision, facts, accounts, *, scope_names=None):
         if envelope.sslfax and by_key.get(key) is not None and by_key[key].sslfax:
             sentence += ' The call offers SSL Fax. ' + text.SSL_FAX
         routes.append({'account': key, 'label': text.account_label(key, accounts), 'usable': True,
-                       'sentence': sentence, 'quote': _money(quote.micros, quote.currency) if quote else None,
-                       'origin': quote.origin if quote else None})
+                       'sentence': sentence, 'quote': _money(quote.micros, quote.currency, quote.plan) if quote else None,
+                       'quote_text': _quote_text(quote), 'origin': quote.origin if quote else None})
     seen = {route['account'] for route in routes}
     for item in decision.excluded:
         if item.account in seen:
@@ -192,8 +189,9 @@ def explanation(decision, facts, accounts, *, scope_names=None):
         quote = next((q for q in facts.quotes if q.account == item.account and q.number == quoted), None)
         routes.append({'account': item.account, 'label': text.account_label(item.account, accounts), 'usable': False,
                        'sentence': text.excluded_sentence(item, accounts, facts, envelope.caps),
-                       'quote': _money(quote.micros, quote.currency) if quote else None,
-                       'origin': quote.origin if quote else None, 'soft': item.soft})
+                       'quote': _money(quote.micros, quote.currency, quote.plan) if quote else None,
+                       'quote_text': _quote_text(quote), 'origin': quote.origin if quote else None,
+                       'soft': item.soft})
     return {
         'outcome': decision.outcome,
         'sentence': text.decision_sentence(decision, accounts, scope_names, zone),
