@@ -337,7 +337,7 @@ class CertaintyService:
                 'pages_text': pages_text(first, last), 'action': f'Send {pages_text(first, last)}',
                 'basis': offer.confirmed.sentence,
                 'warning': f'Page {first} may already have arrived, so the recipient may get it twice.',
-                'may_send': may_act, 'to_number': row['to_number'], 'total_pages': last}
+                'may_send': may_act, 'total_pages': last}
 
     def _with_cost(self, actor, views):
         """Price each offered continuation on the account the rules would choose, outside the transaction."""
@@ -346,7 +346,9 @@ class CertaintyService:
             offer = view.get('continuation')
             if not offer or offer.get('state') != 'offered':
                 continue
-            number = offer.pop('to_number', None)
+            with self.store.engine.connect() as connection:  # the full number stays out of the view
+                number = connection.execute(sa.select(self.store.jobs.c.to_number).where(
+                    self.store.jobs.c.id == view['fax_id'])).scalar()
             sentence, account, money = cost(self.store.engine, self.values(), actor, to_number=number,
                                             pages=offer['pages'], total=offer['total_pages'])
             offer.update({'cost_text': sentence, 'cost_account': account, 'cost': money})

@@ -35,7 +35,8 @@ whole fax again ("send again").
   session log (``hylafax/bin/negotiation``: ``clean_pages``, the pages the
   receiver answered MCF before any other answer) and counts only those; a
   session log without page answers is unknown. With error correction on for
-  the whole call (``fax_engine_calls.ecm``), ``npages`` stands.
+  the whole call (``fax_engine_calls.ecm``), ``npages`` stands; on for some
+  pages only, the answers count blocks rather than pages: unknown.
 - **Cloud fax services**, from their own reports, kept when the result
   arrives (``fax_page_reports``):
 
@@ -205,6 +206,10 @@ def hylafax_confirmed(pages, *, ecm, clean_pages, flagged_page):
     if ecm == 'on':
         return Confirmed(pages, 'hylafax', f'The call used error correction, and the receiving machine confirmed '
                                            f'the first {_pages(pages)} whole.')
+    if ecm == 'mixed':
+        # With error correction the machine answers each block, not each page, so the answers cannot be counted.
+        return Confirmed(None, 'hylafax', 'The call used error correction for some pages only, so Faxbot cannot tell '
+                                          'which page the receiving machine reported damaged.')
     if type(clean_pages) is not int:
         return Confirmed(None, 'hylafax', "Faxbot could not read the receiving machine's answer to each page of "
                                           'this call, so it cannot tell which pages arrived well.')

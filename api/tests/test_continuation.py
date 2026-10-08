@@ -79,7 +79,8 @@ def test_the_ssl_fax_engine_counts_only_clean_pages_without_error_correction():
     assert flagged.sentence == 'The receiving machine reported damaged lines on page 7, so only the first 6 pages ' \
                                'count as confirmed.'
     assert hylafax_confirmed(9, ecm='off', clean_pages=12, flagged_page=None).pages == 9
-    assert hylafax_confirmed(9, ecm='mixed', clean_pages=4, flagged_page=None).pages == 4
+    # Error correction on some pages only: its answers count blocks, not pages, so nothing is claimed.
+    assert hylafax_confirmed(9, ecm='mixed', clean_pages=4, flagged_page=None).pages is None
     unknown = hylafax_confirmed(9, ecm='off', clean_pages=None, flagged_page=None)
     assert unknown.pages is None and unknown.source == 'hylafax'
     assert hylafax_confirmed(9, ecm=None, clean_pages=None, flagged_page=None).pages is None
@@ -392,7 +393,7 @@ def test_on_the_uncertain_item_it_sits_beside_send_again_and_settles_the_item(cl
     [item] = client.get(f'/certainty/faxes/{job}', headers=ADMIN).json()['items']
     assert 'continue' in item['actions'] and item['continuation']['state'] == 'offered'
     assert item['continuation']['action'] == 'Send pages 8–20'
-    assert item['continuation']['cost_text']
+    assert item['continuation']['cost_text'] and NUMBER not in json.dumps(item['continuation'])
     # Sent's own action goes through the item, with the person's reason.
     offer = client.get(f'/continuations/faxes/{job}', headers=ADMIN).json()['offer']
     assert offer['open_item_id'] == item['id']
