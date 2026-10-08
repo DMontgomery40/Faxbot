@@ -844,7 +844,7 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
                                       tiff_path=tiff_path, header=values.fax_header or '', settings=settings,
-                                      station=choice.number, subaddress=subaddress)
+                                      station=choice.number, **({'subaddress': subaddress} if subaddress else {}))
     except BaseException:
         await forget_plan(ami, tag)
         raise
