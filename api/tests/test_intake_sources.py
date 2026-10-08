@@ -341,6 +341,47 @@ def test_a_mailbox_with_no_fax_number_receives_a_connectors_documents(client, tm
     assert [(row.mailbox_label, row.to_number) for row in placed] == [('Scans only', None)]
 
 
+def test_a_connector_files_only_into_a_mailbox_its_administrator_can_see(client, tmp_path):
+    """Faxbot files a connector's documents as itself, so adding one, or moving it to another mailbox, needs the
+    person setting it up to see faxes in that mailbox; a mailbox that does not exist is one sentence."""
+    from api.tests.test_access_management_http import assign
+    front = mailbox(client, 'Front Desk', '+15550100001')
+    billing = mailbox(client, 'Billing', '+15550100002')
+    role = client.post('/access/roles', headers=B, json={
+        'name': 'Connector setup', 'description': 'Sets up scanners', 'permissions': ['settings:read', 'settings:write'],
+        'enabled': True, 'expected_policy_version': policy_version(client)})
+    assert role.status_code == 200, role.text
+    sam, person = ready_user(client, 'sam', role.json()['role']['id'])
+    assign(client, person['id'], 'role_fax_viewer', resource_id=front['resource_id'])
+    folder = tmp_path / 'scans'
+    folder.mkdir()
+
+    def body(box_id):
+        return {'name': 'Scanner share', 'kind': 'folder', 'direction': 'receive',
+                'settings': {'path': str(folder), 'mailbox_id': box_id, 'settle_seconds': 10}}
+    refused = sam.post('/intake/sources', body(billing['id']))
+    assert refused.status_code == 403
+    assert refused.json()['detail'] == text.MAILBOX_NOT_YOURS.format(mailbox='Billing')
+    unknown = sam.post('/intake/sources', body('0' * 32))
+    assert unknown.status_code == 400 and unknown.json()['detail'] == text.MAILBOX_UNKNOWN
+    added = sam.post('/intake/sources', body(front['id']))
+    assert added.status_code == 201, added.text
+    source = added.json()
+    moved = sam.client.put(f"/intake/sources/{source['id']}", headers=sam.headers(csrf=True), json={
+        'version': source['version'], 'settings': {'mailbox_id': billing['id']}})
+    assert moved.status_code == 403
+    renamed = sam.client.put(f"/intake/sources/{source['id']}", headers=sam.headers(csrf=True), json={
+        'version': source['version'], 'name': 'Front desk scanner'})
+    assert renamed.status_code == 200, renamed.text
+    # Someone who sees every mailbox may move it; Faxbot then files there as itself.
+    moved = client.put(f"/intake/sources/{source['id']}", headers=B, json={
+        'version': renamed.json()['version'], 'settings': {'mailbox_id': billing['id']}})
+    assert moved.status_code == 200, moved.text
+    (listed,) = [item for item in client.get('/intake/sources', headers=B).json()['connectors']
+                 if item['id'] == source['id']]
+    assert listed['mailbox']['label'] == 'Billing'
+
+
 def test_a_sidecar_names_the_number_and_a_missing_folder_is_one_sentence(client, tmp_path):
     mailbox(client, 'Billing', '+15550100002')
     folder = tmp_path / 'inbox'

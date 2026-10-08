@@ -109,11 +109,20 @@ SHARED_CALL = ("When faxes from several partners share one call, each document's
 
 
 class RelayRefused(RuntimeError):
-    """A relayed document the relay will not accept; ``reason`` is a stable code and the message one sentence."""
+    """A relayed document the relay will not accept; ``reason`` is a stable code and the message why, as the
+    sender reads it after "{relay} did not accept it for relaying: " (``refusal_sentence``)."""
 
     def __init__(self, reason, message, status=409):
         super().__init__(message)
         self.reason, self.status = reason, status
+
+
+def refusal_sentence(relay, why):
+    """The sender's sentence for a fax its relay refused at acceptance: no call was made, and nothing was sent."""
+    why = (why or '').strip().rstrip('.')
+    lead = f'{relay or "The relaying partner"} did not accept it for relaying'
+    return f'{lead}: {why}. Nothing was sent; Faxbot sends it by your next route.' if why else \
+        f'{lead}. Nothing was sent; Faxbot sends it by your next route.'
 
 
 # Terms ---------------------------------------------------------------------------------------------------------
@@ -1008,43 +1017,37 @@ class RelayService:
             return refusal.status, self.direct._refusal(identity, message_id, refusal.reason, str(refusal), peer)
 
     def _relay_terms(self, peer, facts, now):
-        relay = self._organization()
         row = self.store.agreement(facts['agreement'])
         if row is None or row['role'] != 'relay' or row['peer_id'] != peer['id'] or row['state'] != 'active':
-            raise RelayRefused('no_agreement', f'{relay} has no active relay agreement with you, so nothing was '
-                                               'accepted.')
+            raise RelayRefused('no_agreement', 'it has no active relay agreement with you')
         terms = json.loads(row['terms'])
         if not covers(terms, facts['destination']):
-            raise RelayRefused('destination', f'{relay} did not agree to relay faxes to this number, so nothing was '
-                                              'accepted.')
+            raise RelayRefused('destination', 'it did not agree to relay faxes to this number')
         from ..routing.destinations import PREMIUM, classify
         if classify(facts['destination'], country_of(facts['destination']) or 'US').kind == PREMIUM:
             # A partner's fax never makes the relay dial a premium-rate number, whatever the agreement covers.
-            raise RelayRefused('destination', f'{relay} does not relay faxes to premium-rate numbers, so nothing was '
-                                              'accepted.')
+            raise RelayRefused('destination', 'it does not relay faxes to premium-rate numbers')
         if not hours_open(terms, now):
-            raise RelayRefused('outside_hours', f'It is outside the hours when {relay} relays faxes, so nothing was '
-                                                'accepted.')
+            raise RelayRefused('outside_hours', 'it is outside the hours when it relays faxes')
         return row, terms
 
     def _check_limits(self, row, terms, pages, cost, now, connection=None):
-        relay = self._organization()
         since = month_start(now, terms.get('time_zone'))
         used_pages, used_money = (self.store.usage_on(connection, row['id'], since) if connection is not None
                                   else self.store.usage(row['id'], since))
         if terms.get('monthly_pages') and used_pages + pages > terms['monthly_pages']:
-            raise RelayRefused('over_limit', f"This fax would go over the {terms['monthly_pages']:,} pages a month "
-                                             f'{relay} agreed to relay for you, so nothing was accepted.')
+            raise RelayRefused('over_limit', f"this fax would go over the {terms['monthly_pages']:,} pages a month "
+                                             'it agreed to relay for you')
         spend = terms.get('monthly_spend')
         if spend:
             if cost is None or cost[1] != spend['currency']:
-                raise RelayRefused('cost_unknown', f'{relay} cannot tell what this fax would cost, and the agreement '
-                                                   'has a spending limit, so nothing was accepted.')
+                raise RelayRefused('cost_unknown', 'it cannot tell what this fax would cost, and the agreement has a '
+                                                   'spending limit')
             if used_money.get(spend['currency'], 0) + cost[0] > spend['amount_micros']:
                 # The partner reads this: its currency is always named.
                 limit = money_for(spend['amount_micros'], spend['currency'])
-                raise RelayRefused('over_limit', f'This fax would go over the {limit} a month {relay} agreed to spend '
-                                                 'relaying for you, so nothing was accepted.')
+                raise RelayRefused('over_limit', f'this fax would go over the {limit} a month it agreed to spend '
+                                                 'relaying for you')
 
     def _accept(self, identity, peer, manifest, document, now):
         import hashlib
@@ -1054,13 +1057,12 @@ class RelayService:
         facts = manifest['relay']
         row, terms = self._relay_terms(peer, facts, now)
         if not document.startswith(b'%PDF'):
-            raise RelayRefused('not_pdf', 'Only PDF documents can be relayed.', 400)
+            raise RelayRefused('not_pdf', 'only PDF documents can be relayed', 400)
         configuration, access = self._configuration()
         revision = configuration.read().active
         profile_id = revision.profile_id('outbound')
         if profile_id is None:
-            raise RelayRefused('not_sending', f'{self._organization()} is not sending faxes now, so nothing was '
-                                              'accepted.')
+            raise RelayRefused('not_sending', 'it is not sending faxes now')
         profile = configuration.read_profile(profile_id)
         values = revision.values
         destination = facts['destination']
@@ -1072,7 +1074,8 @@ class RelayService:
                 moment=now, zone_name=getattr(values, 'time_zone', '') or '',
                 first_page=relay_pages.marketing_lines(marketing, destination), folder=folder)
         except relay_pages.RelayPagesError as error:
-            raise RelayRefused('not_readable', str(error), 400) from None
+            raise RelayRefused('not_readable', 'it could not read the document: ' + str(error).rstrip('.'),
+                               400) from None
         prediction, _ = own_prediction(self.engine, values, profile.configuration.provider_id, destination, pages,
                                        now=now)
         cost = ((prediction.cost.micros, prediction.cost.currency)
@@ -1101,6 +1104,9 @@ class RelayService:
             existing = self.direct.store.find('inbound', manifest['message_id'], connection)
             if existing is not None:
                 raise _AlreadyAccepted()
+            refused = self.store.fax(role='relay', message_id=manifest['message_id'], connection=connection)
+            if refused is not None and refused['state'] == 'refused':
+                raise RelayRefused('refused', 'it already refused this fax')
             self._check_limits(row, terms, pages, cost, now, connection)
             self.store.add_fax_on(connection, role='relay', message_id=manifest['message_id'],
                                   agreement_id=row['id'], peer_id=peer['id'], job_id=job_id, destination=destination,
@@ -1116,16 +1122,25 @@ class RelayService:
             if hold is not None:
                 from ..batching.acceptance import recorder
                 recorder(self.engine, job_id, hold, _RelaySender(row))(connection, moment)
-        from ..access.system_outbound import SystemSenderError, accept
+        from ..access.system_outbound import RulesHold, SystemSenderError, accept
         try:
             accept(configuration, access.store, row['principal_id'], revision, job, also=record)
+        except RulesHold as held:
+            # Its own sending rules would hold the fax (approval, a time window or no allowed route): a partner's
+            # fax never waits in this installation's Sent outside the sender's control. Refused, signed, so the
+            # sender's own next route sends it at once; this administrator keeps a record of it.
+            self._discard(paths, job_id)
+            self.store.add_fax(role='relay', message_id=manifest['message_id'], agreement_id=row['id'],
+                               peer_id=peer['id'], job_id=job_id, destination=destination, pages=pages,
+                               state='refused', detail=f"Refused to relay a fax from {peer['organization']}: "
+                                                       f'{held.reason}.'[:300], now=now)
+            raise RelayRefused('rules', held.partner_reason) from None
         except _AlreadyAccepted:
             existing = self.direct.store.find('inbound', manifest['message_id'])
             return json.loads(existing['receipt'])
         except SystemSenderError:
             self._discard(paths, job_id)
-            raise RelayRefused('no_agreement', f'{self._organization()} has no active relay agreement with you, '
-                                               'so nothing was accepted.') from None
+            raise RelayRefused('no_agreement', 'it has no active relay agreement with you') from None
         except RelayRefused:
             self._discard(paths, job_id)
             raise
@@ -1139,7 +1154,8 @@ class RelayService:
 
     def _discard(self, paths, job_id):
         """Remove the files of a fax that was not accepted, unless an earlier acceptance of it owns them."""
-        if self.store.fax_for_job(job_id, role='relay') is not None:
+        found = self.store.fax_for_job(job_id, role='relay')
+        if found is not None and found['state'] != 'refused':
             return
         for path in paths:
             try:
@@ -1225,9 +1241,14 @@ class RelayService:
                         'shared': shared, 'detail': f"{relay}'s call ended partway, and part of the fax may have "
                                                     'arrived. Check with the recipient before sending it again.'}
             reason = (job.error if job is not None and isinstance(job.error, str) and job.error else None)
-            sentence = (f'{relay} cancelled it before dialing.' if state == 'cancelled' and not any(
-                attempt['submitted_at'] for attempt in tried) else
-                f"{relay}'s call failed before any page was sent" + (f': {reason}' if reason else '.'))
+            called = any(attempt['submitted_at'] for attempt in tried)
+            if state == 'cancelled' and not called:
+                sentence = f'{relay} cancelled it before dialing.'
+            elif not called:
+                # Nothing was submitted, so no call was made: never "call failed".
+                sentence = f'{relay} did not place a call for it' + (f': {reason}' if reason else '.')
+            else:
+                sentence = f"{relay}'s call failed before any page was sent" + (f': {reason}' if reason else '.')
             return {'status': FAILED_BEFORE_DATA, 'pages': 0, 'seconds': None, 'charge': self._charge(fax['job_id']),
                     'shared': shared, 'detail': sentence}
         if state == 'reconciliation_required':
@@ -1318,7 +1339,7 @@ class RelayService:
         except (DirectProtocolError, UnicodeEncodeError, TypeError, AttributeError):
             return 403, {'detail': 'This request is not from an enrolled partner.'}
         fax = self.store.fax(role='relay', message_id=message_id)
-        if fax is None or fax['peer_id'] != peer['id']:
+        if fax is None or fax['peer_id'] != peer['id'] or fax['state'] == 'refused':
             return 200, self._sign(identity, peer, 'relay_status', message_id=message_id, status='not_relayed')
         if fax['outcome_statement_id'] is None:
             return 200, self._sign(identity, peer, 'relay_status', message_id=message_id, status='pending')

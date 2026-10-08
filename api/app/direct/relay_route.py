@@ -150,9 +150,12 @@ class _RelaySubmission:
                 # Accepted for relaying, not delivered: the relay's signed outcome settles the fax.
                 return SubmissionReceipt(None, 'in_progress')
             if statement.get('type') == 'refusal' and 400 <= status < 500:
-                detail = statement.get('detail') if isinstance(statement.get('detail'), str) else None
-                await self._move('refused', detail=detail)
-                raise DirectRefused(detail or 'The relaying partner did not accept the fax.')
+                # Refused at acceptance: no call was made and nothing was sent; the sender's next route sends it.
+                from .relay import refusal_sentence
+                why = statement.get('detail') if isinstance(statement.get('detail'), str) else None
+                sentence = refusal_sentence(peer.get('organization'), why)
+                await self._move('refused', detail=sentence)
+                raise DirectRefused(sentence)
         # The partner may have accepted it; ask instead of sending again.
         await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'uncertain'))
         raise RuntimeError('The answer from the relaying partner could not be confirmed.')

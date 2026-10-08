@@ -277,6 +277,121 @@ def test_the_approval_and_the_claim_cannot_race_into_two_sends(ruled):
     assert first is not None and first.job_id == job and second is None
 
 
+def _watch_claims(monkeypatch):
+    """Record, inside each claim's own locked transaction, the holds still open on the fax it claims."""
+    from api.app.routing import holds as hold_module
+    seen, guard = [], __import__('threading').Lock()
+    original = OutboundStore._claim_row_on
+
+    def watched(self, connection, row, owner, now, lease_seconds):
+        t = envelopes.tables(connection)
+        still_open = [hold['kind'] for hold in hold_module.open_on(connection, t, row['id'])]
+        claim = original(self, connection, row, owner, now, lease_seconds)
+        if claim is not None:
+            with guard:
+                seen.append((row['id'], still_open))
+        return claim
+    monkeypatch.setattr(OutboundStore, '_claim_row_on', watched)
+    return seen
+
+
+def test_approving_while_two_workers_claim_sends_each_fax_once_and_only_after_its_approval(ruled, monkeypatch):
+    """Real threads on real connections: one approver and two claiming workers start together. Every fax is claimed
+    exactly once, and never while its approval is still open (checked inside the claim's own transaction)."""
+    import threading
+    publish(ruled, APPROVAL)
+    # One number each: a claimed fax keeps its number's one line busy (capacity.py).
+    jobs = [accept(ruled, to=f'+120255501{n:02d}') for n in range(6)]
+    pending = {hold['job_id']: hold for hold in HoldStore(ruled.delivery).holds()}
+    assert set(pending) == set(jobs)
+    seen = _watch_claims(monkeypatch)
+    start, approved, claims, failures = threading.Barrier(3), threading.Event(), [], []
+    guard = threading.Lock()
+
+    def approve():
+        try:
+            start.wait(timeout=30)
+            store = HoldStore(ruled.delivery)
+            for job in jobs:
+                hold = pending[job]
+                store.approve(hold['id'], version=hold['version'], actor=BEN, actor_name='Ben Example')
+        except Exception as error:  # surfaced below
+            failures.append(error)
+        finally:
+            approved.set()
+
+    def work(name):
+        try:
+            start.wait(timeout=30)
+            deadline = datetime.utcnow() + timedelta(seconds=60)
+            while datetime.utcnow() < deadline:
+                done = approved.is_set()  # read before claiming: a claim after the last approval ends the loop
+                claim = ruled.delivery.claim(name)
+                if claim is not None:
+                    with guard:
+                        claims.extend(member.job_id for member in claim.everyone)
+                elif done:
+                    return
+        except Exception as error:
+            failures.append(error)
+
+    threads = [threading.Thread(target=approve)] + [threading.Thread(target=work, args=(f'worker-{n}',))
+                                                     for n in (1, 2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert not failures and not any(thread.is_alive() for thread in threads)
+    assert sorted(claims) == sorted(jobs)  # each fax once: never twice, never missed
+    assert sorted(job for job, _ in seen) == sorted(jobs)
+    assert all(still_open == [] for _, still_open in seen)  # never claimed while its approval was open
+    assert _claim(ruled) is None
+    with ruled.engine.connect() as connection:
+        attempts = dict(connection.execute(sa.select(ruled.delivery.attempts.c.job_id, sa.func.count())
+                                           .group_by(ruled.delivery.attempts.c.job_id)).all())
+    assert attempts == {job: 1 for job in jobs}
+
+
+def test_a_fax_held_after_its_preview_never_goes_with_others_before_its_approval(ruled, monkeypatch):
+    """POST /fax decides a preview before the lock and sending together follows it, but the acceptance transaction
+    decides again. A rule published in between holds the fax while it already waits to go with others: the
+    together claim must not take it before its approval, and the other faxes to that number still go."""
+    from api.app.batching import store as batching
+    batching.BatchingSettings(ruled.engine).save(TO, enabled=True, recipient_agreed=True, actor='principal:p1',
+                                                 actor_name='Owner')
+    seen = _watch_claims(monkeypatch)
+    earlier = datetime.utcnow() - timedelta(hours=1)
+
+    def accept_together(plan):
+        identity, now = uuid4().hex, datetime.utcnow()
+        job = {'id': identity, 'to_number': TO, 'file_name': 'synthetic.pdf', 'tiff_path': '', 'status': 'queued',
+               'pages': 1, 'created_at': now, 'updated_at': now}
+        with ruled.configuration._locked() as connection:
+            ruled.configuration._accept_outbound_on(connection, ruled.snapshot.active, job)
+            rules_acceptance.recorder(plan, identity, ANNE)(connection, now)
+            batching.hold_on(connection, batching.tables(ruled.engine, connection), identity,
+                             batching.HoldPlan(TO, 'key:front', 'Front Desk', 1, False, 60), earlier)
+        return identity
+    preview = lambda: rules_acceptance.prepare(ruled.engine, ruled.snapshot.active, actor=ANNE,  # noqa: E731
+                                               destination=TO, pages=3)
+    free = accept_together(preview())
+    stale = preview()  # decided before the rule below: no hold
+    publish(ruled, APPROVAL)
+    held = accept_together(stale)
+    assert [hold['kind'] for hold in holds(ruled, held)] == ['approval']
+    claim = _claim(ruled)
+    assert claim is not None and [member.job_id for member in claim.everyone] == [free]
+    assert _claim(ruled) is None
+    assert batching.member(ruled.engine, held)['state'] == 'separate'  # it goes on its own once released
+    ruled.delivery.fail_preparation(claim, category='preparation_failed')  # frees the number's one line
+    assert _claim(ruled) is None  # still waiting for its approval
+    hold = holds(ruled, held)[0]
+    HoldStore(ruled.delivery).approve(hold['id'], version=hold['version'], actor=BEN)
+    later = _claim(ruled)
+    assert later is not None and [member.job_id for member in later.everyone] == [held]
+    assert all(still_open == [] for _, still_open in seen)
+
+
 def test_an_approval_binds_to_the_document_it_was_held_with(ruled):
     publish(ruled, APPROVAL)
     pdf = ruled.tmp / 'probe.pdf'
@@ -369,6 +484,92 @@ async def test_today_s_fallback_for_faxes_no_rule_decides_is_unchanged(listed):
         assert _fail(listed, job, before_data=None) == 'ready'
         await worker.step()
         assert inner.used == ['signalwire', 'phaxio']
+    finally:
+        OutboundStore.fallback_policy = None
+
+
+def _four_more_sinch_accounts(database, tmp_path):
+    """Four more Sinch accounts send (synthetic credentials), each with its own card; the rules below name only
+    these four."""
+    from api.tests.test_provider_accounts import UK, environment, manager, with_accounts
+    control = manager(database, tmp_path)
+    first = control.initialize({**environment(tmp_path), 'FAX_DATA_DIR': str(tmp_path), 'FAX_DISABLED': 'false',
+                                'PUBLIC_API_URL': 'https://faxbot.example.org'})
+    extra = {key: {**UK, 'label': label, 'receives': False, 'numbers': [], 'credentials': {
+        **UK['credentials'], 'api_key': f'synthetic-{key}-key'}} for key, label in (
+        ('sinch-uk', 'Sinch (UK)'), ('sinch-au', 'Sinch (Australia)'), ('sinch-ca', 'Sinch (Canada)'),
+        ('sinch-us', 'Sinch (US)'))}
+    snapshot = with_accounts(control, first, extra)
+    env = SimpleNamespace(configuration=control.store, delivery=OutboundStore(control.store),
+                          routes=RouteStore(database), snapshot=snapshot, rules=RuleStore(database), engine=database,
+                          tmp=tmp_path)
+    env.routes.replace_cards([card(key, page='0.05') for key in ('sinch-uk', 'sinch-au', 'sinch-ca', 'sinch-us')])
+    return env
+
+
+@pytest.mark.asyncio
+async def test_strict_fallback_stops_at_the_limit_and_the_fax_waits_in_sent_with_its_sentence(database, tmp_path):
+    """Four accounts a rule tries in order, each call ending before any fax data: MAX_FALLBACKS more attempts after
+    the first, each one pre-data, and then the fax is held in Sent (never failed) until someone checks again."""
+    from api.app.outbound_store import FALLBACK_LIMIT
+    from api.app.routing.fallback import MAX_FALLBACKS
+    assert FALLBACK_LIMIT == MAX_FALLBACKS == 2
+    env = _four_more_sinch_accounts(database, tmp_path)
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(env.delivery, env.routes))
+    try:
+        publish(env, {'format': 1, 'routes': [rule('r-four', {'try_in_order': ['sinch-uk', 'sinch-au', 'sinch-ca',
+                                                                               'sinch-us']})]})
+        job = accept(env)
+        assert envelopes.load(env.engine, job).strict
+        worker = OutboundWorker(env.delivery, RoutedTransport(Inner(env.delivery), direct=None))
+        tried = []
+        for expected in ('ready', 'ready', 'ready'):
+            assert await worker.step() is True
+            tried.append(choice(env, env.delivery.get(job)['attempt_id'])['account_key'])
+            assert _fail(env, job, before_data=True) == expected
+        assert tried == ['sinch-uk', 'sinch-au', 'sinch-ca']  # the first try and MAX_FALLBACKS more, in order
+        assert env.delivery.fallback_count(job) == MAX_FALLBACKS
+        with env.engine.connect() as connection:
+            flags = connection.execute(sa.select(env.delivery.attempts.c.ended_before_data).where(
+                env.delivery.attempts.c.job_id == job)).scalars().all()
+        assert flags == [1, 1, 1]
+        (hold,) = holds(env, job)
+        assert hold['kind'] == 'no_route'
+        assert hold['reason'] == ('Faxbot tried Sinch (UK), Sinch (Australia) and Sinch (Canada), and each call '
+                                  'ended before any page was sent. It waits for you in Sent; nothing was sent.')
+        assert env.delivery.get(job)['state'] == 'ready' and env.delivery.get(job)['attempt_id'] is None
+        with env.engine.connect() as connection:
+            status = connection.execute(sa.select(env.configuration.jobs.c.status).where(
+                env.configuration.jobs.c.id == job)).scalar()
+        assert status == 'queued'
+        worker.paused.clear()
+        assert await worker.step() is False  # held: never claimed by itself
+        HoldStore(env.delivery).check_again(hold['id'], version=hold['version'], actor=ANNE)
+        assert await worker.step() is True
+        assert choice(env, env.delivery.get(job)['attempt_id'])['account_key'] == 'sinch-us'  # never one tried
+        assert _fail(env, job, before_data=True) == 'ready'  # still at the limit: held again, never failed
+        assert [item['kind'] for item in holds(env, job)] == ['no_route']
+        assert env.delivery.fallback_count(job) == MAX_FALLBACKS
+    finally:
+        OutboundStore.fallback_policy = None
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_fax_data_at_the_limit_still_fails_and_waits_for_a_person(database, tmp_path):
+    """Holding is only for calls that ended before any page: one that may have sent pages fails as before."""
+    env = _four_more_sinch_accounts(database, tmp_path)
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(env.delivery, env.routes))
+    try:
+        publish(env, {'format': 1, 'routes': [rule('r-two', {'try_in_order': ['sinch-uk', 'sinch-au']})]})
+        job = accept(env)
+        worker = OutboundWorker(env.delivery, RoutedTransport(Inner(env.delivery), direct=None))
+        assert await worker.step() is True
+        assert _fail(env, job, before_data=False) == 'failed'
+        assert holds(env, job) == []
+        unknown = accept(env, to='+12025550188')
+        assert await worker.step() is True
+        assert _fail(env, unknown, before_data=None) == 'failed'  # the provider did not say
+        assert holds(env, unknown) == []
     finally:
         OutboundStore.fallback_policy = None
 

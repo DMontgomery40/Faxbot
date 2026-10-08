@@ -6,7 +6,8 @@ import {
   FormControl, InputLabel, Link, MenuItem, Paper, Select, Table, TableBody, TableCell, TableHead, TableRow, Typography,
 } from '@mui/material';
 import { formatLocalDate } from '../api/time';
-import { formatRate } from './delivery/shared';
+import { isForbidden } from '../api/client';
+import { DeliveryError, formatRate } from './delivery/shared';
 import type { ProviderAccount, RulesApi } from './ProviderRulesApi';
 
 export function TrunkPicker({ api, value, onChange }: {
@@ -16,12 +17,17 @@ export function TrunkPicker({ api, value, onChange }: {
   onChange: (key: string) => void;
 }) {
   const [trunks, setTrunks] = useState<ProviderAccount[]>([]);
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let live = true;
     api.accounts().then((state) => { if (live) setTrunks(state.accounts.filter((account) => account.provider === 'sip')); })
-      .catch(() => undefined);
+      .catch((failure) => {
+        // Someone who may not see provider accounts edits the first trunk; any other failure is said.
+        if (live && !isForbidden(failure)) setError(failure);
+      });
     return () => { live = false; };
   }, [api]);
+  if (error) return <DeliveryError error={error} onClose={() => setError(null)} />;
   if (trunks.length < 2) return null;
   const selected = value ?? trunks.find((trunk) => trunk.primary)?.key ?? trunks[0].key;
   return (

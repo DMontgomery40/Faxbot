@@ -40,6 +40,9 @@ AUTOMATIC = 'Not brought in: the message was sent automatically, such as an out-
 NO_MAILBOX = ('Not filed: this connector names no mailbox, and no sidecar file gave a fax number. Choose a '
               'mailbox for the connector.')
 MAILBOX_GONE = 'Not filed: the mailbox this connector names no longer exists. Choose another mailbox.'
+MAILBOX_UNKNOWN = 'There is no such mailbox, or it is turned off. Choose one of your mailboxes.'
+MAILBOX_NOT_YOURS = ('You can’t see faxes in {mailbox}, so a connector you set up can’t file into it. Choose a '
+                     'mailbox whose faxes you can see.')
 BAD_SIDECAR = 'Not done: the sidecar file could not be used. {detail}'
 NO_SIDECAR_SEND = ('Not sent: no sidecar file with the fax number, such as {name}, arrived beside it within '
                    '{minutes} minutes.')

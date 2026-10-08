@@ -398,8 +398,8 @@ async def test_a_relayed_fax_within_the_limits_goes_as_the_relays_own_fax_and_on
     refused = a.delivery.get(second)
     assert a.direct.store.find('outbound', refused['attempt_id'])['state'] == 'refused'
     (detail,) = [r['detail'] for r in rows(a.engine, "SELECT * FROM relay_faxes WHERE state = 'refused'")]
-    assert detail == ('This fax would go over the 2 pages a month Sydney office agreed to relay for you, so nothing was '
-                      'accepted.')
+    assert detail == ('Sydney office did not accept it for relaying: this fax would go over the 2 pages a month it '
+                      'agreed to relay for you. Nothing was sent; Faxbot sends it by your next route.')
     assert rows(a.engine, 'SELECT route FROM delivery_attempt_costs WHERE id = :id',
                 id=refused['attempt_id'])[0]['route'] == 'phaxio'
     assert len(rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'relay'")) == 1
@@ -682,7 +682,8 @@ async def test_a_withdrawal_lets_accepted_faxes_finish_and_refuses_new_ones_befo
     row = a.delivery.get(second)
     assert a.direct.store.find('outbound', row['attempt_id'])['state'] == 'refused'
     (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE role = 'sender' AND state = 'refused'")
-    assert refused['detail'] == 'Sydney office has no active relay agreement with you, so nothing was accepted.'
+    assert refused['detail'] == ('Sydney office did not accept it for relaying: it has no active relay agreement '
+                                 'with you. Nothing was sent; Faxbot sends it by your next route.')
     assert rows(a.engine, 'SELECT route, route_reason FROM delivery_attempt_costs WHERE id = :id',
                 id=row['attempt_id']) == [{'route': 'phaxio', 'route_reason': 'alternative'}]
     assert len(rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'relay'")) == 1
@@ -720,8 +721,140 @@ async def test_a_premium_rate_number_is_never_relayed(relay_trio):
     conventional = await send(a)
     assert conventional.submissions == 1
     (refused,) = rows(a.engine, "SELECT detail FROM relay_faxes WHERE state = 'refused'")
-    assert refused['detail'] == 'Sydney office does not relay faxes to premium-rate numbers, so nothing was accepted.'
+    assert refused['detail'] == ('Sydney office did not accept it for relaying: it does not relay faxes to '
+                                 'premium-rate numbers. Nothing was sent; Faxbot sends it by your next route.')
     assert a.delivery.get(job)['state'] == 'in_progress'
+
+
+# The relay's own sending rules -------------------------------------------------------------------------------------
+
+def b_rules(trio, document):
+    """Publish B's organization rules (Providers → Rules)."""
+    from api.app.rules.store import RuleStore
+    store = RuleStore(trio.b_engine)
+    current = store.draft('organization', '')
+    draft = store.save_draft('organization', '', document, expected_version=current['version'] if current else 0)
+    active = store.active('organization', '')
+    store.publish('organization', '', expected_active_revision=active['number'] if active else None,
+                  expected_draft_version=draft['version'])
+
+
+def b_decision(trio, job_id):
+    (decision,) = rows(trio.b_engine, 'SELECT outcome, actor_principal_id, facts FROM fax_job_rule_decisions '
+                                      'WHERE job_id = :id', id=job_id)
+    return decision
+
+
+def b_relays_through(trio, organization, number):
+    """B itself sends through a partner relay to Australia, as cheap as can be: an active agreement where B is the
+    sender, with a signed price (``direct.relay.relay_candidates`` offers it for any of B's own faxes)."""
+    from api.app.direct.relay import RelayStore, parse_terms
+    from api.tests.test_partner_relay_terms import _price
+    now = datetime.utcnow()
+    peer_id = uuid4().hex
+    peers = sa.Table('direct_peers', sa.MetaData(), autoload_with=trio.b_engine)
+    with trio.b_engine.begin() as connection:
+        connection.execute(peers.insert().values(
+            id=peer_id, organization=organization, phone_number=number, endpoint_url=f'https://{peer_id[:6]}.example',
+            signing_key=peer_id[:43].ljust(43, 'a'), exchange_key='e' * 43, state='verified', challenge_failures=0,
+            version=1, created_at=now, updated_at=now))
+    offer = {'statement': json.dumps({'type': 'relay_offer', 'price': _price(1_000, now=now)}), 'signature': 's'}
+    RelayStore(trio.b_engine).create(agreement_id=uuid4().hex, peer_id=peer_id, role='sender', state='active',
+                                     terms=parse_terms({'countries': ['AU']}, zone_name='Australia/Sydney'),
+                                     statement=offer, direction='received', now=now)
+    assert [c.peer_id for c in relay_candidates(DEST, Shape(1, None, 'fine', 'normal'), engine=trio.b_engine)] == [
+        peer_id]
+    return peer_id
+
+
+RELAYED = {'id': 'l-relayed', 'name': 'Relayed faxes', 'on': True, 'when': {}}
+
+
+def b_nothing_written(trio):
+    """Nothing of a refused relayed fax is kept at B but the refusal record: no fax, decision, hold or delivery."""
+    for table in ('fax_jobs', 'fax_job_rule_decisions', 'outbound_holds'):
+        assert rows(trio.b_engine, f'SELECT id FROM {table}') == []
+    assert rows(trio.b_engine, "SELECT id FROM direct_deliveries WHERE direction = 'inbound'") == []
+    assert trio.provider.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('limit, held, why', [
+    ({'never': ['phaxio']}, 'your rules allow no account to send it', 'its sending rules allow no account to send it'),
+    ({'cap_cost': {'currency': 'AUD', 'amount': '0.01'}}, 'your rules allow no account to send it',
+     'its sending rules allow no account to send it'),
+    ({'hold_for_approval': {'separate_approver': False}}, 'your rules hold it for approval',
+     'its sending rules would hold it for approval'),
+])
+async def test_a_relayed_fax_the_relays_own_rules_would_hold_is_refused_and_the_sender_sends_it_at_once(
+        relay_trio, limit, held, why):
+    """B's limits apply to the faxes it relays. One its rules would hold (approval, or no allowed route) never waits
+    in B's Sent outside the sender's control: B refuses it at acceptance, signed, so A's own route sends it in the
+    same attempt, and B's administrator keeps a record of the refusal."""
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    b_rules(trio, {'format': 1, 'limits': [{**RELAYED, 'then': limit}]})
+    job = queue(a)
+    conventional = await send(a)
+    assert conventional.submissions == 1  # A's own route, in the same attempt
+    (mine,) = rows(a.engine, "SELECT state, detail FROM relay_faxes WHERE role = 'sender'")
+    assert mine['state'] == 'refused'
+    assert mine['detail'] == (f'Sydney office did not accept it for relaying: {why}. Nothing was sent; Faxbot sends '
+                              'it by your next route.')
+    assert a.delivery.get(job)['state'] == 'in_progress'
+    b_nothing_written(trio)
+    (record,) = rows(trio.b_engine, "SELECT state, detail FROM relay_faxes WHERE role = 'relay'")
+    assert (record['state'], record['detail']) == ('refused', f'Refused to relay a fax from Leeds HQ: {held}.')
+    listed = trio.client.get('/direct/relay/faxes', headers=ADMIN).json()['faxes']
+    assert [item['status'] for item in listed if item['role'] == 'relay'] == [record['detail']]
+
+
+@pytest.mark.asyncio
+async def test_rules_published_after_the_preview_still_refuse_the_relayed_fax_with_nothing_kept(
+        relay_trio, monkeypatch):
+    """The decision made inside the acceptance transaction is the one that counts: a hold decided there (rules
+    published since the preview) rolls the whole acceptance back and refuses the fax."""
+    from app.access import system_outbound
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    b_rules(trio, {'format': 1, 'limits': [{**RELAYED, 'then': {'hold_for_approval': {}}}]})
+    real, previews = system_outbound._hold_kind, []
+
+    def stale_preview(decision):
+        if not previews:  # the preview, read before the lock, as if decided before the rule was published
+            previews.append(decision)
+            return None
+        return real(decision)
+    monkeypatch.setattr(system_outbound, '_hold_kind', stale_preview)
+    queue(a)
+    conventional = await send(a)
+    assert previews and conventional.submissions == 1
+    b_nothing_written(trio)
+    assert rows(trio.b_engine, "SELECT id FROM access_resources WHERE kind = 'outbound'") == []
+    (record,) = rows(trio.b_engine, "SELECT detail FROM relay_faxes WHERE role = 'relay'")
+    assert record['detail'] == 'Refused to relay a fax from Leeds HQ: your rules hold it for approval.'
+
+
+@pytest.mark.asyncio
+async def test_a_relayed_fax_is_never_relayed_again_even_when_the_relays_rules_name_a_relay_first(relay_trio):
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    onward = await asyncio.to_thread(b_relays_through, trio, 'Perth office', '+61855501234')
+    b_rules(trio, {'format': 1, 'routes': [{'id': 'r-onward', 'name': 'Relay to Australia', 'on': True,
+                                            'when': {}, 'then': {'try_in_order': ['relay:' + onward, 'phaxio']}}]})
+    queue(a)
+    await send(a)
+    relayed = relayed_job(trio, a)
+    decision = b_decision(trio, relayed['job_id'])
+    (sender,) = [row['principal_id'] for row in rows(trio.b_engine, "SELECT principal_id FROM relay_agreements "
+                                                                   "WHERE role = 'relay'")]
+    assert decision['outcome'] == 'route' and decision['actor_principal_id'] == sender
+    assert json.loads(decision['facts'])['sender'] == {'principal_id': sender, 'kind': 'system', 'key_id': None,
+                                                       'groups': []}
+    b_sent(trio, relayed['job_id'])
+    assert trio.provider.sent == [(relayed['job_id'], DEST)]  # by B's own account, never through Perth
+    assert rows(trio.b_engine, "SELECT id FROM direct_deliveries WHERE direction = 'outbound'") == []
+    assert rows(trio.b_engine, "SELECT id FROM relay_faxes WHERE role = 'sender'") == []
 
 
 def test_signed_relay_times_are_utc_whatever_the_servers_time_zone(monkeypatch, tmp_path):

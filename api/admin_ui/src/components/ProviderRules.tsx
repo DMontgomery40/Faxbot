@@ -5,7 +5,9 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Button, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Tabs, Typography,
 } from '@mui/material';
+import { isForbidden } from '../api/client';
 import type { AdminDestination } from '../navigation';
+import { DeliveryError } from './delivery/shared';
 import type { RulesApi, Scope } from './ProviderRulesApi';
 import { ORGANIZATION } from './ProviderRulesApi';
 import { DraftBar, useRulesDraft } from './ProviderRulesDraft';
@@ -24,9 +26,15 @@ export function ReceivingSummary({ load, onNavigate }: {
   load?: () => Promise<NumberRuleSummary[]>; onNavigate?: (destination: AdminDestination) => void;
 }) {
   const [rules, setRules] = useState<NumberRuleSummary[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let live = true;
-    load?.().then((value) => { if (live) setRules(value); }).catch(() => { if (live) setRules(null); });
+    load?.().then((value) => { if (live) setRules(value); }).catch((failure) => {
+      if (!live) return;
+      setRules(null);
+      // Someone who may not see number rules sees the summary without them; any other failure is said.
+      if (!isForbidden(failure)) setError(failure);
+    });
     return () => { live = false; };
   }, [load]);
   if (!load) return null;
@@ -36,6 +44,7 @@ export function ReceivingSummary({ load, onNavigate }: {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         Which mailbox each of your numbers delivers to is set on Numbers.
       </Typography>
+      <DeliveryError error={error} onClose={() => setError(null)} />
       {rules && rules.length === 0 && <Typography variant="body2">No number has a mailbox yet.</Typography>}
       {rules?.slice(0, 8).map((rule) => (
         <Typography key={`${rule.to_number}-${rule.mailbox_label}`} variant="body2">

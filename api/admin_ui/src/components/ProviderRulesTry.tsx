@@ -6,6 +6,7 @@ import {
   MenuItem, Paper, Select, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { isForbidden } from '../api/client';
 import { DeliveryError, formatMoney, NOT_PRICED } from './delivery/shared';
 import type {
   ExplainRequest, ExplainResult, Revision, RulesApi, RulesDocument, RulesState, Scope, StepResult, TraceStep,
@@ -137,7 +138,10 @@ export default function ProviderRulesTry({ api, scope, state, document }: {
 
   useEffect(() => {
     let live = true;
-    api.revisions(scope).then((value) => { if (live) setRevisions(value.revisions); }).catch(() => undefined);
+    api.revisions(scope).then((value) => { if (live) setRevisions(value.revisions); }).catch((failure) => {
+      // Without the history only the draft and the active rules can be tried; a failure other than permission is said.
+      if (live && !isForbidden(failure)) setError(failure);
+    });
     return () => { live = false; };
   }, [api, scope]);
 
