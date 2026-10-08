@@ -274,9 +274,20 @@ async def test_an_offer_whose_pages_never_come_does_not_stay_open(pair, tmp_path
     assert answer['pages_held'] == 6
     offered = RepairStore(b_engine()).for_message('receiver', first)
     assert offered['state'] == 'offered'
+    path = f'/direct/deliveries/{first}'
+    # Another enrolled partner asking about that message never closes this partner's offer.
+    from api.app.direct.crypto import Identity, card
+    other = Identity.generate()
+    enrolled = client.post('/direct/peers', headers=ADMIN, json={'card': card(
+        other, organization='Hill Clinic', fax_number='+15550100099', endpoint='https://hill.example')})
+    assert enrolled.status_code == 201, enrolled.text
+    moment = timestamp()
+    asked = client.get(path, headers={'X-Faxbot-Direct-Key': other.signing_key, 'X-Faxbot-Direct-Time': moment,
+                                      'X-Faxbot-Direct-Signature': other.sign(f'GET {path} {moment}'.encode())})
+    assert asked.status_code == 200 and '"status":"not_received"' in asked.json()['statement']
+    assert RepairStore(b_engine()).for_message('receiver', first)['state'] == 'offered'
     # The sender's own question about those pages is answered "not received", which closes the offer at once.
     moment = timestamp()
-    path = f'/direct/deliveries/{first}'
     status = client.get(path, headers={'X-Faxbot-Direct-Key': identity.signing_key, 'X-Faxbot-Direct-Time': moment,
                                        'X-Faxbot-Direct-Signature': identity.sign(f'GET {path} {moment}'.encode())})
     assert status.status_code == 200 and '"status":"not_received"' in status.json()['statement']

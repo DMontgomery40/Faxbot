@@ -445,7 +445,7 @@ class DirectService:
         if row is None or row['peer_id'] != peer['id'] or row['state'] != 'accepted':
             # The sender never got these pages here: an offer for them (repair.py) will never be completed.
             from .repair import RepairStore
-            RepairStore(self.store.engine).expire_offers(now=now, message_id=message_id)
+            RepairStore(self.store.engine).expire_offers(now=now, message_id=message_id, peer_id=peer['id'])
             return 200, signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'not_received',
                                           'answered_at': timestamp(), 'capabilities': self.offered(peer)})
         return 200, {**signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'accepted',

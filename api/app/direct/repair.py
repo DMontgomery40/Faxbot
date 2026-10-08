@@ -127,15 +127,17 @@ class RepairStore:
             connection.execute(self.repairs.update().where(self.repairs.c.id == row_id).values(
                 **values, updated_at=utcnow()))
 
-    def expire_offers(self, *, now=None, message_id=None):
+    def expire_offers(self, *, now=None, message_id=None, peer_id=None):
         """Close this side's offers for missing pages that will never come; how many were closed.
 
-        With ``message_id``: the offer whose pages the sender has said, by asking for that message, it never sent
-        (the question was answered "not received"). Without it: every offer older than ``OFFER_LIFETIME``.
+        With ``message_id`` and ``peer_id``: that partner's offer whose pages it has said, by asking for that
+        message, it never sent (the question was answered "not received"); a partner closes only its own offers.
+        Without them: every offer older than ``OFFER_LIFETIME``.
         """
         now = now or utcnow()
         r = self.repairs
-        which = r.c.message_id == message_id if message_id is not None else r.c.created_at < now - OFFER_LIFETIME
+        which = (sa.and_(r.c.message_id == message_id, r.c.peer_id == peer_id) if message_id is not None
+                 else r.c.created_at < now - OFFER_LIFETIME)
         with write_transaction(self.engine) as connection:
             return connection.execute(r.update().where(r.c.role == 'receiver', r.c.state == 'offered', which)
                                       .values(state='expired', updated_at=now)).rowcount
