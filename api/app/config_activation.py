@@ -121,8 +121,12 @@ def _effective_definition(values, definition):
     return definition
 
 
-def compile_profiles(values, catalog, state):
+def compile_profiles(values, catalog, state, accounts=None):
+    """The outbound and inbound profiles; ``accounts`` (the revision's extra provider accounts, a
+    ConfigurationDocument) builds a role's profile from an extra account marked as that role's default."""
     values.validate_provider_selection({identity: True for identity in catalog.provider_ids})
+    if accounts is not None:
+        values = values.with_provider_accounts(accounts)
     if values.storage_backend not in {'local', 's3'}:
         raise ConfigurationActivationError('Unknown storage provider.')
     state = _plugin_state(values, state)
@@ -142,7 +146,17 @@ def compile_profiles(values, catalog, state):
             raise ConfigurationActivationError('Selected provider does not support inbound fax.')
         if role == 'inbound' and traits.get('needs_storage', True) and not state['roles']['storage']['enabled']:
             raise ConfigurationActivationError('Inbound fax requires enabled storage.')
-        profile = _configuration_for(values, definition, state['settings'].get(identity, {}))
+        from .accounts import AccountsError, account_configuration, default_override
+        extra = default_override(accounts, role) if accounts is not None else None
+        if extra is not None:
+            try:
+                profile = account_configuration(values, extra, catalog=catalog, plugin_state=state)
+            except AccountsError as error:
+                raise ConfigurationActivationError(str(error)) from None
+            if profile.provider_id != identity:
+                raise ConfigurationActivationError('The default account does not match the provider in use.')
+        else:
+            profile = _configuration_for(values, definition, state['settings'].get(identity, {}))
         if role == 'outbound' and profile.manifest is not None and 'send_fax' not in profile.manifest.get('actions', {}):
             raise ConfigurationActivationError('Selected manifest cannot send faxes.')
         profiles[role] = profile
@@ -201,9 +215,12 @@ class ConfigurationManager:
         self._validate_maintenance(expected, values)
         return self.catalog_loader(values)
 
-    def _prepare_apply(self, expected, values, state, catalog):
+    def _prepare_apply(self, expected, values, state, catalog, accounts=None):
         self._validate_maintenance(expected, values)
-        profiles = compile_profiles(values, catalog, state)
+        # The extra provider accounts the candidate will carry: the desired revision's unless this write
+        # replaces them (apply_accounts); never taken from the candidate values.
+        accounts = expected.desired.accounts if accounts is None else accounts
+        profiles = compile_profiles(values, catalog, state, accounts)
         restart = any(getattr(values, name) != getattr(expected.active.values, name) for name in _RESTART_FIELDS)
         old_ami = (any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
                        for _, identity in expected.active.profiles)
@@ -218,12 +235,25 @@ class ConfigurationManager:
         profiles, restart = self._prepare_apply(expected, values, state, catalog)
         return self.store.apply(expected, values, restart_required=restart, actor=actor, providers=profiles, plugins=state)
 
-    def _apply_authorized(self, expected, values, state, *, principal, control, operation, catalog):
-        profiles, restart = self._prepare_apply(expected, values, state, catalog)
-        baseline = compile_profiles(expected.desired.values, catalog, expected.desired.plugins.as_dict())
+    def _apply_authorized(self, expected, values, state, *, principal, control, operation, catalog, accounts=None):
+        profiles, restart = self._prepare_apply(expected, values, state, catalog, accounts)
+        baseline = compile_profiles(expected.desired.values, catalog, expected.desired.plugins.as_dict(),
+                                    expected.desired.accounts)
         return self.store.apply_authorized(expected, values, principal=principal, control=control,
             operation=operation, restart_required=restart, providers=profiles, plugins=state,
-            baseline_providers=baseline)
+            baseline_providers=baseline, accounts=accounts)
+
+    def apply_accounts(self, expected, accounts, changes, *, principal, control):
+        """Replace the extra provider accounts (a ConfigurationDocument) with an audited configuration change.
+
+        ``changes`` are the configuration fields the change needs as well, such as ``outbound_backend`` when an
+        account becomes the default for sending. Like a change on the trunk page, a trunk account applies without
+        a restart; the fax engine's files follow the saved configuration.
+        """
+        values, state = self._patch_values(expected, changes)
+        catalog = self._catalog_for(expected, values)
+        return self._apply_authorized(expected, values, state, principal=principal, control=control,
+            operation='providers.configure', catalog=catalog, accounts=accounts)
 
     def _patch_values(self, expected, changes):
         values = expected.desired.values.with_patch(changes)

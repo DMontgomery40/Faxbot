@@ -325,6 +325,10 @@ class ConfigurationValues(BaseModel):
     time_zone: str = Field('', validation_alias=AliasChoices('FAX_TIME_ZONE', 'TZ'))
 
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
+    # The extra provider accounts of the configuration revision these values were read from (accounts.py):
+    # a read-only view for code that has only the values. Revisions write accounts from their own record,
+    # never from here.
+    _provider_accounts: object = PrivateAttr(default=None)
 
     @field_validator("fax_backend", "outbound_backend", "inbound_backend", "storage_backend", mode="before")
     @classmethod
@@ -508,9 +512,23 @@ class ConfigurationValues(BaseModel):
                 value = self._saved_number(name, value, changes)
             environment[key] = ("true" if value else "false") if isinstance(value, bool) else str(value)
         values = type(self).from_environment(environment)
+        values._provider_accounts = self._provider_accounts
         if ({"sinch_inbound_basic_user", "sinch_inbound_basic_pass"} & set(changes)
                 and values.sinch_inbound_basic_user and not values.sinch_inbound_basic_pass):
             raise ConfigurationValueError([{"field": "SINCH_INBOUND_BASIC_PASS", "reason": "required_with_user"}])
+        return values
+
+    @property
+    def provider_accounts(self) -> dict:
+        """The extra provider accounts, {key: document}, as their revision stores them; {} when there are none."""
+        document = self._provider_accounts
+        return document.as_dict() if document is not None else {}
+
+    def with_provider_accounts(self, document) -> "ConfigurationValues":
+        """A copy of these values whose read-only accounts view is ``document`` (a ConfigurationDocument)."""
+        values = self.model_copy()
+        values._explicit_keys = self._explicit_keys
+        values._provider_accounts = document if document is not None and document.as_dict() else None
         return values
 
     @property

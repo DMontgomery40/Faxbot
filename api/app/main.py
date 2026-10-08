@@ -89,6 +89,7 @@ from .direct.http import router as direct_router
 from .cases.http import router as cases_router
 from .forms.http import router as forms_router
 from .inbound.http import router as inbound_router
+from .accounts_http import router as accounts_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
@@ -206,6 +207,7 @@ app.include_router(direct_router)
 app.include_router(cases_router)
 app.include_router(forms_router)
 app.include_router(inbound_router)
+app.include_router(accounts_router)
 app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(hylafax_router)
@@ -241,7 +243,9 @@ async def _request_validation_error(request, exc):
     if request.url.path.startswith('/admin/fax-jobs/') and request.url.path.endswith('/reconcile'):
         # Pydantic errors include raw rejected values and arbitrary extra keys.
         return JSONResponse({'detail': 'Invalid provider identity reconciliation input.'}, status_code=422)
-    if request.url.path.startswith('/admin/settings') or request.url.path.startswith('/plugins/'):
+    if (request.url.path.startswith('/admin/settings') or request.url.path.startswith('/plugins/')
+            or request.url.path.startswith('/admin/providers/accounts')):
+        # Provider account bodies carry credentials: never echo a rejected value.
         return JSONResponse({'detail': [
             {'loc': error['loc'], 'type': error['type'], 'msg': 'Invalid configuration input.'}
             for error in exc.errors()]}, status_code=422)
