@@ -366,13 +366,20 @@ def recipients_nppes(number: str = typer.Argument(..., metavar='NUMBER', help='T
 @recipients.command('messages')
 def recipients_messages(received: bool = typer.Option(False, '--received', help='Show messages received.'),
                         sent: bool = typer.Option(False, '--sent', help='Show messages sent.'),
-                        limit: int = typer.Option(50, '--limit', min=1, max=200, help='How many to show.')):
+                        limit: int = typer.Option(50, '--limit', min=1, max=200, help='How many to show.'),
+                        fax: str = typer.Option(None, '--fax', metavar='FAX_ID',
+                                                help='Show only the messages one sent fax went as.')):
     """List Direct messages and FHIR documents sent and received, newest first, with what happened to each."""
-    direction = 'in' if received and not sent else 'out' if sent and not received else None
-    params = {'limit': limit, **({'direction': direction} if direction else {})}
-    view = state.api().get('/digital/messages', params=params)
+    if fax:
+        view = state.api().get(f'/digital/faxes/{segment(fax)}')
+        empty = 'This fax went as no Direct message or FHIR document.'
+    else:
+        direction = 'in' if received and not sent else 'out' if sent and not received else None
+        params = {'limit': limit, **({'direction': direction} if direction else {})}
+        view = state.api().get('/digital/messages', params=params)
+        empty = 'No Direct messages or FHIR documents yet.'
     state.out().result(view, lambda out: out.table(
         ['When', 'Way', 'With', 'State', 'What happened'],
         [[local_time(item['created_at']), 'Sent' if item['direction'] == 'out' else 'Received', item['counterpart'],
           MESSAGE_STATES.get(item['state'], item['state']), item['sentence'] or '-']
-         for item in view['messages']], empty='No Direct messages or FHIR documents yet.'))
+         for item in view['messages']], empty=empty))

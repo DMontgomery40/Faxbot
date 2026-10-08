@@ -56,3 +56,6 @@ def test_a_recipients_address_is_added_confirmed_and_withdrawn(cli):
     assert both.exit_code != 0 and 'either --direct or --fhir' in (both.stdout + both.stderr)
     messages = cli('recipients', 'digital', 'messages', '--sent')
     assert 'No Direct messages or FHIR documents yet.' in messages.stdout
+    one = cli('recipients', 'digital', 'messages', '--fax', 'a' * 32)
+    assert one.exit_code == 0, one.stdout + one.stderr
+    assert 'This fax went as no Direct message or FHIR document.' in one.stdout
