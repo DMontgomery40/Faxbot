@@ -22,12 +22,13 @@ describe('Costs → Savings: fax images sent as header lines', () => {
       sending_together: part, direct_delivery: part,
       case_packets: { ...part, earlier_not_counted: false, counted_from: null, counted_from_sentence: null },
       direct_bytes: { bytes_saved: 59392, documents: 1, references: 0, patches: 0, fax_images: 1,
-        sentence: '58 KB not sent in the last 30 days: 1 fax image as only new header lines over pages the partner '
-          + 'held. These are bytes over the internet, not money; the calls were already saved.' },
+        sentence: '58 KB not sent in the last 30 days: 1 fax image sent as new header lines only, over pages the '
+          + 'partner already held. These are bytes over the internet, not money; the calls were already saved.' },
     })));
     render(<Savings client={client()} />);
     const card = await screen.findByTestId('savings-bytes');
-    expect(within(card).getByText(/1 fax image as only new header lines over pages the partner held/)).toBeTruthy();
+    expect(within(card).getByText(/1 fax image sent as new header lines only, over pages the partner already held/))
+      .toBeTruthy();
     expect(within(card).queryByText('Estimate')).toBeNull();
     expect(screen.getByTestId('savings-total').textContent)
       .toBe('No money saved in the last 30 days, as far as Faxbot can tell.');

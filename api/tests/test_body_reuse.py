@@ -275,8 +275,9 @@ async def test_identical_bodies_with_changing_headers_send_only_the_header_regio
     assert (view['fax_images'], view['documents'], view['references'], view['patches']) == (2, 2, 0, 0)
     assert view['bytes_saved'] == sum(row['size_bytes'] - row['said']['delta_size'] for row in kept[1:])
     assert view['sentence'] == (
-        f"{reuse.size_text(view['bytes_saved'])} not sent in the last 30 days: 2 fax images as only new header lines "
-        'over pages the partner held. These are bytes over the internet, not money; the calls were already saved.')
+        f"{reuse.size_text(view['bytes_saved'])} not sent in the last 30 days: 2 fax images sent as new header lines "
+        'only, over pages the partner already held. These are bytes over the internet, not money; the calls were '
+        'already saved.')
 
 
 @pytest.mark.asyncio
@@ -434,9 +435,9 @@ def test_costs_savings_and_sent_say_what_a_reused_body_saved(cli, tmp_path):  # 
              'base': 'b' * 64, 'full': 61440, 'sent': 2048, 'now': now})
     savings = cli('costs', 'savings')
     assert savings.exit_code == 0, savings.stderr
-    assert ('Bytes saved by reuse and patches: 58 KB not sent in the last 30 days: 1 fax image as only new header '
-            'lines over pages the partner held. These are bytes over the internet, not money; the calls were already '
-            'saved.') in ' '.join(savings.stdout.split())  # the terminal wraps long lines
+    assert ('Bytes saved by reuse and patches: 58 KB not sent in the last 30 days: 1 fax image sent as new header '
+            'lines only, over pages the partner already held. These are bytes over the internet, not money; the calls '
+            'were already saved.') in ' '.join(savings.stdout.split())  # the terminal wraps long lines
     assert cli.json('costs', 'savings')['direct_bytes']['fax_images'] == 1
     from api.tests.test_cli import BOOTSTRAP
     deliveries = cli.client.get('/direct/deliveries', headers={'X-API-Key': BOOTSTRAP}).json()['deliveries']

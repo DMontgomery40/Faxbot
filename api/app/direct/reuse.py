@@ -941,7 +941,8 @@ def savings_view(engine, *, since, days):
             parts.append(f"{patch['documents']} as only the changes to an earlier version")
         if body['documents']:
             images = 'fax image' if body['documents'] == 1 else 'fax images'
-            parts.append(f"{body['documents']} {images} as only new header lines over pages the partner held")
+            parts.append(f"{body['documents']} {images} sent as new header lines only, over pages the partner "
+                         'already held')
         listed = ' and '.join(parts) if len(parts) < 3 else ', '.join(parts[:-1]) + ' and ' + parts[-1]
         sentence = (f"{size_text(saved)} not sent in the last {days} days: {listed}. "
                     'These are bytes over the internet, not money; the calls were already saved.')
