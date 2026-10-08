@@ -192,13 +192,13 @@ class Poller:
                                       reference=message.reference, subject=document.name, sender=sender,
                                       document_digest=document.digest)
                     continue
-            number = details.get('to_number') or destination
+            number = details.get('to_number')
             arrival = receive.Arrival(
                 operation_id=message.operation_id, part=str(document.position), name=document.name,
                 kind=document.kind, data=document.data, digest=document.digest, to_number=number,
                 from_number=details.get('from_number'), received_at=received_at, reference=message.reference,
                 subject=document.name, sender=sender, pages=details.get('pages'),
-                mailbox_label=label if number == destination else None,
+                mailbox_label=None if number else label, mailbox_id=None if number else destination,
                 report={'subject': message.subject, 'sidecar_operation_id': details.get('operation_id')})
             if number is None and problem:
                 self.store.record(source.id, 'receive', message.operation_id, str(document.position),
@@ -208,16 +208,15 @@ class Poller:
             receive.file_document(self.access(), values, self.store, source, arrival)
 
     def destination(self, source):
-        """(number, mailbox label, reason when there is none) for documents with no sidecar number."""
+        """(mailbox ID, mailbox label, reason when there is none) for documents with no sidecar number: they are
+        filed straight into the connector's mailbox, whether or not it has a fax number."""
         mailbox_id = source.settings.get('mailbox_id')
         if not mailbox_id:
             return None, None, text.NO_MAILBOX
         box = self.store.mailbox(mailbox_id)
         if box is None:
             return None, None, text.MAILBOX_GONE
-        if not box['number']:
-            return None, box['label'], text.MAILBOX_HAS_NO_NUMBER.format(mailbox=box['label'])
-        return box['number'], box['label'], None
+        return box['id'], box['label'], None
 
     def send_message(self, source, message, received_at, too_large, secret):
         settings, values = source.settings, self.values()
@@ -329,14 +328,14 @@ class Poller:
             return self._file_failed(source, root, path, sidecar, name, digest=digest,
                                      reason=text.BAD_SIDECAR.format(detail=str(error)))
         destination, label, problem = self.destination(source)
-        number = details.get('to_number') or destination
-        if number is None:
+        number = details.get('to_number')
+        if number is None and destination is None:
             return self._file_failed(source, root, path, sidecar, name, digest=digest, reason=problem)
         arrival = receive.Arrival(
             operation_id='f:' + digest, part='', name=name, kind=kind, data=data, digest=digest, to_number=number,
             from_number=details.get('from_number'), received_at=details.get('source_received_at'), reference=name,
-            subject=name, pages=details.get('pages'), mailbox_label=label if number == destination else None,
-            report={'sidecar_operation_id': details.get('operation_id')})
+            subject=name, pages=details.get('pages'), mailbox_label=None if number else label,
+            mailbox_id=None if number else destination, report={'sidecar_operation_id': details.get('operation_id')})
         item, outcome = receive.file_document(self.access(), self.values(), self.store, source, arrival)
         failed = outcome in ('failed', 'conflict')
         folders.move(root, path, failed=failed, reason=item.get('reason') if failed else None, sidecar=sidecar)

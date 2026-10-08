@@ -19,7 +19,7 @@ from app.intake.sources.poller import Poller
 from app.intake.sources.store import SourceSecrets, SourceStore
 from app.main import app
 from api.tests.imap_fake import FakeImap, client_context
-from api.tests.test_access_management_http import B, ORIGIN, _environment, create_user, ready_user
+from api.tests.test_access_management_http import B, ORIGIN, _environment, create_user, policy_version, ready_user
 from api.tests.test_work_http import hold_worker, mailbox, pdf
 
 
@@ -314,6 +314,31 @@ def test_folder_waits_for_a_file_to_settle_and_files_bytes_once(client, tmp_path
         text.UNREADABLE_RECEIVE.format(name='broken.pdf')
     states = [(item['what'], item['state'], item['duplicates']) for item in items(client)]
     assert sorted(states) == [('broken.pdf', 'failed', 0), ('scan.pdf', 'imported', 0), ('scan.pdf', 'imported', 1)]
+
+
+def test_a_mailbox_with_no_fax_number_receives_a_connectors_documents(client, tmp_path):
+    created = client.post('/access/mailboxes', headers=B, json={'label': 'Scans only', 'enabled': True,
+                                                                'expected_policy_version': policy_version(client)})
+    assert created.status_code == 200, created.text
+    box = created.json()['mailbox']
+    folder = tmp_path / 'scans'
+    folder.mkdir()
+    source = add(client, {'name': 'Scanner share', 'kind': 'folder', 'direction': 'receive',
+                          'settings': {'path': str(folder), 'mailbox_id': box['id'], 'settle_seconds': 10}})
+    clock = Clock()
+    runner = poller(clock=clock)
+    scan = folder / 'scan.pdf'
+    scan.write_bytes(pdf('Synthetic scan for a mailbox with no number'))
+    _old(scan)
+    check(runner, source['id'])
+    clock.now += 11
+    ok, _ = check(runner, source['id'])
+    assert ok and (folder / 'done' / 'scan.pdf').exists()
+    (item,) = items(client, 'Scanner share')
+    assert item['state'] == 'imported' and item['status'] == text.FILED.format(mailbox='Scans only')
+    with engine().connect() as connection:
+        placed = connection.execute(sa.text('SELECT mailbox_label, to_number FROM inbound_faxes')).all()
+    assert [(row.mailbox_label, row.to_number) for row in placed] == [('Scans only', None)]
 
 
 def test_a_sidecar_names_the_number_and_a_missing_folder_is_one_sentence(client, tmp_path):

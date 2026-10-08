@@ -260,7 +260,7 @@ class SourceStore:
 
     # -- mailboxes (where received documents are filed) ---------------------------------------
     def mailbox_choices(self):
-        """Every mailbox with the number Faxbot files a connector's documents under (its oldest number)."""
+        """Every mailbox, with its oldest fax number to show beside it; documents go into the mailbox itself."""
         with read_connection(self.engine) as connection:
             boxes = connection.execute(sa.select(self.mailboxes.c.id, self.mailboxes.c.label)
                                        .order_by(self.mailboxes.c.label, self.mailboxes.c.id)).all()

@@ -226,7 +226,8 @@ def store_document(path, directory):
 CONFLICT = 'A different document was already imported with this operation id and revision; the first one is kept.'
 
 
-def record_import(access, values, *, account, manifest, path, digest, report=None, compare=True):
+def record_import(access, values, *, account, manifest, path, digest, report=None, compare=True, mailbox_id=None,
+                  actor=None):
     """Acquire one validated PDF through the inbound acquisition store.
 
     Returns (status, import id, inbound fax id): ``received`` for a new document,
@@ -234,6 +235,9 @@ def record_import(access, values, *, account, manifest, path, digest, report=Non
     (the bytes are the source's own), different bytes under the same identity
     raise ImportConflict and the first document is kept; a caller that converts
     what it received compares the source's digests itself and passes False.
+    ``mailbox_id`` files the document straight into that mailbox (a document with
+    no fax number); ``actor``, a person importing, must be able to read it, and
+    None means Faxbot itself, such as an intake connector set up for that mailbox.
     """
     from ..inbound.acquisition import ImportStore, discard as discard_artifact, store_document as store_artifact
     store = ImportStore(access.inbound)
@@ -243,7 +247,7 @@ def record_import(access, values, *, account, manifest, path, digest, report=Non
                         report=report if report is not None else manifest.report(),
                         source_received_at=manifest.source_received_at,
                         artifact_digest=digest if compare else None, schedule=False,
-                        country=values.fax_default_country)
+                        country=values.fax_default_country, mailbox_id=mailbox_id, actor=actor)
     if begun.conflict:
         raise ImportConflict(CONFLICT)
     if begun.state in ('received', 'conflict'):
