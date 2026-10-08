@@ -191,6 +191,32 @@ def test_no_notice_within_the_wait_is_uncertain_and_a_late_one_still_settles_it(
     assert delivery_state(world, job)[0] == 'success'
 
 
+def test_a_digital_attempt_whose_notice_is_missing_gets_an_uncertain_item_that_its_late_notice_settles(world):
+    """AV's uncertain sent faxes read the digital attempt as it stands, through work/certainty's real feed: one
+    open item for the missing notice; the late notice delivers the fax and the item settles as delivered."""
+    from api.app.access.policy import AccessControl
+    from api.app.access.store import AccessStore
+    from api.app.work.certainty import CertaintyStore
+    job = queue(world)
+    asyncio.run(send(world))
+    worker(world).step(now=datetime.utcnow() + timedelta(minutes=61))
+    certainty, control = CertaintyStore(world.engine), AccessControl(AccessStore(world.engine))
+    certainty.feed(control)
+
+    def items():
+        with world.engine.connect() as connection:
+            return [(row['category'], row['state'], row['outcome']) for row in connection.execute(
+                sa.select(certainty.items).where(certainty.items.c.job_id == job)).mappings()]
+    assert items() == [('notice_missing', 'open', None)]
+    (message,) = world.store.for_job(job)
+    party = Party(RECIPIENT, world.pki.recipient, world.pki.recipient_key, chain=(world.pki.intermediate,))
+    world.imap.add(notice(party, message['message_id'], world.pki.sender, 'dispatched'))
+    worker(world).step()
+    certainty.close_delivered()
+    certainty.feed(control)
+    assert items() == [('notice_missing', 'settled', 'delivered')]
+
+
 def test_a_failed_notice_lets_the_fax_take_its_next_route(world):
     job = queue(world)
     asyncio.run(send(world))
