@@ -1,5 +1,7 @@
 // Providers → the trunk page → Send-only numbers: numbers you show on faxes you send but never receive on here,
 // such as your main office number, and the numbers you rent only to send from.
+// Saved as the fax_send_only_numbers setting through PUT /admin/sip/send-only, which refuses a number an account
+// receives on.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, IconButton, Link, Paper, Stack, TextField, Typography } from '@mui/material';
 import { Delete } from '@mui/icons-material';
