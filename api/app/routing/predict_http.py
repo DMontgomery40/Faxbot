@@ -161,11 +161,13 @@ def _document_pages(source, folder):
     pdf, tiff = Path(folder) / 'document.pdf', Path(folder) / 'document.tiff'
     with open(source, 'rb') as handle:
         is_pdf = handle.read(4) == b'%PDF'
+    # The same checks as a fax accepted with POST /fax (documents.prepare_upload): pages, sizes and raster limits.
     if is_pdf:
         conversion.validate_pdf(str(source))
         pdf = Path(source)
     else:
         conversion.txt_to_pdf(str(source), str(pdf))
+        conversion.validate_pdf(str(pdf))
     conversion.pdf_to_tiff(str(pdf), str(tiff))
     frames = conversion.read_fax_frames(str(tiff))
     if not frames:
@@ -193,11 +195,12 @@ def _coded_view(engine, values, number, facts, frames, measured, resolution):
                        'sentence': f'Faxbot would send these pages with {choice.reason}'}}
 
 
-@router.post('/predict', dependencies=[Depends(require_permission('settings:read'))])
+@router.post('/predict', dependencies=[Depends(require_permission('fax:send', resource='personal'))])
 async def predict_document(request: Request, to: str = Form(..., min_length=1, max_length=40),
                            file: UploadFile = File(...)):
     """What this document faxed to ``to`` would take and cost on each route, with each coding measured on its own
-    pages; estimates only, nothing is sent or kept."""
+    pages; estimates only, nothing is sent or kept. It draws the document's pages as sending one does, so it takes
+    the permission to send faxes and the same size and page limits as ``POST /fax``."""
     import sqlalchemy as sa
     from .. import conversion
     from ..pages import coding
