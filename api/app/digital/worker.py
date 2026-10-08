@@ -45,6 +45,8 @@ def filer(access_source, values):
         report = {'source_system': 'Direct message', 'operation_id': operation, 'revision': str(index),
                   'message_id': received.message_id[:300], 'sender': received.sender, 'file_name': name[:200],
                   'source_sha256': hashlib.sha256(data).hexdigest(), 'account': account.key}
+        if getattr(received, 'replies_to', ()):
+            report['replies_to'] = list(received.replies_to)  # what it answers, for expected faxes
         try:
             status, import_id, inbound_id = record_import(
                 access, values, account=account_identity('import', 'digital:' + account.key), manifest=manifest,

@@ -529,6 +529,9 @@ class Received:
     sender_certificate: object = None
     received_at: datetime | None = None
     report: bool = False         # a delivery notice or bounce: never recorded or filed as a received message
+    # The message IDs this message answers (In-Reply-To, then References), so a reply can be matched to its
+    # request (work/expectations.py). What the sender stated, never proof.
+    replies_to: tuple = ()
 
 
 def _is_bounce(notice):
@@ -621,7 +624,17 @@ def open_message(raw, account, *, store, transport, now=None):
     except smime.SmimeError as error:
         return Received(message_id, sender, [], refused=str(error), received_at=received_at)
     return Received(message_id, sender, documents, wants_dispatched=wants, sender_certificate=signer,
-                    received_at=received_at)
+                    received_at=received_at, replies_to=replies_to(headers))
+
+
+def replies_to(headers):
+    """The message IDs a message names in In-Reply-To and References (RFC 5322 3.6.4), at most 20, in order."""
+    found = []
+    for name in ('in-reply-to', 'references'):
+        for value in re.findall(r'<[^<>\s]{1,510}>', headers.get(name) or ''):
+            if value not in found:
+                found.append(value)
+    return tuple(found[:20])
 
 
 def notice_message(*, account, original_message_id, recipient, disposition, now=None):

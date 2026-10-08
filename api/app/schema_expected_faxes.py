@@ -74,6 +74,8 @@ INDEXES = (
     ('ix_work_expectations_mailbox', 'work_expectations', ('mailbox_id', 'state'), False),
     ('ix_work_expectations_subaddress', 'work_expectations', ('subaddress_key',), False),
     ('ix_work_expectations_reference', 'work_expectations', ('reference_key',), False),
+    # The matcher's watermark: expectations not yet looked back over (examined_at IS NULL).
+    ('ix_work_expectations_examined', 'work_expectations', ('examined_at',), False),
     ('uq_work_expectation_events_dedupe', 'work_expectation_events', ('expectation_id', 'dedupe_key'), True),
     ('ix_work_expectation_events_time', 'work_expectation_events', ('expectation_id', 'occurred_at'), False),
     ('uq_work_expectation_links_pair', 'work_expectation_links', ('expectation_id', 'inbound_fax_id'), True),

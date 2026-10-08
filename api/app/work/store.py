@@ -106,6 +106,9 @@ class WorkStore:
         from ..access.receiving_rules import tables as receiving_tables
         receiving = receiving_tables(engine)
         self.routing = receiving['routing'] if receiving is not None else None
+        # Expected faxes beside these items (expectations.py), reflected on first use, and when this
+        # process next escalates them.
+        self._expectations, self._expectations_due_at = None, None
 
     # -- reading ---------------------------------------------------------------------
     def received(self):
@@ -201,7 +204,7 @@ class WorkStore:
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).all()
-        created = 0
+        created, made = 0, []
         for row in rows:
             try:
                 with write_transaction(self.engine) as connection:
@@ -220,8 +223,11 @@ class WorkStore:
                                   details={'mailbox': place.label, 'due_hours': hours, 'due_source': source,
                                            'arrived': self.arrived_on(connection, row.id)})
                     created += 1
+                    made.append(identity)
             except DeliveryStoreError:
                 continue  # A concurrent feeder created it; the unique index decides.
+        # Each new item is matched against the expected faxes now, so an idle installation matches nothing.
+        self.expectations().examine(now=now, item_ids=made)
         return created
 
     def escalate(self, control, *, now=None, limit=100):
@@ -260,12 +266,18 @@ class WorkStore:
                     changed += 1
             except (WorkChanged, DeliveryStoreError):
                 continue  # A person changed it first, or another worker escalated it.
-        # Expected faxes past their due time are escalated here too, once each (expectations.py).
-        return changed + self.expectations().escalate(control, now=now, limit=limit)
+        # Expected faxes past their due time are escalated here too, once each, at most every few minutes:
+        # their due times are hours or days away, and an idle installation should not query them every cycle.
+        if self._expectations_due_at is not None and now < self._expectations_due_at:
+            return changed
+        from .expectations import ExpectationWorker
+        escalated = self.expectations().escalate(control, now=now, limit=limit)
+        self._expectations_due_at = now + ExpectationWorker.SWEEP if escalated < limit else None
+        return changed + escalated
 
     def expectations(self):
         """The expected-fax records beside these work items, reflected once."""
-        if getattr(self, '_expectations', None) is None:
+        if self._expectations is None:
             from .expectations import ExpectationStore
             self._expectations = ExpectationStore(self.engine)
         return self._expectations

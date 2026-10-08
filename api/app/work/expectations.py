@@ -276,6 +276,10 @@ class ExpectationStore:
             elif account.startswith('import:digital:'):
                 signals['digital_message_id'] = text('message_id')
                 signals['direct_sender'] = text('sender', 320)
+                # The requests it answers (In-Reply-To, References), as Faxbot's Direct receiver recorded them.
+                answers = report.get('replies_to')
+                if isinstance(answers, list):
+                    signals['digital_replies_to'] = [value[:512] for value in answers[:20] if isinstance(value, str)]
             elif account.startswith('import:connector:'):
                 signals['email_subject'] = text('subject', 200)
                 signals['email_sender'] = text('sender', 320)
@@ -306,6 +310,8 @@ class ExpectationStore:
         if key and key in (signals.get('digital_message_id'), signals.get('email_message_id'),
                            signals.get('partner_message_id')):
             hits.append(('digital_message', {'message_id': key}, None))
+        elif key and key in (signals.get('digital_replies_to') or []):
+            hits.append(('digital_message', {'replies_to': key}, None))
         subject = signals.get('email_subject')
         if expectation['subject_key'] and subject and subject_match(subject, expectation['subject_key']):
             stated = revision_after(subject, expectation['subject_key'])
@@ -428,13 +434,23 @@ class ExpectationStore:
         connection.execute(query.values(state='rejected', note='Closed by another document.', decided_at=now,
                                              updated_at=now, version=self.links.c.version + 1))
 
-    def examine(self, *, now=None, limit=100):
-        """Examine each received document with a work item once; return how many were examined."""
+    def examine(self, *, now=None, limit=100, item_ids=None):
+        """Examine received documents with a work item not examined yet; return how many were examined.
+
+        ``WorkStore.feed`` calls this with the items it has just made, so a
+        received document is matched as soon as it becomes work and an idle
+        installation runs no matching at all. Without ``item_ids`` this is the
+        slow sweep for any item a crash left between the two.
+        """
         now = now or utcnow()
         items, arrivals = self.items, self.arrivals
+        if item_ids is not None and not item_ids:
+            return 0
         query = (sa.select(items.c.id, items.c.inbound_fax_id, items.c.mailbox_id, items.c.available_at)
                  .select_from(items.outerjoin(arrivals, arrivals.c.id == items.c.inbound_fax_id))
                  .where(arrivals.c.id.is_(None)).order_by(items.c.created_at, items.c.id).limit(limit))
+        if item_ids is not None:
+            query = query.where(items.c.id.in_(sorted(item_ids)))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).all()
             candidates = self.candidates_on(connection) if rows else []
@@ -465,6 +481,12 @@ class ExpectationStore:
                 with read_connection(self.engine) as connection:
                     candidates = self.candidates_on(connection)
         return examined
+
+    def waiting_to_look_back(self):
+        """The watermark check: whether any expectation has not been looked back over yet (one indexed query)."""
+        with read_connection(self.engine) as connection:
+            return connection.execute(sa.select(self.expectations.c.id).where(
+                self.expectations.c.examined_at.is_(None)).limit(1)).first() is not None
 
     def look_back(self, *, now=None, limit=100):
         """Check each new expectation once against documents that arrived before it; return how many."""
@@ -585,13 +607,25 @@ class ExpectationStore:
 
 
 class ExpectationWorker:
-    """Background matching: examine each new arrival once, then look back for each new expectation."""
+    """Background matching that costs nothing while nothing changes.
+
+    New arrivals are matched when ``WorkStore.feed`` makes their work items.
+    Each step makes one indexed check for expectations not looked back over yet
+    and looks back only when there are some; every ``SWEEP`` it also examines
+    any arrival a crash left unexamined. Overdue escalation runs from
+    ``WorkStore.escalate`` at most once every ``SWEEP`` per process.
+    """
+    SWEEP = timedelta(minutes=5)
 
     def __init__(self, store):
         self.store = store
+        self.next_sweep = None
 
     def step(self, *, now=None):
         now = now or utcnow()
-        examined = self.store.examine(now=now)
-        looked = self.store.look_back(now=now)
-        return examined >= 100 or looked >= 100
+        looked = self.store.look_back(now=now) if self.store.waiting_to_look_back() else 0
+        swept = 0
+        if self.next_sweep is None or now >= self.next_sweep:
+            swept = self.store.examine(now=now)
+            self.next_sweep = now + self.SWEEP if swept < 100 else now  # a full batch: keep sweeping
+        return looked >= 100 or swept >= 100

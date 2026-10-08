@@ -200,6 +200,32 @@ def test_an_approved_extraction_only_proposes(xw):
     assert detail['state'] == 'proposed_match' and detail['proposals'][0]['signal'] == 'extraction'
 
 
+def test_an_idle_installation_runs_only_the_watermark_check(xw):
+    admin = operator(xw, 'admin', 'installation', 'role_administrator')
+    expect(xw, admin, reference='PO 42', due_hours=24)
+    xw.arrive('fax-1', sub='111')
+    work, worker = WorkStore(xw.engine), ExpectationWorker(xw.expected)
+    moment = NOW + timedelta(minutes=1)
+    work.feed(now=moment)
+    worker.step(now=moment)
+    work.escalate(xw.control, now=moment)
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    sa.event.listen(xw.engine, 'before_cursor_execute', record)
+    try:
+        for seconds in (10, 20, 30):  # three idle cycles of both background tasks
+            later = moment + timedelta(seconds=seconds)
+            work.feed(now=later)
+            work.escalate(xw.control, now=later)
+            worker.step(now=later)
+    finally:
+        sa.event.remove(xw.engine, 'before_cursor_execute', record)
+    mine = [statement for statement in statements if 'work_expectation' in statement]
+    assert len(mine) == 3 and all('examined_at IS NULL' in statement for statement in mine), mine
+
+
 # -- escalation and concurrency ------------------------------------------------------------
 
 def test_overdue_escalates_once_across_restarts_to_a_backup_who_can_see_the_mailbox(xw):

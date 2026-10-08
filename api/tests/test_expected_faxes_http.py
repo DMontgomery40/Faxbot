@@ -161,3 +161,29 @@ def test_import_outage_and_evidence_over_http_with_access_checked(client):
                                                                    'version': own['version']})
     assert stale.status_code == 409
     assert billing['id'] != front['id']
+
+
+def test_a_direct_reply_closes_the_expectation_for_the_request_it_names(client):
+    from types import SimpleNamespace
+    from app.digital.direct_message import Received, replies_to
+    from app.digital.worker import filer
+    from api.tests.test_work_http import pdf
+    assert replies_to({'in-reply-to': '<request-1@faxbot.example>',
+                       'references': '<older@faxbot.example> <request-1@faxbot.example>'}) == (
+        '<request-1@faxbot.example>', '<older@faxbot.example>')
+    box = mailbox(client, 'Records', '+15550100003')
+    created = client.post('/expected-faxes', headers=B, json={
+        'reference': 'Records request 882', 'kind': 'Signed records', 'mailbox_id': box['id'],
+        'message_id': '<request-1@faxbot.example>'})
+    assert created.status_code == 201, created.text
+    values = app.state.configuration_runtime.manager.store.read().active.values
+    account = SimpleNamespace(key='hisp', setting=lambda name: box['id'] if name == 'mailbox_id' else None)
+    received = Received('<reply-9@hisp.example>', 'records@hisp.example', [], replies_to=(
+        '<request-1@faxbot.example>',))
+    filed = filer(lambda: app.state.access_runtime, values)(account, received, 1, 'records.pdf', 'application/pdf',
+                                                             pdf('Synthetic records'))
+    assert filed['status'] == 'received', filed
+    match_now()
+    view = expected(client, created.json()['code'])
+    assert view['state'] == 'matched' and view['match']['signal'] == 'digital_message'
+    assert view['state_text'].startswith('Arrived and matched by its Direct message ID on ')
