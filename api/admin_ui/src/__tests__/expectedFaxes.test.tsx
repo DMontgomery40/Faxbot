@@ -175,7 +175,7 @@ describe('Faxes → Expected', () => {
     expect(screen.getByText('Already done: record it in the system, do not submit it again (1)')).toBeTruthy();
     expect(screen.getByText('Recorded during the outage, but the new export does not list it; check it by hand.')).toBeTruthy();
     expect(screen.getByText('PO 701: Order faxed to Acme')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Sort the latest export again' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reconcile with the latest export again' })).toBeTruthy();
     expect(screen.queryByText('Record what was done')).toBeNull();  // the outage has ended
   });
 });

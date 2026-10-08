@@ -108,8 +108,7 @@ def test_import_outage_and_evidence_over_http_with_access_checked(client):
         files={'file': ('open.json', json.dumps(data).encode(), 'application/json')})
     first = upload(rows)
     assert first.status_code == 200, first.text
-    assert first.json()['summary'] == ('2 rows: 2 new, 0 unchanged, 0 new revisions, 0 changed without a new '
-                                       'revision, 0 with problems. Every expected fax still waiting is in this export.')
+    assert first.json()['summary'] == '2 rows: 2 new. Every expected fax still waiting is in this export.'
     assert upload(rows).json()['replay'] is True
     listing = client.get('/expected-faxes', headers=B).json()['expected']
     assert sorted(entry['reference'] for entry in listing) == ['100', '200']

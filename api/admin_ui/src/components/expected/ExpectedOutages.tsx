@@ -134,7 +134,7 @@ export default function ExpectedOutages({ api, onNotice }: { api: ExpectedApi; o
         <TextField size="small" label="Note" value={note} onChange={(event) => setNote(event.target.value)} helperText=" " />
         <Button variant="contained" disabled={!source}
           onClick={() => act(() => api.startOutage(source, note.trim() || undefined), `${source} is marked down.`)}>
-          Mark it down
+          {source ? `Mark ${source} as down` : 'Mark the system down'}
         </Button>
       </Stack>
       <Table size="small" sx={{ mb: 3 }}>
@@ -160,11 +160,13 @@ export default function ExpectedOutages({ api, onNotice }: { api: ExpectedApi; o
           <Stack direction="row" spacing={1}>
             {chosen.open && (
               <Button variant="outlined" onClick={() => act(() => api.endOutage(chosen.code, chosen.version),
-                `${chosen.source} is marked back. Import its next export to sort the work.`)}>Mark it back</Button>
+                `${chosen.source} is marked back up. Import its next export to sort the work.`)}>
+                {`Mark ${chosen.source} as back up`}
+              </Button>
             )}
             {!chosen.open && (
-              <Button variant="outlined" onClick={() => act(() => api.reconcile(chosen.code), 'Sorted again.')}>
-                Sort the latest export again
+              <Button variant="outlined" onClick={() => act(() => api.reconcile(chosen.code), 'Reconciled again.')}>
+                Reconcile with the latest export again
               </Button>
             )}
           </Stack>

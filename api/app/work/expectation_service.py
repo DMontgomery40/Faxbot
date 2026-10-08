@@ -675,7 +675,8 @@ class ExpectationService:
                 if totals['expected'] else 'No faxes were expected')
         summary = (f"{rate} in the last {days} days; {totals['waiting']} are still waiting, {totals['overdue']} "
                    f"overdue. {unlinked} of {arrived} received faxes answered no expected fax"
-                   + (f", and {not_stored} received faxes were never stored." if not_stored else '.'))
+                   + (f", and {not_stored} received faxes could not be stored; they are listed with the reason in "
+                      'Faxes → Received (faxbot received list).' if not_stored else '.'))
         return {'days': days, 'since': since, **totals, 'arrived': arrived, 'arrived_unmatched': unlinked,
                 'not_stored': not_stored, 'unmatched_expected': views, 'unmatched_arrivals': entries,
                 'summary': summary}
@@ -865,10 +866,7 @@ class ExpectationService:
         summary = loads(run['summary'], {}) or {}
         missing = [dict(entry, mailbox=labels.get(entry['mailbox_id'])) for entry in summary.get('missing', [])
                    if entry.get('mailbox_id') in readable]
-        parts = [f"{run['created_count']} new", f"{run['unchanged_count']} unchanged",
-                 f"{run['revised_count']} new revisions", f"{run['conflict_count']} changed without a new revision",
-                 f"{run['problem_count']} with problems"]
-        sentence = f"{run['rows_total']} rows: " + ', '.join(parts) + '.'
+        sentence = import_sentence(run)
         if run['full_export']:
             sentence += (f" {len(missing)} expected faxes are no longer in this export; they stay open until you "
                          'decide.' if missing else ' Every expected fax still waiting is in this export.')
@@ -1189,6 +1187,19 @@ class ExpectationService:
                                 details={'actor_name': name, 'export_id': export_id,
                                          'manifest_sha256': hashlib.sha256(document).hexdigest()})
         return buffer.getvalue(), f"faxbot-expected-{row['code']}.zip"
+
+
+def import_sentence(run):
+    """What an import did, naming only the counts that are not zero, such as "5 rows: 3 unchanged, 1 new revision"."""
+    rows = run['rows_total']
+    if not rows:
+        return 'The file has no rows.'
+    counts = ((run['created_count'], 'new', 'new'), (run['unchanged_count'], 'unchanged', 'unchanged'),
+              (run['revised_count'], 'new revision', 'new revisions'),
+              (run['conflict_count'], 'changed without a new revision', 'changed without a new revision'),
+              (run['problem_count'], 'with a problem', 'with problems'))
+    parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
+    return f"{rows} {'row' if rows == 1 else 'rows'}: " + ', '.join(parts) + '.'
 
 
 def expected_for_document(store, control, connection, actor, inbound_id, now):

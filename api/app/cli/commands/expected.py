@@ -134,7 +134,8 @@ def expected_add(reference: str = typer.Argument(..., help='The business referen
                  revision: str = typer.Option(None, '--revision', help='The revision it must be, such as B.'),
                  parts: list[str] = typer.Option(None, '--must-include', help='A part it must include, such as '
                                                                               '"Signature page". Repeat for more.'),
-                 subaddress: str = typer.Option(None, '--subaddress', help='The subaddress the sender will dial. '
+                 subaddress: str = typer.Option(None, '--subaddress', help="The subaddress the sender's fax machine sends "
+                                                                           '(a SUB or subaddress field). '
                                                                            'Default: the reference, when it is digits.'),
                  subject: str = typer.Option(None, '--email-subject', help='Text the email subject will contain, such '
                                                                            'as "PO 483".'),
@@ -338,8 +339,9 @@ def sources_save(name: str = typer.Argument(..., help='A name for the source, su
                                                help='Hours each row has when it gives no due time.'),
                  subject: str = typer.Option(None, '--subject-pattern', help='How the reference appears in an email '
                                                                              'subject, such as "PO {reference}".'),
-                 sub: str = typer.Option(None, '--subaddress-pattern', help='How the reference is dialed as a '
-                                                                           'subaddress, such as "{digits}".'),
+                 sub: str = typer.Option(None, '--subaddress-pattern',
+                                         help="How the reference appears in the subaddress the sender's fax machine "
+                                              'sends, such as "{digits}".'),
                  form_field: str = typer.Option(None, '--form-field', help="The partner form field that holds the "
                                                                            'reference.'),
                  revision_field: str = typer.Option(None, '--revision-field', help='The partner form field that holds '

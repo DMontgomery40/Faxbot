@@ -133,7 +133,7 @@ function ExpectDialog({ api, onClose, onAdded }: {
             label="It must be signed" />
           <Typography variant="subtitle2">Where the reference will appear</Typography>
           <TextField label="Subaddress" value={form.subaddress} onChange={set('subaddress')}
-            helperText="Digits the sender dials after your number. Left empty, a reference made only of digits is used." />
+            helperText="The subaddress the sender's fax machine sends (many machines have a SUB or subaddress field). Left empty, a reference made only of digits is used." />
           <TextField label="Email subject contains" value={form.email_subject} onChange={set('email_subject')}
             helperText="For documents that arrive by email, such as PO 483." />
           <TextField label="Message ID" value={form.message_id} onChange={set('message_id')}

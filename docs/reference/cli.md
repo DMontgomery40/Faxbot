@@ -1170,7 +1170,7 @@ $ faxbot expected add [OPTIONS] {reference}
 * `--due-hours <int range>`: Due this many hours from now, instead of --due.  [1&lt;=x&lt;=8760]
 * `--revision <str>`: The revision it must be, such as B.
 * `--must-include <str>`: A part it must include, such as &quot;Signature page&quot;. Repeat for more.
-* `--subaddress <str>`: The subaddress the sender will dial. Default: the reference, when it is digits.
+* `--subaddress <str>`: The subaddress the sender&#x27;s fax machine sends (a SUB or subaddress field). Default: the reference, when it is digits.
 * `--email-subject <str>`: Text the email subject will contain, such as &quot;PO 483&quot;.
 * `--message-id <str>`: The Direct or email message ID it will carry, when you know it.
 * `--direct-address <str>`: The Direct address it may come from.
@@ -1418,7 +1418,7 @@ $ faxbot expected sources save [OPTIONS] {name}
 * `--mailbox <str>`: The mailbox for rows that name none.
 * `--due-hours <int range>`: Hours each row has when it gives no due time.  [0&lt;=x&lt;=8760]
 * `--subject-pattern <str>`: How the reference appears in an email subject, such as &quot;PO {reference}&quot;.
-* `--subaddress-pattern <str>`: How the reference is dialed as a subaddress, such as &quot;{digits}&quot;.
+* `--subaddress-pattern <str>`: How the reference appears in the subaddress the sender&#x27;s fax machine sends, such as &quot;{digits}&quot;.
 * `--form-field <str>`: The partner form field that holds the reference.
 * `--revision-field <str>`: The partner form field that holds the revision.
 * `--help`: Show this message and exit.

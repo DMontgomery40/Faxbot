@@ -90,7 +90,7 @@ def test_import_through_a_saved_source_then_an_outage_and_its_lists(cli, tmp_pat
     export.write_text('PO,Supplier\n701,Acme\n702,Beta\n')
     imported = cli('expected', 'import', export, '--source', 'Open purchase orders', '--full')
     assert imported.exit_code == 0, imported.stdout + imported.stderr
-    assert '2 rows: 2 new, 0 unchanged' in imported.stdout
+    assert '2 rows: 2 new.' in imported.stdout
     again = cli('expected', 'import', export, '--source', 'Open purchase orders', '--full')
     assert 'This file was imported before; nothing was added twice.' in again.stdout
     started = cli('expected', 'outage', 'start', 'Open purchase orders', '--note', 'ERP maintenance')

@@ -106,7 +106,7 @@ function SourceDialog({ api, source, onClose, onSaved }: {
           <TextField label="Email subject pattern" value={subject} onChange={(event) => setSubject(event.target.value)}
             helperText="How the reference appears in an email subject, such as PO {reference}. An email whose subject contains it closes the expected fax." />
           <TextField label="Subaddress pattern" value={sub} onChange={(event) => setSub(event.target.value)}
-            helperText="How senders dial the reference after your number, such as {digits}. Empty: a reference made only of digits is used." />
+            helperText="How the reference appears in the subaddress the sender's fax machine sends (many machines have a SUB or subaddress field), such as {digits}. Left empty, a reference made only of digits is used." />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <TextField fullWidth label="Partner form field with the reference" value={formField}
               onChange={(event) => setFormField(event.target.value)}
