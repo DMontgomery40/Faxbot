@@ -194,14 +194,19 @@ def stamp(tiff, *, header, station, moment, zone_name=''):
     return output.getvalue(), facts
 
 
-def build(values, job_id, *, moment=None):
-    """The fax image for an accepted fax, from its engine image or the same conversion; FaxImageUnavailable if not."""
+def build(values, job_id, *, moment=None, encoded=False):
+    """The fax image for an accepted fax, from its engine image or the same conversion; FaxImageUnavailable if not.
+
+    ``encoded``: the fax's engine image may hold the experimental encoded pages
+    (``codec/send.py`` writes them over it), so the image is made from the
+    original document instead; a partner never gets encoded pages.
+    """
     root = Path(values.fax_data_dir)
     if re.fullmatch('[a-f0-9]{32}', job_id or '') is None:
         raise FaxImageUnavailable('The fax has no usable fax image.')
     engine_image, pdf = root / (job_id + '.tiff'), root / (job_id + '.pdf')
     try:
-        if engine_image.is_file() and not engine_image.is_symlink():
+        if engine_image.is_file() and not engine_image.is_symlink() and not encoded:
             tiff = engine_image.read_bytes()
         elif pdf.is_file() and not pdf.is_symlink():
             from ..conversion import DocumentConversionError, pdf_to_tiff
@@ -222,6 +227,16 @@ def build(values, job_id, *, moment=None):
     except Exception:
         raise FaxImageUnavailable('The fax image could not be made.') from None
     return FaxImage(data, check(data, facts, None), facts)
+
+
+def encoded_send(engine, job_id):
+    """Whether the fax was accepted with experimental encoded pages (``codec_sends``), which may have replaced
+    its engine image."""
+    from ..codec.store import CodecStoreError, send_for
+    try:
+        return send_for(engine, job_id) is not None
+    except CodecStoreError:
+        return False
 
 
 def check(data, facts, pages):

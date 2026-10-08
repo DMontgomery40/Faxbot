@@ -329,6 +329,41 @@ async def test_a_refused_fax_image_goes_by_fax_in_the_same_attempt_only_because_
 
 
 @pytest.mark.asyncio
+async def test_a_fax_with_encoded_pages_reaches_a_partner_as_the_fax_image_of_its_original(peer_pair, monkeypatch):
+    """Encoded pages (experimental, codec/send.py) may replace a fax's engine image; a partner never gets them."""
+    import shutil
+    from api.app import conversion
+    from api.app.codec.store import record_send
+    from api.app.direct import service as direct_service
+    if shutil.which('gs') is None:
+        pytest.skip('Ghostscript renders the document')
+    pair = peer_pair
+    opt_in(pair)
+    signed_at = timestamp()
+    monkeypatch.setattr(direct_service, 'timestamp', lambda: signed_at)  # one header time for both faxes
+    digests = {}
+    for encoded in (False, True):
+        job = accept(pair, image=False)
+        conversion.pdf_to_tiff(str(pair['data'] / (job + '.pdf')), str(pair['data'] / (job + '.tiff')))
+        if encoded:
+            # Acceptance wrote the encoded pages over the engine image and recorded the send.
+            (pair['data'] / (job + '.tiff')).write_bytes(engine_image(1))
+            engine = pair['a'].store.engine
+            with engine.begin() as connection:
+                record_send(connection, engine, job, {
+                    'phone_number': B_NUMBER, 'provider_id': 'sip', 'layout': 'grid', 'resolution': 'fine',
+                    'fec': 'medium', 'pages_original': 1, 'pages_encoded': 1, 'document_sha256': '0' * 64,
+                    'encrypted': 0, 'format_version': 1}, datetime.utcnow())
+        row, conventional = await send(pair, job)
+        assert row['state'] == 'success' and conventional.submissions == 0
+        sent = pair['a'].store.find('outbound', row['attempt_id'])
+        assert sent['kind'] == 'fax_image'
+        digests[encoded] = sent['digest']
+    # The partner gets exactly the fax image a fax without encoded pages has.
+    assert digests[True] == digests[False]
+
+
+@pytest.mark.asyncio
 async def test_a_lost_answer_for_a_fax_image_is_asked_about_never_sent_again(peer_pair):
     pair = peer_pair
     opt_in(pair)
