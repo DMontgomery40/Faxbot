@@ -307,8 +307,8 @@ class CertaintyService:
         """The continuation store, or None on an installation without its tables."""
         found = getattr(self, '_continuation_store', None)
         if found is None:
+            from ..routing.continuation import ContinuationStore
             try:
-                from ..routing.continuation import ContinuationStore
                 found = ContinuationStore(self.store.engine)
             except Exception:
                 found = False

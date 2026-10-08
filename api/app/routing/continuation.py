@@ -350,10 +350,10 @@ def note_text(sent_at, total, first, *, zone_name=None):
 
 def _note_font():
     """(font name, whether it has the en dash): DejaVu Sans as shipped for forms, else Helvetica."""
+    from ..forms.renderer import FONT_PATH
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
-        from ..forms.renderer import FONT_PATH
         if 'FaxbotNote' not in pdfmetrics.getRegisteredFontNames():
             pdfmetrics.registerFont(TTFont('FaxbotNote', str(FONT_PATH)))
         return 'FaxbotNote', True
@@ -732,14 +732,14 @@ def cost_sentence(part, whole):
 
 def cost(engine, values, actor, *, to_number, pages, total):
     """(sentence, account key or None, {'part', 'whole'} money or None) on the account the rules would choose."""
+    from ..accounts import all_accounts, sending_accounts
+    from ..rules.evaluate import decide
+    from ..rules.explain import FactsReader
+    from ..rules.store import RuleStore
+    from .pricing import price
+    from .rules_acceptance import alternate_lookup, sender_of
+    from .store import RouteStore
     try:
-        from ..accounts import all_accounts, sending_accounts
-        from ..rules.evaluate import decide
-        from ..rules.explain import FactsReader
-        from ..rules.store import RuleStore
-        from .pricing import price
-        from .rules_acceptance import alternate_lookup, sender_of
-        from .store import RouteStore
         routes = RouteStore(engine)
         accounts = sending_accounts(values)
         principal, kind, key_id = sender_of(actor)
@@ -900,8 +900,8 @@ class ContinuationService:
             name = self.store.name_on(connection, actor.principal_id)
             self.store.record_on(connection, prepared, actor_id=actor.principal_id, actor_name=name, reason=reason,
                                  now=now)
+        from ..audit import audit_event
         try:
-            from ..audit import audit_event
             audit_event('fax_continued', job_id=job_id, continuation_job_id=prepared.job_id,
                         first_page=prepared.first_page, last_page=prepared.last_page)
         except Exception:
