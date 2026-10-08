@@ -133,8 +133,15 @@ def test_jbig_measured_smallest_for_a_known_jbig_machine_is_chosen_and_priced_as
     assert choice.reason == 'JBIG: 54% shorter than MH for these pages.'
     assert (choice.request('hylafax'), choice.request('builtin')) == ('JBIG', 'JBIG')
     unknown = coding.usable_codings(ecm=True, configured='jbig')
-    first = coding.best_coding(pages, unknown.codings, ecm=True, measured=measured)
-    assert (first.coding, first.priced) == ('MH', 'MH') and unknown.needs_request('MH')
+    first = coding.best_coding(pages, unknown.codings, ecm=True, measured=measured, negotiate=True)
+    assert (first.coding, first.priced) == ('MH', 'MH') and unknown.needs_request('MH', 'builtin')
+    # Not on record: the SSL Fax engine is asked for nothing; its job keeps your setting (JBIG), so the job
+    # controls hand faxsend no DesiredDF and it negotiates the most compact coding itself.
+    assert first.request('hylafax') is None and first.request('builtin') == 'MH'
+    assert not unknown.needs_request(None)
+    from app import hylafax_engine
+    settings = hylafax_engine.CallSettings(t38=True, max_rate=14400, ecm=True, fine=True, compression='jbig')
+    assert hylafax_engine.with_coding(settings, first.request('hylafax')) is settings
 
 
 # The SSL Fax engine reports what the machine takes -------------------------------------------------------------
@@ -176,7 +183,14 @@ def test_a_recorded_jbig_machine_gets_jbig_on_the_next_fax(installation, databas
     installation.record_observation(PEER, source='e' * 32, engine='hylafax', now=NOW + timedelta(hours=1),
                                     values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1, 'codings': 'MH,MR,MMR'})
     later = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING, attempt='c' * 32)
-    assert later.coding.coding == 'MH'
+    # A known machine without JBIG: the smallest measured coding, asked of both engines.
+    assert later.coding.coding == 'MH' and later.coding.request('hylafax') == later.coding.request('builtin') == 'MH'
+
+
+def test_an_unknown_number_on_the_ssl_fax_engine_is_not_narrowed(installation, database, tmp_path):  # noqa: F811
+    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    assert changed.coding.negotiate and changed.coding.request('hylafax') is None
+    assert coding.newest_coding(database, JOB)['receiver_known'] == 0
 
 
 def test_jbig_tools_are_found_on_the_path(tmp_path, monkeypatch):

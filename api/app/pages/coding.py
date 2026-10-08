@@ -273,6 +273,11 @@ class CodingChoice:
     compared: str | None = None          # the coding the sentence compares with, when there is one
     fallback: str | None = None          # for a JBIG not measured: the smallest measured coding, otherwise sent
     fallback_reason: str | None = None   # that coding's own sentence
+    # True when JBIG was left out only because the receiving machine's capabilities are not on record: the SSL Fax
+    # engine is then asked for nothing and negotiates the most compact coding itself (JBIG where the machine offers
+    # it), and Faxbot learns the machine's codings from that call; the time is priced at the measured coding, an
+    # estimate (the lead's rule, 2026-10-08).
+    negotiate: bool = False
 
     @property
     def bits(self) -> int:
@@ -283,8 +288,11 @@ class CodingChoice:
         """The coding the time is priced with: the request, or the fallback for a JBIG not measured."""
         return self.coding if self.measured else self.fallback
 
-    def request(self, engine) -> str:
-        """The coding to ask ``engine`` ('hylafax' or 'builtin') for: the built-in engine has no JBIG."""
+    def request(self, engine) -> str | None:
+        """The coding to ask ``engine`` ('hylafax' or 'builtin') for: the built-in engine has no JBIG. None for the
+        SSL Fax engine and a machine not on record: nothing is asked, so no job control narrows the engine."""
+        if engine == 'hylafax' and self.negotiate:
+            return None
         return self.coding if self.measured or engine == 'hylafax' else self.fallback
 
 
@@ -298,7 +306,7 @@ def _shorter(chosen, other, measured):
     return f'{chosen}: {percent}% shorter than {other} for these pages.'
 
 
-def best_coding(frames, allowed, *, ecm, measured=None) -> CodingChoice:
+def best_coding(frames, allowed, *, ecm, measured=None, negotiate=False) -> CodingChoice:
     """The coding to request for these pages: the usable coding with the fewest measured bits.
 
     ``allowed`` names the codings this call may use (MH is always added);
@@ -334,8 +342,9 @@ def best_coding(frames, allowed, *, ecm, measured=None) -> CodingChoice:
         # built-in engine, the smallest measured coding goes.
         return CodingChoice('JBIG', tuple(measured[best]), measured,
                             f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}',
-                            measured=False, compared=other, fallback=best, fallback_reason=reason)
-    return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other)
+                            measured=False, compared=other, fallback=best, fallback_reason=reason,
+                            negotiate=negotiate)
+    return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other, negotiate=negotiate)
 
 
 # What may be requested for a number ---------------------------------------------------------------------------
@@ -357,7 +366,9 @@ class Usable:
         """Whether ``engine`` ('hylafax' or 'builtin', which has no JBIG) must be told ``coding``: left alone, it
         would take a more compact one up to the ceiling that the receiving machine and error correction allow,
         either a usable one that measured larger or one that failed to this number. Equal to what it would take
-        anyway: no request is needed."""
+        anyway: no request is needed. None (nothing asked of the SSL Fax engine) needs none."""
+        if coding is None:
+            return False
         return any(_rank(coding) < _rank(other) <= _rank(self.ceiling)
                    and (other in self.codings or other in self.failed)
                    and not (engine == 'builtin' and other == 'JBIG') for other in CODINGS)

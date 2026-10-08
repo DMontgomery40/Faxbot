@@ -345,14 +345,15 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
     assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']
 
 
-def test_shading_to_an_unknown_machine_leaves_jbig_out_and_asks_both_engines_for_mh(
+def test_shading_to_an_unknown_machine_asks_the_built_in_engine_for_mh_and_leaves_the_ssl_fax_engine_its_own(
         installation, database, tmp_path):  # noqa: F811
-    """No DIS on record for the machine: JBIG is left out (the lead's rule, 2026-10-08), so the time is never priced
-    at a JBIG size the machine may not take; MH, measured smallest, goes with the call on either engine."""
+    """No DIS on record for the machine (the lead's rules, 2026-10-08): JBIG is not priced, MH (measured smallest)
+    prices the call and goes to the built-in engine, and the SSL Fax engine is asked for nothing, so it negotiates
+    the most compact coding itself (JBIG where the machine offers it) and Faxbot learns the machine from it."""
     from app.pages import sending
     changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
     assert sending.unchanged(changed) and changed.coding.coding == 'MH' and changed.coding.measured
-    assert (changed.coding.request('hylafax'), changed.coding.request('builtin')) == ('MH', 'MH')
+    assert (changed.coding.request('hylafax'), changed.coding.request('builtin')) == (None, 'MH')
     record = coding.newest_coding(database, JOB)
     assert (record['requested'], record['measured'], record['compared']) == ('MH', 1, 'MMR')
     assert coding.sent_view(database, JOB)['sentence'] == 'Sent with MH: 20% shorter than MMR for these pages.'

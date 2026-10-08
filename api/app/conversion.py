@@ -713,7 +713,8 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
             continue
         measured = (codings.measure_cached(pages, measure_cache) if measure_cache is not None
                     else codings.measure(pages))
-        choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured)
+        choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
+                                     negotiate=usable.left_out.get('JBIG') == codings.JBIG_NOT_ON_RECORD)
         choices[name] = choice
         # A JBIG request that could not be measured is priced at its fallback's measured size (codings.best_coding).
         shapes[name] = decision.Shape(len(pages), tuple(measured["MMR"]), frames_resolution(pages), name,
