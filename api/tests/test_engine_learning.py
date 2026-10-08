@@ -286,16 +286,26 @@ def test_a_call_placed_with_settings_other_than_those_in_force_never_resets_what
     assert engine_learning.decide(values(), NUMBER, db=db).audio
 
 
-def test_received_calls_from_a_caller_whose_t38_failed_are_answered_with_audio(db):
+def test_a_received_t38_failure_is_kept_and_shown_but_its_caller_is_answered_as_usual(db, monkeypatch):
+    """Answering with audio fax fails for a caller that waits about ten seconds before asking for T.38 (measured
+    in test_t38_loopback.py's notes), so INBOUND_AUDIO is off: the memory is kept and shown, faxbot-inmode stays
+    empty, and a key left there is removed. Turned on, the same sync writes the caller's keys."""
     from api.tests.test_screening import FakeAsterisk
     record(db, direction='inbound')
     engine_learning.learn_recent(db, values())
+    [row] = memory_rows(db)
+    assert (row['direction'], row['kind']) == ('inbound', 't38_failed')
+    epoch = engine_learning.current_epoch(db, values())
+    sentence = engine_learning.memory_sentence(engine_learning.memories(db, NUMBER, epoch=epoch), 'inbound')
+    assert sentence.endswith('; Faxbot still answers its calls the usual way.')
     store = engine_frames.FrameStore(db)
     asterisk = FakeAsterisk({'/faxbot-inmode/19995550000': 'audio'})
     asyncio.run(engine_frames.sync(asterisk, store, db, values()))
+    assert not any(key.startswith('/faxbot-inmode/') for key in asterisk.database)
+    monkeypatch.setattr(engine_learning, 'INBOUND_AUDIO', True)
+    asyncio.run(engine_frames.sync(asterisk, store, db, values()))
     keys = dict(asterisk.database)
     assert keys['/faxbot-inmode/13035550150'] == 'audio' and keys['/faxbot-inmode/3035550150'] == 'audio'
-    assert '/faxbot-inmode/19995550000' not in keys
     # Sending to that number is unchanged: memory is per direction.
     assert not engine_learning.decide(values(), NUMBER, db=db).audio
     engine_learning.forget(db, NUMBER)
@@ -655,6 +665,34 @@ def client(monkeypatch, tmp_path):
     _environment(monkeypatch, tmp_path)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as test_client:
         yield test_client
+
+
+def test_the_background_work_records_each_placed_call_and_learns_from_failed_calls(client):
+    """Decisions only read: FramesWork (the router's background step) is what keeps a placed call's changes and
+    what failed calls taught. Driven here with a stand-in for Faxbot's connection to Asterisk."""
+    from types import SimpleNamespace
+    from api.tests.test_screening import FakeAsterisk
+    from app import engine_frames_http
+    from app.main import app
+
+    class Asterisk(FakeAsterisk):
+        _connected = SimpleNamespace(is_set=lambda: True)
+        connected_at = 1.0
+
+        def __getattr__(self, name):
+            if name.startswith('on_'):
+                return lambda callback: None
+            raise AttributeError(name)
+    engine = app.state.configuration_runtime.manager.store.engine
+    work = engine_frames_http.FramesWork(app, Asterisk({}))
+    work.submitted({'JobID': 'job7', 'AttemptID': 'attempt7', 'Called': NUMBER,
+                    'Learned': {'engine': 'builtin', 'audio': True, 'reasons': ['Synthetic reason.']}})
+    assert engine_learning.choice_for_attempt(engine, 'attempt7')['reasons'] == 'Synthetic reason.'
+    record(engine)
+    work.result({})
+    asyncio.run(work.step())
+    assert [row['kind'] for row in memory_rows(engine)] == ['t38_failed']
+    assert work.learned_at > 0 and not work.dirty
 
 
 def test_their_fax_machine_joins_both_engines_calls_and_forgets_with_an_audit_row(client):

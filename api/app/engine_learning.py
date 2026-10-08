@@ -68,6 +68,11 @@ ECM_FAILS = 2
 COMPRESSIONS = ('JBIG', 'MMR', 'MR', 'MH')
 SETTING_COMPRESSION = {'jbig': 'JBIG', 'mmr': 'MMR', 'mr': 'MR', 'mh': 'MH'}
 KINDS = ('t38_failed', 'audio_failed')
+# Received calls: what failed is kept and shown, but Faxbot does not answer a caller with audio fax because of it
+# (faxbot-inmode stays empty). Measured on two Asterisks (2026-10-07): a caller that stays silent about ten seconds
+# before asking for T.38, as Asterisk's SendFAX z and Faxbot's own built-in engine do, misses the three DIS of an
+# audio-only answer and fails. Turn on only with live evidence from the callers it would apply to.
+INBOUND_AUDIO = False
 # The trunk settings that decide the path a call takes (carrier, account, transport, network, T.38); a change
 # to any starts learning again. Faxbot's own fax preferences (speed, error correction, compression) are not
 # here: the rules read them for each call, and a learned value only ever narrows them.
@@ -434,6 +439,8 @@ def memory_sentence(rows, direction) -> str | None:
         if direction == 'outbound':
             return (f'Fax over IP (T.38) to this number failed {when}, so Faxbot uses audio fax for it until '
                     f'{_day(until)}.')
+        if not INBOUND_AUDIO:
+            return f'Fax over IP (T.38) from this number failed {when}; Faxbot still answers its calls the usual way.'
         return (f'Fax over IP (T.38) from this number failed {when}, so Faxbot answers its calls with audio fax until '
                 f'{_day(until)}.')
     when, until = _failed_text(rows, 'audio_failed')

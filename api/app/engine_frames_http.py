@@ -21,6 +21,9 @@ from . import engine_frames, engine_learning
 from .routing.background import installation_engine, lifespan_tasks, repeat_async
 
 SYNC_EVERY_SECONDS = 600.0
+# What failed calls taught is kept at least this often: the SSL Fax engine's result can be stored after the call's
+# last event, and a failed fax may try another call soon after.
+LEARN_EVERY_SECONDS = 60.0
 
 
 class FramesWork:
@@ -31,6 +34,7 @@ class FramesWork:
         self.dirty = True
         self.synced_for = None
         self.synced_at = 0.0
+        self.learned_at = 0.0
         ami.on_frames(self.heard)
         # What each placed call used (both engines' Submission events), and new results to learn from.
         ami.on_submission(self.submitted)
@@ -90,7 +94,8 @@ class FramesWork:
             return False
         now = time.monotonic()
         connection = self.ami.connected_at
-        if not (self.dirty or self.synced_for != connection or now - self.synced_at > SYNC_EVERY_SECONDS):
+        if not (self.dirty or self.synced_for != connection or now - self.synced_at > SYNC_EVERY_SECONDS
+                or now - self.learned_at > LEARN_EVERY_SECONDS):
             return False
         engine, _ = installation_engine(self.app)
         values = await run_lifecycle_step(self._values)
@@ -100,6 +105,7 @@ class FramesWork:
         try:
             # What recent failed calls taught, received ones too (their callers' keys follow below).
             await run_lifecycle_step(lambda: engine_learning.learn_recent(engine, values))
+            self.learned_at = now
             store = await run_lifecycle_step(lambda: engine_frames.FrameStore(engine))
             await engine_frames.sync(self.ami, store, engine, values)
         except BaseException:

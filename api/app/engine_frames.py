@@ -537,12 +537,14 @@ def desired_families(store, engine, values, *, now=None) -> dict:
         if learned_for(store, values, number, now=now).inbound_rate == 14400:
             for key in caller_keys(number):
                 inrate[key] = '14400'
-    # Callers whose calls failed only over T.38 recently are answered with audio fax (engine_learning, T8).
+    # Callers whose calls failed only over T.38 recently are answered with audio fax (engine_learning, T8), while
+    # INBOUND_AUDIO is on; off, the family stays empty and any key left in it is removed.
     from . import engine_learning
     inmode = {}
-    for number in sorted(engine_learning.inbound_audio_callers(store.engine, values, now=now)):
-        for key in caller_keys(number):
-            inmode[key] = 'audio'
+    if engine_learning.INBOUND_AUDIO:
+        for number in sorted(engine_learning.inbound_audio_callers(store.engine, values, now=now)):
+            for key in caller_keys(number):
+                inmode[key] = 'audio'
     return {FAMILY_IAF: iaf, FAMILY_INRATE: inrate, FAMILY_INMODE: inmode}
 
 
