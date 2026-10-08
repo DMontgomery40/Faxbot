@@ -548,8 +548,9 @@ class TrunkAccount:
         return endpoint_name(self.key)
 
 
-def extra_trunks(values) -> list:
-    """The trunk accounts after the first that are on and filled in, in account order."""
+def extra_trunks(values, *, unfinished=False) -> list:
+    """The trunk accounts after the first that are on and filled in, in account order; ``unfinished`` also lists
+    those still missing their carrier (so Faxbot can say why they are not loaded)."""
     from . import accounts
     found = []
     try:
@@ -563,7 +564,7 @@ def extra_trunks(values) -> list:
             own = accounts.account_values(values, account.key)
         except accounts.AccountsError:
             continue
-        if configured(own):
+        if configured(own) or unfinished:
             found.append(TrunkAccount(account.key, account.label, own))
     return found
 
@@ -603,7 +604,7 @@ def _rendered(values):
     kinds = {}
     for account, trunk, _ in rendered:
         kinds[trunk.transport] = trunk.preset.phone_system
-    for account in extra_trunks(values):
+    for account in extra_trunks(values, unfinished=True):
         try:
             trunk = effective_trunk(account.values)
         except TrunkConfigurationError:
@@ -635,6 +636,23 @@ def rendered_endpoints(values) -> tuple:
     except TrunkConfigurationError:
         return ()
     return tuple(account.endpoint for account, _, _ in rendered)
+
+
+def trunk_loaded(values, key=None) -> bool:
+    """Whether calls can go over trunk account ``key`` now: Faxbot wrote it into Asterisk's file, and the running
+    Asterisk loaded that file (when it shares Faxbot's data folder and says what it loaded). A trunk that is not
+    loaded is skipped like an account that is not ready, never bound to a fax."""
+    try:
+        endpoint = endpoint_name(key)
+    except ValueError:
+        return False
+    if endpoint not in rendered_endpoints(values):
+        return False
+    try:
+        started = started_configuration_path(values).read_text()
+    except OSError:
+        return True  # an Asterisk Faxbot does not manage: what it loaded cannot be read here
+    return f'[{endpoint}]' in started
 
 
 def shared_addresses(values) -> list:

@@ -699,6 +699,12 @@ def health(values, account, engine, *, now=None, problem=None):
     if not account.set_up:
         missing = ', '.join(account.missing) or 'settings'
         return 'not_set_up', f'Add its {missing} to finish setting it up.', details
+    if account.provider == 'sip' and not account.primary:
+        # A trunk after the first that Asterisk's file leaves out (sip_trunk.trunk_problems) carries no call.
+        from .sip_trunk import trunk_problems
+        problem = trunk_problems(values).get(account.key)
+        if problem:
+            return 'not_set_up', problem, details
     if over_daily_limit(engine, values, account, now=now):
         limit = _money_text(account.daily_spend_micros, account.currency)
         return ('spending_limit', f'It has cost {limit} today, its daily limit; Faxbot uses it again after '

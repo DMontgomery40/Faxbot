@@ -209,6 +209,88 @@ def test_a_sites_accounts_in_order_pass_a_full_site_trunk_only_when_the_rule_say
     assert (found is not None and found.job_id == job) is offered
 
 
+class _ConnectedAmi:
+    """Asterisk's manager connection as route readiness sees it: connected."""
+
+    def __init__(self):
+        import asyncio
+        self._connected = asyncio.Event()
+        self._connected.set()
+
+
+def _routed(env, monkeypatch):
+    from api.app import config
+    from api.app.routing import transport as routed
+    from api.app.routing.transport import RoutedTransport
+    from api.tests.test_rules_delivery import Inner
+    # Readiness reads the configuration in force; here, this installation's. These synthetic faxes have no
+    # document on disk, so the trunk's fax image is not prepared (that step is the transport's own test).
+    monkeypatch.setattr(config, 'configuration_values', lambda: values(env))
+    monkeypatch.setattr(routed, 'ensure_route_artifact', lambda revision, configuration, job_id: None)
+    inner = Inner(env.delivery)
+    inner.ami = _ConnectedAmi()
+    return RoutedTransport(inner, direct=None)
+
+
+def test_a_fax_bound_to_a_second_trunk_keeps_that_trunk_through_dispatch(trunked, monkeypatch):
+    """The trunk key survives binding: the attempt's stored profile names the trunk, and the call it builds goes
+    out over that trunk's endpoint with that trunk's caller ID."""
+    from api.app import ami
+    from api.app.routing import envelope as envelopes
+    from api.app.routing.plan import RoutePlan, RoutePlanner
+    publish(trunked, {'format': 1, 'routes': [rule('r-leeds', {'use': 'sip-leeds'})]})
+    job = accept(trunked, to='+442079460000')
+    found = claim(trunked)
+    assert found.job_id == job
+    pinned = envelopes.load(trunked.engine, job)
+    revision, _ = trunked.configuration.outbound_context(job)
+    plan = RoutePlanner(trunked.routes).plan(to_number='+442079460000', bound='sip', values=revision.values,
+                                             pages=1, pinned=pinned, alternates=True)
+    assert [choice.route.key for choice in plan.choices] == ['sip-leeds']
+    transport = _routed(trunked, monkeypatch)
+    chosen, assigned = transport._assign(found, plan, revision)
+    assert chosen is not None, transport._skipped
+    assert chosen.route.key == 'sip-leeds'
+    _, profile, job_row = trunked.delivery.load_dispatch(assigned)
+    assert profile.configuration.provider_id == 'sip' and profile.configuration.settings['trunk'] == 'sip-leeds'
+    fields = ami.originate_fields_for(revision.values, job, job_row['to_number'], '/faxdata/x.tiff',
+                                      attempt_id=assigned.attempt_id, trunk=profile.configuration.settings['trunk'])
+    assert fields['Channel'] == 'PJSIP/+442079460000@trunk-sip-leeds-endpoint'
+    assert fields['CallerID'] == '+441132000000'
+
+
+def test_a_trunk_asterisk_has_not_loaded_is_skipped_never_bound(trunked, monkeypatch, tmp_path):
+    from api.app.routing import envelope as envelopes
+    from api.app.routing.plan import RoutePlanner
+    half = {'provider': 'sip', 'label': 'Half trunk', 'settings': {'host': '192.0.2.50', 'auth': 'ip'}}
+    trunked.snapshot = trunked.configuration.apply(
+        trunked.snapshot, trunked.snapshot.active.values, restart_required=False, actor='test',
+        accounts=ConfigurationDocument({'sip-leeds': LEEDS, 'sip-half': half}))
+    publish(trunked, {'format': 1, 'routes': [rule('r-half', {'try_in_order': ['sip-half', 'phaxio']})]})
+    job = accept(trunked)
+    found = claim(trunked)
+    pinned = envelopes.load(trunked.engine, job)
+    revision, _ = trunked.configuration.outbound_context(job)
+    plan = RoutePlanner(trunked.routes).plan(to_number=found and '+12025550123', bound='sip', values=revision.values,
+                                             pages=1, pinned=pinned, alternates=True)
+    chosen, assigned = _routed(trunked, monkeypatch)._assign(found, plan, revision)
+    assert chosen.route.key == 'phaxio'
+    _, profile, _ = trunked.delivery.load_dispatch(assigned)
+    assert profile.configuration.provider_id == 'phaxio'
+    from api.app import accounts
+    state, sentence, _ = accounts.health(values(trunked), accounts.account_named(values(trunked), 'sip-half'),
+                                         trunked.engine)
+    assert (state, sentence) == ('not_set_up', 'Half trunk is not loaded yet: fill in its settings.')
+    # A trunk Faxbot wrote but the running Asterisk has not loaded yet is not ready either.
+    from api.app import sip_trunk
+    started = tmp_path / 'asterisk' / 'pjsip.conf.started'
+    started.parent.mkdir(parents=True, exist_ok=True)
+    started.write_text('[trunk-endpoint]\n')
+    assert sip_trunk.trunk_loaded(values(trunked), 'sip-leeds') is False
+    started.write_text('[trunk-endpoint]\n[trunk-sip-leeds-endpoint]\n')
+    assert sip_trunk.trunk_loaded(values(trunked), 'sip-leeds') is True
+
+
 def test_a_trunk_never_calls_its_own_numbers_but_another_trunk_may(trunked):
     """The self-call guard per trunk: a fax to one of the Leeds trunk's numbers never goes out over Leeds; with
     "place a real call" it may use the first trunk, and a fax to the first trunk's number may use Leeds."""
