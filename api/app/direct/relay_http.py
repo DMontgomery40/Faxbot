@@ -223,7 +223,7 @@ CHECK_FIRST = 'Check with the recipient before sending it again.'
 
 def fax_status(row):
     """One sentence for a relayed fax; an uncertain one always says what to do."""
-    if row['state'] in ('failed_before_data', 'uncertain') and row['detail']:
+    if row['state'] in ('failed_before_data', 'uncertain', 'refused') and row['detail']:
         if row['state'] == 'uncertain' and CHECK_FIRST not in row['detail']:
             return f"{row['detail']} {CHECK_FIRST}"
         return row['detail']

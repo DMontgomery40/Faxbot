@@ -18,9 +18,13 @@ agreement is the authority instead of a live credential:
 - the installation's own sending rules: the decision is read before the lock
   and decided again in the transaction (``routing.rules_acceptance``), exactly
   as for a fax a person sends, so this organization's limits (a cost cap,
-  "never use" an account, an approval) apply to every fax it relays. A relayed
-  fax is never relayed again: the planner leaves out every partner relay for
-  it (``direct.relay.relay_candidates`` with its ``job_id``);
+  "never use" an account) apply to every fax it relays. A fax its rules would
+  hold (for approval, a time window, or with no allowed route) is not accepted
+  at all (``RulesHold``): a partner's fax never waits in this installation's
+  Sent outside the sender's control, and the relay refuses it, signed, so the
+  sender's own next route sends it at once. A relayed fax is never relayed
+  again: the planner leaves out every partner relay for it
+  (``direct.relay.relay_candidates`` with its ``job_id``);
 - the caller's own step (``also``), which records the relay ledger row in the
   same transaction, so a fax is never queued without its record or the reverse.
   A fax the rules hold, or send first by another account than the trunk, never
@@ -43,6 +47,35 @@ from .types import AccessError
 
 class SystemSenderError(RuntimeError):
     """One plain sentence for the administrator."""
+
+
+# Why the installation's own rules would hold a fax: for its administrator's record ("Refused to relay a fax from
+# {partner}: ...") and for the partner ("{relay} did not accept it for relaying: ...").
+HOLD_REASONS = {
+    'approval': ('your rules hold it for approval', 'its sending rules would hold it for approval'),
+    'window': ('your rules hold it until a time window opens',
+               'its sending rules would hold it until a time window opens'),
+    'no_route': ('your rules allow no account to send it', 'its sending rules allow no account to send it'),
+}
+
+
+class RulesHold(RuntimeError):
+    """The installation's own sending rules would hold this fax, so it is not accepted (nothing was written)."""
+
+    def __init__(self, kind):
+        self.kind = kind
+        self.reason, self.partner_reason = HOLD_REASONS[kind]
+        super().__init__(self.reason)
+
+
+def _hold_kind(decision):
+    """``approval``, ``window`` or ``no_route`` when the decision holds the fax; None when it may go."""
+    if decision.outcome == 'route':
+        return None
+    if decision.outcome == 'blocked':
+        return 'no_route'
+    kinds = {hold.kind for hold in decision.envelope.holds}
+    return 'approval' if 'approval' in kinds or not kinds else 'window'
 
 
 def _now():
@@ -119,6 +152,18 @@ def _rules(configuration, revision, principal_id, job):
     return plan, rules_acceptance.recorder(plan, job['id'], _SystemSender(principal_id))
 
 
+def _refuse_if_held(connection, job_id):
+    """The decision made in the transaction holds the fax (rules published since the preview): roll it all back."""
+    from ..routing import envelope as envelopes
+    try:
+        pinned = envelopes.load_on(connection, job_id)
+    except envelopes.UnreadableDecision:
+        raise RulesHold('no_route') from None
+    held = _hold_kind(pinned.decision) if pinned is not None else None
+    if held is not None:
+        raise RulesHold(held)
+
+
 def _follow_envelope(connection, job_id, bound_key, now):
     """Take the fax out of a sending-together group unless its decision sends it first by the bound trunk."""
     from ..routing import envelope as envelopes
@@ -140,11 +185,15 @@ def accept(configuration, access_store, principal_id, revision, job, *, also=Non
     """Accept ``job`` as an outbound fax of ``principal_id`` in one transaction; returns the bound profile.
 
     The installation's sending rules decide its route envelope in the same
-    transaction. ``also(connection, now)`` runs last in the same transaction;
+    transaction; raises ``RulesHold`` when they would hold the fax, with nothing
+    written. ``also(connection, now)`` runs last in the same transaction;
     anything it raises rolls the whole acceptance back.
     """
     tables = access_store.tables
     plan, decide = _rules(configuration, revision, principal_id, job)
+    held = _hold_kind(plan.decision)
+    if held is not None:
+        raise RulesHold(held)
     with configuration._locked() as connection:
         version = access_store.lock_on(connection)
         now = _now()
@@ -159,6 +208,7 @@ def accept(configuration, access_store, principal_id, revision, job, *, also=Non
         _audit(connection, tables, actor=principal_id, operation='fax.accept', target_kind='resource',
                target_id=identity, before=version, after=version, details={'source': source}, now=now)
         decide(connection, now)
+        _refuse_if_held(connection, job['id'])
         if also is not None:
             also(connection, now)
         _follow_envelope(connection, job['id'], plan.bound_key, now)
