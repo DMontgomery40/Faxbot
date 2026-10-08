@@ -482,6 +482,39 @@ def test_a_fax_whose_rule_uses_the_plan_takes_its_pages_first(allowance):  # noq
     assert plan.first.route.key == 'signalwire' and plan.first.reason != 'plan_reserved' and plan.held is None
 
 
+def test_unreadable_prices_leave_an_account_out_and_a_bug_in_the_allocation_raises(allowance, monkeypatch,  # noqa: F811
+                                                                                       caplog):
+    """prices_for leaves out only an account whose prices or plan cannot be read, and logs why; a bug in
+    after_hold (the plan's room after what is held for other faxes) raises instead of quietly pricing it out."""
+    from api.app.routing import pricing
+    from api.app.routing.database import DeliveryStoreError
+    env = allowance
+    # The 60-page fax's rule uses the plan, so the room held for it reaches the 100-page fax's price (after_hold).
+    publish(env, {'format': 1, 'routes': [rule('r-small', {'use': 'phaxio'}, {'destination': {'numbers': [SMALL]}})]})
+    small, large = accept(env, to=SMALL, pages=60), accept(env, to=LARGE, pages=100)
+    pinned = envelopes.load(env.engine, large)
+    ask = dict(pinned=pinned, bound='phaxio', job_id=large)
+    assert allocation.allocate(env.routes, values_of(env)).hold(large, 'phaxio') is not None
+    assert 'phaxio' in pricing.prices_for(env.routes, values_of(env), LARGE, 100, **ask)
+    real = pricing.price
+
+    def unreadable(routes, values, key, *args, **kwargs):
+        if key == 'phaxio':
+            raise DeliveryStoreError('Delivery storage is unavailable.')
+        return real(routes, values, key, *args, **kwargs)
+    monkeypatch.setattr(pricing, 'price', unreadable)
+    with caplog.at_level('WARNING'):
+        left = pricing.prices_for(env.routes, values_of(env), LARGE, 100, **ask)
+    assert 'phaxio' not in left and 'signalwire' in left and 'Account phaxio could not be priced' in caplog.text
+    monkeypatch.setattr(pricing, 'price', real)
+
+    def broken(left, hold):
+        raise TypeError('a bug in after_hold')
+    monkeypatch.setattr(allocation, 'after_hold', broken)
+    with pytest.raises(TypeError, match='a bug in after_hold'):
+        pricing.prices_for(env.routes, values_of(env), LARGE, 100, **ask)
+
+
 def test_sent_details_show_the_kept_sentence_over_the_reason_code():
     from api.app.routing.http import _cost_view
     sentence = 'Sent by SignalWire for about $0.12 so your last 100 Phaxio pages this month go to the waiting fax ' \

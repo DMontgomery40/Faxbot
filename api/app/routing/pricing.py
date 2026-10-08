@@ -144,8 +144,11 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
     ``job_id``: the queued fax being planned. Its scarce plans are priced after the room held for other faxes
     (``plan_allocation.hold_for``); without it every plan is priced against its whole room, as for a quote.
     """
+    import sqlalchemy as sa
     from . import dialing
     from .alternates import attempt_number
+    from .costs import InvalidRateCard
+    from .database import DeliveryStoreError
     from .plan import extra_routes
     from .store import destination_key
     destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
@@ -174,7 +177,11 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
         try:
             found[key] = price(routes, values, key, number, pages, provider=provider, now=now,
                                number='alternate' if number != destination else 'original', hold=holds.get(key))
-        except Exception:
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError, InvalidRateCard) as error:
+            # This account's prices or plan could not be read: it is left out, and the cause logged. Anything else
+            # (a bug in pricing or in the plan's allocation) raises.
+            import logging
+            logging.getLogger(__name__).warning('Account %s could not be priced: %s', key, error)
             continue
     return found
 
