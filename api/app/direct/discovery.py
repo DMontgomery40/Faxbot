@@ -1023,11 +1023,11 @@ class DiscoveryService:
             raise DirectConflict('Turn on "Use direct delivery" under Recipients → Partners → Direct delivery first; '
                                  'senders reach this Faxbot through it.')
         if not str(getattr(values, 'direct_organization', '') or '').strip():
-            raise DirectConflict('Add your organization name for direct delivery to the installation settings first.')
+            raise DirectConflict('Add your organization name under Recipients → Partners → Direct delivery first.')
         number = _e164(getattr(values, 'direct_fax_number', ''), values)
         if number is None:
-            raise DirectConflict('Add the fax number partners send to for direct delivery to the installation '
-                                 'settings first.')
+            raise DirectConflict('Add the fax number partners send to under Recipients → Partners → Direct delivery '
+                                 'first.')
         return number, number in receiving_numbers(_WithoutDirect(values))
 
     def publish(self, number, directory, *, actor_id=None, actor_name=None, now=None):
