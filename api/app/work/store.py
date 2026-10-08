@@ -260,4 +260,12 @@ class WorkStore:
                     changed += 1
             except (WorkChanged, DeliveryStoreError):
                 continue  # A person changed it first, or another worker escalated it.
-        return changed
+        # Expected faxes past their due time are escalated here too, once each (expectations.py).
+        return changed + self.expectations().escalate(control, now=now, limit=limit)
+
+    def expectations(self):
+        """The expected-fax records beside these work items, reflected once."""
+        if getattr(self, '_expectations', None) is None:
+            from .expectations import ExpectationStore
+            self._expectations = ExpectationStore(self.engine)
+        return self._expectations

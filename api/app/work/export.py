@@ -96,11 +96,16 @@ class EvidenceExport:
             names = store.names_on(connection, [row[field] for field in ('owner_principal_id', 'backup_principal_id',
                                                                          'acknowledged_by', 'done_by')]
                                    + [actor.principal_id])
-        return now, row, documents, inbound, imports, deliveries, connectors, events, names
+            # The expected faxes this document answers or may answer, as far as the exporter may see them.
+            from .expectation_service import expected_for_document
+            expected = expected_for_document(store.expectations(), service.control, connection, actor,
+                                             row['inbound_fax_id'], now)
+        return now, row, documents, inbound, imports, deliveries, connectors, events, names, expected
 
     def create(self, actor, item_id):
         """Return (zip bytes, file name). Records an ``exported`` event with the manifest digest."""
-        now, row, documents, inbound, imports, deliveries, connectors, events, names = self._gather(actor, item_id)
+        now, row, documents, inbound, imports, deliveries, connectors, events, names, expected = self._gather(
+            actor, item_id)
         missing = []
         original = None
         if not documents:
@@ -171,6 +176,7 @@ class EvidenceExport:
             } for item in imports],
             'email_delivery': [delivery(item) for item in deliveries],
             'history': history,
+            'expected': expected,
             'missing': missing,
             'limits': list(LIMITS),
         }

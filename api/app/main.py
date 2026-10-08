@@ -101,6 +101,7 @@ from .inbound.http import router as inbound_router
 from .accounts_http import router as accounts_router
 from .work.http import imports_router, router as work_router
 from .work.certainty_http import router as certainty_router
+from .work.expectation_http import router as expected_router
 from .routing.continuation_http import router as continuation_router
 from .setup_plan.http import router as setup_plan_router
 from .routing.transport import RoutedTransport
@@ -232,6 +233,7 @@ app.include_router(accounts_router)
 app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(certainty_router)
+app.include_router(expected_router)
 app.include_router(continuation_router)
 app.include_router(setup_plan_router)
 app.include_router(hylafax_router)

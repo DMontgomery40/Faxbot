@@ -261,3 +261,21 @@ def record_import(access, values, *, account, manifest, path, digest, report=Non
     if completion.state == 'conflict':
         raise ImportConflict(CONFLICT)
     return ('received' if completion.stored else 'duplicate'), begun.import_id, begun.inbound_fax_id
+
+
+def identity_outcome(stored_digest, digest, *, earlier_revision):
+    """What one imported record means under the import identity rules (source, operation id, revision).
+
+    ``stored_digest`` is the content digest already held under this exact
+    identity (None when there is none); ``earlier_revision`` says whether another
+    revision of the same operation is held. The expected-fax import
+    (``expectation_imports.py``) applies the same rules as ``record_import``:
+
+    - ``duplicate``: the same identity with the same content; a replay resumes and adds nothing.
+    - ``conflict``: the same identity with different content; the first is kept and the change waits for review.
+    - ``revision``: a revision not seen before of a known operation; a related, separate version.
+    - ``new``: an operation not seen before.
+    """
+    if stored_digest is not None:
+        return 'duplicate' if stored_digest == digest else 'conflict'
+    return 'revision' if earlier_revision else 'new'

@@ -31,6 +31,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `received`: Received faxes: list and open them, give...
 * `sent`: Sent faxes: list them, open one, download...
 * `forms`: Registered forms: import a fillable PDF or...
+* `expected`: Expected faxes: record a fax before it...
 * `numbers`: Your fax numbers: which mailbox each...
 * `recipients`: Fax numbers you send to: routing, batching...
 * `providers`: The fax services Faxbot sends and receives...
@@ -1071,6 +1072,491 @@ $ faxbot forms partner [OPTIONS] {partner}
 **Arguments**:
 
 * `partner`: Partner organization, fax number or id.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `faxbot expected`
+
+Expected faxes: record a fax before it arrives, see what is missing or overdue, confirm proposed matches, import open work from another system, and reconcile after that system was down.
+
+**Usage**:
+
+```console
+$ faxbot expected [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List expected faxes, the ones waiting...
+* `show`: Show one expected fax, any received faxes...
+* `add`: Expect a fax: record what should arrive,...
+* `confirm`: Confirm that a proposed received fax is...
+* `reject`: Say a proposed received fax is not the one...
+* `match`: Link a received fax to an expected fax by...
+* `cancel`: Cancel an expected fax that is no longer...
+* `done-elsewhere`: Record that an expected fax was completed...
+* `conflict`: Decide about a row the import changed...
+* `report`: What is still missing, what is overdue,...
+* `export`: Download an expected fax&#x27;s evidence as a...
+* `import`: Import open work from another system as...
+* `imports`: List recent imports of expected faxes,...
+* `sources`: Saved import sources: the file format and...
+* `outage`: Outage mode: mark a source system down,...
+
+### `faxbot expected list`
+
+List expected faxes, the ones waiting first, with their state and due time.
+
+**Usage**:
+
+```console
+$ faxbot expected list [OPTIONS]
+```
+
+**Options**:
+
+* `--show WHICH`: overdue, proposed (waiting for you to confirm), missing (no longer in the latest export), conflicts, closed or all. Default: waiting.
+* `--mailbox <str>`: Only this mailbox, by name.
+* `--search <str>`: Only references containing this text.
+* `--limit <int range>`: How many to show.  [default: 100; 1&lt;=x&lt;=500]
+* `--help`: Show this message and exit.
+
+### `faxbot expected show`
+
+Show one expected fax, any received faxes proposed as its answer, and optionally its history.
+
+**Usage**:
+
+```console
+$ faxbot expected show [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--history`: Also show everything that happened.
+* `--help`: Show this message and exit.
+
+### `faxbot expected add`
+
+Expect a fax: record what should arrive, from whom and by when, before it arrives.
+
+**Usage**:
+
+```console
+$ faxbot expected add [OPTIONS] {reference}
+```
+
+**Arguments**:
+
+* `reference`: The business reference, such as &quot;PO 483&quot;.  [required]
+
+**Options**:
+
+* `--expecting <str>`: What should arrive, such as &quot;Signed acknowledgement&quot;.  [required]
+* `--mailbox <str>`: The mailbox that owns it, by name.  [required]
+* `--from-name <str>`: Who will send it, such as &quot;Acme Supply&quot;.
+* `--fax-number <str>`: A fax number it may come from. Repeat for more.
+* `--due <str>`: When it is due, such as 2026-10-12 17:00 (local time).
+* `--due-hours <int range>`: Due this many hours from now, instead of --due.  [1&lt;=x&lt;=8760]
+* `--revision <str>`: The revision it must be, such as B.
+* `--must-include <str>`: A part it must include, such as &quot;Signature page&quot;. Repeat for more.
+* `--subaddress <str>`: The subaddress the sender will dial. Default: the reference, when it is digits.
+* `--email-subject <str>`: Text the email subject will contain, such as &quot;PO 483&quot;.
+* `--message-id <str>`: The Direct or email message ID it will carry, when you know it.
+* `--direct-address <str>`: The Direct address it may come from.
+* `--note <str>`: A short description.
+* `--help`: Show this message and exit.
+
+### `faxbot expected confirm`
+
+Confirm that a proposed received fax is the one expected. This closes it.
+
+**Usage**:
+
+```console
+$ faxbot expected confirm [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--proposal <int range>`: Which proposed fax, as numbered in &#x27;faxbot expected show&#x27;.  [x&gt;=1]
+* `--help`: Show this message and exit.
+
+### `faxbot expected reject`
+
+Say a proposed received fax is not the one expected. The expected fax keeps waiting.
+
+**Usage**:
+
+```console
+$ faxbot expected reject [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--proposal <int range>`: Which proposed fax, as numbered in &#x27;faxbot expected show&#x27;.  [x&gt;=1]
+* `--reason <str>`: Why it is not the one (up to 300 characters).
+* `--help`: Show this message and exit.
+
+### `faxbot expected match`
+
+Link a received fax to an expected fax by hand. This closes it.
+
+**Usage**:
+
+```console
+$ faxbot expected match [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--received-fax <str>`: The received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27;.  [required]
+* `--note <str>`: Why it is the one (up to 300 characters).
+* `--help`: Show this message and exit.
+
+### `faxbot expected cancel`
+
+Cancel an expected fax that is no longer needed.
+
+**Usage**:
+
+```console
+$ faxbot expected cancel [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--reason <str>`: Why it is no longer expected (up to 300 characters).  [required]
+* `--help`: Show this message and exit.
+
+### `faxbot expected done-elsewhere`
+
+Record that an expected fax was completed another way, such as by phone or on a portal.
+
+**Usage**:
+
+```console
+$ faxbot expected done-elsewhere [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--how <str>`: How it was completed, such as &quot;Confirmed on the supplier portal&quot; (up to 300 characters).  [required]
+* `--help`: Show this message and exit.
+
+### `faxbot expected conflict`
+
+Decide about a row the import changed without a new revision.
+
+**Usage**:
+
+```console
+$ faxbot expected conflict [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `--keep`: Keep the first version and set the change aside.
+* `--apply`: Use the import&#x27;s changed version.
+* `--help`: Show this message and exit.
+
+### `faxbot expected report`
+
+What is still missing, what is overdue, and which received faxes answered no expected fax.
+
+**Usage**:
+
+```console
+$ faxbot expected report [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back.  [default: 30; 1&lt;=x&lt;=365]
+* `--help`: Show this message and exit.
+
+### `faxbot expected export`
+
+Download an expected fax&#x27;s evidence as a zip file: its history, its match and what is missing.
+
+**Usage**:
+
+```console
+$ faxbot expected export [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The expected fax&#x27;s code, from &#x27;faxbot expected list&#x27;.  [required]
+
+**Options**:
+
+* `-o, --output <str>`: Zip file to write. Use &#x27;-&#x27; for standard output.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot expected import`
+
+Import open work from another system as expected faxes. Importing the same file again adds nothing.
+
+**Usage**:
+
+```console
+$ faxbot expected import [OPTIONS] {file}
+```
+
+**Arguments**:
+
+* `file`: The export file (CSV or JSON, as the source says).  [required]
+
+**Options**:
+
+* `--source <str>`: The saved import source&#x27;s name, from &#x27;faxbot expected sources list&#x27;.  [required]
+* `--full`: The file lists all open work, so anything missing from it is reported.
+* `--help`: Show this message and exit.
+
+### `faxbot expected imports`
+
+List recent imports of expected faxes, newest first, with what each one changed.
+
+**Usage**:
+
+```console
+$ faxbot expected imports [OPTIONS]
+```
+
+**Options**:
+
+* `--limit <int range>`: How many imports to show.  [default: 20; 1&lt;=x&lt;=100]
+* `--help`: Show this message and exit.
+
+### `faxbot expected sources`
+
+Saved import sources: the file format and which column holds each field.
+
+**Usage**:
+
+```console
+$ faxbot expected sources [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List saved import sources and their column...
+* `save`: Save an import source once: its format and...
+
+#### `faxbot expected sources list`
+
+List saved import sources and their column mappings.
+
+**Usage**:
+
+```console
+$ faxbot expected sources list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot expected sources save`
+
+Save an import source once: its format and which column holds each field. Saving again changes it.
+
+**Usage**:
+
+```console
+$ faxbot expected sources save [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: A name for the source, such as &quot;Open purchase orders&quot;.  [required]
+
+**Options**:
+
+* `--format <str>`: csv or json.  [required]
+* `--column FIELD=COLUMN`: Which column holds a field, such as reference=&quot;PO Number&quot;. Fields: reference (required), operation_id, revision, kind, description, counterparty, fax_numbers, direct_address, due, mailbox, subaddress, email_subject, message_id, required_parts, required_revision, window_start.  [required]
+* `--mailbox <str>`: The mailbox for rows that name none.
+* `--due-hours <int range>`: Hours each row has when it gives no due time.  [0&lt;=x&lt;=8760]
+* `--subject-pattern <str>`: How the reference appears in an email subject, such as &quot;PO {reference}&quot;.
+* `--subaddress-pattern <str>`: How the reference is dialed as a subaddress, such as &quot;{digits}&quot;.
+* `--form-field <str>`: The partner form field that holds the reference.
+* `--revision-field <str>`: The partner form field that holds the revision.
+* `--help`: Show this message and exit.
+
+### `faxbot expected outage`
+
+Outage mode: mark a source system down, record what was done by fax or email meanwhile, and sort the next export into done, new and held lists.
+
+**Usage**:
+
+```console
+$ faxbot expected outage [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List declared outages, the newest first.
+* `show`: Show an outage: what was done during it...
+* `start`: Mark a source system down.
+* `end`: Mark a source system back.
+* `record`: Record one action done during an outage...
+* `reconcile`: Sort the export imported after the outage...
+
+#### `faxbot expected outage list`
+
+List declared outages, the newest first.
+
+**Usage**:
+
+```console
+$ faxbot expected outage list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot expected outage show`
+
+Show an outage: what was done during it and the reconciliation lists.
+
+**Usage**:
+
+```console
+$ faxbot expected outage show [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The outage&#x27;s code, from &#x27;faxbot expected outage list&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot expected outage start`
+
+Mark a source system down. Record what you do by fax or email meanwhile with &#x27;outage record&#x27;.
+
+**Usage**:
+
+```console
+$ faxbot expected outage start [OPTIONS] {source}
+```
+
+**Arguments**:
+
+* `source`: The import source&#x27;s name: the system that is down.  [required]
+
+**Options**:
+
+* `--since <str>`: When it went down (local time). Default: now.
+* `--note <str>`: A short note, such as &quot;ERP maintenance&quot;.
+* `--help`: Show this message and exit.
+
+#### `faxbot expected outage end`
+
+Mark a source system back. Then import its next export to sort the work into three lists.
+
+**Usage**:
+
+```console
+$ faxbot expected outage end [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The outage&#x27;s code, from &#x27;faxbot expected outage list&#x27;.  [required]
+
+**Options**:
+
+* `--at <str>`: When it came back (local time). Default: now.
+* `--help`: Show this message and exit.
+
+#### `faxbot expected outage record`
+
+Record one action done during an outage against the item&#x27;s original ID. Faxbot never submits it anywhere.
+
+**Usage**:
+
+```console
+$ faxbot expected outage record [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The outage&#x27;s code, from &#x27;faxbot expected outage list&#x27;.  [required]
+
+**Options**:
+
+* `--id <str>`: The item&#x27;s original ID in the source system.  [required]
+* `--did <str>`: What was done, such as &quot;Order faxed to Acme&quot;.  [required]
+* `--by <str>`: fax, email, phone or other.  [required]
+* `--revision <str>`: The item&#x27;s revision, when it has one.
+* `--reference <str>`: The business reference, such as &quot;PO 483&quot;.
+* `--uncertain`: It may not have gone through.
+* `--sent-fax <str>`: The sent fax&#x27;s ID, from &#x27;faxbot sent list --ids&#x27;.
+* `--evidence <str>`: Where the evidence is, such as &quot;Fax log page 3&quot;.
+* `--at <str>`: When it was done (local time). Default: now.
+* `--help`: Show this message and exit.
+
+#### `faxbot expected outage reconcile`
+
+Sort the export imported after the outage into done, new and held lists again. Nothing is sent or submitted.
+
+**Usage**:
+
+```console
+$ faxbot expected outage reconcile [OPTIONS] {code}
+```
+
+**Arguments**:
+
+* `code`: The outage&#x27;s code, from &#x27;faxbot expected outage list&#x27;.  [required]
 
 **Options**:
 
