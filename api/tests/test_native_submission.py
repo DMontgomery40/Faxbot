@@ -177,7 +177,11 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
     assert all(re.search(r",(GotoIf|UserEvent|Return)\(", line) for line in frames)
     assert sum("UserEvent(FaxFrames," in line for line in frames) == 1
     assert not any("FaxResult" in line for line in frames)
-    assert applications.count("SendFAX") == 1
+    # One send per call: the usual SendFAX, or audio fax for this call only (FAXBOT_AUDIO, engine_learning.py);
+    # each is followed at once by Hangup, so no path sends twice.
+    sends = [index for index, line in enumerate(send) if ",SendFAX(" in line]
+    assert applications.count("SendFAX") == len(sends) == 2
+    assert all(",Hangup()" in send[index + 1] for index in sends)
     assert sum("UserEvent(FaxResult," in line for line in send) == 0
     assert sum("UserEvent(FaxResult," in line for line in terminal) == 1
     assert (
