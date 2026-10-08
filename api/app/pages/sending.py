@@ -117,6 +117,10 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
         return None
     route, number, mode = configuration.provider_id, job.get('to_number'), how_sent(configuration)
     root = Path(str(pdf)).parent
+    # A fax accepted by an earlier build may have encoded pages written over its fax image: made again from the
+    # original document, once, so this attempt chooses from the original (codec/send.py).
+    from ..codec.send import restore_original_image
+    restore_original_image(engine, job_id, pdf, tiff if mode == 'image' else None)
     records = capabilities.records_for(engine)
     # The machine that answers is the dialed number's; the person's page settings are also read for the recipient
     # they chose (an approved toll-free number is dialed instead, routing/alternates.py): the stricter one wins.

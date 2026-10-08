@@ -963,3 +963,45 @@ def test_the_console_and_command_line_read_and_change_page_settings(monkeypatch,
         listed = ' '.join(cli('providers', 'long-pages').stdout.split())
         assert 'sinch' in listed and 'Phaxio gets several pages on one long page' in listed
         assert cli('providers', 'long-pages', 'sinch', '--long-pages', 'maybe').exit_code != 0
+
+
+def test_a_fax_encoded_at_acceptance_by_an_earlier_build_gets_its_original_image_back_once(installation, database,
+                                                                                          tmp_path, caplog):
+    """Upgrade safety: the old path wrote encoded pages over <job>.tiff (and payload PDFs beside the fax) and
+    recorded codec_sends at acceptance. Before the next attempt chooses, the image is made again from the PDF."""
+    import logging
+    from app import codec
+    from app.codec.store import record_send
+    if not shutil.which('gs'):
+        pytest.skip('Ghostscript draws the original image again')
+    pdf, tiff = tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff'
+    (tmp_path / 'letter.txt').write_text('\n'.join(f'Synthetic line {index} of a letter.' for index in range(60)))
+    conversion.txt_to_pdf(str(tmp_path / 'letter.txt'), str(pdf))
+    conversion.pdf_to_tiff(str(pdf), str(tmp_path / 'original.tiff'))
+    original = conversion.read_fax_frames(str(tmp_path / 'original.tiff'))
+    # The old acceptance path: encoded pages over the fax image, a payload PDF for a provider, and the send row.
+    encoded = codec.encode_document(codec.Document(pdf.read_bytes(), 'application/pdf', 'document.pdf'))
+    codec.write_tiff(encoded.pages, tiff)
+    (tmp_path / f'{JOB}.payload-sinch.pdf').write_bytes(b'%PDF-1.4 encoded pages')
+    _fax_row(database, 'sip', pages=len(original))
+    with database.begin() as connection:
+        record_send(connection, database, JOB, {
+            'phone_number': PEER, 'provider_id': 'sip', 'layout': 'grid', 'resolution': 'fine', 'fec': 'medium',
+            'pages_original': len(original), 'pages_encoded': encoded.page_count, 'document_sha256': '0' * 64,
+            'encrypted': 0, 'format_version': 1}, NOW)
+    configuration = SimpleNamespace(provider_id='sip', manifest=None, traits={'requires_tiff': True})
+
+    def attempt(attempt_id):
+        return sending.prepare(database, SimpleNamespace(sip_fax_fine=True), configuration,
+                               SimpleNamespace(job_id=JOB, attempt_id=attempt_id, members=()), {'to_number': PEER},
+                               pdf, tiff, now=NOW)
+    with caplog.at_level(logging.WARNING):
+        attempt('c' * 32)
+        restored = conversion.read_fax_frames(str(tiff))
+        assert len(restored) == len(original) and all(same(a, b) for a, b in zip(restored, original))
+        assert not (tmp_path / f'{JOB}.payload-sinch.pdf').exists()
+        attempt('d' * 32)  # once: nothing is left to restore
+    said = [record.getMessage() for record in caplog.records if record.name == 'app.codec.send']
+    assert said == [f'Fax {JOB}: its fax image held encoded pages written when it was accepted by an earlier build; '
+                    'it was made again from the original document before this attempt.',
+                    f'Fax {JOB}: an unused encoded-pages PDF from an earlier build was removed.']

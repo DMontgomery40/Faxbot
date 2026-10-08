@@ -168,3 +168,44 @@ def combine(*steps):
         for step in present:
             step(connection, now)
     return run
+
+
+def restore_original_image(engine, job_id, pdf_path, tiff_path=None):
+    """Upgrade safety for a fax accepted while encoded pages were decided at acceptance (before one chooser per
+    attempt): that build wrote the encoded pages over the fax image (``<job>.tiff``) on a phone-line route, or
+    beside the fax as ``<job>.payload-<provider>.pdf`` for a provider. Such a fax has a ``codec_sends`` row and
+    no attempt that sent encoded pages (``fax_page_changes`` layout 'codec').
+
+    Called before an attempt chooses its pages (``pages/sending.py``): an image whose first page shows the
+    encoded pattern is made again from the original PDF, and the unused payload PDFs are removed, each once
+    (afterwards there is nothing left to find), with a log line. True when anything was restored."""
+    from .. import codec
+    from ..conversion import pdf_to_tiff
+    from .store import send_for
+    if engine is None:
+        return False
+    try:
+        if send_for(engine, job_id) is None:
+            return False
+        with engine.connect() as connection:
+            changes = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=connection)
+            if connection.execute(sa.select(changes.c.id).where(
+                    changes.c.job_id == job_id, changes.c.layout == 'codec').limit(1)).first() is not None:
+                return False  # encoded pages chosen by an attempt: the fax image was never touched
+    except (CodecStoreError, sa.exc.SQLAlchemyError):
+        return False  # no codec records (an installation before 0031): nothing was ever encoded
+    restored = False
+    image = Path(tiff_path) if tiff_path else None
+    if image is not None and image.is_file() and not image.is_symlink():
+        first = codec.first_page(image.read_bytes())
+        if first is not None and codec.looks_like_payload(first):
+            pdf_to_tiff(str(pdf_path), str(image))
+            log.warning('Fax %s: its fax image held encoded pages written when it was accepted by an earlier '
+                        'build; it was made again from the original document before this attempt.', job_id)
+            restored = True
+    for payload in Path(pdf_path).parent.glob(f'{job_id}.payload-*.pdf'):
+        if payload.is_file() and not payload.is_symlink():
+            payload.unlink(missing_ok=True)
+            log.warning('Fax %s: an unused encoded-pages PDF from an earlier build was removed.', job_id)
+            restored = True
+    return restored
