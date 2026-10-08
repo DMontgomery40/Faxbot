@@ -49,8 +49,9 @@ def notice_pair(notice: str = typer.Argument(..., help="The notice's ID, from 'f
                 without_notice: bool = typer.Option(False, '--without-notice',
                                                     help='File the document in Received without its notice fax.')):
     """Pair a document a partner delivered directly with its notice fax, or file it without one."""
-    if not (code or fax or without_notice):
-        raise CliError('Give the code from the notice page (--code), the received fax (--fax), or --without-notice.')
+    if not (fax or without_notice):
+        raise CliError("Give the received fax that is the notice (--fax, from 'faxbot recipients partners "
+                       "notice-faxes'), or --without-notice.")
     if without_notice and (code or fax):
         raise CliError('Use --without-notice on its own.')
     body = {key: value for key, value in (('code', code), ('fax_id', fax)) if value}

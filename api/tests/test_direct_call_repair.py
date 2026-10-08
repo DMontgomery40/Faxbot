@@ -216,3 +216,44 @@ def test_held_pages_reads_the_engine_count_and_damaged_lines(tmp_path):
     data = image.read_bytes()
     assert held_pages(data) == (6, [])
     assert held_pages(data, reported=5) == (5, [])
+
+
+@pytest.mark.asyncio
+async def test_a_partner_cannot_ask_about_or_add_pages_to_another_senders_fax(pair, tmp_path):
+    from api.app.direct.crypto import canonical, timestamp
+    await broken_call(pair, tmp_path, held=6)
+    # B also holds a partial fax from a third party's number at the same time.
+    other = call_image(ten_pages(), tmp_path, 3)
+    inbound = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=b_engine())
+    moment = datetime.utcnow() - timedelta(minutes=1)
+    with b_engine().begin() as connection:
+        connection.execute(inbound.insert().values(
+            id=uuid4().hex, from_number='+15550109999', to_number=B_NUMBER, status='failed', backend='sip', pages=3,
+            tiff_path=str(other), created_at=moment, received_at=moment, updated_at=moment))
+    identity = pair['a'].identity()
+    statement = canonical({'type': 'call_query', 'repair_id': 'c' * 32, 'message_id': 'd' * 32,
+                           'caller': '+15550109999', 'called': B_NUMBER,
+                           'started_at': timestamp(), 'ended_at': timestamp(), 'pages_sent': 3, 'total_pages': 10,
+                           'signer': identity.signing_key, 'recipient': pair['b_on_a']['signing_key'],
+                           'created_at': timestamp()}).decode('ascii')
+    answered = pair['b_client'].post('/direct/calls/pages',
+                                     json={'statement': statement, 'signature': identity.sign(statement.encode())})
+    assert answered.status_code == 200 and '"status":"not_found"' in answered.json()['statement']
+    assert RepairStore(b_engine()).find('receiver', 'c' * 32) is None
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_partner_is_asked_again_only_after_a_pause(pair, tmp_path):
+    from api.app.direct import repair as repair_module
+    _, attempt, _, reach = await broken_call(pair, tmp_path, held=6)
+    reach.down = True
+    posts_before = pair['to_b'].posts
+    await CallRepair(pair['a']).step()
+    await CallRepair(pair['a']).step()
+    assert RepairStore(pair['a'].store.engine).for_attempt(attempt) is None
+    assert attempt in repair_module._BACKOFF and repair_module._BACKOFF[attempt][1] == 1  # asked once, then paused
+    reach.down = False
+    repair_module._BACKOFF.pop(attempt)
+    await CallRepair(pair['a']).step()
+    assert RepairStore(pair['a'].store.engine).for_attempt(attempt)['state'] == 'completed'
+    assert pair['to_b'].posts - posts_before == 2

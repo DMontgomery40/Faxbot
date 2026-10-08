@@ -20,6 +20,6 @@ def test_notice_fax_switch_and_the_lists(cli, tmp_path):  # noqa: F811
     assert 'No documents sent in pieces yet.' in cli('recipients', 'partners', 'transfers').stdout
     assert 'No broken calls with partners.' in cli('recipients', 'partners', 'repairs').stdout
     asked = cli('recipients', 'partners', 'pair', 'n-1')
-    assert asked.exit_code != 0 and 'Give the code from the notice page' in asked.stderr
+    assert asked.exit_code != 0 and 'Give the received fax that is the notice' in asked.stderr
     missing = cli('recipients', 'partners', 'notice-faxes', 'n-1')
     assert missing.exit_code != 0 and 'There is no such document waiting for its notice.' in missing.stderr

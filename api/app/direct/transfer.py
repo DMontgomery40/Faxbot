@@ -520,7 +520,8 @@ class TransferReceiver:
                 peer = self.service.store.get_peer(row['peer_id'])
                 if peer is not None:
                     self.service.store.answer_or_fence(row['message_id'], peer, now=now)
-                _remove(row['folder'])
+            # The receiver's pieces, or the sender's sealed copy: nothing encrypted is left behind.
+            _remove(row['folder'])
             self.store.finish(row['id'], 'abandoned', detail='Stopped: the transfer was not finished in time.', now=now)
         return False
 

@@ -47,7 +47,7 @@ function handlers(calls: Recorded[], notices: DirectNotice[] = [waiting]) {
       { id: 'fax-9', from_number: '+15550100001', pages: 1, received_at: '2026-10-07T15:02:00' }] })),
     http.post('/direct/notices/n-1/pair', async ({ request }) => {
       await record(request);
-      return HttpResponse.json({ ...waiting, state: 'paired', matched_by: 'person', detail: 'Paired. The document is in Received.',
+      return HttpResponse.json({ ...waiting, state: 'paired', matched_by: 'person', detail: 'Paired with the received notice fax. The document is in Received.',
         partner_told: true });
     }),
     http.post('/direct/peers/peer-1/notice-fax', async ({ request }) => {
@@ -81,7 +81,7 @@ describe('Partners → notice faxes, pieces and repaired calls', () => {
     fireEvent.click(await within(dialog).findByRole('radio', { name: /From \+15550100001, 1 page/ }));
     fireEvent.change(within(dialog).getByLabelText('Code on the page (optional)'), { target: { value: '1234 5678 9012 3456 7890' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Pair' }));
-    expect(await screen.findByText('Paired. The document is in Received.')).toBeTruthy();
+    expect(await screen.findByText('Paired with the received notice fax. The document is in Received.')).toBeTruthy();
     expect(calls).toEqual([{ method: 'POST', path: '/direct/notices/n-1/pair',
       body: { code: '1234 5678 9012 3456 7890', fax_id: 'fax-9' } }]);
   });

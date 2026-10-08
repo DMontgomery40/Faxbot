@@ -53,6 +53,10 @@ from .crypto import DirectProtocolError, canonical, check_signed, parse_timestam
 WINDOW = timedelta(minutes=15)  # a call's received fax is looked for this close to the call (clocks differ)
 REPAIR_DAYS = 7  # a broken call older than this is left to a person
 QUESTION_FRESHNESS = timedelta(hours=24)
+BACKOFF_FIRST = timedelta(minutes=2)
+BACKOFF_MAX = timedelta(hours=6)
+# Broken calls whose partner could not be reached: when to ask again, and how many tries so far (this process).
+_BACKOFF = {}
 BAD_LINES_TAG = 326  # TIFF BadFaxLines: damaged lines on a received page (written by HylaFAX and spandsp)
 KIND = 'repair'  # the sender's delivery record of the missing pages
 STATE_TEXT = {
@@ -289,7 +293,19 @@ class CallRepair:
                 return 409, service._refusal(identity, body['message_id'], 'replay',
                                              'This repair was already asked about for another document.', peer)
             return 200, {'statement': existing['statement'], 'signature': existing['signature']}
-        fax = self.store.call_fax(body['caller'], started, ended)
+        # Only a call from the partner's own enrolled number to this installation's number: a partner can never
+        # ask about, or add pages to, a fax someone else sent here. A caller ID other than the enrolled number
+        # is "not found", and that fax waits for a person as before.
+        from ..engine_frames import same_number
+        from ..routing.numbers import InvalidNumber, normalize_number
+        values = service.values()
+        try:
+            own = normalize_number(values.direct_fax_number, country=values.fax_default_country)
+        except InvalidNumber:
+            own = None
+        fax = None
+        if same_number(body['caller'], peer['phone_number']) and own and same_number(body['called'], own):
+            fax = self.store.call_fax(peer['phone_number'], started, ended)
         held, ecm, damaged = 0, None, []
         if fax is not None:
             try:
@@ -373,24 +389,43 @@ class CallRepair:
         peer = await run_lifecycle_step(lambda: service.store.verified_peer_for(call['to_number']))
         if peer is None or not peer.get('partner_receives_fax_images'):
             return None  # Not an enrolled partner that takes fax images: the fax waits for a person, as before.
+        moment = utcnow()
+        if _BACKOFF.get(call['attempt_id'], (moment, 0))[0] > moment:
+            return None  # The partner could not be reached lately; asked again after a pause.
         identity = await run_lifecycle_step(service.identity)
-        try:
-            image = await run_lifecycle_step(lambda: self._image(values, call['job_id']))
-        except FaxImageUnavailable:
-            return None
+        image = None
+        total = call.get('total_pages')
+        if not isinstance(total, int) or total < 1:
+            # The fax's page count is not recorded: count the pages of the image that would go.
+            try:
+                image = await run_lifecycle_step(lambda: self._image(values, call['job_id']))
+            except FaxImageUnavailable:
+                return None
+            total = image.pages
         repair_id, message_id = uuid4().hex, uuid4().hex
-        answer = await self.ask(identity, peer, call, repair_id=repair_id, message_id=message_id,
-                                total_pages=image.pages)
+        answer = await self.ask(identity, peer, call, repair_id=repair_id, message_id=message_id, total_pages=total)
         if answer is None:
-            return None  # Asked again on a later step, within the repair window.
+            # Not reachable or no answer: asked again later, with a growing pause (2 minutes up to 6 hours).
+            _, tries = _BACKOFF.get(call['attempt_id'], (moment, 0))
+            _BACKOFF[call['attempt_id']] = (moment + min(BACKOFF_MAX, BACKOFF_FIRST * 2 ** tries), tries + 1)
+            return None
+        _BACKOFF.pop(call['attempt_id'], None)
         held = answer['pages_held'] if answer.get('status') == 'found' else 0
-        state = 'completed' if held == image.pages else 'confirmed' if held > 0 else 'expired'
+        if 0 < held < total and image is None:
+            # Built only now, once the partner confirmed it holds part of the call.
+            try:
+                image = await run_lifecycle_step(lambda: self._image(values, call['job_id']))
+            except FaxImageUnavailable:
+                image = None
+            if image is None or image.pages != total:
+                held = 0  # The pages would not line up with the call's: nothing is sent; the fax waits for you.
+        state = 'completed' if held == total else 'confirmed' if held > 0 else 'expired'
         envelope = answer['envelope']
         row, created = await run_lifecycle_step(lambda: self.store.record({
             'role': 'sender', 'repair_id': repair_id, 'peer_id': peer['id'], 'job_id': call['job_id'],
-            'attempt_id': call['attempt_id'], 'message_id': message_id if 0 < held < image.pages else None,
+            'attempt_id': call['attempt_id'], 'message_id': message_id if 0 < held < total else None,
             'caller': call['caller'], 'call_started_at': call['answered_at'] or call['started_at'],
-            'total_pages': image.pages, 'pages_held': held,
+            'total_pages': total, 'pages_held': held,
             'ecm': None if answer.get('ecm') is None else int(bool(answer['ecm'])), 'state': state,
             'statement': envelope['statement'], 'signature': envelope['signature']}))
         if not created or state != 'confirmed':

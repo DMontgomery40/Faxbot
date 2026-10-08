@@ -71,7 +71,7 @@ async def _call(operation):
     except (NoticeConflict, DirectConflict) as error:
         raise HTTPException(409, detail=str(error)) from None
     except DirectUnavailable:
-        raise HTTPException(409, detail='Turn on direct delivery under Delivery routes → Partners first.') from None
+        raise HTTPException(409, detail='Turn on direct delivery under Recipients → Partners first.') from None
     except IdentityUnavailable:
         raise HTTPException(503, detail='Direct delivery keys are unavailable on this installation.') from None
     except DeliveryStoreError:
@@ -166,8 +166,8 @@ async def pair_notice(notice_id: str, payload: PairIn, request: Request,
         notice_id, code=payload.code, fax_id=payload.fax_id, actor=actor, actor_name=name))
     told = await NoticeReceiver(service).tell(row)
     (view,) = await _call(lambda: _views(service, [row]))
-    detail = ('Paired. The document is in Received.' if payload.fax_id or payload.code
-              else 'Filed in Received without its notice fax.')
+    detail = ('Paired with the received notice fax. The document is in Received.' if payload.fax_id
+              else 'The document is in Received, without a notice fax linked to it.')
     return {**view, 'detail': detail, 'partner_told': told}
 
 

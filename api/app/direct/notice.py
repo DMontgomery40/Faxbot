@@ -27,7 +27,7 @@ arrived after a held original, each once (``direct_notice_scans``): the SUB
 first (the received TIFF's FaxSubAddress tag, or the built-in engine's SUB
 frame), then the barcode. A match files the original in Received (its email,
 mailbox rules and Work) and tells the sender, signed. When neither can be read,
-the administrator pairs it under Delivery routes → Partners → Notices by typing
+the administrator pairs it under Recipients → Partners → Notice faxes by typing
 the code from the page or picking the received fax; a held original never
 turns into a fax (C1).
 
@@ -242,7 +242,7 @@ def notice_page(*, notice_id, sender, sender_number, recipient, recipient_number
     y -= 34
     pdf.setFont('Helvetica', 12)
     for line in ('Your Faxbot pairs this page with the document by itself. If it does not,',
-                 'enter this code in Faxbot under Delivery routes, Partners, Notices.'):
+                 'enter this code in Faxbot under Recipients, Partners, Notice faxes.'):
         pdf.drawString(72, y, line)
         y -= 18
     pdf.showPage()

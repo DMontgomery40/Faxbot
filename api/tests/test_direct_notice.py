@@ -307,3 +307,25 @@ async def test_the_built_in_engines_sub_frame_pairs_it(noticed, tmp_path):
     notice.NoticeReceiver(b_service()).step()
     row = notice.NoticeStore(b_engine()).find('receiver', attempt)
     assert row['state'] == 'paired' and row['matched_by'] == 'sub' and row['inbound_id'] == fax_id
+
+
+@pytest.mark.asyncio
+async def test_the_notice_fax_is_queued_by_the_background_step_once(noticed):
+    """The delivery worker's own service has no access runtime: the background step queues the notice fax."""
+    runtime = noticed['a'].access()
+    noticed['a'].access = lambda: None
+    original = pdf_bytes('Queued later')
+    job = accept(noticed, original)
+    routed, _ = transport(noticed)
+    assert await OutboundWorker(noticed['delivery'], routed).step() is True
+    attempt = noticed['delivery'].get(job)['attempt_id']
+    store = notice.NoticeStore(noticed['a'].store.engine)
+    assert store.find('sender', attempt)['state'] == 'announced'
+    noticed['a'].access = lambda: runtime
+    assert notice.NoticeSender(noticed['a']).step() is False
+    queued = store.find('sender', attempt)
+    assert queued['state'] == 'queued' and queued['notice_job_id'] == notice.notice_job_id(attempt)
+    notice.NoticeSender(noticed['a']).step()
+    with noticed['configuration'].engine.connect() as connection:
+        assert connection.execute(sa.text('SELECT count(*) FROM fax_jobs WHERE file_name = :name'),
+                                  {'name': notice.FILE_NAME}).scalar() == 1
