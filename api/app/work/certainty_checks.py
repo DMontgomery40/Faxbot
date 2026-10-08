@@ -32,7 +32,9 @@ from ..routing.database import reflect
 
 
 # The order and the cost of each check, cheapest first.
-ORDER = ('partner', 'call_record', 'receipt_query', 'phone_call', 'npi_lookup')
+ORDER = ('partner', 'call_record', 'receipt_query', 'phone_call')
+# A fax a person answered has its own checks instead: the call record, the phone call for the right number and,
+# for a healthcare provider, the NPI registry (``npi_lookup``).
 COSTS = {'partner': 'Free', 'call_record': 'Free', 'receipt_query': 'One page', 'phone_call': 'A few minutes',
          'npi_lookup': 'Free'}
 TITLES = {'partner': 'Ask the partner', 'call_record': 'Read the call record',
