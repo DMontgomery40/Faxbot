@@ -364,7 +364,7 @@ class CallRepair:
     async def repair(self, call):
         """Ask about one broken call and send only the missing pages; the repair's state."""
         from .service import _DirectSubmission
-        from .crypto import FAX_IMAGE, seal
+        from .crypto import seal
         from .faximage import FaxImageUnavailable
         service = self.service
         values = await run_lifecycle_step(service.values)

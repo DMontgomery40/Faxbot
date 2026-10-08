@@ -6,7 +6,7 @@ the page A actually made (as an engine would hand it over), so pairing is
 proven by SUB, by the printed barcode, and by a person when neither is there.
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 import json
 import random

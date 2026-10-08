@@ -7,7 +7,6 @@ synthetic PDF become several pieces.
 """
 import asyncio
 import hashlib
-import os
 from pathlib import Path
 
 import httpx
@@ -20,7 +19,7 @@ from api.app.direct.service import DirectReconciler
 from api.app.direct.transfer import TransferStore
 from api.app.outbound_worker import OutboundWorker
 from api.tests.test_direct_delivery import (  # noqa: F401 - fixtures
-    ADMIN, accept, b_client, b_items, pair, stored_document, transport)
+    accept, b_client, b_items, pair, stored_document, transport)
 
 
 def big_pdf(seed='transfer'):
@@ -310,7 +309,6 @@ async def test_a_partner_without_transfers_gets_the_whole_document_in_one_reques
 
 def test_unfinished_transfers_are_stopped_and_fenced(pieces):
     from datetime import timedelta
-    from api.app.direct.service import DirectService
     from api.app.direct.transfer import TransferReceiver
     from api.app.routing.database import utcnow
     import json as _json
