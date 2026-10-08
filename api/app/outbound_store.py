@@ -683,6 +683,14 @@ class OutboundStore:
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
+        # A fax its sending rules hold never waits in a group: acceptance can decide a hold after the preview
+        # put it there (a rule published in between), and a group claim must not send it before its release.
+        gate = self._hold_gate(now, connection)
+        if gate is not None:
+            members = t['outbound_batch_members']
+            for job_id in connection.execute(sa.select(members.c.id).where(
+                    members.c.state == 'waiting', members.c.id.in_(gate))).scalars().all():
+                batching.separate_on(connection, t, job_id, now)
         group = batching.due_group_on(connection, t, now, values=values)
         if group is None:
             return None

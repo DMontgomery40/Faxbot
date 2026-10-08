@@ -277,6 +277,121 @@ def test_the_approval_and_the_claim_cannot_race_into_two_sends(ruled):
     assert first is not None and first.job_id == job and second is None
 
 
+def _watch_claims(monkeypatch):
+    """Record, inside each claim's own locked transaction, the holds still open on the fax it claims."""
+    from api.app.routing import holds as hold_module
+    seen, guard = [], __import__('threading').Lock()
+    original = OutboundStore._claim_row_on
+
+    def watched(self, connection, row, owner, now, lease_seconds):
+        t = envelopes.tables(connection)
+        still_open = [hold['kind'] for hold in hold_module.open_on(connection, t, row['id'])]
+        claim = original(self, connection, row, owner, now, lease_seconds)
+        if claim is not None:
+            with guard:
+                seen.append((row['id'], still_open))
+        return claim
+    monkeypatch.setattr(OutboundStore, '_claim_row_on', watched)
+    return seen
+
+
+def test_approving_while_two_workers_claim_sends_each_fax_once_and_only_after_its_approval(ruled, monkeypatch):
+    """Real threads on real connections: one approver and two claiming workers start together. Every fax is claimed
+    exactly once, and never while its approval is still open (checked inside the claim's own transaction)."""
+    import threading
+    publish(ruled, APPROVAL)
+    # One number each: a claimed fax keeps its number's one line busy (capacity.py).
+    jobs = [accept(ruled, to=f'+120255501{n:02d}') for n in range(6)]
+    pending = {hold['job_id']: hold for hold in HoldStore(ruled.delivery).holds()}
+    assert set(pending) == set(jobs)
+    seen = _watch_claims(monkeypatch)
+    start, approved, claims, failures = threading.Barrier(3), threading.Event(), [], []
+    guard = threading.Lock()
+
+    def approve():
+        try:
+            start.wait(timeout=30)
+            store = HoldStore(ruled.delivery)
+            for job in jobs:
+                hold = pending[job]
+                store.approve(hold['id'], version=hold['version'], actor=BEN, actor_name='Ben Example')
+        except Exception as error:  # surfaced below
+            failures.append(error)
+        finally:
+            approved.set()
+
+    def work(name):
+        try:
+            start.wait(timeout=30)
+            deadline = datetime.utcnow() + timedelta(seconds=60)
+            while datetime.utcnow() < deadline:
+                done = approved.is_set()  # read before claiming: a claim after the last approval ends the loop
+                claim = ruled.delivery.claim(name)
+                if claim is not None:
+                    with guard:
+                        claims.extend(member.job_id for member in claim.everyone)
+                elif done:
+                    return
+        except Exception as error:
+            failures.append(error)
+
+    threads = [threading.Thread(target=approve)] + [threading.Thread(target=work, args=(f'worker-{n}',))
+                                                     for n in (1, 2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert not failures and not any(thread.is_alive() for thread in threads)
+    assert sorted(claims) == sorted(jobs)  # each fax once: never twice, never missed
+    assert sorted(job for job, _ in seen) == sorted(jobs)
+    assert all(still_open == [] for _, still_open in seen)  # never claimed while its approval was open
+    assert _claim(ruled) is None
+    with ruled.engine.connect() as connection:
+        attempts = dict(connection.execute(sa.select(ruled.delivery.attempts.c.job_id, sa.func.count())
+                                           .group_by(ruled.delivery.attempts.c.job_id)).all())
+    assert attempts == {job: 1 for job in jobs}
+
+
+def test_a_fax_held_after_its_preview_never_goes_with_others_before_its_approval(ruled, monkeypatch):
+    """POST /fax decides a preview before the lock and sending together follows it, but the acceptance transaction
+    decides again. A rule published in between holds the fax while it already waits to go with others: the
+    together claim must not take it before its approval, and the other faxes to that number still go."""
+    from api.app.batching import store as batching
+    batching.BatchingSettings(ruled.engine).save(TO, enabled=True, recipient_agreed=True, actor='principal:p1',
+                                                 actor_name='Owner')
+    seen = _watch_claims(monkeypatch)
+    earlier = datetime.utcnow() - timedelta(hours=1)
+
+    def accept_together(plan):
+        identity, now = uuid4().hex, datetime.utcnow()
+        job = {'id': identity, 'to_number': TO, 'file_name': 'synthetic.pdf', 'tiff_path': '', 'status': 'queued',
+               'pages': 1, 'created_at': now, 'updated_at': now}
+        with ruled.configuration._locked() as connection:
+            ruled.configuration._accept_outbound_on(connection, ruled.snapshot.active, job)
+            rules_acceptance.recorder(plan, identity, ANNE)(connection, now)
+            batching.hold_on(connection, batching.tables(ruled.engine, connection), identity,
+                             batching.HoldPlan(TO, 'key:front', 'Front Desk', 1, False, 60), earlier)
+        return identity
+    preview = lambda: rules_acceptance.prepare(ruled.engine, ruled.snapshot.active, actor=ANNE,  # noqa: E731
+                                               destination=TO, pages=3)
+    free = accept_together(preview())
+    stale = preview()  # decided before the rule below: no hold
+    publish(ruled, APPROVAL)
+    held = accept_together(stale)
+    assert [hold['kind'] for hold in holds(ruled, held)] == ['approval']
+    claim = _claim(ruled)
+    assert claim is not None and [member.job_id for member in claim.everyone] == [free]
+    assert _claim(ruled) is None
+    assert batching.member(ruled.engine, held)['state'] == 'separate'  # it goes on its own once released
+    ruled.delivery.fail_preparation(claim, category='preparation_failed')  # frees the number's one line
+    assert _claim(ruled) is None  # still waiting for its approval
+    hold = holds(ruled, held)[0]
+    HoldStore(ruled.delivery).approve(hold['id'], version=hold['version'], actor=BEN)
+    later = _claim(ruled)
+    assert later is not None and [member.job_id for member in later.everyone] == [held]
+    assert all(still_open == [] for _, still_open in seen)
+
+
 def test_an_approval_binds_to_the_document_it_was_held_with(ruled):
     publish(ruled, APPROVAL)
     pdf = ruled.tmp / 'probe.pdf'

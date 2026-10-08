@@ -4,7 +4,9 @@ A hold is a row in ``outbound_holds`` (0029). The fax stays ``ready`` and the
 claim never offers it while an approval or no-route hold is open, or while a
 time window has not opened yet (``blocking``). Approving, refusing and the
 claim all run under the configuration lock, so an approval and a claim can
-never race into two sends.
+never race into two sends. A held fax never waits in a sending-together group:
+the claim takes it out of one first (acceptance can decide a hold after the
+preview put it there), so it goes on its own once released.
 
 - **Approval** (``fax:approve``, Owner and Administrator by default). It binds
   to the fax, its document's SHA-256, the destination, the number it dials and
