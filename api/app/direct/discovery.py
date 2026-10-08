@@ -122,8 +122,10 @@ OUTCOME_TEXT = {
     'bad_record': 'Listed, but the record is not signed correctly or has expired, so it was ignored.',
     'directory_unreachable': 'Faxbot could not ask the directory.',
 }
+# Everything else (not a Faxbot, not listed, a bad card) is kept for NOT_FOUND_FOR. A directory record that
+# could not be trusted is asked about again after a day, so a record its publisher corrects is seen soon.
 EXPIRY = {'faxbot': FOUND_FOR, 'listed': FOUND_FOR, 'private': FAILED_FOR, 'unreachable': FAILED_FOR,
-          'directory_unreachable': FAILED_FOR}
+          'directory_unreachable': FAILED_FOR, 'bad_record': FAILED_FOR}
 
 _LABEL = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 _HOST = re.compile(rf'{_LABEL}(?:\.{_LABEL})+')
