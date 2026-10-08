@@ -29,6 +29,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
+COPY LICENSE LICENSE-MIT /app/
+
 COPY api/requirements.txt /app/api/requirements.txt
 COPY python_mcp/requirements.txt python_mcp/runtime-constraints.txt /app/python_mcp/
 RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/python_mcp/requirements.txt \
