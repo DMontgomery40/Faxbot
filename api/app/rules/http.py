@@ -265,7 +265,7 @@ def _context(request, store, kind, scope_id, accounts):
         card = routes.card_for(account.key)
         prices[account.key] = (estimate_cost(card, 1), card.currency) if card is not None else None
     return CheckContext(accounts=accounts, prices=prices, matches_30_days=_matches(store, kind, scope_id),
-                        relays=_relays(engine), **context)
+                        relays=_relays(engine), digital=_digital(engine), **context)
 
 
 def _relays(engine):
@@ -276,6 +276,16 @@ def _relays(engine):
             return frozenset(connection.execute(sa.select(agreements.c.peer_id).where(
                 agreements.c.role == 'sender', agreements.c.state == 'active')).scalars())
     except Exception:
+        return None
+
+
+def _digital(engine):
+    """IDs of recipients' confirmed Direct addresses and FHIR endpoints (digital/), or None before 0052."""
+    from ..digital.store import DigitalStore
+    from ..routing.database import DeliveryStoreError
+    try:
+        return frozenset(DigitalStore(engine).confirmed_ids())
+    except DeliveryStoreError:
         return None
 
 

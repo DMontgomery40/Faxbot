@@ -1,5 +1,4 @@
 """S/MIME for Direct: sign, encrypt, decrypt and verify, with trust checked against synthetic anchors."""
-import base64
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone

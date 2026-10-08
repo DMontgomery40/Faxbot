@@ -347,6 +347,52 @@ def _minutes(terms, plan, named, seconds, how):
         'a minute', room, how), True)
 
 
+# A Direct message or FHIR document (``digital/``): no call, priced per message by its account's plan.
+DIGITAL_PREFIXES = ('dsm:', 'fhir:')
+
+
+def _digital(facts, shape):
+    """What one message adds on a digital route's plan. ``terms.card.per_call_micros`` is the price of a message,
+    ``per_page_micros`` of a page, ``included_pages`` the messages a monthly fee includes, ``overage_page_micros``
+    the price of each message past them, and ``plan.faxes`` the messages sent this month. No terms: unknown."""
+    terms, label = facts.terms, facts.label
+    if terms is None:
+        return Prediction(None, 0.0, None, _sentence(
+            facts.missing or f'{label} has no price on file, so the cost is unknown'), False)
+    card = terms.card
+    plan = facts.plan or PlanUse()
+    fee = plan_fee_text(card.monthly_fee_micros, card.currency) if card.monthly_fee_micros else None
+    named = f'your {label} plan' + (f' ({fee} a month)' if fee else '')
+    if terms.included_pages:
+        if plan.faxes is None:
+            return Prediction(0, 0.0, None, _sentence(
+                f'{named} includes {terms.included_pages} messages a month, and Faxbot has no count of the messages '
+                'sent this month, so whether this one costs extra is unknown'), True)
+        room = f'{plan.faxes} of its {terms.included_pages} included messages used this month'
+        if plan.faxes + 1 <= terms.included_pages:
+            return Prediction(0, 0.0, Money(0, card.currency), _sentence(
+                f'Included in {named}, so this message adds nothing to the bill', room), True)
+        if terms.overage_page_micros is None:
+            return Prediction(0, 0.0, None, _sentence(
+                f'This message would go past what {named} includes, and the price of extra messages is not on file',
+                room), True)
+        return Prediction(0, 0.0, Money(terms.overage_page_micros, card.currency), _sentence(
+            f'One message past what {named} includes, at {money_text(terms.overage_page_micros, card.currency)}',
+            room), True)
+    if card.flat_plan:
+        return Prediction(0, 0.0, Money(0, card.currency), _sentence(
+            f'Included in {named}, so this message adds nothing to the bill'), True)
+    pages = shape.pages if card.per_page_micros else 0
+    micros = card.per_call_micros + pages * card.per_page_micros
+    if micros == 0:
+        sentence = f'{label} charges nothing for a message'
+    else:
+        parts = ([f'{money_text(card.per_call_micros, card.currency)} a message'] if card.per_call_micros else []) + (
+            [f'{money_text(card.per_page_micros, card.currency)} a page'] if card.per_page_micros else [])
+        sentence = f'{label} charges ' + ' and '.join(parts)
+    return Prediction(pages, 0.0, Money(micros, card.currency), _sentence(sentence), False)
+
+
 def predict_from(facts, shape):
     """The prediction from gathered facts. Pure: the same facts and shape always give the same answer."""
     if not isinstance(shape, Shape):
@@ -359,6 +405,8 @@ def predict_from(facts, shape):
         return Prediction(0, 0.0, Money(0, facts.currency), _sentence(
             'Delivered straight to a verified partner over the internet, with no phone call, so it costs nothing'),
             False)
+    if facts.route_key.startswith(DIGITAL_PREFIXES):
+        return _digital(facts, shape)
     seconds, how = line_seconds(shape, facts.link)
     terms = facts.terms
     if terms is None:

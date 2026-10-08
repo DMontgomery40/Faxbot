@@ -29,7 +29,8 @@ import sqlalchemy as sa
 
 
 KEY = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
-RESERVED = ('local', 'direct')
+# 'digital' names every Direct message and FHIR route in sending rules (rules.model.DIGITAL).
+RESERVED = ('local', 'direct', 'digital')
 # Providers an extra account can be added for, with the settings each asks for: (name, the provider's own
 # configuration field, label, required for an extra account, help). Secrets are the fields the configuration
 # model marks secret; they are write-only.

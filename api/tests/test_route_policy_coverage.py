@@ -46,6 +46,7 @@ OWN_AUTHENTICATION = {
     ("GET", "/direct/relay/outcomes/{message_id}"): "signed partner request: the outcome of a fax it relayed here",
     ("POST", "/direct/introductions"): "signed partner introduction (a hint; the challenge fax still decides)",
     ("GET", "/.well-known/faxbot-direct"): "public partner card, by design; 404 while direct delivery or it is off",
+    ("GET", "/digital/jwks/{key}"): "a FHIR client's public keys, for the recipient's system to register; 404 when off",
     ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
     ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",
     ("GET", "/openapi.json"): "API description",

@@ -5,6 +5,7 @@ under (its outbound provider and any listed extra routes) and from verified
 direct peers. Nothing here reads current credentials for an accepted fax.
 """
 from dataclasses import dataclass, field
+import logging
 import re
 
 import sqlalchemy as sa
@@ -58,6 +59,9 @@ def route_label(key):
     # The trunk is named after the carrier or phone system it connects to.
     if key == 'sip':
         return trunk_name()
+    if _is_digital(key):
+        from ..digital.text import route_label as digital_label
+        return digital_label(key)
     return LABELS.get(key, key)
 
 
@@ -98,9 +102,16 @@ def extra_routes(values, bound):
 
 
 def ledger_key(key):
-    """The key the delivery ledger records a route under: a partner relay's ``relay:<id>`` as ``relay.<id>``."""
+    """The key the delivery ledger records a route under: a partner relay's ``relay:<id>`` as ``relay.<id>``, a
+    digital route's ``dsm:<id>`` as ``dsm.<id>``."""
+    from ..digital.text import ledger_key as digital_ledger_key
     from ..direct.relay import ledger_key as relay_ledger_key
-    return relay_ledger_key(key)
+    return digital_ledger_key(relay_ledger_key(key))
+
+
+def _is_digital(key):
+    from ..rules.model import is_digital
+    return is_digital(key)
 
 
 def _accounts(values):
@@ -137,6 +148,28 @@ def _in_order(candidates, prices=None, pages=1):
             estimate_cost(candidate.card, pages) if candidate.card is not None else None)
         choices.append(RouteChoice(candidate, 'rule' if index == 0 and not choices else 'alternative', estimate))
     return choices
+
+
+def _with_digital(candidates, digital, pinned):
+    """The candidates with digital routes placed where the fax's rules put them.
+
+    In a rule's own order (``use``, ``try_in_order``), a digital route sits where its key, or ``digital``, is
+    listed; otherwise (and for the automatic choice and ``cheapest``) it is ranked by cost with the accounts.
+    """
+    if pinned is None or pinned.envelope.mode not in ('one', 'ordered'):
+        return candidates + digital
+    from ..rules.model import DIGITAL
+    order = list(pinned.envelope.accounts)
+    rank = {key: index for index, key in enumerate(order)}
+    group = rank.get(DIGITAL, len(order))
+    placed = list(candidates)
+    for item in digital:
+        place = rank.get(item.key, group)
+        position = next((index for index, candidate in enumerate(placed)
+                         if candidate.kind not in ('local', 'direct') and rank.get(candidate.key, len(order)) > place),
+                        len(placed))
+        placed.insert(position, item)
+    return placed
 
 
 def _trunk_numbers(values):
@@ -260,6 +293,8 @@ class RoutePlanner:
                 keys = [key for key in keys if pinned.allows(key)]
         else:
             keys = [key for key in pinned.envelope.accounts if alternates or key == bound]
+        # Digital routes (``dsm:``, ``fhir:``, or all of them as ``digital``) are offered below, not as accounts.
+        keys = [key for key in keys if not _is_digital(key)]
         candidates = []
         for key in keys:
             why = self._unusable(key, current, pinned, prices)
@@ -284,6 +319,12 @@ class RoutePlanner:
         if relay_prices:
             # A relay is ranked by its partner's signed price like any account; an unknown price sorts last.
             prices = {**(prices or {}), **relay_prices}
+        digital, digital_prices, digital_skipped = self._digital(destination, pages, values, pinned, current, prices,
+                                                                 now)
+        skipped += digital_skipped
+        if digital:
+            prices = {**(prices or {}), **digital_prices}
+            candidates = _with_digital(candidates, digital, pinned)
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
         if tried:
             done = {(route, number or destination) for route, number in tried}
@@ -352,6 +393,32 @@ class RoutePlanner:
                 if micros > cap.micros:
                     return 'over_cap'
         return None
+
+    def _digital(self, destination, pages, values, pinned, current, prices, now):
+        """Recipients' confirmed Direct addresses and FHIR endpoints (``digital.routes.candidates``), with prices.
+
+        Returns (candidates, {key: Price}, skipped). A key the fax's rules name that has no usable address now is
+        skipped as ``unavailable``; one over a cost cap (or of unknown cost under a cap) as ``over_cap`` or
+        ``unknown_cost``, like an account.
+        """
+        from ..digital.routes import candidates as digital_candidates
+        from .database import DeliveryStoreError
+        try:
+            found, skipped = digital_candidates(self.store.engine, values, destination, pages, pinned=pinned,
+                                                current=current, now=now)
+        except DeliveryStoreError:
+            # The digital route records cannot be read (a database before 0052): the fax goes by its other routes.
+            logging.getLogger(__name__).warning('Digital route records are unavailable; no Direct or FHIR route.')
+            return [], {}, []
+        kept, priced = [], {}
+        for item in found:
+            why = self._unusable(item.key, None, pinned, {**(prices or {}), item.key: item.price})
+            if why is not None:
+                skipped.append((item.key, why))
+                continue
+            kept.append(RouteCandidate(item.key, 'digital', item.account_key, None, peer_id=item.address_id))
+            priced[item.key] = item.price
+        return kept, priced, skipped
 
     def _relays(self, destination, pages, pinned, job_id, now, *, home=None):
         """Partner relays (``direct.relay.relay_candidates``) the decision allows, with their signed prices.

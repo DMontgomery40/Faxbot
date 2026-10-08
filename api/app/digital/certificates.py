@@ -13,7 +13,8 @@ Trust (Applicability Statement for Secure Health Transport; DirectTrust):
   alternative name rfc822Name, or the legacy emailAddress), a domain-bound one
   names the domain (dNSName, or the domain in rfc822Name/emailAddress).
 - Revocation: when a certificate on the path publishes a CRL address, Faxbot
-  reads the CRL (``crl_fetch``) and refuses a revoked certificate. A CRL that
+  reads the CRL (``crl_fetch``) and refuses a revoked certificate. The same
+  fetch reads a missing issuer from the certificate's caIssuers address. A CRL that
   cannot be read is noted on the result and does not refuse the certificate,
   as the Direct reference implementation does by default; integration should
   confirm the HISP's policy.
@@ -162,8 +163,33 @@ def _usage_ok(certificate, purpose):
     return bool(usage.digital_signature)
 
 
-def _path(certificate, anchors, intermediates):
-    """Leaf-to-anchor path, each link verified; None when no anchor is reached."""
+def _ca_issuers(certificate):
+    """The certificate's Authority Information Access caIssuers addresses (RFC 5280 4.2.2.1)."""
+    access = _extension(certificate, x509.AuthorityInformationAccess)
+    if access is None:
+        return []
+    from cryptography.x509.oid import AuthorityInformationAccessOID
+    return [item.access_location.value for item in access
+            if item.access_method == AuthorityInformationAccessOID.CA_ISSUERS
+            and isinstance(item.access_location, x509.UniformResourceIdentifier)
+            and re.match(r'https?://', item.access_location.value)][:2]
+
+
+def _issuers_from(url, fetch):
+    """Certificates at a caIssuers address (one DER certificate or a PKCS #7 bundle); [] when unreadable."""
+    try:
+        return load_certificates(fetch(url))
+    except (LookupError, CertificateRefused):
+        # ``fetch`` raises LookupError when the address cannot be read.
+        return []
+
+
+def _path(certificate, anchors, intermediates, fetch=None):
+    """Leaf-to-anchor path, each link verified; None when no anchor is reached.
+
+    A missing issuer is looked for among ``intermediates`` (what the signature or the directory carried), then
+    at the certificate's caIssuers address when ``fetch`` is given, as Direct security agents do.
+    """
     anchor_prints = {fingerprint(anchor): anchor for anchor in anchors}
     if fingerprint(certificate) in anchor_prints:
         return (certificate,)
@@ -176,6 +202,11 @@ def _path(certificate, anchors, intermediates):
             return tuple(path + [anchor])
         issuer = next((item for item in pool if item not in path and _is_ca(item) and _issued_by(current, item)),
                       None)
+        if issuer is None and fetch is not None:
+            for url in _ca_issuers(current):
+                pool += _issuers_from(url, fetch)
+            issuer = next((item for item in pool if item not in path and _is_ca(item) and _issued_by(current, item)),
+                          None)
         if issuer is None:
             return None
         path.append(issuer)
@@ -189,7 +220,7 @@ def check(certificate, *, anchors, intermediates=(), address=None, purpose='encr
     if not anchors:
         raise CertificateRefused('No trust bundle is loaded, so no certificate can be trusted yet.')
     moment = _now(now)
-    path = _path(certificate, list(anchors), list(intermediates))
+    path = _path(certificate, list(anchors), list(intermediates), fetch=crl_fetch)
     if path is None:
         raise CertificateRefused('The certificate is not issued by any authority in your trust bundles.')
     for index, item in enumerate(path):
@@ -296,15 +327,19 @@ def discover(address, *, anchors, intermediates=(), dns_lookup=None, ldap_lookup
         except LookupError as error:
             result.tried.append((kind, name, str(error) or 'could not be asked'))
             continue
-        usable = []
+        usable, loaded = [], []
         for blob in found:
             try:
-                certificate = x509.load_der_x509_certificate(blob)
+                loaded.append(x509.load_der_x509_certificate(blob))
             except ValueError:
                 result.refused.append('A published certificate could not be read.')
+        # Authorities published beside a certificate help build its path; they are never used to encrypt.
+        pool = list(intermediates) + [item for item in loaded if _is_ca(item)]
+        for certificate in loaded:
+            if _is_ca(certificate):
                 continue
             try:
-                checked = check(certificate, anchors=anchors, intermediates=intermediates, address=address,
+                checked = check(certificate, anchors=anchors, intermediates=pool, address=address,
                                 purpose='encrypt', now=now, crl_fetch=crl_fetch)
             except CertificateRefused as refusal:
                 result.refused.append(str(refusal))

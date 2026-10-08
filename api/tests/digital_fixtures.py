@@ -29,7 +29,7 @@ def key():
 
 
 def certificate(subject, subject_key, issuer, issuer_key, *, ca=False, email=None, dns=None, days=365,
-                not_before=None, usage='both', crl=None):
+                not_before=None, usage='both', crl=None, ca_issuers=None):
     now = not_before or datetime.now(timezone.utc) - timedelta(days=1)
     builder = (x509.CertificateBuilder().subject_name(_name(subject)).issuer_name(issuer)
                .public_key(subject_key.public_key()).serial_number(x509.random_serial_number())
@@ -50,6 +50,10 @@ def certificate(subject, subject_key, issuer, issuer_key, *, ca=False, email=Non
     names += [x509.DNSName(dns)] if dns else []
     if names:
         builder = builder.add_extension(x509.SubjectAlternativeName(names), critical=False)
+    if ca_issuers:
+        from cryptography.x509.oid import AuthorityInformationAccessOID
+        builder = builder.add_extension(x509.AuthorityInformationAccess([x509.AccessDescription(
+            AuthorityInformationAccessOID.CA_ISSUERS, x509.UniformResourceIdentifier(ca_issuers))]), critical=False)
     if crl:
         builder = builder.add_extension(x509.CRLDistributionPoints([x509.DistributionPoint(
             full_name=[x509.UniformResourceIdentifier(crl)], relative_name=None, reasons=None, crl_issuer=None)]),
@@ -102,3 +106,134 @@ def pem_key(private_key):
 
 def pem_cert(*certificates):
     return b''.join(item.public_bytes(serialization.Encoding.PEM) for item in certificates).decode('ascii')
+
+
+# A fake HISP: SMTP submission with STARTTLS and sign-in (aiosmtpd), and MDNs from the recipient's side ------------
+
+class _Recorder:
+    def __init__(self):
+        self.messages = []
+        self.rcpt_reply = None
+        self.data_reply = None
+
+    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
+        if self.rcpt_reply:
+            return self.rcpt_reply
+        envelope.rcpt_tos.append(address)
+        return '250 OK'
+
+    async def handle_DATA(self, server, session, envelope):
+        if self.data_reply:
+            return self.data_reply
+        self.messages.append((envelope.mail_from, list(envelope.rcpt_tos), envelope.content))
+        return '250 Message accepted for delivery'
+
+
+def free_port():
+    import socket
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+class FakeHisp:
+    """The HISP's sending server: STARTTLS required, then sign-in with the synthetic password, then SMTP."""
+
+    USER, PASSWORD = SENDER, 'synthetic-hisp-password'
+
+    def __init__(self, directory, *, cert=None, key=None):
+        """``cert`` and ``key``: reuse another fake server's certificate, so one trusted certificate covers both
+        (two self-signed certificates with the same name confuse OpenSSL's lookup)."""
+        import ssl
+        from aiosmtpd.controller import Controller
+        from aiosmtpd.smtp import AuthResult
+        from api.tests.imap_fake import certificate as server_certificate
+        directory.mkdir(parents=True, exist_ok=True)
+        if cert is not None:
+            self.cert, server_key = cert, key
+        else:
+            self.cert, server_key = server_certificate(directory)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(self.cert), str(server_key))
+        self.recorder = _Recorder()
+        self.logins = []
+
+        def authenticator(server, session, envelope, mechanism, auth_data):
+            self.logins.append(auth_data.login)
+            return AuthResult(success=(auth_data.login.decode() == self.USER
+                                       and auth_data.password.decode() == self.PASSWORD), handled=False)
+        self.controller = Controller(self.recorder, hostname='127.0.0.1', port=free_port(), tls_context=context,
+                                     require_starttls=True, auth_required=True, auth_require_tls=True,
+                                     authenticator=authenticator)
+        self.controller.start()
+        self.port = self.controller.port
+
+    @property
+    def messages(self):
+        return self.recorder.messages
+
+    def close(self):
+        self.controller.stop()
+
+
+def client_context(*cert_paths):
+    import ssl
+    context = ssl.create_default_context()
+    for path in cert_paths:
+        context.load_verify_locations(cafile=str(path))
+    return context
+
+
+class Party:
+    """A synthetic Direct party (its own security agent) for building messages Faxbot receives."""
+
+    def __init__(self, address, certificate, private_key, chain=()):
+        self.address, self.certificate, self.key, self.chain = address, certificate, private_key, tuple(chain)
+
+    def setting(self, name):
+        return {'direct_address': self.address}.get(name)
+
+
+def notice(party, original_message_id, faxbot_certificate, disposition):
+    """An MDN from ``party`` about a message Faxbot sent, signed by it and encrypted for Faxbot."""
+    from api.app.digital.direct_message import notice_message, secure_message
+    headers, body = notice_message(account=party, original_message_id=original_message_id, recipient=SENDER,
+                                   disposition=disposition)
+    return secure_message(headers, body, own_certificate=party.certificate, own_chain=party.chain,
+                          own_key=party.key, recipients=[faxbot_certificate])
+
+
+def direct_message_from(party, faxbot_certificate, document, *,
+                        message_id='<synthetic.1@direct.hospital.example.net>', ask_delivery=True):
+    """A Direct message with an XDM package, from ``party`` to Faxbot's address, signed and encrypted."""
+    from api.app.digital.direct_message import build_message, secure_message
+    headers, body = build_message(sender=party.address, recipient=SENDER, message_id=message_id, document=document,
+                                  pages=1, organization='Synthetic Hospital', request_delivery=ask_delivery)
+    return secure_message(headers, body, own_certificate=party.certificate, own_chain=party.chain,
+                          own_key=party.key, recipients=[faxbot_certificate])
+
+
+def synthetic_pdf(text='Synthetic referral for a test patient'):
+    from io import BytesIO
+    from reportlab.pdfgen import canvas
+    output = BytesIO()
+    document = canvas.Canvas(output)
+    document.drawString(72, 720, text)
+    document.showPage()
+    document.save()
+    return output.getvalue()
+
+
+def hisp_settings(hisp=None, imap=None, *, security='faxbot', receives=False, mailbox_id=None, **extra):
+    """(settings, credentials) of a synthetic HISP account on the fake HISP and fake mailbox."""
+    world = pki()
+    settings = {'direct_address': SENDER, 'smtp_host': '127.0.0.1', 'smtp_port': hisp.port if hisp else 587,
+                'security': security, 'imap_host': '127.0.0.1', 'imap_port': imap.port if imap else 993,
+                'request_delivery': True, 'wait_minutes': 60, 'receives': receives,
+                'certificate': pem_cert(world.sender, world.intermediate), 'currency': 'USD',
+                'monthly_fee': '16.58', 'price_per_message': '0', 'price_source': 'https://hdirect.inpriva.com/',
+                'price_date': '2026-10-08', **extra}
+    if mailbox_id:
+        settings['mailbox_id'] = mailbox_id
+    credentials = {'password': FakeHisp.PASSWORD, 'private_key': pem_key(world.sender_key)}
+    return settings, credentials
