@@ -264,12 +264,14 @@ def _context(name):
 def test_the_dialplan_reads_each_calls_own_trunk_and_hands_it_over():
     receive, done, engine_in = (_context(name) for name in ('faxbot-inbound-receive', 'faxbot-inbound-done',
                                                              'faxbot-engine-in'))
-    assert 'Set(FAXBOT_TRUNK=${FILTER(abcdefghijklmnopqrstuvwxyz0123456789_-,${FAXBOT_TRUNK})})' in receive
+    # Checked whole (FILTER would read - as a range): anything but a trunk key is cleared before any use.
+    assert 'Set(FAXBOT_TRUNK=${IF($[${REGEX("^[a-z0-9][a-z0-9_-]*$" ${FAXBOT_TRUNK})}]?${FAXBOT_TRUNK}:)})' in receive
+    assert receive.index('Set(FAXBOT_TRUNK=') < receive.index('faxbot-screen')
     # T.38 checks read the endpoint the call is on, never the first trunk's by name.
     for section in (receive, engine_in, _context('faxbot-send')):
         assert 'PJSIP_ENDPOINT(trunk-endpoint' not in section
         assert 'PJSIP_ENDPOINT(${CHANNEL(endpoint)},t38_udptl)' in section
-    assert ' trunk=${FILTER(abcdefghijklmnopqrstuvwxyz0123456789_-,${FAXBOT_TRUNK})}' in done
+    assert ' trunk=${FAXBOT_TRUNK})' in done
     assert done.count('UserEvent(FaxInboundCall,DID:${FAXBOT_DID},Trunk:${FAXBOT_TRUNK},') == 2
     # The SSL Fax engine hears the trunk in the call's name: <token>.<digits>.<trunk>, nothing on the first trunk.
     assert 'Set(CALLERID(name)=${CALLERID(name)}.${FAXBOT_TRUNK})' in engine_in

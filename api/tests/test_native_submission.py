@@ -944,7 +944,10 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
                             "FAXBOT_TRUNK"}, variable
     # The subaddress (hex) and the trunk key reach the shell only through FILTER.
     assert "${FILTER(0123456789abcdef,${FAXBOT_FAR_SUB})}" in command
-    assert "trunk=${FILTER(abcdefghijklmnopqrstuvwxyz0123456789_-,${FAXBOT_TRUNK})}" in command
+    # The trunk key was checked whole when the call came in (faxbot-inbound-receive), never caller-chosen.
+    assert "trunk=${FAXBOT_TRUNK})" in command
+    assert any('Set(FAXBOT_TRUNK=${IF($[${REGEX("^[a-z0-9][a-z0-9_-]*$" ${FAXBOT_TRUNK})}]' in line
+               for line in receive)
     for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
                 "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw

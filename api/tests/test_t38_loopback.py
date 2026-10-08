@@ -223,6 +223,19 @@ def trunk_values(peer_address, **extra):
         'SIP_TRUNK_CALLER_ID': CALLER, 'SIP_TRUNK_DIDS': DID, **extra})
 
 
+# Several trunks (provider-rules design §3.6): the first trunk points at an address nothing answers, and the
+# second trunk, account key ``sip-b``, is the other container standing in for carrier B.
+SECOND = 'sip-b'
+
+
+def two_trunk_values(peer_address, **extra):
+    from app.config_profiles import ConfigurationDocument
+    first = trunk_values(UNREACHABLE, SIP_TRUNK_DIDS='+15555550198', **extra)
+    return first.with_provider_accounts(ConfigurationDocument({SECOND: {
+        'provider': 'sip', 'label': 'Carrier B', 'receives': True, 'numbers': [DID],
+        'settings': {'preset': 'custom', 'auth': 'ip', 'host': peer_address, 'caller_id': CALLER}}}))
+
+
 def wait_booted(docker, container):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
@@ -253,14 +266,15 @@ def never_latch(text):
 
 def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=False, wait_for_receiver=60,
              fax_image=None, identity=None, hang_up_after=None, extra_variables=None, receiver_db=None,
-             wait_frames=False):
+             wait_frames=False, two_trunks=False):
     """Send the two proof pages from one container to the other and collect what each side saw.
 
     ``fax_image`` sends that fax image instead, under ``identity`` (job, attempt);
     ``hang_up_after`` makes the sender hang up that many seconds after the call is placed.
     ``extra_variables`` ({name: value}) go on the sent call as Faxbot sets them (patch 0004: FAXBOT_T38_NOW,
     FAXBOT_IAF); ``receiver_db`` ({family/key: value}) goes into the receiver's Asterisk database first;
-    ``wait_frames`` also waits for the sender's FaxFrames event.
+    ``wait_frames`` also waits for the sender's FaxFrames event. ``two_trunks`` gives both sides two trunks, the
+    other container being the second (``two_trunk_values``), and sends over that second trunk.
     """
     docker = Docker()
     image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
@@ -279,7 +293,7 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
         # Each side's trunk is the other container, rendered by Faxbot itself.
         for container, peer, edit in ((receiver, addresses['sender'], receiver_edit),
                                       (sender, addresses['receiver'], sender_edit)):
-            text = sip_trunk.render_pjsip(trunk_values(peer))
+            text = sip_trunk.render_pjsip((two_trunk_values if two_trunks else trunk_values)(peer))
             rendered = tmp_path / f'{container}.conf'
             rendered.write_text(edit(text) if edit else text)
             docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
@@ -319,9 +333,11 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
         docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
 
         job, attempt = identity or (uuid.uuid4().hex, uuid.uuid4().hex)
-        values = trunk_values(addresses['receiver'], SIP_FAX_PREFERENCE_HEADER='true',
-                              FAX_LOCAL_STATION_ID='+15555550100', FAX_HEADER='Faxbot proof')
-        fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt)
+        values = (two_trunk_values if two_trunks else trunk_values)(
+            addresses['receiver'], SIP_FAX_PREFERENCE_HEADER='true', FAX_LOCAL_STATION_ID='+15555550100',
+            FAX_HEADER='Faxbot proof')
+        fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt,
+                                          trunk=SECOND if two_trunks else None)
         if extra_variables:
             fields['Variable'] += ''.join(f',{name}={value}' for name, value in extra_variables.items())
         for name, value in (receiver_db or {}).items():
@@ -372,6 +388,9 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
             'sent': sent, 'received': received,
             'receiver_log': docker.read(receiver, '/tmp/asterisk.log'),
             'submit_to_result_seconds': round(finished - submitted, 1),
+            'fields': fields,
+            'sender_endpoints': docker.asterisk(sender, 'pjsip show endpoints'),
+            'receiver_endpoints': docker.asterisk(receiver, 'pjsip show endpoints'),
         }
     finally:
         docker.close()
@@ -1057,3 +1076,30 @@ def test_internet_aware_fax_between_two_faxbots_is_shorter_with_the_same_pages(t
     assert 'Internet Aware Fax (peer)' in iaf['sender_log'] and 'Internet Aware Fax (peer)' in iaf['receiver_log']
     assert report['iaf']['seconds'] < report['paced']['seconds'], report
     print(json.dumps({'iaf': report}, indent=2))
+
+
+def test_a_second_trunk_carries_the_fax_and_the_receiver_hands_over_which_trunk_it_came_in_on(tmp_path):
+    """Several trunks over loopback: Faxbot's file has two trunks on each side; the fax goes out over the second
+    trunk's endpoint (carrier B, the other container), and the receiver, which identifies the caller by address on
+    its own second trunk, hands the fax to Faxbot naming that trunk (FAXBOT_TRUNK from the endpoint's set_var)."""
+    outcome = exchange(tmp_path, two_trunks=True)
+    result, captured = outcome['result'], outcome['captured']
+    print(json.dumps({'two_trunks': {
+        'channel': outcome['fields']['Channel'], 'status': result.get('Status'), 'pages': result.get('Pages'),
+        'mode': result.get('Mode'), 'handover_trunk': (captured or {}).get('body', {}).get('trunk'),
+        'call_trunk': ((captured or {}).get('body', {}).get('call') or {}).get('trunk'),
+        'sender_endpoints': [line.strip() for line in outcome['sender_endpoints'].splitlines()
+                             if line.strip().startswith('Endpoint:')],
+        'receiver_endpoints': [line.strip() for line in outcome['receiver_endpoints'].splitlines()
+                               if line.strip().startswith('Endpoint:')],
+        'image': outcome['image']}}, indent=2))
+    assert outcome['fields']['Channel'] == f'PJSIP/{DID}@trunk-{SECOND}-endpoint'
+    for listing in (outcome['sender_endpoints'], outcome['receiver_endpoints']):
+        assert 'trunk-endpoint' in listing and f'trunk-{SECOND}-endpoint' in listing
+    assert result['Status'] == 'SUCCESS' and result['Pages'] == '2', result
+    assert captured is not None, 'Receiver did not report the fax'
+    assert captured['body']['trunk'] == SECOND and captured['body']['call']['trunk'] == SECOND
+    assert captured['body']['faxstatus'] == 'SUCCESS' and captured['body']['faxpages'] == 2
+    # The dialplan read each call's own endpoint for its T.38 checks: no unknown channel item on either side.
+    for log in (outcome['sender_log'], outcome['receiver_log']):
+        assert 'Unknown or unavailable item requested' not in log
