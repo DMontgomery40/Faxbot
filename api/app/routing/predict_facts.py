@@ -385,10 +385,15 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     number = where.number or destination
     card, saved = None, False
     if engine is not None:
+        from .database import DeliveryStoreError
         try:
             # The saved cards are authoritative: a card the administrator removed is not brought back here.
             card, saved = stored_card(engine, route_key, preset), True
-        except Exception:
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            # The saved cards could not be read: the shipped card, and the cause logged. Anything else is a bug
+            # and raises.
+            import logging
+            logging.getLogger(__name__).warning('Saved rate cards could not be read: %s', error)
             card = None
     if card is None and not saved:
         card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)

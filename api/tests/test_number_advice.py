@@ -543,3 +543,30 @@ def test_the_predictor_logs_unreadable_origin_prices_and_raises_on_a_bug(databas
     monkeypatch.setattr(origin_rates, 'rated_terms', broken)
     with pytest.raises(TypeError, match='a bug in origin pricing'):
         facts_for('sip', '+13035550100', values=values, engine=database)
+
+
+def test_the_predictor_logs_unreadable_saved_cards_and_raises_on_a_bug(database, monkeypatch, caplog):  # noqa: F811
+    """The saved cards' guard catches only storage errors: the shipped card prices the call, and the cause is
+    logged; any other error is a bug and raises."""
+    import sqlalchemy as sa
+    from api.app.routing import predict_facts
+    from api.app.routing.database import DeliveryStoreError
+    upgrade_schema(database)
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'telnyx',
+                                                   'SIP_TRUNK_AUTH': 'ip', 'FAX_DEFAULT_COUNTRY': 'US'})
+    shipped = predict_facts.facts_for('sip', '+13035550100', values=values, engine=None)
+    assert shipped.terms is not None  # Telnyx's shipped card
+    for error in (DeliveryStoreError('Delivery storage is unavailable.'), sa.exc.OperationalError('SELECT', {}, None)):
+        def unavailable(*args, **kwargs):
+            raise error
+        monkeypatch.setattr(predict_facts, 'stored_card', unavailable)
+        caplog.clear()
+        with caplog.at_level('WARNING'):
+            facts = predict_facts.facts_for('sip', '+13035550100', values=values, engine=database)
+        assert facts.terms == shipped.terms and 'Saved rate cards could not be read' in caplog.text
+
+    def broken(*args, **kwargs):
+        raise TypeError('a bug in reading saved cards')
+    monkeypatch.setattr(predict_facts, 'stored_card', broken)
+    with pytest.raises(TypeError, match='a bug in reading saved cards'):
+        predict_facts.facts_for('sip', '+13035550100', values=values, engine=database)
