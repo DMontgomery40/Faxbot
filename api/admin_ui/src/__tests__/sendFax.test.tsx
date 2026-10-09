@@ -15,18 +15,20 @@ const document = (lastModified = 1_790_000_000_000, text = '%PDF-1.4 referral') 
   new File([text], 'referral.pdf', { type: 'application/pdf', lastModified });
 
 it('preserves the selected PDF bytes when the request is encoded as multipart', async () => {
-  const file = document();
+  const bytes = new Uint8Array([...new TextEncoder().encode('%PDF-1.4 referral\n'), 0, 128, 255]);
+  const file = new File([bytes], 'referral.pdf', { type: 'application/pdf' });
   const form = new FormData();
   form.append('to', '+12025550123');
   form.append('file', file);
   // Use the same Request encoder as fetch/MSW, and actually consume its body.
   const request = new Request('https://synthetic.invalid/fax', { method: 'POST', body: form });
+  expect(request.headers.get('Content-Type')).toMatch(/^multipart\/form-data; boundary=/);
   const decoded = await request.formData();
   const uploaded = decoded.get('file') as File;
   expect(decoded.get('to')).toBe('+12025550123');
   expect(uploaded.name).toBe('referral.pdf');
   expect(uploaded.type).toBe('application/pdf');
-  expect(await uploaded.text()).toBe('%PDF-1.4 referral');
+  expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(bytes);
 });
 
 type Answer = 'lost' | 'accepted';
