@@ -645,7 +645,7 @@ def frames_resolution(frames) -> str:
 
 
 def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, seal=None, recipient=None,
-                exact_raster=False, resolution=None, tools=None):
+                exact_raster=False, resolution=None, tools=None, usable=None):
     """The experimental codec's encoded pages for this attempt, as (pages, sentence[, details]), or None.
 
     ``frames`` are the pages this attempt would otherwise send (the same pages ``choose_layout`` prices as
@@ -664,7 +664,7 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
     try:
         return codec_send.attempt_pages(engine, setting, frames=frames, page_bits=frame_bits(frames), number=number,
                                         route=route, pdf_path=pdf_path, seal=seal, exact_raster=exact_raster,
-                                        resolution=resolution, tools=tools)
+                                        resolution=resolution, tools=tools, usable=usable)
     except (CodecError, DocumentConversionError, OSError):
         import logging
         logging.getLogger(__name__).warning('Encoded pages could not be made for this attempt; it sends other pages.')

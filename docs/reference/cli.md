@@ -8694,7 +8694,7 @@ $ faxbot system codec encode [OPTIONS] {source}
 
 * `-o, --output <path>`: The fax TIFF to write.  [required]
 * `--resolution standard|fine|superfine|300|400`: The fax resolution the pages are made for.  [default: fine]
-* `--layout grid|runs|picture`: grid survives resolution changes; runs carries the most but needs the exact image; picture hides the document in a picture.  [default: grid]
+* `--layout grid|runs|picture|enumerative`: grid survives resolution changes; runs carries the most but needs the exact image; picture hides the document in a picture; enumerative needs an unchanged image and a recipient whose Faxbot supports enumerative profile 1.  [default: grid]
 * `--error-correction low|medium|high`: How much damage the pages survive.  [default: medium]
 * `--shared-key KEY`: Encrypt with this shared key.
 * `--force`: Replace the file if it exists.

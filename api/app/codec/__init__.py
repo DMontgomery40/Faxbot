@@ -9,6 +9,8 @@ it onto bilevel pages sized to the receiver's resolution (``pages``):
   payload itself; it needs the exact raster (``runs``);
 - ``picture``: a halftone of a picture whose dot clusters lean left or right
   to carry the bits (``pages``; StegaTone-style cluster shifting).
+- ``enumerative``: exact ranked MH run sequences (profile 1), explicitly
+  selected for compatible Faxbot decoders and an unchanged raster.
 
 A receiving Faxbot finds the pattern, decodes, checks the SHA-256 and delivers
 the original; the received fax image is kept unchanged as evidence. Everything

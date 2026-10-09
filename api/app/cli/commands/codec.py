@@ -123,9 +123,10 @@ def codec_encode(source: Path = typer.Argument(..., exists=True, dir_okay=False,
                  output: Path = typer.Option(..., '--output', '-o', help='The fax TIFF to write.'),
                  resolution: str = typer.Option('fine', '--resolution', metavar='standard|fine|superfine|300|400',
                                                 help='The fax resolution the pages are made for.'),
-                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture',
+                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture|enumerative',
                      help='grid survives resolution changes; runs carries the most but needs the exact image; '
-                          'picture hides the document in a picture.'),
+                          'picture hides the document in a picture; enumerative needs an unchanged image '
+                          'and a recipient whose Faxbot supports enumerative profile 1.'),
                  fec: str = typer.Option('medium', '--error-correction', metavar='low|medium|high',
                                          help='How much damage the pages survive.'),
                  key: str = typer.Option(None, '--shared-key', metavar='KEY', help='Encrypt with this shared key.'),
