@@ -156,7 +156,7 @@ def scenario(installation):
                                          evidence='Synthetic letter')
         # Two faxes sent by their cheapest route per delivered fax, one failed (not counted), one too old.
         jobs = [_fax(client) for _ in range(3)]
-        _record(engine, job_id=jobs[0], route='sip', reason='cheapest_delivered')
+        coded = _record(engine, job_id=jobs[0], route='sip', reason='cheapest_delivered')
         _record(engine, job_id=jobs[1], route='sip', reason='cheapest_delivered')
         _record(engine, job_id=jobs[2], route='sip', reason='cheapest_delivered', outcome='failed')
         _record(engine, job_id=jobs[2], route='sip', reason='cheapest_delivered', sequence=2,
@@ -175,6 +175,18 @@ def scenario(installation):
                     disposition='answered' if answered else 'no_answer', connected_seconds=seconds, t38=t38,
                     pages=2 if answered else None, fax_status='SUCCESS' if answered else None, fax_preference=1,
                     created_at=at, updated_at=at))
+            # One fax to a partner as a call inside a private tunnel (no carrier; its transport is not counted).
+            connection.execute(calls.insert().values(
+                id=uuid4().hex, direction='outbound', call_id='synthetic-peer', caller=DID, called=AGREED,
+                started_at=start, answered_at=start, ended_at=start, disposition='answered', connected_seconds=40,
+                t38='unknown', pages=2, fax_status='SUCCESS', fax_preference=0, peer_id='a' * 32,
+                created_at=start, updated_at=start))
+            # The first fax's pages measured: MR asked for, 10 seconds smaller than the MMR the engine would take.
+            choices = sa.Table('fax_coding_choices', sa.MetaData(), autoload_with=engine)
+            connection.execute(choices.insert().values(
+                id=uuid4().hex, job_id=jobs[0], attempt_id=coded, number=AGREED, route='sip', requested='MR',
+                measured=1, compared='MMR', pages=2, bits=json.dumps({'MH': 500000, 'MR': 288000, 'MMR': 432000}),
+                receiver_known=1, reason='MR: 33% shorter than MMR for these pages.', created_at=start))
 
         response = client.get('/routing/savings/mechanisms', headers=ADMIN)
         assert response.status_code == 200, response.text
@@ -243,6 +255,19 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert savings['t38']['sentence'] == ('Fax over IP (T.38) took about 18 seconds a page over 10 calls, and audio '
                                           'fax about 30 seconds a page over 10 calls.')
     assert savings['t38']['saved'] == [] and savings['t38']['estimate'] is False
+
+    # The smallest measured coding (CA) and partner calls over a private tunnel (BF), each from its own records.
+    coding = items['measured_coding']
+    assert (coding['evidence']['level'], coding['here']['sentence']) == ('lab', 'Used on 1 fax in 30 days')
+    assert savings['coding']['sentence'] == ("Page codings were measured on 1 fax; on 1 a smaller coding than the fax "
+                                             "engine's own choice saved about 10 seconds on the line at full fax "
+                                             'speed.')
+    assert savings['coding']['saved'] == [] and savings['coding']['estimate'] is True
+    tunnel = items['partner_tunnel']
+    assert (tunnel['evidence']['level'], tunnel['works']['here']) == ('lab', False)
+    assert tunnel['here']['sentence'] == 'Used on 1 fax in 30 days'
+    assert savings['tunnel_calls']['sentence'] == ('1 fax went to a partner as a fax call inside a private tunnel, '
+                                                   'with no carrier.')
 
     busy = items['busy_hours']
     assert busy['part'] is None and busy['here']['sentence'] == mechanisms.NO_PART['busy_hours']

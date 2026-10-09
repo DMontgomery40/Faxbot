@@ -452,7 +452,8 @@ SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'S
                 ('cheapest_route', 'Cheapest route per delivered fax'), ('plan_first', 'Faxes through your plan'),
                 ('relay', 'Partner relays'), ('continuation', 'Only the missing pages'),
                 ('partner_repair', 'Missing pages to partners'), ('blocked_calls', 'Junk callers turned away'),
-                ('t38', 'Fax over IP (T.38)'), ('digital', 'Direct messages and FHIR'))
+                ('t38', 'Fax over IP (T.38)'), ('digital', 'Direct messages and FHIR'),
+                ('coding', 'Smallest page coding'), ('tunnel_calls', 'Partner fax over a private tunnel'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):

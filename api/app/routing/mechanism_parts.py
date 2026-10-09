@@ -223,6 +223,67 @@ def digital(engine, *, since, days):
     return result
 
 
+# Fax speed for the time a coding saves, as Faxbot's other page estimates use (14,400 bit/s).
+LINE_BITS_PER_SECOND = 14_400
+CODINGS = ('MH', 'MR', 'MMR', 'JBIG')  # least to most compact, as pages/coding.py ranks them
+
+
+def page_coding(engine, *, since, days):
+    """Faxes whose page coding was measured (``fax_coding_choices``, pages/coding.py), on attempts that worked.
+
+    A choice saves time only when it is smaller than the coding the fax engine would have taken without measuring
+    (the most compact usable one, which ``compared`` then names). When the choice is that coding, ``compared`` is
+    the next smallest and nothing was saved. The time is an estimate at full fax speed; no money is added, because
+    the call's billed time already includes it.
+    """
+    import json
+    t = reflect(engine, ('fax_coding_choices', 'delivery_attempt_costs'))
+    choices, costs = t['fax_coding_choices'], t['delivery_attempt_costs']
+    with read_connection(engine) as connection:
+        rows = connection.execute(sa.select(choices.c.job_id, choices.c.requested, choices.c.compared,
+                                            choices.c.measured, choices.c.bits).join(
+            costs, costs.c.id == choices.c.attempt_id).where(
+            costs.c.outcome == 'success', choices.c.created_at >= since)).all()
+    result = {'faxes': len({row.job_id for row in rows}), 'smaller': 0, 'seconds_saved': 0, 'saved': {}}
+    for row in rows:
+        if not row.measured or row.compared not in CODINGS or row.requested not in CODINGS:
+            continue
+        if CODINGS.index(row.compared) <= CODINGS.index(row.requested):
+            continue  # the engine's own choice: nothing saved by measuring
+        bits = json.loads(row.bits or '{}')
+        mine, theirs = bits.get(row.requested), bits.get(row.compared)
+        if isinstance(mine, int) and isinstance(theirs, int) and theirs > mine:
+            result['smaller'] += 1
+            result['seconds_saved'] += (theirs - mine) // LINE_BITS_PER_SECOND
+    if not result['faxes']:
+        result['sentence'] = f'No fax had its page coding measured in the last {days} days.'
+        return result
+    sentence = f"Page codings were measured on {_faxes(result['faxes'])}"
+    if result['smaller']:
+        sentence += (f"; on {result['smaller']} a smaller coding than the fax engine's own choice saved about "
+                     f"{_duration(result['seconds_saved'])} on the line at full fax speed")
+    else:
+        sentence += "; the fax engine's own choice was already the smallest"
+    result['sentence'] = sentence + '.'
+    return result
+
+
+def tunnel_calls(engine, *, since, days):
+    """Faxes sent to partners as fax calls inside a private tunnel, with no carrier (``sip_call_records.peer_id``)."""
+    table = reflect(engine, ('sip_call_records',))['sip_call_records']
+    with read_connection(engine) as connection:
+        calls = connection.scalar(sa.select(sa.func.count()).select_from(table).where(
+            table.c.peer_id.is_not(None), table.c.direction == 'outbound', table.c.fax_status == 'SUCCESS',
+            table.c.started_at >= since))
+    result = {'faxes': int(calls or 0), 'saved': {}}
+    one = result['faxes'] == 1
+    result['sentence'] = (
+        f"{_faxes(result['faxes'])} went to {'a partner as a fax call' if one else 'partners as fax calls'} inside a "
+        'private tunnel, with no carrier.'
+        if result['faxes'] else f'No fax went to a partner over a private tunnel in the last {days} days.')
+    return result
+
+
 def blocked_calls(engine, *, since, days):
     """Calls from blocked senders that Asterisk turned away before answering (``screened_call_rejections``)."""
     table = reflect(engine, ('screened_call_rejections',))['screened_call_rejections']

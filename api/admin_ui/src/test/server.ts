@@ -689,6 +689,8 @@ const consoleHandlers = [
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.
   http.get('/routing/savings', () => json(emptySavings())),
+  // Pricing the document itself: refused by default, so Send a fax keeps its page-count price.
+  http.post('/routing/predict', () => json({ detail: 'This operation is not permitted.' }, 403)),
   // The Overview's savings map: an answer with no mechanisms draws no map.
   http.get('/routing/savings/mechanisms', () => json({ days: 30, title: 'How Faxbot saves money',
     sentence: 'Every way Faxbot saves money, in the order a fax meets them.', legend: [], stages: [] })),

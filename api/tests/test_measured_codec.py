@@ -338,6 +338,9 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
     assert coding.sent_sentence({**record, 'requested': 'MR', 'reason': 'MR: 5% shorter than MH for these pages.',
                                  'negotiated': 'MH'}, 'sending') == (
         'Going with MR: 5% shorter than MH for these pages. The call used MH.')
+    # Uncertain: sent, and said as the packed pages say it, never "Going with".
+    assert coding.sent_sentence(record, 'uncertain') == (
+        'Sent with MH: 20% shorter than MMR for these pages; whether it arrived is not confirmed yet.')
     # Recorded once per attempt: deciding the same attempt again keeps the first row.
     _send(database, tmp_path, pages=frames('shaded_0'), values=values)
     assert coding.attempt_coding(database, ATTEMPT)['id'] == record['id']

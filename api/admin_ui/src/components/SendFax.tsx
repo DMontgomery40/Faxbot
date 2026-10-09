@@ -32,7 +32,7 @@ import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } f
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 import type { BatchingCheck } from '../api/batchingTypes';
 import type { RecipientCheck } from '../api/numberAdviceTypes';
-import type { RecommendedRoute, RoutePrediction } from '../api/deliveryTypes';
+import type { DocumentPrediction, RecommendedRoute, RoutePrediction } from '../api/deliveryTypes';
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
@@ -192,12 +192,31 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber, routeKey, pages]);
-  const costSentence = prediction ? `What would this cost? ${prediction.headline}`
-    : (route ? routeCostSentence(route, null) : null);
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+
+  // Better still: the document itself, its pages drawn and each fax coding measured on them (POST /routing/predict).
+  // Asked once the number and the file have settled; any refusal or failure, or a route the answer does not cover
+  // (local, partner, relay or digital routes), keeps the page-count price above.
+  const [documentAnswer, setDocumentAnswer] = useState<DocumentPrediction | null>(null);
+  const documentNumber = /\d/.test(toNumber) ? normalizeFaxDestination(toNumber) : null;
+  useEffect(() => {
+    setDocumentAnswer(null);
+    if (!file || fileError || !documentNumber) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.predictDocument(documentNumber, file)
+        .then((answer) => { if (live) setDocumentAnswer(answer); })
+        .catch(() => undefined);
+    }, 600);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, documentNumber, file, fileError]);
+  const documentRoute = documentAnswer?.routes.find((item) => item.route === routeKey) ?? null;
+  const shown: RoutePrediction | null = documentRoute ?? prediction;
+  const costSentence = shown ? `What would this cost? ${shown.headline}`
+    : (route ? routeCostSentence(route, null) : null);
   const configReady = !configLoading && !configError && typeof config?.fax_disabled === 'boolean'
     && Number.isSafeInteger(config.max_file_size_mb) && config.max_file_size_mb > 0;
   const faxDisabled = configReady && config?.fax_disabled === true;
@@ -397,14 +416,19 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                     {costSentence && (
                       <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
                     )}
-                    {prediction && (
+                    {shown && (
                       <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-basis">
-                        {prediction.basis}
+                        {shown.basis}
                       </Typography>
                     )}
-                    {prediction?.finish_sentence && (
+                    {documentRoute?.coding && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-coding">
+                        {documentRoute.coding.sentence}
+                      </Typography>
+                    )}
+                    {shown?.finish_sentence && (
                       <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-finish">
-                        {prediction.finish_sentence}
+                        {shown.finish_sentence}
                       </Typography>
                     )}
                   </Box>

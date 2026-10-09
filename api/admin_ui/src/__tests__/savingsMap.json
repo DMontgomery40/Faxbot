@@ -274,6 +274,36 @@
             "turn_on": false
           },
           {
+            "key": "partner_tunnel",
+            "name": "Partner fax over a private tunnel",
+            "sentence": "Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Used on 1 fax in 30 days"
+            },
+            "part": "tunnel_calls",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=tunnel_calls",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
             "key": "relay",
             "name": "Partner relays",
             "sentence": "Sends faxes abroad through a partner that places them as local calls in its own country.",
@@ -517,6 +547,36 @@
             "page": "providers/trunk",
             "page_label": "Providers → Telnyx",
             "link": "costs/savings?part=t38",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "measured_coding",
+            "name": "Smallest page coding",
+            "sentence": "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Used on 1 fax in 30 days"
+            },
+            "part": "coding",
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "link": "costs/savings?part=coding",
             "link_label": "Costs → Savings",
             "command": "faxbot costs savings",
             "turn_on": false
@@ -1280,6 +1340,11 @@
     "    Off while direct delivery is off.",
     "    Needs a verified partner; you have none yet.",
     "    Not used in 30 days",
+    "  Partner fax over a private tunnel: Off · Not here · Test lab",
+    "    Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Used on 1 fax in 30 days",
     "  Partner relays: Off · Not here · Sample data",
     "    Sends faxes abroad through a partner that places them as local calls in its own country.",
     "    Off until you and a partner both sign a relay agreement.",
@@ -1316,6 +1381,9 @@
     "  Fax over IP (T.38): On · Works here · Live call",
     "    Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
     "    Used on 10 calls in 30 days",
+    "  Smallest page coding: On · Works here · Test lab",
+    "    Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+    "    Used on 1 fax in 30 days",
     "  Sending together: On · Works here · Test lab",
     "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
     "    On for 1 recipient who agreed.",

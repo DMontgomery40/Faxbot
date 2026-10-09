@@ -160,6 +160,19 @@ export interface PredictionAnswer {
   note: string;
 }
 
+// POST /routing/predict: the same for the document itself, its codings measured on its own pages; nothing is kept.
+// `coding` is set only for Faxbot's own engines (route 'sip'): the coding they would be asked for, in one sentence.
+export interface DocumentRoutePrediction extends RoutePrediction {
+  coding: { coding: string; measured: boolean; sentence: string } | null;
+}
+
+export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
+  routes: DocumentRoutePrediction[];
+  measured: Record<string, number>;
+  measured_sentence: string | null;
+  jbig_measured: boolean;
+}
+
 export interface DestinationDetail extends Destination {
   direct_partner: { organization: string; verified: boolean } | null;
   recommended_routes: RecommendedRoute[];
@@ -783,6 +796,9 @@ export interface Savings {
     calls: number; audio_calls: number; seconds_per_page: number | null; audio_seconds_per_page: number | null;
   };
   digital?: CountedPart & { faxes: number };
+  // Faxes whose page coding was measured, and the time a smaller coding than the engine's own choice saved.
+  coding?: SavingPart & { faxes: number; smaller: number; seconds_saved: number };
+  tunnel_calls?: CountedPart & { faxes: number };
 }
 
 // A Savings part that counts exactly and carries no money.

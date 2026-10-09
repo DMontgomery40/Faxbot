@@ -438,6 +438,25 @@ def digital_routes(here):
     return State(on, why is None, sentence, why)
 
 
+def measured_coding(here):
+    why = None if here.trunk_sends else f"Needs your own SIP trunk and Faxbot's fax engines; {here.through()}."
+    return State(True, why is None, None, why)
+
+
+def partner_tunnel(here):
+    peers = reflect(here.engine, ('direct_peers',))['direct_peers']
+    with read_connection(here.engine) as connection:
+        ready = connection.scalar(sa.select(sa.func.count()).select_from(peers).where(
+            peers.c.state == 'verified', peers.c.partner_peer_calls == 1, peers.c.peer_call_address.is_not(None)))
+    why = None
+    if not here.partners:
+        why = 'Needs a verified partner; you have none yet.'
+    elif not ready:
+        why = ("Needs a verified partner that takes fax calls over a private tunnel; none of yours has said it "
+               'does.')
+    return State(here.direct_on, why is None, None if here.direct_on else 'Off while direct delivery is off.', why)
+
+
 def free_line(here):
     return State(True, bool(here.sending), 'On; each number takes one call at a time unless you allow more.',
                  _needs_sending(here))
@@ -561,6 +580,11 @@ CATALOGUE = (
               'it already holds, or only the changes from the version it has.',
               'route', 'built', 'direct_bytes', 'recipients/partners', 'Recipients → Partners', reuse,
               settings=('direct_delivery_enabled',), counts=('documents', 'document', 'documents')),
+    Mechanism('partner_tunnel', 'Partner fax over a private tunnel',
+              "Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no "
+              'carrier and nothing per minute.',
+              'route', 'lab', 'tunnel_calls', 'recipients/partners', 'Recipients → Partners', partner_tunnel,
+              settings=('direct_delivery_enabled',)),
     Mechanism('relay', 'Partner relays',
               'Sends faxes abroad through a partner that places them as local calls in its own country.',
               'route', 'built', 'relay', 'recipients/partners', 'Recipients → Partners', relay),
@@ -589,6 +613,11 @@ CATALOGUE = (
               'are shorter.',
               'call', 'live', 't38', 'providers/trunk', 'Providers → Carrier trunk', fax_over_ip,
               settings=('sip_t38_enabled',), counts=('calls', 'call', 'calls')),
+    Mechanism('measured_coding', 'Smallest page coding',
+              "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take "
+              'less time on the line.',
+              'call', 'lab', 'coding', 'providers/trunk', 'Providers → Carrier trunk', measured_coding,
+              settings=('sip_fax_compression',)),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
               'call', 'lab', 'sending_together', 'recipients/list', 'Recipients → Details', sending_together),

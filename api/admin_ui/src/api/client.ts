@@ -54,6 +54,7 @@ import type {
   DestinationDetail,
   DestinationPatch,
   PredictionAnswer,
+  DocumentPrediction,
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
@@ -1086,6 +1087,15 @@ class AdminAPIClient {
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
   async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
     return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
+  }
+
+  // The same for the document itself: its pages drawn and each coding measured on them; nothing is sent or kept.
+  // Only the number and the file go: never a patient's details.
+  async predictDocument(to: string, file: File): Promise<DocumentPrediction> {
+    const form = new FormData();
+    form.append('to', normalizeFaxDestination(to));
+    form.append('file', file);
+    return this.json('/routing/predict', { method: 'POST', body: form });
   }
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {

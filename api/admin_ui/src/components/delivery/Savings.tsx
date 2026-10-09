@@ -119,6 +119,11 @@ export default function Savings({ client, focus = null }: { client: AdminAPIClie
             <Part part="fax_friendly" title="Shaded pages lightened" sentence={data.fax_friendly.sentence}
               testId="savings-fax-friendly" focus={focus} />
           )}
+          {/* Time on the line saved by the smallest measured page coding, at full fax speed; no money is added. */}
+          {data.coding && (
+            <Part part="coding" title="Smallest page coding" sentence={data.coding.sentence}
+              testId="savings-coding" focus={focus} />
+          )}
           {/* Exact counts with no money: the route each fax took, and why. */}
           {data.cheapest_route && (
             <Part part="cheapest_route" title="Cheapest route per delivered fax" sentence={data.cheapest_route.sentence}
@@ -127,6 +132,10 @@ export default function Savings({ client, focus = null }: { client: AdminAPIClie
           {data.plan_first && (
             <Part part="plan_first" title="Faxes through your plan" sentence={data.plan_first.sentence}
               estimate={false} testId="savings-plan-first" focus={focus} />
+          )}
+          {data.tunnel_calls && (
+            <Part part="tunnel_calls" title="Partner fax over a private tunnel" sentence={data.tunnel_calls.sentence}
+              estimate={false} testId="savings-tunnel-calls" focus={focus} />
           )}
           {data.relay && (
             <Part part="relay" title="Partner relays" sentence={data.relay.sentence} testId="savings-relay"
