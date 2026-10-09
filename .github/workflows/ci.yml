@@ -70,7 +70,7 @@ jobs:
         working-directory: api
         run: |
           mkdir -p faxdata
-          python -m pytest -q -p ci_shard --faxbot-test-shard ${{ matrix.shard }}/8 --junitxml=backend-results.xml
+          python -m pytest -q -p ci_shard --faxbot-test-shard ${{ matrix.shard }}/8 --maxfail=1 --junitxml=backend-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
