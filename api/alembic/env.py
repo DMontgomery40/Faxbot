@@ -76,6 +76,9 @@ config.attributes["schema_encoder_tuning"] = importlib.import_module(package + "
 config.attributes["schema_polled_transmit"] = importlib.import_module(package + ".schema_polled_transmit")
 
 
+config.attributes["schema_analysis"] = importlib.import_module(package + ".schema_analysis")
+
+
 def migrate(connection):
     with schema.guarded_migration(connection, lock_timeout=config.attributes.get("lock_timeout", schema.LOCK_TIMEOUT_SECONDS)):
         context.configure(connection=connection, target_metadata=legacy.frozen_metadata(),

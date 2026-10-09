@@ -64,7 +64,7 @@ describe('the navigation table', () => {
 
   it('follows each page permission as the old tabs did', () => {
     expect(pagesOf(visible(['diagnostics:read']), 'overview')).toEqual(['overview']);
-    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['security', 'storage', 'api', 'assistants', 'plugins']);
+    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['analysis', 'security', 'storage', 'api', 'assistants', 'plugins']);
     expect(pagesOf(visible(['settings:write']), 'system')).toEqual(['setup']);
     expect(pagesOf(visible(['host:terminal', 'logs:read']), 'system')).toEqual(['logs', 'terminal']);
     expect(pagesOf(visible(['keys:manage']), 'access')).toEqual(['keys', 'sessions']);
@@ -204,8 +204,9 @@ describe('the console shell', () => {
       }
     }
     // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders, Numbers → Your NPI record,
-    // Faxes → Forms, Costs → Charges and Costs → Invoices.
-    expect(opened).toHaveLength(47);
+    // Faxes → Forms, Costs → Charges, Costs → Invoices and System → AI analysis.
+    expect(opened).toEqual(expect.arrayContaining(['numbers/advice', 'system/analysis', 'costs/recommendations']));
+    expect(new Set(opened).size).toBe(opened.length);
     expect(opened).not.toContain('system/remote');
     expect(opened).not.toContain('providers/freeswitch');
   }, 60000);

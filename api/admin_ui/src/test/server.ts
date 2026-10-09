@@ -643,6 +643,8 @@ const accessHandlers = [
 
 // Console sections that load on entry; minimal replies keep tests quiet.
 const consoleHandlers = [
+  http.get('/analysis', () => HttpResponse.json({ configured: false, enabled: false, state: 'not_configured',
+    message: null, last_run: null, next_run_at: null, stale: false })),
   http.get('/admin/health-status', () => json({ timestamp: now(), backend: 'phaxio', backend_healthy: true,
     jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })),
   http.get('/admin/config', () => json({ fax_disabled: true, max_file_size_mb: 10 })),

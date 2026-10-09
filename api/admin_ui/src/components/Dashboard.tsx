@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { AnalysisCard } from './AIAnalysis';
 import { WaitingForYouCard } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import {
@@ -197,13 +198,14 @@ interface DashboardProps {
   onNavigate?: (destination: AdminDestination) => void;
   // May this account open the Setup Wizard (settings:write)?
   canSetUp?: boolean;
+  canReadAnalysis?: boolean;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
   // May this account read settings? Only then does the savings map at the bottom appear.
   canReadSettings?: boolean;
 }
 
-function Dashboard({ client, onNavigate, canSetUp = false, onSendFax, canReadSettings = false }: DashboardProps) {
+function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = false, onSendFax, canReadSettings = false }: DashboardProps) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
@@ -317,6 +319,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax, canReadSet
         </Box>
       </Box>
 
+      {canReadAnalysis && <AnalysisCard client={client} onNavigate={onNavigate} />}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {error}

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
+import { AnalysisCard } from '../AIAnalysis';
 import type { AdminDestination } from '../../navigation';
 import { ScreenHeader } from '../access/AccessViews';
 import { BillingStepsSection, FaxMarkerSection, PartnersSection, TollFreeSection } from './AdviceSections';
@@ -89,6 +90,7 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
   return (
     <Box>
       <ScreenHeader title="Recommendations" />
+      <AnalysisCard client={client} onNavigate={onNavigate} />
       <Stack spacing={3}>
         {empty && (
           <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>

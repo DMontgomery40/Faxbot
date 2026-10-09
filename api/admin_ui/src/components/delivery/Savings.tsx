@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Chip, CircularProgress, Paper, Stack, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
+import { AnalysisCard } from '../AIAnalysis';
 import type { Savings as SavingsResult } from '../../api/deliveryTypes';
 import { parseServerTime } from '../../api/time';
 import { ScreenHeader } from '../access/AccessViews';
@@ -73,6 +74,7 @@ export default function Savings({ client, focus = null }: { client: AdminAPIClie
   return (
     <Box>
       <ScreenHeader title="Savings" subtitle={data?.sentence} onRefresh={() => void load()} busy={busy} />
+      <AnalysisCard client={client} />
       <DeliveryError error={error} onClose={() => setError(null)} />
       {!data && busy && <CircularProgress size={24} />}
       {data && (

@@ -41,7 +41,7 @@ def _source(**changes):
 
 
 def test_polled_transmit_follows_integrated_predecessor():
-    assert schema_polled_transmit.REVISION == '0062_polled_transmit' == schema.HEAD
+    assert schema_polled_transmit.REVISION == '0062_polled_transmit' == schema.POLLED_TRANSMIT
     assert schema.ENCODER_TUNING == PRIOR
     assert schema_polled_transmit.TABLES == frozenset({'poll_held', 'poll_collections'})
     assert schema_polled_transmit.TABLES <= schema.STRICT_TABLES

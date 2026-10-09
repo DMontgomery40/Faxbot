@@ -50,6 +50,7 @@ import type AdminAPIClient from './api/client';
 import type { AdminConfig, AuthMe, ConsoleContext } from './api/types';
 import { providerLabel } from './providerLabels';
 import Dashboard from './components/Dashboard';
+import AIAnalysis from './components/AIAnalysis';
 import SetupWizard from './components/SetupWizard';
 import JobsList from './components/JobsList';
 import Plugins from './components/Plugins';
@@ -250,7 +251,7 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
         render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)}
-          canReadSettings={ctx.permissions.has('settings:read')} /> },
+          canReadSettings={ctx.permissions.has('settings:read')} canReadAnalysis={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {
@@ -434,6 +435,8 @@ export const NAVIGATION: NavArea[] = [
       { id: 'setup', label: 'Setup', icon: <HelpIcon />, gate: { anyOf: ['settings:write'] },
         render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')}
           isOwner={isOwner(ctx)} onNavigate={ctx.navigate} /> },
+      { id: 'analysis', label: 'AI analysis', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <AIAnalysis client={ctx.client} isOwner={isOwner(ctx)} /> },
       { id: 'security', label: 'Security', icon: <SecurityIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['security'], 'Security') },
       { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },
