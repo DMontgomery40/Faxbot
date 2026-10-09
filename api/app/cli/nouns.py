@@ -2,7 +2,8 @@
 
 `faxbot send` and `faxbot status`, then received, sent, numbers, recipients,
 providers, costs, access and system, each holding what its console area holds.
-`faxbot forms` is the Faxes area's Forms page, beside send, received and sent.
+`faxbot forms` is the Faxes area's Forms page, beside send, received and sent; `faxbot expected` is its
+Expected page.
 Commands are defined in their modules; this module gives each one its home.
 """
 import typer
@@ -17,6 +18,7 @@ from .commands import setup_plan
 from .commands import number_advice
 from .commands import digital
 from .commands import forwarded_trust
+from .commands import expected as expected_commands
 from .commands import cases as case_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -251,3 +253,5 @@ def register(app):
         if name == 'sent':
             # The Faxes area's third page.
             app.add_typer(forms.forms, name='forms')
+            # Faxes -> Expected: faxes recorded before they arrive, and recovery after a source system's outage.
+            app.add_typer(expected_commands.expected, name='expected')

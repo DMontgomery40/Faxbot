@@ -1572,6 +1572,20 @@ class AdminAPIClient {
     return res.blob();
   }
 
+  // Expected faxes (components/expected/expectedApi.ts): the import upload and the evidence download.
+  async importExpected<T>(source: string, file: File, fullExport: boolean): Promise<T> {
+    const form = new FormData();
+    form.append('source', source);
+    form.append('full_export', fullExport ? 'true' : 'false');
+    form.append('file', file);
+    return this.json('/expected-faxes/imports', { method: 'POST', body: form });
+  }
+
+  async exportExpected(expectedId: string): Promise<Blob> {
+    const res = await this.fetch(`/expected-faxes/${id(expectedId)}/export`);
+    return res.blob();
+  }
+
   async getWorkSettings(): Promise<WorkSettings> {
     return this.json('/work/settings');
   }
