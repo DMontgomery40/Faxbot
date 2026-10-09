@@ -34,8 +34,8 @@ Rules:
   for the number (``due``, off by default).
 - **One call, one try.** A collection that ended uncertain (the call dropped
   while a document was arriving) is never collected again by itself; a
-  timetable skips a number whose last collection is uncertain until a person
-  collects it by hand.
+  timetable and manual collection both stop while any previous collection
+  has an unconfirmed outcome. There is no manual reconciliation control yet.
 - **Passwords** (T.30 PWD) are sealed with the installation key (``PollSeal``)
   and go only into the engine's job (collecting) or the engine's sidecar for a
   held fax; they are never shown or logged.
@@ -59,6 +59,8 @@ import weakref
 
 import sqlalchemy as sa
 
+from .database import DeliveryStoreError
+
 
 TABLES = ('poll_sources', 'poll_requests', 'poll_results', 'poll_held', 'poll_collections')
 OUTCOMES = ('received', 'nothing_waiting', 'refused', 'failed', 'uncertain', 'not_sent')
@@ -73,6 +75,8 @@ NOT_ON = 'Turn on collecting faxes from this number first.'
 HOLD_NOT_ON = 'Turn on holding faxes for this number first.'
 NOT_SENT = "Faxbot's fax engine could not take the call, so nothing was dialed."
 NOT_HELD = "Faxbot's fax engine could not take the fax, so it is not held."
+PREVIOUS_UNCONFIRMED = ('The previous collection has an unconfirmed outcome. Check Received and the fax engine; '
+                        'another collection is blocked until its outcome is confirmed.')
 WAITING = 'Faxbot is calling the other fax server to collect the fax it holds for you.'
 HELD_WAITING = 'Waiting for the other site to call and collect it.'
 ADVICE_NOTE = ('Collecting works only when the other fax server holds the fax for you to collect. Turn it on only '
@@ -88,7 +92,7 @@ class PollRefused(ValueError):
     the sentence says which. Nothing was dialed."""
 
 
-class PollStoreError(RuntimeError):
+class PollStoreError(DeliveryStoreError):
     """The polling records cannot be read or written now (before migration 0062, or the database is down)."""
 
 
@@ -257,12 +261,48 @@ def save_source(engine, number, *, enabled, label=None, selective=None, actor=No
                   collect_days=days, time_zone=zone)
 
 
+def _unresolved(connection, tables, number):
+    asked, results = tables['poll_requests'], tables['poll_results']
+    return connection.execute(sa.select(asked.c.id).select_from(
+        asked.outerjoin(results, results.c.request_id == asked.c.id)).where(
+            asked.c.number == number, sa.or_(results.c.outcome.is_(None), results.c.outcome == 'uncertain'))
+        .limit(1)).scalar() is not None
+
+
+def _check_previous(engine, number):
+    tables = _tables(engine)
+    with engine.connect() as connection:
+        if _unresolved(connection, tables, number):
+            raise PollRefused(PREVIOUS_UNCONFIRMED)
+
+
 def record_request(engine, request_id, number, *, selective=None, engine_job=None, actor=None, actor_name=None,
-                   now=None):
+                   now=None, guard=False, timetable=False):
     if not _HEX32.fullmatch(str(request_id or '')):
         raise ValueError('Unsupported polling request')
-    table = _tables(engine)['poll_requests']
-    with engine.begin() as connection:
+    # Serialize the final eligibility check with recording the call, across API workers.
+    from .database import write_transaction
+    tables = _tables(engine)
+    table = tables['poll_requests']
+    now = now or datetime.utcnow()
+    with write_transaction(engine) as connection:
+        if guard:
+            if _unresolved(connection, tables, number):
+                raise PollRefused(PREVIOUS_UNCONFIRMED)
+            sources = tables['poll_sources']
+            row = connection.execute(sa.select(sources).where(
+                sources.c.number == number,
+                sa.or_(sources.c.direction.is_(None), sources.c.direction == 'collect')).order_by(
+                    sources.c.created_at.desc(), sources.c.id.desc()).limit(1)).mappings().first()
+            if row is None or not row['enabled']:
+                raise PollRefused(NOT_ON)
+            if timetable:
+                if not _scheduled(_from_row(row), now):
+                    raise PollRefused('The collection timetable is no longer due.')
+                recent = connection.execute(sa.select(table.c.id).where(
+                    table.c.number == number, table.c.requested_at > now - timedelta(minutes=3)).limit(1)).scalar()
+                if recent is not None:
+                    raise PollRefused('This collection time has already been claimed.')
         connection.execute(table.insert().values(
             id=request_id, number=number, selective=selective or None, engine_job=engine_job,
             requested_by=str(actor)[:40] if actor else None,
@@ -365,23 +405,29 @@ def advice(engine, number, *, now=None, predict=None):
 
 # Collecting ---------------------------------------------------------------------------------------------------
 
-async def collect(engine, values, ami, number, *, actor=None, actor_name=None, now=None, seal=None):
+async def collect(engine, values, ami, number, *, actor=None, actor_name=None, now=None, seal=None, timetable=False):
     """Ask Faxbot's SSL Fax engine to call ``number`` once and collect the fax its server holds for you. Returns
     the request ID. Raises ``PollRefused`` (polling not turned on for the number, or the engine cannot take the
     call; nothing dialed). A lost answer after submission leaves the collection uncertain; it is never asked
     for again by itself. With ``seal`` (a ``PollSeal``) the number's polling password goes with the call."""
-    import asyncio
+    import functools
+    from ..config_runtime import run_lifecycle_step
     from .. import hylafax_engine
-    found = await asyncio.to_thread(source, engine, number)
+
+    async def blocking(function, *args, **kwargs):
+        return await run_lifecycle_step(functools.partial(function, *args, **kwargs))
+
+    found = await blocking(source, engine, number)
     if found is None or not found.enabled:
         raise PollRefused(NOT_ON)
+    await blocking(_check_previous, engine, number)
     choice = await hylafax_engine.choose(values, ami=ami)
     if choice.engine != 'hylafax':
         raise PollRefused(f"Faxbot collects faxes with its fax engine, which cannot take the call now: "
                           f"{choice.reason}")
     password = ''
     if found.password_sealed and seal is not None:
-        password = await asyncio.to_thread(seal.open, found.password_sealed, number) or ''
+        password = await blocking(seal.open, found.password_sealed, number) or ''
     request_id = uuid.uuid4().hex
     now = now or datetime.utcnow()
     try:
@@ -389,31 +435,31 @@ async def collect(engine, values, ami, number, *, actor=None, actor_name=None, n
                                                 selective=found.selective or '', password=password)
     except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError, ValueError):
         logging.getLogger(__name__).warning('The SSL Fax engine could not take a collection.', exc_info=True)
-        await asyncio.to_thread(record_request, engine, request_id, number, selective=found.selective,
-                                actor=actor, actor_name=actor_name, now=now)
-        await asyncio.to_thread(record_result, engine, request_id, 'not_sent', NOT_SENT, now=now)
+        await blocking(record_request, engine, request_id, number, selective=found.selective,
+                       actor=actor, actor_name=actor_name, now=now, guard=True, timetable=timetable)
+        await blocking(record_result, engine, request_id, 'not_sent', NOT_SENT, now=now)
         raise PollRefused(NOT_SENT) from None
     try:
         # Written before the call: a collection Faxbot asked for is on record whatever happens next.
-        await asyncio.to_thread(record_request, engine, request_id, number, selective=found.selective,
-                                engine_job=job.engine_job, actor=actor, actor_name=actor_name, now=now)
+        await blocking(record_request, engine, request_id, number, selective=found.selective,
+                       engine_job=job.engine_job, actor=actor, actor_name=actor_name, now=now,
+                       guard=True, timetable=timetable)
     except BaseException:
-        await asyncio.to_thread(job.discard)
+        await blocking(job.discard)
         await hylafax_engine.forget_plan(ami, job.tag)
         raise
     try:
         emit = getattr(ami, '_emit', None)
         if emit is not None and job.submission:
             emit('Submission', job.submission)  # the trunk call's record starts now, as for a sent fax
-        await asyncio.to_thread(job.submit)
+        await blocking(job.submit)
     except Exception:
         # The engine may have the job: uncertain, never asked for again by itself.
-        await asyncio.to_thread(record_result, engine, request_id, 'uncertain',
-                                "Faxbot's fax engine did not confirm the call; check Received before "
-                                'collecting again.', now=now)
+        await blocking(record_result, engine, request_id, 'uncertain',
+                       PREVIOUS_UNCONFIRMED, now=now)
         raise
     finally:
-        await asyncio.to_thread(job.close)
+        await blocking(job.close)
     return request_id
 
 
@@ -472,11 +518,20 @@ def view(engine, number, *, now=None, predict=None):
 TIMETABLE_BY = 'the timetable'
 
 
+def _scheduled(found, now):
+    from zoneinfo import ZoneInfo
+    if not found.enabled or not found.collect_times or not found.collect_days:
+        return False
+    zone = ZoneInfo(found.time_zone) if found.time_zone else timezone.utc
+    local = now.replace(tzinfo=timezone.utc).astimezone(zone)
+    return (DAYS[local.weekday()] in found.collect_days.split(',')
+            and local.strftime('%H:%M') in found.collect_times.split(','))
+
+
 def due(engine, now, *, recent_minutes=3) -> list:
     """The numbers whose timetable names this minute (in their own time zone, else UTC) and that may be collected
     now: collecting is on, no collection was asked for in the last ``recent_minutes`` (so one slot collects once),
-    and the newest result is not uncertain (a person must check Received and collect by hand first)."""
-    from zoneinfo import ZoneInfo
+    and no collection has an unconfirmed outcome (including one with no result after a restart)."""
     table = _tables(engine)['poll_sources']
     with engine.connect() as connection:
         rows = connection.execute(sa.select(table).where(table.c.collect_times.is_not(None),
@@ -488,19 +543,15 @@ def due(engine, now, *, recent_minutes=3) -> list:
         if number in numbers:
             continue
         found = source(engine, number)
-        if found is None or not found.enabled or not found.collect_times or not found.collect_days:
+        if found is None or not _scheduled(found, now):
             continue
-        zone = ZoneInfo(found.time_zone) if found.time_zone else timezone.utc
-        local = now.replace(tzinfo=timezone.utc).astimezone(zone)
-        if DAYS[local.weekday()] not in found.collect_days.split(','):
-            continue
-        if local.strftime('%H:%M') not in found.collect_times.split(','):
+        try:
+            _check_previous(engine, number)
+        except PollRefused:
             continue
         asked = requests(engine, number, limit=1)
         if asked:
             if asked[0]['requested_at'] > now - timedelta(minutes=recent_minutes):
-                continue
-            if asked[0]['outcome'] == 'uncertain':
                 continue
         numbers.append(number)
     return numbers
@@ -514,7 +565,8 @@ async def collect_due(engine, values, ami, *, now=None, seal=None) -> list:
     started = []
     for number in await asyncio.to_thread(due, engine, now):
         try:
-            started.append(await collect(engine, values, ami, number, actor_name=TIMETABLE_BY, now=now, seal=seal))
+            started.append(await collect(engine, values, ami, number, actor_name=TIMETABLE_BY, now=now, seal=seal,
+                                         timetable=True))
         except PollRefused as refused:
             logging.getLogger(__name__).info('Timed collection from %s skipped: %s', number, refused)
     return started

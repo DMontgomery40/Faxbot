@@ -438,12 +438,12 @@ def test_the_timetable_names_this_minute_once_in_the_numbers_time_zone_and_skips
     # One slot collects once: a request made in the last minutes holds it off.
     polling.record_request(installation, 'a' * 32, NUMBER, now=at_eight - timedelta(minutes=1))
     assert polling.due(installation, at_eight) == []
-    # An uncertain result stops the timetable until a person collects by hand.
+    # An uncertain result stops the timetable; a later result cannot erase its uncertainty.
     polling.record_result(installation, 'a' * 32, 'uncertain', 'Check Received.', now=at_eight)
     assert polling.due(installation, datetime(2026, 10, 8, 22, 0)) == []
     polling.record_request(installation, 'b' * 32, NUMBER, now=datetime(2026, 10, 8, 20, 0))
     polling.record_result(installation, 'b' * 32, 'received', 'Collected.', now=datetime(2026, 10, 8, 20, 1))
-    assert polling.due(installation, datetime(2026, 10, 8, 22, 0)) == [NUMBER]
+    assert polling.due(installation, datetime(2026, 10, 8, 22, 0)) == []
     view = polling.view(installation, NUMBER, now=NOW)
     assert view['timetable'] == 'Faxbot collects at 08:00 and 16:00 on weekdays (America/Denver).'
     assert polling.save_source(installation, NUMBER, enabled=True, collect_times='', now=NOW).collect_times is None
@@ -651,3 +651,83 @@ def test_cli_and_api_hold_settings_and_a_held_document_need_the_engine(polling_c
     sender = cli.client.post('/admin/api-keys', headers=admin, json={'name': 'synthetic', 'scopes': ['fax:send']})
     key = {'X-API-Key': sender.json()['token']}
     assert cli.client.get(route + '/hold', headers=key).status_code == 403
+
+
+@pytest.mark.parametrize('outcome', [None, 'uncertain'])
+def test_unresolved_collection_blocks_later_timetable_and_manual_call(installation, monkeypatch, outcome):
+    polling.save_source(installation, NUMBER, enabled=True, collect_times='09:00', collect_days='thu,fri', now=NOW)
+    polling.record_request(installation, REQUEST, NUMBER, engine_job='7', now=NOW)
+    if outcome:
+        polling.record_result(installation, REQUEST, outcome, 'Check Received.', now=NOW)
+    assert polling.due(installation, NOW + timedelta(days=1)) == []
+    prepared = []
+
+    async def choose(*args, **kwargs):
+        return hylafax_engine.EngineChoice('hylafax')
+
+    async def prepare(*args, **kwargs):
+        prepared.append(True)
+        raise AssertionError('An unresolved collection must not prepare another call')
+
+    monkeypatch.setattr(hylafax_engine, 'choose', choose)
+    monkeypatch.setattr(hylafax_engine, 'prepare_poll', prepare)
+    with pytest.raises(polling.PollRefused, match='previous collection'):
+        asyncio.run(polling.collect(installation, SimpleNamespace(), Ami(), NUMBER))
+    assert prepared == []
+    if outcome is None:
+        polling.record_result(installation, REQUEST, 'received', 'Collected.', now=NOW)
+        assert polling.due(installation, NOW + timedelta(days=1)) == [NUMBER]
+
+
+@pytest.mark.parametrize('timed', [False, True])
+def test_concurrent_collectors_submit_only_one_call(installation, monkeypatch, timed):
+    polling.save_source(installation, NUMBER, enabled=True, collect_times='09:00', collect_days='thu', now=NOW)
+    submitted, discarded = [], []
+
+    async def choose(*args, **kwargs):
+        return hylafax_engine.EngineChoice('hylafax')
+
+    class Job:
+        engine_job, tag, submission = '42', '1' * 16, {}
+
+        def __init__(self, request_id):
+            self.request_id = request_id
+
+        def submit(self):
+            submitted.append(self.request_id)
+            if timed:
+                # Even an immediately completed call must not let another worker repeat this time slot.
+                polling.record_result(installation, self.request_id, 'received', 'Collected.', now=NOW)
+
+        def discard(self):
+            discarded.append(self.request_id)
+
+        def close(self):
+            pass
+
+    async def run():
+        ready = asyncio.Event()
+        preparing = 0
+
+        async def prepare(*args, request_id, **kwargs):
+            nonlocal preparing
+            preparing += 1
+            if preparing == 2:
+                ready.set()
+            await asyncio.wait_for(ready.wait(), timeout=5)
+            return Job(request_id)
+
+        monkeypatch.setattr(hylafax_engine, 'prepare_poll', prepare)
+        async def one():
+            if timed:
+                return await polling.collect_due(installation, SimpleNamespace(), Ami(), now=NOW)
+            return await polling.collect(installation, SimpleNamespace(), Ami(), NUMBER, now=NOW)
+        return await asyncio.gather(one(), one(), return_exceptions=True)
+
+    monkeypatch.setattr(hylafax_engine, 'choose', choose)
+    results = asyncio.run(run())
+    assert len(submitted) == 1
+    assert len(discarded) == 1
+    assert len(polling.requests(installation, NUMBER)) == 1
+    if not timed:
+        assert sum(isinstance(result, polling.PollRefused) for result in results) == 1

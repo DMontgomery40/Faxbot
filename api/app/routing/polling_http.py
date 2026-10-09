@@ -29,6 +29,7 @@ import sqlalchemy as sa
 from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
 from . import polling
+from .database import DeliveryStoreError
 from .schedule_http import _engine, _number, _values
 
 
@@ -51,7 +52,7 @@ async def _collect_due(app):
         return
     try:
         started = await polling.collect_due(engine, values, ami_client, seal=polling.PollSeal(runtime.manager.store))
-    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError):
         logging.getLogger(__name__).warning('Timed fax collection could not read its settings.')
         return
     if started:
@@ -161,7 +162,7 @@ async def collect_now(number: str, request: Request, identity=Depends(require_pe
                                            actor_name=name, seal=_seal(request))
     except polling.PollRefused as error:
         raise HTTPException(409, detail=str(error)) from None
-    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError):
         raise HTTPException(503, detail='Collecting faxes is unavailable. Try again.') from None
     from ..audit import audit_event
     audit_event('recipient_polling_collect', number=target)
@@ -226,7 +227,7 @@ async def hold_fax(number: str, request: Request, file: UploadFile = File(...),
             raise HTTPException(409, detail=str(error)) from None
         except ValueError as error:
             raise HTTPException(400, detail=str(error)) from None
-        except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError):
             raise HTTPException(503, detail='Holding faxes is unavailable. Try again.') from None
     from ..audit import audit_event
     audit_event('recipient_polling_held', number=target)
@@ -246,7 +247,7 @@ async def withdraw_fax(number: str, hold_id: str, request: Request,
         raise HTTPException(404, detail='No such held fax.') from None
     except polling.PollRefused as error:
         raise HTTPException(409, detail=str(error)) from None
-    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError):
         raise HTTPException(503, detail='Holding faxes is unavailable. Try again.') from None
     from ..audit import audit_event
     audit_event('recipient_polling_withdrawn', number=target, outcome=kept)
