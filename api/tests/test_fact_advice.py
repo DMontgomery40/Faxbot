@@ -95,7 +95,7 @@ def test_the_catalogue_is_fixed_and_each_fact_has_its_establishing_step():
         'partner', 'digital_address', 'toll_free', 'case_reuse'}
     for fact in fact_advice.CATALOGUE:
         assert fact.step and fact.confirm and fact.time
-        # Caller ID is never part of a fact: Faxbot never changes it to lower a charge.
+        # This fact-advice implementation does not propose caller-ID selection.
         assert 'caller id' not in (fact.title + fact.confirm + fact.step).lower()
 
 
@@ -112,7 +112,8 @@ def test_a_partner_suggestion_prices_direct_delivery_minus_the_enrollment_fax(da
     assert money(partner['saving']) == '0.02625'
     # The enrollment fax is one page by the best route: 23 s, always one minute, $0.005, subtracted.
     assert money(partner['establish_cost']) == '0.005' and money(partner['net']) == '0.02125'
-    assert partner['sentence'].startswith('Would have cost $0.026 less over 3 faxes (estimate).')
+    # Prose rounds totals of at least one cent; the exact amounts above remain unchanged.
+    assert partner['sentence'].startswith('Would have cost $0.03 less over 3 faxes (estimate).')
     assert 'one enrollment fax (about $0.005)' in partner['sentence']
     assert 'Synthetic Partner Clinic must confirm the code' in partner['confirm']
     assert partner['realized'] is False and result['realized'].startswith('These figures are what your faxes')

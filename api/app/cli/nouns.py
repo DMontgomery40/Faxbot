@@ -18,6 +18,7 @@ from .commands import charges as charge_commands
 from .commands import setup_plan
 from .commands import number_advice
 from .commands import fact_advice
+from .commands import portfolio as portfolio_commands
 from .commands import digital
 from .commands import forwarded_trust
 from .commands import expected as expected_commands
@@ -200,6 +201,7 @@ costs.command('fax')(delivery.routing_fax_cost)
 costs.command('received')(delivery.routing_received_costs)
 costs.command('savings')(delivery.routing_savings)
 costs.command('advice')(fact_advice.costs_advice)
+costs.command('portfolio')(portfolio_commands.portfolio)
 costs.command('mechanisms')(delivery.routing_mechanisms)
 costs.add_typer(delivery.recommendations, name='recommendations')
 costs.command('rate-cards')(delivery.routing_rate_cards)

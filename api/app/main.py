@@ -82,6 +82,7 @@ from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
+from .routing.portfolio_http import router as routing_portfolio_router
 from .routing.number_http import router as routing_number_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.polling_http import router as routing_polling_router
@@ -219,6 +220,7 @@ app.include_router(management_router)
 app.include_router(routing_router)
 app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
+app.include_router(routing_portfolio_router)
 app.include_router(routing_number_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_polling_router)

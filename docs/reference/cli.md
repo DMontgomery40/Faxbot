@@ -6492,6 +6492,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `advice`: Show what one missing fact cost you per...
+* `portfolio`: Compare setup bundles under an explicit...
 * `mechanisms`: List every way Faxbot saves money, grouped...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `rate-rows`: Replace the prices by where calls start...
@@ -6602,6 +6603,32 @@ $ faxbot costs advice [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days of sent faxes to price again.  [default: 90; 7&lt;=x&lt;=183]
+* `--help`: Show this message and exit.
+
+### `faxbot costs portfolio`
+
+Compare setup bundles under an explicit budget and expected/cautious assumptions. Costs, currency, period
+and whose amounts count come from the file. Inputs are not saved and no partner is enrolled or route changed.
+
+The JSON object needs currency (for example USD), horizon (the period), perspective (whose amounts count),
+budget, nodes, groups and relationships. A node has id, label, cost, installed (true/false) and group_id
+(or null). A shared group has id, label and cost. A relationship has a and b (the two node IDs), expected
+and cautious benefits. Use empty lists for no groups or relationships, and stable lowercase IDs.
+
+Write every amount as quoted decimal text with up to six decimal places, or null for unknown. Costs and
+budget are nonnegative; benefits are running-cost reductions over the period, excluding setup, and can
+be negative for higher running costs. Use one currency throughout, at most ten nodes and ten groups,
+and one relationship per pair. Amount magnitudes cannot exceed 1,000,000,000,000.
+
+**Usage**:
+
+```console
+$ faxbot costs portfolio [OPTIONS]
+```
+
+**Options**:
+
+* `--file <str>`: UTF-8 JSON scenario file, or - for standard input; at most 64 KiB.  [required]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs mechanisms`
