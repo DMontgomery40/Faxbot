@@ -8,6 +8,22 @@
 
 **Costs → Prices & plans** (`#/costs/prices`) holds the published price of each provider in use, editable, with its source and date. Faxbot uses them to estimate costs and choose the cheapest route.
 
+## Advice
+
+**Costs → Advice** (`#/costs/advice`) includes **Compare setup plans**. It compares setup items using amounts you supply; it does not save the inputs, enroll a partner or change a route.
+
+Enter **Whose costs and benefits?**, **Planning period**, a three-letter **Currency** and the **Budget** for additional setup spending. Use the same currency and period for every amount.
+
+Add each **Setup item** with its cost and mark **Already installed** where applicable. Add a **Shared setup cost** when several items need the same setup; Faxbot counts it once. Under **Benefits between items**, enter the expected and cautious change in running costs when both items are present. A negative benefit means higher running costs.
+
+Leave an amount blank when it is unknown; enter `0` when there is none. Faxbot lists missing amounts needed for a comparison. **Expected plan** has the highest expected net benefit. **Cautious plan** has the best lower net benefit across your two scenarios. Both are estimates from your inputs, not measured savings.
+
+To compare from the command line, create a UTF-8 JSON scenario using the fields in the [command reference](../reference/cli.md#faxbot-costs-portfolio), then run:
+
+```bash
+faxbot costs portfolio --file scenario.json
+```
+
 ## Savings
 
 **Costs → Savings** (`#/costs/savings`) shows what the last 30 days saved, each part marked **Estimate**:
@@ -15,8 +31,9 @@
 - **Sending together**: calls saved when faxes to the same number shared a call;
 - **Direct delivery**: fax calls avoided when a partner accepted the document directly;
 - **Case packets**: pages not sent again because a packet listed documents the recipient already had.
+- **Pages saved by encoding (experimental)**: pages avoided when an attempt used encoded pages.
 
-Every figure compares what you paid with what the same faxes would have cost the usual way, so it stays an estimate after the carrier reports. A fax that would have gone through a flat plan saves no money. Case packets count from when Faxbot started recording what each packet left out, and the page says from which day.
+Money estimates compare what you paid with what the same faxes would have cost the usual way, so they remain estimates after the carrier reports. Exact byte counts for reuse and patches appear separately and are not added to money saved. A fax that would have gone through a flat plan saves no money. Case packets count from when Faxbot started recording what each packet left out, and the page says from which day.
 
 ## Recommendations
 
