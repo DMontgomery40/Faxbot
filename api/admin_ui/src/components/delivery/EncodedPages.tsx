@@ -113,7 +113,7 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
       {saved && <Alert severity="success" sx={{ mt: 1 }} onClose={() => setSaved(null)}>{saved}</Alert>}
       <FormControlLabel sx={{ mt: 1 }} disabled={!canWrite || busy}
         control={<Switch checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />}
-        label="Send documents to this number as encoded pages when that costs less" />
+        label="Allow encoded pages for this number" />
       {turningOn && (
         <FormControlLabel disabled={!canWrite || busy}
           control={<Checkbox checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />}
@@ -202,7 +202,7 @@ export function ReceivedEncodedPages({ client, faxId, canDownload }: {
     <Box my={1} data-testid="received-encoded-pages">
       <Typography variant="caption" color="text.secondary">Encoded pages</Typography>
       <Typography variant="body2">{view.sentence}</Typography>
-      {view.state === 'decoded' && canDownload && (
+      {view.state === 'decoded' && view.document_available !== false && canDownload && (
         <Button size="small" variant="outlined" sx={{ mt: 0.5 }} onClick={() => void download()}>
           Download the original document
         </Button>

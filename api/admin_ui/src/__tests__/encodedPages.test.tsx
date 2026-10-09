@@ -30,8 +30,8 @@ describe('Encoded pages in a fax number\'s Details', () => {
         saved.push(await request.json());
         return HttpResponse.json({
           ...off, enabled: true, version: 1, fec: 'high', has_key: true, key_fingerprint: '3f2a9c1d',
-          state_sentence: 'On: when encoded pages cost less on the fax’s route, faxes to this number go as '
-            + 'encoded pages (experimental).',
+          state_sentence: 'On: Faxbot compares encoded pages with ordinary pages for each attempt. It can choose a '
+            + 'lower estimated bill or fewer pages on a plan or an unpriced route (experimental).',
           agreement: { action: 'on', by: 'Owner', at: '2026-10-07T16:30:00+00:00', recipient_agreed: true,
             style: 'Dense pages', fec: 'High', key_fingerprint: '3f2a9c1d' },
         });
@@ -40,7 +40,7 @@ describe('Encoded pages in a fax number\'s Details', () => {
     render(<EncodedPagesPanel client={client()} number={NUMBER} canWrite />);
     expect(await screen.findByText(off.state_sentence)).toBeTruthy();
     expect(screen.getByText(off.limits_text)).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Send documents to this number as encoded pages when that costs less' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Allow encoded pages for this number' }));
     const save = screen.getByRole('button', { name: 'Save encoded pages' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.click(screen.getByRole('checkbox', { name: off.agreement_text }));
@@ -85,7 +85,7 @@ describe('Encoded pages on a sent and a received fax', () => {
 
   it('shows the decode result, offers the original, and gives the fallback sentence when decoding failed', async () => {
     server.use(http.get('/codec/received/:fax', ({ params }) => HttpResponse.json(params.fax === 'good'
-      ? { encoded: true, state: 'decoded', content_type: 'application/pdf', document_name: 'referral.pdf',
+      ? { encoded: true, state: 'decoded', document_available: true, content_type: 'application/pdf', document_name: 'referral.pdf',
         sentence: 'Carried an encoded document on 1 page; Faxbot decoded it and checked its fingerprint (experimental).' }
       : { encoded: true, state: 'failed', sentence: 'The document is encrypted with a key this Faxbot does not have, '
         + 'so the fax is delivered as received.' })));
@@ -95,6 +95,17 @@ describe('Encoded pages on a sent and a received fax', () => {
     unmount();
     render(<ReceivedEncodedPages client={client()} faxId="bad" canDownload />);
     expect(await screen.findByText(/so the fax is delivered as received\./)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Download the original document' })).toBeNull();
+  });
+
+  it('keeps the decode history visible without offering an original that is no longer available', async () => {
+    const sentence = 'Faxbot decoded this document and checked its fingerprint. The decoded original is no longer available.';
+    server.use(http.get('/codec/received/expired', () => HttpResponse.json({
+      encoded: true, state: 'decoded', document_available: false, sentence,
+      content_type: 'application/pdf', document_name: 'referral.pdf',
+    })));
+    render(<ReceivedEncodedPages client={client()} faxId="expired" canDownload />);
+    expect(await screen.findByText(sentence)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Download the original document' })).toBeNull();
   });
 });

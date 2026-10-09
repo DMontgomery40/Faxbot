@@ -8,8 +8,8 @@ from ..client import segment
 from ..errors import CliError, EXIT_FAILURE
 from ..output import local_time
 
-numbers = typer.Typer(help='Encoded pages (experimental): send a document as a few dense pages that the recipient\'s '
-                           'Faxbot decodes, where the recipient agreed and it costs less.', no_args_is_help=True)
+numbers = typer.Typer(help='Encoded pages (experimental): allow recipient-approved documents that the recipient\'s '
+                           'Faxbot decodes. Faxbot compares each attempt\'s route.', no_args_is_help=True)
 tools = typer.Typer(help='Encode a document as payload pages, or decode payload pages from a received fax file, on '
                          'this computer (experimental).', no_args_is_help=True)
 

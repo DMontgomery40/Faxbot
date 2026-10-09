@@ -320,8 +320,14 @@ BEHAVIOR_RULE = (
     "For document-handling changes, trace sending, receiving, email delivery and document download "
     "through the code and relevant tests. Check defaults, explicit tools, automatic selection, recipient "
     "agreement, endpoint and decoder compatibility, integrity checks, retained originals and failure "
-    "behavior. Explain the affected flows in maintained operator guides. Distinguish supported conditions "
-    "from unverified limits; a failing example alone does not prove a universal limitation."
+    "behavior. Check each affected client, including any browser decoder, rather than assuming all clients "
+    "support a new format. Explain every changed operator behavior that lacks instructions in maintained "
+    "guides; missing instructions are documentation work, not a reason to leave a code finding instead. "
+    "Trace value units through their conversion helpers before reporting a numerical mismatch. Before "
+    "calling a capability untested, read dated verification recorded in the changed tests and README, "
+    "and state the evidence's actual scope. One recorded live route is neither universal interoperability "
+    "nor no live validation; inability to repeat a recorded check here does not erase it. Distinguish "
+    "supported conditions from unverified limits; a failing example alone does not prove a universal limitation."
 )
 
 DIFF_FORMAT = ("Write the diff exactly as `git diff` prints it: a `diff --git a/<path> b/<path>` line, `--- a/<path>` "

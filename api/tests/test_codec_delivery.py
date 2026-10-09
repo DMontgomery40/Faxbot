@@ -119,22 +119,19 @@ def _payload_pdf(tmp_path, document, **options):
     return (tmp_path / 'payload.pdf').read_bytes(), encoded
 
 
-class _Receipts:
-    """An in-memory stand-in for the codec_receipts table."""
-
-    def __init__(self, monkeypatch):
-        self.rows = {}
-        monkeypatch.setattr(receive, 'receipt_for', lambda engine, fax: self.rows.get(fax))
-        monkeypatch.setattr(receive, 'record_receipt', self.record)
-
-    def record(self, engine, fax, values, now=None):
-        self.rows.setdefault(fax, {'inbound_fax_id': fax, **values})
-        return self.rows[fax]
+def _received_engine(identity, source):
+    """Register an actual received document, including its access and retention boundary."""
+    from datetime import datetime
+    from app.routing.background import installation_engine
+    now = datetime.utcnow()
+    main.app.state.access_runtime.inbound.accept(dict(
+        id=identity, from_number=NUMBER, to_number='+12025550456', status='received', backend='sip',
+        pages=1, pdf_path=str(source), created_at=now, received_at=now, updated_at=now))
+    return installation_engine(main.app)[0]
 
 
 @pytest.mark.parametrize('layout', ['grid', 'enumerative'])
-def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_path, monkeypatch, layout):
-    receipts = _Receipts(monkeypatch)
+def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_path, client, layout):
     original = tmp_path / 'original.pdf'
     from reportlab.pdfgen import canvas
     page = canvas.Canvas(str(original))
@@ -142,44 +139,45 @@ def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_p
     page.save()
     document = codec.Document(original.read_bytes(), 'application/pdf', 'referral.pdf')
     data, _ = _payload_pdf(tmp_path, document, layout=layout)
-    receipt = receive.check_document(None, 'fax-1', data, folder=tmp_path)
+    engine = _received_engine('fax-1', tmp_path / 'payload.pdf')
+    receipt = receive.check_document(engine, 'fax-1', data, folder=tmp_path)
     assert receipt['state'] == 'decoded' and receipt['document_sha256'] == document.sha256
     assert receipt['layout'] == layout
     assert Path(receipt['document_path']).read_bytes() == document.data
     assert receive.sentence(receipt) == ('Carried an encoded document on 1 page; Faxbot decoded it and checked its '
                                          'fingerprint (experimental).')
-    assert receive.check_document(None, 'fax-1', b'not even read', folder=tmp_path) is receipt  # written once
-    attachment, note = receive.email_extras(None, {'inbound_fax_id': 'fax-1'}, data, folder=tmp_path)
+    assert receive.check_document(engine, 'fax-1', b'not even read', folder=tmp_path) == receipt  # success is cached
+    attachment, note = receive.email_extras(engine, {'inbound_fax_id': 'fax-1'}, data, folder=tmp_path)
     message = EmailMessage()
     message.set_content('A fax arrived.\n')
     message.add_attachment(data, maintype='application', subtype='pdf', filename='fax.pdf')
     receive.attach(message, attachment, note)
     names = [part.get_filename() for part in message.iter_attachments()]
     assert names == ['fax.pdf', 'decoded-referral.pdf'] and 'decoded it and attached' in message.get_body().get_content()
-    assert receipts.rows['fax-1']['state'] == 'decoded'
+    assert receive.receipt_for(engine, 'fax-1')['state'] == 'decoded'
 
 
-def test_a_payload_fax_that_cannot_be_decoded_is_delivered_as_received_with_one_sentence(tmp_path, monkeypatch):
-    _Receipts(monkeypatch)
+def test_a_payload_fax_that_cannot_be_decoded_is_delivered_as_received_with_one_sentence(tmp_path, client):
     document = codec.Document(b'x' * 5000, 'text/plain', 'note.txt')
     data, encoded = _payload_pdf(tmp_path, document, layout='grid', secret='partner key one', fec='low')
-    receipt = receive.check_document(None, 'fax-2', data, folder=tmp_path)
+    engine = _received_engine('fax-2', tmp_path / 'payload.pdf')
+    receipt = receive.check_document(engine, 'fax-2', data, folder=tmp_path)
     assert receipt['state'] == 'failed'
     assert receipt['reason'] == ('The document is encrypted and no shared key is set for this sender, so the fax is '
                                  'delivered as received.')
-    attachment, note = receive.email_extras(None, {'inbound_fax_id': 'fax-2'}, data, folder=tmp_path)
+    attachment, note = receive.email_extras(engine, {'inbound_fax_id': 'fax-2'}, data, folder=tmp_path)
     assert attachment is None and note == receipt['reason']
 
 
-def test_an_ordinary_fax_has_no_decode_result(tmp_path, monkeypatch):
-    receipts = _Receipts(monkeypatch)
+def test_an_ordinary_fax_has_no_decode_result(tmp_path, client):
     from PIL import Image, ImageDraw
     page = Image.new('1', (1728, 2156), 1)
     ImageDraw.Draw(page).text((100, 100), 'An ordinary synthetic fax.', fill=0)
     page.save(tmp_path / 'plain.tiff', compression='group4', dpi=(204, 196))
     tiff_to_pdf(str(tmp_path / 'plain.tiff'), str(tmp_path / 'plain.pdf'))
-    assert receive.check_document(None, 'fax-3', (tmp_path / 'plain.pdf').read_bytes(), folder=tmp_path) is None
-    assert receipts.rows == {}
+    engine = _received_engine('fax-3', tmp_path / 'plain.pdf')
+    assert receive.check_document(engine, 'fax-3', (tmp_path / 'plain.pdf').read_bytes(), folder=tmp_path) is None
+    assert receive.receipt_for(engine, 'fax-3') is None
 
 
 # --- over HTTP and through acceptance -------------------------------------------------------------------------

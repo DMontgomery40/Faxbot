@@ -5,14 +5,15 @@ probed for the payload pattern (cheap, so every fax can be checked). A payload
 fax is decoded, its SHA-256 checked, a PDF original validated, and the
 original kept beside the received fax, whose image is never changed. A fax
 whose pages cannot be decoded is delivered as received, with one sentence
-saying why. The result is written once in ``codec_receipts``.
+saying why. Successful results are kept in ``codec_receipts``; a failed
+attempt is checked again after shared-key settings change.
 """
 import logging
 import os
 from pathlib import Path
 import tempfile
 
-from .store import CodecSettings, CodecStoreError, receipt_for, record_receipt
+from .store import CodecSettings, CodecStoreError, receipt_for, record_receipt, utcnow
 
 log = logging.getLogger(__name__)
 EXTENSIONS = {'application/pdf': '.pdf', 'text/plain': '.txt'}
@@ -30,24 +31,34 @@ def check_document(engine, inbound_fax_id, data, *, from_number=None, folder, se
         existing = receipt_for(engine, inbound_fax_id)
     except CodecStoreError:
         return None
+    settings = CodecSettings(engine, seal)
     if existing is not None:
-        return existing
+        if existing['state'] == 'decoded':
+            return existing
+        try:
+            if not settings.keys_changed_since(existing['created_at']):
+                return existing
+        except CodecStoreError:
+            return existing
+    # Start before reading keys: a key changed during decoding still permits a later retry.
+    attempted_at = utcnow()
     # Probe page one only; an ordinary fax costs one page's image and one scan for the pattern.
     probe = codec.first_page(data)
     if probe is None or not codec.looks_like_payload(probe):
         return None
     try:
-        secrets = CodecSettings(engine, seal).secrets(from_number)
+        secrets = settings.secrets(from_number)
     except Exception:
         secrets = []
     try:
         document, report = codec.decode_images(codec.read_images(data), secrets=secrets)
     except codec.CodecError as error:
-        return record_receipt(engine, inbound_fax_id, {'state': 'failed', 'reason': _reason(error)})
+        return record_receipt(engine, inbound_fax_id, {'state': 'failed', 'reason': _reason(error)}, now=attempted_at)
     except Exception:
         log.warning('Decoding a received payload fax failed; it is delivered as received.')
         return record_receipt(engine, inbound_fax_id, {
-            'state': 'failed', 'reason': 'The encoded pages could not be read, so the fax is delivered as received.'})
+            'state': 'failed', 'reason': 'The encoded pages could not be read, so the fax is delivered as received.'},
+            now=attempted_at)
     if document.content_type == 'application/pdf':
         from ..conversion import DocumentConversionError, validate_pdf
         descriptor, temporary = tempfile.mkstemp(prefix='.codec-', suffix='.pdf', dir=folder)
@@ -58,25 +69,52 @@ def check_document(engine, inbound_fax_id, data, *, from_number=None, folder, se
         except DocumentConversionError:
             return record_receipt(engine, inbound_fax_id, {
                 'state': 'failed', 'reason': 'The decoded document is not a PDF Faxbot can open, so the fax is '
-                                             'delivered as received.'})
+                                             'delivered as received.'}, now=attempted_at)
         finally:
             Path(temporary).unlink(missing_ok=True)
-    target = Path(folder) / f'{inbound_fax_id}-decoded-{document.sha256[:12]}{EXTENSIONS[document.content_type]}'
-    descriptor, temporary = tempfile.mkstemp(prefix='.codec-', dir=folder)
+    return _publish_document(engine, inbound_fax_id, document, report, folder, attempted_at)
+
+
+def _publish_document(engine, inbound_fax_id, document, report, folder, attempted_at):
+    """Publish only while the received source is retained, sharing its cleanup lock."""
+    from ..inbound.retention import locked_document
+    temporary = published = None
     try:
-        with os.fdopen(descriptor, 'wb') as handle:
-            handle.write(document.data)
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, target)
-        temporary = None
+        with locked_document(engine, inbound_fax_id) as (connection, inbound):
+            if inbound is None or inbound['status'] != 'received' or not inbound['pdf_path']:
+                return None
+            # Another checker may have completed while this one was decoding.
+            existing = receipt_for(engine, inbound_fax_id, connection=connection)
+            if existing is not None and existing['state'] == 'decoded':
+                return existing
+            target = Path(folder) / f'{inbound_fax_id}-decoded-{document.sha256[:12]}{EXTENSIONS[document.content_type]}'
+            descriptor, temporary = tempfile.mkstemp(prefix='.codec-', dir=folder)
+            with os.fdopen(descriptor, 'wb') as handle:
+                handle.write(document.data)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, target)
+            published = target
+            temporary = None
+            return record_receipt(engine, inbound_fax_id, {
+                'state': 'decoded', 'layout': report.get('layout'), 'pages_encoded': report.get('pages_expected'),
+                'document_sha256': document.sha256, 'content_type': document.content_type,
+                'document_name': (document.name or None) and document.name[:200], 'size_bytes': len(document.data),
+                'document_path': str(target)}, now=attempted_at, connection=connection)
+    except Exception:
+        if published is not None:
+            try:
+                # Context exit can fail at commit. Recheck under the lock so an
+                # uncertain commit or another successful checker never loses its file.
+                with locked_document(engine, inbound_fax_id) as (connection, _):
+                    stored = receipt_for(engine, inbound_fax_id, connection=connection)
+                    if not stored or stored['state'] != 'decoded' or stored.get('document_path') != str(published):
+                        published.unlink(missing_ok=True)
+            except Exception:
+                log.warning('A decoded original could not be published or safely removed; check received-document storage.')
+        raise
     finally:
         if temporary:
             Path(temporary).unlink(missing_ok=True)
-    return record_receipt(engine, inbound_fax_id, {
-        'state': 'decoded', 'layout': report.get('layout'), 'pages_encoded': report.get('pages_expected'),
-        'document_sha256': document.sha256, 'content_type': document.content_type,
-        'document_name': (document.name or None) and document.name[:200], 'size_bytes': len(document.data),
-        'document_path': str(target)})
 
 
 def sentence(receipt):
@@ -108,7 +146,8 @@ def email_extras(engine, item, document, *, folder, seal=None):
             'the fax as received is attached too (experimental).')
     except Exception:
         log.warning('Checking a received fax for encoded pages failed; it is delivered as received.')
-        return None, None
+        return None, ('Faxbot could not check this fax for an encoded original, so the fax is delivered as '
+                      'received.')
 
 
 def attach(message, attachment, note):
