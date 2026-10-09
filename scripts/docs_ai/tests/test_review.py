@@ -354,3 +354,40 @@ def test_audit_batches_accumulate_findings_and_a_failed_batch_is_reported(reposi
     assert '### Batch 2: docs/orphan.md' in findings and '- docs/orphan.md: not in mkdocs.yml nav.' in findings
     assert _run(repository, 'x', '--audit', '--pages', 'docs/none/*.md').stderr.strip() == (
         'No maintained page under docs/ matches those patterns.')
+
+
+def test_generated_cli_is_readable_evidence_but_never_an_edit_or_audit_target(autopilot, repository):
+    for name in ('docs/reference/cli.md', 'docs/reference/access-api.md', 'docs/operations/receiving.md'):
+        path = repository / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('Reference evidence\n')
+    git(repository, 'add', 'docs')
+    git(repository, 'commit', '-qm', 'Reference and operator pages')
+    context = autopilot.review_context('HEAD~1')
+    for pages in (context['pages'].splitlines(), autopilot.maintained_pages()):
+        assert 'docs/reference/cli.md' not in pages
+        assert 'docs/reference/access-api.md' in pages
+        assert 'docs/operations/receiving.md' in pages
+    assert 'Reference evidence' in autopilot.tool_read_file('HEAD', 'docs/reference/cli.md')
+    for prompt in (autopilot.proposal_prompt(context),
+                   autopilot.audit_prompt(['docs/guide.md'], ['docs/guide.md'], set(), 'f' * 40)):
+        assert 'Never edit docs/reference/cli.md' in prompt
+        assert 'maintained operator guides' in prompt
+        assert 'sending, receiving, email delivery and document download' in prompt
+        assert 'automatic selection' in prompt and 'decoder compatibility' in prompt
+
+
+def test_a_hunk_combining_context_from_different_sections_is_refused_without_guessing(autopilot, repository):
+    original = '# Decode\nDecode with a key.\n\n# Encode\nEncrypt with a key.\n\n# Profiles\nSaved profiles.\n'
+    (repository / 'docs/guide.md').write_text(original)
+    git(repository, 'add', 'docs/guide.md')
+    git(repository, 'commit', '-qm', 'Two different command sections')
+    mixed = ('diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n'
+             '@@ -5,4 +5,5 @@\n Decode with a key.\n \n+New explanation.\n # Profiles\n Saved profiles.\n')
+    before = git(repository, 'status', '--porcelain')
+    with pytest.raises(autopilot.ProposalError, match='does not apply'):
+        autopilot.validated_patch(mixed)
+    assert (repository / 'docs/guide.md').read_text() == original
+    assert not git(repository, 'diff', '--cached')
+    assert (repository / 'mkdocs-docs-llm.rejected.patch').read_text() == mixed
+    assert git(repository, 'status', '--porcelain') == before + '?? mkdocs-docs-llm.rejected.patch\n'

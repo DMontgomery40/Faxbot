@@ -38,6 +38,7 @@ export interface CodecSave {
 export interface CodecReceived {
   encoded: boolean;
   state: 'decoded' | 'failed' | null;
+  document_available?: boolean;
   sentence: string | null;
   document_name?: string | null;
   content_type?: string | null;

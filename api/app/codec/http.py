@@ -6,9 +6,12 @@ fax's encoded pages are said in its page line (``pages.views.sent_view``, the
 Sent detail), because each attempt chooses its pages' layout.
 """
 from datetime import timezone
+import os
+from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.http import private_operation, require_identity, runtime as access_runtime
@@ -24,8 +27,8 @@ router = APIRouter(prefix='/codec', tags=['Encoded pages (experimental)'])
 
 AGREEMENT = ('The recipient agreed to receive documents as encoded pages that their Faxbot, or the decoder at '
              'faxbot.net/decode, turns back into the original.')
-LIMITS = ('Experimental. Use it only for recipients outside HIPAA-style rules: an encoded page is not readable '
-          'as a fax until it is decoded.')
+LIMITS = ('Experimental. The recipient must decode the pages to read the document and agree that encoded pages '
+          'meet their document-handling requirements.')
 STYLE_TEXT = {'dense': 'Dense pages', 'picture': 'A picture of the first page'}
 LEVEL_TEXT = {'low': 'Low', 'medium': 'Medium', 'high': 'High'}
 
@@ -77,8 +80,8 @@ def _number_view(settings, number):
     history = settings.history(number)
     agreement = next((row for row in history if row['action'] == 'on'), None) if setting['enabled'] else None
     if setting['enabled']:
-        state = ('On: when encoded pages cost less on the fax’s route, faxes to this number go as encoded '
-                 'pages (experimental).')
+        state = ('On: Faxbot compares encoded pages with ordinary pages for each attempt. It can choose a '
+                 'lower estimated bill or fewer pages on a plan or an unpriced route (experimental).')
     else:
         state = 'Off: faxes to this number go as normal pages.'
     return {'number': number, 'enabled': setting['enabled'], 'style': setting['style'], 'fec': setting['fec'],
@@ -147,10 +150,14 @@ async def delete_number(number: str, request: Request, identity=Depends(require_
     return await _save(request, identity, _number(number, request), NumberSetting(enabled=False))
 
 
-def _receipt_view(receipt):
+def _receipt_view(receipt, document_available=False):
     if receipt is None:
-        return {'encoded': False, 'state': None, 'sentence': None}
-    return {'encoded': True, 'state': receipt['state'], 'sentence': receive.sentence(receipt),
+        return {'encoded': False, 'state': None, 'sentence': None, 'document_available': False}
+    sentence = receive.sentence(receipt)
+    if receipt['state'] == 'decoded' and not document_available:
+        sentence += ' The decoded original is no longer available.'
+    return {'encoded': True, 'state': receipt['state'], 'sentence': sentence,
+            'document_available': document_available,
             'document_name': receipt.get('document_name'), 'content_type': receipt.get('content_type'),
             'size_bytes': receipt.get('size_bytes'), 'sha256': receipt.get('document_sha256'),
             'pages_encoded': receipt.get('pages_encoded'), 'experimental': True}
@@ -162,37 +169,98 @@ async def _received_document(request, identity, inbound_id):
         identity.actor, inbound_id)))
 
 
-@router.get('/received/{inbound_id}')
-async def received(inbound_id: str, request: Request, identity=Depends(require_identity)):
-    """The decode result for a received fax; a fax not checked yet is checked now."""
-    document = await _received_document(request, identity, inbound_id)
+def _available(receipt, document):
+    return bool(receipt and receipt['state'] == 'decoded' and receipt.get('document_path')
+                and document and document['status'] == 'received' and document['pdf_path']
+                and Path(receipt['document_path']).is_file())
+
+
+async def _check_received(request, identity, inbound_id):
+    """Both detail and direct download perform the same authorized, key-change-bounded check."""
+    await _received_document(request, identity, inbound_id)
     engine, runtime = _engine(request)
     revision = request.scope['faxbot.configuration'].active
 
     def check():
-        found = receipt_for(engine, inbound_id)
-        if found is not None or document.get('status') != 'received' or not document.get('pdf_path'):
-            return _receipt_view(found)
+        from ..inbound.retention import locked_document
+        with locked_document(engine, inbound_id) as (connection, document):
+            found = receipt_for(engine, inbound_id, connection=connection)
+            already_decoded = found is not None and found['state'] == 'decoded'
+            unavailable = not document or document['status'] != 'received' or not document['pdf_path']
+            if already_decoded or unavailable:
+                return found, _available(found, document)
+        if found is not None and not CodecSettings(engine).keys_changed_since(found['created_at']):
+            return found, False
         from ..intake.worker import load_document
         try:
             data = load_document(document['pdf_path'], revision.values)
         except Exception:
-            return _receipt_view(None)
-        return _receipt_view(receive.check_document(
+            return found, False
+        receive.check_document(
             engine, inbound_id, data, from_number=document.get('from_number'),
-            folder=revision.values.fax_data_dir, seal=_seal(runtime)))
-    return await _call(check)
+            folder=revision.values.fax_data_dir, seal=_seal(runtime))
+        with locked_document(engine, inbound_id) as (connection, document):
+            found = receipt_for(engine, inbound_id, connection=connection)
+            return found, _available(found, document)
+    return engine, await _call(check)
+
+
+@router.get('/received/{inbound_id}')
+async def received(inbound_id: str, request: Request, identity=Depends(require_identity)):
+    """Check a received document once, or retry a failure after shared-key settings change."""
+    _, (receipt, available) = await _check_received(request, identity, inbound_id)
+    return _receipt_view(receipt, available)
 
 
 @router.get('/received/{inbound_id}/document')
 async def received_document(inbound_id: str, request: Request, identity=Depends(require_identity)):
-    await _received_document(request, identity, inbound_id)
-    engine, _ = _engine(request)
-    receipt = await _call(lambda: receipt_for(engine, inbound_id))
-    if receipt is None or receipt['state'] != 'decoded' or not receipt.get('document_path'):
+    engine, (_, available) = await _check_received(request, identity, inbound_id)
+    if not available:
         raise HTTPException(404, detail='This fax has no decoded document.')
-    audit_event('codec_document_served', job_id=inbound_id)
-    extension = receive.EXTENSIONS.get(receipt['content_type'], '.pdf')
-    return FileResponse(receipt['document_path'], media_type=receipt['content_type'],
-                        filename=f'decoded_{inbound_id}{extension}',
-                        headers={'Cache-Control': 'no-cache, no-store, must-revalidate'})
+    opened = []
+
+    def acquire():
+        from ..inbound.retention import locked_document
+        with locked_document(engine, inbound_id) as (connection, document):
+            receipt = receipt_for(engine, inbound_id, connection=connection)
+            if not _available(receipt, document):
+                raise HTTPException(404, detail='This fax has no decoded document.')
+            try:
+                handle = Path(receipt['document_path']).open('rb')
+            except OSError:
+                raise HTTPException(404, detail='This fax has no decoded document.') from None
+            opened.append(handle)
+            return receipt, handle
+
+    try:
+        receipt, handle = await _call(acquire)
+        audit_event('codec_document_served', job_id=inbound_id)
+        extension = receive.EXTENSIONS.get(receipt['content_type'], '.pdf')
+        filename = quote(f'decoded_{inbound_id}{extension}')
+        return _DecodedResponse(handle, media_type=receipt['content_type'], headers={
+            'Content-Disposition': f"attachment; filename*=utf-8''{filename}",
+            'Content-Length': str(os.fstat(handle.fileno()).st_size),
+            'Cache-Control': 'no-cache, no-store, must-revalidate'})
+    except BaseException:
+        # run_lifecycle_step joins acquisition even when the request is cancelled.
+        for handle in opened:
+            handle.close()
+        raise
+
+
+class _DecodedResponse(StreamingResponse):
+    """A retained original opened under its parent lock; cleanup may unlink it during transfer."""
+
+    def __init__(self, handle, **kwargs):
+        self.handle = handle
+        super().__init__(self.chunks(), **kwargs)
+
+    def chunks(self):
+        while chunk := self.handle.read(64 * 1024):
+            yield chunk
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.handle.close()

@@ -188,7 +188,26 @@ async def test_without_a_subaddress_the_printed_barcode_pairs_it(noticed, tmp_pa
     notice.NoticeReceiver(b_service()).step()
     row = notice.NoticeStore(b_engine()).find('receiver', attempt)
     assert row['state'] == 'paired' and row['matched_by'] == 'barcode' and row['inbound_id'] == fax_id
-    assert len(b_items(noticed['b_client'])) == 1
+    # Advance the periodic feed explicitly: it keeps the notice's history but never emails it beside the original.
+    intake = b_service().store.intake
+    intake.feed_inbound()
+    items = b_items(noticed['b_client'])
+    assert len(items) == 2
+    (document,) = [item for item in items if item['source'] == 'direct']
+    (fax_notice,) = [item for item in items if item['source'] == 'fax']
+    with b_engine().connect() as connection:
+        filed = connection.execute(sa.text(
+            "SELECT inbound_fax_id FROM inbound_imports WHERE source = 'local' "
+            "AND account = :account AND operation_id = :message"),
+            {'account': 'direct:' + row['peer_id'], 'message': attempt}).scalar_one()
+    assert document['inbound_fax_id'] == filed and filed != fax_id
+    assert stored_document(noticed['b_client']) == [original]
+    assert fax_notice['inbound_fax_id'] == fax_id and fax_notice['state'] == 'received'
+    assert fax_notice['next_attempt_at'] is None and fax_notice['attempts'] == 0
+    assert fax_notice['status'] == ('This is the fax notice for a document delivered directly; that document is '
+                                    'emailed instead.')
+    intake.feed_inbound()
+    assert {item['id'] for item in b_items(noticed['b_client'])} == {item['id'] for item in items}
 
 
 @pytest.mark.asyncio

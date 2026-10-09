@@ -19,6 +19,10 @@ raster, so they are only a candidate on a route where Faxbot makes the fax
 image itself and a previous call to the number negotiated ECM and fine
 resolution. Other routes use grid pages, sturdy ones when a provider renders
 the PDF itself.
+
+On Faxbot's own engines each candidate, and the normal pages it competes
+with, is priced in its smallest usable coding. This happens before filtering
+or ranking: a Group-4 estimate must not discard a page that costs less in MH.
 """
 from dataclasses import dataclass
 import io
@@ -103,18 +107,39 @@ def _rank(prediction):
             prediction.seconds if prediction.seconds is not None else unknown)
 
 
+def _measured_shape(Shape, frames, resolution, layout, usable):
+    """The same eligible coding and engine tuning used by the outer layout chooser."""
+    from ..pages import coding
+    measured = coding.measure(frames, tuning=usable.tuning)
+    choice = coding.best_coding(frames, usable.codings, ecm=usable.ecm, measured=measured,
+                                negotiate=usable.left_out.get('JBIG') == coding.JBIG_NOT_ON_RECORD)
+    return Shape(pages=len(frames), page_bits=tuple(measured['MMR']), resolution=resolution,
+                 layout=layout, measured=measured, coding=choice.priced)
+
+
 def choose(document, *, route_key, destination, pages_original, page_bits_original, exact_raster,
            ecm_and_fine_seen, provider_renders, fec='medium', style='dense', secret=None, picture=None,
-           resolution='fine', encoder=None, tools=None):
-    """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake."""
+           resolution='fine', encoder=None, tools=None, usable=None, frames_original=None):
+    """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake.
+
+    ``usable`` and ``frames_original`` let Faxbot's own engines price every layout in the coding the call can
+    use. Provider-rendered routes retain their estimate because Faxbot does not select their coding.
+    """
     from .. import codec
     tools = tools or predictor()
     if tools is None:
         return Choice(False, 'Faxbot cannot yet predict what this route charges, so the fax goes as normal pages.')
     predict, Shape = tools
     encode = encoder or codec.encode_document
-    original = predict(route_key, destination, Shape(pages=pages_original, page_bits=tuple(page_bits_original),
-                                                     resolution=resolution, layout='normal'))
+    usable = usable if exact_raster and not provider_renders else None
+    if usable is not None:
+        if frames_original is None or len(frames_original) != pages_original:
+            raise ValueError('The original pages are required to compare measured fax codings.')
+        shape = _measured_shape(Shape, frames_original, resolution, 'normal', usable)
+    else:
+        shape = Shape(pages=pages_original, page_bits=tuple(page_bits_original),
+                      resolution=resolution, layout='normal')
+    original = predict(route_key, destination, shape)
     if style == 'picture':
         candidates = [dict(layout='picture')]
     elif exact_raster and ecm_and_fine_seen:
@@ -128,9 +153,12 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
                            picture=picture if options['layout'] == 'picture' else None, **options)
         except codec.CodecError:
             continue
-        bits = tuple(g4_page_bits(page) for page in pages.pages)
-        prediction = predict(route_key, destination, Shape(pages=pages.page_count, page_bits=bits,
-                                                           resolution=resolution, layout='codec'))
+        if usable is not None:
+            shape = _measured_shape(Shape, pages.pages, resolution, 'codec', usable)
+        else:
+            bits = tuple(g4_page_bits(page) for page in pages.pages)
+            shape = Shape(pages=pages.page_count, page_bits=bits, resolution=resolution, layout='codec')
+        prediction = predict(route_key, destination, shape)
         if not saves(original, prediction, pages_original, pages.page_count):
             continue
         if best is None or _rank(prediction) < _rank(best[1]):

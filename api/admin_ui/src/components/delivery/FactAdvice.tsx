@@ -8,6 +8,7 @@ import AdminAPIClient from '../../api/client';
 import type { FactAdvice as Advice, FactRecipient, FactRow } from '../../api/factAdviceTypes';
 import { ScreenHeader } from '../access/AccessViews';
 import { formatMoneyList } from './shared';
+import PortfolioPlanner from './PortfolioPlanner';
 
 const KIND_LABEL: Record<FactRow['kind'], string> = {
   authorization: 'Needs their agreement',
@@ -79,6 +80,7 @@ export default function FactAdvice({ client }: { client: AdminAPIClient }) {
           <Typography variant="body2" color="text.secondary">{advice.note}</Typography>
         </Stack>
       )}
+      <PortfolioPlanner client={client} />
     </Box>
   );
 }

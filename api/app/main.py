@@ -82,6 +82,7 @@ from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
 from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
+from .routing.portfolio_http import router as routing_portfolio_router
 from .routing.number_http import router as routing_number_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.polling_http import router as routing_polling_router
@@ -219,6 +220,7 @@ app.include_router(management_router)
 app.include_router(routing_router)
 app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
+app.include_router(routing_portfolio_router)
 app.include_router(routing_number_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_polling_router)
@@ -2347,39 +2349,21 @@ async def _cleanup_once():
     cutoff = datetime.utcnow() - timedelta(days=max(1, settings.artifact_ttl_days))
     await run_lifecycle_step(lambda: _cleanup_outbound_documents(cutoff))
     await run_lifecycle_step(lambda: _cleanup_case_originals(cutoff))
-    with SessionLocal() as db:
-        # Inbound retention cleanup
-        try:
-            from .db import InboundFax  # type: ignore
-        except Exception:
-            InboundFax = None  # type: ignore
-        if InboundFax is not None:
-            now = datetime.utcnow()
-            storage = get_storage()
-            rows = db.query(InboundFax).all()  # type: ignore[attr-defined]
-            for fx in rows:
-                try:
-                    if fx.retention_until and fx.retention_until <= now:
-                        # Delete stored PDF (local or S3)
-                        if fx.pdf_path:
-                            try:
-                                storage.delete(str(fx.pdf_path))
-                            except Exception:
-                                pass
-                            fx.pdf_path = None
-                        # Delete local TIFF if present
-                        if fx.tiff_path and os.path.exists(fx.tiff_path):
-                            try:
-                                os.remove(fx.tiff_path)
-                            except FileNotFoundError:
-                                pass
-                            fx.tiff_path = None
-                        fx.updated_at = now
-                        db.add(fx)
-                        db.commit()
-                        audit_event("inbound_deleted", job_id=fx.id)
-                except Exception:
-                    continue
+    await run_lifecycle_step(_cleanup_inbound_documents)
+
+
+def _cleanup_inbound_documents():
+    from .inbound.retention import remove_expired_documents
+    try:
+        removed, attention = remove_expired_documents(
+            _deliveries().configuration.engine, get_storage(), settings.fax_data_dir)
+    except Exception:
+        audit_event('inbound_retention_requires_attention')
+        return
+    for identity in removed:
+        audit_event('inbound_deleted', job_id=identity)
+    for identity in attention:
+        audit_event('inbound_retention_requires_attention', job_id=identity)
 
 
 @app.get("/fax/{job_id}/pdf")

@@ -84,7 +84,7 @@ def _secret(engine, seal, number):
 
 
 def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path, seal=None, exact_raster=False,
-                  resolution='fine', tools=None):
+                  resolution='fine', tools=None, usable=None):
     """``AttemptPages`` when the codec's own check (``decision.choose``) says encoded pages save on ``route``,
     else None. Writes nothing.
 
@@ -107,7 +107,7 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
         document, route_key=route, destination=number, pages_original=len(frames), page_bits_original=page_bits,
         exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
         provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
-        picture=picture, resolution=resolution, tools=tools)
+        picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames)
     if not choice.use:
         log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
         return None

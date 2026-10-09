@@ -229,7 +229,7 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
             return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap,
                                           pdf_path=str(pdf), seal=seal, recipient=chosen,
                                           exact_raster=mode == 'image',
-                                          resolution='fine' if call_fine else 'standard')
+                                          resolution='fine' if call_fine else 'standard', usable=usable)
         choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
                                           dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                           card=route_card, boundary_seconds=cap.boundary_seconds,

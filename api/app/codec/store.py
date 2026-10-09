@@ -1,9 +1,10 @@
 """Stored state of the experimental payload codec: recipient opt-ins, their history, sends and decode results.
 
 Runtime code reflects the 0031 tables; it never imports the frozen metadata.
-Opt-in history, send rows and decode results are written once and never
-updated. A shared key is sealed with the installation key; only its
-fingerprint is ever read back for display.
+Opt-in history, send rows and successful decode results are immutable.
+Failed decode attempts may be retried after shared-key settings change; their
+created_at is the latest failed attempt's start time. A shared key is sealed
+with the installation key; only its fingerprint is read back for display.
 """
 from datetime import datetime
 import uuid
@@ -127,6 +128,13 @@ class CodecSettings:
                 t.c.phone_number == number)).scalar_one_or_none()
         return None if envelope is None else self.seal.open(envelope, number)
 
+    def keys_changed_since(self, moment):
+        """Any stored decoding key changed since this attempt, including another partner's key."""
+        t = tables(self.engine)['codec_numbers']
+        with self.engine.connect() as connection:
+            # Clearing a key can expose another key beyond the decoder's bounded candidate set.
+            return connection.execute(sa.select(t.c.id).where(t.c.updated_at >= moment).limit(1)).first() is not None
+
     def history(self, number):
         t = tables(self.engine)['codec_number_changes']
         with self.engine.connect() as connection:
@@ -215,24 +223,38 @@ def sends_for(engine, job_ids):
     return {row['id']: dict(row) for row in rows}
 
 
-def receipt_for(engine, inbound_fax_id):
+def receipt_for(engine, inbound_fax_id, *, connection=None):
     t = tables(engine)['codec_receipts']
+    query = sa.select(t).where(t.c.inbound_fax_id == inbound_fax_id)
+    if connection is not None:
+        row = connection.execute(query).mappings().first()
+        return dict(row) if row is not None else None
     with engine.connect() as connection:
-        row = connection.execute(sa.select(t).where(t.c.inbound_fax_id == inbound_fax_id)).mappings().first()
+        row = connection.execute(query).mappings().first()
     return dict(row) if row is not None else None
 
 
-def record_receipt(engine, inbound_fax_id, values, now=None):
-    """Write the one decode result for a received fax; an existing result is kept as it is."""
+def record_receipt(engine, inbound_fax_id, values, now=None, *, connection=None):
+    """Record an attempt without demoting success or overwriting a newer failure.
+
+    An optional connection must hold the inbound document's retention lock;
+    publication uses it to make its final availability check and receipt atomic.
+    """
     t = tables(engine)['codec_receipts']
     now = now or utcnow()
-    with engine.begin() as connection:
-        existing = connection.execute(sa.select(t).where(t.c.inbound_fax_id == inbound_fax_id)).mappings().first()
-        if existing is not None:
-            return dict(existing)
-        row = {'id': uuid.uuid4().hex, 'inbound_fax_id': inbound_fax_id, 'created_at': now, **values}
-        try:
-            connection.execute(t.insert().values(**row))
-        except sa.exc.IntegrityError:
-            pass
-    return receipt_for(engine, inbound_fax_id)
+    if connection is None:
+        from ..inbound.retention import locked_document
+        with locked_document(engine, inbound_fax_id) as (connection, inbound):
+            if inbound is None or inbound['status'] != 'received' or not inbound['pdf_path']:
+                return None
+            return record_receipt(engine, inbound_fax_id, values, now, connection=connection)
+    existing = receipt_for(engine, inbound_fax_id, connection=connection)
+    if existing is None:
+        connection.execute(t.insert().values(
+            id=uuid.uuid4().hex, inbound_fax_id=inbound_fax_id, created_at=now, **values))
+    elif existing['state'] == 'failed':
+        condition = (t.c.inbound_fax_id == inbound_fax_id) & (t.c.state == 'failed')
+        if values['state'] == 'failed':
+            condition &= t.c.created_at <= now
+        connection.execute(t.update().where(condition).values({'reason': None, **values, 'created_at': now}))
+    return receipt_for(engine, inbound_fax_id, connection=connection)

@@ -79,7 +79,7 @@ def test_actual_index_rejects_extra_non_docs_staged_change(repository):
 
 
 @pytest.mark.parametrize('name', [
-    'api/notes.md', 'docs/generated/notes.md', 'docs/architecture/notes.md',
+    'api/notes.md', 'docs/generated/notes.md', 'docs/architecture/notes.md', 'docs/reference/cli.md',
     'docs/AGENTS.md', 'docs/CLAUDE.md', 'docs/SKILL.md',
 ])
 def test_rejects_non_instructional_markdown_targets(repository, name):
@@ -90,3 +90,42 @@ def test_rejects_non_instructional_markdown_targets(repository, name):
     patch = proposal(repository)
     with pytest.raises(ValueError, match='scope'):
         patch_scope.validate(patch)
+
+
+@pytest.mark.parametrize('change', ['edit', 'delete', 'rename_from', 'rename_to'])
+def test_generated_command_reference_is_protected_in_patches_and_the_real_index(repository, change):
+    generated = repository / 'docs/reference/cli.md'
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    if change != 'rename_to':
+        generated.write_text('Generated command reference\n')
+        git('add', 'docs/reference/cli.md')
+        git('commit', '-qm', 'Generated reference')
+    if change == 'edit':
+        generated.write_text('Handwritten addition to generated reference\n')
+    elif change == 'delete':
+        generated.unlink()
+    elif change == 'rename_from':
+        git('mv', 'docs/reference/cli.md', 'docs/commands.md')
+    else:
+        git('mv', 'docs/guide.md', 'docs/reference/cli.md')
+    git('add', '-A', 'docs')
+    with pytest.raises(ValueError, match='scope'):
+        patch_scope.validate_staged()
+    patch = proposal(repository)
+    before = git('status', '--porcelain')
+    with pytest.raises(ValueError, match='scope'):
+        patch_scope.validate(patch)
+    assert git('status', '--porcelain') == before
+
+
+def test_operator_guides_and_maintained_reference_pages_remain_valid(repository):
+    for name in ('docs/operations/receiving.md', 'docs/reference/access-api.md'):
+        path = repository / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('Maintained instructions\n')
+    git('add', 'docs')
+    patch_scope.validate_staged()
+    patch = proposal(repository)
+    before = git('status', '--porcelain')
+    patch_scope.validate(patch)
+    assert git('status', '--porcelain') == before

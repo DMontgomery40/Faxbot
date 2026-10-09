@@ -63,7 +63,8 @@ def test_opted_in_plain_http_session_uses_non_secure_unprefixed_cookie(installat
     installation.setenv('FAXBOT_CONSOLE_ORIGINS', 'http://192.0.2.10:8080')
     origin = {'Origin': 'http://192.0.2.10:8080'}
     with TestClient(app, base_url='http://192.0.2.10:8080') as client:
-        assert client.post('/auth/key-login', json={'api_key': BOOTSTRAP}).status_code == 403
+        missing_origin = client.post('/auth/key-login', json={'api_key': BOOTSTRAP})
+        assert missing_origin.status_code == 403, missing_origin.text
         assert client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
             headers={'Origin': 'http://evil.example'}).status_code == 403
         login = client.post('/auth/key-login', json={'api_key': BOOTSTRAP}, headers=origin)

@@ -2,7 +2,17 @@
 
 Faxbot is one self-hosted fax product: a FastAPI backend, React Admin Console, provider adapters, SIP fax engines, SDKs, and MCP servers. The current work makes delivery cheaper and more reliable while keeping the sender's normal fax-number workflow.
 
-The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. This is documented future work; preserve the current Phase 1 and four-fix implementation scope.
+The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. The README records which parts are implemented. The current user request defines the work to do; dated Phase 1 and four-fix batches are not permanent scope limits.
+
+## Research and decision evidence
+
+- Faxbot targets international companies. Evaluate laws and carrier terms for the actual country, activity, number rights, account, route and effective date. A restriction in one country does not reject a mechanism everywhere; an uncertain rule calls for research, not an invented prohibition.
+- The owner permits useful faxbot.net document relay, storage and processing architectures. An opaque notice ID and the public demo's access restrictions do not impose a product-wide ban on handling documents.
+- Treat missing measurements, local equipment, current engine support and current billing as experiment inputs. They do not establish impossibility or zero value. Consider compatible endpoints, commercial engines, other markets and uses beyond fax where justified.
+- Pursue ambitious research with the models and tools authorized for the task. Use work such as [OpenAI's mathematics repository](https://github.com/openai/math) as inspiration for rigorous experiments and proofs, without treating it as proof of a Faxbot claim. Earlier session-specific model choices and release deadlines do not cap research.
+- Keep owner decisions separate from agent interpretations and audit findings. Correct or delete a false derived rule at its active sources and copies; do not leave it in force beside an appended correction. Preserve authentic quotations and historical evidence without treating them as current instructions. Stale memories and handoffs must not override the current request or this guide.
+- Distinguish unsupported claims from useful mechanisms. Reject a claim of automatic compliance, unverified savings or guaranteed interoperability without rejecting the architecture itself. Preserve recipient agreement, document integrity, access controls and reconciliation of uncertain delivery.
+- Report byte reduction, line time, billed units and monetary effects separately. A byte reduction can reduce metered transport or storage costs; it must not count an avoided telephone call twice. Current accounting limits are not universal economic conclusions.
 
 ## Licensing
 
@@ -23,7 +33,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 - Read [README.md](README.md) for current capabilities and its [roadmap](README.md#roadmap) for planned work. Verify against the current checkout before treating a capability as complete.
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Preserve unrelated changes and coordinate when another agent owns the same files.
 - Historical Markdown from 2025 is kept locally under `.archived/`, preserving its original paths. That folder is excluded from Git and Docker builds. Use current docs for instructions; do not restore archived pages to navigation or treat their old plans as active work.
-- The cost-reduction work now includes routing and billing observations, an intake queue with SMTP delivery, verified direct partners, and recipient-approved case packets. The next focused batch covers number normalization, TXT pagination, client idempotency, and one-bit PDF images.
+- The cost-reduction work now includes routing and billing observations, an intake queue with SMTP delivery, verified direct partners, and recipient-approved case packets. Use the current README and task to identify the next batch; the earlier four-fix batch is historical context.
 - Read the [enterprise architecture](planning/enterprise-correspondence.md) for the current-code status matrix, proposed interfaces, E0–E4 dependencies, acceptance criteria and deferred integration questions. The smallest future foundation is trustworthy acquisition plus one generic import, owned queue, acknowledgement target and evidence export.
 - When present locally, `MAJOR-IMPROVEMENT-AGENT-PROMPT.md` contains the research implementation brief and the four-fix follow-up. `MAJOR-IMPROVEMENT.md` and `research/faxbot-cost-research-2026-10-03/` contain supporting research. Start with the package's `README.md`, `context/IMPLEMENTATION_HANDOFF.md`, `context/CLAIMS_AND_UNCERTAINTIES.md`, and `ADDENDUM_2026-10-03.md`. These local research files are intentionally excluded from Git; do not commit them. Their dated code snapshots and conversation instructions are context, not proof of current behavior or authorization for unrelated work.
 

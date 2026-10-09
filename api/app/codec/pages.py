@@ -11,7 +11,7 @@ Every page has, from the top:
   exact position of every column, wherever the page was shifted or scaled
   across;
 - three copies of the page header, written as grid rows;
-- the data, in the page's layout (grid, runs or picture);
+- the data, in the page's layout (grid, runs, picture or enumerative);
 - 4 mm of white at the bottom.
 
 A grid or picture row carries ``columns`` bits: a 32-bit stream bit offset,
@@ -22,10 +22,11 @@ on its own, so a dropped, repeated or partly damaged line costs only the
 groups it breaks. Run-coded lines are described in ``runs``.
 
 The page header (32 bytes, big-endian): magic 'FXP', version 1, layout
-(1 grid, 2 runs, 3 picture), parity symbols, page index, page count, the
+(1 grid, 2 runs, 3 picture, 4 enumerative), parity symbols, page index, page count, the
 document tag (the first four bytes of the container's SHA-256), the codeword
 count, the container length, the first and the end stream bit this page
-carries, the run limit and a reserved byte. Header rows use offsets
+carries, the run limit and profile byte (0 for older layouts, 1 for the
+immutable enumerative profile). Header rows use offsets
 0xFFFFFFF0-0xFFFFFFF2 and a zero tag in their CRC.
 """
 from binascii import crc_hqx
@@ -40,6 +41,7 @@ import struct
 from PIL import Image, ImageDraw, ImageFont
 
 from . import runs as runcode
+from . import enumerative
 from . import stream as streams
 from . import t4
 
@@ -69,7 +71,7 @@ RESOLUTIONS = {
     '300': Resolution('300', 300, 300, 2592, 3300),
     '400': Resolution('400', 400, 400, 3456, 4400),
 }
-LAYOUTS = {'grid': 1, 'runs': 2, 'picture': 3}
+LAYOUTS = {'grid': 1, 'runs': 2, 'picture': 3, 'enumerative': 4}
 LAYOUT_NAMES = {value: key for key, value in LAYOUTS.items()}
 HEADER = struct.Struct('>3sBBBHH4sIIIIBB')
 HEADER_OFFSETS = (0xFFFFFFF0, 0xFFFFFFF1, 0xFFFFFFF2)
@@ -148,9 +150,13 @@ def geometry(resolution='fine', layout='grid', *, sturdy=False, run_limit=DEFAUL
     else:
         unit = 2
         height = 1 if res.ydpi < 150 else 2
-    if layout == 'runs':
+    if layout in ('runs', 'enumerative'):
         height = 1
-    ladder_height = max(height if layout != 'runs' else 1, 1 if res.ydpi < 150 else 2)
+    if layout == 'enumerative':
+        run_limit = enumerative.RUN_LIMIT
+        if res.width not in enumerative.WIDTHS:
+            raise PageError('This page width does not support the enumerative layout.')
+    ladder_height = max(height, 1 if res.ydpi < 150 else 2)
     quiet = res.mm_dots(3)
     columns = (res.width - 2 * quiet) // unit - 8
     if columns % 2 == 0:
@@ -223,8 +229,11 @@ def _caption_lines(geo, page_index, page_count):
     canvas = Image.new('L', (res.width, height_square), 255)
     draw = ImageDraw.Draw(canvas)
     size = max(10, round(res.xdpi * 7 / 72))
-    font = ImageFont.truetype(_font_path(), size)
-    draw.text((geo.quiet, 0), CAPTION, font=font, fill=0)
+    # Keep these fixed captions identical whether optional RAQM shaping is installed or not.
+    font = ImageFont.truetype(_font_path(), size, layout_engine=ImageFont.Layout.BASIC)
+    caption = ('Encoded document: needs a Faxbot decoder supporting enumerative profile 1.'
+               if geo.layout == 'enumerative' else CAPTION)
+    draw.text((geo.quiet, 0), caption, font=font, fill=0)
     draw.text((geo.quiet, round(size * 1.35)),
               f'Page {page_index + 1} of {page_count} · experimental · Faxbot payload format 1',
               font=font, fill=0)
@@ -325,8 +334,11 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
             first = position
             lines = []
             while position < total_bits and len(lines) < geo.max_data_lines:
-                changes, used = runcode.encode_line(tag, position, source, position, geo.resolution.width,
-                                                    geo.run_limit)
+                if layout == 'enumerative':
+                    changes, used = enumerative.encode_line(tag, position, source, position, geo.resolution.width)
+                else:
+                    changes, used = runcode.encode_line(tag, position, source, position, geo.resolution.width,
+                                                       geo.run_limit)
                 lines.append(changes)
                 position += used
             plans.append((first, min(position, total_bits), lines))
@@ -341,7 +353,8 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
     page_bits = []
     for index, (first, end, rows) in enumerate(plans):
         header = HEADER.pack(b'FXP', 1, LAYOUTS[layout], parity, index, len(plans), tag, codewords,
-                             len(container), first, end, geo.run_limit, 0)
+                             len(container), first, end, geo.run_limit,
+                             enumerative.PROFILE if layout == 'enumerative' else 0)
         lines = [b'\xff' * (geo.resolution.width // 8)] * geo.resolution.mm_lines(8)
         caption = _caption_lines(geo, index, len(plans))
         stride = geo.resolution.width // 8
@@ -466,7 +479,7 @@ def find_ladder(image, *, limit=None):
 
 
 def _decode_header(payload):
-    magic, version, layout, parity, index, count, tag, codewords, length, first, end, limit, _ = \
+    magic, version, layout, parity, index, count, tag, codewords, length, first, end, limit, profile = \
         HEADER.unpack_from(payload)
     if magic != b'FXP' or version != 1 or layout not in LAYOUT_NAMES or not 1 <= parity <= 128:
         return None
@@ -477,9 +490,12 @@ def _decode_header(payload):
     if (length > MAX_DOCUMENT_BYTES + 4096 or parity >= 255
             or codewords != streams.codeword_count(length, parity) or not 1 <= limit <= 63):
         return None
+    if layout == LAYOUTS['enumerative'] and (profile != enumerative.PROFILE
+            or limit != enumerative.RUN_LIMIT or not first < end <= codewords * 255 * 8):
+        return None
     return {'layout': LAYOUT_NAMES[layout], 'parity': parity, 'page': index, 'pages': count, 'tag': tag,
             'codewords': codewords, 'container_length': length, 'first_bit': first, 'end_bit': end,
-            'run_limit': limit}
+            'run_limit': limit, 'profile': profile}
 
 
 def read_page(image):
@@ -515,8 +531,32 @@ def read_page(image):
     segments = {}
     lines_read = lines_damaged = since_good = 0
     layout = header['layout']
+    if layout == 'enumerative':
+        try:
+            row_bits_count = enumerative.payload_bits(width, header['profile'])
+        except ValueError as error:
+            raise PageError(str(error)) from None
+        if header['first_bit'] % row_bits_count:
+            raise PageError('The enumerative page starts at an invalid stream offset.')
     for y in range(y0, height):
         line = data[y * width:(y + 1) * width]
+        if layout == 'enumerative':
+            result = enumerative.decode_line(t4.changes_from_pixels(line), width, tag,
+                                             profile=header['profile'])
+            if (result is None or result[0] % row_bits_count
+                    or not header['first_bit'] <= result[0] < header['end_bit']):
+                lines_damaged += 1 if lines_read else 0
+                since_good += 1 if lines_read else 0
+                continue
+            offset, payload = result
+            segment = (offset, len(payload), int(payload, 2))
+            key = (offset, len(payload))
+            if key in segments and segments[key] != segment:
+                raise PageError('Conflicting enumerative payload rows were received.')
+            segments[key] = segment
+            lines_read += 1
+            since_good = 0
+            continue
         if layout == 'runs':
             changes = t4.changes_from_pixels(line)
             if len(changes) < 8:
@@ -569,6 +609,17 @@ def assemble(reads):
     tag = max(tags, key=tags.get)
     chosen = [read for read in reads if read.header['tag'] == tag]
     header = chosen[0].header
+    if any(read.header['layout'] == 'enumerative' for read in chosen):
+        fields = ('layout', 'parity', 'pages', 'codewords', 'container_length', 'run_limit', 'profile')
+        seen = {}
+        for read in chosen:
+            if any(read.header.get(key) != header.get(key) for key in fields):
+                raise PageError('Conflicting enumerative page headers were received.')
+            for offset, count, value in read.segments:
+                key = (offset, count)
+                if key in seen and seen[key] != value:
+                    raise PageError('Conflicting enumerative payload rows were received.')
+                seen[key] = value
     total = header['codewords'] * 255
     stream = bytearray(total)
     covered = bytearray(total)

@@ -8,8 +8,8 @@ from ..client import segment
 from ..errors import CliError, EXIT_FAILURE
 from ..output import local_time
 
-numbers = typer.Typer(help='Encoded pages (experimental): send a document as a few dense pages that the recipient\'s '
-                           'Faxbot decodes, where the recipient agreed and it costs less.', no_args_is_help=True)
+numbers = typer.Typer(help='Encoded pages (experimental): allow recipient-approved documents that the recipient\'s '
+                           'Faxbot decodes. Faxbot compares each attempt\'s route.', no_args_is_help=True)
 tools = typer.Typer(help='Encode a document as payload pages, or decode payload pages from a received fax file, on '
                          'this computer (experimental).', no_args_is_help=True)
 
@@ -90,7 +90,9 @@ def received_decoded(inbound_id: str = typer.Argument(..., help="A received fax'
     api = state.api()
     response = received_id(api, inbound_id, lambda fax_id: api.get(
         f'/codec/received/{segment(fax_id)}/document', raw=True))
-    _report_saved(save_document(response, output, f'decoded_{inbound_id}.pdf', force), len(response.content))
+    content_type = response.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
+    extension = '.txt' if content_type == 'text/plain' else '.pdf'
+    _report_saved(save_document(response, output, f'decoded_{inbound_id}{extension}', force), len(response.content))
 
 
 @tools.command('decode')
@@ -123,9 +125,10 @@ def codec_encode(source: Path = typer.Argument(..., exists=True, dir_okay=False,
                  output: Path = typer.Option(..., '--output', '-o', help='The fax TIFF to write.'),
                  resolution: str = typer.Option('fine', '--resolution', metavar='standard|fine|superfine|300|400',
                                                 help='The fax resolution the pages are made for.'),
-                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture',
+                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture|enumerative',
                      help='grid survives resolution changes; runs carries the most but needs the exact image; '
-                          'picture hides the document in a picture.'),
+                          'picture hides the document in a picture; enumerative needs an unchanged image '
+                          'and a recipient whose Faxbot supports enumerative profile 1.'),
                  fec: str = typer.Option('medium', '--error-correction', metavar='low|medium|high',
                                          help='How much damage the pages survive.'),
                  key: str = typer.Option(None, '--shared-key', metavar='KEY', help='Encrypt with this shared key.'),

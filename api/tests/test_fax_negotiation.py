@@ -59,7 +59,7 @@ RECEIVED = log(
 
 # What a call reports about the other machine's pages (dense pages, migration 0028) when its log names nothing.
 NO_PAGE_LIMITS = {'page_length': None, 'page_width': None, 'fine': None, 'remote_ecm': None, 'scan_ms': None,
-                  'boundary_ms': None, 'boundaries': None}
+                  'boundary_ms': None, 'boundaries': None, 'remote_codings': None}
 
 
 def parsed(spool, environment, text):
