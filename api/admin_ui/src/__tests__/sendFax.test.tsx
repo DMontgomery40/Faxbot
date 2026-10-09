@@ -14,6 +14,21 @@ const config = { fax_disabled: false, max_file_size_mb: 10 };
 const document = (lastModified = 1_790_000_000_000, text = '%PDF-1.4 referral') =>
   new File([text], 'referral.pdf', { type: 'application/pdf', lastModified });
 
+it('preserves the selected PDF bytes when the request is encoded as multipart', async () => {
+  const file = document();
+  const form = new FormData();
+  form.append('to', '+12025550123');
+  form.append('file', file);
+  // Use the same Request encoder as fetch/MSW, and actually consume its body.
+  const request = new Request('https://synthetic.invalid/fax', { method: 'POST', body: form });
+  const decoded = await request.formData();
+  const uploaded = decoded.get('file') as File;
+  expect(decoded.get('to')).toBe('+12025550123');
+  expect(uploaded.name).toBe('referral.pdf');
+  expect(uploaded.type).toBe('application/pdf');
+  expect(await uploaded.text()).toBe('%PDF-1.4 referral');
+});
+
 type Answer = 'lost' | 'accepted';
 
 function faxServer(answers: Answer[]) {

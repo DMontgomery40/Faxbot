@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import AdminAPIClient from '../../api/client';
 import type { CaseDocuments } from '../../api/deliveryTypes';
-import type { CaseRepair } from '../../api/caseTypes';
+import type { CaseRecipient, CaseRepair } from '../../api/caseTypes';
 import type { AdminDestination } from '../../navigation';
 import {
   STATE_COLOR, STATE_LABEL, documentState, missingSentence, pagesText, stateSentence, versionAndSource,
@@ -37,6 +37,7 @@ export default function CaseLedgerTable({ client, caseId, held, canSend, canWrit
   const [notice, setNotice] = useState<string | null>(null);
   const [days, setDays] = useState<string>(String(held.reuse_days ?? held.reuse_days_default ?? 90));
   const [noLimit, setNoLimit] = useState(held.reuse_days === 0);
+  const [recipient, setRecipient] = useState<CaseRecipient | null>(null);
 
   const documents = held.documents;
   const ids = documents.map((document) => document.id).filter((value): value is string => Boolean(value));
@@ -92,8 +93,27 @@ export default function CaseLedgerTable({ client, caseId, held, canSend, canWrit
     }
   };
 
-  const saveDays = () => run(
-    () => client.setCaseReuseDays(held.to, noLimit ? 0 : Number(days), held.recipient_version ?? 0),
+  const editDays = async () => {
+    setBusy(true);
+    setRecipient(null);
+    try {
+      const current = await client.call<CaseRecipient>({
+        method: 'GET', path: `/case-recipients/${encodeURIComponent(held.to)}`,
+      });
+      setRecipient(current);
+      setDays(String(current.reuse_days || current.reuse_days_default));
+      setNoLimit(current.reuse_days === 0);
+    } catch (failure) {
+      onError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveDays = () => recipient && run(async () => {
+    await client.setCaseReuseDays(held.to, noLimit ? 0 : Number(days), recipient.version);
+    setRecipient(null);
+  },
     'Saved. Acknowledgements older than this are not trusted, and those documents are sent in full again.');
 
   const reuseSentence = held.reuse_days === 0
@@ -174,7 +194,10 @@ export default function CaseLedgerTable({ client, caseId, held, canSend, canWrit
 
       <Box sx={{ mt: 2 }} data-testid="case-reuse">
         <Typography variant="body2" color="text.secondary">{reuseSentence}</Typography>
-        {canWrite && (
+        {canWrite && !recipient && <Button size="small" disabled={busy} onClick={() => void editDays()}>
+          Edit acknowledgement period
+        </Button>}
+        {canWrite && recipient && (
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} sx={{ mt: 1 }}>
             <TextField size="small" type="number" label="Trust acknowledgements for (days)" value={days} disabled={noLimit}
               onChange={(event) => setDays(event.target.value)} inputProps={{ min: 1, max: 3650 }} sx={{ width: 260 }} />

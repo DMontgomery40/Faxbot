@@ -128,44 +128,63 @@ class MoveStore:
         tables = reflect(engine, ('number_moves', 'number_move_events'))
         self.moves, self.events = tables['number_moves'], tables['number_move_events']
 
-    def current(self, number):
-        """(move row, its events oldest first) for the number's newest move, or (None, [])."""
-        with read_connection(self.engine) as connection:
-            move = connection.execute(sa.select(self.moves).where(self.moves.c.number == number).order_by(
-                self.moves.c.created_at.desc(), self.moves.c.id.desc()).limit(1)).mappings().first()
-            if move is None:
-                return None, []
-            events = connection.execute(sa.select(self.events).where(self.events.c.move_id == move['id']).order_by(
-                self.events.c.created_at, self.events.c.id)).mappings().all()
+    def _current_on(self, connection, number):
+        move = connection.execute(sa.select(self.moves).where(self.moves.c.number == number).order_by(
+            self.moves.c.created_at.desc(), self.moves.c.id.desc()).limit(1)).mappings().first()
+        if move is None:
+            return None, []
+        events = connection.execute(sa.select(self.events).where(self.events.c.move_id == move['id']).order_by(
+            self.events.c.created_at, self.events.c.id)).mappings().all()
         return dict(move), [dict(event) for event in events]
+
+    def current(self, number):
+        """The newest move and its events; mutations check these again under the write lock."""
+        with read_connection(self.engine) as connection:
+            return self._current_on(connection, number)
+
+    def _open_on(self, connection, number):
+        move, events = self._current_on(connection, number)
+        if move is None or outcome(events) is not None:
+            raise RoutingConflict('This number has no move in progress. Start one first.')
+        return move, events
 
     def start(self, number, from_account, to_account, *, principal_id=None, by_name=None, now=None):
         if from_account == to_account:
             raise RoutingInputError('Choose another account than the one that carries the number now.')
-        move, events = self.current(number)
-        if move is not None and outcome(events) is None:
-            raise RoutingConflict('This number already has a move in progress. Finish or abandon it first.')
         with write_transaction(self.engine) as connection:
+            move, events = self._current_on(connection, number)
+            if move is not None and outcome(events) is None:
+                raise RoutingConflict('This number already has a move in progress. Finish or abandon it first.')
             by, name = _who(self.engine, connection, principal_id)
             connection.execute(self.moves.insert().values(
                 id=uuid4().hex, number=number, from_account=from_account, to_account=to_account, started_by=by,
                 started_by_name=(name or by_name or None) and str(name or by_name)[:200], created_at=now or utcnow()))
         return self.current(number)
 
-    def record(self, number, step, state, *, origin=None, note=None, evidence=None, principal_id=None, by_name=None,
-               now=None):
-        move, events = self.current(number)
-        if move is None or outcome(events) is not None:
-            raise RoutingConflict('This number has no move in progress. Start one first.')
+    def _record_on(self, connection, move, step, state, *, origin=None, note=None, evidence=None,
+                   principal_id=None, by_name=None, now=None):
         note = (note or '').strip() or None
         if note is not None and len(note) > 2000:
             raise RoutingInputError('Keep the note under 2,000 characters.')
+        by, name = _who(self.engine, connection, principal_id)
+        connection.execute(self.events.insert().values(
+            id=uuid4().hex, move_id=move['id'], step=step, state=state, origin=origin, note=note,
+            evidence=json.dumps(evidence, sort_keys=True) if evidence is not None else None, recorded_by=by,
+            recorded_by_name=(name or by_name or None) and str(name or by_name)[:200], created_at=now or utcnow()))
+
+    def record(self, number, step, state, *, origin=None, note=None, evidence=None, principal_id=None, by_name=None,
+               now=None, values=None):
         with write_transaction(self.engine) as connection:
-            by, name = _who(self.engine, connection, principal_id)
-            connection.execute(self.events.insert().values(
-                id=uuid4().hex, move_id=move['id'], step=step, state=state, origin=origin, note=note,
-                evidence=json.dumps(evidence, sort_keys=True) if evidence is not None else None, recorded_by=by,
-                recorded_by_name=(name or by_name or None) and str(name or by_name)[:200], created_at=now or utcnow()))
+            move, events = self._open_on(connection, number)
+            if step == 'move' and state == 'finished':
+                # All clients, including the CLI, must satisfy the same evidence gates.
+                if values is None:
+                    raise RoutingConflict('Check the current move evidence before finishing the plan.')
+                view = move_view(self.engine, values, number, now=now)
+                if any(item['state'] != 'done' for item in view['steps']):
+                    raise RoutingConflict('Complete every move step and its receipt checks before finishing the plan.')
+            self._record_on(connection, move, step, state, origin=origin, note=note, evidence=evidence,
+                            principal_id=principal_id, by_name=by_name, now=now)
         return self.current(number)
 
 
@@ -182,17 +201,25 @@ def _latest(events, step):
 
 # -- what Faxbot reads ----------------------------------------------------------------------------------------------------
 
-def arrivals(engine, number, since):
+def arrivals(engine, number, since, *, account_keys=False):
     """Received faxes to ``number`` since ``since``: [(when, endpoint, pages, sender)] oldest first."""
     from ..engine_frames import same_number
-    faxes = reflect(engine, ('inbound_faxes',))['inbound_faxes']
+    tables = reflect(engine, ('inbound_faxes', 'inbound_imports'))
+    faxes, imports = tables['inbound_faxes'], tables['inbound_imports']
+    # Multiple import observations may refer to one stored fax. Only an unambiguous
+    # recorded account identifies the receiving account; never multiply arrivals.
+    account = sa.select(sa.case((sa.func.count(sa.distinct(imports.c.account_key)) == 1,
+                                sa.func.max(imports.c.account_key)), else_=None)).where(
+        imports.c.inbound_fax_id == faxes.c.id, imports.c.state == 'received').scalar_subquery()
     digits = ''.join(ch for ch in number if ch.isdigit())
     at = sa.func.coalesce(faxes.c.received_at, faxes.c.created_at)
     with read_connection(engine) as connection:
         rows = connection.execute(sa.select(at.label('at'), faxes.c.backend, faxes.c.inbound_backend, faxes.c.pages,
-                                            faxes.c.from_number, faxes.c.to_number).where(
+                                            faxes.c.from_number, faxes.c.to_number, account.label('account_key')).where(
             faxes.c.to_number.like('%' + digits[-7:]), at >= since).order_by(at, faxes.c.id)).all()
-    return [(row.at, row.inbound_backend or row.backend, row.pages, row.from_number) for row in rows
+    return [(row.at, (('account:' + row.account_key) if row.account_key else
+                     ('provider:' + (row.inbound_backend or row.backend or ''))) if account_keys else
+                    (row.inbound_backend or row.backend), row.pages, row.from_number) for row in rows
             if same_number(row.to_number or '', number)]
 
 
@@ -204,7 +231,9 @@ def test_faxes(engine, number, origin, since):
         rows = connection.execute(sa.select(costs.c.created_at, jobs.c.pages).select_from(
             costs.outerjoin(jobs, jobs.c.id == costs.c.job_id)).where(
             costs.c.destination == number, costs.c.outcome == 'success', costs.c.created_at >= since,
-            sa.or_(costs.c.route == origin, costs.c.provider_id == origin)).order_by(costs.c.created_at)).all()
+            sa.or_(costs.c.route == origin,
+                   sa.and_(sa.or_(costs.c.route.is_(None), costs.c.route == ''),
+                           costs.c.provider_id == origin))).order_by(costs.c.created_at)).all()
     return [(row.created_at, row.pages) for row in rows]
 
 
@@ -228,10 +257,19 @@ def _name(values, key):
 
 def reconcile(engine, values, move, events, *, now):
     """Each receipt test matched to one arrival, and arrivals since cutover at the old and new endpoints."""
-    old, new = _endpoint(values, move['from_account']), _endpoint(values, move['to_account'])
+    old, new = move['from_account'], move['to_account']
+    old_provider, new_provider = _endpoint(values, old), _endpoint(values, new)
     cutover = _latest(events, 'cutover')
     since = cutover['created_at'] if cutover is not None and cutover['state'] == 'done' else move['created_at']
-    received = arrivals(engine, move['number'], since - timedelta(minutes=TEST_MINUTES))
+    raw = arrivals(engine, move['number'], since - timedelta(minutes=TEST_MINUTES), account_keys=True)
+    def endpoint(identity):
+        kind, _, value = identity.partition(':')
+        if kind == 'account':
+            return value if value in (old, new) else 'unrelated'
+        if value == old_provider == new_provider:
+            return None
+        return old if value == old_provider else new if value == new_provider else 'unrelated'
+    received = [(at, endpoint(identity), pages, sender) for at, identity, pages, sender in raw]
     used = set()
     tests = []
     for event in [event for event in events if event['step'] == 'receipt_test' and event['state'] == 'started']:
@@ -241,7 +279,7 @@ def reconcile(engine, values, move, events, *, now):
         if sent:
             when, pages = sent[0]
             for index, (at, endpoint, arrived_pages, _) in enumerate(received):
-                if index in used or not (when - timedelta(minutes=1) <= at <= when + timedelta(minutes=TEST_MINUTES)):
+                if endpoint == 'unrelated' or index in used or not (when - timedelta(minutes=1) <= at <= when + timedelta(minutes=TEST_MINUTES)):
                     continue
                 if pages and arrived_pages and pages != arrived_pages:
                     continue
@@ -249,12 +287,12 @@ def reconcile(engine, values, move, events, *, now):
                     continue
                 used.add(index)
                 where.append(endpoint)
-                if old == new or len(set(where)) == 2:
+                if endpoint is None or len(set(where)) == 2:
                     break
             if not where:
                 state = 'waiting' if now - when < timedelta(minutes=TEST_MINUTES) else 'lost'
-            elif old == new:
-                state = 'arrived_new'
+            elif None in where:
+                state = 'arrived_unattributed'
             elif set(where) == {old, new}:
                 state = 'arrived_both'
             else:
@@ -264,6 +302,8 @@ def reconcile(engine, values, move, events, *, now):
             'not_sent': f'Waiting for a test fax sent through {label}.',
             'waiting': f'The test fax sent through {label} has not arrived yet.',
             'lost': f'The test fax sent through {label} did not arrive within {TEST_MINUTES} minutes.',
+            'arrived_unattributed': ('A matching fax arrived, but its receiving account was not recorded. '
+                                     'This does not confirm that the new account received the test.'),
             'arrived_new': f'The test fax sent through {label} arrived through {_name(values, move["to_account"])}.',
             'arrived_old': (f'The test fax sent through {label} still arrived through '
                             f'{_name(values, move["from_account"])}: the move has not reached every network yet.'),
@@ -273,12 +313,14 @@ def reconcile(engine, values, move, events, *, now):
         tests.append({'id': event['id'], 'origin': origin, 'origin_label': label,
                       'started_text': _day(event['created_at']), 'state': state, 'sentence': sentence})
     after = [item for item in received if item[0] >= since]
-    counted = {'old': 0, 'new': 0, 'both': sum(1 for test in tests if test['state'] == 'arrived_both')}
+    counted = {'old': 0, 'new': 0, 'unattributed': 0, 'both': sum(1 for test in tests if test['state'] == 'arrived_both')}
     for _, endpoint, _, _ in after:
         if old != new and endpoint == old:
             counted['old'] += 1
         elif endpoint == new:
             counted['new'] += 1
+        elif endpoint is None:
+            counted['unattributed'] += 1
     # A fax that arrived at both endpoints is one fax: it is counted once, as having reached the new one.
     counted['old'] -= counted['both']
     total = counted['old'] + counted['new']
@@ -294,6 +336,9 @@ def reconcile(engine, values, move, events, *, now):
                     f"{_name(values, move['from_account'])} {when}"
                     + (f"; {counted['both']} arrived through both and {'is' if counted['both'] == 1 else 'are'} "
                        'counted once.' if counted['both'] else '.'))
+    if counted['unattributed']:
+        sentence += (f" {counted['unattributed']} arrivals have no recorded receiving account; "
+                     'Faxbot cannot confirm which account received them.')
     return tests, dict(counted, sentence=sentence), old != new
 
 
@@ -414,7 +459,7 @@ def _steps(engine, values, move, events, answers, tests, counted, separate):
                        ['Start a test from each of two routes, then send one page to the number through each.'],
                        'test', 'Start a test'))
     old_after = counted['old'] if separate else 0
-    reconciled = state == 'done' and not old_after
+    reconciled = state == 'done' and not old_after and not counted.get('unattributed')
     steps.append(_step('reconciled', 'after', 'Arrivals reconciled across the old and new account',
                        'done' if reconciled else ('failed' if old_after and len(arrived) >= 2 else 'waiting'),
                        [counted['sentence']]))
@@ -432,8 +477,21 @@ def _steps(engine, values, move, events, answers, tests, counted, separate):
 
 
 def forget_learned(engine, number, *, principal_id=None, by_name=None, now=None):
-    """Forget what earlier calls taught Faxbot about this number, and record how many facts that was."""
-    from .. import engine_learning
-    count = engine_learning.forget(engine, number, actor_id=principal_id, actor_name=by_name, now=now)
-    return MoveStore(engine).record(number, 'facts_expired', 'done', evidence={'forgotten': count},
-                                    principal_id=principal_id, by_name=by_name, now=now)
+    """Validate the open move, forget its number and record the evidence in one transaction."""
+    from ..engine_frames import same_number
+    now = now or utcnow()
+    store = MoveStore(engine)
+    memory = reflect(engine, ('fax_destination_memory',))['fax_destination_memory']
+    digits = ''.join(char for char in number if char.isdigit())
+    with write_transaction(engine) as connection:
+        move, _ = store._open_on(connection, number)
+        ids = [row.id for row in connection.execute(sa.select(memory.c.id, memory.c.number).where(
+            memory.c.number.like('%' + digits[-7:]), memory.c.forgotten_at.is_(None)))
+            if same_number(row.number, number)]
+        if ids:
+            connection.execute(memory.update().where(memory.c.id.in_(ids)).values(
+                forgotten_at=now, forgotten_by=principal_id,
+                forgotten_by_name=(by_name or None) and str(by_name)[:200]))
+        store._record_on(connection, move, 'facts_expired', 'done', evidence={'forgotten': len(ids)},
+                         principal_id=principal_id, by_name=by_name, now=now)
+    return store.current(number)

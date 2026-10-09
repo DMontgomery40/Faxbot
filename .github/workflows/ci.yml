@@ -37,6 +37,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Set up Node for console/CLI parity checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: api/admin_ui/package-lock.json
+      - name: Install console dependencies for route analysis
+        run: npm ci --prefix api/admin_ui --no-audit --no-fund
       - name: Install system dependencies
         run: |
           sudo apt-get update

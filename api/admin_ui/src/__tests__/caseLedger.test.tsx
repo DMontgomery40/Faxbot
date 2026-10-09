@@ -46,6 +46,7 @@ async function open(canWrite = true) {
       missing: [{ title: 'Fax from 2025', removed_at: null }, { title: 'Old referral', removed_at: '2026-10-06T03:00:00' }],
       packets_in_flight: 1, reason: 'x', fax_id: body.preview ? null : 'a'.repeat(32) }, { status: 202 });
     }),
+    http.get('/case-recipients/:number', () => HttpResponse.json({to: TO, reuse_days: 45, reuse_days_default: 90, reuse_days_set: true, version: 7})),
     http.patch('/case-recipients/:number', async ({ request }) => {
       posts.push({ path: 'reuse', body: await request.json() });
       return HttpResponse.json({ to: TO, reuse_days: 30, reuse_days_default: 90, reuse_days_set: true, version: 1 });
@@ -115,9 +116,22 @@ describe('Case packet acknowledgements', () => {
 
   it('sets how long acknowledgements are trusted, and shows it read-only to people who may not change it', async () => {
     const { posts } = await open();
-    fireEvent.change(screen.getByLabelText('Trust acknowledgements for (days)'), { target: { value: '30' } });
+    expect(screen.queryByLabelText('Trust acknowledgements for (days)')).toBeNull();
+    fireEvent.click(screen.getByRole('button', {name: 'Edit acknowledgement period'}));
+    const days = await screen.findByLabelText('Trust acknowledgements for (days)');
+    expect((days as HTMLInputElement).value).toBe('45');
+    fireEvent.change(days, { target: { value: '30' } });
     fireEvent.click(within(screen.getByTestId('case-reuse')).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(posts).toEqual([{ path: 'reuse', body: { reuse_days: 30, version: 0 } }]));
+    await waitFor(() => expect(posts).toEqual([{ path: 'reuse', body: { reuse_days: 30, version: 7 } }]));
+  });
+
+  it('keeps acknowledgement editing closed when current settings cannot be read', async () => {
+    const {posts} = await open();
+    server.use(http.get('/case-recipients/:number', () => HttpResponse.json({detail: 'Unavailable'}, {status: 503})));
+    fireEvent.click(screen.getByRole('button', {name: 'Edit acknowledgement period'}));
+    await screen.findByRole('alert');
+    expect(screen.queryByLabelText('Trust acknowledgements for (days)')).toBeNull();
+    expect(posts).toEqual([]);
   });
 
   it('shows no change controls without permission to change the recipient', async () => {

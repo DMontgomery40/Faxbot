@@ -91,7 +91,11 @@ export interface ApplyResult {
   plan: Plan;
 }
 
+export interface PlanSummary { number: number; created_at: string; actor_name: string | null }
+
 export interface SetupPacksApi {
+  list(): Promise<{ plans: PlanSummary[] }>;
+  get(number: number): Promise<Plan>;
   latest(): Promise<Latest>;
   preview(context: SetupContext): Promise<Plan>;
   apply(plan: Plan, items: string[]): Promise<ApplyResult>;
@@ -99,6 +103,8 @@ export interface SetupPacksApi {
 
 export function setupPacksApi(client: Pick<AdminAPIClient, 'call'>): SetupPacksApi {
   return {
+    list: () => client.call<{ plans: PlanSummary[] }>({ method: 'GET', path: '/setup/plans' }),
+    get: (number) => client.call<Plan>({ method: 'GET', path: `/setup/plans/${number}` }),
     latest: () => client.call<Latest>({ method: 'GET', path: '/setup/plans/latest' }),
     preview: (context) => client.call<Plan>({ method: 'POST', path: '/setup/plans', body: context }),
     apply: (plan, items) => client.call<ApplyResult>({

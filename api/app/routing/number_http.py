@@ -284,7 +284,7 @@ async def record_move_step(number: str, step: str, payload: StepIn, request: Req
                                     'the move.')
         by, name = _actor(store.engine, identity)
         MoveStore(store.engine).record(canonical, step, payload.state, note=payload.note, principal_id=by,
-                                       by_name=name)
+                                       by_name=name, values=values)
         return move_view(store.engine, values, canonical)
     return await _call(record)
 

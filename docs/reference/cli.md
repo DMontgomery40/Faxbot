@@ -6497,6 +6497,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `rate-rows`: Replace the prices by where calls start...
 * `state-prices`: Import a carrier&#x27;s US prices for calls...
 * `predict`: Show what a fax to a number would take and...
+* `analysis`: Read the saved analysis, its freshness and...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
 * `charges`: What each provider charged: how Faxbot...
@@ -6690,6 +6691,20 @@ $ faxbot costs predict [OPTIONS]
 * `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
 * `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
 * `--file <file>`: Price this document (PDF or plain text) instead: Faxbot measures each fax coding on its own pages. --pages, --layout and --resolution then come from the document.
+* `--help`: Show this message and exit.
+
+### `faxbot costs analysis`
+
+Read the saved analysis, its freshness and the next refresh time.
+
+**Usage**:
+
+```console
+$ faxbot costs analysis [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot costs recommendations`
@@ -8011,6 +8026,7 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 * `restore`: Restore a backup after checking every file...
 * `setup`: Suggested packs of rules and settings from...
 * `settings`: Every Faxbot setting: show, change, check...
+* `analysis`: AI analysis: configure a model, test the...
 * `diagnostics`: Check the installation without sending a fax.
 * `logs`: The activity log: sign-ins, faxes, phone...
 * `codec`: Encode a document as payload pages, or...
@@ -8184,6 +8200,7 @@ $ faxbot system setup [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `plan`: Preview a plan from what Faxbot already...
+* `list`: List saved setup plans so you can inspect...
 * `show`: Show a plan: its suggestions, what&#x27;s...
 * `apply`: Apply a plan&#x27;s chosen suggestions in one...
 
@@ -8202,6 +8219,20 @@ $ faxbot system setup plan [OPTIONS]
 * `--name <str>`: Your business name, printed at the top of each page.
 * `--country <str>`: The country your organization works in, such as US or GB. Leave out if you are not sure.
 * `--mailbox-country <str>`: A mailbox and the country it works in, as &#x27;NAME=COUNTRY&#x27;. Repeat for each mailbox.
+* `--help`: Show this message and exit.
+
+#### `faxbot system setup list`
+
+List saved setup plans so you can inspect an earlier plan with show.
+
+**Usage**:
+
+```console
+$ faxbot system setup list [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot system setup show`
@@ -8367,6 +8398,90 @@ $ faxbot system settings export [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot system analysis`
+
+AI analysis: configure a model, test the connection, and refresh its advice.
+
+**Usage**:
+
+```console
+$ faxbot system analysis [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Read the saved analysis, its freshness and...
+* `run`: Queue a fresh analysis.
+* `test`: Test the saved model connection with a...
+* `configure`: Save model settings.
+
+#### `faxbot system analysis status`
+
+Read the saved analysis, its freshness and the next refresh time.
+
+**Usage**:
+
+```console
+$ faxbot system analysis status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system analysis run`
+
+Queue a fresh analysis. Check status for the result; this does not change fax settings.
+
+**Usage**:
+
+```console
+$ faxbot system analysis run [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system analysis test`
+
+Test the saved model connection with a synthetic request, without fax records.
+
+**Usage**:
+
+```console
+$ faxbot system analysis test [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system analysis configure`
+
+Save model settings. The owner must enable analysis before operational data is sent.
+
+**Usage**:
+
+```console
+$ faxbot system analysis configure [OPTIONS]
+```
+
+**Options**:
+
+* `--provider <str>`: openai, openrouter or compatible.
+* `--model <str>`: The model identifier from your provider.
+* `--base-url <str>`: API base address for a compatible provider.
+* `--interval-hours <int range>`: Refresh interval in hours; 0 means manual only.  [0&lt;=x&lt;=168]
+* `--enable / --disable`: Allow or stop operational analysis.
+* `--key-prompt`: Enter the model API key without showing it.
+* `--key-stdin`: Read the model API key from standard input.
 * `--help`: Show this message and exit.
 
 ### `faxbot system diagnostics`

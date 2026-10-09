@@ -70,6 +70,8 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 | `make ui-check` | Runs the console tests (`VITEST_ARGS` narrows them to named files), the type check and the build, as the `build-admin-ui` job does |
 | `npm ci --prefix node_mcp && npm --prefix node_mcp run check` | Checks that every Node MCP module parses and imports |
 
+Before running the full backend suite or `tests/test_console_cli_parity.py`, run `npm ci --prefix api/admin_ui` once. The parity check uses the installed TypeScript compiler to resolve the console's actual request methods and paths. It needs Node 24 and the console dependencies even when you are testing only the backend. The API CI job installs them before its tests.
+
 `make test-local` sets the CI environment:
 
 - `FAX_DISABLED=true` (no faxes are sent)

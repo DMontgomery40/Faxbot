@@ -13,7 +13,7 @@ import type { AdminDestination } from '../navigation';
 import { formatMoney } from './delivery/shared';
 import {
   applicable, appliedKeys, setupPacksApi, type ApplyResult, type ItemKind, type MailboxChoice, type MissingEntry,
-  type Plan, type PlanItem, type SetupContext, type SetupPacksApi,
+  type Plan, type PlanSummary, type PlanItem, type SetupContext, type SetupPacksApi,
 } from './SetupPacksApi';
 
 const KIND_LABEL: Record<ItemKind, string> = {
@@ -111,6 +111,7 @@ export default function SetupPacks({ client, api: given, countries = [], canEdit
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [result, setResult] = useState<ApplyResult | null>(null);
+  const [history, setHistory] = useState<PlanSummary[] | null>(null);
 
   const show = useCallback((next: Plan) => {
     setPlan(next);
@@ -132,6 +133,27 @@ export default function SetupPacks({ client, api: given, countries = [], canEdit
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [api, show]);
+
+  const loadHistory = async () => {
+    setBusy(true);
+    setError(null);
+    try { setHistory((await api.list()).plans); }
+    catch (reason) { setError(errorText(reason, 'Faxbot could not load the plan history. Try again.')); }
+    finally { setBusy(false); }
+  };
+
+  const openPlan = async (number: number) => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    setStale(false);
+    try {
+      const found = await api.get(number);
+      show(found);
+      setContext(found.context);
+    } catch (reason) { setError(errorText(reason, 'Faxbot could not load that plan. Try again.')); }
+    finally { setBusy(false); }
+  };
 
   const preview = async () => {
     setBusy(true);
@@ -189,6 +211,24 @@ export default function SetupPacks({ client, api: given, countries = [], canEdit
         Faxbot looks at your accounts, numbers, the faxes you sent and received, and your partners, and suggests
         rules and settings that save money and trouble. Previewing changes nothing.
       </Typography>
+
+      <Button variant="outlined" sx={{ mb: 2 }} disabled={busy} onClick={() => void loadHistory()}>
+        {history === null ? 'Plan history' : 'Refresh plan history'}
+      </Button>
+      {history !== null && <Paper variant="outlined" sx={{ mb: 3, p: 2 }}>
+        <Typography variant="subtitle1" component="h3">Previous setup plans</Typography>
+        {history.length === 0 ? <Typography>No setup plans have been saved yet.</Typography> :
+          <Table size="small" aria-label="Setup plan history">
+            <TableHead><TableRow><TableCell>Plan</TableCell><TableCell>Created</TableCell>
+              <TableCell>Created by</TableCell><TableCell /></TableRow></TableHead>
+            <TableBody>{history.map((entry) => <TableRow key={entry.number}>
+              <TableCell>{entry.number}</TableCell><TableCell>{formatServerTime(entry.created_at)}</TableCell>
+              <TableCell>{entry.actor_name || 'Not recorded'}</TableCell>
+              <TableCell><Button size="small" disabled={busy} aria-label={`Open setup plan ${entry.number}`}
+                onClick={() => void openPlan(entry.number)}>Open</Button></TableCell>
+            </TableRow>)}</TableBody>
+          </Table>}
+      </Paper>}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Typography variant="subtitle1" component="h3" sx={{ fontWeight: 600, mb: 1 }}>Describe your organization</Typography>

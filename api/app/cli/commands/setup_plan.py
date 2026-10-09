@@ -97,6 +97,23 @@ def setup_plan(name: str = typer.Option('', '--name', help='Your business name, 
     state.out().result(plan, _human(plan))
 
 
+@setup.command('list')
+def setup_list():
+    """List saved setup plans so you can inspect an earlier plan with show."""
+    result = state.api().get('/setup/plans')
+
+    def human(out):
+        rows = result['plans']
+        if not rows:
+            out.line('No setup plans have been saved yet.')
+            return
+        out.table(['Plan', 'Created', 'Created by'],
+                  [[row['number'], local_time(row['created_at']), row.get('actor_name') or 'Not recorded']
+                   for row in rows])
+        out.line('Open a plan with: faxbot system setup show NUMBER')
+    state.out().result(result, human)
+
+
 @setup.command('show')
 def setup_show(number: int = typer.Argument(None, help='The plan number. Default: the newest plan.')):
     """Show a plan: its suggestions, what's missing and each mailbox's settings."""

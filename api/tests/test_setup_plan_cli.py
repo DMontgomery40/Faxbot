@@ -64,3 +64,16 @@ def test_mailbox_countries_are_given_by_mailbox_name(cli):
     plan = cli.json('system', 'setup', 'plan', '--mailbox-country', 'Leeds=gb')
     leeds = plan['mailboxes'][0]
     assert leeds['name'] == 'Leeds' and leeds['country'] == 'GB' and leeds['missing'] == ['reviewed-rules.GB']
+
+
+def test_lists_saved_plans_and_opens_an_earlier_one(cli):
+    assert cli.json('system', 'setup', 'list') == {'plans': []}
+    first = cli.json('system', 'setup', 'plan', '--name', 'First synthetic organization')
+    second = cli.json('system', 'setup', 'plan', '--name', 'Second synthetic organization')
+    saved = cli.json('system', 'setup', 'list')['plans']
+    assert [row['number'] for row in saved] == [second['number'], first['number']]
+    shown = cli.json('system', 'setup', 'show', str(first['number']))
+    assert shown['context']['organization_name'] == 'First synthetic organization'
+    assert shown['applications'] == []
+    human = cli('system', 'setup', 'list')
+    assert human.exit_code == 0 and 'faxbot system setup show NUMBER' in human.stdout

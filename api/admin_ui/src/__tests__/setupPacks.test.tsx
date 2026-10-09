@@ -77,6 +77,8 @@ function plan(changes: Partial<Plan> = {}): Plan {
 function memory(first: Plan | null = null) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const api: SetupPacksApi = {
+    list: vi.fn(async () => ({plans: [{number: 1, created_at: '2026-10-07T15:00:00', actor_name: 'Earlier admin'}]})),
+    get: vi.fn(async (number) => plan({number, context: {organization_name: 'Earlier organization', country: 'GB', mailboxes: {}}})),
     latest: vi.fn(async () => ({ plan: first, mailboxes: [
       { id: 'box-us', name: 'Denver', numbers: ['+13035550100'], numbers_country: 'US' },
       { id: 'box-gb', name: 'Leeds', numbers: [], numbers_country: null }] })),
@@ -98,6 +100,17 @@ async function choose(label: string, option: string) {
 }
 
 describe('Setup → Suggested Packs', () => {
+  it('lists saved plans and opens the selected historical plan without applying it', async () => {
+    const {api} = memory(plan());
+    render(<SetupPacks api={api} countries={['US', 'GB']} />);
+    fireEvent.click(await screen.findByRole('button', {name: 'Plan history'}));
+    expect(await screen.findByText('Earlier admin')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', {name: 'Open setup plan 1'}));
+    await waitFor(() => expect((screen.getByLabelText('Business name') as HTMLInputElement).value).toBe('Earlier organization'));
+    expect(api.get).toHaveBeenCalledWith(1);
+    expect(api.apply).not.toHaveBeenCalled();
+  });
+
   it('previews from what the administrator states, and never fills a country in', async () => {
     const { api, calls } = memory();
     render(<SetupPacks api={api} countries={['US', 'GB']} />);

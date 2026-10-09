@@ -16,7 +16,7 @@ from api.app.config_values import ConfigurationValues
 from api.app.routing import number_moves, number_placement
 from api.app.routing.seed import load_cards
 from api.app.routing.store import RouteStore, RoutingConflict
-from api.app.schema import HEAD, upgrade_schema, validate_schema
+from api.app.schema import upgrade_schema, validate_schema
 from api.app import schema_fact_advice
 from api.tests.test_schema import database  # noqa: F401 (fixture)
 
@@ -73,9 +73,9 @@ def rows_of(result):
     return {row['number']: row for row in result['numbers']}
 
 
-def test_migration_0065_adds_three_append_only_tables_at_head(database):  # noqa: F811
+def test_migration_0065_tables_remain_in_the_current_schema(database):  # noqa: F811
     upgrade_schema(database)
-    assert HEAD == schema_fact_advice.REVISION == '0065_fact_advice'
+    assert schema_fact_advice.REVISION == '0065_fact_advice'
     with database.connect() as connection:
         validate_schema(connection, require_version=True)
         names = set(sa.inspect(connection).get_table_names())
@@ -261,3 +261,122 @@ def test_forgetting_what_was_learned_is_recorded_with_its_count(database):  # no
     assert number_moves.move_view(database, move_values(), QUIET, now=NOW)['state'] == 'abandoned'
     with pytest.raises(RoutingConflict):
         number_moves.MoveStore(database).record(QUIET, 'cutover', 'done')
+
+
+def _memory(engine):
+    table = sa.Table('fax_destination_memory', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(table.insert().values(id='review-memory', number=QUIET, direction='outbound',
+            kind='t38_failed', evidence='review-call', epoch_id='review-epoch', learned_at=NOW,
+            expires_at=NOW + timedelta(days=30), created_at=NOW))
+    return table
+
+
+def test_move_forget_without_an_open_plan_leaves_learning_untouched(database):
+    seeded(database)
+    memory = _memory(database)
+    with pytest.raises(RoutingConflict):
+        number_moves.forget_learned(database, QUIET, by_name='Ada', now=NOW)
+    with database.connect() as connection:
+        assert connection.execute(sa.select(memory.c.forgotten_at)).scalar_one() is None
+
+
+def test_finishing_through_the_http_handler_requires_all_evidence(database, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from api.app.routing import number_http
+    seeded(database)
+    store = number_moves.MoveStore(database)
+    store.start(QUIET, 'sip', 'humblefax', now=NOW)
+    monkeypatch.setattr(number_http, '_store', lambda request: SimpleNamespace(engine=database))
+    monkeypatch.setattr(number_http, '_values', lambda request: move_values())
+    monkeypatch.setattr(number_http, '_number', lambda number, request: number)
+    monkeypatch.setattr(number_http, '_actor', lambda engine, identity: (None, 'Ada'))
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(number_http.record_move_step(QUIET, 'move', number_http.StepIn(state='finished'),
+                                                 SimpleNamespace(), SimpleNamespace()))
+    assert failure.value.status_code == 409
+    assert number_moves.outcome(store.current(QUIET)[1]) is None
+
+
+def test_same_provider_receipts_do_not_prove_the_new_account_received_the_tests(database):
+    seeded(database)
+    other = {'provider': 'sip', 'label': 'Other trunk', 'receives': True, 'numbers': ['+17205550150'],
+             'settings': {'preset': 'anveo', 'auth': 'ip', 'host': '192.0.2.50'}}
+    configured = move_values().with_provider_accounts(ConfigurationDocument({'sip-other': other}))
+    store = number_moves.MoveStore(database)
+    start = NOW - timedelta(hours=5)
+    store.start(QUIET, 'sip', 'sip-other', now=start)
+    store.record(QUIET, 'cutover', 'done', now=start)
+    for index, origin in enumerate(('sip', 'phaxio')):
+        when = start + timedelta(hours=index + 1)
+        store.record(QUIET, 'receipt_test', 'started', origin=origin, now=when)
+        sent(database, QUIET, when + timedelta(minutes=1), route=origin, provider=origin)
+        received(database, QUIET, when + timedelta(minutes=2), backend='sip')
+    view = number_moves.move_view(database, configured, QUIET, now=NOW)
+    steps = {step['step']: step for step in view['steps']}
+    assert steps['receipt_tests']['state'] != 'done'
+    assert steps['reconciled']['state'] != 'done'
+    assert all(test['state'] == 'arrived_unattributed' for test in view['tests'])
+
+
+def test_failed_move_event_rolls_back_the_learning_clear(database):
+    seeded(database)
+    memory = _memory(database)
+    number_moves.MoveStore(database).start(QUIET, 'sip', 'humblefax', now=NOW)
+    def refuse_event(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('INSERT INTO NUMBER_MOVE_EVENTS'):
+            raise RuntimeError('Synthetic event storage failure')
+    sa.event.listen(database, 'before_cursor_execute', refuse_event)
+    try:
+        with pytest.raises(RuntimeError, match='Synthetic event storage failure'):
+            number_moves.forget_learned(database, QUIET, now=NOW)
+    finally:
+        sa.event.remove(database, 'before_cursor_execute', refuse_event)
+    with database.connect() as connection:
+        assert connection.execute(sa.select(memory.c.forgotten_at)).scalar_one() is None
+    assert number_moves.MoveStore(database).current(QUIET)[1] == []
+
+
+def test_explicit_receiving_accounts_allow_a_fully_evidenced_same_provider_move(database):
+    seeded(database)
+    other = {'provider': 'sip', 'label': 'Other trunk', 'receives': True, 'numbers': ['+17205550150'],
+             'settings': {'preset': 'anveo', 'auth': 'ip', 'host': '192.0.2.50'}}
+    configured = move_values().with_provider_accounts(ConfigurationDocument({'sip-other': other}))
+    store = number_moves.MoveStore(database)
+    start = NOW - timedelta(hours=5)
+    store.start(QUIET, 'sip', 'sip-other', now=start)
+    answer_all(database, QUIET)
+    rules = sa.Table('inbound_rules', sa.MetaData(), autoload_with=database)
+    with database.begin() as connection:
+        connection.execute(rules.insert().values(id='move-rule', to_number=QUIET,
+                                                mailbox_label='Fax team', created_at=start))
+    for step in number_moves.RECORDED:
+        store.record(QUIET, step, 'done', now=start + timedelta(minutes=1))
+    imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=database)
+    faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=database)
+    for index, origin in enumerate(('sip', 'phaxio')):
+        when = start + timedelta(hours=index + 1)
+        store.record(QUIET, 'receipt_test', 'started', origin=origin, now=when)
+        sent(database, QUIET, when + timedelta(minutes=1), route=origin, provider=origin)
+        arrived = when + timedelta(minutes=2)
+        received(database, QUIET, arrived, backend='sip')
+        with database.begin() as connection:
+            fax = connection.execute(sa.select(faxes.c.id).where(faxes.c.received_at == arrived)).scalar_one()
+            connection.execute(imports.insert().values(id=uuid4().hex, source='sip', account='synthetic',
+                operation_id=fax, revision='', state='received', attempts=1, imported_at=arrived,
+                acquired_at=arrived, artifact_digest='a' * 64, artifact_size=12, inbound_fax_id=fax,
+                created_at=arrived, updated_at=arrived, account_key='sip-other'))
+    number_moves.forget_learned(database, QUIET, now=NOW)
+    view = number_moves.move_view(database, configured, QUIET, now=NOW)
+    assert all(step['state'] == 'done' for step in view['steps']), view['steps']
+    store.record(QUIET, 'move', 'finished', values=configured, now=NOW + timedelta(seconds=1))
+    assert number_moves.move_view(database, configured, QUIET, now=NOW)['state'] == 'finished'
+
+
+def test_receipt_tests_do_not_count_another_account_as_the_primary_route(database):
+    seeded(database)
+    sent(database, QUIET, NOW, route='sip-other', provider='sip')
+    assert number_moves.test_faxes(database, QUIET, 'sip', NOW - timedelta(minutes=1)) == []
+    assert number_moves.test_faxes(database, QUIET, 'sip-other', NOW - timedelta(minutes=1)) == [(NOW, 1)]
