@@ -799,6 +799,32 @@ def show_friendly(out, result):
         out.line(result['action'] + ' Or run: faxbot system settings set fax_friendly_documents=where_it_saves')
 
 
+def _read_discovery_advice(api):
+    return api.get('/direct/discovery')
+
+
+def _show_discovery_advice(out, result):
+    items = result.get('suggestions') or []
+    if not items:
+        out.line('No recipient that runs Faxbot has been found yet.')
+    for item in items:
+        out.line(item['sentence'])
+    if items:
+        out.line('Review these with faxbot recipients partners discover list.')
+
+
+def _read_relay_advice(api):
+    return api.get('/direct/relay/recommendations')
+
+
+def _show_relay_advice(out, result):
+    items = result.get('recommendations') or []
+    if not items:
+        out.line('No partner would have sent your recent faxes for less.')
+    for item in items:
+        out.line(f"{item['sentence']} {item['action']}")
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
@@ -807,6 +833,8 @@ RECOMMENDATION_SECTIONS = [
     ('fax_marker', 'Fax marker', _read_fax_marker, show_fax_marker),
     ('billing_steps', 'Billing steps', _read_billing_steps, show_billing_steps),
     ('partners', 'Partner candidates', _read_partners, show_partners),
+    ('discovery', 'Recipients that run Faxbot', _read_discovery_advice, _show_discovery_advice),
+    ('relays', 'Partner relays', _read_relay_advice, _show_relay_advice),
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
     ('pages', 'Shaded areas', _read_friendly, show_friendly),

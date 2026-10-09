@@ -93,6 +93,7 @@ import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOve
 import ReplyNumber from './components/ReplyNumber';
 import BlockedSenders from './components/BlockedSenders';
 import NpiRecordPanel from './components/NpiRecord';
+import NumberMoves from './components/NumberMoves';
 import BlockIcon from '@mui/icons-material/Block';
 import Forms from './components/forms/Forms';
 import ExpectedFaxes from './components/expected/ExpectedFaxes';
@@ -311,6 +312,8 @@ export const NAVIGATION: NavArea[] = [
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
       // The organization's NPIs and what the NPI registry lists for them (routing/nppes.py).
+      { id: 'advice', label: 'Advice and moves', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <NumberMoves client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'npi', label: 'Your NPI record', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <NpiRecordPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'blocked', label: 'Blocked senders', icon: <BlockIcon />, gate: { anyOf: SETTINGS_READ },

@@ -108,6 +108,9 @@ numbers.add_typer(reply.reply, name='reply')
 numbers.add_typer(blocked.blocked, name='blocked')
 numbers.add_typer(connectors.connectors, name='connectors')
 numbers.add_typer(number_advice.npi, name='npi')
+numbers.command('advice')(fact_advice.numbers_advice)
+numbers.command('dependencies')(fact_advice.numbers_dependencies)
+numbers.add_typer(fact_advice.move, name='move')
 numbers.add_typer(forwarded_trust.forwarded_trust, name='forwarded-trust')
 
 # -- recipients ----------------------------------------------------------------------

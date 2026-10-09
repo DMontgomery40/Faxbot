@@ -1587,12 +1587,15 @@ $ faxbot numbers [OPTIONS] COMMAND [ARGS]...
 * `add`: Send faxes that arrive on a number to a...
 * `update`: Change a fax number&#x27;s mailbox, the number...
 * `explain`: Which mailbox, email and urgency a...
+* `advice`: Read line advice with its history and...
+* `dependencies`: Record a dependency: broadband,...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `email`: Email delivery of received faxes.
 * `reply`: The number printed on the faxes you send,...
 * `blocked`: Junk senders whose calls are turned away...
 * `connectors`: Email mailboxes and folders that bring...
 * `npi`: Your NPI numbers, so Faxbot can tell you...
+* `move`: A checked plan for moving a number between...
 * `forwarded-trust`: Certificate authorities you trust to...
 
 ### `faxbot numbers list`
@@ -1694,6 +1697,42 @@ $ faxbot numbers explain [OPTIONS]
 * `--account KEY`: The account it arrives on.
 * `--at TIME`: When it arrives, in this installation&#x27;s time zone, such as 2026-10-07 18:30.
 * `--subaddress DIGITS`: The subaddress the sender&#x27;s machine gives, if any.
+* `--help`: Show this message and exit.
+
+### `faxbot numbers advice`
+
+Read line advice with its history and unanswered dependency questions.
+
+**Usage**:
+
+```console
+$ faxbot numbers advice [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: [default: 90; 30&lt;=x&lt;=183]
+* `--help`: Show this message and exit.
+
+### `faxbot numbers dependencies`
+
+Record a dependency: broadband, other_lines, emergency or printed; answer yes, no or unknown.
+
+**Usage**:
+
+```console
+$ faxbot numbers dependencies [OPTIONS] {number} {question} {answer}
+```
+
+**Arguments**:
+
+* `number`: [required]
+* `question`: [required]
+* `answer`: [required]
+
+**Options**:
+
+* `--note <str>`
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers mailboxes`
@@ -2408,6 +2447,123 @@ Read each of your NPIs from NPPES now.
 ```console
 $ faxbot numbers npi check [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot numbers move`
+
+A checked plan for moving a number between your accounts. Faxbot places no port order.
+
+**Usage**:
+
+```console
+$ faxbot numbers move [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Read the plan, account choices, evidence...
+* `start`: Start a checked move plan to another...
+* `record`: Record a step as done or not_done.
+* `test`: Start watching for a receipt test from...
+* `forget`: Forget learned call properties from the...
+
+#### `faxbot numbers move show`
+
+Read the plan, account choices, evidence and steps still to do.
+
+**Usage**:
+
+```console
+$ faxbot numbers move show [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move start`
+
+Start a checked move plan to another receiving account; this places no port order.
+
+**Usage**:
+
+```console
+$ faxbot numbers move start [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: [required]
+
+**Options**:
+
+* `--to-account <str>`: [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move record`
+
+Record a step as done or not_done. Use step move with finished or abandoned to end the plan.
+
+**Usage**:
+
+```console
+$ faxbot numbers move record [OPTIONS] {number} {step} {status}
+```
+
+**Arguments**:
+
+* `number`: [required]
+* `step`: [required]
+* `status`: [required]
+
+**Options**:
+
+* `--note <str>`
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move test`
+
+Start watching for a receipt test from this route; send the test fax separately.
+
+**Usage**:
+
+```console
+$ faxbot numbers move test [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: [required]
+
+**Options**:
+
+* `--origin <str>`: [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move forget`
+
+Forget learned call properties from the old carrier and record this step in the plan.
+
+**Usage**:
+
+```console
+$ faxbot numbers move forget [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: [required]
 
 **Options**:
 

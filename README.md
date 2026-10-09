@@ -50,12 +50,12 @@ The API serves the console at `/admin/ui/`. Its left panel has eight areas, each
 
 - **Overview**: what needs a person now, what sending costs, and at the bottom a map of every way Faxbot saves money, along a fax's path, with whether each is on, works here and has been tested.
 - **Faxes**: Received (with each fax's owner), Sent (route, cost, delivery attempts) and Send a fax (route and cost before sending).
-- **Numbers**: every number Faxbot carries with its mailbox and email delivery, mailboxes, email delivery and sender identity.
+- **Numbers**: every number Faxbot carries, advice and checked move plans, its mailbox and email delivery, mailboxes, email delivery and sender identity.
 - **Recipients**: the numbers you fax and their route order, direct-delivery partners, and case packets.
 - **Providers**: what sends and receives, and one page per provider in use, the trunk named by its carrier; **Add or change a provider** opens the Setup wizard.
 - **Costs**: spending, prices and plans, savings (estimates) and recommendations.
 - **Access**: users, groups, roles, who has access, keys and phones, and sessions.
-- **System**: setup, security, storage and retention, audit log, diagnostics, logs, and Developer (API and SDKs, AI assistants, terminal, scripts and checks, provider plugins).
+- **System**: setup, AI analysis, security, storage and retention, audit log, diagnostics, logs, and Developer (API and SDKs, AI assistants, terminal, scripts and checks, provider plugins).
 
 Screens follow the signed-in user's permissions, use plain words outside Developer, and show settings only the owner may change disabled to everyone else. See the [console guide](docs/admin-console.md) and [Setup Wizard](docs/admin-console/setup-wizard.md).
 
@@ -82,6 +82,14 @@ Screens follow the signed-in user's permissions, use plain words outside Develop
 Health checks are available at `/health` and `/health/ready`. `/health/ready` answers 200 when Faxbot is ready for what it is set up to do (sending, receiving or both) and 503 otherwise, the same rule `faxbot system health` uses for its exit code. Readiness does not prove that a fax has been delivered. Faxbot starts even when it cannot sign in to its fax engine (Asterisk): readiness, the dashboard and Settings give the reason in one sentence, sends are refused with it, and Faxbot keeps trying. The Compose file restarts the `api` and `asterisk` services after any exit, including **Restart Faxbot** in the console.
 
 Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by `docker compose up -d` (a plain `docker compose restart` keeps the old values). `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart (Settings offers **Restart now**) and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
+
+## AI analysis
+
+Open **System → AI analysis** to choose OpenAI, OpenRouter, or another OpenAI-compatible API. Enter the API base address, model identifier and API key, save them, and test the connection. The owner can then enable analysis and choose a refresh interval; zero means manual refresh only. Keys are encrypted with the installation's existing secret storage and are never returned in full to the console or command line.
+
+**Analyze now** queues a saved report. The model can read bounded operational evidence about outbound delivery outcomes, attempt costs and calls avoided. It receives no fax documents, fax numbers or saved provider credentials. It cannot send a fax or change settings. Existing cost calculations and rule-based recommendations continue to update from records without an LLM. AI advice is additional interpretation; estimates, reported charges and settlements remain separate, and the analysis does not claim to total subscriptions, inbound charges or unmatched bills.
+
+The console shows when analysis last completed, its model and evidence, whether it is stale, and any refresh failure. A failed refresh keeps the previous successful report. The same controls are available with `faxbot system analysis configure`, `test`, `run` and `status`; `faxbot costs analysis` reads the saved report. Use `--key-prompt` or `--key-stdin` when configuring the model key. No model provider is contacted until you enable analysis or explicitly test its connection.
 
 ## SDKs and AI assistants
 
@@ -131,6 +139,9 @@ Reference pages under `docs/generated/` are generated from code. The README/road
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 
 ### Implemented
+
+- [x] Opt-in operational AI analysis with encrypted OpenAI-compatible credentials, OpenRouter support, bounded read-only evidence tools, durable manual and scheduled refreshes, visible freshness/failure state, and matching console/CLI controls. Verified with synthetic data and mocked model responses; live model-provider validation is separate.
+- [x] Number dependency answers and checked move plans are available in **Numbers → Advice and moves** and `faxbot numbers advice`, `dependencies` and `move`. Record account readiness, carrier cutover and receipt tests, review evidence, and finish or abandon the plan. Faxbot does not place a port order or send a receipt-test fax automatically.
 
 - [x] Durable outbound jobs, uncertain-outcome handling, server-side idempotency, and held test jobs.
 - [x] Users, groups, roles, scoped keys, sessions, mailbox access, and single-use mobile pairing.
