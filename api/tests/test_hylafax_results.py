@@ -396,7 +396,7 @@ def test_the_engine_hands_over_only_images_in_its_out_folder_with_its_own_secret
         assert taken.status_code == 200 and taken.json()['status'] == 'ok', taken.text
 
 
-def test_the_only_shell_command_is_the_built_in_hand_over_and_engine_lines_reach_only_their_context(tmp_path):
+def test_shell_commands_are_limited_to_built_in_helpers_outside_engine_contexts(tmp_path):
     dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
     contexts, current = {}, None
     for line in dialplan.splitlines():
@@ -406,10 +406,20 @@ def test_the_only_shell_command_is_the_built_in_hand_over_and_engine_lines_reach
         elif current:
             contexts[current] += line + '\n'
     with_shell = [name for name, body in contexts.items() if 'SHELL(' in body or 'SYSTEM(' in body]
-    assert with_shell == ['faxbot-inbound-done'] and dialplan.count('SHELL(') == 1
-    # The engine's lines enter faxbot-engine-out only, and nothing an engine context runs reaches SHELL.
+    assert with_shell == ['faxbot-inbound-done', 'faxbot-peer-route']
+    assert dialplan.count('SHELL(') == 2 and 'SYSTEM(' not in dialplan
+    commands = {name: body.split('SHELL(', 1)[1].split(' ', 1)[0]
+                for name, body in contexts.items() if name in with_shell}
+    assert commands == {'faxbot-inbound-done': '/usr/local/bin/faxbot-inbound-notify',
+                        'faxbot-peer-route': '/usr/local/bin/faxbot-peer-route'}
+    # The route helper receives only the filtered address, with no other shell arguments or expressions.
+    route_shell = [line for line in contexts['faxbot-peer-route'].splitlines() if 'SHELL(' in line]
+    assert route_shell == ['exten => s,1,Set(FAXBOT_ROUTE=${SHELL(/usr/local/bin/faxbot-peer-route '
+                           '${FILTER(0123456789abcdefABCDEF.:,${FAXBOT_PEER_ADDRESS})})})']
+    # The engine's lines enter faxbot-engine-out only, and engine contexts cannot call either shell helper.
     engine_contexts = [name for name in contexts if name.startswith('faxbot-engine')]
-    assert engine_contexts and not any('faxbot-inbound-done' in contexts[name] for name in engine_contexts)
+    assert engine_contexts and not any(helper in contexts[name]
+                                       for name in engine_contexts for helper in with_shell)
     values = SimpleNamespace(fax_data_dir=str(tmp_path), sip_trunk_dids='+15555550100', fax_default_country='US')
     iax = hylafax_engine.render_iax(values, {'lines': {'1': 'a' * 32, '2': 'b' * 32}}, lines=2)
     peers = [block for block in iax.split('\n[') if block.startswith('faxbot-line')]
