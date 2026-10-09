@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import { NAVIGATION, type PageContext } from '../navigation';
@@ -153,4 +153,36 @@ it('shows an environment-supplied key as read-only and never offers to remove it
   fireEvent.change(screen.getByLabelText('Hours between analyses'), { target: { value: '169' } });
   expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
   expect(writes).toEqual([]);
+});
+
+
+it.each(['idle', 'succeeded'])('refreshes a %s card, pauses when hidden and catches up on return', async (state) => {
+  const { AnalysisCard } = await import('../components/AIAnalysis');
+  const client = new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
+  const call = vi.spyOn(client, 'call').mockResolvedValue({ ...idle, state });
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const completed = (summary: string) => ({ ...idle, state: 'succeeded', stale: true,
+    last_run: { id: 'scheduled', provider: 'openai', model: 'chosen-model', started_at: '2026-10-09T01:00:00',
+      finished_at: '2026-10-09T01:00:04', summary, evidence: [], usage: {}, error: null } });
+  vi.useFakeTimers();
+  let view: ReturnType<typeof render> | undefined;
+  try {
+    await act(async () => { view = render(<AnalysisCard client={client} />); });
+    call.mockResolvedValue(completed('A scheduled report is ready.'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(screen.getByText('A scheduled report is ready.')).toBeTruthy();
+    expect(screen.getByText(/older evidence or settings/)).toBeTruthy();
+    visibility.mockReturnValue('hidden');
+    fireEvent(document, new Event('visibilitychange'));
+    call.mockResolvedValue(completed('The newest scheduled report is ready.'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(120000); });
+    expect(screen.queryByText('The newest scheduled report is ready.')).toBeNull();
+    visibility.mockReturnValue('visible');
+    await act(async () => { fireEvent(document, new Event('visibilitychange')); });
+    expect(screen.getByText('The newest scheduled report is ready.')).toBeTruthy();
+  } finally {
+    view?.unmount();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

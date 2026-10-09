@@ -60,15 +60,33 @@ export function AnalysisCard({ client, canRun = false, onNavigate, settingsPage 
   }, [load, refreshKey]);
   const running = status?.state === 'queued' || status?.state === 'running';
   useEffect(() => {
-    if (!running) return;
     let cancelled = false;
     let timer: number;
-    const poll = async () => {
-      await load();
-      if (!cancelled) timer = window.setTimeout(() => { void poll(); }, pollMs);
+    let generation = 0;
+    // Scheduled runs and freshness changes must also reach an already-open card.
+    const delay = running ? pollMs : 45000;
+    const visible = () => document.visibilityState !== 'hidden';
+    const poll = async (request: number) => {
+      if (cancelled || request !== generation || !visible()) return;
+      if (!fence.current) await load();
+      if (!cancelled && request === generation && visible()) {
+        timer = window.setTimeout(() => { void poll(request); }, delay);
+      }
     };
-    timer = window.setTimeout(() => { void poll(); }, pollMs);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    const visibilityChanged = () => {
+      window.clearTimeout(timer);
+      generation += 1;
+      if (visible()) void poll(generation);
+    };
+    if (visible()) {
+      timer = window.setTimeout(() => { void poll(generation); }, delay);
+    }
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', visibilityChanged);
+    };
   }, [running, load, pollMs]);
   const run = async () => {
     if (fence.current || !canRun || !status?.configured || !status.enabled || running || actionsDisabled) return;

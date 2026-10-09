@@ -58,6 +58,14 @@ def upgrade_analysis(connection, operations):
 
 
 def downgrade_analysis(connection, operations):
+    from .schema import SchemaUpgradeError
+    runs = connection.execute(sa.select(sa.func.count()).select_from(sa.table('analysis_runs'))).scalar()
+    state = sa.table('analysis_state', sa.column('state'))
+    pending = connection.execute(sa.select(sa.func.count()).select_from(state).where(
+        state.c.state.in_(('queued', 'running')))).scalar()
+    if runs or pending:
+        raise SchemaUpgradeError('Saved analysis or pending analysis requests exist; this revision cannot be undone '
+                                 'without losing them.')
     for index, table, _, _ in reversed(INDEXES):
         operations.drop_index(index, table_name=table)
     for name in reversed(ORDER):
