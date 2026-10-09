@@ -95,7 +95,7 @@ Docs Autopilot can draft instructional Markdown updates for a range of commits. 
 - **On your computer:** install the [Codex CLI](https://github.com/openai/codex), run `codex login` with your own account, then `make docs-propose BASE=<previous commit>` (add `APPLY=1` to stage the result). Codex runs read-only with GPT-6 Luna (`DOCS_AI_MODEL` and `DOCS_AI_REASONING_EFFORT` override the model and effort). No API key is used.
 - **On GitHub:** run the **Docs Autopilot (LLM)** workflow by hand. It uses the `OPENROUTER_API_KEY` repository secret, lets you choose GPT-6 Luna or Claude Sonnet 5.5, and uploads the patch. It opens a pull request only when you tick **apply**.
 
-Either way, the proposal is saved to `mkdocs-docs-llm.patch` only after `scripts/docs_ai/validate_doc_patch.py` accepts it: ordinary Markdown under `docs/`, never `docs/generated/`, `docs/architecture/`, the README, `planning/` or agent instructions.
+Either way, the proposal is saved to `mkdocs-docs-llm.patch` only after `scripts/docs_ai/validate_doc_patch.py` accepts it: ordinary Markdown under `docs/`, never `docs/generated/`, `docs/architecture/`, the generated `docs/reference/cli.md`, the README, `planning/` or agent instructions. The CLI reference remains readable as evidence; put instructional explanations in maintained guides. Corrections to command help belong in the CLI source, followed by `make cli-docs`.
 
 ### Enterprise testing boundary
 

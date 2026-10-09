@@ -287,8 +287,7 @@ def review_context(base_ref=None):
     stat = run(f'git diff --stat=160 {shlex.quote(base)}..HEAD').splitlines()
     if len(stat) > 300:
         stat = stat[:299] + [f'... and {len(stat) - 299} more lines; use git diff --stat to see them']
-    pages = [line for line in run('git ls-files docs').splitlines()
-             if line.endswith('.md') and not line.startswith(('docs/generated/', 'docs/architecture/'))]
+    pages = maintained_pages()
     return {'base': base, 'head': head, 'stat': '\n'.join(stat) or '(no changes)', 'pages': '\n'.join(pages)}
 
 
@@ -298,7 +297,10 @@ READER_RULE = """Who reads these pages: the administrator who set Faxbot up and 
 - Speak to that administrator directly and tell them exactly what to set and where: the screen and setting, the command, or the value to enter in their phone system or router.
 - Never write "ask your administrator", "give this to your (phone system) administrator", "ask your IT team", "ask whoever installed Faxbot" or anything else that treats the reader as someone without access. The reader is that person.
 - Name another party only when real companies really have one: the fax carrier or provider, a partner who manages an Avaya or BT phone system, the recipient's fax machine. Even then, give the reader the exact settings to check or pass on.
-- Keep developer internals (API internals, revision IDs, plugin manifests, environment-variable plumbing) out of operator guides; they belong on developer reference pages."""
+- Keep developer internals (API internals, revision IDs, plugin manifests, environment-variable plumbing) out of operator guides; they belong on developer reference pages.
+- Describe current behavior separately from research possibility. Faxbot targets international companies: scope legal and carrier conditions to the country, activity, account and source date. Do not infer a global prohibition from one jurisdiction, missing local equipment, an unsupported engine or an unmeasured benefit.
+- Do not invent owner decisions. The owner permits useful faxbot.net document relay, storage and processing designs; opaque notice IDs and public-demo access limits do not prohibit those architectures. Earlier Phase 1 and four-fix batches are not permanent scope limits.
+- Correct unsupported legal or economic absolutes in the affected guides instead of repeating them with an appended disclaimer. Byte savings may affect metered data or storage, but do not count an avoided call twice or claim savings without a cost basis. Recipient agreement and applicable document-handling requirements replace blanket industry exclusions; do not claim automatic compliance."""
 
 # Screen paths in the guides went stale when the console's navigation was reorganized, and
 # audits that checked labels alone missed them.
@@ -308,10 +310,26 @@ SCREEN_PATH_RULE = (
     "a path whose area or page is not there is wrong, so fix it to the page that now holds that setting or button."
 )
 
+GENERATED_CLI_RULE = (
+    "Never edit docs/reference/cli.md: api/app/cli/reference.py and make cli-docs regenerate it. "
+    "Read it as evidence, and put user-facing explanations in maintained operator guides. "
+    "If its generated help is wrong, report the responsible command definition as a code finding."
+)
+
+BEHAVIOR_RULE = (
+    "For document-handling changes, trace sending, receiving, email delivery and document download "
+    "through the code and relevant tests. Check defaults, explicit tools, automatic selection, recipient "
+    "agreement, endpoint and decoder compatibility, integrity checks, retained originals and failure "
+    "behavior. Explain the affected flows in maintained operator guides. Distinguish supported conditions "
+    "from unverified limits; a failing example alone does not prove a universal limitation."
+)
+
 DIFF_FORMAT = ("Write the diff exactly as `git diff` prints it: a `diff --git a/<path> b/<path>` line, `--- a/<path>` "
                "and `+++ b/<path>` lines, then hunks headed `@@ -<start>,<count> +<start>,<count> @@` with three "
                "unchanged context lines before and after each change. Do not use the apply_patch format or bare `@@` "
-               "lines. Delete a whole page with `deleted file mode 100644` and every line removed.")
+               "lines. Read the exact target section before writing each hunk and copy contiguous context from "
+               "that section; never combine context from different commands or sections. Delete a whole page "
+               "with `deleted file mode 100644` and every line removed.")
 
 
 def proposal_prompt(context) -> str:
@@ -324,12 +342,13 @@ The change to review is {base}..{head}.
 
 How to work:
 1. Read what changed, code first: `git diff {base}..HEAD` for the code (api/, asterisk/, scripts/, docker-compose*.yml, Makefile and similar), then for docs/.
-2. Find every maintained page under docs/ that describes the changed behavior (search for setting names, commands, labels and routes). Check each claim on those pages against the code: setting names and defaults, button and screen labels (api/admin_ui/src), CLI commands and options (api/app/cli), API routes, numbers, limits and what the product actually does. {SCREEN_PATH_RULE}
+2. Find every maintained page under docs/ that describes the changed behavior (search for setting names, commands, labels and routes). Check each claim on those pages against the code: setting names and defaults, button and screen labels (api/admin_ui/src), CLI commands and options (api/app/cli), API routes, numbers, limits and what the product actually does. {SCREEN_PATH_RULE} {BEHAVIOR_RULE}
 3. Fix every contradiction you find. Where user-visible behavior from this change is not explained on any page, add a brief explanation where a reader would look for it.
 4. Do not restate, reword or reorganize text that is already correct, and do not add marketing language. Text that addresses the reader as someone other than the administrator is not correct: fix it.
 5. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
 
 Scope:
+- {GENERATED_CLI_RULE}
 - Change only maintained Markdown under docs/. Never change docs/generated/, docs/architecture/, README.md, planning/, AGENTS.md or other agent instructions, .github/ workflows, mkdocs.yml or any code.
 - Never open .env files, *.key or *.cred files, .git/, .local-handoff/, research/, faxdata/ or node_modules/.
 - Do not run anything that changes the repository.
@@ -681,7 +700,8 @@ def _patch_stats(patch):
 
 def maintained_pages():
     return [line for line in run('git ls-files docs').splitlines()
-            if line.endswith('.md') and not line.startswith(('docs/generated/', 'docs/architecture/'))]
+            if line.endswith('.md') and not line.startswith(('docs/generated/', 'docs/architecture/'))
+            and line != 'docs/reference/cli.md']
 
 
 def nav_pages():
@@ -702,7 +722,7 @@ This is an audit of the documentation against the CURRENT code at {head}; there 
 
 How to work:
 1. Read each page in full, then read the code it describes: api/app (settings in api/app/config_values.py, routes, behavior), the console (api/admin_ui/src), the CLI (api/app/cli), asterisk/, the Compose files and scripts/.
-2. Check every claim against the code: setting names and defaults, button and screen labels, CLI commands and options, API routes, numbers, limits and what the product actually does. Fix every contradiction. {SCREEN_PATH_RULE}
+2. Check every claim against the code: setting names and defaults, button and screen labels, CLI commands and options, API routes, numbers, limits and what the product actually does. Fix every contradiction. {SCREEN_PATH_RULE} {BEHAVIOR_RULE}
 3. Pages or sections that describe features, settings, screens or commands that no longer exist in the code: delete them in the diff (a whole page as a deleted file) and say so in a finding. If mkdocs.yml's nav lists a page you delete, say so too, because mkdocs.yml is changed by hand.
 4. Pages that duplicate each other (also with pages outside this batch, listed below): propose merging them. Keep the better page, move anything it lacks into it, and delete the other.
 5. Report each page of this batch that is not in mkdocs.yml's nav as a finding.
@@ -712,6 +732,7 @@ How to work:
 9. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
 
 Scope:
+- {GENERATED_CLI_RULE}
 - Change only maintained Markdown under docs/. Never change docs/generated/, docs/architecture/, README.md, planning/, AGENTS.md or other agent instructions, .github/ workflows, mkdocs.yml or any code.
 - Never open .env files, *.key or *.cred files, .git/, .local-handoff/, research/, faxdata/ or node_modules/.
 - Do not run anything that changes the repository.
