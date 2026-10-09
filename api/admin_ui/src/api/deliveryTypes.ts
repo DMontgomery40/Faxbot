@@ -639,8 +639,8 @@ export interface DirectDeliveryRecord {
   // The sent fax this record belongs to, and whether a one-page notice went by fax with the original.
   job_id?: string | null;
   notice?: boolean;
-  // Sent's sentence for a fax that went to a partner's intake, or as a reference or the changes to a copy the
-  // partner held; null otherwise, optional for older servers.
+  // Sent's sentence for a fax that went to a partner's intake, as a reference or the changes to a copy the partner
+  // held, or as a fax image's new header lines over pages it held; null otherwise, optional for older servers.
   send_once?: string | null;
   status: string;
   size_bytes: number;
@@ -777,6 +777,9 @@ export interface SendOnceBytes {
   documents: number;
   references: number;
   patches: number;
+  // Fax images that went as only their new header lines, over pages the partner already held; optional for older
+  // servers.
+  fax_images?: number;
   sentence: string;
 }
 

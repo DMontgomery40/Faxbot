@@ -59,6 +59,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/direct/holdings"): "signed partner question: which documents it delivered are still held",
     ("POST", "/direct/references"): "signed partner manifest for a copy of a document it delivered before",
     ("POST", "/direct/patches"): "signed partner delivery: the changes to an earlier version it delivered",
+    ("POST", "/direct/regions"): "signed partner delivery: a fax image's new header regions around a body it delivered",
     ("GET", "/digital/jwks/{key}"): "a FHIR client's public keys, for the recipient's system to register; 404 when off",
     ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
     ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",

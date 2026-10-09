@@ -319,7 +319,7 @@ class DirectService:
                 return 409, self._refusal(identity, message_id, error.reason, str(error), peer)
         if carriage is not None:
             from .reuse import CarriageMiss
-            if kind != 'original':
+            if kind not in getattr(carriage, 'kinds', ('original',)):
                 return 400, self._refusal(identity, message_id, 'malformed', 'Only original documents can be sent '
                                                                              'this way.', peer)
             try:
@@ -345,6 +345,7 @@ class DirectService:
                 return refusal[0], self._refusal(identity, message_id, refusal[1], refusal[2], peer)
         folder = Path(values.fax_data_dir) / 'direct'
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        image_body = None
         if kind == FAX_IMAGE:
             # Every check that can refuse comes before acceptance: the image must match its signed facts
             # and turn into the PDF people read.
@@ -353,6 +354,8 @@ class DirectService:
                 faximage.readable_copy(document, folder)
             except faximage.FaxImageInvalid as error:
                 return 400, self._refusal(identity, message_id, 'not_fax_image', str(error), peer)
+            # Its page body, as the receipt names it: the sender may later send only new header regions (reuse.py).
+            image_body = faximage.layout(document)
         elif not document.startswith(b'%PDF'):
             return 400, self._refusal(identity, message_id, 'not_pdf', 'Only PDF documents can be delivered directly.', peer)
         suffix = '.tiff' if kind == FAX_IMAGE else '.pdf'
@@ -394,6 +397,8 @@ class DirectService:
                        'accepted_at': timestamp(), 'capabilities': self.offered(peer)}
             if kind == FAX_IMAGE:
                 receipt['kind'] = FAX_IMAGE
+                if image_body is not None:
+                    receipt['body_sha256'] = image_body.body_sha256
             if held is not None:
                 receipt['held_for_notice'] = True
             if intake_facts:
@@ -695,7 +700,8 @@ class DirectRoute:
         yield _DirectSubmission(service, peer, message_id, manifest, signature, ciphertext, digest,
                                 notice_job=claim.job_id if with_notice and image is None else None,
                                 routing=routing, job_id=claim.job_id,
-                                document=document if image is None and staged is None and not with_notice else None)
+                                document=document if image is None and staged is None and not with_notice else None,
+                                image=image if staged is None else None)
 
 
 def _first_of_send(send_once, identity, peer, agreement, claim, number, digest, size, values):
@@ -726,13 +732,15 @@ async def _hear(service, peer, statement):
 
 class _DirectSubmission:
     def __init__(self, service, peer, message_id, manifest, signature, ciphertext, digest, *, notice_job=None,
-                 routing=None, job_id=None, document=None):
+                 routing=None, job_id=None, document=None, image=None):
         """``notice_job``: the original fax's ID when a notice fax goes with this document (notice.py).
         ``routing``: the signed list of a send's recipients, sent with its first document (distribute.py).
-        ``document``: the original's bytes when it may go as a reference or as changes (reuse.py)."""
+        ``document``: the original's bytes when it may go as a reference or as changes (reuse.py).
+        ``image``: the fax image (``faximage.FaxImage``) when it may go as its new header regions (reuse.py)."""
         self.service, self.peer, self.message_id = service, peer, message_id
         self.manifest, self.signature, self.ciphertext, self.digest = manifest, signature, ciphertext, digest
         self.notice_job, self.routing, self.job_id, self.document = notice_job, routing, job_id, document
+        self.image = image
 
     async def submit(self):
         if self.notice_job is None:
@@ -767,8 +775,8 @@ class _DirectSubmission:
                 await run_lifecycle_step(lambda: service.store.mark_outbound(self.message_id, 'refused'))
                 raise DirectRefused('The partner is not taking documents at its intake now; nothing was sent.')
             return outcome
-        if self.document is not None:
-            # The partner may already hold this document, or an earlier version of it (reuse.py).
+        if self.document is not None or self.image is not None:
+            # The partner may already hold this document, an earlier version of it, or a fax image's body (reuse.py).
             from .reuse import offer
             outcome = await offer(self)
             if outcome is not None:

@@ -19,12 +19,36 @@ same signed receipt. Only how the bytes get there differs:
   (``POST /direct/patches``). The partner rebuilds the document and files it
   only when the result's SHA-256 and size match the signed manifest.
 
+- **Body (fax images).** A fax image differs on every send only in what Faxbot
+  itself draws: the header band on each page, with the date, time and page
+  number. The page body is written in strips of its own (``faximage.layout``)
+  and addressed by its digest. Each receipt for a fax image says, signed,
+  which body the partner now holds (``body_sha256``). Before a fax image goes
+  to a partner that signed such a receipt for the same body and the same
+  recipient, Faxbot asks, signed, whether it still holds it; the signed answer
+  is a short authorization for this one message ID and recipient number. If it
+  does, only the image without its body strips goes (the file's structure and
+  the new header bands, encrypted to the partner), with the body's digest, the
+  authorization and the whole image's SHA-256, signed (``POST /direct/regions``).
+  The partner puts its kept body strips back, byte for byte, and files the
+  result only when its SHA-256 and size match the signed manifest. A missing
+  body, a result that does not match, an expired or foreign authorization, or
+  another recipient is a signed miss that records nothing, so the whole image
+  goes at once. These are bytes too: a fax image to a partner never makes a
+  call. Through the opt-in fax codec on a phone route a body reference could
+  save call time, but the codec's payload carries only a PDF or text, so that
+  is not built (README roadmap).
+
 A partner answers only about documents that same partner delivered to it, so
 nobody can learn what another sender sent. A miss is a signed refusal
-(``not_held``, ``patch_mismatch``) that records nothing, so the full document
-goes at once under the same message ID. Any other outcome follows the direct
-route's rules: only a signed refusal allows the fax route, and a lost answer
-is asked about, never sent again.
+(``not_held``, ``patch_mismatch`` and the body misses in ``BODY_MISSES``) that
+records nothing, so the full document goes at once under the same message ID.
+Any other outcome follows the direct route's rules: only a signed refusal
+allows the fax route, and a lost answer is asked about, never sent again.
+
+Savings keep the frozen table's two kinds: a body reuse is kept as ``patch``
+(the changes from an image the partner held, whose SHA-256 is the base) and
+told apart by its delivery being a fax image.
 
 The delta is a simple rsync-style block delta written here (no extra
 dependency): the earlier version is indexed in fixed blocks, the new document
@@ -32,7 +56,9 @@ is scanned for those blocks, and what does not match goes as literal bytes;
 the instructions are then zlib-compressed. A delta that would not save at
 least a fifth of the bytes is not sent.
 """
+import asyncio
 from dataclasses import dataclass
+from datetime import timedelta, timezone
 import hashlib
 import json
 import logging
@@ -52,11 +78,19 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from ..config_runtime import run_lifecycle_step
 from ..routing.database import read_connection, reflect, utcnow, write_transaction
-from .crypto import (DirectProtocolError, b64, canonical, check_signed, parse_timestamp, signed, timestamp, unb64,
-                     verify)
+from . import faximage
+from .crypto import (FAX_IMAGE, DirectProtocolError, b64, canonical, check_signed, parse_timestamp, signed, timestamp,
+                     unb64, verify)
 
 
-REFERENCE, PATCH = 'reference', 'patch'
+REFERENCE, PATCH, BODY = 'reference', 'patch', 'body'
+# A fax image's body the partner cannot use: nothing is accepted, and the whole image goes at once.
+BODY_MISSES = ('not_held', 'raster_mismatch', 'not_authorized', 'authorization_expired', 'recipient_changed')
+BODY_QUERY, BODY_HOLDINGS, REGIONS = 'body_query', 'body_holdings', 'regions'
+AUTHORIZATION_SECONDS = 600  # how long a partner's "I hold this body" answer lets the sender rely on it
+MAX_HELD_LOOKUPS = 5
+REGIONS_MAGIC = b'FXBR1'
+_LABELS = {PATCH: b'faxbot-direct-patch-v1|', BODY: b'faxbot-direct-regions-v1|'}
 FRESHNESS_SECONDS = 24 * 3600
 MAX_ASKED = 10
 BLOCK = 64
@@ -195,44 +229,85 @@ def apply_delta(base, delta, *, max_size):
 
 
 # The delta's envelope: encrypted to the partner and bound to its message, base and result -------------------------
-def _patch_key(shared, ephemeral, recipient, message_id, base, result):
+def _patch_key(shared, ephemeral, recipient, message_id, base, result, carriage=PATCH):
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=None,
-                info=b'faxbot-direct-patch-v1|' + ephemeral + recipient + f'{message_id}|{base}|{result}'.encode(
+                info=_LABELS[carriage] + ephemeral + recipient + f'{message_id}|{base}|{result}'.encode(
                     'ascii')).derive(shared)
 
 
-def _patch_aad(message_id, base, result):
-    return canonical({'message_id': message_id, 'base_sha256': base, 'result_sha256': result})
+def _patch_aad(message_id, base, result, carriage=PATCH):
+    bound = {'message_id': message_id, 'base_sha256': base, 'result_sha256': result}
+    return canonical(bound if carriage == PATCH else {**bound, 'carriage': carriage})
 
 
-def seal_delta(peer, *, message_id, base, result, delta):
-    """Encrypt ``delta`` to the partner; returns (facts for the signed patch statement, ciphertext)."""
+def seal_delta(peer, *, message_id, base, result, delta, carriage=PATCH):
+    """Encrypt ``delta`` to the partner; returns (facts for the signed patch statement, ciphertext).
+
+    ``carriage`` keeps a patch's changes and a fax image's header regions (``BODY``) under separate keys."""
     ephemeral = X25519PrivateKey.generate()
     raw = serialization.Encoding.Raw, serialization.PublicFormat.Raw
     ephemeral_public = ephemeral.public_key().public_bytes(*raw)
     recipient = unb64(peer['exchange_key'], length=32)
     shared = ephemeral.exchange(X25519PublicKey.from_public_bytes(recipient))
     nonce = os.urandom(12)
-    ciphertext = AESGCM(_patch_key(shared, ephemeral_public, recipient, message_id, base, result)).encrypt(
-        nonce, delta, _patch_aad(message_id, base, result))
+    ciphertext = AESGCM(_patch_key(shared, ephemeral_public, recipient, message_id, base, result, carriage)).encrypt(
+        nonce, delta, _patch_aad(message_id, base, result, carriage))
     return {'ephemeral_key': b64(ephemeral_public), 'nonce': b64(nonce), 'size': len(delta),
             'sha256': hashlib.sha256(ciphertext).hexdigest()}, ciphertext
 
 
-def open_delta(identity, facts, ciphertext, *, message_id, base, result):
+def open_delta(identity, facts, ciphertext, *, message_id, base, result, carriage=PATCH):
     if hashlib.sha256(ciphertext).hexdigest() != facts['sha256']:
         raise DeltaError('The changes do not match their signed statement.')
     ephemeral = unb64(facts['ephemeral_key'], length=32)
     own = identity.exchange.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     try:
         shared = identity.exchange.exchange(X25519PublicKey.from_public_bytes(ephemeral))
-        delta = AESGCM(_patch_key(shared, ephemeral, own, message_id, base, result)).decrypt(
-            unb64(facts['nonce'], length=12), ciphertext, _patch_aad(message_id, base, result))
+        delta = AESGCM(_patch_key(shared, ephemeral, own, message_id, base, result, carriage)).decrypt(
+            unb64(facts['nonce'], length=12), ciphertext, _patch_aad(message_id, base, result, carriage))
     except (InvalidTag, ValueError):
         raise DeltaError('The changes could not be decrypted for this recipient.') from None
     if len(delta) != facts['size']:
         raise DeltaError('The changes do not match their signed statement.')
     return delta
+
+
+# A fax image without its body: Faxbot's own header bands and the file's structure --------------------------------
+def encode_regions(remaining, holes, *, size):
+    """The compressed regions: the whole image's size, where each body strip goes, and the image without them."""
+    body = (REGIONS_MAGIC + _varint(size) + _varint(len(holes))
+            + b''.join(_varint(offset) + _varint(length) for offset, length in holes) + remaining)
+    return zlib.compress(body, 9)
+
+
+def decode_regions(payload, *, size):
+    """(holes, the image without its body) from ``encode_regions``; DeltaError when it is not for ``size`` bytes."""
+    decompressor = zlib.decompressobj()
+    try:
+        body = decompressor.decompress(payload, size * 2 + 4096)
+    except zlib.error:
+        raise DeltaError('The header regions are not in the expected format.') from None
+    if decompressor.unconsumed_tail or not decompressor.eof or not body.startswith(REGIONS_MAGIC):
+        raise DeltaError('The header regions are not in the expected format.')
+    declared, position = _read_varint(body, len(REGIONS_MAGIC))
+    count, position = _read_varint(body, position)
+    if declared != size or not 0 < count <= size:
+        raise DeltaError('The header regions are for another fax image.')
+    holes = []
+    for _ in range(count):
+        offset, position = _read_varint(body, position)
+        length, position = _read_varint(body, position)
+        holes.append((offset, length))
+    return holes, body[position:]
+
+
+def _statement(receipt):
+    """The content of a signed receipt kept as JSON text, or {}."""
+    try:
+        statement = json.loads(json.loads(receipt or '{}').get('statement') or '{}')
+    except (TypeError, ValueError, AttributeError):
+        return {}
+    return statement if isinstance(statement, dict) else {}
 
 
 # What a partner holds --------------------------------------------------------------------------------------------
@@ -261,6 +336,56 @@ class ReuseStore:
                 return data
         return None
 
+    def held_body(self, peer_id, digest, recipient):
+        """The kept fax image ``peer_id`` delivered here to ``recipient`` whose body has this digest.
+
+        Returns (its bytes, its layout, its SHA-256), read again and checked; raises CarriageMiss ``not_held``, or
+        ``recipient_changed`` when the only such image was delivered to another recipient (number or key). Found
+        through this installation's own signed receipts, which name each fax image's body (``body_sha256``).
+        """
+        d = self.deliveries
+        with read_connection(self.engine) as connection:
+            rows = connection.execute(sa.select(d.c.document_path, d.c.digest, d.c.manifest, d.c.receipt).where(
+                d.c.direction == 'inbound', d.c.peer_id == peer_id, d.c.state == 'accepted', d.c.kind == FAX_IMAGE,
+                d.c.document_path.is_not(None), d.c.receipt.contains(digest))
+                .order_by(d.c.accepted_at.desc(), d.c.id).limit(MAX_HELD_LOOKUPS)).all()
+        elsewhere = False
+        for path, kept, manifest, receipt in rows:
+            if _statement(receipt).get('body_sha256') != digest:
+                continue
+            try:
+                delivered_to = json.loads(manifest)['recipient']
+            except (TypeError, ValueError, KeyError):
+                continue
+            if delivered_to != recipient:
+                elsewhere = True
+                continue
+            try:
+                data = Path(path).read_bytes()
+            except OSError:
+                continue
+            found = faximage.layout(data) if hashlib.sha256(data).hexdigest() == kept else None
+            if found is not None and found.body_sha256 == digest:
+                return data, found, kept
+        if elsewhere:
+            raise CarriageMiss('recipient_changed', 'These pages were delivered to another recipient here; send the '
+                                                    'whole fax image.')
+        raise CarriageMiss('not_held', 'This installation no longer holds these pages; send the whole fax image.')
+
+    def body_sent_before(self, peer_id, recipient, digest, *, exclude=None):
+        """Whether ``peer_id`` signed a receipt for a fax image from us to ``recipient`` with this body digest."""
+        d = self.deliveries
+        query = sa.select(d.c.receipt).where(
+            d.c.direction == 'outbound', d.c.peer_id == peer_id, d.c.kind == FAX_IMAGE, d.c.state == 'accepted',
+            d.c.recipient_number == recipient['fax_number'], d.c.receipt.contains(digest))
+        if exclude is not None:
+            query = query.where(d.c.message_id != exclude)
+        with read_connection(self.engine) as connection:
+            receipts = connection.execute(query.order_by(d.c.accepted_at.desc()).limit(MAX_HELD_LOOKUPS)).scalars()
+            statements = [_statement(receipt) for receipt in receipts]
+        return any(statement.get('body_sha256') == digest and statement.get('recipient') == recipient
+                   for statement in statements)
+
     def sent_before(self, peer_id, digest, *, exclude=None):
         """Whether ``peer_id`` accepted a document with this SHA-256 from this installation."""
         d = self.deliveries
@@ -282,20 +407,38 @@ class ReuseStore:
                 created_at=utcnow()))
             return True
 
+    def _with_kind(self):
+        """Savings with their outbound delivery's kind: a ``patch`` whose delivery is a fax image is a body reuse."""
+        s, d = self.savings, self.deliveries
+        return s.outerjoin(d, sa.and_(d.c.message_id == s.c.message_id, d.c.direction == 'outbound'))
+
     def saving(self, message_id):
+        """The bytes one delivery saved, with ``kind`` (``fax_image`` or None) from its delivery; None if none."""
         with read_connection(self.engine) as connection:
-            row = connection.execute(sa.select(self.savings).where(
-                self.savings.c.message_id == message_id)).mappings().one_or_none()
-        return dict(row) if row is not None else None
+            row = connection.execute(sa.select(self.savings, self.deliveries.c.kind.label('delivery_kind'))
+                                     .select_from(self._with_kind())
+                                     .where(self.savings.c.message_id == message_id)).mappings().one_or_none()
+        if row is None:
+            return None
+        found = dict(row)
+        found['kind'] = found.pop('delivery_kind')
+        return found
 
     def totals(self, since):
-        s = self.savings
+        """{``reference``|``patch``|``body``: documents, full and sent bytes} since ``since``."""
+        s, d = self.savings, self.deliveries
         with read_connection(self.engine) as connection:
-            rows = connection.execute(sa.select(s.c.carriage, sa.func.count(), sa.func.sum(s.c.full_bytes),
-                                                sa.func.sum(s.c.sent_bytes)).where(s.c.created_at >= since)
-                                      .group_by(s.c.carriage)).all()
-        return {carriage: {'documents': int(count), 'full_bytes': int(full or 0), 'sent_bytes': int(sent or 0)}
-                for carriage, count, full, sent in rows}
+            rows = connection.execute(sa.select(s.c.carriage, d.c.kind, sa.func.count(), sa.func.sum(s.c.full_bytes),
+                                                sa.func.sum(s.c.sent_bytes)).select_from(self._with_kind())
+                                      .where(s.c.created_at >= since).group_by(s.c.carriage, d.c.kind)).all()
+        totals = {}
+        for carriage, kind, count, full, sent in rows:
+            key = BODY if carriage == PATCH and kind == FAX_IMAGE else carriage
+            entry = totals.setdefault(key, {'documents': 0, 'full_bytes': 0, 'sent_bytes': 0})
+            entry['documents'] += int(count)
+            entry['full_bytes'] += int(full or 0)
+            entry['sent_bytes'] += int(sent or 0)
+        return totals
 
 
 def answer_holdings(service, statement, signature, *, now=None):
@@ -308,6 +451,8 @@ def answer_holdings(service, statement, signature, *, now=None):
         body = json.loads(encoded)
     except (AttributeError, UnicodeEncodeError, ValueError):
         return refused
+    if isinstance(body, dict) and body.get('type') == BODY_QUERY:
+        return _answer_bodies(service, identity, body, encoded, signature, now=now)
     digests = body.get('digests') if isinstance(body, dict) else None
     if (not isinstance(body, dict) or set(body) != {'type', 'recipient', 'said_at', 'signer', 'digests'}
             or body['type'] != 'holdings_query' or body['recipient'] != identity.signing_key
@@ -328,6 +473,66 @@ def answer_holdings(service, statement, signature, *, now=None):
     held = [digest for digest in dict.fromkeys(digests) if store.held_copy(peer['id'], digest) is not None]
     return 200, signed(identity, {'type': 'holdings', 'recipient': peer['signing_key'], 'digests': held,
                                   'answered_at': timestamp()})
+
+
+def _answer_bodies(service, identity, body, encoded, signature, *, now):
+    """Which fax image bodies this partner delivered here to this recipient number are still held: a signed answer
+    that lets the partner rely on them for this one message until ``expires_at``."""
+    refused = (400, {'detail': 'This question could not be checked.'})
+    bodies = body.get('bodies')
+    if (set(body) != {'type', 'recipient', 'said_at', 'signer', 'message_id', 'fax_number', 'bodies'}
+            or body['recipient'] != identity.signing_key or not isinstance(body['message_id'], str)
+            or not _ID.fullmatch(body['message_id']) or not isinstance(body['fax_number'], str)
+            or not isinstance(bodies, list) or not 0 < len(bodies) <= MAX_ASKED
+            or any(not isinstance(item, str) or not _HEX64.fullmatch(item) for item in bodies)):
+        return refused
+    peer = service.store.peer_by_key(body['signer']) if isinstance(body['signer'], str) else None
+    if peer is None or peer['state'] == 'revoked':
+        return 403, {'detail': 'This installation does not answer this sender.'}
+    try:
+        verify(peer['signing_key'], encoded, signature)
+        if abs((parse_timestamp(body['said_at']) - now).total_seconds()) > FRESHNESS_SECONDS:
+            return refused
+    except DirectProtocolError:
+        return refused
+    store = ReuseStore(service.store.engine)
+    recipient = {'fax_number': body['fax_number'], 'signing_key': identity.signing_key}
+    held = []
+    for digest in dict.fromkeys(bodies):
+        try:
+            store.held_body(peer['id'], digest, recipient)
+        except CarriageMiss:
+            continue
+        held.append(digest)
+    moment = now.replace(tzinfo=timezone.utc)
+    return 200, signed(identity, {'type': BODY_HOLDINGS, 'recipient': peer['signing_key'],
+                                  'message_id': body['message_id'], 'fax_number': body['fax_number'], 'bodies': held,
+                                  'answered_at': timestamp(moment),
+                                  'expires_at': timestamp(moment + timedelta(seconds=AUTHORIZATION_SECONDS))})
+
+
+async def ask_bodies(service, identity, peer, *, message_id, recipient, digests):
+    """The bodies the partner says, signed, it still holds for this message: (held, its signed answer), or None.
+
+    None when it holds none of them or cannot say (unreachable, or a Faxbot that does not know fax image bodies
+    answers 400 or 404): then the whole image goes.
+    """
+    from .service import PartnerUnreachable
+    statement = canonical({'type': BODY_QUERY, 'recipient': peer['signing_key'], 'said_at': timestamp(),
+                           'signer': identity.signing_key, 'message_id': message_id,
+                           'fax_number': recipient['fax_number'], 'bodies': list(digests)[:MAX_ASKED]})
+    try:
+        status, body = await service.http.request('POST', peer['endpoint_url'] + '/direct/holdings', json={
+            'statement': statement.decode('ascii'), 'signature': identity.sign(statement)})
+        answer = check_signed(body, peer['signing_key'])
+    except (PartnerUnreachable, httpx.HTTPError, DirectProtocolError, OSError):
+        return None
+    if (status != 200 or answer.get('type') != BODY_HOLDINGS or answer.get('recipient') != identity.signing_key
+            or answer.get('message_id') != message_id or answer.get('fax_number') != recipient['fax_number']
+            or not isinstance(answer.get('bodies'), list)):
+        return None
+    held = {digest for digest in answer['bodies'] if isinstance(digest, str) and digest in digests}
+    return (held, {'statement': body['statement'], 'signature': body['signature']}) if held else None
 
 
 async def ask_holdings(service, identity, peer, digests):
@@ -405,6 +610,84 @@ class Patch:
         return data
 
 
+_REGIONS_KEYS = frozenset({'type', 'signer', 'recipient', 'fax_number', 'message_id', 'body_sha256', 'result_sha256',
+                           'result_size', 'regions', 'authorization', 'said_at'})
+
+
+@dataclass
+class Regions:
+    """A fax image as Faxbot's new header regions around a body the partner holds, checked before anything is filed.
+
+    Every way it cannot be the signed image is a CarriageMiss from ``BODY_MISSES``: nothing is accepted, and the
+    sender sends the whole image under the same message ID. Never a delivery of anything but the signed image.
+    """
+    statement: str
+    signature: str
+    ciphertext: bytes
+    kind = BODY
+    kinds = (FAX_IMAGE,)
+    delta_size: int = 0
+    base: str | None = None
+
+    def document(self, service, identity, peer, manifest, *, now=None):
+        now = now or utcnow()
+        unchecked = CarriageMiss('raster_mismatch', 'The rebuilt fax image could not be checked; send the whole fax '
+                                                    'image.')
+        try:
+            encoded = self.statement.encode('ascii')
+            verify(peer['signing_key'], encoded, self.signature)
+            body = json.loads(encoded)
+        except (AttributeError, ValueError, UnicodeEncodeError, DirectProtocolError):
+            raise unchecked from None
+        document, recipient = manifest['document'], manifest['recipient']
+        facts = body.get('regions') if isinstance(body, dict) else None
+        if (not isinstance(body, dict) or set(body) != _REGIONS_KEYS or body['type'] != REGIONS
+                or body['signer'] != peer['signing_key'] or body['message_id'] != manifest['message_id']
+                or body['result_sha256'] != document['sha256'] or body['result_size'] != document['size']
+                or not isinstance(body['body_sha256'], str) or not _HEX64.fullmatch(body['body_sha256'])
+                or not isinstance(facts, dict) or set(facts) != {'ephemeral_key', 'nonce', 'size', 'sha256'}
+                or type(facts['size']) is not int or not isinstance(facts['sha256'], str)):
+            raise unchecked
+        if body['recipient'] != identity.signing_key or body['fax_number'] != recipient['fax_number']:
+            raise CarriageMiss('recipient_changed', 'These header regions were made for another recipient; send the '
+                                                    'whole fax image.')
+        self._authorized(identity, peer, body, recipient, now)
+        held, found, kept = ReuseStore(service.store.engine).held_body(peer['id'], body['body_sha256'], recipient)
+        try:
+            payload = open_delta(identity, facts, self.ciphertext, message_id=manifest['message_id'],
+                                 base=body['body_sha256'], result=document['sha256'], carriage=BODY)
+            holes, remaining = decode_regions(payload, size=document['size'])
+            data = faximage.splice(remaining, holes, faximage.body_strips(held, found), size=document['size'])
+        except (DeltaError, DirectProtocolError, faximage.FaxImageInvalid):
+            raise CarriageMiss('raster_mismatch', 'The rebuilt fax image did not match; send the whole fax '
+                                                  'image.') from None
+        if len(data) != document['size'] or hashlib.sha256(data).hexdigest() != document['sha256']:
+            raise CarriageMiss('raster_mismatch', 'The rebuilt fax image did not match; send the whole fax image.')
+        self.delta_size, self.base = len(payload), kept
+        return data
+
+    @staticmethod
+    def _authorized(identity, peer, body, recipient, now):
+        """This installation's own signed answer that it holds the body, for this message, sender and recipient."""
+        try:
+            answer = check_signed(body['authorization'], identity.signing_key)
+            expires = parse_timestamp(answer.get('expires_at'))
+        except (DirectProtocolError, UnicodeEncodeError):
+            raise CarriageMiss('not_authorized', 'These header regions came without a valid answer from this '
+                                                 'installation; send the whole fax image.') from None
+        if (answer.get('type') != BODY_HOLDINGS or answer.get('recipient') != peer['signing_key']
+                or answer.get('message_id') != body['message_id'] or not isinstance(answer.get('bodies'), list)
+                or body['body_sha256'] not in answer['bodies']):
+            raise CarriageMiss('not_authorized', 'These header regions came without a valid answer from this '
+                                                 'installation; send the whole fax image.')
+        if answer.get('fax_number') != recipient['fax_number']:
+            raise CarriageMiss('recipient_changed', 'These header regions were answered for another recipient; send '
+                                                    'the whole fax image.')
+        if now > expires:
+            raise CarriageMiss('authorization_expired', 'The answer that this installation holds these pages has '
+                                                        'expired; send the whole fax image.')
+
+
 # The sender ------------------------------------------------------------------------------------------------------
 def patch_bases(service, peer, job_id, values):
     """Earlier versions this partner accepted from us of the case documents ``job_id`` carries, newest first.
@@ -472,7 +755,6 @@ async def _held(submission):
 
 async def _patch(submission, identity, digest, path):
     """The signed patch statement and the encrypted delta from the version ``digest`` kept at ``path``, or None."""
-    import asyncio
     base = await run_lifecycle_step(path.read_bytes)
     if hashlib.sha256(base).hexdigest() != digest:
         return None
@@ -492,8 +774,11 @@ async def offer(submission):
     """Deliver ``submission``'s original as a reference or a patch when the partner holds what that needs.
 
     Returns the SubmissionReceipt when the partner accepted it, or None when the whole document should go now
-    (nothing was accepted). Raises like the direct route for anything else.
+    (nothing was accepted). Raises like the direct route for anything else. A fax image goes as its header regions
+    when the partner holds its body (``offer_body``).
     """
+    if getattr(submission, 'image', None) is not None:
+        return await offer_body(submission)
     try:
         planned = await _held(submission)
     except Exception:
@@ -531,8 +816,53 @@ async def offer(submission):
     return None
 
 
+def regions_request(identity, submission, recipient, found, authorization):
+    """The signed regions statement and the encrypted image without its body, for ``POST /direct/regions``."""
+    remaining, holes = faximage.cut(submission.image.data, found)
+    payload = encode_regions(remaining, holes, size=len(submission.image.data))
+    facts, ciphertext = seal_delta(submission.peer, message_id=submission.message_id, base=found.body_sha256,
+                                   result=submission.digest, delta=payload, carriage=BODY)
+    statement = signed(identity, {'type': REGIONS, 'recipient': submission.peer['signing_key'],
+                                  'fax_number': recipient['fax_number'], 'message_id': submission.message_id,
+                                  'body_sha256': found.body_sha256, 'result_sha256': submission.digest,
+                                  'result_size': len(submission.image.data), 'regions': facts,
+                                  'authorization': authorization, 'said_at': timestamp()})
+    return statement, ciphertext
+
+
+async def offer_body(submission):
+    """Deliver ``submission``'s fax image as its header regions when the partner holds its body.
+
+    Only when the partner signed a receipt for an earlier fax image from us to the same recipient with the same body,
+    and now says, signed, that it still holds it. Returns the SubmissionReceipt once the partner accepted the
+    rebuilt image, or None when the whole image should go now (nothing was accepted).
+    """
+    service, peer, image = submission.service, submission.peer, submission.image
+    found = await asyncio.to_thread(faximage.layout, image.data)
+    if found is None:
+        return None  # an image without its own body strips always goes whole
+    recipient = json.loads(submission.manifest)['recipient']
+    store = ReuseStore(service.store.engine)
+    if not await run_lifecycle_step(lambda: store.body_sent_before(peer['id'], recipient, found.body_sha256,
+                                                                   exclude=submission.message_id)):
+        return None
+    identity = await run_lifecycle_step(service.identity)
+    asked = await ask_bodies(service, identity, peer, message_id=submission.message_id, recipient=recipient,
+                             digests=[found.body_sha256])
+    if asked is None:
+        return None
+    statement, ciphertext = await asyncio.to_thread(regions_request, identity, submission, recipient, found, asked[1])
+    return await submission.deliver('/direct/regions', fallback=BODY_MISSES, files={
+        'manifest': (None, submission.manifest, 'application/json'),
+        'signature': (None, submission.signature.encode('ascii'), 'text/plain'),
+        'regions': (None, statement['statement'].encode('ascii'), 'application/json'),
+        'regions_signature': (None, statement['signature'].encode('ascii'), 'text/plain'),
+        'image': ('regions.bin', ciphertext, 'application/octet-stream')})
+
+
 def record_from_receipt(service, message_id):
-    """Count the bytes a partner's signed receipt says it did not need (a reference or a patch); once."""
+    """Count the bytes a partner's signed receipt says it did not need (a reference, a patch or a fax image's
+    body); once. A body is kept as a ``patch`` from the image the partner held (the frozen table's two kinds)."""
     row = service.store.find('outbound', message_id)
     if row is None or row['state'] != 'accepted' or not row.get('receipt'):
         return False
@@ -541,12 +871,13 @@ def record_from_receipt(service, message_id):
     except (TypeError, ValueError, KeyError):
         return False
     carriage = statement.get('carriage')
-    if carriage not in (REFERENCE, PATCH):
+    if carriage not in (REFERENCE, PATCH, BODY) or (carriage == BODY and row.get('kind') != FAX_IMAGE):
         return False
-    sent = statement.get('delta_size') if carriage == PATCH else 0
-    base = statement.get('base_sha256') if carriage == PATCH else None
-    if type(sent) is not int or sent < 0 or (carriage == PATCH and not isinstance(base, str)):
+    sent = statement.get('delta_size') if carriage != REFERENCE else 0
+    base = statement.get('base_sha256') if carriage != REFERENCE else None
+    if type(sent) is not int or sent < 0 or (carriage != REFERENCE and not isinstance(base, str)):
         return False
+    carriage = PATCH if carriage == BODY else carriage
     send_id = None
     if row.get('job_id'):
         from .distribute import DistributionStore
@@ -571,6 +902,9 @@ def sent_text(partner, saving):
     partner = partner or 'the partner'
     if saving['carriage'] == REFERENCE:
         return f'Delivered directly to {partner}, which already held this document; only a reference was sent.'
+    if saving.get('kind') == FAX_IMAGE:
+        return (f'Delivered directly as a fax image to {partner}, which already held these pages; only the new '
+                f"header lines went, {size_text(saving['sent_bytes'])} instead of {size_text(saving['full_bytes'])}.")
     return (f'Delivered directly to {partner} as the changes to a version it already held; '
             f"{size_text(saving['sent_bytes'])} sent instead of {size_text(saving['full_bytes'])}.")
 
@@ -580,20 +914,23 @@ def received_text(partner, carriage):
     if carriage == REFERENCE:
         return (f'Delivered directly by {partner} as a reference to a copy of this document it sent you before; '
                 'no telephone call.')
+    if carriage == BODY:
+        return (f'Delivered directly as a fax image by {partner}, rebuilt from pages it sent you before with only its '
+                'new header lines, and checked against the whole image; no telephone call.')
     return (f'Delivered directly by {partner} as the changes to an earlier version it sent you, checked against '
             'the whole document; no telephone call.')
 
 
 def savings_view(engine, *, since, days):
-    """Bytes partners did not need sent again (references and patches), never money."""
+    """Bytes partners did not need sent again (references, patches and fax image bodies), never money."""
     try:
         totals = ReuseStore(engine).totals(since)
     except Exception:
         totals = {}
-    reference = totals.get(REFERENCE, {'documents': 0, 'full_bytes': 0, 'sent_bytes': 0})
-    patch = totals.get(PATCH, {'documents': 0, 'full_bytes': 0, 'sent_bytes': 0})
-    saved = (reference['full_bytes'] - reference['sent_bytes']) + (patch['full_bytes'] - patch['sent_bytes'])
-    documents = reference['documents'] + patch['documents']
+    empty = {'documents': 0, 'full_bytes': 0, 'sent_bytes': 0}
+    reference, patch, body = (totals.get(REFERENCE, empty), totals.get(PATCH, empty), totals.get(BODY, empty))
+    saved = sum(part['full_bytes'] - part['sent_bytes'] for part in (reference, patch, body))
+    documents = reference['documents'] + patch['documents'] + body['documents']
     if not documents:
         sentence = f'No documents went to partners as references or changes in the last {days} days.'
     else:
@@ -602,7 +939,12 @@ def savings_view(engine, *, since, days):
             parts.append(f"{reference['documents']} as a reference to a copy the partner held")
         if patch['documents']:
             parts.append(f"{patch['documents']} as only the changes to an earlier version")
-        sentence = (f"{size_text(saved)} not sent in the last {days} days: {' and '.join(parts)}. "
+        if body['documents']:
+            images = 'fax image' if body['documents'] == 1 else 'fax images'
+            parts.append(f"{body['documents']} {images} sent as new header lines only, over pages the partner "
+                         'already held')
+        listed = ' and '.join(parts) if len(parts) < 3 else ', '.join(parts[:-1]) + ' and ' + parts[-1]
+        sentence = (f"{size_text(saved)} not sent in the last {days} days: {listed}. "
                     'These are bytes over the internet, not money; the calls were already saved.')
     return {'bytes_saved': max(saved, 0), 'documents': documents, 'references': reference['documents'],
-            'patches': patch['documents'], 'sentence': sentence}
+            'patches': patch['documents'], 'fax_images': body['documents'], 'sentence': sentence}

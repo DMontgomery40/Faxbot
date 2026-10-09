@@ -160,6 +160,26 @@ async def receive_patch(request: Request):
                                                        carriage=Patch(patch, patch_signature, ciphertext)))
 
 
+@router.post('/regions')
+async def receive_regions(request: Request):
+    """A fax image as its sender's new header regions around a page body this partner delivered before: multipart
+    ``manifest``, ``signature``, ``regions``, ``regions_signature`` and file ``image``."""
+    from .reuse import Regions
+    service = service_for(request.app)
+    await _enabled(service)
+    form = await _form(request, fields=4)
+    manifest, signature, image = form.get('manifest'), form.get('signature'), form.get('image')
+    regions, regions_signature = form.get('regions'), form.get('regions_signature')
+    if (not all(isinstance(value, str) for value in (manifest, signature, regions, regions_signature))
+            or image is None or isinstance(image, str)):
+        raise HTTPException(400, detail='The message is not in the direct delivery format.')
+    ciphertext = await image.read(MAX_DOCUMENT_BYTES + 1)
+    if len(ciphertext) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(413, detail='This document is too large.')
+    return await _partner_call(lambda: service.receive(_ascii(manifest), signature, b'',
+                                                       carriage=Regions(regions, regions_signature, ciphertext)))
+
+
 # Operator routes --------------------------------------------------------------------------------
 
 def _views(service, rows):
