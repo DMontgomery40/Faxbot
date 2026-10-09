@@ -208,6 +208,9 @@ def test_the_engine_reads_its_poll_command_from_each_lines_own_config():
     from api.tests.test_hylafax_engine import ROOT
     entry = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
     assert "printf 'PollRcvdCmd:\\t\\t/usr/local/lib/faxbot-engine/pollrcvd\\n'" in entry
+    # And the command a polled call runs (hylafax/patches/0002), with pollq kept for faxgetty's user.
+    assert "printf 'PolledCmd:\\t\\t/usr/local/lib/faxbot-engine/polled\\n'" in entry
+    assert 'chown uucp:uucp "$spool/pollq"' in entry
 
 
 # Advice ---------------------------------------------------------------------------------------------------------

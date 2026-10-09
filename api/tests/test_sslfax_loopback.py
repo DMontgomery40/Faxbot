@@ -1520,6 +1520,10 @@ def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(t
     assert second['sent_detail']['requested'] == 'JBIG' and second['sent_detail']['negotiated'] == 'JBIG', proofs
 
 
+# The polling password the proof uses: distinctive, so a coincidental digit string in a log cannot fail its check.
+PASSWORD = '1357924'
+
+
 def held_pages(count):
     """A document to hold for collection: ``count`` pages of large distinct shapes as a Group 4 fax TIFF (bytes),
     and the same pages as bitmaps."""
@@ -1612,7 +1616,7 @@ def test_s_a_held_fax_is_collected_by_polling_and_an_unknown_selective_address_i
     as refused, and leaves the protected document held. Case r (a peer that holds nothing) stays as it is."""
     context = loopback('s', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
     plain = hold_on_peer(context, 'a' * 32, 2)
-    hold_on_peer(context, 'b' * 32, 1, selective='77', password='2468')
+    hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
     proof = {}
     try:
         request, result = collect_once(context)
@@ -1654,14 +1658,14 @@ def test_s2_a_held_fax_behind_a_password_goes_only_to_the_caller_that_gives_it(t
     its DTC (the document stays held); with the right password, sent with the call from its sealed setting, the
     document is collected and lands in Received with identical pixels below the header line."""
     context = loopback('s2', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
-    protected = hold_on_peer(context, 'b' * 32, 1, selective='77', password='2468')
+    protected = hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
     proof = {}
     try:
-        wrong_request, wrong = collect_once(context, selective='77', password='0000')
+        wrong_request, wrong = collect_once(context, selective='77', password='0000000')
         proof['wrong_password'] = wrong
         time.sleep(3)
         proof['after_wrong'] = polled_evidence(context)
-        right_request, right = collect_once(context, selective='77', password='2468')
+        right_request, right = collect_once(context, selective='77', password=PASSWORD)
         proof['right_password'] = right
         if right['outcome'] == 'received':
             fax, pages = received_in_faxbot(context, right['inbound_fax_id'], tmp_path)
@@ -1684,9 +1688,14 @@ def test_s2_a_held_fax_behind_a_password_goes_only_to_the_caller_that_gives_it(t
     second = proof['after_right']
     assert [report['outcome'] for report in second['peer_reports']] == ['refused', 'sent'], proof
     assert second['peer_reports'][1]['job'] == 'b' * 32 and second['still_held'] == [], proof
-    # The password itself is in no log on either side.
-    assert '2468' not in session_logs(context['docker'], context['peer']), proof
-    assert '2468' not in session_logs(context['docker'], context['engine']), proof
+    # The password itself is in no log the run writes: both engines' session logs (stock HylaFAX+ printed it in the
+    # poller's; patch 0002 hides it) and every container's own log.
+    docker = context['docker']
+    for name in ('peer', 'engine'):
+        assert PASSWORD not in session_logs(docker, context[name]), name
+    for name in ('api', 'asterisk', 'engine', 'carrier', 'peer'):
+        logs = docker.run('logs', context[name], check=False)
+        assert PASSWORD not in logs.stdout + logs.stderr, name
 
 
 def test_r_a_collection_from_a_fax_server_that_holds_nothing_calls_once_and_says_so(tmp_path, loopback):

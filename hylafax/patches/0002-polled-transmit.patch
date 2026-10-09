@@ -15,7 +15,9 @@ What changes:
   the ordinary send path (sendClientCapabilitiesOK, sendFaxPhaseB,
   Class1Modem::sendPhaseB, sendEnd), the DTC standing in for the DIS; any
   other DTC is refused with DCN (T.30 5.3.6.1.4). Nothing is received on
-  such a call, and FaxRcvdCmd does not run for it.
+  such a call, and FaxRcvdCmd does not run for it. A held document whose
+  pages differ in format, or are not single-strip TIFF pages (the sender
+  reads a page's first strip only, as faxq prepares them), is not sent.
 - faxd/Class1Recv.c++, Class1.h/.c++, Class1Poll.c++: the Class 1 driver sets
   bit 9 when told, keeps the poller's PWD, SEP, CIG and DTC instead of
   treating a DTC as its own DIS echoed back (recvDCSFrames), returns from
@@ -27,6 +29,8 @@ What changes:
   polled call with: document (or ""), device, commid, reason (or ""), pages
   sent, caller, CIG, SEP, the holder's job reference, then the call ID values
   as FaxRcvdCmd gets them. Unset by default; Faxbot's engine sets it.
+- faxd/FaxPoll.c++ (the polling side): the session log no longer prints the
+  polling password it sends; it says whether one was given.
 
 Timing (T.30 5.3.6.1.4, Figure 5-2b): the poller repeats DTC after T4
 (3 s +/- 15%) without a response, so the first DCS must start inside it. It
@@ -322,9 +326,24 @@ diff -ruN a/faxd/FaxModem.h b/faxd/FaxModem.h
 +    virtual bool pollRefuse(fxStr& emsg);
  };
  #endif /* _FAXMODEM_ */
+diff -ruN a/faxd/FaxPoll.c++ b/faxd/FaxPoll.c++
+--- a/faxd/FaxPoll.c++	2026-10-08 16:14:21
++++ b/faxd/FaxPoll.c++	2026-10-08 17:38:08
+@@ -42,8 +42,9 @@
+ {
+     bool pollOK = false;
+     changeState(RECEIVING);
+-    traceProtocol("POLL FAX: begin (SEP \"%s\", PWD \"%s\")",
+-	(const char*) sep, (const char*) pwd);
++    // Faxbot: the polling password is a secret; the log says only whether one was given.
++    traceProtocol("POLL FAX: begin (SEP \"%s\", PWD %s)",
++	(const char*) sep, pwd.length() ? "given" : "none");
+     /*
+      * Create the first file ahead of time to avoid timing
+      * problems with Class 1 modems.  (Creating the file
 diff -ruN a/faxd/FaxRecv.c++ b/faxd/FaxRecv.c++
 --- a/faxd/FaxRecv.c++	2026-10-08 16:14:21
-+++ b/faxd/FaxRecv.c++	2026-10-08 16:26:40
++++ b/faxd/FaxRecv.c++	2026-10-08 16:51:52
 @@ -26,6 +26,8 @@
  #include "Sys.h"
  
@@ -380,7 +399,7 @@ diff -ruN a/faxd/FaxRecv.c++ b/faxd/FaxRecv.c++
  	    info.params = modem->getRecvParams();
  	    if (!modem->getRecvTSI(info.sender))		// optional TSI
  		info.sender = "<UNSPECIFIED>";
-@@ -142,11 +164,268 @@
+@@ -142,11 +164,278 @@
  	    Sys::unlink(ri.qfile);
  	else
  	    Sys::chmod(ri.qfile, recvFileMode);
@@ -570,19 +589,29 @@ diff -ruN a/faxd/FaxRecv.c++ b/faxd/FaxRecv.c++
 +    }
 +    Class2Params first, page;
 +    u_int pages = 0;
-+    bool uniform = true;
++    bool uniform = true, onestrip = true;
 +    do {
 +	heldPageParams(tif, page, clientInfo);
 +	if (pages++ == 0)
 +	    first = page;
 +	else if (page.vr != first.vr || page.wd != first.wd || page.ln != first.ln || page.df != first.df)
 +	    uniform = false;
++	/*
++	 * The sender reads each page as one strip (faxq's document preparation
++	 * writes them so); a page in several strips would go out cut short.
++	 */
++	if (TIFFNumberOfStrips(tif) != 1)
++	    onestrip = false;
 +	req.pagehandling.append(page.encodePage());
 +	req.pagehandling.append(TIFFLastDirectory(tif) ? 'P' : 'S');
 +    } while (TIFFReadDirectory(tif));
 +    TIFFClose(tif);
 +    if (!uniform) {
 +	emsg = "The held document's pages differ in format; it is not sent";
++	return (false);
++    }
++    if (!onestrip) {
++	emsg = "The held document's pages are not single-strip TIFF pages; it is not sent";
 +	return (false);
 +    }
 +    req.totpages = pages;
