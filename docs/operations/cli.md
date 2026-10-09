@@ -84,6 +84,8 @@ faxbot access keys create --for "Front desk scanner" -p fax:send -p fax:read   #
 faxbot costs spending
 ```
 
+To compare setup options such as joining a partner's network under a budget, write a JSON scenario file and run `faxbot costs portfolio --file scenario.json` (use `--file -` to read standard input). The file is at most 64 KiB. It holds a currency, a period (`horizon`), whose amounts count (`perspective`), a `budget`, up to ten setup items (`nodes`), shared costs (`groups`) and the benefit of each pair of items (`relationships`). Write amounts as quoted decimal text, or `null` when you do not know a value. If a needed amount is `null`, the command lists what to enter instead of a plan. Otherwise it prints an expected plan and a cautious plan. The result comes only from the amounts you enter. It is not a measured saving. The command saves nothing, enrolls no partner and changes no route. `faxbot reference cli` lists every field.
+
 Users, groups, roles, mailboxes and keys are named the way people know them: a sign-in name, a group name, a mailbox label. Add `--ids` to a list to see internal ids, and use an id when two names are the same.
 
 Secrets that Faxbot shows only once (new API keys, temporary passwords, the device key from pairing and the recovered installation key) are printed once and never saved. Settings and provider credentials are always shown masked. Enter secrets with the hidden prompts (`faxbot system settings set --secret NAME`, `faxbot providers configure phaxio --secret api_key`) rather than on the command line, where they would stay in your shell history.
