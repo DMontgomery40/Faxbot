@@ -2,14 +2,17 @@
 // installation's card for partners to add.
 import { useState } from 'react';
 import {
-  Box, Button, Card, CardContent, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TextField, Typography,
+  Box, Button, Card, CardContent, FormControlLabel, Paper, Stack, Switch, Table, TableBody, TableCell, TableContainer,
+  TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import HandshakeIcon from '@mui/icons-material/Handshake';
 import AdminAPIClient from '../../api/client';
 import type { DirectPartner } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, FormDialog, StatusChip, useSmallScreens } from '../access/AccessViews';
 import DirectCardDialog from './DirectCardDialog';
+import PartnerActivity from './PartnerActivity';
+import PartnerRelay from './PartnerRelay';
+import PartnerSendOnce from './PartnerSendOnce';
 import { DeliveryError, Notice } from './shared';
 
 const TONE: Record<DirectPartner['state'], 'success' | 'warning' | 'default'> = {
@@ -30,9 +33,14 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
   const [confirming, setConfirming] = useState<DirectPartner | null>(null);
   const [code, setCode] = useState('');
   const [removing, setRemoving] = useState<DirectPartner | null>(null);
+  // Partners → a partner → Relay: local calls through a partner, both ways (PartnerRelay).
+  const [relaying, setRelaying] = useState<DirectPartner | null>(null);
+  // Partners → a partner → Send once: one copy to a partner's intake for several of its numbers (PartnerSendOnce).
+  const [sendingOnce, setSendingOnce] = useState<DirectPartner | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tunnelAddress, setTunnelAddress] = useState<Record<string, string>>({});
 
   const run = async (operation: () => Promise<string | null>) => {
     setBusy(true);
@@ -41,6 +49,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       const message = await operation();
       if (message) setNotice(message);
       onChanged();
+      setRefresh((value) => value + 1);
       return true;
     } catch (failure) {
       setError(failure);
@@ -76,12 +85,37 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
     }
   };
 
+  const setFaxImages = (partner: DirectPartner, accept: boolean) => void run(async () => (
+    await client.setDirectFaxImages(partner.id, accept)).detail);
+
+  const setNoticeFax = (partner: DirectPartner, on: boolean) => void run(async () => (
+    await client.setDirectNoticeFax(partner.id, on)).detail);
+  // The partner activity lists reload after every change made here.
+  const [refresh, setRefresh] = useState(0);
+
+  const setTunnelCalls = (partner: DirectPartner, accept: boolean) => void run(async () => (
+    await client.setDirectTunnelCalls(partner.id, accept,
+      (tunnelAddress[partner.id] ?? partner.peer_call_address ?? '').trim() || null)).detail);
+
+  const checkTunnel = (partner: DirectPartner) => void run(async () => {
+    const found = await client.checkDirectTunnel(partner.id);
+    return found.applies ? found.sentence : `${found.sentence} ${found.note}`;
+  });
+
   const remove = async () => {
     if (!removing) return;
     if (await run(async () => { await client.removeDirectPartner(removing.id); return null; })) setRemoving(null);
   };
 
-  const actions = (partner: DirectPartner) => canWrite && partner.state !== 'revoked' && (
+  const actions = (partner: DirectPartner) => partner.state !== 'revoked' && (
+    <>
+      <Button size="small" onClick={() => setRelaying(partner)} disabled={busy}>Relay</Button>
+      <Button size="small" onClick={() => setSendingOnce(partner)} disabled={busy}>Send once</Button>
+      {canWrite && writeActions(partner)}
+    </>
+  );
+
+  const writeActions = (partner: DirectPartner) => (
     <>
       {partner.state === 'pending' && (
         <Button size="small" onClick={() => sendCode(partner)} disabled={busy}>Send code by fax</Button>
@@ -89,6 +123,63 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       <Button size="small" onClick={() => { setError(null); setConfirming(partner); }} disabled={busy}>Confirm a code</Button>
       <Button size="small" color="error" onClick={() => { setError(null); setRemoving(partner); }} disabled={busy}>Remove</Button>
     </>
+  );
+
+  // Fax images: the exact fax image a call would carry, delivered directly and filed like any received fax.
+  const faxImages = (partner: DirectPartner) => partner.state !== 'revoked' && (
+    <Box mt={1}>
+      {canWrite && (
+        <FormControlLabel
+          control={<Switch size="small" checked={Boolean(partner.receive_fax_images)} disabled={busy}
+            onChange={(event) => setFaxImages(partner, event.target.checked)} />}
+          label="Accept fax images" />
+      )}
+      {partner.fax_images_text && (
+        <Typography variant="body2" color="text.secondary">{partner.fax_images_text}</Typography>
+      )}
+      {canWrite && (
+        <FormControlLabel
+          control={<Switch size="small" checked={Boolean(partner.notice_fax)} disabled={busy}
+            onChange={(event) => setNoticeFax(partner, event.target.checked)} />}
+          label="Send a notice fax with each document" />
+      )}
+      {partner.notice_fax_text && (
+        <Typography variant="body2" color="text.secondary">{partner.notice_fax_text}</Typography>
+      )}
+      {partner.certificate_text && (
+        <Typography variant="body2" color="error">{partner.certificate_text}</Typography>
+      )}
+      {tunnelCalls(partner)}
+    </Box>
+  );
+
+  // Fax calls inside an encrypted tunnel: a real fax call straight to the partner's Faxbot, with no carrier.
+  const tunnelCalls = (partner: DirectPartner) => partner.state === 'verified' && (
+    <Box mt={1} aria-label={`Fax calls inside a tunnel with ${partner.organization}`} role="group">
+      {canWrite && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+          <TextField size="small" label="Their address inside the tunnel" placeholder="10.20.0.2"
+            value={tunnelAddress[partner.id] ?? partner.peer_call_address ?? ''} disabled={busy}
+            onChange={(event) => setTunnelAddress({ ...tunnelAddress, [partner.id]: event.target.value })} />
+          <FormControlLabel
+            control={<Switch size="small" checked={Boolean(partner.receive_peer_calls)} disabled={busy}
+              onChange={(event) => setTunnelCalls(partner, event.target.checked)} />}
+            label="Take their fax calls inside the tunnel" />
+          <Button size="small" onClick={() => setTunnelCalls(partner, Boolean(partner.receive_peer_calls))}
+            disabled={busy}>Save address</Button>
+          <Button size="small" onClick={() => checkTunnel(partner)} disabled={busy}>Check the tunnel</Button>
+        </Stack>
+      )}
+      {partner.peer_calls_text && (
+        <Typography variant="body2" color="text.secondary">{partner.peer_calls_text}</Typography>
+      )}
+      {canWrite && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          Set up a WireGuard tunnel to this partner on the fax engine's network yourself; Faxbot only places calls
+          through it.
+        </Typography>
+      )}
+    </Box>
   );
 
   return (
@@ -111,6 +202,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
                 <Typography variant="body2" color="text.secondary">{partner.fax_number}</Typography>
                 <Box my={1}><StatusChip label={LABEL[partner.state]} tone={TONE[partner.state]} /></Box>
                 <Typography variant="body2">{partner.status}</Typography>
+                {faxImages(partner)}
                 <Box mt={1}>{actions(partner)}</Box>
               </CardContent>
             </Card>
@@ -135,6 +227,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
                   <TableCell>
                     <StatusChip label={LABEL[partner.state]} tone={TONE[partner.state]} />
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{partner.status}</Typography>
+                    {faxImages(partner)}
                   </TableCell>
                   <TableCell align="right">{actions(partner)}</TableCell>
                 </TableRow>
@@ -142,6 +235,16 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      <PartnerActivity client={client} canWrite={canWrite} refresh={refresh} />
+
+      {relaying && (
+        <PartnerRelay client={client} partner={relaying} canWrite={canWrite} open onClose={() => setRelaying(null)} />
+      )}
+      {sendingOnce && (
+        <PartnerSendOnce client={client} partner={sendingOnce} canWrite={canWrite} open
+          onClose={() => setSendingOnce(null)} />
       )}
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />

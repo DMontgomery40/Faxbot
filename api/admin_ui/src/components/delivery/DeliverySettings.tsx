@@ -26,7 +26,9 @@ import { numberHint, settingsNumberFormat } from '../common/numbers';
 import { providerLabel } from '../../providerLabels';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
+import { RoutePagesPanel } from './PagesSettings';
 import { DeliveryError } from './shared';
+import friendlyWords from './faxFriendlySetting.json';
 
 type FormValue = string | number | boolean;
 type Values = Record<string, FormValue>;
@@ -35,6 +37,22 @@ const routeLabel = (id: string) => providerLabel(id);
 
 // One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
 export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
+// Fax-friendly shading (pages/friendly.py): "Where it saves time" by default, decided for each attempt. The words
+// are the server's own (friendly.console_words(), copied to faxFriendlySetting.json and kept equal by
+// tests/test_faithful_choice.py), so the console, the command line and guided setup say the same thing.
+type FriendlyChoice = 'where_it_saves' | 'always' | 'never';
+export const FRIENDLY_LABEL = friendlyWords.label;
+export const FRIENDLY_OPTIONS = (Object.keys(friendlyWords.choices) as FriendlyChoice[]).map((value) => (
+  { value, label: friendlyWords.choices[value][0] }));
+export const FRIENDLY_HELP = friendlyWords.help;
+export const WHITEN_LABEL = friendlyWords.whiten.label;
+export const WHITEN_HELP = friendlyWords.whiten_help;
+
+// The helper under the choice: what the chosen option does, then how the pattern works.
+export function friendlyHelp(choice: string): string {
+  const chosen = friendlyWords.choices[choice as FriendlyChoice] ?? friendlyWords.choices.where_it_saves;
+  return choice === 'never' ? chosen[1] : `${chosen[1]} ${FRIENDLY_HELP}`;
+}
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
@@ -53,6 +71,8 @@ export function deliveryEditorValues(data: Settings): Values {
     values.outbound_routes = parseRoutes(data.routing.outbound_routes).join(',');
     values.route_min_success_percent = data.routing.min_success_percent;
     values.local_delivery_enabled = data.routing.local_delivery ?? true;
+    values.fax_friendly_documents = data.routing.fax_friendly_documents ?? 'where_it_saves';
+    values.fax_friendly_whiten = data.routing.fax_friendly_whiten ?? false;
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -156,12 +176,13 @@ export function RouteOrderEditor({ value, onChange, available, outbound, disable
   );
 }
 
-function SwitchField({ label, helper, checked, onChange }: {
-  label: string; helper: string; checked: boolean; onChange: (checked: boolean) => void;
+function SwitchField({ label, helper, checked, onChange, disabled = false }: {
+  label: string; helper: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean;
 }) {
   return (
     <Box>
-      <FormControlLabel control={<Switch checked={checked} onChange={(event) => onChange(event.target.checked)} />} label={label} />
+      <FormControlLabel control={<Switch checked={checked} disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)} />} label={label} />
       <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 6 }}>{helper}</Typography>
     </Box>
   );
@@ -235,6 +256,18 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
             onChange={(checked) => onChange('local_delivery_enabled', checked)}
             helper={LOCAL_DELIVERY_HELP} />
+          <ResponsiveSettingItem icon={<SettingsIcon />} label={FRIENDLY_LABEL}
+            value={String(loaded.fax_friendly_documents ?? '')}
+            editValue={String(form.fax_friendly_documents ?? 'where_it_saves')}
+            onChange={(value) => onChange('fax_friendly_documents', value)}
+            type="select" options={FRIENDLY_OPTIONS} helperText={friendlyHelp(String(form.fax_friendly_documents ?? ''))}
+            showCurrentValue={showCurrentValue} />
+          <SwitchField label={WHITEN_LABEL} checked={Boolean(form.fax_friendly_whiten)}
+            disabled={form.fax_friendly_documents === 'never'}
+            onChange={(checked) => onChange('fax_friendly_whiten', checked)}
+            helper={WHITEN_HELP} />
+          <RoutePagesPanel client={client} canWrite={canWrite}
+            routes={[outbound, ...parseRoutes(form.outbound_routes)]} />
         </ResponsiveFormSection>
       )}
 

@@ -536,14 +536,18 @@ def test_startup_without_the_fax_engine_still_serves_the_console(isolated_instal
                         'MAX_REQUESTS_PER_MINUTE': '0'}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://testserver')
-    monkeypatch.setattr(main, 'AMI_STARTUP_WAIT_SECONDS', 0.5)
+    # A refused login must end the startup wait at once, so that case gets a 30-second wait to stop early from;
+    # a stopped engine waits the whole (short) wait.
+    wait = 30.0 if asterisk else 0.5
+    monkeypatch.setattr(main, 'AMI_STARTUP_WAIT_SECONDS', wait)
     headers = {'X-API-Key': bootstrap}
     started = time.monotonic()
     try:
         with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
             if asterisk:
-                # A refused login ends the startup wait at once instead of after the timeout.
-                assert time.monotonic() - started < 5
+                # A refused login ends the startup wait at once instead of after the timeout: 15 s is well under
+                # the 30-second engine wait, and loaded CI machines need the room.
+                assert time.monotonic() - started < 15 < wait
             assert client.get('/health').json() == {'status': 'ok'}
             ready = client.get('/health/ready')
             assert ready.status_code == 503 and ready.json()['message'] == expected
@@ -554,8 +558,11 @@ def test_startup_without_the_fax_engine_still_serves_the_console(isolated_instal
             report = client.post('/admin/diagnostics/report', headers=headers).json()
             sentences = [check['sentence'] for section in report['sections'] for check in section['checks']]
             assert sentences.count(expected) == 1
+            # A readable document: since rules in delivery (WP-C) the engine is checked once the pages are known,
+            # because a sending rule may allow another route.
+            from api.tests.test_work_http import pdf
             sent = client.post('/fax', headers=headers, data={'to': '+15555550123'},
-                               files={'file': ('synthetic.pdf', b'%PDF-1.4\n%%EOF\n', 'application/pdf')})
+                               files={'file': ('synthetic.pdf', pdf('Synthetic page'), 'application/pdf')})
             assert sent.status_code == 503 and sent.json()['detail'] == expected
             if asterisk:
                 # The client keeps signing in again in the background (after 1 s, then 2 s).

@@ -53,6 +53,8 @@ class AuthorizedFaxQueries:
         columns += ('send_by_call',) if 'send_by_call' in jobs.c else ()
         # 0021: an urgent fax goes before others waiting for the same line.
         columns += ('urgent',) if 'urgent' in jobs.c else ()
+        # 0040: the time the sender needs the fax sent by.
+        columns += ('send_by',) if 'send_by' in jobs.c else ()
         return sa.select(*(jobs.c[name] for name in columns),
             delivery.c.state.label('delivery_state'), delivery.c.dispatch_mode,
             delivery.c.version.label('delivery_version')).select_from(

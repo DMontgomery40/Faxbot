@@ -50,7 +50,7 @@ const CREDENTIALS = [
   { key: 'efax_user_id', label: 'User ID' },
 ];
 
-const INTERVALS = [
+export const INTERVALS = [
   { seconds: 30, text: 'Every 30 seconds' },
   { seconds: 60, text: 'Every minute' },
   { seconds: 120, text: 'Every 2 minutes' },
@@ -60,7 +60,7 @@ const INTERVALS = [
   { seconds: 3600, text: 'Every hour' },
 ];
 
-function intervalText(seconds: number): string {
+export function intervalText(seconds: number): string {
   const known = INTERVALS.find((item) => item.seconds === seconds);
   if (known) return known.text;
   return seconds % 60 === 0 ? `Every ${seconds / 60} minutes` : `Every ${seconds} seconds`;

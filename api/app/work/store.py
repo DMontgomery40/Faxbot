@@ -18,6 +18,9 @@ Rules this module keeps:
 - Every change is a compare-and-set on ``version`` together with its event.
 - Assignment never confers access: an owner or backup must already hold
   ``work:read`` and ``inbound:read`` on the document.
+- Every document a partner delivers directly is filed as a received fax
+  (``direct/filing.py``), so it gets an item like any fax; its ``received``
+  event says it came directly, with no telephone call.
 """
 from datetime import timedelta
 import json
@@ -99,6 +102,13 @@ class WorkStore:
         self.resources, self.mailboxes = tables['access_resources'], tables['mailboxes']
         self.principals, self.users = tables['access_principals'], tables['access_users']
         self.intake, self.connectors = tables['intake_items'], tables['intake_connectors']
+        # How each received fax was placed (0030): a receiving rule may mark its item urgent. None before then.
+        from ..access.receiving_rules import tables as receiving_tables
+        receiving = receiving_tables(engine)
+        self.routing = receiving['routing'] if receiving is not None else None
+        # Expected faxes beside these items (expectations.py), reflected on first use, and when this
+        # process next escalates them.
+        self._expectations, self._expectations_due_at = None, None
 
     # -- reading ---------------------------------------------------------------------
     def received(self):
@@ -146,6 +156,16 @@ class WorkStore:
         return dict(connection.execute(sa.select(self.principals.c.id, self.principals.c.display_name)
                                        .where(self.principals.c.id.in_(ids))).all())
 
+    def arrived_on(self, connection, inbound_id):
+        """How a document a partner delivered directly arrived, in one sentence; None for any other document."""
+        record = connection.execute(sa.select(self.imports.c.report).where(
+            self.imports.c.inbound_fax_id == inbound_id, self.imports.c.source == 'local',
+            self.imports.c.account.like('direct:%'))).mappings().first()
+        if record is None:
+            return None
+        from ..direct.filing import received_text
+        return received_text(dict(record))
+
     @staticmethod
     def target(setting, installation_hours):
         """(hours, source) for a new item: the mailbox target, else the installation target."""
@@ -176,13 +196,15 @@ class WorkStore:
         """Create one open item per received document that has none; return how many."""
         now = now or utcnow()
         inbound, items = self.inbound, self.items
+        # A fax that may be a partner's notice waits until the notice matcher has examined it (duplicates.py).
+        from .duplicates import held
         query = (sa.select(inbound.c.id, inbound.c.sha256, self.available_at().label('available_at'))
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
-                 .where(items.c.id.is_(None), self.received())
+                 .where(items.c.id.is_(None), self.received(), ~held(self.engine, inbound, now=now))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).all()
-        created = 0
+        created, made = 0, []
         for row in rows:
             try:
                 with write_transaction(self.engine) as connection:
@@ -198,10 +220,14 @@ class WorkStore:
                         version=1, created_at=now, updated_at=now))
                     self.event_on(connection, identity, 'received', actor_id=None, now=now,
                                   occurred_at=row.available_at,
-                                  details={'mailbox': place.label, 'due_hours': hours, 'due_source': source})
+                                  details={'mailbox': place.label, 'due_hours': hours, 'due_source': source,
+                                           'arrived': self.arrived_on(connection, row.id)})
                     created += 1
+                    made.append(identity)
             except DeliveryStoreError:
                 continue  # A concurrent feeder created it; the unique index decides.
+        # Each new item is matched against the expected faxes now, so an idle installation matches nothing.
+        self.expectations().examine(now=now, item_ids=made)
         return created
 
     def escalate(self, control, *, now=None, limit=100):
@@ -240,4 +266,18 @@ class WorkStore:
                     changed += 1
             except (WorkChanged, DeliveryStoreError):
                 continue  # A person changed it first, or another worker escalated it.
-        return changed
+        # Expected faxes past their due time are escalated here too, once each, at most every few minutes:
+        # their due times are hours or days away, and an idle installation should not query them every cycle.
+        if self._expectations_due_at is not None and now < self._expectations_due_at:
+            return changed
+        from .expectations import ExpectationWorker
+        escalated = self.expectations().escalate(control, now=now, limit=limit)
+        self._expectations_due_at = now + ExpectationWorker.SWEEP if escalated < limit else None
+        return changed + escalated
+
+    def expectations(self):
+        """The expected-fax records beside these work items, reflected once."""
+        if self._expectations is None:
+            from .expectations import ExpectationStore
+            self._expectations = ExpectationStore(self.engine)
+        return self._expectations

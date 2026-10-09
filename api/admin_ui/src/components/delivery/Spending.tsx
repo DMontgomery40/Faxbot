@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Box, Button, Card, CardContent, Grid, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
-import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts } from '../../api/deliveryTypes';
+import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts, ReceivedFaxCosts } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { DeliveryError, Notice, formatMinutes, formatMoney, formatMoneyList } from './shared';
 import { NO_PUBLISHED_PRICE, neverPricedSentence, notPriced, receivedCost, receivedLabel, sentCost, withCarrier } from './spendingSummary';
@@ -165,10 +165,42 @@ function ReceivedCard({ entry }: { entry: ReceivedCosts }) {
   );
 }
 
-export default function Spending({ client, providers, received, carrier, canWrite, onChanged }: {
+// A cloud provider's received faxes: what it charged, estimates for the rest, and faxes with no price, never $0.
+function ReceivedFaxesCard({ entry }: { entry: ReceivedFaxCosts }) {
+  const open = notPriced(entry.faxes_not_priced, 'fax');
+  return (
+    <Card variant="outlined" sx={{ borderRadius: 2, height: '100%' }} data-testid={`received-faxes-${entry.provider_id}`}>
+      <CardContent>
+        <Typography variant="subtitle1">Received faxes: {entry.label}</Typography>
+        <Typography variant="h5" component="p" sx={{ mt: 1 }}>
+          {formatMoneyList(entry.total_cost, entry.faxes_included_in_plan ? 'Included in your plan' : 'Not priced yet')}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{entry.summary}</Typography>
+        {entry.faxes_with_reported_cost > 0 && (
+          <Typography variant="body2" color="text.secondary">
+            {charged(entry.label, entry.reported_cost, entry.faxes_with_reported_cost, 'fax')}
+          </Typography>
+        )}
+        {entry.faxes_without_reported_cost - entry.faxes_not_priced > 0 && entry.estimated_cost_not_reported.length > 0 && (
+          <Typography variant="body2" color="text.secondary">
+            Estimated {formatMoneyList(entry.estimated_cost_not_reported)} for {count(entry.faxes_without_reported_cost - entry.faxes_not_priced, 'fax')} {entry.label} has not priced yet.
+          </Typography>
+        )}
+        {open && (
+          <Typography variant="body2" color="text.secondary" data-testid={`received-faxes-not-priced-${entry.provider_id}`}>
+            {`${open.charAt(0).toUpperCase()}${open.slice(1)}.`}
+          </Typography>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Spending({ client, providers, received, receivedFaxes = [], carrier, canWrite, onChanged }: {
   client: AdminAPIClient;
   providers: ProviderCosts[];
   received: ReceivedCosts[];
+  receivedFaxes?: ReceivedFaxCosts[];
   carrier: CarrierChargeStatus | null;
   canWrite: boolean;
   onChanged: () => void;
@@ -199,7 +231,7 @@ export default function Spending({ client, providers, received, carrier, canWrit
       <Notice message={notice} onClose={() => setNotice(null)} />
       {carrier?.supported && !carrier.readable && (
         <Typography variant="body2" color="text.secondary" mb={2}>
-          {carrier.carrier} call charges appear here once you add your {carrier.carrier} API key in Providers → {carrier.carrier}.
+          {carrier.sentence ?? `${carrier.carrier} call charges appear here once you add your ${carrier.carrier} API key in Providers → ${carrier.carrier}.`}
         </Typography>
       )}
       {carrier?.supported && carrier.readable && canWrite && (
@@ -209,7 +241,7 @@ export default function Spending({ client, providers, received, carrier, canWrit
           </Button>
         </Box>
       )}
-      {providers.length === 0 && received.length === 0 ? (
+      {providers.length === 0 && received.length === 0 && receivedFaxes.length === 0 ? (
         <Typography color="text.secondary">No faxes have been sent or received in the last 30 days.</Typography>
       ) : (
         <Grid container spacing={2}>
@@ -221,6 +253,11 @@ export default function Spending({ client, providers, received, carrier, canWrit
           {received.map((entry) => (
             <Grid item xs={12} sm={6} md={4} key={`received-${entry.carrier ?? entry.provider_id}`}>
               <ReceivedCard entry={entry} />
+            </Grid>
+          ))}
+          {receivedFaxes.map((entry) => (
+            <Grid item xs={12} sm={6} md={4} key={`received-faxes-${entry.provider_id}`}>
+              <ReceivedFaxesCard entry={entry} />
             </Grid>
           ))}
         </Grid>

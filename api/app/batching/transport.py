@@ -39,6 +39,21 @@ class BatchingTransport:
                                  preset=getattr(revision.values, 'sip_trunk_preset', None))
         if not verdict.saves or not choice.route.bound:
             raise BatchSplit()
+        # Sending rules: every fax in the call must still have the trunk first in its envelope; else each goes alone.
+        from ..routing import envelope as envelopes
+        from ..routing.rules_acceptance import first_route_is_bound
+        for member in claim.everyone:
+            try:
+                pinned = envelopes.load(self.store.configuration.engine, member.job_id)
+            except envelopes.UnreadableDecision:
+                raise BatchSplit() from None
+            if pinned is not None and not first_route_is_bound(pinned.decision, 'sip'):
+                raise BatchSplit()
+        if not policy.header_identifies_sender(revision.values):
+            from .store import call_members
+            members = call_members(self.store.configuration.engine, claim.attempt_id)
+            if members and members[0].get('layout') == policy.LAYOUT_PAGE_HEADERS:
+                raise BatchSplit()  # 47 CFR 68.318(d): the header this call would print does not name the sender
         return plan, choice
 
     def _record(self, claim, plan, choice):
@@ -67,9 +82,11 @@ class BatchingTransport:
             yield operation
 
 
-def call_image(store, root, claim):
-    """Make the one image a shared call sends; ``BatchSplit`` when it cannot be made."""
-    from .image import CallImageError, MemberUnusable, build_call_image, separator_line
+def call_image(store, root, claim, lighten=None):
+    """Make the one image a shared call sends; ``BatchSplit`` when it cannot be made. ``lighten``: each fax's
+    lightened pages for this call (pages/friendly.py call_lightener), or None."""
+    from .image import (CallImageError, MemberUnusable, build_call_image, index_entry, index_heading, page_mark,
+                        separator_line)
     from .store import call_members
     members = call_members(store.configuration.engine, claim.attempt_id)
     expected = [member.job_id for member in claim.everyone]
@@ -78,8 +95,18 @@ def call_image(store, root, claim):
     lines = [(member['id'], member['pages'],
               separator_line(member['document_number'], member['documents'], member['reference'],
                              member['pages'], member['sender_name'])) for member in members]
+    index = marks = None
+    if members[0].get('layout') == policy.LAYOUT_INDEX_PAGE:
+        # The page ranges printed are the ones stored when the call was formed, which outcomes map against.
+        index = (*index_heading(len(members), members[-1]['last_page']),
+                 [index_entry(member['document_number'], member['first_page'], member['last_page'],
+                              member['reference'], member['pages'], member['sender_name']) for member in members])
+    elif members[0].get('layout') == policy.LAYOUT_PAGE_HEADERS:
+        marks = [[page_mark(member['document_number'], member['documents'], page, member['pages'],
+                            member['reference'], member['sender_name']) for page in range(1, member['pages'] + 1)]
+                 for member in members]
     try:
-        return build_call_image(root, claim.attempt_id, lines)
+        return build_call_image(root, claim.attempt_id, lines, index=index, marks=marks, lighten=lighten)
     except MemberUnusable as error:
         # That fax goes on its own (and fails there if its document is really gone); the rest go together.
         raise BatchSplit({error.job_id}) from None

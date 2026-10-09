@@ -1,17 +1,20 @@
 /*
- * Faxbot: the two steps its T.38 gateway changes add to spandsp 0.0.6's gateway, in one place.
+ * Faxbot: what its changes add to spandsp 0.0.6, in one place: the two T.38 gateway steps (patches 0002 and
+ * 0003), the far-end frame capture and Internet Aware Fax steps of patch 0004, and patch 0005's subaddress check.
  *
- * res_fax_spandsp.c includes this file (patches 0002 and 0003; the image build copies it next to that
- * file), and so does the replay proof asterisk/tests/t38_gateway_replay.c, so the proof runs exactly the
- * steps the patches run. Include it after <spandsp.h>, with SPANDSP_EXPOSE_INTERNAL_STRUCTURES defined.
+ * res_fax_spandsp.c includes this file (the image build copies it next to that file), and so do the replay
+ * proofs asterisk/tests/t38_gateway_replay.c and t38_terminal_replay.c, so the proofs run exactly the steps
+ * the patches run. Include it after <spandsp.h>, with SPANDSP_EXPOSE_INTERNAL_STRUCTURES defined.
  *
- * Both steps read and change spandsp's internal gateway state, and FAXBOT_SPANDSP_FLAG_INDICATOR is
- * copied from spandsp 0.0.6's private t38_gateway.c. They were checked against the spandsp 0.0.6 in the
+ * The steps read and change spandsp's internal gateway and terminal state, and FAXBOT_SPANDSP_FLAG_INDICATOR
+ * is copied from spandsp 0.0.6's private t38_gateway.c. They were checked against the spandsp 0.0.6 in the
  * Debian package snapshot the images pin (release date 20110122), so any other spandsp stops the build.
  */
 #ifndef FAXBOT_T38_GATEWAY_H
 #define FAXBOT_T38_GATEWAY_H
 
+#include <stdio.h>
+#include <string.h>
 #include <spandsp/version.h>
 
 #if !defined(SPANDSP_RELEASE_DATE) || SPANDSP_RELEASE_DATE != 20110122
@@ -79,6 +82,286 @@ static inline int faxbot_gateway_end_empty_training(t38_gateway_state_t *gw)
 	}
 	t38_non_ecm_buffer_push(buffer);
 	return 1;
+}
+
+/*
+ * Patch 0004, part 1: what the far end's fax machine said, captured as T.30 frames pass (spandsp's real-time
+ * frame handler, both directions) and kept, bounded, for the channel variables set when the session ends.
+ *
+ * Frames are as spandsp hands them over: address (0xFF), control, FCF (spandsp's bit order, t30_fcf.h), then
+ * the FIF. FCFs here are spandsp 0.0.6's: DIS 0x80, DTC 0x81, DCS 0x82, NSF 0x20, CSA 0x24, TSA 0x62, SUB 0xC2,
+ * CFR 0x84, FTT 0x44; the low bit of every FCF but DIS/DTC's is the X bit (whether a DIS was received), so it is
+ * masked off. Each kept frame is cut at FAXBOT_FRAME_MAX octets, so a long NSF never grows a variable or a log line.
+ * A SUB fits: its FIF is at most 20 digits (T.30 5.3.6.2.4), 23 octets in all. The internet address frames (CSA,
+ * TSA) are kept whole up to FAXBOT_ADDRESS_MAX: their FIF is a sequence octet, a type octet, a length octet and at
+ * most 77 address octets (T.30 5.3.6.2.12, as spandsp's own decode_url_msg checks), so with the address, control
+ * and FCF octets 83 in all. An SSL Fax address ("ssl://<passcode>@<address>:<port>") is often longer than 32.
+ * Nothing logs these two frames; the NOTICE line names only the DIS.
+ */
+#define FAXBOT_FRAME_MAX 32
+#define FAXBOT_ADDRESS_MAX (2 + 4 + 77)
+#define FAXBOT_RATES_MAX 16
+
+typedef struct {
+	uint8_t frame[FAXBOT_ADDRESS_MAX];
+	int len;
+} faxbot_frame_t;
+
+typedef struct {
+	faxbot_frame_t dis;		/* the far end's last DIS (or DTC) */
+	faxbot_frame_t dcs_first;	/* the session's first DCS, whichever side sent it */
+	faxbot_frame_t dcs_last;	/* its last DCS: the settings the pages went with */
+	faxbot_frame_t csa;		/* the far end's internet address (CSA), when it sent one */
+	faxbot_frame_t tsa;		/* the sender's internet address (TSA), when it sent one */
+	faxbot_frame_t sub;		/* the subaddress (SUB) the sender gave */
+	faxbot_frame_t nsf;		/* the far end's non-standard facilities (NSF), first octets only */
+	uint8_t rates[FAXBOT_RATES_MAX];	/* each DCS's speed code (FIF octet 2, bits 11-14), in order */
+	int rates_len;
+	int dcs_sent;			/* 1 when this side sent the DCS: it sent the fax */
+	unsigned int dcs, cfr, ftt;	/* DCS frames (trainings), confirmations and failures to train */
+} faxbot_frames_t;
+
+static inline void faxbot_frame_keep_at_most(faxbot_frame_t *kept, const uint8_t *msg, int len, int most)
+{
+	kept->len = len < most ? len : most;
+	memcpy(kept->frame, msg, kept->len);
+}
+
+static inline void faxbot_frame_keep(faxbot_frame_t *kept, const uint8_t *msg, int len)
+{
+	faxbot_frame_keep_at_most(kept, msg, len, FAXBOT_FRAME_MAX);
+}
+
+/*! \brief Patch 0004: keep one T.30 frame; \p received is 1 for a frame from the far end. */
+static inline void faxbot_frames_record(faxbot_frames_t *frames, int received, const uint8_t *msg, int len)
+{
+	uint8_t fcf;
+
+	if (!frames || !msg || len < 3) {
+		return;
+	}
+	fcf = msg[2];
+	if (received && (fcf == 0x80 || fcf == 0x81)) {
+		faxbot_frame_keep(&frames->dis, msg, len);
+		return;
+	}
+	switch (fcf & 0xFE) {
+	case 0x82:	/* DCS */
+		frames->dcs++;
+		if (!frames->dcs_first.len) {
+			faxbot_frame_keep(&frames->dcs_first, msg, len);
+		}
+		faxbot_frame_keep(&frames->dcs_last, msg, len);
+		frames->dcs_sent = !received;
+		if (len > 4 && frames->rates_len < FAXBOT_RATES_MAX) {
+			frames->rates[frames->rates_len++] = msg[4] & 0x3C;
+		}
+		break;
+	case 0x84:	/* CFR */
+		frames->cfr++;
+		break;
+	case 0x44:	/* FTT */
+		frames->ftt++;
+		break;
+	case 0x24:	/* CSA: whole, up to the longest address T.30 allows */
+		if (received) {
+			faxbot_frame_keep_at_most(&frames->csa, msg, len, FAXBOT_ADDRESS_MAX);
+		}
+		break;
+	case 0x62:	/* TSA: the same */
+		if (received) {
+			faxbot_frame_keep_at_most(&frames->tsa, msg, len, FAXBOT_ADDRESS_MAX);
+		}
+		break;
+	case 0xC2:	/* SUB */
+		if (received) {
+			faxbot_frame_keep(&frames->sub, msg, len);
+		}
+		break;
+	case 0x20:	/* NSF */
+		if (received && fcf == 0x20 && !frames->nsf.len) {
+			faxbot_frame_keep(&frames->nsf, msg, len);
+		}
+		break;
+	}
+}
+
+/*! \brief A DCS speed code (FIF octet 2 & 0x3C, spandsp's fallback table) in bit/s; 0 when unknown. */
+static inline int faxbot_dcs_rate(uint8_t code)
+{
+	switch (code) {
+	case 0x20: return 14400;	/* V.17 */
+	case 0x28: return 12000;	/* V.17 */
+	case 0x24: return 9600;		/* V.17 */
+	case 0x04: return 9600;		/* V.29 */
+	case 0x2C: return 7200;		/* V.17 */
+	case 0x0C: return 7200;		/* V.29 */
+	case 0x08: return 4800;		/* V.27ter */
+	case 0x00: return 2400;		/* V.27ter */
+	}
+	return 0;
+}
+
+/*! \brief Lower-case hex of \p len octets into \p out (at least 2 * FAXBOT_ADDRESS_MAX + 1 bytes); empty for none. */
+static inline void faxbot_hex(const uint8_t *buf, int len, char *out)
+{
+	static const char digits[] = "0123456789abcdef";
+	int i;
+
+	for (i = 0; i < len && i < FAXBOT_ADDRESS_MAX; i++) {
+		out[2 * i] = digits[buf[i] >> 4];
+		out[2 * i + 1] = digits[buf[i] & 0x0F];
+	}
+	out[2 * i] = '\0';
+}
+
+/*! \brief The speed codes of every DCS as hex, separated by dots (at most FAXBOT_RATES_MAX entries). */
+static inline void faxbot_rates_text(const faxbot_frames_t *frames, char *out, size_t size)
+{
+	size_t used = 0;
+	int i;
+
+	out[0] = '\0';
+	for (i = 0; i < frames->rates_len && used + 4 < size; i++) {
+		used += snprintf(out + used, size - used, "%s%02x", i ? "." : "", frames->rates[i]);
+	}
+}
+
+/*
+ * Patch 0004, part 2: T.38 Internet Aware Fax (IAF) for a call Faxbot marked FAXBOT_IAF (engine_frames.py decides,
+ * from an enrolled partner or a fax server you approved; never a carrier call by guesswork): "peer" is another
+ * Faxbot, "endpoint" an approved IAF fax server (such as an SR140). Both get spandsp's IAF mode (T.38, continuous
+ * flow, no fill bits). The training check stays (no NO_TCF): in spandsp 0.0.6 a receiver with NO_TCF never starts
+ * receiving the page (start_receiving_document waits for a check only when it is off, and starts nothing when it
+ * is on), and the pair replay in asterisk/tests shows such a call failing. The check is sent ahead like the rest.
+ *
+ * Faster than real time: spandsp's T.38 terminal paces its data at the modem rate. Its unpaced mode
+ * (T38_TERMINAL_OPTION_NO_PACING) is not used, because spandsp 0.0.6 then puts up to 300 octets in each T.38
+ * packet and never applies the far end's datagram size, while Asterisk cuts any packet larger than the far end
+ * accepts (ast_udptl_write; 98 octets on Faxbot's trunks). Instead faxbot_iaf_send_ahead sends the next paced
+ * chunk now: the T.38 front end's clock jumps to the moment that chunk is due, and the T.30 timers do not move
+ * (t38_terminal_send_timeout with 0 samples), so every protocol timeout keeps its real length and every packet
+ * keeps its paced size. It never jumps while the front end is timing a receive.
+ */
+#define FAXBOT_IAF_PEER 1
+#define FAXBOT_IAF_ENDPOINT 2
+/* Chunks sent ahead after each 20 ms timer tick; each is one paced chunk (54 octets at 14,400 bit/s). */
+#define FAXBOT_IAF_AHEAD 9
+
+static inline int faxbot_iaf_kind(const char *value)
+{
+	if (!value) {
+		return 0;
+	}
+	if (!strcmp(value, "peer")) {
+		return FAXBOT_IAF_PEER;
+	}
+	if (!strcmp(value, "endpoint")) {
+		return FAXBOT_IAF_ENDPOINT;
+	}
+	return 0;
+}
+
+/*! \brief The T.30 IAF mode bits for \p kind (0 for none). */
+static inline int faxbot_iaf_t30_mode(int kind)
+{
+	switch (kind) {
+	case FAXBOT_IAF_PEER:
+	case FAXBOT_IAF_ENDPOINT:
+		return T30_IAF_MODE_T38 | T30_IAF_MODE_CONTINUOUS_FLOW | T30_IAF_MODE_NO_FILL_BITS;
+	}
+	return 0;
+}
+
+/*!
+ * \brief Send the next paced T.38 chunk now instead of when it is due.
+ * \retval 1 a chunk was due later and has been sent
+ * \retval 0 nothing to send ahead (nothing timed, already due, or a receive is being timed)
+ */
+static inline int faxbot_iaf_send_ahead(t38_terminal_state_t *terminal)
+{
+	t38_terminal_front_end_state_t *fe = &terminal->t38_fe;
+
+	if (fe->timed_step == 0 || !fe->us_per_tx_chunk || fe->timeout_rx_samples || fe->samples >= fe->next_tx_samples) {
+		return 0;
+	}
+	fe->samples = fe->next_tx_samples;
+	t38_terminal_send_timeout(terminal, 0);
+	return 1;
+}
+
+/*
+ * Patch 0005: the T.33 subaddress (SUB) a fax Faxbot sends asks for, from the channel variable FAXBOT_TX_SUB
+ * (ami.py sets it for a notice fax's notice ID or a subaddress your sending rules chose). spandsp 0.0.6 sends SUB
+ * with its DCS only when the far end's DIS sets the subaddressing bit (DIS bit 49), so Faxbot records a subaddress
+ * as requested, and as carried only when that bit was set (engine_frames.py); the replay proof in asterisk/tests
+ * shows both. A SUB's field holds at most 20 characters (T.30 5.3.6.2.4).
+ *
+ * The other side: spandsp 0.0.6's own DIS leaves bit 49 clear (its default T.30 features have no subaddressing),
+ * so a sending machine that honours the DIS never sent the built-in engine a SUB, and receiving rules by subaddress
+ * and notice pairing by SUB could not work there. faxbot_receive_subaddress sets it for a fax Faxbot receives.
+ */
+#define FAXBOT_SUB_MAX 20
+
+/*! \brief Patch 0005: a fax Faxbot receives says, in its DIS, that it takes a subaddress (T.30 DIS bit 49). */
+static inline void faxbot_receive_subaddress(t30_state_t *t30)
+{
+	t30_set_supported_t30_features(t30, t30->supported_t30_features | T30_SUPPORT_SUB_ADDRESSING);
+}
+
+/*!
+ * \brief The subaddress in \p value as Faxbot sends it: digits and +, # and * (spaces dropped), at most
+ * FAXBOT_SUB_MAX, into \p out (at least FAXBOT_SUB_MAX + 1 bytes). Any other character, or a longer value, gives an
+ * empty \p out: nothing is sent rather than part of an address. The same characters receiving_rules.py accepts.
+ */
+static inline void faxbot_sub_clean(const char *value, char *out, size_t size)
+{
+	size_t used = 0;
+
+	if (!out || !size) {
+		return;
+	}
+	out[0] = '\0';
+	if (!value) {
+		return;
+	}
+	for (; *value; value++) {
+		if (*value == ' ') {
+			continue;
+		}
+		if (!((*value >= '0' && *value <= '9') || *value == '+' || *value == '#' || *value == '*')
+			|| used >= FAXBOT_SUB_MAX || used + 1 >= size) {
+			out[0] = '\0';
+			return;
+		}
+		out[used++] = *value;
+	}
+	out[used] = '\0';
+}
+
+/*
+ * Patch 0006 (builder CA): the most compact coding a sent fax may use, from FAXBOT_COMPRESSION ("mh", "mr" or
+ * "mmr"), measured on the fax's own pages (api/app/pages/coding.py). It is a ceiling on what the sender offers:
+ * spandsp still takes the best coding the receiving machine also has, and T.6 (MMR) only with error correction
+ * (t30.c, process_rx_dis_dtc), so a machine never gets a coding it lacks. Error correction is not changed.
+ */
+
+/*! \brief The T.30 compressions a sent fax offers for \p coding; 0 (keep Asterisk's own set) for anything else. */
+static inline int faxbot_compressions(const char *coding)
+{
+	if (!coding) {
+		return 0;
+	}
+	if (!strcmp(coding, "mh")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION;
+	}
+	if (!strcmp(coding, "mmr")) {
+		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION | T30_SUPPORT_T6_COMPRESSION;
+	}
+	return 0;
 }
 
 #endif /* FAXBOT_T38_GATEWAY_H */

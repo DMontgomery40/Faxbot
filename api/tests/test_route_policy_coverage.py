@@ -24,12 +24,17 @@ OWN_AUTHENTICATION = {
     ("POST", "/phaxio-inbound"): "verified provider ingest",
     ("POST", "/sinch-inbound"): "verified provider ingest",
     ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",
+    # One address per extra provider account, each checked with that account's own basic auth or signature.
+    ("POST", "/phaxio-inbound/{key}"): "verified provider ingest for one Phaxio account (its own signature)",
+    ("POST", "/sinch-inbound/{key}"): "verified provider ingest for one Sinch account (its own basic auth)",
+    ("POST", "/efax-inbound/{key}"): "verified provider signal for one eFax account; stores nothing",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",
     ("POST", "/_internal/hylafax/started"): "the SSL Fax engine's own secret (faxes it took before a restart)",
     ("POST", "/_internal/hylafax/inbound"): "the SSL Fax engine's own secret; images in its out folder only",
     ("POST", "/_internal/hylafax/received-failed"): "the SSL Fax engine's own secret (a received call that left no fax)",
+    ("POST", "/_internal/hylafax/polled"): "the SSL Fax engine's own secret (a held fax another machine collected)",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
     # Direct delivery partners carry no API key: each request is verified against
@@ -37,6 +42,27 @@ OWN_AUTHENTICATION = {
     ("POST", "/direct/deliveries"): "signed partner manifest",
     ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
     ("POST", "/direct/verifications"): "signed partner code confirmation",
+    ("POST", "/direct/capabilities"): "signed partner statement of what it accepts",
+    ("POST", "/direct/relay/statements"): "signed partner relay statement (offer, acceptance, withdrawal, price, receipt)",
+    ("GET", "/direct/relay/outcomes/{message_id}"): "signed partner request: the outcome of a fax it relayed here",
+    ("POST", "/direct/introductions"): "signed partner introduction (a hint; the challenge fax still decides)",
+    ("GET", "/.well-known/faxbot-direct"): "public partner card, by design; 404 while direct delivery or it is off",
+    ("POST", "/direct/transfers"): "signed partner preflight: a document's manifest and pieces before its bytes",
+    ("PUT", "/direct/transfers/{message_id}/pieces/{sequence}"): "signed partner request: one piece of a document",
+    ("GET", "/direct/transfers/{message_id}"): "signed partner request: which pieces of a transfer are held",
+    ("POST", "/direct/transfers/{message_id}/commit"): "signed partner commit of a document sent in pieces",
+    ("POST", "/direct/notices"): "signed partner statement linking a notice fax to its original",
+    ("POST", "/direct/notices/paired"): "signed partner statement that a notice fax was paired",
+    ("POST", "/direct/calls/pages"): "signed partner question: which pages of a broken call are held",
+    ("POST", "/direct/distribution/statements"): "signed partner send-once statement (offer, acceptance, withdrawal)",
+    ("POST", "/direct/distributions"): "signed partner delivery: a send's first document and its list of recipients",
+    ("POST", "/direct/holdings"): "signed partner question: which documents it delivered are still held",
+    ("POST", "/direct/references"): "signed partner manifest for a copy of a document it delivered before",
+    ("POST", "/direct/patches"): "signed partner delivery: the changes to an earlier version it delivered",
+    ("POST", "/direct/regions"): "signed partner delivery: a fax image's new header regions around a body it delivered",
+    ("GET", "/digital/jwks/{key}"): "a FHIR client's public keys, for the recipient's system to register; 404 when off",
+    ("GET", "/forms/partner/holdings"): "signed partner request: which registered forms this installation holds",
+    ("GET", "/forms/partner/forms/{address}"): "signed partner request: one registered form by its content address",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",
@@ -127,6 +153,13 @@ READS = {
     ("GET", "/routing/recommendations/sending"): ("settings:read", False),
     ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
     ("GET", "/routing/recommendations/plans"): ("settings:read", False),
+    # The dry run: what a fax would cost on each route, before sending; nothing is sent or recorded.
+    ("GET", "/routing/predict"): ("settings:read", False),
+    # The same with the document itself, its codings measured on its pages; nothing is kept. It draws the pages as
+    # sending does (Ghostscript on an upload), so only someone who may send faxes may ask.
+    ("POST", "/routing/predict"): ("fax:send", False),
+    # The savings map: every way Faxbot saves money and how each stands here, never money (like /routing/savings).
+    ("GET", "/routing/savings/mechanisms"): ("settings:read", False),
 }
 
 

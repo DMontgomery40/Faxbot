@@ -18,10 +18,15 @@ from .config_runtime import run_lifecycle_step
 class SubmissionReceipt:
     provider_sid: str | None
     status: str
+    # The adapter's own plain sentence for a failure the provider answered at once (never provider text).
+    error: str | None = None
 
     def __post_init__(self):
         if self.status not in {'in_progress', 'success', 'failed', 'cancelled'}:
             raise ValueError('Unusable provider status.')
+        if self.error is not None and (self.status != 'failed' or not isinstance(self.error, str)
+                                       or not 0 < len(self.error) <= 200):
+            raise ValueError('Unusable failure sentence.')
         if self.provider_sid is not None and (not isinstance(self.provider_sid, str)
                 or not self.provider_sid or len(self.provider_sid) > 100
                 or any(ord(char) < 32 for char in self.provider_sid)):
@@ -105,7 +110,7 @@ class OutboundWorker:
                 # Deliberately outside the transport exception handler. This
                 # commit may already have succeeded when its response is lost.
                 await run_lifecycle_step(lambda: self.store.record_receipt(claim,
-                    provider_sid=receipt.provider_sid, status=receipt.status))
+                    provider_sid=receipt.provider_sid, status=receipt.status, error=receipt.error))
         except PreparationFailure as error:
             if not preparing:
                 raise
@@ -124,6 +129,14 @@ class OutboundWorker:
             for member in claim.everyone:
                 self.paused[member.job_id] = until
             return False
+        except Exception:
+            if not preparing:
+                raise
+            # Any other error before the durable marker is a bug or an integration failure (such as a database
+            # whose migration did not run), and nothing was sent: the fax fails as a preparation failure with its
+            # cause logged, so its pre-data rules apply. Raised, it would be claimed, leased and recovered for ever.
+            logging.getLogger(__name__).exception('Fax %s could not be prepared; nothing was sent.', claim.job_id)
+            await run_lifecycle_step(lambda: self.store.fail_preparation(claim, category='preparation_failed'))
         return True
 
     async def run(self):

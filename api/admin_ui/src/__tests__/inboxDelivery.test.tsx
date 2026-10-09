@@ -87,6 +87,26 @@ describe('Inbox email delivery', () => {
     expect(screen.getByText('Delivered to billing@clinic.example')).toBeTruthy();
   });
 
+  it('lists a fax image a partner delivered directly with the received faxes, once, never as faxed', async () => {
+    const label = 'Delivered directly as a fax image by Valley Hospital; no telephone call.';
+    server.use(
+      http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-direct', '+15550106666'), backend: 'direct', status_text: label }])),
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [
+        item({ id: 'i9', source: 'direct', inbound_fax_id: 'fax-direct', state: 'delivered', status: 'Delivered.',
+          next_attempt_at: null, delivered_at: '2026-10-03T13:00:00', delivered_to: ['referrals@clinic.example'] }),
+      ], counts: { received: 0, sending: 0, delivered: 1, failed: 0 } })),
+    );
+    render(<Received client={client()} inboundEnabled permissions={operator} onNavigate={() => undefined} />);
+    const row = await rowFor('+15550106666');
+    expect(within(row).getByText(label)).toBeTruthy();
+    expect(within(row).getByText('Direct delivery')).toBeTruthy();
+    expect(within(row).getByText('Delivered to referrals@clinic.example')).toBeTruthy();
+    // Filed with the received faxes, so the older section for direct deliveries does not list it again.
+    expect(screen.queryByText('Received by direct delivery')).toBeNull();
+    expect(screen.queryByText(/faxed/i)).toBeNull();
+  });
+
   it('retries a delivery that did not go through', async () => {
     const retries = inbox();
     render(<Received client={client()} inboundEnabled permissions={operator} />);
@@ -428,4 +448,30 @@ describe('How received faxes reach Faxbot', () => {
     expect(screen.getByText('https://fax.example/phaxio-inbound')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
   });
+
+  it.each(['blocked', 'unavailable'])('keeps the address available when the clipboard is %s', async (mode) => {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const writeText = vi.fn().mockRejectedValue(new Error('Clipboard access denied'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true,
+      value: mode === 'blocked' ? { writeText } : undefined });
+    try {
+      server.use(http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'phaxio',
+        callbacks: [{ name: 'Phaxio inbound', url: 'https://fax.example/phaxio-inbound' }] })));
+      render(<ReceivingAddresses client={client()} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
+      expect(await screen.findByText('Could not copy the address. Select it above and copy it manually.')).toBeTruthy();
+      expect(screen.queryByText('Address copied.')).toBeNull();
+      expect(screen.getByText('https://fax.example/phaxio-inbound')).toBeTruthy();
+      if (mode === 'blocked') {
+        writeText.mockResolvedValue(undefined);
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+        expect(await screen.findByText('Address copied.')).toBeTruthy();
+        expect(writeText).toHaveBeenLastCalledWith('https://fax.example/phaxio-inbound');
+      }
+    } finally {
+      if (previous) Object.defineProperty(navigator, 'clipboard', previous);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
 });

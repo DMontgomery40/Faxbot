@@ -401,7 +401,7 @@ async def ssl_fax_engine(context: Context) -> list[Finding]:
     if status == OK and hylafax_engine.engine_audio(values):
         status = ATTENTION  # on audio fax on its own; Apply and connect on the trunk page tries T.38 again
     fix = None if status in (OK, OFF) else 'Open carrier trunk'
-    return [Finding('engine.sslfax', 'engine', 'Fast fax service', status, sentence, fix,
+    return [Finding('engine.sslfax', 'engine', 'Fax engine', status, sentence, fix,
                     'providers/trunk' if fix else None)]
 
 

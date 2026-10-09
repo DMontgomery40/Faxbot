@@ -46,6 +46,7 @@ import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/Respon
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
+import HumbleFaxReceiving, { humblefaxReceivingValues } from './HumbleFaxReceiving';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
 import { BUILTIN_PROVIDERS, PROVIDER_LABELS, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
@@ -145,6 +146,8 @@ function editorValues(data: SettingsType): SettingsForm {
     mobile_local_base: data.mobile?.local_base ?? '',
     docs_base_url: data.developer?.docs_base_url ?? '',
     telnyx_api_key: data.sip.telnyx_api_key ?? '',
+    flowroute_access_key: data.sip.flowroute_access_key ?? '',
+    flowroute_secret_key: data.sip.flowroute_secret_key ?? '',
     feature_v3_plugins: data.features?.v3_plugins ?? false,
     feature_plugin_install: data.features?.plugin_install ?? false,
     fax_disabled: data.backend.disabled,
@@ -156,6 +159,7 @@ function editorValues(data: SettingsType): SettingsForm {
     phaxio_verify_signature: data.phaxio.verify_signature,
     sinch_project_id: data.sinch.project_id,
     sinch_base_url: data.sinch.base_url ?? '',
+    sinch_webhook_base_url: data.sinch.webhook_base_url ?? '',
     sinch_api_key: data.sinch.api_key,
     sinch_api_secret: data.sinch.api_secret,
     documo_api_key: data.documo?.api_key ?? '',
@@ -164,6 +168,7 @@ function editorValues(data: SettingsType): SettingsForm {
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
+    ...humblefaxReceivingValues(data),
     ...efaxEditorValues(data),
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
@@ -402,14 +407,17 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   );
 
   // A switch; `confirmOff` asks before turning it off (one sentence), never before turning it on.
-  const switchField = (label: string, field: string, helperText: string,
+  // A label, or [label when on, label when off], so the words always match the switch beside them.
+  const switchField = (label: string | [string, string], field: string, helperText: string,
     options: { inverted?: boolean; disabled?: boolean; confirmOff?: { title: string; text: string; action: string } } = {}) => {
     const value = Boolean(form[field]);
+    const checked = options.inverted ? !value : value;
+    const shown = Array.isArray(label) ? label[checked ? 0 : 1] : label;
     const note = withOwnerNote(field, helperText);
     return (
       <Box sx={{ px: 2 }} data-testid={`switch-${field}`}>
         <FormControlLabel
-          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled || locked(field)}
+          control={<Switch checked={checked} disabled={options.disabled || locked(field)}
             onChange={(event) => {
               const next = options.inverted ? !event.target.checked : event.target.checked;
               if (!event.target.checked && options.confirmOff) {
@@ -418,7 +426,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               }
               handleForm(field, next);
             }} />}
-          label={label} />
+          label={shown} />
         {note && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{note}</Typography>}
       </Box>
     );
@@ -731,7 +739,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Typography>
             )}
 
-            {switchField('Sending is on', 'fax_disabled',
+            {switchField(['Sending is on', 'Sending is off'], 'fax_disabled',
               'Off: Faxbot stops sending. Faxes submitted while sending is off stay on hold after you turn it back on.',
               { inverted: true, confirmOff: { title: 'Turn off sending?', action: 'Turn off sending',
                 text: 'Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.' } })}
@@ -903,6 +911,21 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     {textField('Sinch address (optional)', 'sinch_base_url', 'Leave it empty to use the usual Sinch address.')}
                     {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
                     {textField('Sinch API Secret', 'sinch_api_secret', 'Leave unchanged to keep the saved secret.', 'password')}
+                    {textField('Address Sinch sends received faxes to (optional)', 'sinch_webhook_base_url',
+                      "Leave it empty to use this server's public address. Fill it in when Sinch reaches Faxbot at another address, such as https://fax-hooks.example.com.")}
+                    {settings.sinch?.incoming_webhook_url && (
+                      <Alert severity="info" sx={{ mt: 2 }} data-testid="sinch-incoming-webhook">
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>Incoming webhook URL</Typography>
+                        <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                          {settings.sinch.incoming_webhook_login_url || settings.sinch.incoming_webhook_url}
+                        </Typography>
+                        <Typography variant="body2" sx={{ mt: 1 }}>
+                          {settings.sinch.incoming_webhook_login_url
+                            ? 'In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste this into Incoming webhook URL, with your password in place of PASSWORD. Sinch then shows the password as ***.'
+                            : 'In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste this into Incoming webhook URL. Faxbot checks each fax with Sinch before it keeps it.'}
+                        </Typography>
+                      </Alert>
+                    )}
                   </ResponsiveSettingSection>
                 )}
 
@@ -974,6 +997,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       {...envField('humblefax_secret_key')}
                     />
                     {textField('Send from this HumbleFax number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
+                    <HumbleFaxReceiving values={form} onChange={handleForm} disabled={!canEdit} client={client}
+                      receivingProvider={effectiveInbound === 'humblefax' && !!form.inbound_enabled} settings={settings} />
                   </ResponsiveSettingSection>
                 )}
 
@@ -1007,6 +1032,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     />
                     )}
                     <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} presetChosenElsewhere={Boolean(sections)} /></Box>
+                    {settings.sip.call_records && (settings.sip as { trunk?: { preset?: string } }).trunk?.preset && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} data-testid="trunk-call-records">
+                        {settings.sip.call_records.sentence}
+                      </Typography>
+                    )}
                     {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'telnyx' || settings.sip.telnyx_api_key_set) && (
                       <Box sx={{ mt: 2 }} data-testid="telnyx-key">
                         <ResponsiveSettingItem
@@ -1014,12 +1044,39 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                           label="Telnyx API key"
                           value={settings.sip.telnyx_api_key_set ? 'Saved' : ''}
                           editValue={form.telnyx_api_key ?? ''}
-                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) on your numbers; it changes a number only when you select Turn on T.38."
+                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call and checks fax over IP (T.38) and caller-name lookup on your numbers; it changes a number only when you select Turn on T.38 or Turn off name lookup."
                           placeholder="Telnyx API key"
                           onChange={(value) => handleForm('telnyx_api_key', value)}
                           type="password"
                           showCurrentValue={!pendingRestart && !!settings.sip.telnyx_api_key_set}
                           {...envField('telnyx_api_key')}
+                        />
+                      </Box>
+                    )}
+                    {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'flowroute' || settings.sip.flowroute_secret_key_set) && (
+                      <Box sx={{ mt: 2 }} data-testid="flowroute-keys">
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.flowroute_access_key)}
+                          label="Flowroute API access key"
+                          value={settings.sip.flowroute_access_key || ''}
+                          editValue={form.flowroute_access_key ?? ''}
+                          helperText="Optional. With it and the secret key, Faxbot shows what Flowroute charged for each call. Find both on the API page of your Flowroute account preferences (manage.flowroute.com/accounts/preferences/api)."
+                          placeholder="Access key"
+                          onChange={(value) => handleForm('flowroute_access_key', value)}
+                          showCurrentValue={!pendingRestart && !!settings.sip.flowroute_access_key}
+                          {...envField('flowroute_access_key')}
+                        />
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.flowroute_secret_key_set)}
+                          label="Flowroute API secret key"
+                          value={settings.sip.flowroute_secret_key_set ? 'Saved' : ''}
+                          editValue={form.flowroute_secret_key ?? ''}
+                          helperText="Faxbot only reads call records with it; it never places calls or changes your Flowroute account."
+                          placeholder="Secret key"
+                          onChange={(value) => handleForm('flowroute_secret_key', value)}
+                          type="password"
+                          showCurrentValue={!pendingRestart && !!settings.sip.flowroute_secret_key_set}
+                          {...envField('flowroute_secret_key')}
                         />
                       </Box>
                     )}
@@ -1061,13 +1118,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             title="Receiving"
             icon={<CheckCircleIcon />}
           >
-            {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
+            {switchField(['Receiving is on', 'Receiving is off'], 'inbound_enabled', receivingSentence,
               { disabled: !form.inbound_enabled && !receiverCanReceive })}
-            {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
-              <Alert severity="warning">
-                HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
-              </Alert>
-            )}
 
             <ResponsiveSettingItem
               icon={<SettingsIcon />}
@@ -1429,7 +1481,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 />
 
                 {textField('Document links for fax services work for (minutes)', 'pdf_token_ttl_minutes', 'How long a fax service may fetch a document Faxbot sends through it.', 'number')}
-                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', '0 keeps them.', 'number')}
+                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', 'Also removes documents kept for case packets once they have not been added or sent for this long. 0 keeps them.', 'number')}
                 {textField('Clean up old files every (minutes)', 'cleanup_interval_minutes', '', 'number')}
                 <Alert 
                   severity="info" 

@@ -72,7 +72,7 @@ class IntakeWorker:
 
     def deliver(self, item):
         store = self.store
-        connector = store.connector_for(item['to_number'])
+        connector = store.connector_for_item(item)  # a number rule may choose the connector (receiving rules)
         if connector is None:
             store.record_failed(item, message='No email delivery is set up for this number.')
             return
@@ -92,6 +92,14 @@ class IntakeWorker:
             return
         message = build_message(connector.settings, item, document, filename=attachment_name(item),
                                 time_zone=getattr(self.values(), 'time_zone', '') or '')
+        # Experimental encoded pages: attach the decoded original beside the fax as received.
+        from ..codec import receive as codec_receive
+        from ..codec.store import KeySeal
+        configuration = getattr(getattr(store, 'secrets', None), 'configuration', None)
+        attachment, note = codec_receive.email_extras(
+            store.engine, item, document, folder=getattr(self.values(), 'fax_data_dir', '.'),
+            seal=KeySeal(configuration) if configuration is not None else None)
+        codec_receive.attach(message, attachment, note)
         try:
             delivery = self.sender(connector.settings, password, message)
         except DefiniteFailure as error:

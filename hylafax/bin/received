@@ -12,12 +12,15 @@ file=${1:-}
 commid=$(printf '%s' "${3:-}" | tr -cd '0-9')
 reason=$(printf '%s' "${4:-}" | tr -cd 'A-Za-z0-9 .,:()_-' | cut -c1-200)
 caller=$(printf '%s' "${5:-}" | tr -cd '0-9+')
-# Asterisk names the call <token>.<called digits> in the caller name; the dialed
-# number (seventh argument) is used only when a modem passes one.
-name=$(printf '%s' "${6:-}" | tr -cd '0-9.')
-token=${name%%.*}
-called=''
+# Asterisk names the call <token>.<called digits> in the caller name, and adds .<trunk> when the call came in
+# on a trunk other than the first; the dialed number (seventh argument) is used only when a modem passes one.
+name=$(printf '%s' "${6:-}" | tr -cd '0-9a-z._-' | cut -c1-90)
+token=$(printf '%s' "${name%%.*}" | tr -cd '0-9')
+called='' trunk=''
 case $name in *.*) called=${name#*.} ;; esac
+case $called in *.*) trunk=${called#*.}; called=${called%%.*} ;; esac
+called=$(printf '%s' "$called" | tr -cd '0-9')
+trunk=$(printf '%s' "$trunk" | tr -cd 'a-z0-9_-' | cut -c1-32)
 [ -n "$called" ] || called=$(printf '%s' "${7:-}" | tr -cd '0-9+')
 
 case $file in
@@ -42,7 +45,20 @@ rate=$(printf '%s\n' "$info" | sed -n 's/^ *SignalRate: *//p' | head -1)
 format=$(printf '%s\n' "$info" | sed -n 's/^ *DataFormat: *//p' | head -1)
 recv=$(printf '%s\n' "$info" | sed -n 's/^ *TimeToRecv: *//p' | head -1 \
   | awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }')
+# The subaddress the sender's machine stated (T.33 SUB), for Faxbot's number rules: faxinfo's SubAddr,
+# else the session log's "subaddress <...>". Only T.30's numeric characters are kept.
+subaddr=$(printf '%s\n' "$info" | sed -n 's/^ *SubAddr: *//p' | head -1 | tr -cd '0-9#*+' | cut -c1-20)
 log=log/c$commid
+if [ -z "$subaddr" ] && [ -z "$queued" ] && [ -f "$log" ]; then
+  subaddr=$(sed -n 's/.*, subaddress <\([0-9#*+ ]*\)>.*/\1/p' "$log" | head -1 | tr -cd '0-9#*+' | cut -c1-20)
+fi
+# The far end's internet fax address (its TSA, ssl://...) when it offered one, for partner discovery, as sent
+# calls report it: host and port only, never the passcode in front of the last @.
+tsa=''
+if [ -z "$queued" ] && [ -f "$log" ]; then
+  tsa=$(sed -n 's/.*REMOTE TSA "ssl:\/\/\([^"]*\)".*/\1/p' "$log" | head -1)
+  tsa=$(printf '%s' "${tsa##*@}" | tr -cd 'A-Za-z0-9.:-' | cut -c1-255)
+fi
 sslfax=false offered=''
 # Without its communication ID the call has no session log of its own: whether SSL Fax ran is unknown.
 [ -z "$queued" ] || sslfax=unknown
@@ -71,5 +87,8 @@ temporary=$state/received/.$key.ticket
   printf 'reason64=%s\nstation64=%s\nrate64=%s\nformat64=%s\n' \
     "$(b64 "$reason")" "$(b64 "$station")" "$(b64 "$rate")" "$(b64 "$format")"
   printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$received"
-  printf 'negotiation64=%s\n' "$negotiation"
+  printf 'negotiation64=%s\nsubaddr=%s\nremote_address64=%s\n' "$negotiation" "$subaddr" "$(b64 "$tsa")"
+  printf 'trunk=%s\n' "$trunk"
+  # A fax Faxbot collected by polling names its collection (bin/pollrcvd).
+  printf 'poll=%s\n' "$(printf '%s' "${FAXBOT_POLL:-}" | tr -cd 'a-f0-9' | cut -c1-32)"
 } > "$temporary" && mv -f "$temporary" "$ticket"

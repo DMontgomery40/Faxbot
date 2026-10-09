@@ -134,3 +134,91 @@ def test_upload_replay_bound_authenticates_the_original_revision_binding(install
                 profile_id=newer.active.profile_id('outbound')))
     with pytest.raises(ConfigurationSecretError):
         configuration.outbound_replay_max_bytes(intent())
+
+
+# Faxes Faxbot makes itself under an ID named in advance (forms, receipt queries) ---------------------------------
+
+class _Outbound:
+    """``access.outbound`` as the generated-fax path calls it: the fax and its binding in one transaction."""
+
+    def __init__(self, configuration):
+        self.configuration, self.accepted = configuration, []
+
+    def accept(self, actor, revision, job, *, request_identity=None, also=None):
+        with self.configuration._locked() as connection:
+            self.configuration._accept_outbound_on(connection, revision, job)
+            if also is not None:
+                also(connection, datetime.utcnow())
+        self.accepted.append(job['id'])
+
+
+def _generated(database, tmp_path):
+    from types import SimpleNamespace
+    from api.app.schema import upgrade_schema
+    from api.app.config_store import ConfigurationStore
+    from api.app.config_values import ConfigurationValues
+    upgrade_schema(database)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false',
+                                                   'FAX_DATA_DIR': str(tmp_path)})
+    snapshot = configuration.initialize(values, actor='test', providers={'outbound': ProviderConfiguration(
+        'phaxio', credentials={'api_key': 'synthetic-key'}, traits={'requires_tiff': True})})
+    runtime = SimpleNamespace(manager=SimpleNamespace(store=configuration))
+    return runtime, SimpleNamespace(outbound=_Outbound(configuration)), snapshot
+
+
+def _pdf(text):
+    from reportlab.pdfgen import canvas
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer)
+    page.drawString(72, 720, text)
+    page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def test_a_generated_fax_named_again_keeps_the_first_fax_and_its_files_untouched(database, tmp_path):
+    """A second request naming a fax already queued (a form claim retried, a second click) returns that fax:
+    no second fax, and its PDF and TIFF stay byte for byte as they were."""
+    from types import SimpleNamespace
+    from api.app.routing.submit import accept_generated_fax
+    runtime, access, snapshot = _generated(database, tmp_path)
+    actor, fixed = SimpleNamespace(principal_id=None, credential=None), uuid4().hex
+
+    def send(text):
+        return accept_generated_fax(runtime, access, actor, snapshot.active, to_number='+15555550123',
+                                    document=_pdf(text), file_name='form.pdf', pages=1, job_id=fixed)
+    assert send('Synthetic form, first request') == fixed
+    pdf, tiff = tmp_path / f'{fixed}.pdf', tmp_path / f'{fixed}.tiff'
+    before = (pdf.read_bytes(), tiff.read_bytes())
+    assert send('Synthetic form, a different second request') == fixed
+    assert (pdf.read_bytes(), tiff.read_bytes()) == before
+    assert access.outbound.accepted == [fixed]
+    configuration = runtime.manager.store
+    with configuration.engine.connect() as connection:
+        assert connection.execute(sa.select(sa.func.count()).select_from(configuration.jobs)).scalar() == 1
+
+
+def test_a_generated_fax_another_request_is_queuing_is_left_alone(database, tmp_path):
+    """The document is on disk but its fax is not committed yet: the second request writes and removes nothing.
+    A file no fax ever owned, left long ago by an acceptance that never finished, is replaced."""
+    import os
+    import time
+    from types import SimpleNamespace
+    from api.app.routing.submit import GeneratedFaxBusy, ORPHAN_SECONDS, accept_generated_fax
+    runtime, access, snapshot = _generated(database, tmp_path)
+    actor, fixed = SimpleNamespace(principal_id=None, credential=None), uuid4().hex
+    pdf = tmp_path / f'{fixed}.pdf'
+    pdf.write_bytes(b'%PDF-1.4 being written by the first request')
+
+    def send():
+        return accept_generated_fax(runtime, access, actor, snapshot.active, to_number='+15555550123',
+                                    document=_pdf('Synthetic form'), file_name='form.pdf', pages=1, job_id=fixed)
+    with pytest.raises(GeneratedFaxBusy):
+        send()
+    assert pdf.read_bytes() == b'%PDF-1.4 being written by the first request'
+    assert not (tmp_path / f'{fixed}.tiff').exists() and access.outbound.accepted == []
+    stale = time.time() - ORPHAN_SECONDS - 60
+    os.utime(pdf, (stale, stale))
+    assert send() == fixed and access.outbound.accepted == [fixed]
+    assert pdf.read_bytes().startswith(b'%PDF') and pdf.read_bytes() != b'%PDF-1.4 being written by the first request'

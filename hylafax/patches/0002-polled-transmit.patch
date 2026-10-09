@@ -1,0 +1,1020 @@
+Faxbot: polled transmission for HylaFAX+ 7.0.11 (T.30 role reversal), so the
+SSL Fax engine can be polled (applies after 0001-sslfax-address-policy.patch).
+
+What changes:
+
+- faxd/polldoc.h (new): the held-document rules. A document a caller may
+  collect is a TIFF in pollq with a sidecar of the same name and the suffix
+  ".poll" (number=, selective=, password=, job=, tsi=, tagline=, held=).
+  Which document a DTC gets, and why one is refused, is decided here; the
+  image build compiles and runs tests/polled_transmit_test.c++ against it.
+- faxd/FaxRecv.c++, FaxServer.h/.c++: before faxgetty sends its DIS it reads
+  the sidecars held for the caller's number (Caller ID). With one, the DIS
+  says "ready to transmit" (T.30 Table 2, bit 9). A caller that answers with
+  (PWD) (SEP) (CIG) DTC gets the oldest document its SEP and PWD name through
+  the ordinary send path (sendClientCapabilitiesOK, sendFaxPhaseB,
+  Class1Modem::sendPhaseB, sendEnd), the DTC standing in for the DIS; any
+  other DTC is refused with DCN (T.30 5.3.6.1.4). Nothing is received on
+  such a call, and FaxRcvdCmd does not run for it. A held document whose
+  pages differ in format, or are not single-strip TIFF pages (the sender
+  reads a page's first strip only, as faxq prepares them), is not sent.
+- faxd/Class1Recv.c++, Class1.h/.c++, Class1Poll.c++: the Class 1 driver sets
+  bit 9 when told, keeps the poller's PWD, SEP, CIG and DTC instead of
+  treating a DTC as its own DIS echoed back (recvDCSFrames), returns from
+  recvBegin on DTC, and turns the line around (pollTransmitBegin: sendBegin,
+  the DTC as dis_caps, training forced).
+- faxd/FaxModem.h/.c++: the four driver hooks, with defaults that never
+  offer or accept polling (Class 2 drivers are unchanged).
+- faxd/faxGettyApp.h/.c++: a new config item, PolledCmd, run after every
+  polled call with: document (or ""), device, commid, reason (or ""), pages
+  sent, caller, CIG, SEP, the holder's job reference, then the call ID values
+  as FaxRcvdCmd gets them. Unset by default; Faxbot's engine sets it.
+- faxd/FaxPoll.c++ (the polling side): the session log no longer prints the
+  polling password it sends; it says whether one was given.
+
+Timing (T.30 5.3.6.1.4, Figure 5-2b): the poller repeats DTC after T4
+(3 s +/- 15%) without a response, so the first DCS must start inside it. It
+does: the document scan is a few small reads before the DIS, and after the
+DTC the send path begins with the 75 ms switching pause and V.21 exactly as
+after a DIS. ECM, SSL Fax and the T.38 gateway see an ordinary transmission
+from here on.
+
+Known deviation: frames the polled station transmits after the turnaround
+(TSI, DCS, PPS, EOP, DCN) keep HylaFAX's X bit = 1 (the station that
+received DIS, T.30 5.3.6.1.1), although as the station that sent the DIS it
+should set X = 0; only the refusal DCN carries X = 0. HylaFAX+ (getFCF masks
+the bit) and spandsp (& 0xFE) ignore the X bit on reception; a poller that
+checks it is an integration test item. A caller that sends pages first and
+polls in the same call (EOM, then DTC) is not served: the offer is made on
+the first DIS of a call only.
+
+diff -ruN a/faxd/Class1.c++ b/faxd/Class1.c++
+--- a/faxd/Class1.c++	2026-10-08 16:14:21
++++ b/faxd/Class1.c++	2026-10-08 16:18:27
+@@ -111,6 +111,8 @@
+     gotCTRL = false;
+     repeatPhaseB = false;
+     silenceHeard = false;
++    pollable = false;		// Faxbot: no document held until the server says so
++    recvdDTC = false;
+     imagefd = 0;
+     triggerInterrupt = false;
+     checkReadOnWrite = true;
+diff -ruN a/faxd/Class1.h b/faxd/Class1.h
+--- a/faxd/Class1.h	2026-10-08 16:14:21
++++ b/faxd/Class1.h	2026-10-08 16:18:24
+@@ -162,6 +162,14 @@
+     bool	sslSawBlockEnd;	// whether DLE+ETX has been seen
+     bool	sslWatchModem;	// whether or not SSL Fax should watch for modem activity
+ 
++// polled transmission (Faxbot): the caller polls us for a held document
++    bool	pollable;	// a document is held for the caller: DIS bit 9
++    bool	recvdDTC;	// the caller sent DTC: it wants to receive
++    FaxParams	dtcCaps;	// the caller's capabilities as a receiver (its DTC)
++    fxStr	pollSEP;	// the caller's selective polling address (SEP)
++    fxStr	pollPWD;	// the caller's polling password (PWD)
++    fxStr	pollCIG;	// the caller's identification (CIG)
++
+ // modem setup stuff
+     virtual bool setupModem(bool isSend = true);
+     virtual bool setupClass1Parameters();
+@@ -287,6 +295,11 @@
+     bool	requestToPoll(fxStr&);
+     bool	pollBegin(const fxStr& cig, const fxStr& sep, const fxStr& pwd,
+ 		    fxStr& emsg);
++// polled transmission (Faxbot)
++    void	setPollable(bool hasDocument);
++    bool	getRecvDTC(fxStr& sep, fxStr& pwd, fxStr& cig);
++    bool	pollTransmitBegin(Class2Params& caps, fxStr& emsg);
++    bool	pollRefuse(fxStr& emsg);
+ 
+ // miscellaneous
+     bool	faxService(bool enableV34, bool enableV17);	// switch to fax mode (send)
+diff -ruN a/faxd/Class1Poll.c++ b/faxd/Class1Poll.c++
+--- a/faxd/Class1Poll.c++	2026-10-08 16:14:21
++++ b/faxd/Class1Poll.c++	2026-10-08 16:19:40
+@@ -68,3 +68,77 @@
+ 	    FCF_DTC, dtc,
+ 	    conf.t1Timer, false, emsg);
+ }
++
++/*
++ * Polled transmission (Faxbot): the caller polls us for a document we
++ * hold.  The server says before recvBegin whether one is held for the
++ * caller; recvBegin then sets DIS bit 9 ("ready to transmit", T.30
++ * Table 2), and recvDCSFrames keeps the (PWD) (SEP) (CIG) DTC the caller
++ * answers with instead of (TSI) DCS.
++ */
++void
++Class1Modem::setPollable(bool hasDocument)
++{
++    pollable = hasDocument;
++}
++
++bool
++Class1Modem::getRecvDTC(fxStr& sep, fxStr& pwd, fxStr& cig)
++{
++    if (!recvdDTC)
++	return (false);
++    sep = pollSEP;
++    pwd = pollPWD;
++    cig = pollCIG;
++    return (true);
++}
++
++/*
++ * Turn the line around: from here the send protocol runs as it does
++ * after getPrologue() on a call we placed.  The DTC carries the calling
++ * station's capabilities as a receiver in the DIS format (T.30 5.3.6.1.4,
++ * Table 2 "DIS/DTC"), so it stands in for the DIS.  No NSC was read, so
++ * no HylaFAX-specific features are assumed.  The caller's T4 (3 s) runs
++ * from the end of its DTC: the first DCS must follow within it, as it
++ * does after a DIS (sendTraining: switching pause, V.21, TSI, DCS, TCF).
++ */
++bool
++Class1Modem::pollTransmitBegin(Class2Params& caps, fxStr& emsg)
++{
++    if (!recvdDTC) {
++	emsg = "No DTC was received; nothing to transmit on a poll";
++	return (false);
++    }
++    sendBegin();				// training forced; data counters reset
++    dis_caps = dtcCaps;
++    dis_caps.features = 0;
++    if (!dis_caps.isBitEnabled(FaxParams::BITNUM_T4RCVR)) {
++	emsg = "The polling station has no T.4 receiver capability {E122}";
++	protoTrace(emsg);
++	return (false);
++    }
++    caps.setFromDIS(dis_caps);
++    checkReceiverDIS(caps);
++    curcap = NULL;				// force initial setup
++    protoTrace("POLLED FAX: DTC taken as the receiver's capabilities; sending the held document");
++    emsg = "";
++    return (true);
++}
++
++/*
++ * End a DTC we cannot serve.  A station that cannot comply with a
++ * command disconnects (T.30 5.3.6.1.4, DCN).  DCN carries X = 0 here
++ * because we sent the DIS (T.30 5.3.6.1.1).
++ */
++bool
++Class1Modem::pollRefuse(fxStr& emsg)
++{
++    if (!recvdDTC)
++	return (false);
++    if (!switchingPause(emsg))
++	return (false);
++    if (!gotEOT) (void) transmitFrame(FCF_DCN|FCF_RCVR);
++    traceFCF("RECV send", FCF_DCN);
++    recvdDCN = true;
++    return (true);
++}
+diff -ruN a/faxd/Class1Recv.c++ b/faxd/Class1Recv.c++
+--- a/faxd/Class1Recv.c++	2026-10-08 16:14:21
++++ b/faxd/Class1Recv.c++	2026-10-08 16:28:03
+@@ -112,6 +112,10 @@
+     senderHasV17Trouble = false;
+     senderFumblesECM = false;
+     sentRTN = false;
++    recvdDTC = false;				// Faxbot: no DTC yet on this call
++    pollSEP = fxStr::null;
++    pollPWD = fxStr::null;
++    pollCIG = fxStr::null;
+ 
+     if (setupinfo) {
+ 	senderFumblesECM = setupinfo->senderFumblesECM;
+@@ -153,6 +157,16 @@
+ 	protoTrace("This sender exhibits poor call audio quality.  Concealing resolution and color support.");
+     }
+ 
++    if (pollable) {
++	/*
++	 * Faxbot: a document is held for this caller.  DIS bit 9 says we are
++	 * ready to transmit it (T.30 Table 2); a caller that wants it answers
++	 * with DTC instead of DCS, and recvDCSFrames keeps that DTC.
++	 */
++	dis.setBit(FaxParams::BITNUM_T4XMTR, true);
++	protoTrace("POLLED FAX: a document is held for this caller; DIS offers it (bit 9)");
++    }
++
+     bool ok = FaxModem::recvBegin(setupinfo, emsg) && recvIdentification(
+ 	0, fxStr::null,
+ 	0, fxStr::null,
+@@ -192,6 +206,7 @@
+ 	    return (false);
+ 	}
+     }
++    pollable = false;		// Faxbot: a held document is offered on the first DIS of a call only
+     return Class1Modem::recvBegin(setupinfo, emsg);
+ }
+ 
+@@ -317,6 +332,15 @@
+ 		    bool gotframe = true;
+ 		    while (gotframe) {
+ 			if (!recvDCSFrames(frame)) {
++			    if (recvdDTC) {
++				/*
++				 * Faxbot: the caller polls us.  Nothing is received; the
++				 * server turns the line around (FaxServer::recvFax) and
++				 * sends the held document, or refuses with DCN.
++				 */
++				emsg = "";
++				return (true);
++			    }
+ 			    switch (frame.getFCF()) {
+ 				case FCF_DCN:
+ 				    if (sentRTN && curcap->br != BR_2400) {
+@@ -588,12 +612,43 @@
+ 	    gotEOT = true;
+ 	    recvdDCN = true;
+ 	    break;
++	/*
++	 * Faxbot: a caller that wants to receive what we hold answers our DIS
++	 * with (PWD) (SEP) (CIG) DTC (T.30 5.3.6.1.4).  getFCF() strips the
++	 * X bit, so each is told from the receiver-direction frame with the
++	 * same code by its raw FCF; a CSI or DIS heard here is our own echo.
++	 */
++	case FCF_PPW & 0x7F:			// polling password
++	    if (frame.getRawFCF() == FCF_PPW) {
++		decodePWD(pollPWD, frame);
++		protoTrace("REMOTE PWD for polling received (%u characters)", pollPWD.length());
++	    }
++	    break;
++	case FCF_SEP & 0x7F:			// selective polling address
++	    if (frame.getRawFCF() == FCF_SEP) {
++		decodePWD(pollSEP, frame);
++		protoTrace("REMOTE SEP \"%s\"", (const char*) pollSEP);
++	    }
++	    break;
++	case FCF_CIG & 0x7F:			// the caller's identification
++	    if (frame.getRawFCF() == FCF_CIG) {
++		decodeTSI(pollCIG, frame);
++		protoTrace("REMOTE CIG \"%s\"", (const char*) pollCIG);
++	    }
++	    break;
++	case FCF_DIS:				// DTC, or our own DIS echoed
++	    if (frame.getRawFCF() == FCF_DTC && frame.getFrameDataLength() >= 4) {
++		recvdDTC = true;
++		dtcCaps = frame.getDIS();	// NB: really DTC, same format
++		protoTrace("REMOTE DTC: the caller wants to receive the held document");
++	    }
++	    break;
+ 	}
+ 	/*
+ 	 * Sometimes echo is bad enough that we hear ourselves.  So if we hear DIS, we're probably
+-	 * hearing ourselves.  Just ignore it and listen again.
++	 * hearing ourselves.  Just ignore it and listen again.  (A DTC ends the frames: Faxbot.)
+ 	 */
+-    } while (!recvdDCN && (frame.moreFrames() || frame.getFCF() == FCF_DIS) && recvFrame(frame, FCF_RCVR, conf.t2Timer, false, useSSLFax ? false : true));
++    } while (!recvdDCN && (frame.moreFrames() || (frame.getFCF() == FCF_DIS && !recvdDTC)) && recvFrame(frame, FCF_RCVR, conf.t2Timer, false, useSSLFax ? false : true));
+     if ((!frame.isOK() || wasTimeout()) && useSSLFax) {
+ 	/*
+ 	 * If we received a corrupt DCS but a valid TSA before that, then we can start the
+diff -ruN a/faxd/FaxModem.c++ b/faxd/FaxModem.c++
+--- a/faxd/FaxModem.c++	2026-10-08 16:14:21
++++ b/faxd/FaxModem.c++	2026-10-08 16:18:16
+@@ -152,6 +152,20 @@
+ }
+ 
+ /*
++ * Polled transmission (Faxbot): only drivers that answer a DTC
++ * override these; the defaults never offer or accept polling.
++ */
++void FaxModem::setPollable(bool) {}
++bool FaxModem::getRecvDTC(fxStr&, fxStr&, fxStr&) { return (false); }
++bool
++FaxModem::pollTransmitBegin(Class2Params&, fxStr& emsg)
++{
++    emsg = "Polled transmission is not supported by this modem class";
++    return (false);
++}
++bool FaxModem::pollRefuse(fxStr&) { return (false); }
++
++/*
+  * Issue a command upon successful reception.
+  */
+ void
+diff -ruN a/faxd/FaxModem.h b/faxd/FaxModem.h
+--- a/faxd/FaxModem.h	2026-10-08 16:14:21
++++ b/faxd/FaxModem.h	2026-10-08 16:18:12
+@@ -355,5 +355,26 @@
+     virtual bool pollBegin(
+ 	const fxStr& cig, const fxStr& sep, const fxStr& pwd,
+ 	fxStr& emsg);
++
++    /*
++     * Polled transmission (Faxbot): the far end polls us for a document
++     * we hold (T.30 5.3.6.1.4, Figure 5-2b).  Before recvBegin the server
++     * calls setPollable(true) when a document is held for the caller, so
++     * the DIS says "ready to transmit" (bit 9).  When recvBegin returns
++     * true and getRecvDTC is true, the caller answered (PWD) (SEP) (CIG)
++     * DTC instead of (TSI) DCS: nothing is received, roles reverse and the
++     * server runs the send protocol with the DTC standing in for DIS:
++     *
++     *	  sendSetup(req, params, emsg);
++     *	  pollTransmitBegin(caps, emsg);	// as getPrologue() after dial
++     *	  select send parameters; sendSetupPhaseB();
++     *	  sendPhaseB(); sendEnd();
++     *
++     * pollRefuse() ends a DTC the server cannot serve (DCN).
++     */
++    virtual void setPollable(bool hasDocument);
++    virtual bool getRecvDTC(fxStr& sep, fxStr& pwd, fxStr& cig);
++    virtual bool pollTransmitBegin(Class2Params& caps, fxStr& emsg);
++    virtual bool pollRefuse(fxStr& emsg);
+ };
+ #endif /* _FAXMODEM_ */
+diff -ruN a/faxd/FaxPoll.c++ b/faxd/FaxPoll.c++
+--- a/faxd/FaxPoll.c++	2026-10-08 16:14:21
++++ b/faxd/FaxPoll.c++	2026-10-08 17:38:08
+@@ -42,8 +42,9 @@
+ {
+     bool pollOK = false;
+     changeState(RECEIVING);
+-    traceProtocol("POLL FAX: begin (SEP \"%s\", PWD \"%s\")",
+-	(const char*) sep, (const char*) pwd);
++    // Faxbot: the polling password is a secret; the log says only whether one was given.
++    traceProtocol("POLL FAX: begin (SEP \"%s\", PWD %s)",
++	(const char*) sep, pwd.length() ? "given" : "none");
+     /*
+      * Create the first file ahead of time to avoid timing
+      * problems with Class 1 modems.  (Creating the file
+diff -ruN a/faxd/FaxRecv.c++ b/faxd/FaxRecv.c++
+--- a/faxd/FaxRecv.c++	2026-10-08 16:14:21
++++ b/faxd/FaxRecv.c++	2026-10-08 16:51:52
+@@ -26,6 +26,8 @@
+ #include "Sys.h"
+ 
+ #include <sys/file.h>
++#include <sys/stat.h>
++#include <dirent.h>
+ #include <ctype.h>
+ #include <errno.h>
+ #include <stdint.h>
+@@ -35,10 +37,14 @@
+ #include "FaxServer.h"
+ #include "FaxRecvInfo.h"
+ #include "FaxMachineInfo.h"
++#include "FaxRequest.h"
+ #include "faxApp.h"			// XXX
+ #include "t.30.h"
+ #include "config.h"
+ 
++#define BATCH_FIRST 1
++#define BATCH_LAST  2
++
+ /*
+  * FAX Server Reception Protocol.
+  */
+@@ -71,13 +77,29 @@
+      * be lost.)
+      */
+     info.callid = callid;
++    bool polled = false;
+     TIFF* tif = setupForRecv(info, docs, emsg);
+     if (tif) {
+ 	recvPages = 0;			// total count of received pages
+ 	fileStart = pageStart = Sys::now();
+ 
++	/*
++	 * Faxbot: a document held in pollq for the caller's number makes the
++	 * DIS offer it (bit 9).  A caller that answers with DTC gets it below;
++	 * every other caller is received as before.
++	 */
++	fxStr caller(callid.size() > CallID::NUMBER ? callid.id(CallID::NUMBER) : "");
++	modem->setPollable(pollHeldDocuments(caller) > 0);
+ 	faxRecognized = modem->recvBegin(&setupinfo, emsg);
+-	if (faxRecognized) {
++	modem->setPollable(false);
++	fxStr pollSEP, pollPWD, pollCIG;
++	if (faxRecognized && modem->getRecvDTC(pollSEP, pollPWD, pollCIG)) {
++	    polled = true;
++	    TIFFClose(tif);		// nothing is received; the empty file goes below
++	    recvPolled(callid, clientInfo, pollSEP, pollPWD, pollCIG, emsg);
++	    if (emsg != "")
++		traceProtocol("RECV FAX: %s", (const char*) emsg);
++	} else if (faxRecognized) {
+ 	    info.params = modem->getRecvParams();
+ 	    if (!modem->getRecvTSI(info.sender))		// optional TSI
+ 		info.sender = "<UNSPECIFIED>";
+@@ -142,11 +164,278 @@
+ 	    Sys::unlink(ri.qfile);
+ 	else
+ 	    Sys::chmod(ri.qfile, recvFileMode);
+-	if (faxRecognized)
++	if (faxRecognized && !polled)	// a polled call reports through notifyPolled
+ 	    notifyRecvDone(ri);
+     }
+     traceProtocol("RECV FAX: end");
+     return (faxRecognized);
++}
++
++/*
++ * Polled transmission (Faxbot): documents held in pollq for a caller.
++ *
++ * Each held document is a TIFF with a sidecar of the same name and the
++ * suffix ".poll" (see polldoc.h).  The sidecars are read before the DIS
++ * goes out, so the scan must stay short: a few small files.  Only the
++ * documents held for the caller's number are kept.
++ */
++u_int
++FaxServer::pollHeldDocuments(const fxStr& caller)
++{
++    heldCount = 0;
++    DIR* dir = Sys::opendir(FAX_POLLDIR);
++    if (dir == NULL)
++	return (0);
++    struct dirent* dp;
++    const size_t suffix = strlen(POLLDOC_SUFFIX);
++    while ((dp = readdir(dir)) != NULL && heldCount < POLL_HELD_MAX) {
++	size_t n = strlen(dp->d_name);
++	if (n <= suffix || strcmp(dp->d_name + n - suffix, POLLDOC_SUFFIX) != 0)
++	    continue;
++	fxStr sidecar = fxStr(FAX_POLLDIR "/") | dp->d_name;
++	fxStr document = sidecar.head(sidecar.length() - suffix) | ".tif";
++	int fd = Sys::open(sidecar, O_RDONLY);
++	if (fd < 0)
++	    continue;
++	char text[4096];
++	ssize_t got = Sys::read(fd, text, sizeof (text) - 1);
++	Sys::close(fd);
++	if (got <= 0)
++	    continue;
++	text[got] = '\0';
++	PollDoc doc;
++	if (!pollDocParse(text, &doc) || !pollNumberMatch(doc.number, caller))
++	    continue;
++	struct stat sb;
++	if (Sys::stat(document, sb) < 0 || !S_ISREG(sb.st_mode))
++	    continue;
++	heldDocs[heldCount] = doc;
++	heldFiles[heldCount] = document;
++	heldCount++;
++    }
++    closedir(dir);
++    if (heldCount)
++	traceProtocol("POLLED FAX: %u document(s) held for caller \"%s\"", heldCount, (const char*) caller);
++    return (heldCount);
++}
++
++/*
++ * The caller answered our DIS with DTC: choose the held document its SEP
++ * and PWD name and send it, or refuse with DCN.  Either way PolledCmd
++ * (faxGettyApp) hears what happened.
++ */
++void
++FaxServer::recvPolled(const CallID& callid, FaxMachineInfo& clientInfo,
++    const fxStr& sep, const fxStr& pwd, const fxStr& cig, fxStr& emsg)
++{
++    fxStr caller(callid.size() > CallID::NUMBER ? callid.id(CallID::NUMBER) : "");
++    traceProtocol("POLLED FAX: begin (caller \"%s\", CIG \"%s\", SEP \"%s\", PWD %s)",
++	(const char*) caller, (const char*) cig, (const char*) sep, pwd.length() ? "given" : "none");
++    int reason = POLL_OK;
++    int chosen = pollChoose(heldDocs, heldCount, sep, pwd, &reason);
++    u_int npages = 0;
++    fxStr file, job;
++    emsg = "";
++    if (chosen < 0) {
++	emsg = fxStr::format("Polling refused: %s", pollRefusal(reason));
++	traceProtocol("POLLED FAX: %s", (const char*) emsg);
++	fxStr dcn;
++	if (!modem->pollRefuse(dcn) && dcn != "")
++	    traceProtocol("POLLED FAX: %s", (const char*) dcn);
++    } else {
++	file = heldFiles[chosen];
++	job = heldDocs[chosen].job;
++	setServerStatus("Sending held document to %s", (const char*) caller);
++	if (sendPolledDocument(file, heldDocs[chosen], caller, cig, clientInfo, npages, emsg)) {
++	    traceProtocol("POLLED FAX: %s sent to \"%s\", %u pages in %s",
++		(const char*) file, (const char*) caller, npages, fmtTime(getFileTransferTime()));
++	} else {
++	    if (emsg == "") emsg = "fax page transmission failure {E053}";
++	    traceProtocol("POLLED FAX: %s not sent to \"%s\": %s",
++		(const char*) file, (const char*) caller, (const char*) emsg);
++	}
++    }
++    traceProtocol("POLLED FAX: end");
++    notifyPolled(file, emsg, npages, caller, cig, sep, job, callid);
++}
++
++/*
++ * Session parameters one page of a held document needs, as
++ * faxQueueApp::setupParams derives them for a queued job.
++ */
++static void
++heldPageParams(TIFF* tif, Class2Params& params, const FaxMachineInfo& info)
++{
++    params.jp = 0;
++    uint16_t compression = 0;
++    (void) TIFFGetField(tif, TIFFTAG_COMPRESSION, &compression);
++    if (compression == COMPRESSION_CCITTFAX4) {
++	params.df = DF_2DMMR;
++    } else {
++	uint32_t g3opts = 0;
++	TIFFGetField(tif, TIFFTAG_GROUP3OPTIONS, &g3opts);
++	params.df = (g3opts&GROUP3OPT_2DENCODING ? DF_2DMR : DF_1DMH);
++    }
++    uint32_t w = 1728;
++    TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &w);
++    params.setPageWidthInPixels((u_int) w);
++    float yres = 0, xres = 0;
++    if (TIFFGetField(tif, TIFFTAG_YRESOLUTION, &yres) && TIFFGetField(tif, TIFFTAG_XRESOLUTION, &xres)) {
++	uint16_t resunit = RESUNIT_INCH;
++	TIFFGetFieldDefaulted(tif, TIFFTAG_RESOLUTIONUNIT, &resunit);
++	if (resunit == RESUNIT_CENTIMETER) {
++	    yres *= 25.4;
++	    xres *= 25.4;
++	}
++	params.setRes((u_int) xres, (u_int) yres);
++    } else {
++	uint32_t l = 0;
++	TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &l);
++	yres = (l < 1450 ? 98 : 196);		// B4 at 98 lpi is ~1400 lines
++	params.setRes(204, (u_int) yres);
++    }
++    if (info.getMaxPageLengthInMM() != (u_short) -1 && yres > 0) {
++	uint32_t h = 0;
++	TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
++	params.setPageLengthInMM((u_int) (h / yres * 25.4));
++    } else
++	params.ln = LN_INF;
++}
++
++/*
++ * Send a held document to the caller that polled for it.  This is
++ * FaxServer::sendFax from the point after the DIS, on a call we did not
++ * place: the DTC gives the receiver's capabilities (pollTransmitBegin),
++ * the parameters are chosen as for any send, and Phase B, C and D run
++ * through the same code (sendFaxPhaseB, Class1Modem::sendPhaseB).
++ * Nothing is queued: the request lives in memory only.
++ *
++ * Timing (T.30 5.3.6.1.4, Figure 5-2b): the caller repeats its DTC after
++ * T4 (3 s +/- 15%) without a response, so the DCS must start inside it;
++ * sendTraining begins with the 75 ms switching pause and V.21, as after
++ * a DIS, so the delay is the document scan below (a few TIFF directory
++ * reads) plus the usual prologue.
++ */
++bool
++FaxServer::sendPolledDocument(const fxStr& file, const PollDoc& doc, const fxStr& caller,
++    const fxStr& cig, FaxMachineInfo& clientInfo, u_int& npages, fxStr& emsg)
++{
++    npages = 0;
++    useDF = false;
++    formatSize[0] = formatSize[1] = 0;
++    FaxRequest req(fxStr::null);		// no queue file
++    req.jobid = doc.job[0] ? doc.job : "polled";
++    req.external = caller;
++    req.number = caller;
++    req.mailaddr = "polled";
++    req.sender = "polled";
++    req.tsi = doc.tsi;
++    if (doc.tagline[0]) {
++	req.tagline = doc.tagline;
++	req.desiredtl = 1;
++    }
++    req.items.append(FaxItem(FaxRequest::send_fax, 0, fxStr::null, file));
++    /*
++     * The page handling string faxq prepares for a job: each page's
++     * parameters (4 hex digits) and the post-page message after it, MPS
++     * between pages and EOP after the last.  The holder prepares every
++     * page of a held document alike (Faxbot does), so no page needs EOM:
++     * a document whose pages differ is refused rather than sent wrongly.
++     */
++    TIFF* tif = TIFFOpen(file, "r");
++    if (tif == NULL) {
++	emsg = "Can not open held document";
++	return (false);
++    }
++    Class2Params first, page;
++    u_int pages = 0;
++    bool uniform = true, onestrip = true;
++    do {
++	heldPageParams(tif, page, clientInfo);
++	if (pages++ == 0)
++	    first = page;
++	else if (page.vr != first.vr || page.wd != first.wd || page.ln != first.ln || page.df != first.df)
++	    uniform = false;
++	/*
++	 * The sender reads each page as one strip (faxq's document preparation
++	 * writes them so); a page in several strips would go out cut short.
++	 */
++	if (TIFFNumberOfStrips(tif) != 1)
++	    onestrip = false;
++	req.pagehandling.append(page.encodePage());
++	req.pagehandling.append(TIFFLastDirectory(tif) ? 'P' : 'S');
++    } while (TIFFReadDirectory(tif));
++    TIFFClose(tif);
++    if (!uniform) {
++	emsg = "The held document's pages differ in format; it is not sent";
++	return (false);
++    }
++    if (!onestrip) {
++	emsg = "The held document's pages are not single-strip TIFF pages; it is not sent";
++	return (false);
++    }
++    req.totpages = pages;
++
++    clientParams.decodePage(req.pagehandling);
++    clientParams.df = fxmin(modem->getBestDataFormat(), (u_int) req.desireddf);
++    clientParams.br = fxmin(modem->getBestSignallingRate(), (u_int) req.desiredbr);
++    clientParams.ec = (modem->supportsECM() ? req.desiredec : EC_DISABLE);
++    clientParams.st = fxmax(modem->getBestScanlineTime(), (u_int) req.desiredst);
++    clientParams.bf = BF_DISABLE;
++    if (!modem->sendSetup(req, clientParams, emsg))
++	return (false);
++    if (!modem->pollTransmitBegin(clientCapabilities, emsg))
++	return (false);
++    clientInfo.setCSI(cig);
++    fxStr clientdis;
++    clientCapabilities.asciiEncode(clientdis);
++    clientInfo.setDIS(clientdis);
++    if (!sendClientCapabilitiesOK(req, clientInfo, emsg)) {
++	if (!emsg.length()) emsg = "send failed during Phase B negotiation";
++	return (false);
++    }
++    modem->sendSetupPhaseB(req.passwd, req.subaddr);
++    /*
++     * The document's own station ID (the holder's reply number), as
++     * UseJobTSI gives a job its own; the line's ID comes back afterwards.
++     */
++    fxStr lid(getLocalIdentifier());
++    if (doc.tsi[0])
++	setLocalIdentifier(doc.tsi);
++    fileStart = pageStart = Sys::now();
++    traceProtocol("SEND file \"%s\"", (const char*) file);
++    bool sent = sendFaxPhaseB(req, req.items[0], clientInfo, BATCH_FIRST|BATCH_LAST, true);
++    if (doc.tsi[0])
++	setLocalIdentifier(lid);
++    modem->sendEnd();				// DCN
++    npages = req.npages;
++    if (!sent) {
++	emsg = req.notice;
++	return (false);
++    }
++    return (true);
++}
++
++/*
++ * Handle notification that a caller polled a held document (Faxbot).
++ */
++void
++FaxServer::notifyPolled(const fxStr& qfile, const fxStr& reason, u_int npages,
++    const fxStr& caller, const fxStr&, const fxStr&, const fxStr&, const CallID&)
++{
++    if (reason != "")
++	traceServer("POLLED FAX (%s): caller %s got no document: %s"
++	    , (const char*) getCommID()
++	    , (const char*) caller
++	    , (const char*) reason
++	);
++    else
++	traceServer("POLLED FAX (%s): %s sent to caller %s, %u pages"
++	    , (const char*) getCommID()
++	    , (const char*) qfile
++	    , (const char*) caller
++	    , npages
++	);
+ }
+ 
+ int
+diff -ruN a/faxd/FaxServer.c++ b/faxd/FaxServer.c++
+--- a/faxd/FaxServer.c++	2026-10-08 16:14:21
++++ b/faxd/FaxServer.c++	2026-10-08 16:19:55
+@@ -52,6 +52,9 @@
+     : ModemServer(devName, devID)
+ {
+     modem = NULL;
++    heldCount = 0;			// Faxbot: no held documents read yet
++    useDF = false;
++    formatSize[0] = formatSize[1] = 0;
+ }
+ 
+ FaxServer::~FaxServer()
+diff -ruN a/faxd/FaxServer.h b/faxd/FaxServer.h
+--- a/faxd/FaxServer.h	2026-10-08 16:14:21
++++ b/faxd/FaxServer.h	2026-10-08 16:19:52
+@@ -31,9 +31,12 @@
+ #include "ModemServer.h"
+ #include "FaxRecvInfo.h"
+ #include "Array.h"
++#include "polldoc.h"
+ 
+ class FaxAcctInfo;
+ 
++#define	POLL_HELD_MAX	32		// held documents read for one caller (Faxbot)
++
+ fxDECLARE_ObjArray(FaxRecvInfoArray, FaxRecvInfo)
+ 
+ /*
+@@ -85,6 +88,15 @@
+     bool	recvFaxPhaseD(TIFF* tif, FaxRecvInfo&, u_int& ppm, fxStr& emsg);
+     bool	pollFaxPhaseB(const fxStr& sep, const fxStr& pwd,
+ 		    FaxRecvInfoArray&, fxStr& emsg);
++// polled transmission (Faxbot): a document held in pollq goes to a caller that polls
++    PollDoc	heldDocs[POLL_HELD_MAX];	// sidecars of the documents held for the caller
++    fxStr	heldFiles[POLL_HELD_MAX];	// their TIFF files
++    u_int	heldCount;
++    u_int	pollHeldDocuments(const fxStr& caller);
++    void	recvPolled(const CallID& callid, FaxMachineInfo& clientInfo,
++		    const fxStr& sep, const fxStr& pwd, const fxStr& cig, fxStr& emsg);
++    bool	sendPolledDocument(const fxStr& file, const PollDoc& doc, const fxStr& caller,
++		    const fxStr& cig, FaxMachineInfo& clientInfo, u_int& npages, fxStr& emsg);
+ protected:
+     FaxServer(const fxStr& deviceName, const fxStr& devID);
+ 
+@@ -116,6 +128,9 @@
+     virtual void notifyPageRecvd(TIFF* tif, FaxRecvInfo&, int ppm);
+     virtual void notifyDocumentRecvd(FaxRecvInfo& req);
+     virtual void notifyRecvDone(FaxRecvInfo& req);
++    virtual void notifyPolled(const fxStr& qfile, const fxStr& reason, u_int npages,
++		    const fxStr& caller, const fxStr& cig, const fxStr& sep, const fxStr& job,
++		    const CallID& callid);
+     virtual bool processTSIRecvdCmd(FaxRecvInfo&, fxStr&);
+ public:
+     virtual ~FaxServer();
+diff -ruN a/faxd/faxGettyApp.c++ b/faxd/faxGettyApp.c++
+--- a/faxd/faxGettyApp.c++	2026-10-08 16:14:21
++++ b/faxd/faxGettyApp.c++	2026-10-08 16:19:23
+@@ -983,6 +983,61 @@
+ }
+ 
+ /*
++ * Faxbot: a caller polled this line.  Hand what happened to PolledCmd:
++ * the held document it got (or an empty name), the device, the
++ * communication ID, why it got none (or an empty reason), the pages sent,
++ * the caller's number, its CIG and SEP, the holder's reference for the
++ * document, and the call ID values, as FaxRcvdCmd gets them.
++ */
++void
++faxGettyApp::notifyPolled(const fxStr& qfile, const fxStr& reason, u_int npages,
++    const fxStr& caller, const fxStr& cig, const fxStr& sep, const fxStr& job, const CallID& callid)
++{
++    FaxServer::notifyPolled(qfile, reason, npages, caller, cig, sep, job, callid);
++    if (!polledCmd.length())
++	return;
++
++    fxStr pages = fxStr::format("%u", npages);
++    fxStr callid_formatted;
++    for (u_int i = 0; i < callid.size(); i++) {
++	callid_formatted.append(quote | quoted(callid.id(i)) | enquote);
++    }
++    fxStr cmd(polledCmd
++	| quote |           quoted(qfile) | enquote
++	| quote | quoted(getModemDeviceID()) | enquote
++	| quote |      quoted(getCommID()) | enquote
++	| quote |          quoted(reason) | enquote
++	| quote |                  pages  | enquote
++	| quote |          quoted(caller) | enquote
++	| quote |             quoted(cig) | enquote
++	| quote |             quoted(sep) | enquote
++	| quote |             quoted(job) | enquote
++	| callid_formatted);
++    traceServer("POLLED FAX: %s", (const char*) cmd);
++
++    const char* argv[callid.size()+11];
++    argv[0] = (const char*) polledCmd;
++    argv[1] = (const char*) qfile;
++    argv[2] = (const char*) getModemDeviceID();
++    argv[3] = (const char*) getCommID();
++    argv[4] = (const char*) reason;
++    argv[5] = (const char*) pages;
++    argv[6] = (const char*) caller;
++    argv[7] = (const char*) cig;
++    argv[8] = (const char*) sep;
++    argv[9] = (const char*) job;
++    u_short j = 0;
++    for (; j < callid.size(); j++) {
++	argv[j+10] = (const char*) callid.id(j);
++    }
++    argv[j+10] = NULL;
++
++    setProcessPriority(BASE);			// lower priority
++    runCmd(polledCmd, argv, true, this);
++    setProcessPriority(state);			// restore priority
++}
++
++/*
+  * Send a modem status message to the central queuer process.
+  */
+ bool
+@@ -1117,6 +1172,7 @@
+ { "vgettyargs",		&faxGettyApp::vgettyArgs },
+ { "egettyargs",		&faxGettyApp::egettyArgs },
+ { "faxrcvdcmd",		&faxGettyApp::faxRcvdCmd,	FAX_FAXRCVDCMD },
++{ "polledcmd",		&faxGettyApp::polledCmd },
+ { "tsirecvdcmd",	&faxGettyApp::tsiRecvdCmd },
+ { "dynamicconfig",	&faxGettyApp::dynamicConfig },
+ };
+diff -ruN a/faxd/faxGettyApp.h b/faxd/faxGettyApp.h
+--- a/faxd/faxGettyApp.h	2026-10-08 16:14:21
++++ b/faxd/faxGettyApp.h	2026-10-08 16:19:09
+@@ -80,6 +80,7 @@
+     u_short	answerRotorSize;	// rotor table size
+     AnswerType	answerRotary[3];	// rotary selection of answer types
+     fxStr	faxRcvdCmd;		// fax received command
++    fxStr	polledCmd;		// command run when a caller polled a held document (Faxbot)
+     fxStr	dynamicConfig;		// command to dynamically alter configuration
+     fxStr	tsiRecvdCmd;		// command to check TSI
+     u_int	modemPriority;		// modem priority passed to faxq
+@@ -138,6 +139,9 @@
+     void	notifyRecvBegun(FaxRecvInfo&);
+     void	notifyPageRecvd(TIFF* tif, FaxRecvInfo&, int ppm);
+     void	notifyDocumentRecvd(FaxRecvInfo&);
++    void	notifyPolled(const fxStr& qfile, const fxStr& reason, u_int npages,
++		    const fxStr& caller, const fxStr& cig, const fxStr& sep, const fxStr& job,
++		    const CallID& callid);
+     void	notifyRecvDone(FaxRecvInfo&);
+     bool	processTSIRecvdCmd(FaxRecvInfo&, fxStr&);
+ public:
+diff -ruN a/faxd/polldoc.h b/faxd/polldoc.h
+--- a/faxd/polldoc.h	1969-12-31 17:00:00
++++ b/faxd/polldoc.h	2026-10-08 16:15:00
+@@ -0,0 +1,186 @@
++/*
++ * Faxbot: documents held in pollq for a caller to collect (polled
++ * transmission, ITU-T T.30 5.3.6.1.4 and Figure 5-2b).
++ *
++ * A held document is a TIFF in pollq next to a sidecar of the same name with
++ * the suffix ".poll": "key=value" lines naming the number the document is
++ * held for and, when the holder set them, the selective polling address
++ * (T.30 SEP) and polling password (T.30 PWD) a caller must give. faxgetty
++ * reads the sidecars before it answers: when one is held for the caller's
++ * number, its DIS says "ready to transmit" (bit 9). A DTC then chooses the
++ * document:
++ *
++ * - with SEP, the oldest document held for that number with that selective
++ *   address; without SEP, the oldest one held without a selective address
++ *   (a document the holder gave an address is never sent without it);
++ * - a document with a password is sent only to a caller whose PWD matches.
++ *
++ * The rules here are plain C with fixed buffers so the image build can
++ * compile and run polled_transmit_test.c++ against them.
++ */
++#ifndef _POLLDOC_
++#define _POLLDOC_
++
++#include <ctype.h>
++#include <stddef.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define POLLDOC_SUFFIX ".poll"
++#define POLLDOC_TEXT 24			/* T.30 SEP/PWD: at most 20 digits */
++
++typedef struct {
++    char number[32];			/* digits of the number it is held for */
++    char selective[POLLDOC_TEXT];	/* SEP the caller must give; "" none */
++    char password[POLLDOC_TEXT];	/* PWD the caller must give; "" none */
++    char job[80];			/* the holder's reference, reported back */
++    char tsi[32];			/* station ID to send; "" the line's own */
++    char tagline[256];			/* header line format; "" none */
++    long held;				/* when it was held (seconds); oldest first */
++} PollDoc;
++
++enum {
++    POLL_OK = 0,
++    POLL_NO_DOCUMENT = 1,		/* nothing held for this caller */
++    POLL_NEEDS_SELECTIVE = 2,		/* every held document needs a SEP */
++    POLL_NO_SUCH_SELECTIVE = 3,		/* no document for the SEP given */
++    POLL_WRONG_PASSWORD = 4		/* the document's PWD was not given */
++};
++
++/* Copy the T.30 digits of s (0-9, * and #) into out; other characters are dropped. */
++static inline void pollDigits(const char* s, char* out, size_t size)
++{
++    size_t n = 0;
++    if (!size) return;
++    for (; s && *s && n + 1 < size; s++)
++	if (isdigit((unsigned char) *s) || *s == '*' || *s == '#') out[n++] = *s;
++    out[n] = '\0';
++}
++
++/*
++ * 1 when two numbers name the same line: equal digits, or one ends with the
++ * other and the shorter has at least seven digits (a number with and without
++ * its country code), the way Faxbot compares a caller with a stored number.
++ */
++static inline int pollNumberMatch(const char* a, const char* b)
++{
++    char da[64], db[64];
++    size_t la, lb;
++    pollDigits(a, da, sizeof (da));
++    pollDigits(b, db, sizeof (db));
++    la = strlen(da);
++    lb = strlen(db);
++    if (!la || !lb) return 0;
++    if (la == lb) return strcmp(da, db) == 0;
++    if (la > lb) return lb >= 7 && strcmp(da + (la - lb), db) == 0;
++    return la >= 7 && strcmp(db + (lb - la), da) == 0;
++}
++
++/* 1 when two SEP/PWD strings carry the same T.30 digits. */
++static inline int pollTextEqual(const char* a, const char* b)
++{
++    char da[POLLDOC_TEXT], db[POLLDOC_TEXT];
++    pollDigits(a, da, sizeof (da));
++    pollDigits(b, db, sizeof (db));
++    return strcmp(da, db) == 0;
++}
++
++static inline void pollCopy(char* out, size_t size, const char* value, size_t length)
++{
++    if (length >= size) length = size - 1;
++    memcpy(out, value, length);
++    out[length] = '\0';
++}
++
++/*
++ * Read a sidecar's text. Lines are "key=value"; unknown keys are ignored,
++ * so a newer Faxbot may add keys an older engine does not read. 1 when the
++ * sidecar names a number (the one thing a held document must have).
++ */
++static inline int pollDocParse(const char* text, PollDoc* doc)
++{
++    const char* line = text;
++    memset(doc, 0, sizeof (*doc));
++    while (line && *line) {
++	const char* end = strchr(line, '\n');
++	size_t length = end ? (size_t) (end - line) : strlen(line);
++	const char* eq = (const char*) memchr(line, '=', length);
++	if (eq) {
++	    size_t klen = (size_t) (eq - line);
++	    const char* value = eq + 1;
++	    size_t vlen = length - klen - 1;
++	    while (vlen && (value[vlen - 1] == '\r' || value[vlen - 1] == ' ')) vlen--;
++	    if (klen == 6 && strncmp(line, "number", 6) == 0) {
++		char raw[64];
++		pollCopy(raw, sizeof (raw), value, vlen);
++		pollDigits(raw, doc->number, sizeof (doc->number));
++	    } else if (klen == 9 && strncmp(line, "selective", 9) == 0) {
++		char raw[64];
++		pollCopy(raw, sizeof (raw), value, vlen);
++		pollDigits(raw, doc->selective, sizeof (doc->selective));
++	    } else if (klen == 8 && strncmp(line, "password", 8) == 0) {
++		char raw[64];
++		pollCopy(raw, sizeof (raw), value, vlen);
++		pollDigits(raw, doc->password, sizeof (doc->password));
++	    } else if (klen == 3 && strncmp(line, "job", 3) == 0) {
++		pollCopy(doc->job, sizeof (doc->job), value, vlen);
++	    } else if (klen == 3 && strncmp(line, "tsi", 3) == 0) {
++		pollCopy(doc->tsi, sizeof (doc->tsi), value, vlen);
++	    } else if (klen == 7 && strncmp(line, "tagline", 7) == 0) {
++		pollCopy(doc->tagline, sizeof (doc->tagline), value, vlen);
++	    } else if (klen == 4 && strncmp(line, "held", 4) == 0) {
++		char raw[32];
++		pollCopy(raw, sizeof (raw), value, vlen);
++		doc->held = strtol(raw, NULL, 10);
++	    }
++	}
++	line = end ? end + 1 : NULL;
++    }
++    return doc->number[0] != '\0';
++}
++
++/*
++ * Among the documents held for the caller (already matched by number), the
++ * index of the one a DTC with sep and pwd gets: the oldest that fits. -1 when
++ * none fits, with *reason the most specific refusal.
++ */
++static inline int pollChoose(const PollDoc* docs, int count, const char* sep, const char* pwd, int* reason)
++{
++    char wanted[POLLDOC_TEXT];
++    int chosen = -1, i, selectiveSeen = 0, passwordFailed = 0;
++    pollDigits(sep, wanted, sizeof (wanted));
++    for (i = 0; i < count; i++) {
++	const PollDoc* doc = &docs[i];
++	if (doc->selective[0]) selectiveSeen = 1;
++	if (wanted[0] ? !pollTextEqual(doc->selective, wanted) : doc->selective[0] != '\0') continue;
++	if (doc->password[0] && !pollTextEqual(doc->password, pwd)) {
++	    passwordFailed = 1;
++	    continue;
++	}
++	if (chosen < 0 || doc->held < docs[chosen].held) chosen = i;
++    }
++    if (chosen >= 0) {
++	*reason = POLL_OK;
++	return chosen;
++    }
++    if (passwordFailed) *reason = POLL_WRONG_PASSWORD;
++    else if (!count) *reason = POLL_NO_DOCUMENT;
++    else if (wanted[0]) *reason = POLL_NO_SUCH_SELECTIVE;
++    else if (selectiveSeen) *reason = POLL_NEEDS_SELECTIVE;
++    else *reason = POLL_NO_DOCUMENT;
++    return -1;
++}
++
++/* The words for a refusal, as the session log and the polled command get them. */
++static inline const char* pollRefusal(int reason)
++{
++    switch (reason) {
++    case POLL_NO_DOCUMENT:	return "no document is held for this caller";
++    case POLL_NEEDS_SELECTIVE:	return "the held document needs a selective polling address (SEP)";
++    case POLL_NO_SUCH_SELECTIVE: return "no document is held for that selective polling address (SEP)";
++    case POLL_WRONG_PASSWORD:	return "the polling password (PWD) does not match the held document";
++    }
++    return "";
++}
++
++#endif

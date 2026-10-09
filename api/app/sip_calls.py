@@ -39,17 +39,22 @@ COLUMNS = ('id', 'direction', 'job_id', 'attempt_id', 'trunk_preset', 'did', 'ca
 
 NO_FAX_DATA = 'The call connected but no fax data came back from the carrier.'
 # An engine call on which the engine never heard the other fax machine: the engine's own words, never the
-# network's (its T.38 gateway may be the cause); Faxbot's fast fax service is the engine in operator words.
+# network's (its T.38 gateway may be the cause). Operator words call the SSL Fax engine "the fax engine".
 NO_FAX_SIGNAL = 'no_fax_signal'
-NO_SIGNAL = "The call connected but the fast fax service heard no fax machine on the line."
+NO_SIGNAL = "The call connected but the fax engine heard no fax machine on the line."
 NO_SOUND = 'The call connected but no sound came back from the carrier.'
 NOT_A_FAX = 'The call connected but the other end did not answer as a fax machine.'
+# A person or a voice line answered: sound came back, no fax message ever did, and the far end hung up first
+# (research N9, 2026-10-08). The call was answered by a person, never by a fax machine on another route, so the
+# fax takes no other route by itself (``outbound_store.NO_FALLBACK_CATEGORIES``) and a person checks the number.
+PERSON_ANSWERED = 'person_answered'
+PERSON = 'A person answered, not a fax machine; Faxbot did not call again.'
 # Verdicts for an answered call that delivered no fax. The no-data ones mean the
 # network path failed; the other two mean the network carried the call.
 NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
 # A received fax whose image Asterisk stored but could not hand to Faxbot.
 NOT_HANDED_OVER = 'not_handed_over'
-VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL}
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED}
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
@@ -86,6 +91,10 @@ _NO_MESSAGE_ERRORS = frozenset({
     'timed out waiting for initial communication', 'timed out waiting for the first message',
     'timeout', 'hangup', 'channel_hangup', 'the call dropped prematurely', 'remote channel hungup',
     'disconnected after permitted retries'})
+# Of those, the endings in which the far end hung up first (spandsp's T30_ERR_CALLDROPPED, res_fax's HANGUP). With
+# sound back and no fax message, that is a person or a voice line; a timeout with the line still open may be a
+# silent route or a media problem, so it stays ``no_fax_answer`` and another route may still send the fax.
+_HUNG_UP = frozenset({'hangup', 'channel_hangup', 'the call dropped prematurely', 'remote channel hungup'})
 _DISPOSITION_TEXT = {
     'busy': 'The number was busy.',
     'no_answer': 'Nobody answered the call.',
@@ -142,8 +151,11 @@ def verdict(event):
     if received == 0:
         return 'no_media_back'
     if received is not None:
-        # Sound came back, so the network path works; the far end sent no fax signal.
-        return 'no_fax_answer' if reasons & _NO_MESSAGE_ERRORS else 'remote_fax_failed'
+        # Sound came back, so the network path works; the far end sent no fax signal. When it also hung up first,
+        # a person or a voice line answered.
+        if reasons & _NO_MESSAGE_ERRORS:
+            return PERSON_ANSWERED if reasons & _HUNG_UP else 'no_fax_answer'
+        return 'remote_fax_failed'
     if reasons & _NO_MESSAGE_ERRORS:
         return 'no_t38_data_back' if mode == 't38' else 'no_fax_data_back'
     return 'remote_fax_failed'
@@ -154,6 +166,7 @@ def verdict(event):
 # fax answer once the call connected), E126 "No receiver protocol (T.30 T1 timeout)" and, receiving,
 # E102 "No sender protocol (T.30 T1 timeout)".
 _ENGINE_NO_MESSAGE = re.compile(r'\bE(?:002|102|126)\b|No carrier detected|T\.30 T1 timeout', re.IGNORECASE)
+_ENGINE_HUNG_UP = re.compile(r'\bE002\b|No carrier detected', re.IGNORECASE)
 # What the trunk heard on an audio engine call, kept until the engine's result arrives.
 _HEARD, _SILENT = 'trunk heard sound', 'trunk heard no sound'
 # The same, after the engine's words when its result came before the call ended.
@@ -176,8 +189,28 @@ def engine_verdict(record, heard=None):
     if not _ENGINE_NO_MESSAGE.search(record['error_cause'] or ''):
         return 'remote_fax_failed'
     if audio and heard and record['direction'] == 'outbound':
-        return 'no_fax_answer'
+        # E002 "No carrier detected": the line dropped before any fax carrier, after sound came back, as when a
+        # person answers and hangs up; a T.30 T1 timeout (E126) kept the line open and stays no_fax_answer.
+        return PERSON_ANSWERED if _ENGINE_HUNG_UP.search(record['error_cause'] or '') else 'no_fax_answer'
     return NO_FAX_SIGNAL
+
+
+def freeswitch_verdict(status, pages, station, text, audio_in):
+    """``person_answered`` for a FreeSWITCH send (mod_spandsp's channel variables) that a person or a voice line
+    answered: failed, no page and no remote station, spandsp's "The call dropped prematurely" (the far end hung up
+    before any fax message), and sound came back (the hook's ``rtp_audio_in_packet_count`` above zero). Without
+    that count Faxbot cannot tell a person from a silent line, so the fax may still take another route; None then,
+    and for a timeout or any other ending."""
+    if status != 'failed' or (type(pages) is int and pages > 0) or (station or '').strip():
+        return None
+    if ' '.join(str(text or '').split()).lower().rstrip('.') not in _HUNG_UP:
+        return None
+    return PERSON_ANSWERED if type(audio_in) is int and audio_in > 0 else None
+
+
+def category_for(found):
+    """The attempt's error category for a call verdict: ``person_answered`` (never another route), else None."""
+    return PERSON_ANSWERED if found == PERSON_ANSWERED else None
 
 
 def verdict_sentence(found):
@@ -225,6 +258,8 @@ def _sentence(found, reason=''):
         return NO_FAX_DATA
     if found == 'no_fax_answer':
         return NOT_A_FAX
+    if found == PERSON_ANSWERED:
+        return PERSON
     if found == 'remote_fax_failed':
         reason = reason.strip().rstrip('.')
         return (f'The other fax machine answered but the fax failed: {reason}.' if reason
@@ -354,9 +389,35 @@ def _received(value, country=None):
         return number
 
 
+_TRUNK = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
+
+
+def _trunk(value):
+    """The trunk account a call went over, for ``trunk_key``: a trunk after the first by its key; the first
+    trunk (``sip``), and a call that names none, as NULL, which every reader takes as the first trunk."""
+    value = str(value or '').strip()
+    return value if _TRUNK.fullmatch(value) and value != 'sip' else None
+
+
 def _identity(value):
     text = str(value or '').strip()
     return text if _ID.fullmatch(text) else None
+
+
+_SUBADDRESS = re.compile(r'[0-9#*+]{1,20}')
+_PEER = re.compile(r'[a-f0-9]{32}')
+
+
+def _subaddress(value):
+    """The subaddress a call asked for (patch 0005), for ``subaddress``; None when absent or malformed."""
+    text = str(value or '').strip()
+    return text if _SUBADDRESS.fullmatch(text) else None
+
+
+def _peer(value):
+    """The enrolled partner (its enrollment ID) a peer fax call went to or came from, for ``peer_id``."""
+    text = str(value or '').strip()
+    return text if _PEER.fullmatch(text) else None
 
 
 def _sip_call_id(encoded):
@@ -470,8 +531,18 @@ class SipCallRecords:
         preset = str(event.get('Preset') or '')[:32] or None
         values = {'trunk_preset': preset, 'did': caller, 'caller': caller, 'called': _number(event.get('Called')),
                   'fax_preference': 1 if event.get('FaxPreference') == 'yes' else 0}
-        return self._write(lambda connection, table: self._outbound_row(
-            connection, table, job_id, attempt_id, now, **values)['id'])
+        if _trunk(event.get('Trunk')):
+            values['trunk_key'] = _trunk(event.get('Trunk'))
+        # The subaddress this call asked for (patch 0005): requested; carried only if the far end takes one.
+        subaddress = _subaddress(event.get('Subaddress'))
+        # A peer fax call to an enrolled partner inside its tunnel, with no carrier (direct/peer_call.py).
+        peer = _peer(event.get('Peer'))
+
+        def write(connection, table):
+            extra = {name: value for name, value in (('subaddress', subaddress), ('peer_id', peer))
+                     if value and name in table.c}
+            return self._outbound_row(connection, table, job_id, attempt_id, now, **values, **extra)['id']
+        return self._write(write)
 
     def record_originate_response(self, event, *, now=None):
         parts = str(event.get('ActionID') or '').split(':')
@@ -601,7 +672,7 @@ class SipCallRecords:
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': t38, 'pages': None, 'fax_status': None, 'remote_station_id': None,
             'error_cause': None if answered else 'caller hung up before answer', 'fax_preference': 0,
-            'sip_call_id': sip_call_id, 'created_at': now, 'updated_at': now}
+            'sip_call_id': sip_call_id, 'trunk_key': _trunk(event.get('Trunk')), 'created_at': now, 'updated_at': now}
 
         def apply(connection, table):
             row = self._find(connection, table, 'inbound', call_id)
@@ -609,7 +680,8 @@ class SipCallRecords:
                 connection.execute(table.insert().values(**record))
                 return record['id']
             changes = {name: record[name] for name in ('sip_call_id', 'answered_at', 'connected_seconds', 'did',
-                                                       'caller', 'called') if row[name] is None and record[name]}
+                                                       'caller', 'called', 'trunk_key')
+                       if row[name] is None and record[name]}
             if row['t38'] == 'unknown' and t38 != 'unknown':
                 changes['t38'] = t38
             # Asterisk's own times win over the engine's report time.
@@ -668,7 +740,7 @@ class SipCallRecords:
         return self._write(apply)
 
     def record_engine_receive(self, call_id, *, success, pages=None, station=None, reason=None, did=None,
-                              caller=None, inbound_fax_id=None, preset=None, now=None):
+                              caller=None, inbound_fax_id=None, preset=None, trunk=None, now=None):
         """What the SSL Fax engine reported for one received call, fax or not: its result decides the
         call's verdict, whether Asterisk's event for the call came first or not."""
         call_id = str(call_id or '').strip()
@@ -691,7 +763,7 @@ class SipCallRecords:
                     # The engine reports once its session is over; Asterisk's event brings the exact times.
                     'started_at': now, 'answered_at': None, 'ended_at': now, 'disposition': 'answered',
                     'connected_seconds': None, 't38': 'unknown', 'fax_preference': 0, 'sip_call_id': None,
-                    'created_at': now, 'updated_at': now, **values}
+                    'trunk_key': _trunk(trunk), 'created_at': now, 'updated_at': now, **values}
                 connection.execute(table.insert().values(**record))
                 self._settle_engine(connection, table, record['id'], None, now)
                 return record['id']
@@ -702,7 +774,7 @@ class SipCallRecords:
             changes['disposition'] = 'answered'
             if row['ended_at'] is None:
                 changes['ended_at'] = now
-            for name, value in (('did', did), ('caller', caller), ('called', did)):
+            for name, value in (('did', did), ('caller', caller), ('called', did), ('trunk_key', _trunk(trunk))):
                 if row[name] is None and value:
                     changes[name] = value
             if row['job_id'] is None and _identity(inbound_fax_id):
@@ -775,8 +847,10 @@ class SipCallRecords:
             'pages': _pages(call.get('pages')), 'fax_status': status,
             'remote_station_id': _station(call.get('remote_station_id_b64')), 'error_cause': None,
             'fax_preference': 0, 'sip_call_id': _sip_call_id(call.get('sip_call_id_b64')),
-            'created_at': now, 'updated_at': now}
-
+            'trunk_key': _trunk(call.get('trunk')), 'created_at': now, 'updated_at': now}
+        # A peer fax call from an enrolled partner inside its tunnel, with no carrier (direct/peer_call.py).
+        if _peer(call.get('peer')):
+            record['peer_id'] = _peer(call.get('peer'))
         return self._insert_inbound(record)
 
     def record_inbound_event(self, event, *, preset=None, now=None):
@@ -801,8 +875,8 @@ class SipCallRecords:
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': _t38(event.get('Mode')), 'pages': _pages(event.get('Pages')), 'fax_status': status,
             'remote_station_id': _station(event.get('Station64')), 'error_cause': error_cause,
-            'fax_preference': 0, 'sip_call_id': _sip_call_id(event.get('CallID64')), 'created_at': now,
-            'updated_at': now}
+            'fax_preference': 0, 'sip_call_id': _sip_call_id(event.get('CallID64')),
+            'trunk_key': _trunk(event.get('Trunk')), 'created_at': now, 'updated_at': now}
         return self._insert_inbound(record)
 
     def link_inbound(self, call_id, inbound_fax_id):
@@ -828,7 +902,12 @@ class SipCallRecords:
                 row = self._find(connection, self.table, 'inbound', str(call_id))
         except (sa.exc.SQLAlchemyError, SipCallRecordError):
             return None
-        return {'did': row['did'], 'caller': row['caller'], 'pages': row['pages']} if row is not None else None
+        if row is None:
+            return None
+        found = {'did': row['did'], 'caller': row['caller'], 'pages': row['pages']}
+        if row.get('trunk_key'):
+            found['trunk'] = row['trunk_key']  # a trunk after the first; none is the first trunk
+        return found
 
     def unclaimed_inbound_calls(self):
         """Calls whose image Asterisk stored but could not hand over, not linked to a fax yet."""
@@ -851,7 +930,8 @@ class SipCallRecords:
                     sip_call_id=record['sip_call_id']))
             if existing is not None:
                 return existing['id']
-            connection.execute(table.insert().values(**record))
+            connection.execute(table.insert().values(**{key: value for key, value in record.items()
+                                                        if key in table.c or key != 'peer_id'}))
             return record['id']
         return self._write(apply)
 
@@ -1038,7 +1118,7 @@ def _on_engine_missed(event):
         audit_event('sip_engine_restart_requested', backend='sip', reason='missed_call',
                     lines=re.sub(r'[^A-Za-z0-9:, ]', '', str(event.get('Lines') or ''))[:80])
     except Exception:
-        logging.getLogger(__name__).warning('A fax call the fast fax service did not answer could not be recorded.')
+        logging.getLogger(__name__).warning('A fax call the fax engine did not answer could not be recorded.')
 
 
 def engine_audio_check(row):

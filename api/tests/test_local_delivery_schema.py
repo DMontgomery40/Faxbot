@@ -6,7 +6,7 @@ from alembic.config import Config
 import pytest
 import sqlalchemy as sa
 
-from api.app import schema, schema_inbound, schema_inbound_sources, schema_local_delivery
+from api.app import schema, schema_inbound, schema_inbound_sources, schema_local_delivery, schema_receiving_rules
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
 from api.tests.test_work_schema import without_later_access_changes
@@ -83,9 +83,12 @@ def test_0020_upgrade_keeps_every_row_adds_the_column_and_validates_the_frozen_s
         checks = {c['name']: c['sqltext'] for c in inspector.get_check_constraints('inbound_imports')}
         assert set(checks) == {c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
         assert all(f"'{source}'" in checks['ck_inbound_imports_source'] for source in schema_local_delivery.SOURCES)
+        # 0030 adds an index on the receiving account.
         assert {(i['name'], tuple(i['column_names']), bool(i['unique']))
                 for i in inspector.get_indexes('inbound_imports')} == {
-            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES}
+            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES} | {
+            (name, columns, unique) for name, table, columns, unique in schema_receiving_rules.ADDED_INDEXES
+            if table == 'inbound_imports'}
         assert '_inbound_imports_0020' not in inspector.get_table_names()
     _insert_local(database, 1)
     schema.upgrade_schema(database)

@@ -1,0 +1,685 @@
+Faxbot: lossless tuning of the page coding faxsend sends (HylaFAX+ 7.0.11).
+
+The receiver decodes exactly the pixels it would have got without this patch;
+only how they are coded changes. faxd/LosslessTuning.h explains both choices.
+
+MR: every page sent in MR is coded with the fewest-bytes legal reset
+schedule (T.4 4.2.1.3.4 allows a one-dimensional line earlier than every K
+lines), chosen by dynamic programming over each row's measured one- and
+two-dimensional code lengths, with this encoder's EOL alignment and, without
+ECM, the minimum scan line fill Class1Send adds. An MR file is coded again
+even when the session is MR too (Class1Send/Class2Send), so the tuned
+schedule is never skipped, and faxsend keeps a data format the job asked
+for itself (DesiredDF, measured by Faxbot) instead of switching MR or MMR
+to MH whenever tiff2fax's MH file is smaller than its MMR file
+(FaxSend.c++). TuneMR (default yes) turns the schedule off.
+
+JBIG: the page is encoded with each of 12 T.85 settings (options 0, TPBON,
+LRLTWO, both; MX 0, 8, 32; L0 128) and the smallest BIE goes, ties to the
+lower options, then the lower MX. TuneJBIG: "sslfax" (default) tunes only
+pages that go over SSL Fax, whose receiver is HylaFAX+ and decodes JBIG with
+jbigkit's full decoder; "always" or "never" (Faxbot's job controls set them
+per job). Plain JBIG stays options 0, MX 0.
+
+Each converted page logs one "LOSSLESS TUNING" line in the session log
+(settings, bytes, conversion time and the SHA-256 of the raster coded), which
+Faxbot reads (hylafax/bin/negotiation). Tested at build time by
+tests/lossless_tuning_test.c++.
+
+diff -ruN a/faxd/Class1Send.c++ b/faxd/Class1Send.c++
+--- a/faxd/Class1Send.c++
++++ b/faxd/Class1Send.c++
+@@ -2488,7 +2488,11 @@
+ 	 * and this is not consequential.
+ 	 */
+ 
+-	if (conf.softRTFCC && params.df != newparams.df) {
++	/*
++	 * Faxbot: an MR page is coded again even when the file is MR already,
++	 * so that it goes with the fewest-bytes reset schedule (TuneMR).
++	 */
++	if (conf.softRTFCC && (params.df != newparams.df || (newparams.df == DF_2DMR && conf.tuneMR))) {
+ 	    switch (params.df) {
+ 		case DF_1DMH:
+ 		    protoTrace("Reading MH-compressed image file");
+@@ -2500,7 +2504,7 @@
+ 		    protoTrace("Reading MMR-compressed image file");
+ 		    break;
+ 	    }
+-	    dp = convertPhaseCData(dp, totdata, fillorder, params, newparams, rowsperstrip);
++	    dp = convertPhaseCData(dp, totdata, fillorder, params, newparams, rowsperstrip, isSSLFax);
+ 	    params = newparams;		// revert back
+ 	}
+ 
+diff -ruN a/faxd/Class2Send.c++ b/faxd/Class2Send.c++
+--- a/faxd/Class2Send.c++
++++ b/faxd/Class2Send.c++
+@@ -491,7 +491,8 @@
+ 	    dp = data;
+ 
+ 	uint32_t rows = 0;
+-	if (conf.softRTFCC && !conf.class2RTFCC && params.df != newparams.df) {
++	if (conf.softRTFCC && !conf.class2RTFCC &&
++	    (params.df != newparams.df || (newparams.df == DF_2DMR && conf.tuneMR))) {
+ 	    switch (params.df) {
+ 		case DF_1DMH:
+ 		    protoTrace("Reading MH-compressed image file");
+diff -ruN a/faxd/FaxModem.c++ b/faxd/FaxModem.c++
+--- a/faxd/FaxModem.c++
++++ b/faxd/FaxModem.c++
+@@ -872,13 +872,45 @@
+         pBufSize = endOfData - buf;
+ }
+ 
++/*
++ * Faxbot: lossless tuning of the converted page (LosslessTuning.h).  The MR
++ * schedule follows TuneMR (default on).  Tuned JBIG follows TuneJBIG:
++ * "always", "never", or "sslfax" (the default), which tunes only pages that
++ * go over an SSL Fax connection: SSL Fax exists only in HylaFAX+, whose JBIG
++ * receive stores the BIE in a TIFF that libtiff decodes with jbigkit's full
++ * decoder (faxd/CopyQuality.c++, HAVE_JBIGTIFF), and that decoder takes every
++ * T.85 option.  ``sslfax'' says this page goes over SSL Fax; a call that falls
++ * back to the telephone line sends its later pages plain.  One session log
++ * line per page says what was sent, for Faxbot (hylafax/bin/negotiation).
++ */
+ u_char*
+-FaxModem::convertPhaseCData(u_char* buf, u_long& totdata, u_int fillorder, 
+-			    const Class2Params& params, const Class2Params& newparams, uint32_t& rows)
++FaxModem::convertPhaseCData(u_char* buf, u_long& totdata, u_int fillorder,
++			    const Class2Params& params, const Class2Params& newparams, uint32_t& rows,
++			    bool sslfax)
+ {
+     MemoryDecoder dec(buf, params.pageWidth(), totdata, fillorder, params.is2D(), (params.df == DF_2DMMR));
++    const char* jbigMode = (const char*) conf.tuneJBIG;
++    bool tuneJBIG = strcasecmp(jbigMode, "always") == 0 || strcasecmp(jbigMode, "yes") == 0
++	|| (sslfax && strcasecmp(jbigMode, "never") != 0 && strcasecmp(jbigMode, "no") != 0);
++    dec.setTuning(conf.tuneMR, tuneJBIG, newparams.minScanlineSize());
+     u_char* data = dec.convertDataFormat(newparams);
+     totdata = dec.getCC();
+     rows = dec.getRows();
++    if (data && newparams.df == DF_JBIG) {
++	if (tuneJBIG)
++	    protoTrace("LOSSLESS TUNING JBIG tuned: options %d, MX %d, %lu bytes (plain %lu bytes), "
++		"%lu ms, raster %ux%lu sha256 %s", dec.getTunedOptions(), dec.getTunedMX(),
++		dec.getTunedBytes(), dec.getPlainBytes(), dec.getTuneMillis(),
++		params.pageWidth(), (u_long) rows, dec.getRasterDigest());
++	else
++	    protoTrace("LOSSLESS TUNING JBIG plain: options 0, MX 0, %lu bytes, %lu ms, "
++		"raster %ux%lu sha256 %s", dec.getTunedBytes(), dec.getTuneMillis(),
++		params.pageWidth(), (u_long) rows, dec.getRasterDigest());
++    } else if (data && newparams.df == DF_2DMR && conf.tuneMR)
++	protoTrace("LOSSLESS TUNING MR schedule: %lu of %lu rows one-dimensional, %lu bytes "
++	    "(fixed schedule %lu bytes), minimum %u bytes a line, %lu ms, raster %ux%lu sha256 %s",
++	    (u_long) dec.getOneDRows(), (u_long) rows, dec.getTunedBytes(), dec.getPlainBytes(),
++	    newparams.minScanlineSize(), dec.getTuneMillis(), params.pageWidth(), (u_long) rows,
++	    dec.getRasterDigest());
+     return (data);
+ }
+diff -ruN a/faxd/FaxModem.h b/faxd/FaxModem.h
+--- a/faxd/FaxModem.h
++++ b/faxd/FaxModem.h
+@@ -195,7 +195,8 @@
+  * Convert Phase C data...
+  */
+     u_char*	convertPhaseCData(u_char* buf, u_long& totdata, u_int fillorder,
+-                            const Class2Params& params, const Class2Params& newparams, uint32_t& rows);
++                            const Class2Params& params, const Class2Params& newparams, uint32_t& rows,
++                            bool sslfax = false);
+ public:
+     void	recvRecordEmsg(TIFF* tif, fxStr& emsg);
+     void	writeECMData(TIFF*, u_char*, u_int, const Class2Params&, u_short, fxStr& emsg);
+diff -ruN a/faxd/FaxSend.c++ b/faxd/FaxSend.c++
+--- a/faxd/FaxSend.c++
++++ b/faxd/FaxSend.c++
+@@ -847,7 +847,12 @@
+ 		 * JBIG will virtually always outcompress any other format, so we don't consider
+ 		 * another format when we can use JBIG.
+ 		 */
+-		if ((params.df == DF_2DMMR || params.df == DF_2DMR) && formatSize[0] < formatSize[1]) 
++		/*
++		 * Faxbot: a data format the job asked for itself (JobControls DesiredDF, which Faxbot
++		 * measured on the pages, with MR's tuned schedule) is kept; this file-size guess
++		 * compares MH only with MMR and would undo it.
++		 */
++		if (!useDF && (params.df == DF_2DMMR || params.df == DF_2DMR) && formatSize[0] < formatSize[1])
+ 		    params.df = DF_1DMH;
+ 	    }
+ 	} else {
+diff -ruN a/faxd/G3Encoder.c++ b/faxd/G3Encoder.c++
+--- a/faxd/G3Encoder.c++
++++ b/faxd/G3Encoder.c++
+@@ -363,6 +363,16 @@
+ 	}
+     }
+ #undef PIXEL
++}
++
++/*
++ * The number of bits written so far, the partial byte included
++ * (Faxbot: MemoryDecoder measures each row's code length with it).
++ */
++u_long
++G3Encoder::getBitCount() const
++{
++    return ((u_long) buf.getLength())*8 + (8 - bit);
+ }
+ 
+ void
+diff -ruN a/faxd/G3Encoder.h b/faxd/G3Encoder.h
+--- a/faxd/G3Encoder.h
++++ b/faxd/G3Encoder.h
+@@ -64,5 +64,6 @@
+     void	setupEncoder(u_int fillOrder, bool, bool);
+     void	encode(const void* raster, u_int w, u_int h, u_char* rp = NULL);
+     void	encoderCleanup();
++    u_long	getBitCount() const;	// bits written so far (Faxbot: MR tuning)
+ };
+ #endif /* _G3Encoder_ */
+diff -ruN a/faxd/LosslessTuning.h b/faxd/LosslessTuning.h
+--- a/faxd/LosslessTuning.h
++++ b/faxd/LosslessTuning.h
+@@ -0,0 +1,149 @@
++/*
++ * Faxbot: lossless tuning of the page coding faxd sends (MemoryDecoder::convertDataFormat).
++ *
++ * Both choices below change only how the same pixels are coded; the receiver
++ * decodes exactly the raster faxd would have sent without them.
++ *
++ * MR (T.4 two-dimensional coding).  T.4 4.2.1.3.4 bounds the run of
++ * two-dimensionally coded lines after a one-dimensional line by K-1, and
++ * every line carries its own tag bit saying which coding follows (T.4
++ * 4.2.1.3.1), so a one-dimensional line may come earlier than every K lines.
++ * HylaFAX resets on a fixed schedule (y % K == 0).  scheduleMR() chooses,
++ * by dynamic programming, the legal schedule with the fewest bytes on the
++ * line, using the bytes this encoder and Class1Send actually produce:
++ *
++ *  - G3Encoder writes the first EOL unaligned and byte-aligns every later EOL
++ *    so that it ends on a byte boundary (G3Encoder::encode), so each row's
++ *    bytes depend only on its own code length;
++ *  - without ECM, Class1Modem::sendPage copies the first two bytes, then
++ *    zero-fills every stretch from one EOL to the next (and the last row)
++ *    up to the negotiated minimum scan line size; with ECM that size is 0.
++ *
++ * With D[y][j] the fewest bytes through row y with j two-dimensional rows
++ * since the last one-dimensional row:
++ *
++ *     D[0][0]   = cost(0, a[0])
++ *     D[y][0]   = cost(y, a[y]) + min_j D[y-1][j]
++ *     D[y][j]   = cost(y, b[y]) + D[y-1][j-1]          1 <= j <= K-1
++ *
++ * a[y] and b[y] are row y's one- and two-dimensional code lengths (the
++ * reference row is always the previous raster row, whatever its coding), so
++ * the recurrence is exact.  Ties keep the more one-dimensional schedule: the
++ * lowest j wins every minimum, which also makes the result deterministic for
++ * Faxbot's own measurement (api/app/pages/coding.py).
++ *
++ * JBIG (T.85).  T.85 Table 1 allows typical prediction (TPBON), the two-line
++ * template (LRLTWO) and adaptive template moves up to MX 127 at L0 = 128, so
++ * every T.85 receiver must decode them.  JBIG_CANDIDATES lists the settings
++ * tried; the page goes with the smallest BIE, ties to the lower options, then
++ * the lower MX.  On Faxbot's 20-page synthetic corpus this grid of 12 gave
++ * the same total as the full grid of 24 (MX 16, 64 and 127 never won), at
++ * half the encoding time, which is spent during the call.
++ */
++#ifndef _LosslessTuning_
++#define _LosslessTuning_
++
++namespace LosslessTuning {
++
++// Options (JBG_TPBON = 0x08, JBG_LRLTWO = 0x40) and MX, in tie-break order.
++static const int JBIG_OPTIONS[4] = { 0x00, 0x08, 0x40, 0x48 };
++static const int JBIG_MX[3] = { 0, 8, 32 };
++static const unsigned int JBIG_CANDIDATES = 12;
++
++inline int jbigOptions(unsigned int candidate) { return JBIG_OPTIONS[candidate / 3]; }
++inline int jbigMX(unsigned int candidate) { return JBIG_MX[candidate % 3]; }
++
++/*
++ * The bytes row y adds to an MR page of `rows` rows (`bits` its code length,
++ * EOL and tag excluded), after the two leading bytes Class1Send copies as they
++ * are, and with the zero fill up to `minLen` bytes it inserts without ECM.
++ */
++inline unsigned long
++mrRowBytes(unsigned long bits, unsigned long row, unsigned long rows, unsigned long minLen)
++{
++    unsigned long bytes;
++    if (row == 0)	// EOL, tag, code, and the next row's aligned EOL (if any)
++	bytes = (rows == 1 ? (13 + bits + 7) / 8 : (25 + bits + 7) / 8) - 2;
++    else if (row + 1 == rows)	// tag and code, flushed: no EOL follows
++	bytes = (1 + bits + 7) / 8;
++    else		// tag, code, fill and the next row's aligned EOL
++	bytes = (13 + bits + 7) / 8;
++    return bytes < minLen ? minLen : bytes;
++}
++
++/*
++ * The fewest-bytes legal schedule: oneD[y] true for a one-dimensional row.
++ * a and b hold each row's one- and two-dimensional code lengths (b[0] is not
++ * read: the first row is always one-dimensional).  Returns the page's bytes
++ * (the two leading bytes included), or 0 when rows or k is 0 or memory runs
++ * out (oneD is then untouched).
++ */
++inline unsigned long
++scheduleMR(const unsigned long* a, const unsigned long* b, unsigned long rows,
++    unsigned int k, unsigned long minLen, bool* oneD)
++{
++    if (rows == 0 || k == 0)
++	return 0;
++    const unsigned long NONE = (unsigned long) -1;
++    unsigned long* cost = new unsigned long[2*k];
++    unsigned char* from = new unsigned char[rows*k];
++    if (!cost || !from) {
++	delete[] cost;
++	delete[] from;
++	return 0;
++    }
++    unsigned long* cur = cost;
++    unsigned long* next = cost + k;
++    for (unsigned int j = 0; j < k; j++)
++	cur[j] = NONE;
++    cur[0] = mrRowBytes(a[0], 0, rows, minLen);
++    from[0] = 0;
++    for (unsigned long y = 1; y < rows; y++) {
++	unsigned int best = 0;
++	for (unsigned int j = 1; j < k; j++)
++	    if (cur[j] < cur[best])
++		best = j;
++	next[0] = cur[best] + mrRowBytes(a[y], y, rows, minLen);
++	from[y*k] = (unsigned char) best;
++	unsigned long two = mrRowBytes(b[y], y, rows, minLen);
++	for (unsigned int j = 1; j < k; j++) {
++	    next[j] = cur[j-1] == NONE ? NONE : cur[j-1] + two;
++	    from[y*k + j] = (unsigned char) (j-1);
++	}
++	unsigned long* swap = cur;
++	cur = next;
++	next = swap;
++    }
++    unsigned int state = 0;
++    for (unsigned int j = 1; j < k; j++)
++	if (cur[j] < cur[state])
++	    state = j;
++    unsigned long total = 2 + cur[state];
++    for (unsigned long y = rows; y-- > 0;) {
++	oneD[y] = (state == 0);
++	state = from[y*k + state];
++    }
++    delete[] cost;
++    delete[] from;
++    return total;
++}
++
++/*
++ * The bytes of HylaFAX's own fixed schedule (a one-dimensional row every k
++ * rows), with the same cost model, for comparison in the session log.
++ */
++inline unsigned long
++fixedMRBytes(const unsigned long* a, const unsigned long* b, unsigned long rows,
++    unsigned int k, unsigned long minLen)
++{
++    if (rows == 0 || k == 0)
++	return 0;
++    unsigned long total = 2;
++    for (unsigned long y = 0; y < rows; y++)
++	total += mrRowBytes(y % k == 0 ? a[y] : b[y], y, rows, minLen);
++    return total;
++}
++
++}	// namespace LosslessTuning
++
++#endif /* _LosslessTuning_ */
+diff -ruN a/faxd/MemoryDecoder.c++ b/faxd/MemoryDecoder.c++
+--- a/faxd/MemoryDecoder.c++
++++ b/faxd/MemoryDecoder.c++
+@@ -30,8 +30,29 @@
+ #include "MemoryDecoder.h"
+ #include "G3Encoder.h"
+ #include "StackBuffer.h"
++#include "LosslessTuning.h"
+ #include "config.h"
++#include <sys/time.h>
++#include <stdio.h>
++#if defined(HAVE_SSL)
++#include <openssl/evp.h>
++#endif
+ 
++/*
++ * Faxbot: no tuning until setTuning() asks for it, and nothing reported.
++ */
++static void
++clearTuning(bool& mr, bool& jbig, u_int& minLen, int& options, int& mx,
++    u_long& plain, u_long& tuned, uint32_t& oneD, u_long& millis, char* digest)
++{
++    mr = jbig = false;
++    minLen = 0;
++    options = mx = -1;
++    plain = tuned = millis = 0;
++    oneD = 0;
++    digest[0] = '\0';
++}
++
+ MemoryDecoder::MemoryDecoder(u_char* data, u_long n)
+ {
+     bp = data;
+@@ -41,6 +62,8 @@
+     runs = NULL;
+     rowBuf = NULL;
+     rows = 0;
++    clearTuning(tuneMR, tuneJBIG, tuneMinLen, tunedOptions, tunedMX,
++	plainBytes, tunedBytes, oneDRows, tuneMillis, rasterDigest);
+ }
+ 
+ MemoryDecoder::MemoryDecoder(u_char* data, u_int wid, u_long n,
+@@ -60,6 +83,8 @@
+     rowBuf    = new u_char[byteWidth];
+     setupDecoder(fillorder, is2D, isG4);
+     setRuns(runs, runs+width, width);
++    clearTuning(tuneMR, tuneJBIG, tuneMinLen, tunedOptions, tunedMX,
++	plainBytes, tunedBytes, oneDRows, tuneMillis, rasterDigest);
+ }
+ 
+ MemoryDecoder::~MemoryDecoder()
+@@ -422,14 +447,92 @@
+ extern "C" {
+ #include "jbig.h"
+ }
+-fxStackBuffer resultBuffer;
+ 
++/*
++ * jbigkit's output callback: ``file'' is the fxStackBuffer that collects the BIE.
++ */
+ void bufferJBIGData(unsigned char *start, size_t len, void *file)
+ {
+-    resultBuffer.put((const char*) start, len);
++    ((fxStackBuffer*) file)->put((const char*) start, len);
++}
++
++/*
++ * Encode a raster as one BIE with the T.85 settings: D = 0 layers, order 0
++ * (HITOLO, SEQ, ILEAVE and SMID off), one plane, L0 = 128, MY = 0, and the
++ * given options and MX.  jbg_enc_out leaves the raster as it was, so one
++ * raster serves every candidate (Faxbot's build-time test checks this).
++ */
++static void
++encodeJBIG(u_char* raster, u_int width, uint32_t rows, int options, int mx, fxStackBuffer& out)
++{
++    unsigned char *pmap[1];
++    pmap[0] = raster;
++    struct jbg_enc_state jbigstate;
++    out.reset();
++    jbg_enc_init(&jbigstate, width, rows, 1, pmap, bufferJBIGData, &out);
++    /*
++     * T.85 requires "single-progressive sequential coding" and thus:
++     *
++     * Dl = 0, D = 0, P = 1 are required
++     * L0 = 128 is suggested (and appears to be standard among senders)
++     * Mx = 0 to 127 (and 0 appears to be standard)
++     * My = 0, HITOLO = 0, SEQ = 0, ILEAVE = 0, SMID = 0
++     * TPDON = 0, DPON = 0, DPPRIV = 0, DPLAST = 0
++     * LRLTWO and TPBON may each be 0 or 1 (T.85 Table 1)
++     *
++     * As these settings vary from the library's defaults, we carefully
++     * specify all of them.
++     */
++    jbg_enc_options(&jbigstate, 0, options, 128, mx, 0);
++    jbg_enc_out(&jbigstate);
++    jbg_enc_free(&jbigstate);
+ }
+ #endif /* HAVE_JBIG */
+ 
++/*
++ * Faxbot: milliseconds since ``start''.
++ */
++static u_long
++millisSince(const struct timeval& start)
++{
++    struct timeval now;
++    gettimeofday(&now, NULL);
++    long ms = (now.tv_sec - start.tv_sec)*1000L + (now.tv_usec - start.tv_usec)/1000L;
++    return ms < 0 ? 0 : (u_long) ms;
++}
++
++/*
++ * Faxbot: SHA-256 (hex) of the packed raster that is coded, rows of
++ * byteWidth bytes, 1 = black; the receiver decodes exactly this raster.
++ * Empty without OpenSSL.
++ */
++static void
++digestRaster(const u_char* raster, u_long length, char* hex)
++{
++    hex[0] = '\0';
++#if defined(HAVE_SSL)
++    unsigned char md[EVP_MAX_MD_SIZE];
++    unsigned int mdlen = 0;
++    if (EVP_Digest(raster, length, md, &mdlen, EVP_sha256(), NULL) == 1 && mdlen == 32) {
++	for (u_int i = 0; i < mdlen; i++)
++	    snprintf(hex + 2*i, 3, "%02x", md[i]);
++    }
++#endif
++}
++
++/*
++ * Faxbot: one row's code length in bits, EOL and tag bit excluded, from a
++ * scratch encoder; ``ref'' (two-dimensional coding) is overwritten.
++ */
++static u_long
++codeBits(G3Encoder& meter, fxStackBuffer& scratch, const u_char* row, u_int width, u_char* ref)
++{
++    scratch.reset();
++    meter.setupEncoder(FILLORDER_MSB2LSB, true, false);
++    meter.encode(row, width, 1, ref);
++    return meter.getBitCount() - 13;
++}
++
+ u_char* MemoryDecoder::convertDataFormat(const Class2Params& params)
+ {
+     /*
+@@ -438,6 +541,68 @@
+      * These params are for the encoder to use.
+      */
+     rows = 0;
++    struct timeval started;
++    gettimeofday(&started, NULL);
++    if (params.df == DF_2DMR && tuneMR) {
++	/*
++	 * Faxbot: decode the page, measure every row both ways, choose the
++	 * fewest-bytes legal schedule (LosslessTuning.h), then encode it.
++	 */
++	fxStackBuffer raster;
++	if (!RTCraised()) {
++	    for (;;) {
++		(void) decodeRow(rowBuf, width);
++		if (seenRTC())
++		    break;
++		raster.put((const char*) rowBuf, byteWidth);
++		rows++;
++	    }
++	}
++	const u_char* image = (const u_char*) raster;
++	u_short k = (params.vr == VR_NORMAL || params.vr == VR_200X100) ? 2 : 4;
++	u_long* oneBits = new u_long[rows ? rows : 1];
++	u_long* twoBits = new u_long[rows ? rows : 1];
++	bool* oneD = new bool[rows ? rows : 1];
++	u_char* ref = new u_char[byteWidth];
++	fxStackBuffer scratch;
++	G3Encoder meter(scratch);
++	for (uint32_t y = 0; y < rows; y++) {
++	    const u_char* row = image + y*byteWidth;
++	    oneBits[y] = codeBits(meter, scratch, row, width, NULL);
++	    if (y > 0) {
++		memcpy(ref, image + (y-1)*byteWidth, byteWidth);
++		twoBits[y] = codeBits(meter, scratch, row, width, ref);
++	    } else
++		twoBits[y] = 0;
++	}
++	tunedBytes = LosslessTuning::scheduleMR(oneBits, twoBits, rows, k, tuneMinLen, oneD);
++	plainBytes = LosslessTuning::fixedMRBytes(oneBits, twoBits, rows, k, tuneMinLen);
++	fxStackBuffer result;
++	G3Encoder enc(result);
++	enc.setupEncoder(fillorder, true, false);
++	memset(ref, 0, byteWidth);
++	oneDRows = 0;
++	for (uint32_t y = 0; y < rows; y++) {
++	    const u_char* row = image + y*byteWidth;
++	    if (oneD[y]) {
++		enc.encode(row, width, 1);				// 1-D
++		oneDRows++;
++	    } else
++		enc.encode(row, width, 1, ref);				// 2-D
++	    memcpy(ref, row, byteWidth);
++	}
++	enc.encoderCleanup();
++	digestRaster(image, rows*byteWidth, rasterDigest);
++	delete[] oneBits;
++	delete[] twoBits;
++	delete[] oneD;
++	delete[] ref;
++	cc = result.getLength();
++	u_char* dst = new u_char[cc ? cc : 1];
++	memcpy(dst, (const unsigned char*) result, cc);
++	tuneMillis = millisSince(started);
++	return (dst);
++    }
+     if (params.df <= DF_2DMMR) {
+ 	fxStackBuffer result;
+ 	G3Encoder enc(result);
+@@ -484,7 +649,6 @@
+ #ifdef HAVE_JBIG
+ 	char* decodedrow = new char[byteWidth];
+ 	fxStackBuffer raster;
+-	resultBuffer = raster;		// initialize resultBuffer
+ 	if (!RTCraised()) {
+ 	    for (;;) {
+ 		(void) decodeRow(decodedrow, width);
+@@ -497,33 +661,41 @@
+ 	delete[] decodedrow;
+ 	// bitmap raster is prepared, pass through JBIG encoding...
+ 	cc = raster.getLength();
+-	u_char* rasterdst = new u_char[cc];
++	u_char* rasterdst = new u_char[cc ? cc : 1];
+ 	memcpy(rasterdst, (const unsigned char*) raster, cc);
+-	unsigned char *pmap[1];
+-	pmap[0] = rasterdst;
+-	struct jbg_enc_state jbigstate;
+-	jbg_enc_init(&jbigstate, width, rows, 1, pmap, bufferJBIGData, NULL);
++	digestRaster(rasterdst, cc, rasterDigest);
+ 	/*
+-	 * T.85 requires "single-progressive sequential coding" and thus:
+-	 *
+-	 * Dl = 0, D = 0, P = 1 are required
+-	 * L0 = 128 is suggested (and appears to be standard among senders)
+-	 * Mx = 0 to 127 (and 0 appears to be standard)
+-	 * My = 0, HITOLO = 0, SEQ = 0, ILEAVE = 0, SMID = 0
+-	 * TPDON = 0, DPON = 0, DPPRIV = 0, DPLAST = 0
+-	 *
+-	 * As these settings vary from the library's defaults, we carefully
+-	 * specify all of them.
++	 * Plain JBIG is options 0, MX 0.  Faxbot: when tuning, also try every
++	 * candidate (LosslessTuning.h) and keep the smallest BIE; ties keep the
++	 * earlier candidate (lower options, then lower MX).
+ 	 */
+-	jbg_enc_options(&jbigstate, 0, 0, 128, 0, 0);
+-	jbg_enc_out(&jbigstate);
+-	jbg_enc_free(&jbigstate);
++	fxStackBuffer best;
++	encodeJBIG(rasterdst, width, rows, 0, 0, best);
++	plainBytes = best.getLength();
++	tunedOptions = 0;
++	tunedMX = 0;
++	if (tuneJBIG) {
++	    fxStackBuffer trial;
++	    for (u_int i = 1; i < LosslessTuning::JBIG_CANDIDATES; i++) {
++		int options = LosslessTuning::jbigOptions(i);
++		int mx = LosslessTuning::jbigMX(i);
++		encodeJBIG(rasterdst, width, rows, options, mx, trial);
++		if (trial.getLength() < best.getLength()) {
++		    best.reset();
++		    best.put((const char*) trial, trial.getLength());
++		    tunedOptions = options;
++		    tunedMX = mx;
++		}
++	    }
++	}
+ 	delete[] rasterdst;
+ 	// image is now encoded into JBIG
+-	//resultBuffer[19] |= 0x20;	// set VLENGTH = 1, if someday we want to transmit NEWLEN
+-	cc = resultBuffer.getLength();
+-	u_char* dst = new u_char[cc];
+-	memcpy(dst, (const unsigned char*) resultBuffer, cc);
++	//best[19] |= 0x20;	// set VLENGTH = 1, if someday we want to transmit NEWLEN
++	cc = best.getLength();
++	tunedBytes = cc;
++	u_char* dst = new u_char[cc ? cc : 1];
++	memcpy(dst, (const unsigned char*) best, cc);
++	tuneMillis = millisSince(started);
+ 	return (dst);
+ #else
+ 	printf("Attempt to convert Phase C data to JBIG without JBIG support.  This should not happen.\n");
+diff -ruN a/faxd/MemoryDecoder.h b/faxd/MemoryDecoder.h
+--- a/faxd/MemoryDecoder.h
++++ b/faxd/MemoryDecoder.h
+@@ -43,6 +43,17 @@
+     u_int	nblanks;
+     tiff_runlen_t* runs;
+     u_char*	rowBuf;
++    // Faxbot: lossless tuning in convertDataFormat (LosslessTuning.h)
++    bool	tuneMR;		// choose the fewest-bytes MR reset schedule
++    bool	tuneJBIG;	// try the JBIG candidates, keep the smallest
++    u_int	tuneMinLen;	// minimum scan line bytes (0 with ECM)
++    int		tunedOptions;	// JBIG options sent (-1: not JBIG)
++    int		tunedMX;	// JBIG MX sent
++    u_long	plainBytes;	// JBIG at options 0, MX 0, or MR on the fixed schedule
++    u_long	tunedBytes;	// what was sent, by the same measure
++    uint32_t	oneDRows;	// MR rows coded one-dimensionally
++    u_long	tuneMillis;	// time spent converting
++    char	rasterDigest[65];	// SHA-256 of the packed raster coded (hex)
+ 
+     int		decodeNextByte();
+     void	invalidCode(const char* type, int x);
+@@ -59,6 +70,15 @@
+     u_char* cutExtraEOFB();
+     u_char* encodeTagLine (u_long* raster, u_int th, u_int slop, uint32_t scanlines = 0, bool addLines = false, bool onBottom = false);
+     u_char* convertDataFormat(const Class2Params& params);
++    void setTuning(bool mr, bool jbig, u_int minLen)
++		{ tuneMR = mr; tuneJBIG = jbig; tuneMinLen = minLen; }
++    int getTunedOptions() const				{ return tunedOptions; }
++    int getTunedMX() const				{ return tunedMX; }
++    u_long getPlainBytes() const			{ return plainBytes; }
++    u_long getTunedBytes() const			{ return tunedBytes; }
++    uint32_t getOneDRows() const			{ return oneDRows; }
++    u_long getTuneMillis() const			{ return tuneMillis; }
++    const char* getRasterDigest() const			{ return rasterDigest; }
+ 
+     void scanPageForBlanks(u_int fillorder, const Class2Params& params);
+     const u_char* getEndOfPage()			{ return endOfData; }
+diff -ruN a/faxd/ModemConfig.c++ b/faxd/ModemConfig.c++
+--- a/faxd/ModemConfig.c++
++++ b/faxd/ModemConfig.c++
+@@ -174,6 +174,7 @@
+ { "class1sslfaxinfo",		&ModemConfig::class1SSLFaxInfo,	"" },
+ { "class1sslfaxcert",		&ModemConfig::class1SSLFaxCert,		"etc/ssl.pem" },
+ { "class1sslfaxproxy",		&ModemConfig::class1SSLFaxProxy,	"" },
++{ "tunejbig",			&ModemConfig::tuneJBIG,		"sslfax" },
+ { "class2recvdatatrigger",	&ModemConfig::class2RecvDataTrigger },
+ { "ringdata",			&ModemConfig::ringData },
+ { "ringfax",			&ModemConfig::ringFax },
+@@ -272,6 +273,7 @@
+ { "class1frhneedsreset",	&ModemConfig::class1FRHNeedsReset,	false },
+ { "saveunconfirmedpages",	&ModemConfig::saveUnconfirmedPages,	true },
+ { "modemsoftrtfcc",		&ModemConfig::softRTFCC,		true },
++{ "tunemr",			&ModemConfig::tuneMR,			true },
+ { "modemdophasecdebug",		&ModemConfig::doPhaseCDebug,		false },
+ { "noanswervoice",		&ModemConfig::noAnswerVoice,		false },
+ { "saverawimage",		&ModemConfig::saverawimage,		false },
+diff -ruN a/faxd/ModemConfig.h b/faxd/ModemConfig.h
+--- a/faxd/ModemConfig.h
++++ b/faxd/ModemConfig.h
+@@ -263,6 +263,8 @@
+     u_int	minSpeed;		// minimum speed for fax transmits
+     u_int	noDialtoneRetries;	// maximum number of attempts to get dialtone
+     bool	softRTFCC;		// real-time fax compression conversion (software)
++    bool	tuneMR;			// Faxbot: fewest-bytes MR reset schedule (LosslessTuning.h)
++    fxStr	tuneJBIG;		// Faxbot: tuned JBIG options: never, sslfax or always
+     bool	waitForConnect;		// modem sends multiple answer responses
+     fxStr	tagLineFmt;		// format string for tag lines
+     fxStr	tagLineLocale;		// locale for tag lines

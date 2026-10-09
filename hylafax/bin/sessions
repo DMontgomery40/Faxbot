@@ -36,13 +36,15 @@ mark() { printf '%s\n' "$1" >> "$seen"; }
 scan() {
   log=$1 commid=$2
   grep -qx "$commid" "$seen" && return 0
+  # A call on which the other machine collected a held fax (polled transmission): bin/polled reports it.
+  if grep -q 'POLLED FAX: begin' "$log"; then mark "$commid"; return 0; fi
   reason=''
   if ! grep -q 'SESSION END' "$log"; then
     # Still in progress, unless it began before this engine's start: then that start cut it off.
     [ -f "$started" ] && [ "$log" -ot "$started" ] || return 1
     # A sent fax has no caller (notify, or Faxbot's restart rule, reports it).
     grep -q 'CallID:' "$log" || { mark "$commid"; return 0; }
-    reason='Call cut off: the fast fax service restarted'
+    reason='Call cut off: the fax engine restarted'
   else
     if ! grep -q 'RECV FAX: begin' "$log"; then mark "$commid"; return 0; fi  # a sent fax: notify reports it
     # A document with pages goes through the receive script and the hand-over.
@@ -57,16 +59,18 @@ scan() {
   # CallID: '<caller>' '<Asterisk's call name: token.called>' '<dialed>'
   callid=$(grep -m1 'CallID:' "$log")
   caller=$(printf '%s' "$callid" | sed -n "s/.*CallID: '\([^']*\)'.*/\1/p" | tr -cd '0-9+' | cut -c1-20)
-  name=$(printf '%s' "$callid" | sed -n "s/.*CallID: '[^']*' '\([^']*\)'.*/\1/p" | tr -cd '0-9.' | cut -c1-80)
+  name=$(printf '%s' "$callid" | sed -n "s/.*CallID: '[^']*' '\([^']*\)'.*/\1/p" | tr -cd '0-9a-z._-' | cut -c1-90)
   token=${name%%.*}
-  called=''
+  called='' trunk=''
   case $name in *.*) called=${name#*.} ;; esac
+  case $called in *.*) trunk=${called#*.}; called=${called%%.*} ;; esac
   called=$(printf '%s' "$called" | tr -cd '0-9' | cut -c1-20)
+  trunk=$(printf '%s' "$trunk" | tr -cd 'a-z0-9_-' | cut -c1-32)
   token=$(printf '%s' "$token" | tr -cd '0-9' | cut -c1-40)
   key=$commid-$(date +%s)
   report=$(mktemp "$outbox/.received.XXXXXX") || exit 1
-  printf '{"engine_id":"%s","commid":"%s","key":"%s","token":"%s","caller":"%s","called":"%s","reason_b64":"%s"}\n' \
-    "$engine" "$commid" "$key" "$token" "$caller" "$called" "$(b64 "${reason:-fax failed}")" > "$report" \
+  printf '{"engine_id":"%s","commid":"%s","key":"%s","token":"%s","caller":"%s","called":"%s","trunk":"%s","reason_b64":"%s"}\n' \
+    "$engine" "$commid" "$key" "$token" "$caller" "$called" "$trunk" "$(b64 "${reason:-fax failed}")" > "$report" \
     && mv -f "$report" "$outbox/$(date +%s)-recv$commid-failed.report" || { rm -f "$report"; exit 1; }
   mark "$commid"
   return 0

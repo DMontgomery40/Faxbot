@@ -1,0 +1,12 @@
+#!/bin/sh
+# A fax arrived because Faxbot polled for it (a collection, api/app/routing/polling.py). faxsend runs this (as
+# uucp, in the spool folder) through PollRcvdCmd with: notify-address file device commid reason (HylaFAX+
+# 7.0.11 faxd/faxSendApp.c++, notifyPollRecvd). The notify address carries the collection:
+# poll-<request>@faxbot.invalid (hylafax_engine.create_poll_job). The fax is kept and handed over exactly as a
+# received one (bin/received), with the collection named in its ticket, so Faxbot files it in Received from
+# the number it called. Nothing here talks to the network.
+set -u
+
+request=$(printf '%s' "${1:-}" | sed -n 's/^poll-\([a-f0-9]\{32\}\)@faxbot\.invalid$/\1/p')
+[ -n "$request" ] || { printf 'faxbot-pollrcvd: not a collection Faxbot asked for\n' >&2; exit 1; }
+FAXBOT_POLL=$request exec sh "$(dirname "$0")/received" "${2:-}" "${3:-}" "${4:-}" "${5:-}" '' '' ''

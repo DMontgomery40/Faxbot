@@ -250,7 +250,39 @@ class IntakeStore:
         return (exact or [c for c in enabled if c.match_number is None] or [None])[0]
 
     # Items --------------------------------------------------------------
-    def _schedule(self, connection, to_number, received_at, now):
+    def _placement(self, connection, inbound_id):
+        """How the receiving rules placed one received fax (``inbound_fax_routing``), or None."""
+        if inbound_id is None:
+            return None
+        from ..access.receiving_rules import routing_for, tables
+        return routing_for(connection, tables(self.engine), inbound_id)
+
+    def connector_for_item(self, item):
+        """The connector one email item goes through: the one the number rule that placed its fax chose, else
+        the usual one for its number."""
+        if item.get('inbound_fax_id'):
+            with self.engine.connect() as connection:
+                placed = self._placement(connection, item['inbound_fax_id'])
+                if placed is not None and placed.get('rule_id') and placed.get('connector_id'):
+                    return next((c for c in self.list_connectors(connection)
+                                 if c.id == placed['connector_id'] and c.enabled), None)
+        return self.connector_for(item.get('to_number'))
+
+    def _schedule(self, connection, to_number, received_at, now, inbound_id=None):
+        placed = self._placement(connection, inbound_id)
+        if placed is not None and placed.get('rule_id'):
+            from ..access.receiving_rules import email_off_for
+            if email_off_for(placed.get('rule_snapshot')):
+                # The number rule that placed this fax sends no email; a person can still send it.
+                return None, 'The number rule for this fax sends no email.'
+            if placed.get('connector_id'):
+                chosen = next((c for c in self.list_connectors(connection)
+                               if c.id == placed['connector_id'] and c.enabled), None)
+                if chosen is None:
+                    return None, 'The email connector the number rule chose is turned off or gone.'
+                if received_at < chosen.created_at:
+                    return None, 'This fax arrived before email delivery was set up; send it when you are ready.'
+                return now, None
         connector = self.connector_for(to_number, connection)
         # A connector delivers what arrives after it was set up; earlier faxes wait for a person.
         if connector is None:
@@ -271,6 +303,7 @@ class IntakeStore:
             self._imports = reflect(self.engine, ('inbound_imports',))['inbound_imports']
         imports = self._imports
         from ..inbound.acquisition import PLACEHOLDER_DIGESTS
+        from ..work.duplicates import email_note, held
         recorded = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id))
         authentic = sa.or_(inbound.c.sha256.is_(None), inbound.c.sha256.not_in(tuple(PLACEHOLDER_DIGESTS)))
         acquired = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id,
@@ -279,7 +312,9 @@ class IntakeStore:
                            inbound.c.received_at)
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
                  .where(items.c.id.is_(None), inbound.c.pdf_path.is_not(None), inbound.c.pdf_path != '',
-                        sa.or_(sa.and_(~recorded, authentic), sa.and_(inbound.c.status == 'received', acquired)))
+                        sa.or_(sa.and_(~recorded, authentic), sa.and_(inbound.c.status == 'received', acquired)),
+                        # A fax that may be a partner's notice waits for the notice matcher (work/duplicates.py).
+                        ~held(self.engine, inbound, now=now))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         created = 0
         with read_connection(self.engine) as connection:
@@ -289,7 +324,10 @@ class IntakeStore:
                 with write_transaction(self.engine) as connection:
                     if connection.execute(sa.select(items.c.id).where(items.c.inbound_fax_id == row.id)).first():
                         continue
-                    when, note = self._schedule(connection, row.to_number, row.received_at, now)
+                    when, note = self._schedule(connection, row.to_number, row.received_at, now, row.id)
+                    paired = email_note(connection, self.engine, row.id)
+                    if paired is not None:
+                        when, note = None, paired  # its document is emailed instead; a person can still send it
                     connection.execute(items.insert().values(
                         id=uuid4().hex, source='fax', inbound_fax_id=row.id, received_at=row.received_at,
                         pages=row.pages, from_number=row.from_number, to_number=row.to_number, state='received',
@@ -308,6 +346,49 @@ class IntakeStore:
             pages=pages, from_number=from_number, to_number=to_number, state='received', attempts=0,
             next_attempt_at=when, last_error=note, version=1, created_at=now, updated_at=now))
         return identity
+
+    def add_fax_image(self, imports, *, account, message_id, image_path, from_number, to_number, pages,
+                      received_at, report, country=DEFAULT_COUNTRY, original=False):
+        """File a document a partner delivered directly as a received fax; returns the received fax's id.
+
+        ``imports`` is the received-fax ``ImportStore``. A fax image is kept byte
+        for byte as the received fax's image and turned into the PDF people read,
+        as a fax received over the SIP trunk is. ``original=True`` files an
+        original document (a PDF) the same way, unchanged, so every direct
+        arrival has mailbox rules, Work and evidence. Repeating it returns the
+        same received fax. Its email item names it a direct delivery and is keyed
+        on the received fax, so the inbound feed never adds a second one.
+        """
+        from ..inbound.acquisition import convert_tiff, discard, store_document
+        # Faxbot itself delivered it, with no provider: the ``local`` source, under the partner's account.
+        begun = imports.begin(source='local', account=account, operation_id=message_id, backend='direct',
+                              inbound_backend='direct', to_number=to_number, from_number=from_number,
+                              reported_pages=pages, report=report, source_received_at=received_at,
+                              tiff_path=None if original else image_path, schedule=False, country=country)
+        inbound_fax_id = begun.inbound_fax_id
+        if begun.state == 'pending':
+            if original:
+                with open(image_path, 'rb') as handle:
+                    artifact = store_document(handle.read(), inbound_fax_id, provider='The partner')
+            else:
+                artifact = convert_tiff(image_path, inbound_fax_id)
+            completion = imports.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
+                                          size=artifact.size, pages=artifact.pages, media_type=artifact.media_type,
+                                          source_received_at=received_at)
+            discard(artifact, completion)
+        now = utcnow()
+        try:
+            with write_transaction(self.engine) as connection:
+                if connection.execute(sa.select(self.items.c.id).where(
+                        self.items.c.inbound_fax_id == inbound_fax_id)).first() is None:
+                    when, note = self._schedule(connection, to_number, received_at, now)
+                    connection.execute(self.items.insert().values(
+                        id=uuid4().hex, source='direct', inbound_fax_id=inbound_fax_id, received_at=received_at,
+                        pages=pages, from_number=from_number, to_number=to_number, state='received', attempts=0,
+                        next_attempt_at=when, last_error=note, version=1, created_at=now, updated_at=now))
+        except DeliveryStoreError:
+            pass  # The inbound feed created it first; the unique index keeps one.
+        return inbound_fax_id
 
     def get_item(self, identity, connection=None):
         def read(conn):

@@ -74,14 +74,20 @@ class WorkService:
         imports = self.store.imports
         test = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == items.c.inbound_fax_id,
                                             imports.c.source == 'test'))
+        routing = self.store.routing
+        # A receiving rule marked the item urgent (inbound_fax_routing); 0 for every other item.
+        urgent = (sa.func.coalesce(routing.c.urgent, 0) if routing is not None else sa.literal(0)).label('urgent')
+        source = (items.join(inbound, inbound.c.id == items.c.inbound_fax_id)
+                  .join(resources, sa.and_(resources.c.kind == 'inbound',
+                                           resources.c.inbound_fax_id == items.c.inbound_fax_id))
+                  .outerjoin(mailboxes, mailboxes.c.id == items.c.mailbox_id))
+        if routing is not None:
+            source = source.outerjoin(routing, routing.c.id == items.c.inbound_fax_id)
         return (sa.select(*items.c, inbound.c.from_number, inbound.c.to_number, inbound.c.pages, test.label('is_test'),
                           inbound.c.status.label('document_status'), inbound.c.sha256,
                           inbound.c.received_at.label('document_received_at'),
-                          mailboxes.c.label.label('mailbox'), resources.c.id.label('resource_id'))
-                .select_from(items.join(inbound, inbound.c.id == items.c.inbound_fax_id)
-                             .join(resources, sa.and_(resources.c.kind == 'inbound',
-                                                      resources.c.inbound_fax_id == items.c.inbound_fax_id))
-                             .outerjoin(mailboxes, mailboxes.c.id == items.c.mailbox_id)))
+                          mailboxes.c.label.label('mailbox'), resources.c.id.label('resource_id'), urgent)
+                .select_from(source))
 
     def _visible(self, connection, actor, permission, now):
         return self.control.visible_resource_ids_on(connection, actor, permission, 'inbound', now=now)
@@ -150,7 +156,7 @@ class WorkService:
                 'escalated_at': row['escalated_at'], 'done_at': row['done_at'], 'done_by': names.get(row['done_by']),
                 'done_note': row['done_note'], 'duplicate_of': duplicates.get(row['id']), 'is_mine': mine,
                 'overdue': row['state'] == 'open' and row['due_at'] is not None and now > row['due_at'],
-                'is_test': bool(row['is_test']),
+                'is_test': bool(row['is_test']), 'urgent': bool(row.get('urgent')),
                 'version': row['version'], 'actions': actions,
             }
             if detail:
@@ -211,8 +217,11 @@ class WorkService:
                     return []
                 query = query.where(items.c.mailbox_id == found)
             order = sa.case((items.c.state == 'open', 0), (items.c.state == 'acknowledged', 1), else_=2)
-            query = query.order_by(order, items.c.due_at.is_(None), items.c.due_at, items.c.available_at.desc(),
-                                   items.c.id).limit(limit)
+            # Within each state, the items a receiving rule marked urgent come first.
+            urgent = self.store.routing.c.urgent if self.store.routing is not None else sa.literal(0)
+            first = sa.case((urgent == 1, 0), else_=1)
+            query = query.order_by(order, first, items.c.due_at.is_(None), items.c.due_at,
+                                   items.c.available_at.desc(), items.c.id).limit(limit)
             return self._views(connection, actor, connection.execute(query).mappings().all(), now)
 
     def counts(self, actor):

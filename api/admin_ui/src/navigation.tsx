@@ -13,6 +13,7 @@ import SendIcon from '@mui/icons-material/Send';
 import DialpadIcon from '@mui/icons-material/Dialpad';
 import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
 import EmailIcon from '@mui/icons-material/Email';
+import AllInboxIcon from '@mui/icons-material/AllInbox';
 import ContactPhoneIcon from '@mui/icons-material/ContactPhone';
 import ContactsIcon from '@mui/icons-material/Contacts';
 import HandshakeIcon from '@mui/icons-material/Handshake';
@@ -21,6 +22,8 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import SettingsPhoneIcon from '@mui/icons-material/SettingsPhone';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import SavingsIcon from '@mui/icons-material/Savings';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
@@ -47,6 +50,7 @@ import type AdminAPIClient from './api/client';
 import type { AdminConfig, AuthMe, ConsoleContext } from './api/types';
 import { providerLabel } from './providerLabels';
 import Dashboard from './components/Dashboard';
+import AIAnalysis from './components/AIAnalysis';
 import SetupWizard from './components/SetupWizard';
 import JobsList from './components/JobsList';
 import Plugins from './components/Plugins';
@@ -58,11 +62,24 @@ import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
+import Connectors from './components/delivery/Connectors';
 import ProvidersInUse from './components/ProvidersInUse';
+import ProviderRules, { type NumberRuleSummary } from './components/ProviderRules';
+import ProviderAccounts from './components/ProviderAccounts';
+import DigitalAccounts from './components/DigitalAccounts';
+import { DigitalReceived } from './components/delivery/DigitalMessages';
+import { MailboxSendingRulesPicker } from './components/MailboxSendingRules';
+import { rulesApiFor } from './components/ProviderRulesApi';
+import { currencyFor } from './components/ProviderRulesText';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
 import CasePackets from './components/delivery/CasePackets';
 import Savings from './components/delivery/Savings';
+import Charges from './components/delivery/Charges';
+import Invoices from './components/delivery/Invoices';
 import Recommendations from './components/delivery/Recommendations';
+import FactAdvice from './components/delivery/FactAdvice';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
+import UncertainSettingsPanel from './components/work/UncertainSettingsPanel';
 import Terminal from './components/Terminal';
 import AuditLog from './components/AuditLog';
 import { DeploymentSection } from './components/common/Deployment';
@@ -74,6 +91,14 @@ import ResourceAccess from './components/ResourceAccess';
 import Sessions from './components/Sessions';
 import DeliveryRoutes from './components/DeliveryRoutes';
 import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOverview';
+import ReplyNumber from './components/ReplyNumber';
+import BlockedSenders from './components/BlockedSenders';
+import NpiRecordPanel from './components/NpiRecord';
+import NumberMoves from './components/NumberMoves';
+import BlockIcon from '@mui/icons-material/Block';
+import Forms from './components/forms/Forms';
+import ExpectedFaxes from './components/expected/ExpectedFaxes';
+import PendingActionsIcon from '@mui/icons-material/PendingActions';
 
 export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
 
@@ -165,6 +190,30 @@ export interface NavArea {
 }
 
 const SETTINGS_READ = ['settings:read'] as const;
+
+// Loaders the rules screens keep between renders: one per console API client.
+const numberRuleLoaders = new WeakMap<AdminAPIClient, () => Promise<NumberRuleSummary[]>>();
+const mailboxLoaders = new WeakMap<AdminAPIClient, () => Promise<Array<{ id: string; label: string }>>>();
+
+function numberRules(client: AdminAPIClient): () => Promise<NumberRuleSummary[]> {
+  let load = numberRuleLoaders.get(client);
+  if (!load) {
+    load = () => client.listInboundRules().then((page) => page.items.map((rule) => ({ to_number: rule.to_number, mailbox_label: rule.mailbox_label })));
+    numberRuleLoaders.set(client, load);
+  }
+  return load;
+}
+
+function mailboxes(client: AdminAPIClient): () => Promise<Array<{ id: string; label: string }>> {
+  let load = mailboxLoaders.get(client);
+  if (!load) {
+    load = () => client.listMailboxes().then((page) => page.items.map((item) => ({ id: item.id, label: item.label })));
+    mailboxLoaders.set(client, load);
+  }
+  return load;
+}
+
+const currency = (ctx: PageContext) => currencyFor(ctx.context.send?.default_country);
 const OVERVIEW_GATE: Gate = { anyOf: ['diagnostics:read', 'settings:read'] };
 
 // Pages that show active settings wait for the console context they just asked for.
@@ -201,24 +250,39 @@ export const NAVIGATION: NavArea[] = [
     id: 'overview', label: 'Overview', icon: <DashboardIcon />,
     pages: [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
-        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)} /> },
+        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)}
+          canReadSettings={ctx.permissions.has('settings:read')} canReadAnalysis={ctx.permissions.has('settings:read')} /> },
     ],
   },
   {
     id: 'faxes', label: 'Faxes', icon: <FaxIcon />,
     pages: [
       { id: 'received', label: 'Received', icon: <InboxIcon />, gate: { navigation: ['inbox', 'work'] }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx, <Received client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
-          onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions}
-          canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
-          show={readFilter(ctx.params.get('show'))}
-          onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
-          onSendFax={sendFax(ctx)} />) },
+        render: (ctx) => whenContextReady(ctx, <>
+          <Received client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
+            onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions}
+            canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
+            show={readFilter(ctx.params.get('show'))}
+            onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
+            onSendFax={sendFax(ctx)} onOpenSentFax={ctx.openJob} />
+          {ctx.permissions.has('settings:read') && <DigitalReceived client={ctx.client} />}
+        </>) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
-        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)} /> },
+        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
+          canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
-          configError={ctx.contextError} onOpenJob={ctx.openJob} /> },
+          configError={ctx.contextError} onOpenJob={ctx.openJob} sendChoices={ctx.context.send} /> },
+      // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
+      // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
+      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
+        render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
+      // Faxes recorded before they arrive, matched by a reference the sender stated; imports of open work and
+      // outage recovery (faxbot expected).
+      { id: 'expected', label: 'Expected', icon: <PendingActionsIcon />, gate: { anyOf: ['work:read', 'work:import'] },
+        render: (ctx) => <ExpectedFaxes client={ctx.client} canImport={ctx.permissions.has('work:import')}
+          canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')} /> },
     ],
   },
   {
@@ -232,15 +296,39 @@ export const NAVIGATION: NavArea[] = [
           <>
             {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage'))
               && <ResourceAccess client={ctx.client} me={ctx.me} section="mailboxes" />}
+            {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage')) && (
+              <Box sx={{ mt: 4 }}>
+                <MailboxSendingRulesPicker api={rulesApiFor(ctx.client)} loadMailboxes={mailboxes(ctx.client)}
+                  canWrite={ctx.permissions.has('mailboxes:manage')} currency={currency(ctx)} />
+              </Box>
+            )}
             {ctx.permissions.has('settings:read') && (
               <Box sx={{ mt: 4 }}><WorkSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
+            )}
+            {ctx.permissions.has('settings:read') && (
+              <Box sx={{ mt: 4 }}><UncertainSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
             )}
           </>
         ) },
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
+      // The organization's NPIs and what the NPI registry lists for them (routing/nppes.py).
+      { id: 'advice', label: 'Advice and moves', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <NumberMoves client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      { id: 'npi', label: 'Your NPI record', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <NpiRecordPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      { id: 'blocked', label: 'Blocked senders', icon: <BlockIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <BlockedSenders client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      // Mailboxes and folders that bring documents in or send faxes (intake connectors).
+      { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'identity', label: 'Sender identity', icon: <BadgeIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['identity'], 'Sender identity') },
+        render: (ctx) => (
+          <>
+            {settingsPage(['identity'], 'Sender identity')(ctx)}
+            <ReplyNumber client={ctx.client} canWrite={ctx.permissions.has('settings:write')} />
+          </>
+        ) },
     ],
   },
   {
@@ -268,9 +356,18 @@ export const NAVIGATION: NavArea[] = [
           <>
             <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
             <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
+            <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+              currency={currency(ctx)} onNavigate={ctx.navigate} />
+            {ctx.permissions.has('providers:read') && <DigitalAccounts client={ctx.client}
+              canWrite={ctx.permissions.has('providers:write')} />}
             {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
             {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
           </>) },
+      // Which account sends each fax: the organization's rules, sites, lists and workflows.
+      { id: 'rules', label: 'Rules', icon: <AltRouteIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+          currency={currency(ctx)} onNavigate={ctx.navigate}
+          loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} /> },
       providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
       providerPage('efax', 'eFax', 'efax', 'efax'),
       providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),
@@ -290,12 +387,22 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'spending', label: 'Spending', icon: <ReceiptLongIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="spending" /> },
+      // What each provider charged, and faxes a provider billed that Faxbot has no record of.
+      { id: 'charges', label: 'Charges', icon: <ReceiptIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Charges client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      // Monthly invoice totals, and the part your faxes don't explain.
+      { id: 'invoices', label: 'Invoices', icon: <RequestQuoteIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Invoices client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
       { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Savings client={ctx.client} /> },
+        render: (ctx) => <Savings client={ctx.client} focus={ctx.params.get('part')} /> },
       { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          onNavigate={ctx.navigate} focus={ctx.params.get('section')} /> },
+      // What one missing fact (a partner, a recipient's approval, a price, a plan's allowance) cost you.
+      { id: 'advice', label: 'Advice', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <FactAdvice client={ctx.client} /> },
     ],
   },
   {
@@ -327,7 +434,9 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'setup', label: 'Setup', icon: <HelpIcon />, gate: { anyOf: ['settings:write'] },
         render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')}
-          isOwner={isOwner(ctx)} /> },
+          isOwner={isOwner(ctx)} onNavigate={ctx.navigate} /> },
+      { id: 'analysis', label: 'AI analysis', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <AIAnalysis client={ctx.client} isOwner={isOwner(ctx)} /> },
       { id: 'security', label: 'Security', icon: <SecurityIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['security'], 'Security') },
       { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },

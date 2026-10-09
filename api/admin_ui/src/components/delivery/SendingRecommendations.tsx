@@ -6,12 +6,19 @@ import { Box, Button, Chip, CircularProgress, Paper, Stack, Typography } from '@
 import AdminAPIClient from '../../api/client';
 import type { SendingRecommendation, SendingRecommendations as Result } from '../../api/deliveryTypes';
 import { DeliveryError, Notice, formatMoney } from './shared';
+import type { AdminDestination } from '../../navigation';
+import { AddAsRuleButton } from '../ProviderRulesSuggest';
+import { rulesApiFor } from '../ProviderRulesApi';
 
-function Item({ item, canWrite, busy, onUse }: {
+function Item({ item, canWrite, busy, onUse, client, onRuleAdded, onError, onNavigate }: {
   item: SendingRecommendation;
   canWrite: boolean;
   busy: boolean;
   onUse: (item: SendingRecommendation) => void;
+  client: AdminAPIClient;
+  onRuleAdded: (sentence: string) => void;
+  onError: (error: unknown) => void;
+  onNavigate?: (destination: AdminDestination) => void;
 }) {
   const { current, suggested } = item;
   return (
@@ -31,14 +38,19 @@ function Item({ item, canWrite, busy, onUse }: {
           aria-label={`Use ${suggested.label} for ${item.number}`} sx={{ borderRadius: 2 }}>
           Use this route
         </Button>
+        {canWrite && item.rule_suggestion && (
+          <AddAsRuleButton api={rulesApiFor(client)} suggestion={item.rule_suggestion} onDone={onRuleAdded} onError={onError}
+            onNavigate={onNavigate} />
+        )}
       </Box>
     </Paper>
   );
 }
 
-export default function SendingRecommendations({ client, canWrite, onCount }: {
+export default function SendingRecommendations({ client, canWrite, onCount, onNavigate }: {
   client: AdminAPIClient;
   canWrite: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
   // How many recommendations this section shows, or null until it knows.
   onCount?: (count: number | null) => void;
 }) {
@@ -79,6 +91,7 @@ export default function SendingRecommendations({ client, canWrite, onCount }: {
   };
 
   const items = data?.items ?? [];
+  const countries = data?.country_rules ?? [];
   return (
     <Box>
       <DeliveryError error={error} onClose={() => setError(null)} />
@@ -89,7 +102,25 @@ export default function SendingRecommendations({ client, canWrite, onCount }: {
           <Typography variant="h6" component="h2" gutterBottom>Sending</Typography>
           <Stack spacing={2}>
             {items.map((item) => (
-              <Item key={item.number} item={item} canWrite={canWrite} busy={busy === item.number} onUse={(chosen) => void use(chosen)} />
+              <Item key={item.number} item={item} canWrite={canWrite} busy={busy === item.number} onUse={(chosen) => void use(chosen)}
+                client={client} onRuleAdded={setMessage} onError={setError} onNavigate={onNavigate} />
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {countries.length > 0 && (
+        <Box data-testid="country-rule-suggestions" sx={{ mt: 2 }}>
+          <Stack spacing={2}>
+            {countries.map((country) => (
+              <Paper key={`${country.country}-${country.route}`} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                <Typography variant="body2">{country.sentence}</Typography>
+                {canWrite && (
+                  <Box sx={{ mt: 1 }}>
+                    <AddAsRuleButton api={rulesApiFor(client)} suggestion={country.rule_suggestion} onDone={setMessage}
+                      onError={setError} onNavigate={onNavigate} />
+                  </Box>
+                )}
+              </Paper>
             ))}
           </Stack>
         </Box>

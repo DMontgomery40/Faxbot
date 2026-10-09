@@ -147,9 +147,14 @@ def test_dialplan_places_engine_calls_only_from_a_stored_plan_and_never_reports_
     section = text[start:text.index('[faxbot-inbound]')]
     assert '${DB_DELETE(faxbot-engine/${FAXBOT_TAG})}' in section
     assert 'GotoIf($["${FAXBOT_PLAN}" = ""]?refuse)' in section
-    assert 'Dial(PJSIP/${FAXBOT_DIAL}@trunk-endpoint' in section
+    # The plan's trunk (a seventh field after the first trunk), else the first trunk's endpoint; only a loaded
+    # endpoint named trunk-...-endpoint is dialed.
+    assert 'Dial(PJSIP/${FAXBOT_DIAL}@${FAXBOT_ENDPOINT}' in section
+    assert '${CUT(FAXBOT_PLAN,/,7)}' in section and '?trunk-endpoint:${FAXBOT_ENDPOINT}' in section
+    assert 'GotoIf($["${PJSIP_ENDPOINT(${FAXBOT_ENDPOINT},context)}" = ""]?refuse)' in section
+    assert 'GotoIf($[${REGEX("^trunk-([a-z0-9_-]+-)?endpoint$" ${FAXBOT_ENDPOINT})} = 0]?refuse)' in section
     # T.38 on the trunk: the fax gateway joins the engine's audio to T.38; off: audio end to end.
-    assert 'PJSIP_ENDPOINT(trunk-endpoint,t38_udptl)' in section and 'Set(FAXOPT(gateway)=yes)' in section
+    assert 'PJSIP_ENDPOINT(${FAXBOT_ENDPOINT},t38_udptl)' in section and 'Set(FAXOPT(gateway)=yes)' in section
     # The delivery result comes from the engine, never from this dialplan.
     assert 'UserEvent(FaxResult' not in section and 'UserEvent(FaxEngineCall,' in section
     assert 'SendFAX' not in section and 'ReceiveFAX' not in section
@@ -264,20 +269,20 @@ async def test_a_call_the_engine_did_not_answer_restarts_it_and_the_trunk_page_s
     monkeypatch.setattr('time.time', lambda: missed_at + 60)
     state, sentence = await hylafax_engine.engine_summary(values, FakeAmi())
     assert state == 'running' and sentence == (
-        "Faxbot's fast fax service did not answer the 9:14 PM MDT fax call, so that fax was received the ordinary "
-        "way; Faxbot is restarting the fast fax service.")
+        "Faxbot's fax engine did not answer the 9:14 PM MDT fax call, so that fax was received the ordinary "
+        "way; Faxbot is restarting the fax engine.")
     status.write_text(json.dumps({'state': 'running', 'lines': 2, 'started': request['asked'] + 5}))
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
-        'Faxbot restarted the fast fax service.')
+        'Faxbot restarted the fax engine.')
     # An engine on audio fax by itself still says so (each screen adds its own way to try T.38 again).
     monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: True)
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
-        'Faxbot restarted the fast fax service. ' + hylafax_engine.ENGINE_AUDIO)
+        'Faxbot restarted the fax engine. ' + hylafax_engine.ENGINE_AUDIO)
     monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: False)
     # A day later the page is back to the usual sentence.
     monkeypatch.setattr('time.time', lambda: missed_at + hylafax_engine.MISSED_SHOWN + 60)
     assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].startswith(
-        "Faxbot's fast fax service is running on 2 fax lines")
+        "Faxbot's fax engine is running on 2 fax lines")
 
 
 @pytest.mark.asyncio
@@ -340,16 +345,25 @@ class FakeSession(socketserver.StreamRequestHandler):
                 listener.listen(1)
                 port = listener.getsockname()[1]
                 self.reply(f'227 Entering Passive Mode (127,0,0,1,{port >> 8},{port & 255})')
-            elif verb == 'STOT':
-                self.reply('150 FILE: /tmp/doc7.tif (Opening new data connection).')
+            elif verb in {'STOT', 'STOR'}:
+                # STOT names the temporary document itself; STOR (a held fax in pollq) keeps the client's name.
+                name = command.split(' ', 1)[1] if verb == 'STOR' else '/tmp/doc7.tif'
+                self.reply(f'150 FILE: {name} (Opening new data connection).')
                 connection, _ = listener.accept()
                 data = b''
                 while chunk := connection.recv(65536):
                     data += chunk
                 connection.close()
                 listener.close()
-                server.uploads.append(data)
-                self.reply('226 Transfer complete (FILE: /tmp/doc7.tif).')
+                server.uploads.append(data if verb == 'STOT' else (name, data))
+                self.reply(f'226 Transfer complete (FILE: {name}).')
+            elif verb == 'DELE':
+                name = command.split(' ', 1)[1]
+                if any(isinstance(item, tuple) and item[0] == name for item in server.uploads):
+                    server.uploads = [item for item in server.uploads if not (isinstance(item, tuple) and item[0] == name)]
+                    self.reply(f'250 {name} deleted.')
+                else:
+                    self.reply(f'550 {name}: No such file or directory.')
             elif verb == 'JNEW':
                 self.reply('200 New job created: jobid: 7 groupid: 7.')
             elif verb in {'JPARM', 'JSUBM', 'JDELE'}:
@@ -387,8 +401,10 @@ def test_a_job_is_created_with_one_dial_one_try_and_the_tag_then_submitted_only_
     assert f'JPARM DIALSTRING "{tag}"' in parms and f'JPARM JOBINFO "{JOB}.{ATTEMPT}"' in parms
     assert 'JPARM MAXDIALS 1' in parms and 'JPARM MAXTRIES 1' in parms
     assert 'JPARM NOTIFY "DONE+REQUEUE"' in parms and 'JPARM DOCUMENT /tmp/doc7.tif' in parms
-    # Faxbot's header, with % kept literal (HylaFAX reads % as a format code).
-    assert 'JPARM TAGLINE "Faxbot proof 100%%"' in parms and 'JPARM USETAGLINE YES' in parms
+    # Faxbot's header line (47 CFR 68.318(d): date and time, who sends, the station ID, the page), with % kept
+    # literal through HylaFAX's strftime and its own % codes (routing/reply_number.tagline).
+    assert ('JPARM TAGLINE "%d %b %Y %H:%M|Faxbot proof 100%%%%|%%l|Page %%P of %%T"' in parms
+            and 'JPARM USETAGLINE YES' in parms)
     assert job.submit() == '7' and server.commands[-1] == 'JSUBM'
     job.close()
     # No header in Faxbot: no header line from the engine either.

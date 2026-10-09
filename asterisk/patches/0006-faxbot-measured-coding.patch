@@ -1,0 +1,66 @@
+Faxbot: the most compact fax coding a sent fax may use, measured on its own pages (spandsp 0.0.6; builder CA).
+
+Before each attempt Faxbot measures the lossless codings MH, MR and MMR on
+the fax's own pages (api/app/pages/coding.py) and, when the smallest one is
+not what spandsp would take by itself, sets FAXBOT_COMPRESSION ("mh", "mr" or
+"mmr") on the Originate (ami.py). After set_ecm, which offers Asterisk's own
+set (MH, MR and MMR) at session start, SendFAX offers only the codings up to
+the one named (faxbot_compressions in faxbot_t38_gateway.h, which the replay
+proof compiles too): "mmr" offers MH, MR and MMR, "mr" offers MH and MR, "mh"
+offers MH, which every fax machine takes. spandsp still takes the best coding
+the receiving machine also has, and T.6 (MMR) only with error correction, so
+the variable is a ceiling and never makes a machine get a coding it lacks.
+Error correction is not changed. One NOTICE line per session names the
+coding. Unset or anything else keeps Asterisk's own set; a received fax always
+offers every coding.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -617,6 +617,38 @@
+ #endif
+ }
+ 
++/*!
++ * \brief Faxbot (0006): the most compact coding a sent fax may use, from FAXBOT_COMPRESSION ("mh", "mr" or "mmr").
++ *
++ * Faxbot measures MH, MR and MMR on the fax's own pages before dialing (api/app/pages/coding.py) and sets the
++ * smallest one this call may use; faxbot_compressions (faxbot_t38_gateway.h) turns it into the codings offered, a
++ * ceiling: spandsp still takes the best coding the receiving machine also has, and MMR only with error correction.
++ * Error correction is not changed here. Unset or anything else keeps Asterisk's own set (set_ecm); a received fax
++ * always offers every coding.
++ */
++static void faxbot_set_compressions(t30_state_t *t30_state, struct ast_fax_session *s)
++{
++	char coding[8] = "";
++	const char *value;
++	int supported;
++
++	if (!s->chan || !(s->details->caps & AST_FAX_TECH_SEND)) {
++		return;
++	}
++	ast_channel_lock(s->chan);
++	value = pbx_builtin_getvar_helper(s->chan, "FAXBOT_COMPRESSION");
++	if (value) {
++		ast_copy_string(coding, value, sizeof(coding));
++	}
++	ast_channel_unlock(s->chan);
++	supported = faxbot_compressions(coding);
++	if (!supported) {
++		return;
++	}
++	t30_set_supported_compressions(t30_state, supported);
++	ast_log(LOG_NOTICE, "Faxbot: %s offers codings up to %s\n", ast_channel_name(s->chan), coding);
++}
++
+ static int spandsp_v21_new(struct spandsp_pvt *p)
+ {
+ 	/* XXX Here we use MODEM_CONNECT_TONES_FAX_CED_OR_PREAMBLE even though
+@@ -1196,6 +1228,8 @@
+ 	set_local_info(p->t30_state, s->details);
+ 	set_file(p->t30_state, s->details);
+ 	set_ecm(p->t30_state, s->details);
++	/* Faxbot (0006): the most compact coding measured for this fax's pages (FAXBOT_COMPRESSION). */
++	faxbot_set_compressions(p->t30_state, s);
+ 	t30_set_supported_modems(p->t30_state, spandsp_modems(s->details));
+ 
+ 	/* perhaps set_transmit_on_idle() should be called */

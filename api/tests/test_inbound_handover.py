@@ -82,7 +82,7 @@ def _closed_url():
         return f'http://127.0.0.1:{probe.getsockname()[1]}'
 
 
-def notify(data, url, *, file=None, secret='synthetic-file-secret'):
+def notify(data, url, *, file=None, secret='synthetic-file-secret', extra=()):
     if secret is not None:
         (data / 'asterisk').mkdir(parents=True, exist_ok=True)
         (data / 'asterisk' / 'inbound.secret').write_text(secret)
@@ -90,7 +90,7 @@ def notify(data, url, *, file=None, secret='synthetic-file-secret'):
     environment = {'PATH': os.environ['PATH'], 'FAXBOT_DATA_DIR': str(data), 'FAXBOT_API_URL': url,
                    'FAXBOT_NOTIFY_RETRY_SECONDS': '0'}
     return subprocess.run(['sh', str(NOTIFY), f'file={file}', 'did=+15555550199', 'caller=+13035550100',
-                           'status=SUCCESS', 'pages=2', 'mode=audio', 'uniqueid=1791083644.1'],
+                           'status=SUCCESS', 'pages=2', 'mode=audio', 'uniqueid=1791083644.1', *extra],
                           env=environment, capture_output=True, text=True, timeout=60)
 
 
@@ -117,6 +117,24 @@ def test_notifier_prints_ok_or_why_the_hand_over_failed(tmp_path, status, word):
 
 
 @needs_shell
+@needs_shell
+def test_notifier_passes_the_stated_subaddress_frame_and_nothing_else(tmp_path):
+    """The SUB frame the sender's machine sent (patch 0004, hex) reaches Faxbot's number rules; anything that is
+    not hex is dropped on the way, and a call with none sends null."""
+    faxbot = _Faxbot(200)
+    try:
+        stated = notify(tmp_path / 'one', faxbot.url, extra=['sub=ff03c231303032'])
+        junk = notify(tmp_path / 'two', faxbot.url, extra=['sub=ff03"},{"x":"y'])
+        none = notify(tmp_path / 'three', faxbot.url)
+    finally:
+        faxbot.close()
+    assert [result.stdout for result in (stated, junk, none)] == ['ok\n'] * 3
+    assert [request['body']['sub_hex'] for request in faxbot.requests] == ['ff03c231303032', 'ff03', None]
+    text = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    done = text.split('[faxbot-inbound-done]', 1)[1].split('\n[', 1)[0]
+    assert ' sub=${FILTER(0123456789abcdef,${FAXBOT_FAR_SUB})}' in done
+
+
 def test_notifier_never_drops_a_fax_quietly(tmp_path):
     data = tmp_path / 'faxdata'
     missing = notify(data, _closed_url(), secret=None)
@@ -405,7 +423,11 @@ def test_notifier_passes_the_sip_call_id_in_the_call_object(tmp_path):
     assert first['sip_call_id_b64'] == 'M2YwYzVhOGUtMTExMQ==touchpwned'  # only base64 characters survive
     assert second['sip_call_id_b64'] is None
     assert set(first) - {'sip_call_id_b64'} == {'did', 'caller', 'started_at', 'answered_at', 'ended_at', 'pages',
-                                                't38', 'remote_station_id_b64', 'rate', 'resolution'}
+                                                't38', 'remote_station_id_b64', 'rate', 'resolution', 'trunk',
+                                                'peer'}
+    # The first trunk names no trunk account (several trunks: only a trunk after the first sets FAXBOT_TRUNK),
+    # and a carrier call names no partner (only a peer fax call's endpoint sets FAXBOT_PEER).
+    assert first['trunk'] is None and first['peer'] is None
     # Not passed: unknown, never a default.
     assert first['rate'] is None and first['resolution'] is None
 

@@ -1,4 +1,5 @@
 import type { FaxTogetherSummary } from './batchingTypes';
+import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { CallNegotiation } from './sipTypes';
 // TypeScript types for the admin API
 
@@ -60,6 +61,24 @@ export interface NumberFormat {
   international: string;
 }
 
+// The fax coding of a sent fax's newest attempt (MH, MR, MMR or JBIG), measured on its own pages. sentence: which
+// coding went and why; measured_sentence: how long each coding's page data takes at 14,400 bit/s.
+export interface SentCoding {
+  requested: 'MH' | 'MR' | 'MMR' | 'JBIG';
+  negotiated: 'MH' | 'MR' | 'MMR' | 'JBIG' | null;
+  measured: boolean;
+  compared: string | null;
+  pages: number;
+  bits: Record<string, number>;
+  receiver_known: boolean;
+  sentence: string | null;
+  measured_sentence: string | null;
+  // Smaller pages (lossless tuning): the codings the engine tuned on the call, and one sentence about it.
+  tuned?: string[];
+  tuning_refused?: string[];
+  tuning_sentence?: string | null;
+}
+
 export interface FaxJob extends DeliveryMetadata {
   id: string;
   to_number: string;
@@ -74,17 +93,111 @@ export interface FaxJob extends DeliveryMetadata {
   // Present when the fax waited, or went, with other faxes to the same number.
   together?: FaxTogetherSummary | null;
   // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
-  // negotiation: what the call negotiated (measurement only), once the call has a result.
+  // negotiation: what the call negotiated, once the call has a result. changes: what Faxbot changed for this
+  // call from what it learned about the number, one sentence each.
   fax_engine?: {
     engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null;
-    negotiation?: CallNegotiation | null;
+    negotiation?: CallNegotiation | null; changes?: string[];
   } | null;
+  // Pages Faxbot packed onto long pages, blank space it left out, or standard resolution it kept; one sentence each.
+  page_layout?: SentPages | null;
+  // The fax coding the newest attempt asked for, measured on its pages, and what the call used.
+  coding?: SentCoding | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.
   urgent?: boolean;
   // Why it has not started yet, or why its number stays reserved; null otherwise.
   waiting_reason?: string | null;
+  // The time the sender needs it sent by, and one sentence (whether it may miss it); null without one.
+  send_by?: { at: string; sentence: string; at_risk: boolean } | null;
+}
+
+// Recipients, Details: the hours a recipient takes faxes and the busy hours Faxbot learned for its number.
+export interface RecipientSchedule {
+  number: string;
+  time_zone: string;              // the recipient's own zone; '' means the installation's
+  installation_time_zone: string;
+  days: string[] | null;          // 'mon' … 'sun'; null means every day
+  start: string | null;           // 'HH:MM'; null means any time of day
+  end: string | null;
+  learn_busy: boolean;
+  hours_sentence: string;
+  busy_hours: { label: string; sentence: string }[];
+  busy_sentence: string;
+  // Learned call hours (M26): time a page and failed calls by hour, the typical hour, and what Faxbot does with them.
+  call_hours?: { label: string; sentence: string }[];
+  typical_hour?: string | null;
+  call_hours_sentence?: string;
+  failed_try: { route: string | null; label: string; sentence: string; sources: string[]; read_on: string };
+}
+
+// Recipients, Details: collecting faxes this number's fax server holds for you (M21, routing/polling.py).
+export interface RecipientPolling {
+  number: string;
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  // Whether a polling password is set; the password itself is never shown.
+  has_password: boolean;
+  collect_times: string | null;
+  collect_days: string | null;
+  time_zone: string | null;
+  // One sentence for the timetable, or null when Faxbot collects only when asked.
+  timetable: string | null;
+  advice: string | null;
+  note: string;
+  requests: { id: string; requested_at: string; requested: string; requested_by: string | null; state: string;
+    sentence: string; pages: number | null; inbound_fax_id: string | null }[];
+}
+
+export interface RecipientPollingSave {
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  // null keeps the password set, '' clears it, digits set a new one. The timetable fields work the same way.
+  password?: string | null;
+  collect_times?: string | null;
+  collect_days?: string | null;
+  time_zone?: string | null;
+}
+
+// Faxes this number collects from Faxbot (polled transmission): the setting and the faxes held for it.
+export interface RecipientHold {
+  number: string;
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  has_password: boolean;
+  note: string;
+  held: { id: string; held_at: string; held: string; held_by: string | null; pages: number; name: string | null;
+    selective: string | null; has_password: boolean; state: string; sentence: string; gone: boolean }[];
+}
+
+export interface RecipientHoldSave {
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  password?: string | null;
+}
+
+export interface RecipientScheduleSave {
+  time_zone: string | null;
+  days: string[] | null;
+  start: string | null;
+  end: string | null;
+  learn_busy: boolean;
+}
+
+export interface SentPages {
+  layout: 'normal' | 'dense' | 'codec';
+  original_pages: number | null;
+  sent_pages: number | null;
+  pages_saved: number | null;
+  trimmed_pages: number | null;
+  seconds_saved: number | null;
+  resolution: 'standard' | 'fine' | null;
+  sentences: string[];
 }
 
 export interface DeliveryHistoryEvent {
@@ -141,6 +254,7 @@ export interface ApiKey {
 }
 
 export interface Settings {
+  analysis?: import('./analysisTypes').AnalysisSettings;
   _meta?: {
     active_revision_id: string;
     desired_revision_id: string;
@@ -182,6 +296,9 @@ export interface Settings {
     // The fax numbers on the HumbleFax account, read from HumbleFax.
     account_numbers?: string[];
     configured: boolean;
+    // Receive faxes from HumbleFax, and how often Faxbot asks HumbleFax for them.
+    receive?: boolean;
+    poll_seconds?: number;
   };
   efax?: {
     app_id: string;
@@ -201,6 +318,9 @@ export interface Settings {
     api_key: string;
     api_secret: string;
     configured: boolean;
+    webhook_base_url?: string;
+    incoming_webhook_url?: string;
+    incoming_webhook_login_url?: string | null;
   };
   signalwire?: {
     space_url: string;
@@ -226,6 +346,12 @@ export interface Settings {
     // A key Faxbot uses only to read what Telnyx charged for each trunk call.
     telnyx_api_key?: string;
     telnyx_api_key_set?: boolean;
+    // Flowroute API keys Faxbot uses only to read what Flowroute charged for each trunk call.
+    flowroute_access_key?: string;
+    flowroute_secret_key?: string;
+    flowroute_secret_key_set?: boolean;
+    // Whether the trunk's carrier publishes call records with charges, and whether Faxbot can read them.
+    call_records?: { published: boolean; readable: boolean; sentence: string } | null;
   };
   fs?: {
     esl_host?: string;
@@ -267,6 +393,10 @@ export interface Settings {
     min_success_percent: number;
     // Faxes to the installation's own numbers become received faxes here, with no call.
     local_delivery?: boolean;
+    // Fax-friendly shading on documents you send: where it saves time (the default), always or never; and the
+    // opt-in to also make light areas white (off by default; it may erase pale text).
+    fax_friendly_documents?: 'where_it_saves' | 'always' | 'never';
+    fax_friendly_whiten?: boolean;
   };
   intake?: {
     email_enabled: boolean;
@@ -449,11 +579,32 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
+  // A forwarded call: the number the network said it came from, how far that was checked (signed, unchecked,
+  // failed or stated), and one sentence saying so.
+  diverted_from?: string | null;
+  diversion?: string | null;
+  diversion_text?: string | null;
   // Each time fetching the document stopped before it was set going again, oldest first.
   earlier_failures?: InboundEarlierFailure[];
   // The server's sentence about them, in the installation's time zone. The console builds its own from
   // earlier_failures in the viewer's (earlierFailuresText) and shows this only from a server without them.
   earlier_failures_text?: string | null;
+}
+
+// GET /admin/forwarded-trust: certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs).
+export interface ForwardedTrustAnchor {
+  fingerprint: string;
+  short: string;
+  name: string;
+  valid_until: string;
+  source: string;
+  added_on: string;
+}
+
+export interface ForwardedTrust {
+  anchors: ForwardedTrustAnchor[];
+  sentence: string;
+  note: string;
 }
 
 export interface InboundEarlierFailure {
@@ -494,7 +645,14 @@ export interface ConsoleContext {
   policy_version: number;
   permissions: string[];
   navigation: { jobs: boolean; inbox: boolean; send: boolean; work?: boolean };
-  send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
+  send: {
+    fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string;
+    // What rules can match on Send a fax: mailboxes this person may send from, and the organization's
+    // workflows and labels. Each is offered only when there is one.
+    mailboxes?: Array<{ id: string; label: string }>;
+    workflows?: Array<{ key: string; name: string }>;
+    labels?: string[];
+  } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
   provider_view: {
@@ -654,7 +812,8 @@ export interface AccessMailbox {
   version: number;
 }
 
-export interface InboundRule {
+// A number rule; the receiving options (account, sender, times, email, urgency, keep days) are optional.
+export interface InboundRule extends Partial<ReceivingOptions> {
   id: string;
   to_number: string;
   mailbox_id: string;
@@ -756,6 +915,23 @@ export interface ImportResult {
   import_id: string;
   inbound_id: string;
   status: 'received' | 'duplicate';
+}
+
+// GET /admin/inbound/humblefax (and POST .../check): Faxbot checking HumbleFax for received faxes.
+export interface HumbleFaxStatus {
+  account: string;
+  receiving: boolean;
+  // Why Faxbot is not checking HumbleFax, in one sentence; null while it is.
+  reason: string | null;
+  // Receiving through HumbleFax is turned on (the switch, or HumbleFax is the receiving provider).
+  turned_on: boolean;
+  // HumbleFax is the receiving provider, so receiving through it needs no separate switch.
+  receiving_provider: boolean;
+  poll_seconds: number;
+  checked_at: string | null;
+  // New faxes the last check found.
+  found: number | null;
+  problem: string | null;
 }
 
 // GET /admin/inbound/efax: Faxbot checking eFax for received faxes, and copies left at eFax.

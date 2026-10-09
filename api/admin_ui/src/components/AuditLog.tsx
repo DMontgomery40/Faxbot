@@ -58,6 +58,8 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'capability.consume': 'Used a one-time code',
   'host.restart': 'Restarted Faxbot',
   'telnyx.t38_gateway': 'Turned on T.38 at Telnyx',
+  'telnyx.caller_name_lookup': 'Turned off caller-name lookup at Telnyx',
+  'routing.toll_free_approval': "Recorded a recipient's toll-free number",
   'host.terminal': 'Opened the terminal',
   'host.actions': 'Ran a server action',
   'access.retire_permissions': 'Removed permissions that no longer do anything',
@@ -80,12 +82,38 @@ const TELNYX_T38_RESULTS: Record<string, string> = {
   unreachable: 'Tried to turn on T.38 at Telnyx for {number}; Telnyx could not be reached',
 };
 
+// Turning off caller-name lookup names the number and what Telnyx did.
+const TELNYX_NAME_RESULTS: Record<string, string> = {
+  turned_off: 'Turned off caller-name lookup at Telnyx for {number}',
+  still_on: 'Tried to turn off caller-name lookup at Telnyx for {number}; Telnyx still shows it on',
+  refused: 'Tried to turn off caller-name lookup at Telnyx for {number}; Telnyx refused the change',
+  not_found: 'Tried to turn off caller-name lookup at Telnyx for {number}; the number is not on the Telnyx account',
+  unreachable: 'Tried to turn off caller-name lookup at Telnyx for {number}; Telnyx could not be reached',
+};
+
+// A toll-free change names the recipient's number and what was recorded.
+const TOLL_FREE_ACTIONS: Record<string, string> = {
+  noted: 'Put a toll-free number on file for {number}',
+  approved: "Recorded the recipient's approval of a toll-free number for {number}",
+  withdrawn: 'Withdrew the toll-free number for {number}',
+};
+
 export function entryAction(entry: Pick<AuditEntry, 'operation' | 'details'>): string {
   if (entry.operation === 'host.terminal' && entry.details?.session !== 'started') return 'Asked for access to the server terminal';
   if (entry.operation === 'telnyx.t38_gateway') {
     const number = String(entry.details?.shown ?? entry.details?.number ?? 'a number');
     const template = TELNYX_T38_RESULTS[String(entry.details?.result)] ?? 'Tried to turn on T.38 at Telnyx for {number}';
     return template.replace('{number}', number);
+  }
+  if (entry.operation === 'telnyx.caller_name_lookup') {
+    const number = String(entry.details?.shown ?? entry.details?.number ?? 'a number');
+    const template = TELNYX_NAME_RESULTS[String(entry.details?.result)]
+      ?? 'Tried to turn off caller-name lookup at Telnyx for {number}';
+    return template.replace('{number}', number);
+  }
+  if (entry.operation === 'routing.toll_free_approval') {
+    const template = TOLL_FREE_ACTIONS[String(entry.details?.action)] ?? AUDIT_ACTIONS[entry.operation];
+    return template.replace('{number}', String(entry.details?.number ?? 'a recipient'));
   }
   return auditAction(entry.operation);
 }

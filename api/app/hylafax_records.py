@@ -183,6 +183,18 @@ class FaxEngineRecords:
             return row['id']
         return self._write(apply)
 
+    def record_page_capability(self, *, call_key, values, job_id=None, number=None, engine='hylafax', now=None):
+        """What the other machine said it accepts on one sent call (fax_negotiation.page_capability): its
+        longest and widest page, fine resolution, error correction, scan line time, and the call's measured
+        time between pages. One row per call in page_capability_observations (migration 0028), never
+        rewritten; evidence only, used by dense pages (``pages``)."""
+        from .pages.capability import PageRecordError, records_for
+        try:
+            return records_for(self.engine).record_observation(number, source=call_key, engine=engine,
+                                                               values=values, job_id=job_id, now=now)
+        except PageRecordError:
+            raise EngineRecordError('Fax engine record could not be saved.') from None
+
     def for_call(self, direction, call_key):
         """The engine record for one call, or None."""
         table = self._table('fax_engine_calls')
@@ -291,11 +303,17 @@ class FaxEngineRecords:
             sentence = reason
         elif row['sslfax'] == 1 and row['transfer_seconds'] is not None and pages:
             sentence = sslfax_sentence(row['transfer_seconds'], pages)
-        # What the call negotiated (measurement only), once the call has a result.
+        # What the call negotiated, once the call has a result.
         from .fax_negotiation import call_view
         negotiation = call_view(row, call) if (call or {}).get('fax_status') is not None else None
+        # What Faxbot changed for this call from what it learned about the number, with why (engine_learning).
+        from . import engine_learning
+        try:
+            changes = engine_learning.choice_sentences(engine_learning.choice_for_attempt(self.engine, row['call_key']))
+        except sa.exc.SQLAlchemyError:
+            changes = []
         return {'engine': engine, 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
-                'sentence': sentence, 'negotiation': negotiation}
+                'sentence': sentence, 'negotiation': negotiation, 'changes': changes}
 
     def recipient_detail(self, number):
         """Recipients, Details: whether the number takes SSL Fax (and since when) and its own fax limits."""

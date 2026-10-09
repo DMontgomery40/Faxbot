@@ -14,11 +14,17 @@ under, so the same provider fax ID under two accounts stays two records:
 - Sinch: ``sinch:`` and the project ID.
 - eFax: ``efax:`` and the first 12 hex digits of SHA-256 of the app ID and user ID
   (``efax_service.account_key``); Faxbot finds eFax faxes by asking eFax's API.
+- HumbleFax: ``humblefax:`` and the HumbleFax user ID the keys belong to (GetUser),
+  so new keys for the same user keep the same account; Faxbot finds HumbleFax
+  faxes by asking HumbleFax's API (``inbound/humblefax.py``).
 - SIP trunk: ``sip:`` and the trunk user name, or ``sip:asterisk``.
 - Generic import: ``import:`` and the importing principal's ID.
 - Test fax: ``test:`` and the principal's ID.
 - Delivered inside Faxbot: ``local:installation``, keyed on the sent fax's ID
   (a fax to one of the installation's own numbers; ``routing/local.py``).
+- Delivered directly by a partner Faxbot: source ``local`` too (no provider is
+  involved), account ``direct:`` and the partner's enrollment ID, keyed on the
+  message ID (``direct/filing.py``).
 
 Other sources (generic import, test fax) use two calls::
 
@@ -48,10 +54,10 @@ import sqlalchemy as sa
 from ..routing.numbers import DEFAULT_COUNTRY
 
 
-SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax', 'local')
-FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax')
+SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax', 'local', 'humblefax')
+FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax', 'humblefax')
 SOURCE_NAMES = {'phaxio': 'Phaxio', 'sinch': 'Sinch', 'sip': 'the SIP trunk', 'import': 'the import',
-                'test': 'Faxbot', 'efax': 'eFax', 'local': 'Faxbot'}
+                'test': 'Faxbot', 'efax': 'eFax', 'local': 'Faxbot', 'humblefax': 'HumbleFax'}
 # Minutes to wait after each failed attempt: 1, 2, 4, 8, 16, 32, then hourly for 24 hours.
 RETRY_MINUTES = (1, 2, 4, 8, 16, 32) + (60,) * 24
 LEASE = timedelta(minutes=2)
@@ -126,7 +132,7 @@ def account_identity(source, value=None):
         return source + ':' + hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
     if source == 'sip':
         return ('sip:' + (value.strip() or 'asterisk'))[:100]
-    if source in ('sinch', 'import', 'test'):
+    if source in ('sinch', 'import', 'test', 'humblefax'):
         return (source + ':' + value.strip())[:100]
     raise ValueError('Unknown inbound source.')
 
@@ -213,6 +219,7 @@ def describe(row, record, *, now=None, failures=(), provider_copy=None):
     retry_at = None
     if state == 'received':
         text = ('A test fax created in Faxbot.' if source == 'test'
+                else _direct_text(record) if source == 'local' and _is_direct(record)
                 else 'Delivered straight into Received from a fax sent to this number; no phone call was made.'
                 if source == 'local' else 'Received.')
     elif state == 'conflict':
@@ -233,6 +240,15 @@ def describe(row, record, *, now=None, failures=(), provider_copy=None):
             'recovered': _recovered(record), 'provider_note': _provider_note(record, provider_copy),
             'earlier_failures': [_failure_view(item) for item in failures],
             'earlier_failures_text': failures_text(source, failures)}
+
+
+def _is_direct(record):
+    return str(record.get('account') or '').startswith('direct:')
+
+
+def _direct_text(record):
+    from ..direct.filing import received_text
+    return received_text(record)
 
 
 def _failure_view(item):
@@ -259,7 +275,14 @@ def failures_text(source, failures):
 
 
 def _provider_note(record, provider_copy):
-    """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying."""
+    """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying,
+    or a HumbleFax fax that HumbleFax says arrived only in part."""
+    if record.get('source') == 'humblefax' and record.get('state') in ('received', 'conflict'):
+        from .humblefax import partial_note
+        try:
+            return partial_note(json.loads(record.get('report') or '{}'))
+        except (TypeError, ValueError):
+            return None
     if record.get('source') != 'efax' or record.get('state') != 'received' or provider_copy is None:
         return None
     from .efax import deletion_note
@@ -361,25 +384,35 @@ def store_document(data, inbound_fax_id, *, provider='The provider'):
     return StoredArtifact(stored, digest, len(data), pages)
 
 
-def convert_tiff(tiff_path, inbound_fax_id):
-    """Convert a retained SIP TIFF to a stored PDF; the TIFF stays for a later retry."""
+def convert_tiff(tiff_path, inbound_fax_id, *, engine=None):
+    """Convert a retained SIP TIFF to a stored PDF; the TIFF stays for a later retry. With ``engine``, a fax
+    whose long pages were split back into the original pages is recorded (pages/receiving.py)."""
     from ..conversion import DocumentConversionError, tiff_to_pdf
     directory = _settings().fax_data_dir
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix='.inbound-', suffix='.pdf')
     os.close(descriptor)
+    # Long pages another Faxbot packed come back as the original pages (pages/unpack.py); the received image
+    # itself stays exactly as it arrived.
+    from ..pages.receiving import split_for_delivery
+    split = split_for_delivery(tiff_path, directory)
     try:
         try:
-            tiff_to_pdf(tiff_path, temporary)
+            tiff_to_pdf(split.path if split else tiff_path, temporary)
         except DocumentConversionError:
             raise InvalidDocument('The received fax image could not be turned into a PDF.') from None
         with open(temporary, 'rb') as handle:
             data = handle.read()
     finally:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-    return store_document(data, inbound_fax_id, provider='The SIP trunk')
+        for path in (temporary, split.path if split else None):
+            try:
+                if path:
+                    os.unlink(path)
+            except OSError:
+                pass
+    artifact = store_document(data, inbound_fax_id, provider='The SIP trunk')
+    if split and engine is not None:
+        split.record(engine, inbound_fax_id)
+    return artifact
 
 
 def discard(artifact, completion):
@@ -429,7 +462,8 @@ class ImportStore:
     # Begin --------------------------------------------------------------
     def begin(self, *, source, account, operation_id, revision='', backend, inbound_backend=None,
               to_number=None, from_number=None, reported_pages=None, report=None, source_received_at=None,
-              tiff_path=None, artifact_digest=None, schedule=True, country=DEFAULT_COUNTRY):
+              tiff_path=None, artifact_digest=None, schedule=True, country=DEFAULT_COUNTRY, account_key=None,
+              subaddress=None, binding=None, mailbox_id=None, actor=None, diversion=None):
         """Find or create the import for this source identity, in one transaction.
 
         An existing ``pending`` or ``failed`` import is scheduled again at once;
@@ -437,6 +471,15 @@ class ImportStore:
         different content, which records a conflict and keeps the original.
         ``schedule=False`` means the caller holds the document and will call
         ``complete``; a safety fetch is still scheduled for a fetchable source.
+
+        ``account_key`` is the provider account that received the fax
+        (``accounts.py``), kept on the import; ``binding`` is ``(revision id,
+        profile id)`` of that account, written as the fax's provider binding so a
+        later fetch uses that account. ``subaddress`` is the subaddress the sender
+        stated, for the receiving rules; ``diversion`` (inbound/diversion.Diversion) the number the call was
+        forwarded from and how far that was checked. ``mailbox_id`` files a document straight
+        into a mailbox (an import with no fax number); ``actor``, the importer,
+        must be able to read that mailbox.
         """
         if (source not in SOURCES or not isinstance(account, str) or not 0 < len(account) <= 100
                 or not isinstance(operation_id, str) or not 0 < len(operation_id) <= 100
@@ -459,13 +502,22 @@ class ImportStore:
                 id=inbound_id, from_number=_number(from_number), to_number=_number(to_number), status='waiting',
                 backend=backend[:20], inbound_backend=(inbound_backend or None) and inbound_backend[:20],
                 provider_sid=operation_id if source in FETCHABLE else None, pages=reported_pages,
-                tiff_path=tiff_path, created_at=now, received_at=now, updated_at=now), now, country=country)
+                tiff_path=tiff_path, created_at=now, received_at=now, updated_at=now), now, country=country,
+                facts=_facts(account_key, subaddress, source_received_at, now, diversion), mailbox_id=mailbox_id,
+                actor=actor)
+            extra = {'account_key': account_key[:64]} if account_key and 'account_key' in self.imports.c else {}
             connection.execute(self.imports.insert().values(
                 id=import_id, source=source, account=account, operation_id=operation_id, revision=revision,
                 state='pending', attempts=0, next_attempt_at=due, imported_at=now,
                 source_received_at=source_received_at, to_number=_number(to_number),
                 from_number=_number(from_number), reported_pages=reported_pages, report=report_text,
-                inbound_fax_id=inbound_id, created_at=now, updated_at=now))
+                inbound_fax_id=inbound_id, created_at=now, updated_at=now, **extra))
+            if binding is not None:
+                # The account that received the fax, as its revision captured it: later fetches use it.
+                bindings = history_table(self.engine, 'inbound_fax_bindings')
+                if bindings is not None:
+                    connection.execute(bindings.insert().values(id=inbound_id, revision_id=binding[0],
+                                                                profile_id=binding[1]))
             return Begun(import_id, inbound_id, 'pending', True, False)
 
     def _resume_on(self, connection, record, now, *, artifact_digest=None, schedule=True, resumed_by,
@@ -550,6 +602,11 @@ class ImportStore:
                 artifact_media_type=media_type[:64], claim_token=None, claim_expires_at=None, next_attempt_at=None,
                 last_error=None, source_received_at=record['source_received_at'] or source_received_at,
                 updated_at=now))
+            # A receiving rule's "keep for N days" replaces the usual cleanup age for this fax (never a legal hold).
+            from ..access.receiving_rules import routing_for
+            placed = routing_for(connection, self.resources.receiving_tables(), record['inbound_fax_id'])
+            if placed is not None and placed.get('keep_days'):
+                retention = int(placed['keep_days'])
             connection.execute(self.faxes.update().where(self.faxes.c.id == record['inbound_fax_id']).values(
                 status='received', pdf_path=artifact_path, sha256=digest, size_bytes=size, pages=pages,
                 pdf_token=secrets.token_urlsafe(32), pdf_token_expires_at=now + timedelta(minutes=ttl),
@@ -660,6 +717,26 @@ def _number(value):
         return None
     text = str(value).strip()
     return text[:64] or None
+
+
+def _facts(account_key, subaddress, source_received_at, now, diversion=None):
+    """What the receiving rules read about a fax that is being recorded (``access.receiving_rules``)."""
+    from ..access.receiving_rules import ReceivedFacts
+    values = _settings()
+    site = None
+    if account_key:
+        try:
+            from ..accounts import account_named
+            account = account_named(values, account_key)
+            site = account.site if account is not None else None
+        except Exception:
+            site = None
+    return ReceivedFacts(to_number=None, account_key=account_key, site_key=site, subaddress=subaddress,
+                         diverted_from=getattr(diversion, 'diverted_from', None),
+                         diversion=getattr(diversion, 'state', None),
+                         received_at=source_received_at or now,
+                         time_source='provider' if source_received_at else 'import',
+                         time_zone=getattr(values, 'time_zone', '') or '')
 
 
 def _sentence(message):

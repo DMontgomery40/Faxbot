@@ -98,6 +98,9 @@ done
 exit 3
 '''
 
+# The same, waiting also for patch 0004's FaxFrames event, which follows FaxResult in the same hang-up handler.
+AMI_SESSION_FRAMES = AMI_SESSION.replace("*'UserEvent: FaxResult'*) seen=1 ;;", "*'UserEvent: FaxFrames'*) seen=1 ;;")
+
 # The receiving side's manager listener, as Faxbot's own connection would hear
 # it: logs in from the container environment and keeps every user event.
 AMI_LISTENER = r'''
@@ -220,6 +223,19 @@ def trunk_values(peer_address, **extra):
         'SIP_TRUNK_CALLER_ID': CALLER, 'SIP_TRUNK_DIDS': DID, **extra})
 
 
+# Several trunks (provider-rules design §3.6): the first trunk points at an address nothing answers, and the
+# second trunk, account key ``sip-b``, is the other container standing in for carrier B.
+SECOND = 'sip-b'
+
+
+def two_trunk_values(peer_address, **extra):
+    from app.config_profiles import ConfigurationDocument
+    first = trunk_values(UNREACHABLE, SIP_TRUNK_DIDS='+15555550198', **extra)
+    return first.with_provider_accounts(ConfigurationDocument({SECOND: {
+        'provider': 'sip', 'label': 'Carrier B', 'receives': True, 'numbers': [DID],
+        'settings': {'preset': 'custom', 'auth': 'ip', 'host': peer_address, 'caller_id': CALLER}}}))
+
+
 def wait_booted(docker, container):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
@@ -249,11 +265,16 @@ def never_latch(text):
 
 
 def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=False, wait_for_receiver=60,
-             fax_image=None, identity=None, hang_up_after=None):
+             fax_image=None, identity=None, hang_up_after=None, extra_variables=None, receiver_db=None,
+             wait_frames=False, two_trunks=False):
     """Send the two proof pages from one container to the other and collect what each side saw.
 
     ``fax_image`` sends that fax image instead, under ``identity`` (job, attempt);
     ``hang_up_after`` makes the sender hang up that many seconds after the call is placed.
+    ``extra_variables`` ({name: value}) go on the sent call as Faxbot sets them (patch 0004: FAXBOT_T38_NOW,
+    FAXBOT_IAF); ``receiver_db`` ({family/key: value}) goes into the receiver's Asterisk database first;
+    ``wait_frames`` also waits for the sender's FaxFrames event. ``two_trunks`` gives both sides two trunks, the
+    other container being the second (``two_trunk_values``), and sends over that second trunk.
     """
     docker = Docker()
     image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
@@ -272,7 +293,7 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
         # Each side's trunk is the other container, rendered by Faxbot itself.
         for container, peer, edit in ((receiver, addresses['sender'], receiver_edit),
                                       (sender, addresses['receiver'], sender_edit)):
-            text = sip_trunk.render_pjsip(trunk_values(peer))
+            text = sip_trunk.render_pjsip((two_trunk_values if two_trunks else trunk_values)(peer))
             rendered = tmp_path / f'{container}.conf'
             rendered.write_text(edit(text) if edit else text)
             docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
@@ -312,9 +333,16 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
         docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
 
         job, attempt = identity or (uuid.uuid4().hex, uuid.uuid4().hex)
-        values = trunk_values(addresses['receiver'], SIP_FAX_PREFERENCE_HEADER='true',
-                              FAX_LOCAL_STATION_ID='+15555550100', FAX_HEADER='Faxbot proof')
-        fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt)
+        values = (two_trunk_values if two_trunks else trunk_values)(
+            addresses['receiver'], SIP_FAX_PREFERENCE_HEADER='true', FAX_LOCAL_STATION_ID='+15555550100',
+            FAX_HEADER='Faxbot proof')
+        fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt,
+                                          trunk=SECOND if two_trunks else None)
+        if extra_variables:
+            fields['Variable'] += ''.join(f',{name}={value}' for name, value in extra_variables.items())
+        for name, value in (receiver_db or {}).items():
+            family, key = name.split('/', 1)
+            docker.asterisk(receiver, f'database put {family} {key} {value}')
         actions = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
                    f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
                    + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
@@ -323,11 +351,13 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
             # The sender ends the call part-way, the way a dropped line would.
             docker.run('exec', '--detach', sender, 'sh', '-c',
                        f'sleep {hang_up_after}; asterisk -rx "channel request hangup all"')
-        session = docker.run('exec', '--interactive', sender, 'bash', '-c', AMI_SESSION,
+        session = docker.run('exec', '--interactive', sender, 'bash', '-c',
+                             AMI_SESSION_FRAMES if wait_frames else AMI_SESSION,
                              input_text=actions, check=False, timeout=300)
         finished = time.time()
         events = parse_ami(session.stdout)
         result = next((event for event in events if event.get('UserEvent') == 'FaxResult'), None)
+        frames = next((event for event in events if event.get('UserEvent') == 'FaxFrames'), None)
         originate = next((event for event in events if event.get('Event') == 'OriginateResponse'), {})
         assert result is not None, 'No fax result: ' + json.dumps(events[-6:])
 
@@ -353,10 +383,17 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
             'asterisk': docker.asterisk(sender, 'core show version').strip(),
             'spandsp': docker.run('exec', sender, 'dpkg-query', '-W', '-f', '${Version}', 'libspandsp2t64').stdout,
             'fax_capabilities': docker.asterisk(sender, 'fax show capabilities').strip().splitlines()[-2:],
-            'result': result, 'originate': originate, 'captured': captured, 'inbound_event': inbound_event,
+            'result': result, 'frames': frames, 'originate': originate, 'captured': captured,
+            'inbound_event': inbound_event, 'sender_log': docker.read(sender, '/tmp/asterisk.log'),
             'sent': sent, 'received': received,
             'receiver_log': docker.read(receiver, '/tmp/asterisk.log'),
             'submit_to_result_seconds': round(finished - submitted, 1),
+            'fields': fields,
+            'sender_endpoints': docker.asterisk(sender, 'pjsip show endpoints'),
+            'receiver_endpoints': docker.asterisk(receiver, 'pjsip show endpoints'),
+            # A forwarded call's headers the receiver kept for Faxbot ([faxbot-sip-headers]), if any.
+            'receiver_sip_headers': docker.run('exec', receiver, 'sh', '-c', 'cat /faxdata/inbound/*.sip 2>/dev/null',
+                                               check=False).stdout,
         }
     finally:
         docker.close()
@@ -834,3 +871,476 @@ def test_a_shared_call_cut_part_way_delivers_only_the_confirmed_faxes(tmp_path):
     if report.get('faxpages') is not None:
         # The receiver may hold one page more than the sender saw confirmed, never fewer.
         assert confirmed <= int(report['faxpages']) <= confirmed + 1
+
+
+# Junk senders (inbound/screening.py): the receiver's dialplan turns a blocked caller away before answering.
+
+ORIGINATE_SESSION = r'''
+exec 3<>/dev/tcp/127.0.0.1/5038
+cat >&3
+deadline=$((SECONDS + 90))
+seen=''
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if IFS= read -r -t 5 line <&3; then
+    printf '%s\n' "$line"
+    case $line in
+      *'Event: OriginateResponse'*) seen=1 ;;
+    esac
+    if [ -n "$seen" ] && [ -z "${line%$'\r'}" ]; then exit 0; fi
+  fi
+done
+exit 3
+'''
+
+
+def screened_call(tmp_path, entries):
+    """Two Asterisk containers; the receiver's database holds ``entries`` ({key: expiry epoch}) in faxbot-screen.
+
+    The sender places one call with CALLER as its caller ID; the result says how the receiver took it.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    try:
+        docker.network = docker.prefix
+        docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', docker.network)
+        capture = docker.start('api', 'python:3.11-slim', 'python', '-c', CAPTURE)
+        receiver = docker.start('receiver', image, 'infinity', entrypoint='sleep')
+        sender = docker.start('sender', image, 'infinity', entrypoint='sleep')
+        addresses = {name: docker.address(container)
+                     for name, container in (('api', capture), ('receiver', receiver), ('sender', sender))}
+        for container, peer in ((receiver, addresses['sender']), (sender, addresses['receiver'])):
+            rendered = tmp_path / f'{container}.conf'
+            rendered.write_text(sip_trunk.render_pjsip(trunk_values(peer)))
+            docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+            docker.run('cp', str(rendered), f'{container}:/faxdata/asterisk/pjsip.conf')
+        logger = tmp_path / 'logger.conf'
+        logger.write_text('[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n')
+        docker.run('cp', str(logger), f'{receiver}:/etc/asterisk/logger.conf')
+        environment = ['--env', f'ASTERISK_AMI_USERNAME={AMI_USER}', '--env', f'ASTERISK_AMI_PASSWORD={AMI_PASSWORD}']
+        docker.run('exec', '--detach', *environment, '--env', f'ASTERISK_INBOUND_SECRET={SECRET}',
+                   '--env', f'FAXBOT_API_URL=http://{addresses["api"]}:8080', receiver,
+                   'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        docker.run('exec', '--detach', *environment, sender, 'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        wait_booted(docker, receiver)
+        wait_booted(docker, sender)
+        docker.asterisk(receiver, 'pjsip set logger on')
+        docker.run('exec', '--detach', *environment, receiver, 'bash', '-c', AMI_LISTENER)
+        deadline = time.monotonic() + 20
+        while 'Authentication accepted' not in docker.read(receiver, '/tmp/ami-events.log'):
+            assert time.monotonic() < deadline, 'The receiver manager listener did not log in'
+            time.sleep(0.5)
+        for key, value in entries.items():
+            docker.asterisk(receiver, f'database put faxbot-screen {key} {value}')
+        pages = proof_pages()
+        sent = tmp_path / 'proof.tiff'
+        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
+        values = trunk_values(addresses['receiver'], FAX_LOCAL_STATION_ID=CALLER, FAX_HEADER='Faxbot proof')
+        fields = ami.originate_fields_for(values, uuid.uuid4().hex, DID, '/faxdata/outbound/proof.tiff',
+                                          attempt_id=uuid.uuid4().hex)
+        actions = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
+                   f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
+                   + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
+        session = docker.run('exec', '--interactive', sender, 'bash', '-c', ORIGINATE_SESSION,
+                             input_text=actions, check=False, timeout=120)
+        originate = next((event for event in parse_ami(session.stdout)
+                          if event.get('Event') == 'OriginateResponse'), {})
+        # The receiver's event and queue entry come with its reply; wait for them, then end any call.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and 'FaxScreened' not in docker.read(receiver, '/tmp/ami-events.log') \
+                and originate.get('Response') != 'Success':
+            time.sleep(0.5)
+        docker.asterisk(sender, 'channel request hangup all')
+        return {'originate': originate, 'receiver_log': docker.read(receiver, '/tmp/asterisk.log'),
+                'events': parse_ami(docker.read(receiver, '/tmp/ami-events.log')),
+                'queue': docker.asterisk(receiver, 'database show faxbot-screened')}
+    finally:
+        docker.close()
+
+
+def test_a_blocked_caller_is_declined_before_answer_and_an_expired_entry_lets_the_call_through(tmp_path):
+    key = CALLER.lstrip('+')
+    blocked = screened_call(tmp_path / 'blocked', {key: int(time.time()) + 3600})
+    log = blocked['receiver_log']
+    assert blocked['originate'].get('Response') == 'Failure', blocked['originate']
+    assert 'SIP/2.0 603 Decline' in log
+    # The INVITE was never answered: no 200 OK in reply to it, and no fax session started.
+    assert not re.search(r'SIP/2\.0 200 OK[^\n]*\n(?:[^\n]+\n)*?CSeq: \d+ INVITE', log)
+    assert 'ReceiveFAX' not in log
+    screened = [event for event in blocked['events'] if event.get('UserEvent') == 'FaxScreened']
+    assert len(screened) == 1 and screened[0]['Caller'] == CALLER and screened[0]['DID'] == DID
+    assert f'{CALLER}:{DID}:' in blocked['queue']
+    print(json.dumps({'blocked': {'originate': blocked['originate'], 'event': screened[0],
+                                  'queue': blocked['queue'].strip().splitlines()[:2]}}, indent=2))
+    expired = screened_call(tmp_path / 'expired', {key: int(time.time()) - 60})
+    assert expired['originate'].get('Response') == 'Success', expired['originate']
+    assert not any(event.get('UserEvent') == 'FaxScreened' for event in expired['events'])
+    print(json.dumps({'expired': {'originate': expired['originate']}}, indent=2))
+
+
+
+# Patch 0004 on real Asterisk: far-end frames, T.38 at once, and Internet Aware Fax between two Faxbots.
+
+def four_pages(path):
+    """Four distinct fine pages, so a paced call lasts long enough to compare."""
+    from PIL import Image, ImageDraw
+    pages = []
+    for number in range(4):
+        page = Image.new('1', (1728, 2200), 1)
+        draw = ImageDraw.Draw(page)
+        for row in range(100, 2150, 23 + number * 5):
+            draw.rectangle([80 + number * 20, row, 1650 - number * 30, row + 7], fill=0)
+        pages.append(page)
+    pages[0].save(path, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+    return path
+
+
+def test_the_far_ends_frames_come_with_each_built_in_engine_call_and_t38_at_once_asks_at_the_answer(tmp_path):
+    """Asterisk's own ReceiveFAX (the far end here) asks for T.38 three seconds after it answers, so a stock far
+    end that never asks but accepts cannot be built from it; Faxbot's rule for such numbers is tested on synthetic
+    calls in test_engine_frames.py. Here: without T.38 at once the far end asks first; with it, Faxbot asks at the
+    answer, and both calls report who asked and when, with the far end's DIS."""
+    from app import engine_frames
+    from app.config_values import ConfigurationValues
+    usual = exchange(tmp_path, wait_frames=True)
+    now = exchange(tmp_path, wait_frames=True, extra_variables={'FAXBOT_T38_NOW': 'yes'})
+    report = {}
+    for name, outcome in (('usual', usual), ('now', now)):
+        assert outcome['result']['Status'] == 'SUCCESS', outcome['result']
+        row = engine_frames.parse_event(outcome['frames'] or {})
+        assert row is not None, outcome['frames']
+        dis = engine_frames.decode_dis(row['dis'])
+        # The far end is Asterisk's own engine: V.17 with error correction, as Faxbot's receive settings offer.
+        assert dis and dis['max_rate'] == 14400 and dis['ecm'], row['dis']
+        assert row['rate_first'] == 14400 and row['trainings'] >= 1 and row['mode'] == 'T38', outcome['frames']
+        report[name] = {'t38_by': row['t38_by'], 't38_after_ms': row['t38_after_ms'], 'dis': row['dis'],
+                        'rates': row['rates'], 'seconds': outcome['submit_to_result_seconds']}
+    assert report['usual']['t38_by'] == 'far' and report['usual']['t38_after_ms'] >= 2500, report
+    assert report['now']['t38_by'] == 'faxbot' and report['now']['t38_after_ms'] < 2000, report
+    assert 'Faxbot fax frames on' in usual['sender_log']
+    # Calls where Faxbot had to ask late teach it to ask at once; the far end asking itself teaches nothing.
+    late = dict(engine_frames.parse_event(usual['frames']), t38_by='faxbot', t38_after_ms=10600)
+    defaults = ConfigurationValues.from_environment({})
+    assert engine_frames.learn([late] * 3, defaults).t38_now
+    assert not engine_frames.learn([engine_frames.parse_event(usual['frames'])] * 3, defaults).t38_now
+    print(json.dumps({'frames_and_early_t38': report}, indent=2))
+
+
+def test_audio_fax_for_one_number_keeps_its_calls_on_audio_both_ways_with_the_same_pages(tmp_path):
+    """Engine learning (T8): fax over IP failed to or from one number, so Faxbot uses audio fax for it although both
+    sides offer T.38. Sent: the call carries FAXBOT_AUDIO=yes (SendFAX F refuses the far end's T.38 request).
+    Received: the caller's key in faxbot-inmode makes Faxbot answer with ReceiveFAX F; here the caller asks for T.38
+    at the answer (FAXBOT_T38_NOW), is refused and goes on as audio. Every page arrives intact.
+
+    Not covered, because it fails (measured 2026-10-07): a caller that stays silent for about ten seconds before
+    asking for T.38 (Asterisk's own SendFAX z) misses Faxbot's three DIS and gets a DCN, as GOfax.IP's inbound
+    fallback would. That failure teaches "audio failed" too, so the caller goes back to the usual settings."""
+    from app import engine_frames
+    (tmp_path / 'sent').mkdir()
+    (tmp_path / 'received').mkdir()
+    sent = exchange(tmp_path / 'sent', extra_variables={'FAXBOT_AUDIO': 'yes'})
+    received = exchange(tmp_path / 'received', extra_variables={'FAXBOT_T38_NOW': 'yes'},
+                        receiver_db={f'faxbot-inmode/{key}': 'audio' for key in engine_frames.caller_keys(CALLER)})
+    report = {}
+    for name, outcome in (('sent', sent), ('received', received)):
+        assert outcome['result']['Status'] == 'SUCCESS' and outcome['result']['Pages'] == '2', (name, outcome['result'])
+        assert outcome['result']['Mode'] == 'audio', (name, outcome['result'])
+        body = outcome['captured']['body']
+        assert body['call']['t38'] is False and body['faxpages'] == 2, (name, body['call'])
+        sent_heights, received_heights = page_heights(outcome['sent']), page_heights(outcome['received'])
+        header_rows = received_heights[0] - sent_heights[0]
+        assert [page['body_sha256'] for page in page_digests(outcome['received'], skip_rows=header_rows)] == \
+            [page['body_sha256'] for page in page_digests(outcome['sent'])], name
+        report[name] = {'mode': outcome['result']['Mode'], 'seconds': outcome['submit_to_result_seconds']}
+    print(json.dumps({'audio_for_one_number': report}, indent=2))
+
+
+def test_internet_aware_fax_between_two_faxbots_is_shorter_with_the_same_pages(tmp_path):
+    image = four_pages(tmp_path / 'four.tiff')
+    key = CALLER.lstrip('+')
+    paced = exchange(tmp_path, fax_image=image, wait_frames=True, extra_variables={'FAXBOT_T38_NOW': 'yes'})
+    iaf = exchange(tmp_path, fax_image=image, wait_frames=True,
+                   extra_variables={'FAXBOT_T38_NOW': 'yes', 'FAXBOT_IAF': 'peer'},
+                   receiver_db={f'faxbot-iaf/{key}': 'peer'})
+    report = {}
+    for name, outcome in (('paced', paced), ('iaf', iaf)):
+        assert outcome['result']['Status'] == 'SUCCESS' and outcome['result']['Pages'] == '4', outcome['result']
+        # The sending engine adds one header line above each page; the image below it is exactly what was sent.
+        header_rows = page_heights(outcome['received'])[0] - page_heights(image)[0]
+        assert [page['body_sha256'] for page in page_digests(outcome['received'], skip_rows=header_rows)] == [
+            page['body_sha256'] for page in page_digests(image)], name
+        answered, ended = int(outcome['result']['Answered']), int(outcome['result']['Ended'])
+        report[name] = {'seconds': outcome['submit_to_result_seconds'], 'answered_to_end': ended - answered,
+                        'iaf': (outcome['frames'] or {}).get('Iaf')}
+    assert report['iaf']['iaf'] == 'peer' and not report['paced']['iaf']
+    assert 'Internet Aware Fax (peer)' in iaf['sender_log'] and 'Internet Aware Fax (peer)' in iaf['receiver_log']
+    assert report['iaf']['seconds'] < report['paced']['seconds'], report
+    print(json.dumps({'iaf': report}, indent=2))
+
+
+def test_a_subaddress_the_built_in_engine_asks_for_reaches_the_receiving_engine_on_t38_and_audio(tmp_path,
+                                                                                                    monkeypatch):
+    """Patch 0005 (M17): the fax asks for subaddress 4021 through the production Originate fields (as a notice
+    fax's notice ID or a sending rule's subaddress would). The receiving Asterisk, also 0005, says in its DIS that it
+    takes a subaddress, so the sender's spandsp sends SUB, and the receiver hands it to Faxbot with the fax
+    (sub_hex). Over T.38 and over audio alike; the sender's frames show the far end took it (carried)."""
+    from app import engine_frames
+    monkeypatch.setattr(ami, 'fax_subaddress', lambda job_id: '4021')
+    (tmp_path / 't38').mkdir()
+    (tmp_path / 'audio').mkdir()
+    report = {}
+    for name, extra in (('t38', None), ('audio', {'FAXBOT_AUDIO': 'yes'})):
+        outcome = exchange(tmp_path / name, wait_frames=True, extra_variables=extra)
+        result, captured = outcome['result'], outcome['captured']
+        assert 'FAXBOT_TX_SUB=4021' in outcome['fields']['Variable'].split(','), outcome['fields']
+        assert result['Status'] == 'SUCCESS' and result['Pages'] == '2', (name, result)
+        assert result['Mode'] == ('audio' if name == 'audio' else 'T38'), (name, result)
+        assert 'Faxbot: subaddress 4021 requested on' in outcome['sender_log'], name
+        row = engine_frames.parse_event(outcome['frames'] or {})
+        assert engine_frames.subaddress_carried('4021', row) is True, (name, row)
+        assert captured is not None, name
+        assert engine_frames.decode_sub(captured['body']['sub_hex']) == '4021', (name, captured['body'])
+        report[name] = {'mode': result['Mode'], 'far_dis': row['dis'], 'received_sub': captured['body']['sub_hex'],
+                        'seconds': outcome['submit_to_result_seconds'], 'image': outcome['image']}
+    print(json.dumps({'subaddress_sent': report}, indent=2))
+
+
+def test_the_measured_coding_reaches_the_call_and_unset_keeps_asterisks_own(tmp_path):
+    """Patch 0006 (builder CA) on two Asterisks: FAXBOT_COMPRESSION=mh on the Originate makes the sender's DCS MH
+    although both sides take MMR with error correction; unset, the call goes MMR as before. Same two pages."""
+    from app import engine_frames
+    report = {}
+    for name, extra in (('mh', {'FAXBOT_COMPRESSION': 'mh'}), ('unset', None)):
+        (tmp_path / name).mkdir()
+        outcome = exchange(tmp_path / name, wait_frames=True, extra_variables=extra)
+        assert outcome['result']['Status'] == 'SUCCESS' and outcome['result']['Pages'] == '2', (name, outcome['result'])
+        dcs = engine_frames.decode_dcs(engine_frames.parse_event(outcome['frames'] or {})['dcs_last'])
+        report[name] = {'compression': dcs['compression'], 'ecm': dcs['ecm'],
+                        'notice': 'offers codings up to mh' in outcome['sender_log']}
+    assert report['mh'] == {'compression': 'MH', 'ecm': True, 'notice': True}, report
+    assert report['unset'] == {'compression': 'MMR', 'ecm': True, 'notice': False}, report
+    print(json.dumps({'measured_coding': report}, indent=2))
+
+
+def test_a_forwarded_calls_headers_reach_faxbot_unchanged_and_its_signature_still_checks(tmp_path):
+    """X4 over loopback: the sender stands in for a carrier that forwarded the call, adding a Diversion header, two
+    History-Info entries and a diversion PASSporT (RFC 8946) signed with a synthetic key. The receiving dialplan keeps
+    them for Faxbot ([faxbot-sip-headers]); read back, they name the forwarding number, and the PASSporT's signature
+    still checks against its certificate, so Asterisk carried every byte."""
+    from datetime import datetime, timedelta
+    from api.tests.test_diversion import _key_and_certificate, passport
+    from app.inbound import diversion
+    forwarded = '+13035550142'
+    key, certificate = _key_and_certificate(valid_from=datetime.utcnow() - timedelta(days=1),
+                                            valid_until=datetime.utcnow() + timedelta(days=1))
+    now = int(time.time())
+    identity = passport(key, div=forwarded.lstrip('+'), dest=DID.lstrip('+'), iat=now)
+    extra = {'PJSIP_HEADER(add,Diversion)': f'<sip:{forwarded}@carrier.example>;reason=unconditional;counter=1',
+             'PJSIP_HEADER(add,History-Info)': f'<sip:{forwarded}@carrier.example>;index=1',
+             'PJSIP_HEADER(add,Identity)': identity.replace('ppt="div"', 'ppt=div')}
+    outcome = exchange(tmp_path, extra_variables=extra)
+    assert outcome['result']['Status'] == 'SUCCESS', outcome['result']
+    headers = diversion.parse_header_lines(outcome['receiver_sip_headers'])
+    clues = [line for line in outcome['receiver_log'].splitlines()
+             if any(word in line for word in ('Diversion', 'History-Info', 'FILE', 'sip-header', 'Identity:', 'ERROR',
+                                              'WARNING'))]
+    assert headers.get('Diversion') == [extra['PJSIP_HEADER(add,Diversion)']], '\n'.join(clues[-30:])
+    assert headers.get('Identity') and headers['Identity'][0].split(';')[0] == identity.split(';')[0]
+    found = diversion.diversion_for(headers, did=DID, at=datetime.utcfromtimestamp(now), check=True, country='US',
+                                    fetch=lambda url: certificate)
+    # The signature still checks after Asterisk carried it (not verified: who issued the certificate is unchecked).
+    assert (found.diverted_from, found.state, found.source) == (forwarded, 'unanchored', 'passport'), found
+    stated = diversion.diversion_for({name: values for name, values in headers.items() if name != 'Identity'},
+                                     did=DID, at=datetime.utcnow(), country='US')
+    assert (stated.diverted_from, stated.state) == (forwarded, 'stated')
+    print(json.dumps({'forwarded_call': {'headers': sorted(headers), 'state': found.state,
+                                         'from': found.diverted_from, 'image': outcome['image']}}, indent=2))
+
+
+WIREGUARD_DOCKERFILE = '''FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \\
+    && rm -rf /var/lib/apt/lists/*
+'''
+AMI_SESSION_ROUTE = AMI_SESSION.replace("*'UserEvent: FaxResult'*) seen=1 ;;", "*'UserEvent: FaxPeerRoute'*) seen=1 ;;")
+SENDER_PEER, RECEIVER_PEER = 'a1' * 16, 'b2' * 16
+TUNNEL = {'sender': '10.77.0.1', 'receiver': '10.77.0.2'}
+
+
+def test_a_peer_fax_call_goes_inside_a_wireguard_tunnel_between_two_asterisks_with_no_carrier(tmp_path):
+    """M1b over loopback: two Faxbot Asterisks on a private network, each with a WireGuard tunnel set up outside
+    Faxbot (a WireGuard container sharing the Asterisk container's network, as the console says; the Asterisk
+    containers get no extra privilege). Each side's file has the trunk Faxbot renders and the partner's peer endpoint
+    (direct/peer_call.render_peers). Faxbot's route check, run in the sender's Asterisk through the production
+    Originate (ami.peer_route_fields), sees the tunnel (wg0, wireguard); the fax goes to the partner's endpoint with
+    Internet Aware Fax, arrives over T.38 through the tunnel, and the receiver hands it over naming the partner.
+    Then the tunnel is taken down: the same check sees the ordinary network, so Faxbot places no peer call."""
+    from app import engine_frames
+    from app.direct import peer_call
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    wireguard = docker.prefix + '-wireguard'
+    context = tmp_path / 'wireguard-image'
+    context.mkdir()
+    (context / 'Dockerfile').write_text(WIREGUARD_DOCKERFILE)
+    docker.run('build', '--quiet', '--tag', wireguard, str(context), timeout=900)
+    try:
+        docker.network = docker.prefix
+        docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', docker.network)
+        capture = docker.start('api', 'python:3.11-slim', 'python', '-c', CAPTURE)
+        sides = {name: docker.start(name, image, 'infinity', entrypoint='sleep') for name in ('receiver', 'sender')}
+        addresses = {name: docker.address(container) for name, container in sides.items()}
+        api_address = docker.address(capture)
+        # The tunnel, outside Faxbot: one WireGuard container in each Asterisk container's network.
+        tunnels, keys = {}, {}
+        for name, container in sides.items():
+            sidecar = f'{docker.prefix}-wg-{name}'
+            docker.run('run', '--detach', '--name', sidecar, '--network', f'container:{container}', '--cap-add',
+                       'NET_ADMIN', '--label', 'com.faxbot.scope=t38-proof', '--entrypoint', 'sleep', wireguard,
+                       'infinity')
+            docker.containers.append(sidecar)
+            tunnels[name] = sidecar
+            private = docker.run('exec', sidecar, 'wg', 'genkey').stdout.strip()
+            public_key = docker.run('exec', '--interactive', sidecar, 'wg', 'pubkey',
+                                    input_text=private + '\n').stdout.strip()
+            keys[name] = (private, public_key)
+        for name, sidecar in tunnels.items():
+            other = 'receiver' if name == 'sender' else 'sender'
+            script = (f"printf '%s' '{keys[name][0]}' > /tmp/key && ip link add wg0 type wireguard && "
+                      f"wg set wg0 listen-port 51820 private-key /tmp/key peer {keys[other][1]} "
+                      f"endpoint {addresses[other]}:51820 allowed-ips {TUNNEL[other]}/32 persistent-keepalive 5 && "
+                      f"ip addr add {TUNNEL[name]}/24 dev wg0 && ip link set wg0 up")
+            docker.run('exec', sidecar, 'sh', '-c', script)
+        # Each side's file: the trunk as Faxbot renders it, then the partner's peer endpoint.
+        partners = {'sender': {'id': RECEIVER_PEER, 'state': 'verified', 'expires_at': None,
+                               'partner_peer_calls': 1, 'receive_peer_calls': 1,
+                               'peer_call_address': TUNNEL['receiver']},
+                    'receiver': {'id': SENDER_PEER, 'state': 'verified', 'expires_at': None,
+                                 'partner_peer_calls': 1, 'receive_peer_calls': 1,
+                                 'peer_call_address': TUNNEL['sender']}}
+        for name, container in sides.items():
+            other = 'receiver' if name == 'sender' else 'sender'
+            text = sip_trunk.render_pjsip(trunk_values(addresses[other])) + '\n\n' + peer_call.render_peers(
+                [partners[name]])
+            rendered = tmp_path / f'{name}.conf'
+            rendered.write_text(text)
+            docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+            docker.run('cp', str(rendered), f'{container}:/faxdata/asterisk/pjsip.conf')
+        logger = tmp_path / 'logger.conf'
+        logger.write_text('[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n')
+        docker.run('cp', str(logger), f"{sides['receiver']}:/etc/asterisk/logger.conf")
+        docker.run('exec', '--detach', '--env', f'ASTERISK_INBOUND_SECRET={SECRET}',
+                   '--env', f'FAXBOT_API_URL=http://{api_address}:8080', sides['receiver'], 'sh', '-c',
+                   '/start.sh > /tmp/asterisk.log 2>&1')
+        docker.run('exec', '--detach', '--env', f'ASTERISK_AMI_USERNAME={AMI_USER}',
+                   '--env', f'ASTERISK_AMI_PASSWORD={AMI_PASSWORD}', sides['sender'],
+                   'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        for container in sides.values():
+            wait_booted(docker, container)
+        docker.asterisk(sides['receiver'], 'pjsip set logger on')
+        login = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
+                 f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n')
+
+        def route_check(address):
+            token = uuid.uuid4().hex
+            fields = ami.peer_route_fields(token, address)
+            session = docker.run('exec', '--interactive', sides['sender'], 'bash', '-c', AMI_SESSION_ROUTE,
+                                 input_text=login + ''.join(f'{k}: {v}\r\n' for k, v in fields.items()) + '\r\n',
+                                 check=False, timeout=120)
+            event = next((item for item in parse_ami(session.stdout) if item.get('UserEvent') == 'FaxPeerRoute'
+                          and item.get('Check') == token), None)
+            assert event is not None, session.stdout[-2000:]
+            parts = event.get('Route', '').split('/')
+            return peer_call.Tunnel(*parts) if len(parts) == 2 and parts[1] in peer_call.TUNNEL_KINDS else None, event
+
+        # The partner answers Asterisk's checks over the tunnel (its contact is Reachable).
+        deadline = time.monotonic() + 60
+        while 'Avail' not in docker.asterisk(sides['sender'], f'pjsip show aor peer-{RECEIVER_PEER}-aor'):
+            assert time.monotonic() < deadline, docker.asterisk(sides['sender'], 'pjsip show contacts')
+            time.sleep(1)
+        tunnel, route_event = route_check(TUNNEL['receiver'])
+        assert tunnel == peer_call.Tunnel('wg0', 'wireguard'), route_event
+        partner = {'organization': 'Valley Hospital', **partners['sender']}
+        decision = peer_call.require_tunnel(partner, tunnel_lookup=lambda address: tunnel)
+        call = peer_call.PeerCall(RECEIVER_PEER, peer_call.endpoint_name(RECEIVER_PEER), decision)
+
+        sent = tmp_path / 'proof.tiff'
+        pages = proof_pages()
+        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        docker.run('cp', str(sent), f"{sides['sender']}:/faxdata/outbound/proof.tiff")
+        values = trunk_values(addresses['receiver'], FAX_LOCAL_STATION_ID='+15555550100', FAX_HEADER='Faxbot proof')
+        job, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+        fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt,
+                                          peer=call)
+        before = docker.run('exec', tunnels['sender'], 'cat', '/sys/class/net/wg0/statistics/tx_bytes').stdout
+        session = docker.run('exec', '--interactive', sides['sender'], 'bash', '-c', AMI_SESSION_FRAMES,
+                             input_text=login + ''.join(f'{k}: {v}\r\n' for k, v in fields.items()) + '\r\n',
+                             check=False, timeout=300)
+        after = docker.run('exec', tunnels['sender'], 'cat', '/sys/class/net/wg0/statistics/tx_bytes').stdout
+        events = parse_ami(session.stdout)
+        result = next((event for event in events if event.get('UserEvent') == 'FaxResult'), None)
+        frames = next((event for event in events if event.get('UserEvent') == 'FaxFrames'), None)
+        assert result is not None, json.dumps(events[-6:])
+        captured = None
+        deadline = time.monotonic() + 60
+        while captured is None and time.monotonic() < deadline:
+            probe = docker.read(capture, '/tmp/capture.json')
+            captured = json.loads(probe) if probe.strip() else None
+            if captured is None:
+                time.sleep(1)
+        receiver_log = docker.read(sides['receiver'], '/tmp/asterisk.log')
+        report = {'channel': fields['Channel'], 'route': route_event.get('Route'), 'status': result.get('Status'),
+                  'pages': result.get('Pages'), 'mode': result.get('Mode'), 'iaf': (frames or {}).get('Iaf'),
+                  'tunnel_tx_bytes': int(after or 0) - int(before or 0),
+                  'handover_peer': (captured or {}).get('body', {}).get('peer'),
+                  'invite_from_tunnel': f'<--- Received SIP request' in receiver_log and TUNNEL['sender'] in receiver_log}
+        assert fields['Channel'] == f'PJSIP/{DID}@peer-{RECEIVER_PEER}-endpoint', fields
+        assert result['Status'] == 'SUCCESS' and result['Pages'] == '2' and result['Mode'] == 'T38', report
+        assert engine_frames.parse_event(frames)['iaf'] == 'peer', report
+        assert report['tunnel_tx_bytes'] > 10_000, report
+        assert captured is not None and captured['body']['peer'] == SENDER_PEER, report
+        assert captured['body']['call']['peer'] == SENDER_PEER and captured['body']['faxpages'] == 2
+        assert report['invite_from_tunnel'], report
+
+        # The tunnel goes down: the route check sees the ordinary network, so no peer fax call is placed.
+        docker.run('exec', tunnels['sender'], 'ip', 'link', 'del', 'wg0')
+        down, down_event = route_check(TUNNEL['receiver'])
+        assert down is None and not down_event.get('Route', '').endswith('/wireguard'), down_event
+        refused = peer_call.decide(partner, tunnel_lookup=lambda address: down)
+        assert not refused.applies and refused.reason == 'no_tunnel'
+        report['route_without_tunnel'] = down_event.get('Route')
+        print(json.dumps({'peer_fax_call': report}, indent=2))
+    finally:
+        docker.close()
+        docker.run('rmi', wireguard, check=False)
+
+
+def test_a_second_trunk_carries_the_fax_and_the_receiver_hands_over_which_trunk_it_came_in_on(tmp_path):
+    """Several trunks over loopback: Faxbot's file has two trunks on each side; the fax goes out over the second
+    trunk's endpoint (carrier B, the other container), and the receiver, which identifies the caller by address on
+    its own second trunk, hands the fax to Faxbot naming that trunk (FAXBOT_TRUNK from the endpoint's set_var)."""
+    outcome = exchange(tmp_path, two_trunks=True)
+    result, captured = outcome['result'], outcome['captured']
+    print(json.dumps({'two_trunks': {
+        'channel': outcome['fields']['Channel'], 'status': result.get('Status'), 'pages': result.get('Pages'),
+        'mode': result.get('Mode'), 'handover_trunk': (captured or {}).get('body', {}).get('trunk'),
+        'call_trunk': ((captured or {}).get('body', {}).get('call') or {}).get('trunk'),
+        'sender_endpoints': [line.strip() for line in outcome['sender_endpoints'].splitlines()
+                             if line.strip().startswith('Endpoint:')],
+        'receiver_endpoints': [line.strip() for line in outcome['receiver_endpoints'].splitlines()
+                               if line.strip().startswith('Endpoint:')],
+        'image': outcome['image']}}, indent=2))
+    assert outcome['fields']['Channel'] == f'PJSIP/{DID}@trunk-{SECOND}-endpoint'
+    for listing in (outcome['sender_endpoints'], outcome['receiver_endpoints']):
+        assert 'trunk-endpoint' in listing and f'trunk-{SECOND}-endpoint' in listing
+    assert result['Status'] == 'SUCCESS' and result['Pages'] == '2', result
+    assert captured is not None, 'Receiver did not report the fax'
+    assert captured['body']['trunk'] == SECOND and captured['body']['call']['trunk'] == SECOND
+    assert captured['body']['faxstatus'] == 'SUCCESS' and captured['body']['faxpages'] == 2
+    # The dialplan read each call's own endpoint for its T.38 checks: no unknown channel item on either side.
+    for log in (outcome['sender_log'], outcome['receiver_log']):
+        assert 'Unknown or unavailable item requested' not in log

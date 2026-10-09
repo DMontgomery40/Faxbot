@@ -274,6 +274,29 @@ class AccessControl:
         return AccessDecision(False, DecisionReason.FORBIDDEN if exists else DecisionReason.INVALID_RESOURCE, version)
 
     @_safe_storage
+    def authorize_child_on(self, connection, context, permission, container, *, now):
+        """Whether ``permission`` holds for a fax filed under ``container`` that has no access record of its own.
+
+        A form sent to a partner as values has no sent fax, and a document a
+        partner delivered may not be filed as a received fax yet. Both are
+        checked as a fax in that place would be: the grants on the container (a
+        personal container, a mailbox or the unassigned faxes) and on the
+        installation. A grant on one particular fax never applies.
+        """
+        source = self._current_source_on(connection, context, now)
+        self.store.require_lock_on(connection)
+        if permission not in OUTBOUND_PERMISSIONS | INBOUND_PERMISSIONS or permission == 'fax:send':
+            return False
+        if source.reset_required or not self._valid_ref(container):
+            return False
+        kinds = ('personal', 'legacy') if permission in OUTBOUND_PERMISSIONS else ('mailbox', 'legacy')
+        r, parent, tree, valid = self._resource_query()
+        query = sa.select(r.c.id).select_from(tree).where(
+            valid, self._container_shape(r), r.c.kind.in_(kinds), r.c.id == container.id,
+            self._authority_predicate(context, source, permission, r, parent))
+        return connection.execute(query).first() is not None
+
+    @_safe_storage
     def effective_access_on(self, connection, context, resource, *, now):
         source = self._current_source_on(connection, context, now)
         if not self._valid_ref(resource) or source.reset_required:

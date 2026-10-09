@@ -8,6 +8,11 @@ from .routing.numbers import canonical_number
 from .callback_locator import callback_url_with_locators
 
 
+def _before_fax_data(error_type):
+    from .routing.predata import phaxio
+    return phaxio(error_type)
+
+
 class PhaxioFaxService:
     """
     Phaxio Fax API integration for sending faxes via cloud service.
@@ -208,6 +213,8 @@ class PhaxioFaxService:
             "pages": payload.get("num_pages"),
             "error_type": 'provider_error' if payload.get('error_type') else None,
             "error_message": 'Provider reported an error.' if payload.get('error_message') else None,
+            # Whether a failed call ended before any fax data, by Phaxio's error type (routing/predata.py).
+            "before_fax_data": _before_fax_data(payload.get('error_type')),
         }
 
     @staticmethod

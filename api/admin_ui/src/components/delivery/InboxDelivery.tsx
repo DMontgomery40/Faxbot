@@ -6,6 +6,8 @@ import type { InboundFax } from '../../api/types';
 import { formatServerTime, parseServerTime } from '../../api/time';
 import { StatusChip, useSmallScreens } from '../access/AccessViews';
 import { providerLabel } from '../../providerLabels';
+import type { ReceivedForm } from '../../api/formsTypes';
+import ReceivedFormLine from '../forms/ReceivedFormLine';
 
 // The server's sentence for a fax whose number has no email delivery.
 const NO_EMAIL_DELIVERY = 'No email delivery is set up for this number yet.';
@@ -165,11 +167,13 @@ function directTitle(item: IntakeItem): string {
 }
 
 // Documents received from partners by direct delivery; they have no fax record.
-export function DirectDeliveries({ items, canRetry, busy, onRetry }: {
+export function DirectDeliveries({ items, canRetry, busy, onRetry, forms }: {
   items: IntakeItem[];
   canRetry: boolean;
   busy: boolean;
   onRetry: (item: IntakeItem) => void;
+  // Registered forms a partner delivered, by email item: "Rendered from <form> v3; values attached".
+  forms?: Map<string, ReceivedForm>;
 }) {
   const { isMobile } = useSmallScreens();
   if (items.length === 0) return null;
@@ -183,6 +187,7 @@ export function DirectDeliveries({ items, canRetry, busy, onRetry }: {
             <Card key={item.id} sx={{ borderRadius: 2 }}>
               <CardContent>
                 <Typography variant="subtitle1">{directTitle(item)}</Typography>
+                {forms?.get(item.id) && <ReceivedFormLine form={forms.get(item.id)!} />}
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{formatServerTime(item.received_at)}</Typography>
                 <DeliveryStatusLine item={item} canRetry={canRetry} busy={busy} onRetry={onRetry} label={directTitle(item)} />
               </CardContent>
@@ -204,7 +209,10 @@ export function DirectDeliveries({ items, canRetry, busy, onRetry }: {
               {items.map((item) => (
                 <TableRow key={item.id} hover>
                   <TableCell>{formatServerTime(item.received_at)}</TableCell>
-                  <TableCell>{directTitle(item)}</TableCell>
+                  <TableCell>
+                    {directTitle(item)}
+                    {forms?.get(item.id) && <ReceivedFormLine form={forms.get(item.id)!} />}
+                  </TableCell>
                   <TableCell>{item.to_number || '-'}</TableCell>
                   <TableCell><DeliveryStatusLine item={item} canRetry={canRetry} busy={busy} onRetry={onRetry} label={directTitle(item)} /></TableCell>
                 </TableRow>

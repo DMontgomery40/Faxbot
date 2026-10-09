@@ -17,6 +17,41 @@ from . import schema_configuration, schema_outbound, schema_access, schema_authe
 from . import schema_delivery, schema_sip, schema_inbound, schema_work, schema_charges, schema_records
 from . import schema_batching, schema_inbound_sources, schema_case_packets, schema_fax_engine, schema_terminal
 from . import schema_retired_permissions, schema_local_delivery, schema_capacity, schema_history, schema_negotiation
+from . import schema_shared_manifest
+from . import schema_tollfree
+from . import schema_dialed
+from . import schema_routing_rules, schema_receiving_rules
+from . import schema_dense_pages
+from . import schema_fax_codec
+from . import schema_peer_fax
+from . import schema_screening, schema_engine_frames
+from . import schema_case_ledger
+from . import schema_forms
+from . import schema_destination_schedule
+from . import schema_intake_sources
+from . import schema_friendly_pages
+from . import schema_partner_relay
+from . import schema_engine_learning
+from . import schema_discovery
+from . import schema_accounts
+from . import schema_rules_delivery
+from . import schema_notice_repair
+from . import schema_certainty
+from . import schema_send_once
+from . import schema_trunks_sites
+from . import schema_invoices
+from . import schema_continuation
+from . import schema_setup_plans
+from . import schema_number_advice
+from . import schema_digital_routes
+from . import schema_engine_extras
+from . import schema_measured_codec
+from . import schema_shading_method
+from . import schema_routing_learning
+from . import schema_expected_faxes
+from . import schema_fact_advice
+from . import schema_encoder_tuning
+from . import schema_polled_transmit, schema_analysis
 from .schema_checks import canonical_check
 
 FOUNDATION = "0002_schema_foundation"
@@ -40,12 +75,63 @@ RETIRED = schema_retired_permissions.REVISION
 LOCAL_DELIVERY = schema_local_delivery.REVISION
 CAPACITY = schema_capacity.REVISION
 HISTORY = schema_history.REVISION
-HEAD = schema_negotiation.REVISION
+NEGOTIATION = schema_negotiation.REVISION
+SHARED_MANIFEST = schema_shared_manifest.REVISION
+TOLLFREE = schema_tollfree.REVISION
+DIALED = schema_dialed.REVISION
+ROUTING_RULES = schema_routing_rules.REVISION
+RECEIVING_RULES = schema_receiving_rules.REVISION
+DENSE_PAGES = schema_dense_pages.REVISION
+FAX_CODEC = schema_fax_codec.REVISION
+PEER_FAX = schema_peer_fax.REVISION
+SCREENING = schema_screening.REVISION
+ENGINE_FRAMES = schema_engine_frames.REVISION
+CASE_LEDGER = schema_case_ledger.REVISION
+FORMS = schema_forms.REVISION
+DESTINATION_SCHEDULE = schema_destination_schedule.REVISION
+INTAKE_SOURCES = schema_intake_sources.REVISION
+FRIENDLY_PAGES = schema_friendly_pages.REVISION
+PARTNER_RELAY = schema_partner_relay.REVISION
+ENGINE_LEARNING = schema_engine_learning.REVISION
+DISCOVERY = schema_discovery.REVISION
+ACCOUNTS = schema_accounts.REVISION
+RULES_DELIVERY = schema_rules_delivery.REVISION
+NOTICE_REPAIR = schema_notice_repair.REVISION
+CERTAINTY = schema_certainty.REVISION
+SEND_ONCE = schema_send_once.REVISION
+TRUNKS_SITES = schema_trunks_sites.REVISION
+INVOICES = schema_invoices.REVISION
+CONTINUATION = schema_continuation.REVISION
+SETUP_PLANS = schema_setup_plans.REVISION
+NUMBER_ADVICE = schema_number_advice.REVISION
+DIGITAL_ROUTES = schema_digital_routes.REVISION
+ENGINE_EXTRAS = schema_engine_extras.REVISION
+MEASURED_CODEC = schema_measured_codec.REVISION
+SHADING_METHOD = schema_shading_method.REVISION
+ROUTING_LEARNING = schema_routing_learning.REVISION
+EXPECTED_FAXES = schema_expected_faxes.REVISION
+FACT_ADVICE = schema_fact_advice.REVISION
+ENCODER_TUNING = schema_encoder_tuning.REVISION
+POLLED_TRANSMIT = schema_polled_transmit.REVISION
+HEAD = schema_analysis.REVISION
 STRICT_TABLES = (schema_access.TABLES | schema_authentication.TABLES | schema_capabilities.TABLES
                  | schema_delivery.TABLES | schema_sip.TABLES | schema_inbound.TABLES | schema_work.TABLES
                  | schema_charges.TABLES | schema_records.TABLES | schema_batching.TABLES
                  | schema_inbound_sources.TABLES | schema_case_packets.TABLES | schema_fax_engine.TABLES
-                 | schema_history.TABLES)
+                 | schema_history.TABLES | schema_tollfree.TABLES | schema_routing_rules.TABLES
+                 | schema_receiving_rules.TABLES | schema_dense_pages.TABLES
+                 | schema_fax_codec.TABLES | schema_screening.TABLES | schema_engine_frames.TABLES
+                 | schema_case_ledger.TABLES | schema_forms.TABLES | schema_destination_schedule.TABLES
+                 | schema_intake_sources.TABLES | schema_friendly_pages.TABLES | schema_partner_relay.TABLES
+                 | schema_engine_learning.TABLES | schema_discovery.TABLES | schema_notice_repair.TABLES
+                 | schema_certainty.TABLES | schema_send_once.TABLES
+                 | schema_trunks_sites.TABLES
+                 | schema_invoices.TABLES
+                 | schema_continuation.TABLES
+                 | schema_setup_plans.TABLES
+                 | schema_number_advice.TABLES
+                 | schema_digital_routes.TABLES
+                 | schema_measured_codec.TABLES | schema_routing_learning.TABLES | schema_expected_faxes.TABLES | schema_fact_advice.TABLES | schema_encoder_tuning.TABLES | schema_polled_transmit.TABLES | schema_analysis.TABLES)
 INITIAL = "0001_initial"
 LOCK_ID = 0x464158424F54  # FAXBOT, stable across processes and releases
 LOCK_TIMEOUT_SECONDS = 10
@@ -410,8 +496,43 @@ def validate_schema(connection, *, require_version=False):
     case_packets = tables & schema_case_packets.TABLES
     fax_engine = tables & schema_fax_engine.TABLES
     history = tables & schema_history.TABLES
+    tollfree = tables & schema_tollfree.TABLES
+    routing_rules = tables & schema_routing_rules.TABLES
+    receiving_rules = tables & schema_receiving_rules.TABLES
+    dense_pages = tables & schema_dense_pages.TABLES
+    fax_codec = tables & schema_fax_codec.TABLES
+    screening = tables & schema_screening.TABLES
+    frames = tables & schema_engine_frames.TABLES
+    case_ledger = tables & schema_case_ledger.TABLES
+    forms = tables & schema_forms.TABLES
+    schedule = tables & schema_destination_schedule.TABLES
+    intake_sources = tables & schema_intake_sources.TABLES
+    friendly_pages = tables & schema_friendly_pages.TABLES
+    relay = tables & schema_partner_relay.TABLES
+    learning = tables & schema_engine_learning.TABLES
+    discovery = tables & schema_discovery.TABLES
+    notice_repair = tables & schema_notice_repair.TABLES
+    certainty = tables & schema_certainty.TABLES
+    send_once = tables & schema_send_once.TABLES
+    trunks_sites = tables & schema_trunks_sites.TABLES
+    invoices = tables & schema_invoices.TABLES
+    continuation = tables & schema_continuation.TABLES
+    setup_plans = tables & schema_setup_plans.TABLES
+    number_advice = tables & schema_number_advice.TABLES
+    digital = tables & schema_digital_routes.TABLES
+    measured_codec = tables & schema_measured_codec.TABLES
+    routing_learning = tables & schema_routing_learning.TABLES
+    expected = tables & schema_expected_faxes.TABLES
+    fact_advice = tables & schema_fact_advice.TABLES
+    encoder_tuning = tables & schema_encoder_tuning.TABLES
+    polled_transmit = tables & schema_polled_transmit.TABLES
+    analysis = tables & schema_analysis.TABLES
     protected = (present | extensions | outbound | access | authentication | capabilities | delivery | sip | inbound
-                 | work | charges | records | batching | case_packets | fax_engine | history
+                 | work | charges | records | batching | case_packets | fax_engine | history | tollfree
+                 | routing_rules | receiving_rules | dense_pages | fax_codec | screening | frames | case_ledger
+                 | forms | schedule | intake_sources | friendly_pages | relay | learning | discovery | notice_repair
+                 | certainty | send_once | trunks_sites | invoices | continuation | setup_plans | number_advice
+                 | digital | measured_codec | routing_learning | expected | fact_advice | encoder_tuning | polled_transmit | analysis
                  | ({"alembic_version"} & tables))
     _validate_no_write_hooks(connection, protected)
     _validate_plain_indexes(connection, protected)
@@ -428,7 +549,7 @@ def validate_schema(connection, *, require_version=False):
                 or inspector.get_indexes("alembic_version") or inspector.get_unique_constraints("alembic_version")):
             _reject("invalid version table constraints")
         revisions = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars().all()
-        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}
+        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}
                                          for value in revisions):
             _reject("unknown or multiple migration revisions")
         revision = revisions[0] if revisions else None
@@ -436,7 +557,7 @@ def validate_schema(connection, *, require_version=False):
         _reject("upgrade did not produce a version")
     if present not in (set(), {"fax_jobs"}, CORE_TABLES) or (revision and present != CORE_TABLES):
         _reject("incomplete core table set")
-    if revision in {CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if extensions != schema_configuration.TABLES:
             _reject("incomplete configuration table set")
         metadata = schema_configuration.frozen_metadata(dialect=connection.dialect.name)
@@ -444,105 +565,316 @@ def validate_schema(connection, *, require_version=False):
         if extensions:
             _reject("configuration tables exist before their migration revision")
         metadata = frozen_metadata()
-    if revision in {OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if outbound != schema_outbound.TABLES:
             _reject("incomplete outbound table set")
         metadata = schema_outbound.frozen_metadata(dialect=connection.dialect.name)
     elif outbound:
         _reject("outbound tables exist before their migration revision")
-    if revision in {ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if access != schema_access.TABLES:
             _reject('incomplete access table set')
         metadata = schema_access.frozen_metadata(dialect=connection.dialect.name)
     elif access:
         _reject('access tables exist before their migration revision')
-    if revision in {AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if authentication != schema_authentication.TABLES:
             _reject('incomplete authentication admission table set')
         metadata = schema_authentication.frozen_metadata(dialect=connection.dialect.name)
     elif authentication:
         _reject('authentication admission tables exist before their migration revision')
-    if revision in {CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if capabilities != schema_capabilities.TABLES:
             _reject('incomplete capability table set')
         metadata = schema_capabilities.frozen_metadata(dialect=connection.dialect.name)
     elif capabilities:
         _reject('capability tables exist before their migration revision')
-    if revision in {DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if delivery != schema_delivery.TABLES:
             _reject('incomplete delivery route table set')
         metadata = schema_delivery.frozen_metadata(dialect=connection.dialect.name)
     elif delivery:
         _reject('delivery route tables exist before their migration revision')
-    if revision in {SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if sip != schema_sip.TABLES:
             _reject('incomplete SIP call record table set')
         metadata = schema_sip.frozen_metadata(dialect=connection.dialect.name)
     elif sip:
         _reject('SIP call record tables exist before their migration revision')
-    if revision in {INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if inbound != schema_inbound.TABLES:
             _reject('incomplete inbound import table set')
         metadata = schema_inbound.frozen_metadata(dialect=connection.dialect.name)
     elif inbound:
         _reject('inbound import tables exist before their migration revision')
-    if revision in {WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if work != schema_work.TABLES:
             _reject('incomplete work item table set')
         metadata = schema_work.frozen_metadata(dialect=connection.dialect.name)
     elif work:
         _reject('work item tables exist before their migration revision')
-    if revision in {CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if charges != schema_charges.TABLES:
             _reject('incomplete carrier charge table set')
         metadata = schema_charges.frozen_metadata(dialect=connection.dialect.name)
     elif charges:
         _reject('carrier charge tables exist before their migration revision')
-    if revision in {RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if records != schema_records.TABLES:
             _reject('incomplete carrier record table set')
         metadata = schema_records.frozen_metadata(dialect=connection.dialect.name)
     elif records:
         _reject('carrier record tables exist before their migration revision')
-    if revision in {BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if batching != schema_batching.TABLES:
             _reject('incomplete sending-together table set')
         metadata = schema_batching.frozen_metadata(dialect=connection.dialect.name)
     elif batching:
         _reject('sending-together tables exist before their migration revision')
-    if revision in {INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         # 0015 adds no table; it widens the inbound import source constraint.
         metadata = schema_inbound_sources.frozen_metadata(dialect=connection.dialect.name)
-    if revision in {CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if case_packets != schema_case_packets.TABLES:
             _reject('incomplete case packet send table set')
         metadata = schema_case_packets.frozen_metadata(dialect=connection.dialect.name)
     elif case_packets:
         _reject('case packet send tables exist before their migration revision')
-    if revision in {FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if fax_engine != schema_fax_engine.TABLES:
             _reject('incomplete fax engine record table set')
         metadata = schema_fax_engine.frozen_metadata(dialect=connection.dialect.name)
     elif fax_engine:
         _reject('fax engine record tables exist before their migration revision')
-    if revision in {LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}:
+    if revision in {LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         # 0020 adds no table: a widened inbound source constraint and one nullable fax_jobs column.
         metadata = schema_local_delivery.frozen_metadata(dialect=connection.dialect.name)
-    if revision in {CAPACITY, HISTORY, HEAD}:
+    if revision in {CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         # 0021 adds no table: nullable fax_jobs.urgent and delivery_destinations.max_calls.
         metadata = schema_capacity.frozen_metadata(dialect=connection.dialect.name)
-    if revision in {HISTORY, HEAD}:
+    if revision in {HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         if history != schema_history.TABLES:
             _reject('incomplete history table set')
         metadata = schema_history.frozen_metadata(dialect=connection.dialect.name)
     elif history:
         _reject('history tables exist before their migration revision')
-    if revision == HEAD:
+    if revision in {NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
         # 0023 adds no table: nullable negotiation columns on fax_engine_calls.
         metadata = schema_negotiation.frozen_metadata(dialect=connection.dialect.name)
-    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, HEAD}
+    if revision in {SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0025 adds no table: nullable index-page columns on the sending-together tables.
+        metadata = schema_shared_manifest.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if tollfree != schema_tollfree.TABLES:
+            _reject('incomplete toll-free approval table set')
+        metadata = schema_tollfree.frozen_metadata(dialect=connection.dialect.name)
+    elif tollfree:
+        _reject('toll-free approval tables exist before their migration revision')
+    if revision in {DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0027 adds no table: nullable dialed-number columns on outbound_deliveries and outbound_attempts.
+        metadata = schema_dialed.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if routing_rules != schema_routing_rules.TABLES:
+            _reject('incomplete sending rule table set')
+        metadata = schema_routing_rules.frozen_metadata(dialect=connection.dialect.name)
+    elif routing_rules:
+        _reject('sending rule tables exist before their migration revision')
+    if revision in {RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if receiving_rules != schema_receiving_rules.TABLES:
+            _reject('incomplete receiving rule table set')
+        metadata = schema_receiving_rules.frozen_metadata(dialect=connection.dialect.name)
+    elif receiving_rules:
+        _reject('receiving rule tables exist before their migration revision')
+    if revision in {DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if dense_pages != schema_dense_pages.TABLES:
+            _reject('incomplete dense pages table set')
+        metadata = schema_dense_pages.frozen_metadata(dialect=connection.dialect.name)
+    elif dense_pages:
+        _reject('dense pages tables exist before their migration revision')
+    if revision in {FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if fax_codec != schema_fax_codec.TABLES:
+            _reject('incomplete fax payload codec table set')
+        metadata = schema_fax_codec.frozen_metadata(dialect=connection.dialect.name)
+    elif fax_codec:
+        _reject('fax payload codec tables exist before their migration revision')
+    if revision in {PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0034 adds no table: nullable peer fax columns on direct_peers and direct_deliveries.
+        metadata = schema_peer_fax.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if screening != schema_screening.TABLES:
+            _reject('incomplete junk screening table set')
+        metadata = schema_screening.frozen_metadata(dialect=connection.dialect.name)
+    elif screening:
+        _reject('junk screening tables exist before their migration revision')
+    if revision in {ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if frames != schema_engine_frames.TABLES:
+            _reject('incomplete engine frame table set')
+        metadata = schema_engine_frames.frozen_metadata(dialect=connection.dialect.name)
+    elif frames:
+        _reject('engine frame tables exist before their migration revision')
+    if revision in {CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if case_ledger != schema_case_ledger.TABLES:
+            _reject('incomplete case ledger table set')
+        metadata = schema_case_ledger.frozen_metadata(dialect=connection.dialect.name)
+    elif case_ledger:
+        _reject('case ledger tables exist before their migration revision')
+    if revision in {FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if forms != schema_forms.TABLES:
+            _reject('incomplete registered form table set')
+        metadata = schema_forms.frozen_metadata(dialect=connection.dialect.name)
+    elif forms:
+        _reject('registered form tables exist before their migration revision')
+    if revision in {DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if schedule != schema_destination_schedule.TABLES:
+            _reject('incomplete recipient schedule table set')
+        metadata = schema_destination_schedule.frozen_metadata(dialect=connection.dialect.name)
+    elif schedule:
+        _reject('recipient schedule tables exist before their migration revision')
+    if revision in {INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if intake_sources != schema_intake_sources.TABLES:
+            _reject('incomplete intake connector table set')
+        metadata = schema_intake_sources.frozen_metadata(dialect=connection.dialect.name)
+    elif intake_sources:
+        _reject('intake connector tables exist before their migration revision')
+    if revision in {FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if friendly_pages != schema_friendly_pages.TABLES:
+            _reject('incomplete fax-friendly pages table set')
+        metadata = schema_friendly_pages.frozen_metadata(dialect=connection.dialect.name)
+    elif friendly_pages:
+        _reject('fax-friendly pages tables exist before their migration revision')
+    if revision in {PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if relay != schema_partner_relay.TABLES:
+            _reject('incomplete partner relay table set')
+        metadata = schema_partner_relay.frozen_metadata(dialect=connection.dialect.name)
+    elif relay:
+        _reject('partner relay tables exist before their migration revision')
+    if revision in {ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if learning != schema_engine_learning.TABLES:
+            _reject('incomplete engine learning table set')
+        metadata = schema_engine_learning.frozen_metadata(dialect=connection.dialect.name)
+    elif learning:
+        _reject('engine learning tables exist before their migration revision')
+    if revision in {DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if discovery != schema_discovery.TABLES:
+            _reject('incomplete partner discovery table set')
+        metadata = schema_discovery.frozen_metadata(dialect=connection.dialect.name)
+    elif discovery:
+        _reject('partner discovery tables exist before their migration revision')
+    if revision in {ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0043 adds no table: nullable subaddress columns on inbound_rule_options and inbound_fax_routing.
+        metadata = schema_accounts.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0032 adds no table: the Approve faxes permission rows and outbound_attempts.ended_before_data.
+        metadata = schema_rules_delivery.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if notice_repair != schema_notice_repair.TABLES:
+            _reject('incomplete notice fax and transfer table set')
+        metadata = schema_notice_repair.frozen_metadata(dialect=connection.dialect.name)
+    elif notice_repair:
+        _reject('notice fax and transfer tables exist before their migration revision')
+    if revision in {CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if certainty != schema_certainty.TABLES:
+            _reject('incomplete uncertain sent fax table set')
+        metadata = schema_certainty.frozen_metadata(dialect=connection.dialect.name)
+    elif certainty:
+        _reject('uncertain sent fax tables exist before their migration revision')
+    if revision in {SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if send_once != schema_send_once.TABLES:
+            _reject('incomplete send-once and reuse table set')
+        metadata = schema_send_once.frozen_metadata(dialect=connection.dialect.name)
+    elif send_once:
+        _reject('send-once and reuse tables exist before their migration revision')
+    if revision in {TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if trunks_sites != schema_trunks_sites.TABLES:
+            _reject('incomplete rate row table set')
+        metadata = schema_trunks_sites.frozen_metadata(dialect=connection.dialect.name)
+    elif trunks_sites:
+        _reject('rate row tables exist before their migration revision')
+    if revision in {INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if invoices != schema_invoices.TABLES:
+            _reject('incomplete invoice table set')
+        metadata = schema_invoices.frozen_metadata(dialect=connection.dialect.name)
+    elif invoices:
+        _reject('invoice tables exist before their migration revision')
+    if revision in {CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if continuation != schema_continuation.TABLES:
+            _reject('incomplete fax continuation table set')
+        metadata = schema_continuation.frozen_metadata(dialect=connection.dialect.name)
+    elif continuation:
+        _reject('fax continuation tables exist before their migration revision')
+    if revision in {SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if setup_plans != schema_setup_plans.TABLES:
+            _reject('incomplete setup plan table set')
+        metadata = schema_setup_plans.frozen_metadata(dialect=connection.dialect.name)
+    elif setup_plans:
+        _reject('setup plan tables exist before their migration revision')
+    if revision in {NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if number_advice != schema_number_advice.TABLES:
+            _reject('incomplete number advice table set')
+        metadata = schema_number_advice.frozen_metadata(dialect=connection.dialect.name)
+    elif number_advice:
+        _reject('number advice tables exist before their migration revision')
+    if revision in {DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if digital != schema_digital_routes.TABLES:
+            _reject('incomplete digital route table set')
+        metadata = schema_digital_routes.frozen_metadata(dialect=connection.dialect.name)
+    elif digital:
+        _reject('digital route tables exist before their migration revision')
+    if revision in {ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0054 adds no table: nullable columns on sip_call_records, inbound_rule_options and inbound_fax_routing.
+        metadata = schema_engine_extras.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if measured_codec != schema_measured_codec.TABLES:
+            _reject('incomplete measured coding table set')
+        metadata = schema_measured_codec.frozen_metadata(dialect=connection.dialect.name)
+    elif measured_codec:
+        _reject('measured coding tables exist before their migration revision')
+    if revision in {SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        # 0058 adds no table: the nullable fax_friendly_pages.method.
+        metadata = schema_shading_method.frozen_metadata(dialect=connection.dialect.name)
+    if revision in {ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if routing_learning != schema_routing_learning.TABLES:
+            _reject('incomplete polling table set')
+        metadata = schema_routing_learning.frozen_metadata(dialect=connection.dialect.name)
+    elif routing_learning:
+        _reject('polling tables exist before their migration revision')
+    if revision in {EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if expected != schema_expected_faxes.TABLES:
+            _reject('incomplete expected fax table set')
+        metadata = schema_expected_faxes.frozen_metadata(dialect=connection.dialect.name)
+    elif expected:
+        _reject('expected fax tables exist before their migration revision')
+    if revision in {FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if fact_advice != schema_fact_advice.TABLES:
+            _reject('incomplete fact advice table set')
+        metadata = schema_fact_advice.frozen_metadata(dialect=connection.dialect.name)
+    elif fact_advice:
+        _reject('fact advice tables exist before their migration revision')
+    if revision in {ENCODER_TUNING, POLLED_TRANSMIT, HEAD}:
+        if encoder_tuning != schema_encoder_tuning.TABLES:
+            _reject('incomplete encoder tuning table set')
+        metadata = schema_encoder_tuning.frozen_metadata(dialect=connection.dialect.name)
+    elif encoder_tuning:
+        _reject('encoder tuning tables exist before their migration revision')
+    if revision in {POLLED_TRANSMIT, HEAD}:
+        if polled_transmit != schema_polled_transmit.TABLES:
+            _reject('incomplete polled transmission table set')
+        metadata = schema_polled_transmit.frozen_metadata(dialect=connection.dialect.name)
+    elif polled_transmit:
+        _reject('polled transmission tables exist before their migration revision')
+    if revision == HEAD:
+        if analysis != schema_analysis.TABLES:
+            _reject('incomplete analysis table set')
+        metadata = schema_analysis.frozen_metadata(dialect=connection.dialect.name)
+    elif analysis:
+        _reject('analysis tables exist before their migration revision')
+    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, SIP, INBOUND, WORK, CHARGES, RECORDS, BATCHING, INBOUND_SOURCES, CASE_PACKETS, FAX_ENGINE, TERMINAL, RETIRED, LOCAL_DELIVERY, CAPACITY, HISTORY, NEGOTIATION, SHARED_MANIFEST, TOLLFREE, DIALED, ROUTING_RULES, RECEIVING_RULES, DENSE_PAGES, FAX_CODEC, PEER_FAX, SCREENING, ENGINE_FRAMES, CASE_LEDGER, FORMS, DESTINATION_SCHEDULE, INTAKE_SOURCES, FRIENDLY_PAGES, PARTNER_RELAY, ENGINE_LEARNING, DISCOVERY, ACCOUNTS, RULES_DELIVERY, NOTICE_REPAIR, CERTAINTY, SEND_ONCE, TRUNKS_SITES, INVOICES, CONTINUATION, SETUP_PLANS, NUMBER_ADVICE, DIGITAL_ROUTES, ENGINE_EXTRAS, MEASURED_CODEC, SHADING_METHOD, ROUTING_LEARNING, EXPECTED_FAXES, FACT_ADVICE, ENCODER_TUNING, POLLED_TRANSMIT, HEAD}
     for name in sorted(present | extensions | outbound | access | authentication | capabilities | delivery | sip
-                       | inbound | work | charges | records | batching | case_packets | fax_engine | history):
+                       | inbound | work | charges | records | batching | case_packets | fax_engine | history
+                       | tollfree | routing_rules | receiving_rules | dense_pages | fax_codec | screening | frames
+                       | case_ledger | forms | schedule | intake_sources | friendly_pages | relay | learning
+                       | discovery | notice_repair | certainty | send_once | trunks_sites | invoices | continuation
+                       | setup_plans | number_advice | digital | measured_codec | routing_learning | expected | fact_advice | encoder_tuning | polled_transmit | analysis):
         _validate_columns(connection, inspector, name, metadata.tables[name], complete=complete)
         if name == "fax_jobs" and present == CORE_TABLES and "backend" not in {column["name"] for column in inspector.get_columns(name)}:
             _reject("six-table historical schema is missing provider columns")
@@ -553,7 +885,7 @@ def validate_schema(connection, *, require_version=False):
         _validate_indexes(connection, inspector, name, metadata.tables[name], complete=complete)
     # Index names share a schema namespace with unrelated tables. Detect conflicts
     # before any DDL so auxiliary objects can never be replaced or repurposed.
-    planned_metadata = schema_negotiation.frozen_metadata(dialect=connection.dialect.name)
+    planned_metadata = schema_analysis.frozen_metadata(dialect=connection.dialect.name)
     planned = {index.name: name for name, table in planned_metadata.tables.items() for index in table.indexes}
     planned.update({planned_metadata.tables[name].primary_key.name: name for name in STRICT_TABLES})
     planned.update({f"uq_{name}_identity": name for name in UNIQUE_IDENTITIES})

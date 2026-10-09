@@ -112,11 +112,31 @@ def _record_engine(request, job_id, attempt_id, payload, row):
         return
     hylafax_records.safely(records.record_result, direction='outbound', call_key=attempt_id, details=details,
                            job_id=job_id, number=(row or {}).get('called'))
+    # The far end's SSL Fax address, kept as a hint for finding partners; no network here (direct/discovery.py).
+    from .direct.discovery import record_engine_hint
+    hylafax_records.safely(record_engine_hint, engine, attempt_id=attempt_id, job_id=job_id,
+                           number=(row or {}).get('called'), payload=payload)
     # What the call negotiated, from the call's session log (measurement only).
-    from .fax_negotiation import engine_values
+    from .fax_negotiation import engine_values, page_capability
     hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',
                            values=engine_values(payload.get('negotiation_b64')), job_id=job_id,
                            number=(row or {}).get('called'))
+    # The other machine's answer to each page, for sending only the rest of a broken fax (routing/continuation.py).
+    from .routing.continuation import record_engine_report
+    hylafax_records.safely(record_engine_report, engine, job_id=job_id, attempt_id=attempt_id,
+                           negotiation=payload.get('negotiation_b64'))
+    # What the other machine said it accepts (its DIS): dense pages pack and trim from it.
+    capability = page_capability(payload.get('negotiation_b64'))
+    if capability:
+        hylafax_records.safely(records.record_page_capability, call_key=attempt_id, values=capability,
+                               job_id=job_id, number=(row or {}).get('called'))
+    # What lossless tuning did on the call (pages/tuning.py): a tuned page the machine refused makes the number's
+    # later calls plain for that coding.
+    from .fax_negotiation import _report
+    from .pages import tuning
+    hylafax_records.safely(tuning.record_call, engine, call_key=attempt_id, job_id=job_id,
+                           number=(row or {}).get('called'), negotiation=_report(payload.get('negotiation_b64')),
+                           success=payload.get('why') == 'done', sslfax=details['sslfax'])
 
 
 async def _settled_call(request, attempt_id, row):
@@ -204,6 +224,62 @@ async def put_fax_limits(number: str, payload: FaxLimits, request: Request,
     return result
 
 
+# Recipients, Details: smaller pages (lossless tuning, pages/tuning.py) for one number ------------------
+
+class CodingTuning(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # None: as set for all faxes; False: off for this number.
+    tune: Optional[StrictBool] = None
+    # True: the smallest page format for this number too, after its warning.
+    tune_jbig: StrictBool = False
+
+
+def _values_for(request):
+    return request.scope['faxbot.configuration'].active.values
+
+
+@router.get('/routing/destinations/{number}/coding-tuning',
+            dependencies=[Depends(require_permission('settings:read'))])
+async def get_coding_tuning(number: str, request: Request):
+    """Your smaller-pages choice for one number, what is in force for its calls and why."""
+    import sqlalchemy as sa
+    from .pages import tuning
+    from .routing.database import DeliveryStoreError
+    target = _recipient_number(number, request)
+    try:
+        return await run_lifecycle_step(lambda: tuning.recipient_view(_values_for(request), _engine_for(request),
+                                                                      target))
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        raise HTTPException(503, detail='Smaller pages settings are unavailable. Try again.') from None
+
+
+@router.put('/routing/destinations/{number}/coding-tuning')
+async def put_coding_tuning(number: str, payload: CodingTuning, request: Request,
+                            identity=Depends(require_permission('settings:write'))):
+    """Keep your smaller-pages choice for one number; saving also clears what Faxbot learned for it."""
+    import sqlalchemy as sa
+    from .pages import tuning
+    from .routing.database import DeliveryStoreError
+    if payload.tune is True:
+        raise HTTPException(400, detail='Choose off, or leave it as set for all faxes.')
+    target = _recipient_number(number, request)
+    actor = getattr(getattr(identity, 'actor', None), 'principal_id', None) or 'settings'
+
+    def save():
+        engine = _engine_for(request)
+        tuning.save_choice(engine, target, tune=payload.tune, tune_jbig=payload.tune_jbig, actor=str(actor))
+        return tuning.recipient_view(_values_for(request), engine, target)
+    try:
+        result = await run_lifecycle_step(save)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
+        raise HTTPException(503, detail='Smaller pages settings could not be saved. Try again.') from None
+    from .audit import audit_event
+    audit_event('recipient_coding_tuning', number=target, tune=payload.tune, tune_jbig=payload.tune_jbig)
+    return result
+
+
 # What fax calls negotiated (measurement only; fax_negotiation) ------------------------------------
 
 @router.get('/admin/sip/negotiation', dependencies=[Depends(require_permission('providers:read'))])
@@ -269,8 +345,20 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
     from .inbound.http import receive_handover
     _require_engine(x_internal_secret)
     _require_receiving('/_internal/hylafax/inbound')
+    poll = await run_lifecycle_step(lambda: _poll_of(request, payload))
+    if poll is not None:
+        # A fax collected by polling: from the number Faxbot called (the engine's line had no caller).
+        payload = {**payload, 'from_number': poll['number'],
+                   'call': {**(payload.get('call') if isinstance(payload.get('call'), dict) else {}),
+                            'caller': poll['number']}}
     answer = await run_lifecycle_step(
         lambda: receive_handover(request, payload, str(hylafax_engine.received_dir(settings))))
+    if poll is not None and answer.get('id'):
+        from .routing import polling
+        call = payload['call']
+        await run_lifecycle_step(lambda: polling.link_received(
+            _engine_for(request), poll["id"], answer["id"],
+            pages=call.get('pages') if isinstance(call.get('pages'), int) else None))
     # The engine's result decides this call's record, also when Asterisk's event for it came first.
     call = payload.get('call') if isinstance(payload.get('call'), dict) else {}
     pages = call.get('pages') if isinstance(call.get('pages'), int) else None
@@ -278,10 +366,27 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
         request, str(payload.get('uniqueid') or ''), success=payload.get('faxstatus') == 'SUCCESS',
         pages=pages, station=hylafax_engine._text64(call, 'remote_station_id_b64', 40),
         reason=hylafax_engine._text64(payload, 'reason_b64', 64), did=payload.get('to_number'),
-        caller=payload.get('from_number'), inbound_fax_id=answer.get('id')))
+        caller=payload.get('from_number'), inbound_fax_id=answer.get('id'), trunk=payload.get('trunk')))
     from .sip_calls import engine_audio_check
     engine_audio_check(row)
     return answer
+
+
+def _poll_of(request, payload):
+    """{'id', 'number'} of the collection a received fax came from (the engine's ticket names it), or None."""
+    import sqlalchemy as sa
+    from .routing import polling
+    request_id = payload.get('poll') if isinstance(payload.get('poll'), str) else ''
+    if not request_id:
+        return None
+    engine = _engine_for(request)
+    try:
+        asked = polling._tables(engine)['poll_requests']
+    except polling.PollStoreError:
+        return None
+    with engine.connect() as connection:
+        row = connection.execute(sa.select(asked.c.id, asked.c.number).where(asked.c.id == request_id)).first()
+    return {'id': row[0], 'number': row[1]} if row is not None else None
 
 
 def _engine_receive(request, call_id, **fields):
@@ -294,7 +399,13 @@ def _engine_receive(request, call_id, **fields):
         records = sip_calls.SipCallRecords(engine)
         for name in ('did', 'caller'):
             fields[name] = received_number(fields.get(name))
-        row_id = records.record_engine_receive(call_id, preset=settings.sip_trunk_preset, **fields)
+        # The trunk the call came in on (a trunk after the first names itself), and that trunk's carrier.
+        from .sip_trunk import trunk_for
+        trunk = fields.get('trunk') if isinstance(fields.get('trunk'), str) else None
+        found = trunk_for(settings, trunk) if trunk else None
+        fields['trunk'] = trunk if found is not None else None
+        preset = found.values.sip_trunk_preset if found is not None else settings.sip_trunk_preset
+        row_id = records.record_engine_receive(call_id, preset=preset, **fields)
         row = records.call(row_id) if row_id else None
     except Exception:
         import logging
@@ -320,7 +431,7 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
     row = await run_lifecycle_step(lambda: _engine_receive(
         request, call_id, success=False, pages=0, station=None,
         reason=hylafax_engine._text64(payload, 'reason_b64', 64) or 'fax failed',
-        did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None))
+        did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None, trunk=payload.get('trunk')))
     from . import hylafax_records
     from .routing.background import installation_engine
     # The key is <communication id>-<time bin/sessions reported the call>: a new engine container starts its
@@ -336,6 +447,29 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
     from .sip_calls import engine_audio_check
     engine_audio_check(row)
     return {'status': 'ok', 'summary': (row or {}).get('summary')}
+
+
+@router.post('/_internal/hylafax/polled')
+async def engine_polled(request: Request, payload: dict = Body(...),
+                        x_internal_secret: Optional[str] = Header(default=None)):
+    """Another machine collected, or tried to collect, a fax Faxbot holds for it (hylafax/bin/polled): one
+    collection row on the held fax, once per report."""
+    import sqlalchemy as sa
+    from .routing import polling
+    _require_engine(x_internal_secret)
+    engine_id = payload.get('engine_id') if isinstance(payload.get('engine_id'), str) else ''
+    key = payload.get('key') if isinstance(payload.get('key'), str) else ''
+    if not re.fullmatch(r'[a-f0-9]{16}', engine_id) or not re.fullmatch(r'[0-9]{1,12}-[0-9]{1,12}', key):
+        raise HTTPException(400, detail='Unknown fax engine call')
+    engine = _engine_for(request)
+    try:
+        recorded = await run_lifecycle_step(lambda: polling.record_polled(engine, payload))
+    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+        raise HTTPException(503, detail='Fax engine results cannot be saved now; try again.') from None
+    if recorded is None:
+        raise HTTPException(404, detail='Unknown held fax')
+    outcome, sentence = recorded
+    return {'status': 'ok', 'outcome': outcome, 'sentence': sentence}
 
 
 # Engine restarts: a fax the engine took before it started again has no result coming.
@@ -410,6 +544,24 @@ def _sweep(app):
     return False
 
 
+async def _poll_result(request, request_id, payload):
+    """The engine's report on a collection: nothing waiting, refused, failed or uncertain is its result; a
+    collection that brought a fax gets its result from the hand-over that carries it."""
+    import sqlalchemy as sa
+    from .routing import polling
+    engine = _engine_for(request)
+    try:
+        known = await run_lifecycle_step(lambda: polling.is_request(engine, request_id))
+        if not known:
+            raise HTTPException(404, detail='Unknown fax engine job')
+        outcome, sentence = hylafax_engine.poll_outcome(payload)
+        if outcome != 'received':
+            await run_lifecycle_step(lambda: polling.record_result(engine, request_id, outcome, sentence))
+    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+        raise HTTPException(503, detail='Fax engine results cannot be saved now; try again.') from None
+    return {'status': 'ok'}
+
+
 @router.post('/_internal/hylafax/result')
 async def engine_result(request: Request, payload: dict = Body(...),
                         x_internal_secret: Optional[str] = Header(default=None)):
@@ -418,6 +570,9 @@ async def engine_result(request: Request, payload: dict = Body(...),
     if identity is None:
         raise HTTPException(400, detail='Unknown fax engine job')
     job_id, attempt_id = identity
+    if job_id == attempt_id:
+        # A collection by polling (routing/polling.py) carries its request as both parts of its tag.
+        return await _poll_result(request, job_id, payload)
     status, sentence, category = hylafax_engine.result_outcome(payload)
     import sqlalchemy as sa
     from .config_store import ConfigurationStoreError, UnboundProviderProfile
@@ -443,7 +598,8 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
-        if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer'):
+        if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
+                                          sip_calls.PERSON_ANSWERED):
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
@@ -454,8 +610,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # sound came back, sound came back but no fax machine answered, or the other machine answered
         # (sent its ID) and the fax did not finish.
         found = (row or {}).get('verdict')
-        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed'):
+        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed',
+                     sip_calls.PERSON_ANSWERED):
             sentence = sip_calls.verdict_sentence(found)
+        # A person or a voice line answered: the fax fails and takes no other route by itself.
+        category = sip_calls.category_for(found)
     if status == hylafax_engine.UNCERTAIN:
         # Pages that may have arrived unconfirmed, or a job removed or rejected after it dialed: the fax may
         # have arrived. It waits for a person and is never sent again by itself (no other route takes it).
@@ -475,7 +634,10 @@ async def engine_result(request: Request, payload: dict = Body(...),
     try:
         await run_lifecycle_step(lambda: store.observe(
             job_id, attempt_id=attempt_id, profile_id=profile.id, provider_sid=job_id, status=status,
-            event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category))
+            event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category,
+            # The engine fails a call plainly only when it never dialed or ended before any fax data
+            # (hylafax_engine.result_outcome); every other ending waits for a person.
+            before_data=True if status == 'failed' and category in (None, 'person_answered') else None))
     except DeliveryConflict:
         raise HTTPException(409, detail='The fax engine result does not match the fax.') from None
     except UnboundProviderProfile:

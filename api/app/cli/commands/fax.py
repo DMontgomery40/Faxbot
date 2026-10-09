@@ -36,7 +36,10 @@ EVENT_LABELS = {
     'preparation_expired': 'Preparation timed out', 'provider_observation_refused': 'Provider update ignored',
     'terminal_conflict': 'Conflicting provider update ignored', 'late_observation': 'Late provider update',
     'provider_observed': 'Provider status update', 'operator_identity_bound': 'Receipt confirmed with the provider fax ID',
-    'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route'}
+    'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route',
+    'repair_started': 'Sending only the missing pages directly to the partner',
+    'repair_completed': 'Completed directly by the partner after the call broke',
+    'repair_failed': 'The partner did not receive the missing pages'}
 RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot received list --ids.'
 
 
@@ -107,7 +110,37 @@ def _assigned_route(api, job):
         return None
     if not (cost or {}).get('routes'):
         return None
-    return ('Provider', _route_text(job, cost))
+    text = _route_text(job, cost)
+    if cost['routes'][-1] == 'direct':
+        # As Sent shows it: a fax image went directly, with no telephone call, and is never called "faxed".
+        text = _direct_text(api, job) or text
+    return ('Provider', text)
+
+
+def _direct_text(api, job):
+    """"Delivered directly as a fax image to ..." for a fax image the partner accepted, "Completed directly by ..."
+    for a broken call the partner now holds whole, or the sentence for one sent once to its intake or as a
+    reference or changes; None otherwise or unknown."""
+    try:
+        attempt = ((api.get('/admin/fax-jobs/' + segment(job['id']) + '/delivery') or {}).get('attempt') or {}).get('id')
+        records = api.get('/direct/deliveries').get('deliveries') or []
+    except (CliError, KeyError, AttributeError):
+        return None
+    # A call that broke part way and was completed directly through the partner (direct/repair.py).
+    repaired = next((item for item in records if item.get('direction') == 'outbound' and item.get('kind') == 'repair'
+                     and item.get('state') == 'accepted' and item.get('job_id') == job.get('id')), None)
+    if repaired is not None:
+        return repaired.get('status')
+    record = next((item for item in records if item.get('direction') == 'outbound' and attempt
+                   and item.get('message_id') == attempt), None)
+    if record is None or record.get('state') != 'accepted':
+        return None
+    if record.get('send_once'):
+        # Sent once to a partner's intake, or as a reference or changes to a copy the partner held.
+        return record['send_once']
+    if record.get('kind') != 'fax_image':
+        return None
+    return record.get('status')
 
 
 def send(to: str = typer.Argument(..., help='Fax number to send to, for example +15551234567.'),
@@ -127,9 +160,39 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                           'together with other faxes.'),
          by_call: bool = typer.Option(False, '--by-call',
                                       help='Place a real call through your carrier even when the number is one of '
-                                           'your own, for example to test your fax line.')):
+                                           'your own, for example to test your fax line.'),
+         mailbox: str = typer.Option(None, '--mailbox', help='Send from this mailbox, so its sending rules apply.'),
+         workflow: str = typer.Option(None, '--workflow', metavar='KEY',
+                                      help='The workflow this fax is part of, such as referrals.'),
+         label: list[str] = typer.Option(None, '--label', help='A label for this fax, such as legal (repeat it).'),
+         by: str = typer.Option(None, '--by', metavar='TIME',
+                                help="The time the fax must be sent by, such as 17:00 or '2026-10-08 17:00', in "
+                                     "your installation's time zone. Faxbot never holds the fax past it for the "
+                                     "recipient's hours or a busy hour."),
+         recipient: str = typer.Option(None, '--recipient', metavar='NAME',
+                                       help='The provider or person the fax is for. Before a first fax to a number, '
+                                            'Faxbot warns when the NPI registry lists that number for someone else; '
+                                            'it still sends.'),
+         patient_record_number: str = typer.Option(
+             None, '--patient-record-number', metavar='NUMBER',
+             help="Only for a recipient that takes documents into its health records (FHIR): the patient's medical "
+                  "record number there. Faxbot keeps it with the fax's document and never prints it."),
+         patient_record_system: str = typer.Option(
+             None, '--patient-record-system', metavar='SYSTEM',
+             help="The system that medical record number belongs to, such as urn:oid:2.16.840.1.113883.19.5. Leave "
+                  "it out to use the FHIR client's own."),
+         patient_family_name: str = typer.Option(None, '--patient-family-name', metavar='NAME',
+                                                 help="The patient's family name, for a recipient that confirms the "
+                                                      'patient.'),
+         patient_given_name: str = typer.Option(None, '--patient-given-name', metavar='NAME',
+                                                help="The patient's given name, for a recipient that confirms the "
+                                                     'patient.'),
+         patient_birth_date: str = typer.Option(None, '--patient-birth-date', metavar='DAY',
+                                                help="The patient's birth date, such as 1980-04-30, for a recipient "
+                                                     'that confirms the patient.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
+    warning = _first_send_warning(api, to, recipient)
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
     content_type = _TYPES.get(file.suffix.lower(), 'application/octet-stream')
     data = {'to': to, 'queue_only': 'true' if queue else 'false'}
@@ -139,18 +202,47 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['send_by_call'] = 'true'
     if urgent:
         data['urgent'] = 'true'
+    if mailbox:
+        data['mailbox'] = _send_mailbox(api, mailbox)
+    if workflow:
+        data['workflow'] = workflow
+    if label:
+        data['labels'] = list(label)
+    if by:
+        data['send_by'] = by
+    # The patient goes only into the request; no output repeats it.
+    for name, value in (('patient_record_number', patient_record_number),
+                        ('patient_record_system', patient_record_system),
+                        ('patient_family_name', patient_family_name), ('patient_given_name', patient_given_name),
+                        ('patient_birth_date', patient_birth_date)):
+        if value:
+            data[name] = value
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
     route = _planned_route(api, job)
 
     def human(out):
+        if warning:
+            out.line(warning)
         out.line('Fax accepted.')
         out.fields(_fax_fields(job, route))
         if waiting:
             out.line(waiting)
         out.line(f"Check on it with: faxbot status {job['id']}")
-    state.out().result(job, human)
+    state.out().result({**job, 'recipient_warning': warning} if warning else job, human)
+
+
+def _first_send_warning(api, to, recipient):
+    """The NPPES warning before a first fax to ``to``, or None. It never stops the fax: a check that can't run
+    says why and the fax goes ahead."""
+    from ..errors import CliError
+    from .number_advice import recipient_lookup
+    try:
+        result = recipient_lookup(api, to, recipient)
+    except CliError as error:
+        return f'Faxbot could not check this number against NPPES ({error}); sending anyway.'
+    return result.get('sentence') if result.get('warning') else None
 
 
 def _together_line(view):
@@ -161,8 +253,9 @@ def _together_line(view):
         until = local_time(view.get('waiting_until'))
         return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot sent send-now ID'
     if view['state'] == 'together':
-        share = (view.get('share') or {}).get('sentence')
-        return view['sentence'] + (' ' + share if share else '')
+        # How the call marked this fax (its separator page, or its line on the index page), then its share.
+        parts = [view['sentence'], view.get('layout_sentence'), (view.get('share') or {}).get('sentence')]
+        return ' '.join(part for part in parts if part)
     return None
 
 
@@ -183,13 +276,29 @@ def status(fax_id: str = typer.Argument(..., help='Fax ID shown when the fax was
 
 
 @jobs.command('list')
+def _send_mailbox(api, name):
+    """A mailbox this person may send from, by its name or id."""
+    mailboxes = ((api.get('/auth/context') or {}).get('send') or {}).get('mailboxes') or []
+    found = [item for item in mailboxes if item['id'] == name or item['label'].strip().casefold() == name.strip().casefold()]
+    if len(found) == 1:
+        return found[0]['id']
+    names = ', '.join(item['label'] for item in mailboxes)
+    raise CliError(f"You cannot send from a mailbox called '{name}'. "
+                   + (f'You may send from: {names}.' if names else 'You may not send from any mailbox.'))
+
+
 def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only faxes with this status, such as queued, '
                                                                        'SUCCESS or FAILED.'),
               provider: str = typer.Option(None, '--provider', help='Only faxes sent through this provider.'),
               limit: int = typer.Option(50, '--limit', min=1, max=100, help='How many faxes to show.'),
               offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
-              ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh.")):
+              ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh."),
+              held: bool = typer.Option(False, '--held', help='Only faxes your rules are holding: waiting for approval, '
+                                                              'for a time window or for a route the rules allow.')):
     """List sent faxes, newest first, with what each cost. Fax numbers are partly hidden."""
+    if held:
+        from .rules import held_list
+        return held_list()
     api = state.api()
     page = api.get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
                                               'limit': limit, 'offset': offset})
@@ -227,25 +336,50 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The route that carried the fax and why Faxbot chose it, as Sent details show them.
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
+    # The number the fax dialed when it was the recipient's approved toll-free number, as Sent details show it.
+    if (cost.get('dialed') or {}).get('sentence'):
+        route.append(('Dialed', cost['dialed']['sentence']))
+    # What NPPES records Faxbot had read said about the number when the fax was accepted (it still went).
+    if (cost.get('recipient_warning') or {}).get('sentence'):
+        route.append(('NPPES', cost['recipient_warning']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
     if job.get('urgent'):
         route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
+    # The send-by time, and whether the fax may miss it.
+    if (job.get('send_by') or {}).get('sentence'):
+        route.append(('Send by', job['send_by']['sentence']))
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
-    # What the phone call negotiated (speed, compression, error correction), measured only.
+    # What the phone call negotiated (speed, compression, error correction), and what Faxbot changed for this
+    # call from what it learned about the number, with why (engine learning).
     negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
+    changes = (job.get('fax_engine') or {}).get('changes') or []
+    # The coding the newest attempt asked for, measured on its pages, and what the call used.
+    coded = (job.get('coding') or {}).get('sentence')
+    # What lossless tuning sent, or that the machine refused a tuned page (pages/tuning.py).
+    smaller = (job.get('coding') or {}).get('tuning_sentence')
 
     def human(out):
-        out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
+        place = {'index_page': 'Reference on the index page',
+                 'page_headers': 'Reference at the top of its pages'}.get(together.get('layout'),
+                                                                          'Reference on its separator page')
+        out.fields(_fax_fields(job) + route + ([(place, together.get('reference'))]
                                                if together.get('state') == 'together' else [])
-                   + ([('How the call went', negotiation)] if negotiation else []))
+                   + ([('Fax coding', coded)] if coded else [])
+                   + ([('Smaller pages', smaller)] if smaller else [])
+                   + ([('How the call went', negotiation)] if negotiation else [])
+                   + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:
             out.line(line)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
         if (job.get('fax_engine') or {}).get('sentence'):
             out.line(job['fax_engine']['sentence'])
+        # The layout the newest attempt kept (long pages, or the experimental encoded pages), then blank space left
+        # out, standard resolution kept or shading lightened.
+        for sentence in (job.get('page_layout') or {}).get('sentences') or []:
+            out.line(sentence)
     state.out().result(job, human)
 
 
@@ -419,10 +553,12 @@ def _inbound_fields(item):
 
 
 def came_through(item):
-    """Where a received fax came from, as Received shows it: a provider, "Imported" or "This Faxbot"."""
+    """Where a received fax came from, as Received shows it: a provider, "Imported", "This Faxbot" or "Direct delivery"."""
     backend = item.get('backend')
     if backend == 'local':
         return 'This Faxbot'
+    if backend == 'direct':
+        return 'Direct delivery'
     return 'Imported' if backend == 'import' else (_provider(backend) or '-')
 
 
@@ -502,8 +638,15 @@ def inbound_get(inbound_id: str = typer.Argument(..., help="A received fax's ID,
     if negotiation:
         item = {**item, 'negotiation': negotiation}
     sentence = (negotiation or {}).get('sentence')
-    state.out().result(item, lambda out: out.fields(_inbound_fields(item)
-                                                    + ([('How the call went', sentence)] if sentence else [])))
+    from .codec import received_line
+    encoded = received_line(api, item.get('id') or inbound_id)  # decoded, or why it is delivered as received
+    from .notices import received_line as notice_line
+    notice = notice_line(api, item.get('id') or inbound_id)  # a notice fax: the document came directly
+
+    def human(out):
+        out.fields(_inbound_fields(item) + ([('How the call went', sentence)] if sentence else [])
+                   + ([('Encoded pages', encoded)] if encoded else []) + ([('Notice', notice)] if notice else []))
+    state.out().result(item, human)
 
 
 @inbound.command('pdf')

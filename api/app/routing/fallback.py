@@ -1,15 +1,24 @@
 """Send a definitely failed fax again on its next route, at most twice per fax.
 
 Only a final failure reported by the provider qualifies. Uncertain attempts are
-never retried here: they wait for the provider, a partner, or an operator.
+never retried here: they wait for the provider, a partner, or an operator. Nor is
+a call that broke after pages went (``partly_sent``: the built-in and SSL Fax
+engines and FreeSWITCH with pages confirmed, Sinch, Documo, HumbleFax): it waits for a person,
+who may send only its remaining pages (``routing/continuation.py``).
+
+A fax accepted under sending rules moves only to the next route its envelope
+allows (``routing.envelope``), and when a rule chose its route, only after a
+call that ended before any fax data (the delivery store checks that on the
+failed attempt). The next route keeps the envelope's dialed number and layout.
 """
 from datetime import timedelta
 
 import sqlalchemy as sa
 
 from .database import read_connection, utcnow
-from .plan import RoutePlanner
-from .routes import RouteUnavailable, route_configuration, route_ready
+from .plan import RoutePlanner, ledger_key
+from .routes import RouteUnavailable, route_ready
+from . import envelope as envelopes
 
 
 MAX_FALLBACKS = 2
@@ -35,10 +44,11 @@ class FallbackScheduler:
 
     def _usable(self, choice, revision):
         route = choice.route
-        if route.kind == 'direct' or route.bound:
+        if route.kind in ('direct', 'relay') or route.bound:
             return True
         try:
-            return route_ready(route_configuration(revision, route.provider_id), ami=self.ami)
+            from ..accounts import route_configuration
+            return route_ready(route_configuration(revision, route.key), ami=self.ami)
         except RouteUnavailable:
             return False
 
@@ -48,11 +58,34 @@ class FallbackScheduler:
         with read_connection(self.routes.engine) as connection:
             job = connection.execute(sa.select(jobs.c.to_number, jobs.c.pages).where(jobs.c.id == job_id)).one()
         planner = RoutePlanner(self.routes)
-        exclude = planner.tried_routes(job_id, attempt_id) | {failed_route}
-        plan = planner.plan(to_number=job.to_number, bound=bound.configuration.provider_id, values=revision.values,
-                            pages=job.pages, alternates=True, exclude=exclude)
+        # Every submitted attempt, the failed one included, leaves out its route for the number it called. A
+        # definite failure calling the approved alternate moves the fax to the number the sender entered.
+        tried = planner.tried(job_id)
+        dial = dict(self.delivery.dial_state(job_id))
+        if dial['alternate'] and 'dialed_number' in self.routes.attempts.c:
+            # Asked inside the failure's own transaction, the failed attempt does not read as failed yet.
+            with read_connection(self.routes.engine) as connection:
+                failed_number = connection.scalar(sa.select(self.routes.attempts.c.dialed_number).where(
+                    self.routes.attempts.c.id == attempt_id))
+            dial['refused'] = dial['refused'] or failed_number == dial['alternate']
+        try:
+            pinned = envelopes.load(self.routes.engine, job_id)
+        except envelopes.UnreadableDecision:
+            return None  # Without a readable decision there is no allowed next route.
+        key, prices = bound.configuration.provider_id, None
+        if pinned is not None:
+            from ..accounts import default_sending_key
+            from .pricing import prices_for
+            key = default_sending_key(revision.values) or key
+            prices = prices_for(self.routes, revision.values, job.to_number, job.pages, pinned=pinned, bound=key,
+                                dial=dial, job_id=job_id)
+        plan = planner.plan(to_number=job.to_number, bound=key, values=revision.values,
+                            pages=job.pages, alternates=True, dial=dial, tried=tried, pinned=pinned, prices=prices,
+                            job_id=job_id)
+        done = {(route, number or plan.destination) for route, number in tried}
         return next((choice for choice in plan.choices
-                     if choice.route.key not in exclude and self._usable(choice, revision)), None)
+                     if (ledger_key(choice.route.key), plan.number_for(choice.route.key)) not in done
+                     and self._usable(choice, revision)), None)
 
     def step(self):
         moved = 0

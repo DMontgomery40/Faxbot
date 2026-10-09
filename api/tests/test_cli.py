@@ -151,7 +151,9 @@ def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server(
     from app.cli.nouns import NOUNS
     assert NOUNS == ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
     root = typer.main.get_command(cli_app)
-    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
+    # Faxes → Forms is `faxbot forms` and Faxes → Expected is `faxbot expected`, beside received and sent.
+    assert [name for name, command in root.commands.items() if not command.hidden] == [
+        'send', 'status', 'received', 'sent', 'forms', 'expected', *NOUNS[2:]]
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     plain = _plain(result.stdout)
     assert result.exit_code == 0 and ' received ' in plain and ' system ' in plain
@@ -271,6 +273,44 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert refused.exit_code == 1 and 'already exists' in refused.stderr
     unconfirmed = cli('sent', 'confirm-receipt', sent['id'], '--provider-fax-id', 'abc123')
     assert unconfirmed.exit_code == 1 and '--confirm-original-account' in unconfirmed.stderr
+
+
+def test_sent_show_says_which_approved_number_a_fax_dialed(cli, tmp_path, monkeypatch):
+    from app.routing import provenance
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue')
+    sentence = 'Dialed 1-800-555-0100, the toll-free number Example Clinic approved on October 3, 2026.'
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: {
+        'number': '+18005550100', 'display': '1-800-555-0100', 'toll_free': True, 'recipient_name': 'Example Clinic',
+        'approved_on': 'October 3, 2026', 'withdrawn_on': None, 'sentence': sentence} if job_id == sent['id'] else None)
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Dialed ' + sentence in shown
+    monkeypatch.setattr(provenance, 'dialed_view', lambda engine, job_id: None)
+    assert 'Dialed' not in cli('sent', 'show', sent['id']).stdout
+
+
+def test_sent_show_and_costs_fax_say_which_fax_coding_went_and_why(cli, tmp_path, monkeypatch):
+    from app.pages import coding
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue')
+    view = {'requested': 'MH', 'negotiated': 'MH', 'measured': True, 'compared': 'MMR', 'pages': 1,
+            'bits': {'MH': 698656, 'MR': 848360, 'MMR': 873336}, 'receiver_known': True,
+            'sentence': 'Sent with MH: 20% shorter than MMR for these pages.',
+            'measured_sentence': coding.measured_sentence({'MH': 698656, 'MR': 848360, 'MMR': 873336})}
+    monkeypatch.setattr(coding, 'sent_view', lambda engine, job_id: view if job_id == sent['id'] else None)
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Fax coding Sent with MH: 20% shorter than MMR for these pages.' in shown
+    assert cli.json('sent', 'show', sent['id'])['coding']['requested'] == 'MH'
+    cost = ' '.join(cli('costs', 'fax', sent['id']).stdout.split())
+    assert 'Sent with MH: 20% shorter than MMR for these pages.' in cost
+    assert ('Measured on these pages at 14,400 bit/s: MH about 49 seconds, MR about 59 seconds, MMR about 1 minute '
+            '1 second.') in cost
+    assert cli.json('costs', 'fax', sent['id'])['coding']['bits']['MMR'] == 873336
+    monkeypatch.setattr(coding, 'sent_view', lambda engine, job_id: None)
+    assert 'Fax coding' not in cli('sent', 'show', sent['id']).stdout
+    assert 'Measured on these pages' not in cli('costs', 'fax', sent['id']).stdout
 
 
 def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
@@ -786,6 +826,11 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     # Money as money, the provider by name and the date in words: no bare decimals, currency codes or ids.
     shown = cli('costs', 'rate-cards').stdout
     assert '$0.07' in shown and 'Sending' in shown and 'October' in shown
+    # What calling a recipient's approved toll-free number costs on each sending route, with its source date.
+    toll_free = cli.json('costs', 'rate-cards')['toll_free']
+    assert [(item['provider_id'], item['price_text']) for item in toll_free] == [
+        ('phaxio', 'The same as its sending price.')]
+    assert 'Calls to toll-free numbers' in shown and 'Caller ID it needs' in shown
     assert 'USD' not in shown and '0.07 ' not in shown.replace('$0.07', '') and '2026-10-01' not in shown
     # Each route says how it charges and what this fax would cost, for the pages asked.
     three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
@@ -827,6 +872,30 @@ def test_routing_batching_show_set_off_and_send_now(cli, tmp_path):
     assert waiting.exit_code != 0 and 'not waiting' in waiting.stderr
 
 
+def test_recipients_set_index_page_or_page_headers_records_the_agreement_and_needs_sending_together(cli):
+    refused = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert refused.exit_code != 0
+    assert 'Turn on sending together before choosing how documents are marked.' in refused.stderr
+    assert cli('recipients', 'set', '+15551230002', '--separator-pages').exit_code == 0  # already separators
+    both_flags = cli('recipients', 'set', '+15551230002', '--index-page', '--page-headers')
+    assert both_flags.exit_code != 0 and 'Choose one of' in both_flags.stderr
+    cli.json('recipients', 'together', 'set', '+15551230002', '--recipient-agreed')
+    on = cli('recipients', 'set', '+15551230002', '--index-page')
+    assert on.exit_code == 0, on.stdout + on.stderr
+    assert 'start with one index page' in ' '.join(on.stdout.split())
+    shown = cli.json('recipients', 'together', 'show', '+15551230002')
+    assert shown['boundaries'] == 'index_page' and shown['boundaries_agreement']['boundaries_agreed'] is True
+    human = cli('recipients', 'together', 'show', '+15551230002')
+    assert 'Agreement to that recorded by' in human.stdout and "One index page listing each document's pages" in (
+        ' '.join(human.stdout.split()))
+    marks = cli.json('recipients', 'set', '+15551230002', '--page-headers')
+    assert marks['boundaries'] == 'page_headers'
+    both = cli.json('recipients', 'set', '+15551230002', '--name', 'Records desk', '--separator-pages')
+    assert both['display_name'] == 'Records desk' and both['sending_together']['boundaries'] == 'separators'
+    savings = cli('costs', 'savings')
+    assert savings.exit_code == 0 and 'Separator pages left out' in savings.stdout
+
+
 @pytest.fixture
 def telnyx_cli(monkeypatch, tmp_path):
     for client in _serve(monkeypatch, tmp_path, TELNYX_API_KEY='KEYsynthetic-cli', SIP_TRUNK_PRESET='telnyx'):
@@ -844,7 +913,8 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     assert sources == ['KEYsynthetic-cli'] and 'KEYsynthetic-cli' not in result.stdout
     assert telnyx_cli.json('costs', 'reconcile')['checked'] == 0
     costs = telnyx_cli.json('costs', 'spending')
-    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True, 'sentence':
+                                        "Telnyx publishes each call's charge; Faxbot reads it with the Telnyx API key."}
     human = telnyx_cli('costs', 'spending')
     assert 'call charges appear once' not in human.stdout
     # A Telnyx record of a call Faxbot never recorded is shown, included in Charged, and in the total.
@@ -919,6 +989,46 @@ def test_intake_connectors_items_and_test_email(cli):
     assert cli.json('numbers', 'email', 'connectors', 'list') == []
 
 
+def test_connectors_add_test_pause_resume_items_and_remove(cli, tmp_path):
+    scans, outbox = tmp_path / 'scans', tmp_path / 'outbox'
+    scans.mkdir()
+    outbox.mkdir()
+    added = cli.json('numbers', 'connectors', 'add', 'Scanner share', '--kind', 'folder', '--path', str(scans))
+    assert added['what'] == 'Brings in documents from a folder' and added['status'] == 'Not checked yet.'
+    tested = cli.json('numbers', 'connectors', 'test', 'Scanner share')
+    assert tested == {'ok': True, 'detail': f'Faxbot can read and write {scans}; it holds 0 files waiting.'}
+    sending = cli.json('numbers', 'connectors', 'add', 'Outbox', '--kind', 'folder', '--direction', 'send',
+                       '--path', str(outbox))
+    assert sending['has_sending_key'] is True
+    listed_keys = cli.json('access', 'keys', 'list')
+    keys = {key['id']: key for key in (listed_keys['items'] if isinstance(listed_keys, dict) else listed_keys)}
+    assert keys[sending['sending_key_id']]['name'] == 'Outbox'
+    # Settings rights alone cannot give a connector its own sending key.
+    _, token = restricted_key(cli, 'Settings helper', role='Administrator', permissions=('settings:read', 'settings:write'))
+    refused = cli('numbers', 'connectors', 'pause', 'Outbox', key=token)
+    assert refused.exit_code != 0 and refused.stderr.strip() == (
+        'A connector that sends faxes gets its own sending key, so this needs permission to manage keys.')
+    paused = cli.json('numbers', 'connectors', 'pause', 'Outbox')
+    assert paused['paused'] is True and paused['has_sending_key'] is False
+    assert cli('numbers', 'connectors', 'pause', 'Outbox').stdout.strip().startswith('Outbox: Paused by ')
+    resumed = cli.json('numbers', 'connectors', 'resume', 'Outbox')
+    assert resumed['has_sending_key'] is True and resumed['sending_key_id'] != sending['sending_key_id']
+    listed = ' '.join(cli('numbers', 'connectors', 'list').stdout.split())
+    assert 'Faxes files put in a folder' in listed and '0 items, 0 seen again, 0 refused' in listed
+    assert cli.json('numbers', 'connectors', 'items') == {'items': []}
+    assert '0 seen again and never handled twice; 0 refused.' in cli('numbers', 'connectors', 'items').stdout
+    missing = cli('numbers', 'connectors', 'add', 'Nowhere', '--kind', 'folder', '--path', str(tmp_path / 'absent'))
+    assert missing.exit_code != 0 and 'it does not exist inside the Faxbot container' in missing.stderr
+    no_secret = cli('numbers', 'connectors', 'add', 'Mailbox', '--kind', 'email', '--address', 'scans@example.com',
+                    '--mail-server', 'mail.example.com', '--no-ask-secret')
+    assert no_secret.exit_code != 0 and 'Enter the mailbox password or app password.' in no_secret.stderr
+    assert [box['label'] for box in cli.json('numbers', 'connectors', 'choices')['mailboxes']] == []
+    assert cli('numbers', 'connectors', 'fax', 'missing-fax').exit_code != 0
+    cli.json('numbers', 'connectors', 'remove', 'Outbox')
+    cli.json('numbers', 'connectors', 'remove', 'Scanner share')
+    assert cli.json('numbers', 'connectors', 'list') == []
+
+
 def test_only_owners_allow_direct_partners_on_private_networks(cli, tmp_path):
     from app.direct.crypto import Identity, card
     saved = cli.json('system', 'settings', 'set', 'direct_allow_private_peers=false')
@@ -941,7 +1051,12 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
     from app.direct.crypto import Identity, card
 
     class Partner:
+        told = []
+
         async def request(self, method, url, **kwargs):
+            if url == 'https://valley.example/direct/capabilities':
+                self.told.append(json.loads(kwargs['json']['statement'])['capabilities']['fax_images'])
+                return 200, {'recorded': True}
             assert url == 'https://valley.example/direct/verifications'
             return 200, {'verified': True}
 
@@ -959,6 +1074,14 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
     confirmed = cli.json('recipients', 'partners', 'confirm', '+1 555 000 7777', '1234 5678')
     assert confirmed == {'confirmed': True, 'detail': 'The partner confirmed the code.'}
     assert cli.json('recipients', 'partners', 'deliveries') == []
+    # Fax images are opt-in per partner; the partner is told with a signed statement.
+    shown = cli('recipients', 'partners', 'fax-images', 'Valley Hospital', 'on')
+    assert shown.exit_code == 0 and 'Valley Hospital now sends you faxes as the exact fax image.' in shown.stdout
+    listed = ' '.join(cli('recipients', 'partners', 'list').stdout.split())
+    assert 'Fax images' in listed and 'arrive as the exact fax image' in listed
+    assert cli.json('recipients', 'partners', 'fax-images', 'Valley Hospital', 'off')['receive_fax_images'] is False
+    assert Partner.told[-2:] == [True, False]  # Faxbot may also have told the new partner (on by default) by itself
+    assert cli('recipients', 'partners', 'fax-images', 'Valley Hospital', 'maybe').exit_code != 0
     revoked = cli.json('recipients', 'partners', 'revoke', 'Valley Hospital')
     assert revoked['state'] == 'revoked'
 
@@ -980,6 +1103,32 @@ def test_case_packet_preview_send_and_documents(cli, tmp_path):
     assert 'CASE-1' in listed and '1 sent, ' in listed and 'Last sent' in listed
 
 
+def test_providers_rules_round_trip_against_the_rules_engine(cli):
+    """Draft, check, publish, try, history, diff and restore through the real rules routes, not a fake."""
+    added = cli('providers', 'rules', 'add', 'Big faxes need approval', '--when', 'pages-over=20', '--approval')
+    assert added.exit_code == 0, (added.stdout, added.stderr)
+    assert 'When the fax has more than 20 pages, hold the fax for approval.' in ' '.join(added.stdout.split())
+    listed = ' '.join(cli('providers', 'rules', 'list').stdout.split())
+    assert 'You have changes that are not published yet.' in listed and 'Big faxes need approval' in listed
+    checked = cli('providers', 'rules', 'check')
+    assert checked.exit_code == 0, (checked.stdout, checked.stderr)
+    published = cli('providers', 'rules', 'publish', '--note', 'Approval for big faxes')
+    assert published.exit_code == 0, (published.stdout, published.stderr)
+    assert 'Version 1 is in effect for new faxes.' in published.stdout
+    tried = cli.json('providers', 'rules', 'explain', '--to', '+15550100001', '--pages', '25')
+    assert tried['outcome'] == 'held' and tried['holds'], tried
+    assert cli('providers', 'rules', 'disable', 'Big faxes need approval').exit_code == 0
+    assert cli('providers', 'rules', 'publish', '--note', 'Pause it').exit_code == 0
+    history = ' '.join(cli('providers', 'rules', 'history').stdout.split())
+    assert 'Approval for big faxes' in history and 'Pause it' in history
+    diff = cli('providers', 'rules', 'diff', '1', '2')
+    assert diff.exit_code == 0 and 'Big faxes need approval' in diff.stdout
+    restored = cli('providers', 'rules', 'restore', '1')
+    assert restored.exit_code == 0 and 'Version 1 is now your draft.' in restored.stdout
+    assert cli.json('providers', 'rules', 'list')['draft']['document']['limits'][0]['on'] is True
+    assert cli('providers', 'rules', 'discard', '--yes').exit_code == 0
+
+
 def test_costs_savings_reads_as_estimates(cli):
     result = cli.json('costs', 'savings', '--days', '7')
     assert result['days'] == 7 and result['estimate'] is True
@@ -989,6 +1138,38 @@ def test_costs_savings_reads_as_estimates(cli):
     assert 'No money saved in the last 30 days, as far as Faxbot can tell.' in human.stdout
     assert 'Sending together' in human.stdout and 'Direct delivery' in human.stdout and 'Case packets' in human.stdout
     assert result['sentence'] in ' '.join(cli('costs', 'savings', '--days', '7').stdout.split())
+
+
+def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
+    result = cli.json('costs', 'predict', '--to', '+12025550123', '--pages', '3')
+    assert result['number_class'] == 'local' and result['pages'] == 3
+    phaxio = next(route for route in result['routes'] if route['route'] == 'phaxio')
+    assert phaxio['cost'] == {'amount': '0.21', 'currency': 'USD'} and phaxio['billed_pages'] == 3
+    human = ' '.join(cli('costs', 'predict', '--to', '+12025550123', '--pages', '3').stdout.split())
+    assert '+12025550123 is a local number; 3 pages.' in human
+    assert 'Route Cost Time on the line' in human and 'Phaxio: Billed as 3 pages at $0.07 a page;' in human
+    assert result['sentence'] in human
+    assert 'Estimates before sending; the bill comes from your carrier or provider.' in human
+    toll_free = cli.json('costs', 'predict', '--to', '+18005550100')
+    assert toll_free['number_class_text'] == 'a toll-free number'
+    refused = cli('costs', 'predict', '--to', '+12025550123', '--layout', 'tall')
+    assert refused.exit_code != 0 and 'Choose a normal or dense layout.' in refused.stdout + refused.stderr
+    assert '9 in 10 calls within' in human
+
+
+@pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
+def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
+    letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')
+    result = cli.json('costs', 'predict', '--to', '+12025550123', '--file', letter)
+    assert result['pages'] == 1 and set(result['measured']) >= {'MH', 'MR', 'MMR'}
+    # This installation sends through Phaxio only, which codes the pages itself (the trunk's coding: test_routing_predict).
+    phaxio = next(route for route in result['routes'] if route['route'] == 'phaxio')
+    assert phaxio['coding'] is None and phaxio['cost'] == {'amount': '0.07', 'currency': 'USD'}
+    human = ' '.join(cli('costs', 'predict', '--to', '+12025550123', '--file', letter).stdout.split())
+    assert '+12025550123 is a local number; 1 page.' in human
+    assert result['measured_sentence'] in human and 'Phaxio: Billed as 1 page at $0.07 a page;' in human
+    missing = cli('costs', 'predict', '--to', '+12025550123', '--file', tmp_path / 'nothing.pdf')
+    assert missing.exit_code != 0
 
 
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):
@@ -1078,7 +1259,7 @@ def trunk_cli(monkeypatch, tmp_path):
 
 
 def test_trunk_restart_engine_asks_the_engine_or_says_why_there_is_nothing_to_restart(trunk_cli):
-    """`faxbot providers trunk restart-engine`, the console's Restart the fast fax service."""
+    """`faxbot providers trunk restart-engine`, the console's Restart the fax engine."""
     import json as json_module
     from app import hylafax_engine
     refused = trunk_cli('providers', 'trunk', 'restart-engine')
@@ -1179,8 +1360,8 @@ def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was
     out = ' '.join(summary.stdout.split())
     for words in ('Measured on 1 call in the last 7 days; the engine reported nothing for 1 more call.',
                   '9600 bit/s on the last page', 'Not reported by this engine', 'Calls per delivered fax',
-                  'Faxbot only measures these for now; it does not change speed, compression or error correction '
-                  'because of them.'):
+                  'Faxbot starts slower or uses a more robust compression only after its own calls to that number '
+                  'fail the same way more than once; it never turns error correction off or lowers resolution.'):
         assert words in out, words
     assert '14400' not in out  # spandsp's starting speed on a call that confirmed no page is not a measurement
     assert trunk_cli.json('providers', 'trunk', 'negotiation')['days'] == 30
@@ -1301,6 +1482,32 @@ def test_settings_reload_together_check_and_efax_status_read_as_sentences(cli):
     assert efax.exit_code == 0
     assert efax.stdout.strip() == 'Faxbot is not collecting received faxes from eFax; eFax is not set up to receive.'
     assert cli.json('providers', 'efax', 'status')['receiving'] is False
+
+
+def test_humblefax_receiving_status_and_check_read_as_sentences(cli):
+    status = cli('providers', 'humblefax', 'status')
+    assert status.exit_code == 0 and status.stdout.strip() == 'Receive faxes from HumbleFax is off.'
+    assert cli.json('providers', 'humblefax', 'status')['receiving'] is False
+    refused = cli('providers', 'humblefax', 'check')
+    assert refused.exit_code != 0 and 'Receive faxes from HumbleFax is off.' in refused.stderr
+
+
+def test_humblefax_receiving_lines_say_when_faxbot_last_checked():
+    from app.cli.commands.settings import _humblefax_lines
+    from app.cli.output import local_time
+    checked = '2026-10-07T15:41:00'
+    lines = _humblefax_lines({'receiving': True, 'receiving_provider': False, 'checked_at': checked, 'found': 2,
+                              'problem': None, 'poll_seconds': 120})
+    assert lines == ['Faxbot collects the faxes your HumbleFax numbers receive.',
+                     f'Faxbot last checked HumbleFax at {local_time(checked)} and found 2 new faxes.',
+                     'Faxbot checks HumbleFax every 2 minutes.']
+    assert _humblefax_lines({'receiving': True, 'receiving_provider': True, 'checked_at': None, 'found': None,
+                             'problem': 'HumbleFax rejected the account access key or secret key.',
+                             'poll_seconds': 60}) == [
+        'HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.',
+        'HumbleFax rejected the account access key or secret key.', 'Faxbot checks HumbleFax every minute.']
+    assert _humblefax_lines({'receiving': True, 'checked_at': None, 'poll_seconds': 30})[1:] == [
+        'Faxbot has not checked HumbleFax yet.', 'Faxbot checks HumbleFax every 30 seconds.']
 
 
 def test_costs_of_received_faxes_and_published_plans_in_use(cli):
@@ -1459,4 +1666,46 @@ def test_status_names_the_route_faxbot_assigned_and_nothing_before_it():
     assert fax._planned_route(Api(CliError('Not allowed.')), job) is None
     fields = dict(fax._fax_fields(job))
     assert 'Provider' not in fields and 'Planned route' not in fields
+
+
+def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():
+    from app.cli.commands import fax
+    from app.cli.errors import CliError
+    sentence = 'Delivered directly as a fax image to County Clinic; no telephone call.'
+
+    class Api:
+        def __init__(self, kind, refuse=False):
+            self.kind, self.refuse = kind, refuse
+
+        def get(self, path, params=None):
+            if path.endswith('/cost'):
+                return {'routes': ['direct']}
+            if self.refuse:
+                raise CliError('Not allowed.')
+            if path.endswith('/delivery'):
+                return {'attempt': {'id': 'att-1'}}
+            return {'deliveries': [{'direction': 'outbound', 'message_id': 'att-1', 'state': 'accepted',
+                                    'kind': self.kind, 'status': sentence}]}
+    job = {'id': 'f' * 32, 'backend': 'phaxio'}
+    assert fax._assigned_route(Api('fax_image'), job) == ('Provider', sentence)
+    assert fax._assigned_route(Api('original'), job) == ('Provider', 'Direct delivery')
+    assert fax._assigned_route(Api('fax_image', refuse=True), job) == ('Provider', 'Direct delivery')
+    assert fax.came_through({'backend': 'direct'}) == 'Direct delivery'
+
+
+def test_sent_says_a_broken_call_was_completed_directly_by_the_partner():
+    from app.cli.commands import fax
+    sentence = ('Completed directly by County Clinic after the call broke: only the missing pages went, directly, '
+                'and County Clinic now holds the whole fax.')
+
+    class Api:
+        def get(self, path, params=None):
+            if path.endswith('/cost'):
+                return {'routes': ['sip', 'direct']}
+            if path.endswith('/delivery'):
+                return {'attempt': {'id': 'repair-attempt'}}
+            return {'deliveries': [{'direction': 'outbound', 'message_id': 'pages-message', 'job_id': 'f' * 32,
+                                    'state': 'accepted', 'kind': 'repair', 'status': sentence}]}
+    assert fax._assigned_route(Api(), {'id': 'f' * 32, 'backend': 'sip'}) == ('Provider', sentence)
+    assert fax.EVENT_LABELS['repair_completed'] == 'Completed directly by the partner after the call broke'
 

@@ -22,8 +22,13 @@ export default function ReceivingAddresses({ client }: { client: AdminAPIClient 
   if (callbacks.length === 0) return null;
 
   const copy = async (callback: Callback) => {
-    try { await navigator.clipboard.writeText(callback.url); } catch { /* the address stays on screen to copy by hand */ }
-    setCopied('Address copied.');
+    setCopied('');
+    try {
+      await navigator.clipboard.writeText(callback.url);
+      setCopied('Address copied.');
+    } catch {
+      setCopied('Could not copy the address. Select it above and copy it manually.');
+    }
   };
 
   return (

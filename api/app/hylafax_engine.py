@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import ftplib
+import io
 import json
 import logging
 import os
@@ -63,29 +64,29 @@ SUBMIT_TIMEOUT_SECONDS = 15.0
 LAST_TIME = '000010'
 
 # One sentence for each reason a fax uses Faxbot's built-in engine (an ordinary
-# fax); "fast fax service" is the engine in operator words (Jev 0.64-0.74).
+# fax); "fax engine" is the engine in operator words (Jev 0.64-0.74).
 SENDING_TOGETHER = 'Faxes sent together in one call are sent as ordinary faxes.'
-NOT_RUNNING = "Faxbot's fast fax service is not running, so this fax was sent as an ordinary fax."
-NOT_SET_UP = "Faxbot's fast fax service starts when you select Apply and connect."
-LINES_NOT_READY = "Faxbot's fast fax service is still starting, so this fax was sent as an ordinary fax."
-ASTERISK_NOT_CURRENT = ("Faxbot's fast fax service is waiting for the phone connection to restart, "
+NOT_RUNNING = "Faxbot's fax engine is not running, so this fax was sent as an ordinary fax."
+NOT_SET_UP = "Faxbot's fax engine starts when you select Apply and connect."
+LINES_NOT_READY = "Faxbot's fax engine is still starting, so this fax was sent as an ordinary fax."
+ASTERISK_NOT_CURRENT = ("Faxbot's fax engine is waiting for the phone connection to restart, "
                         'so this fax was sent as an ordinary fax.')
 # Engine states for the trunk page and System diagnostics.
-STOPPED = "Faxbot's fast fax service is not running, so faxes are sent the ordinary way."
-STARTING = "Faxbot's fast fax service is still starting."
-WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connection to restart."
+STOPPED = "Faxbot's fax engine is not running, so faxes are sent the ordinary way."
+STARTING = "Faxbot's fax engine is still starting."
+WAITING_FOR_RESTART = "Faxbot's fax engine is waiting for the phone connection to restart."
 # What the engine does after a T.38 call that heard no fax machine; each screen adds its own way to
 # try T.38 again (the console's button, the command line's command).
 ENGINE_AUDIO = 'It sends audio fax because its last T.38 call heard no fax machine.'
 # The engine's own sentence for a line that stopped taking calls (hylafax/entrypoint.sh LINE_DOWN).
-LINE_DOWN = "Faxbot's fast fax service lost a fax line and is starting again."
-# A restart Faxbot asked for (a fax call no line answered, or Restart the fast fax service).
-RESTART_REQUESTED = "Faxbot's fast fax service is starting again."
-RESTART_ASKED = 'The fast fax service will restart when no fax is being sent or received.'
+LINE_DOWN = "Faxbot's fax engine lost a fax line and is starting again."
+# A restart Faxbot asked for (a fax call no line answered, or Restart the fax engine).
+RESTART_REQUESTED = "Faxbot's fax engine is starting again."
+RESTART_ASKED = 'The fax engine will restart when no fax is being sent or received.'
 # Nothing reads a restart request while the engine is not running; it starts afresh on its own.
-RESTART_NOT_RUNNING = ("Faxbot's fast fax service is not running, so there is nothing to restart; faxes are "
+RESTART_NOT_RUNNING = ("Faxbot's fax engine is not running, so there is nothing to restart; faxes are "
                        'sent the ordinary way until it starts.')
-# How long the trunk page says that a fax call went unanswered by the fast fax service.
+# How long the trunk page says that a fax call went unanswered by the fax engine.
 MISSED_SHOWN = 24 * 3600
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
@@ -144,7 +145,7 @@ def restart_request(values):
 
 
 def missed_sentence(values, status, now=None):
-    """One sentence for a fax call the fast fax service did not answer in the last day, or None."""
+    """One sentence for a fax call the fax engine did not answer in the last day, or None."""
     import time
     from datetime import datetime, timezone
     from .people_time import clock
@@ -155,8 +156,8 @@ def missed_sentence(values, status, now=None):
     when = clock(datetime.fromtimestamp(request['at'], timezone.utc).replace(tzinfo=None),
                  getattr(values, 'time_zone', '') or None)
     restarted = status.started is not None and status.started >= request['asked']
-    return (f"Faxbot's fast fax service did not answer the {when} fax call, so that fax was received the "
-            f"ordinary way; Faxbot {'restarted' if restarted else 'is restarting'} the fast fax service.")
+    return (f"Faxbot's fax engine did not answer the {when} fax call, so that fax was received the "
+            f"ordinary way; Faxbot {'restarted' if restarted else 'is restarting'} the fax engine.")
 
 
 def out_dir(values) -> Path:
@@ -437,14 +438,14 @@ class EngineStatus:
 
 # The sentences hylafax/entrypoint.sh writes; anything else from the engine's folder is not shown.
 STATUS_SENTENCES = frozenset({
-    "Faxbot's fast fax service could not start; select Apply and connect to try again.",
-    "Faxbot's fast fax service starts when you select Apply and connect.",
-    "Faxbot's fast fax service could not start; it will try again by itself.",
-    "Faxbot's fast fax service cannot reach the phone connection.",
-    "Faxbot's fast fax service is waiting for the phone connection to restart.",
-    "Faxbot's fast fax service is reconnecting to the phone connection.",
-    "Faxbot's fast fax service stopped and is starting again.",
-    "Faxbot's fast fax service is loading new settings.",
+    "Faxbot's fax engine could not start; select Apply and connect to try again.",
+    "Faxbot's fax engine starts when you select Apply and connect.",
+    "Faxbot's fax engine could not start; it will try again by itself.",
+    "Faxbot's fax engine cannot reach the phone connection.",
+    "Faxbot's fax engine is waiting for the phone connection to restart.",
+    "Faxbot's fax engine is reconnecting to the phone connection.",
+    "Faxbot's fax engine stopped and is starting again.",
+    "Faxbot's fax engine is loading new settings.",
     LINE_DOWN,
     RESTART_REQUESTED,
     *(f'Fax line {number} did not start.' for number in range(1, MAX_LINES + 1)),
@@ -485,6 +486,37 @@ class CallSettings:
     ecm: bool
     fine: bool
     compression: str
+    # What Faxbot learned about this number changed for this call, with one sentence each (engine_learning).
+    learned: object = field(default=None, compare=False, repr=False)
+    # The coding measured smallest for this attempt's pages ('MH', 'MR', 'MMR' or 'JBIG', pages/coding.py), when
+    # Faxbot chose one; ``compression`` then holds it as the setting's value.
+    coding: str | None = None
+    # Lossless tuning for the SSL Fax engine's job (pages/tuning.py ``CallTuning.comment``), carried in the job's
+    # comments for hylafax/bin/jobcontrol; None leaves the engine's defaults.
+    tuning: str | None = None
+
+
+# The coding Faxbot measured, as the setting's value (``sip_trunk.COMPRESSIONS``) and as HylaFAX's job data format.
+_CODING_SETTING = {'MH': 'mh', 'MR': 'mr', 'MMR': 'mmr', 'JBIG': 'jbig'}
+
+
+def with_coding(settings: CallSettings, coding) -> CallSettings:
+    """``settings`` with the coding measured smallest for the pages (pages/coding.py) as the most compact one the
+    call may use: the SSL Fax engine's job data format (``JPARM DATAFORMAT``) and the built-in engine's
+    FAXBOT_COMPRESSION. Both engines still fall back to what the receiving machine takes (HylaFAX+ 7.0.11
+    faxd/FaxSend.c++ ``fxmin``; spandsp 0.0.6 t30.c). MMR and JBIG need error correction, and error correction
+    is never turned on or off for a coding: on a call without it they become MR (logged; the chooser reads the
+    same error correction, so this only happens when the settings changed in between). None keeps ``settings``."""
+    if coding is None:
+        return settings
+    if coding not in _CODING_SETTING:
+        raise ValueError('Unsupported fax coding')
+    if coding in ('MMR', 'JBIG') and not settings.ecm:
+        logging.getLogger(__name__).warning('%s needs error correction, which is off for this call; it asks for MR.',
+                                            coding)
+        coding = 'MR'
+    from dataclasses import replace
+    return replace(settings, compression=_CODING_SETTING[coding], coding=coding)
 
 
 # The engine's own T.38 choice ----------------------------------------------------------------------------
@@ -554,7 +586,7 @@ def engine_t38_failed(at=None) -> bool:
     try:
         changed = note_t38_failure(settings, at)
     except OSError:
-        logging.getLogger(__name__).warning('Faxbot could not record audio fax for its fast fax service.')
+        logging.getLogger(__name__).warning('Faxbot could not record audio fax for its fax engine.')
         return False
     if not changed:
         return False
@@ -593,17 +625,35 @@ def try_t38(values) -> bool:
         return True
 
 
-def call_settings(values, number, *, recipient=None, engine=False) -> CallSettings:
+def call_settings(values, number, *, recipient=None, engine=False, learn=True) -> CallSettings:
     """The settings for one call to ``number``; ``recipient`` is that number's own limits, when set.
-    ``engine``: the SSL Fax engine places the call, which may be on audio fax on its own."""
+    ``engine``: the SSL Fax engine places the call, which may be on audio fax on its own.
+
+    What Faxbot learned from its own calls to the number (``engine_learning.decide``) may make this call
+    audio fax, start it slower, use a more robust compression or turn error correction on; never off, and
+    never past the number's own limits. ``learned`` says what changed and why. Never raises.
+    """
     from . import sip_trunk
     options = sip_trunk.fax_options(values)
     t38 = try_t38(values) and not (engine and engine_t38_off(values))
     override = (recipient or {}).get('max_rate')
     ecm = (recipient or {}).get('ecm')
-    return CallSettings(t38=t38, max_rate=options.rate_for(t38=t38, override=override),
-                        ecm=options.ecm if ecm is None else bool(ecm), fine=options.fine,
-                        compression=options.compression)
+    base_ecm = options.ecm if ecm is None else bool(ecm)
+    learned = None
+    if learn:
+        from . import engine_learning
+        learned = engine_learning.decide(
+            values, number, engine='hylafax' if engine else 'builtin', t38=t38,
+            rate_for=lambda on: options.rate_for(t38=on, override=override), base_ecm=base_ecm,
+            base_compression=options.compression, recipient=recipient)
+        t38 = t38 and not learned.audio
+    max_rate = options.rate_for(t38=t38, override=override)
+    if learned is not None and learned.max_rate and learned.max_rate < max_rate:
+        max_rate = learned.max_rate
+    return CallSettings(t38=t38, max_rate=max_rate, ecm=base_ecm or bool(learned is not None and learned.ecm_on),
+                        fine=options.fine,
+                        compression=(learned.compression if learned is not None and learned.compression
+                                     else options.compression), learned=learned)
 
 
 def recipient_limits(engine, number):
@@ -663,10 +713,10 @@ async def engine_summary(values, ami=None) -> tuple[str, str]:
         # What happened, in one sentence; the audio note stays (each screen adds its way to try T.38 again).
         return 'running', missed + (' ' + ENGINE_AUDIO if engine_audio(values) else '')
     lines = f'{ready} fax line' + ('' if ready == 1 else 's')
-    sentence = (f"Faxbot's fast fax service is running on {lines} and sends pages faster "
+    sentence = (f"Faxbot's fax engine is running on {lines} and sends pages faster "
                 'when the other fax machine allows it.')
     if not getattr(values, 'sip_sslfax_enabled', True):
-        sentence = f"Faxbot's fast fax service is running on {lines}; faster pages are turned off."
+        sentence = f"Faxbot's fax engine is running on {lines}; faster pages are turned off."
     elif status.listener:
         sentence += ' Fax machines that call Faxbot can also send their pages faster.'
     if engine_audio(values):
@@ -684,21 +734,27 @@ def new_tag() -> str:
     return str(secrets.randbelow(9 * 10 ** 15) + 10 ** 15)
 
 
-def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True) -> str:
+def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, endpoints=('trunk-endpoint',)) -> str:
     """The plan Asterisk reads for a tag, from the same Originate fields the built-in engine uses.
 
-    The sixth field says whether this call may use T.38 (1) or stays audio (0).
+    The sixth field says whether this call may use T.38 (1) or stays audio (0). A call over a trunk other than
+    the first adds a seventh: the trunk's endpoint, which must be one of ``endpoints``, the trunks Faxbot
+    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``).
     """
     from .ami import FAX_PREFERENCE_VARIABLE
     channel = fields['Channel']
-    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@trunk-endpoint', channel)
+    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
+                         channel)
     caller = fields.get('CallerID', '')
     if match is None or not re.fullmatch(r'\+?[0-9]{0,20}', caller or ''):
+        raise ValueError('Unsupported engine call plan')
+    if match.group(2) not in tuple(endpoints or ()):
         raise ValueError('Unsupported engine call plan')
     if not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported engine call plan')
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
-    return f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    plan = f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    return plan if match.group(2) == 'trunk-endpoint' else f'{plan}/{match.group(2)}'
 
 
 # Job submission (hfaxd's client protocol, FTP-like) -------------------------------------------------
@@ -757,12 +813,20 @@ _DATA_FORMATS = {'mh': 'G31D', 'mr': 'G32D', 'mmr': 'G4', 'jbig': 'JBIG'}
 
 
 def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str, header: str = '',
-               settings: CallSettings | None = None,
+               settings: CallSettings | None = None, station: str | None = None, subaddress: str | None = None,
                host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
-    """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking)."""
+    """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking).
+
+    ``station``: this job's station ID (TSI), the reply number (routing/reply_number.py); the engine sends
+    it, and prints it in the header line, because its modems run with UseJobTSI. None keeps the engine's own.
+    ``subaddress``: digits sent as the T.33 subaddress (SUB, hfaxd's ``JPARM SUBADDR``); HylaFAX sends it only
+    when the far end's DIS says it takes one, so it is requested, not promised.
+    """
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported fax engine job')
     password = engine_secrets(values)['submit_password']
+    from .conversion import fax_image_resolution
+    standard = fax_image_resolution(tiff_path) == 'standard'
     session = ftplib.FTP()
     prepared = PreparedJob(session, tag=tag)
     try:
@@ -788,19 +852,30 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             'JPARM MAXTRIES 1',
             f'JPARM LASTTIME {LAST_TIME}',
             f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
-            f'JPARM VRES {196 if settings is None or settings.fine else 98}',
+            # A document that is really standard resolution goes at standard (pages/resolution.py).
+            f'JPARM VRES {98 if standard or (settings is not None and not settings.fine) else 196}',
             f'JPARM USESSLFAX {"NO" if not getattr(values, "sip_sslfax_enabled", True) else "YES"}',
             f'JPARM DOCUMENT {document}',
         ]
-        # The header line on each page, as the built-in engine prints it; none when Faxbot's is empty.
-        # HylaFAX reads % as a format code, so a literal % is doubled.
+        # The header line on each page, as the built-in engine prints it (47 CFR 68.318(d): date and time,
+        # who sends, the reply number, the page); none when Faxbot's header is empty.
+        if station is not None:
+            station = re.sub(r'[^+0-9 ]', '', station)[:20]
+            commands.append(f'JPARM TSI {_quote(station)}')
+        if subaddress:
+            commands.append(f'JPARM SUBADDR {_quote(re.sub(r"[^0-9]", "", subaddress)[:20])}')
         if settings is not None:
             # This call's highest speed (code 0-5), error correction and best compression.
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
                          f'JPARM USEECM {"YES" if settings.ecm else "NO"}',
                          f'JPARM DATAFORMAT {_quote(_DATA_FORMATS[settings.compression])}']
+            if settings.tuning and re.fullmatch(r'faxbot-tuning mr=(?:on|off) jbig=(?:sslfax|always|never)',
+                                                settings.tuning):
+                # Lossless tuning for this call (pages/tuning.py); HylaFAX+ uses comments only for cover pages.
+                commands.append(f'JPARM COMMENTS {_quote(settings.tuning)}')
         if header:
-            commands += [f'JPARM TAGLINE {_quote(header[:100].replace("%", "%%"))}', 'JPARM USETAGLINE YES']
+            from .routing.reply_number import tagline
+            commands += [f'JPARM TAGLINE {_quote(tagline(header))}', 'JPARM USETAGLINE YES']
         else:
             commands.append('JPARM USETAGLINE NO')
         for command in commands:
@@ -815,23 +890,44 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
         raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
 
 
-async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
-    """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
-    from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
+async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None, subaddress=None,
+                      trunk=None) -> PreparedJob:
+    """Store the call plan in Asterisk and create the engine job; nothing is dialed yet.
+
+    ``trunk`` is the trunk account the fax goes over (None: the first trunk); its endpoint goes in the plan.
+    """
+    from . import sip_trunk
+    from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for, trunk_values
+    from .ami import reply_choice, sender_identity
+    endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
+    full_values = values
+    values, _ = trunk_values(values, trunk)
     settings = settings or call_settings(values, dest, engine=True)
-    fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id)
+    # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
+    choice = await asyncio.to_thread(reply_choice, values)
+    # A fax relayed for a partner carries that partner's header text and station ID (direct.relay).
+    identity = await asyncio.to_thread(sender_identity, job_id)
+    header, station = identity if identity is not None else (values.fax_header or '', choice.number)
+    fields = originate_fields_for(full_values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice,
+                                  trunk=trunk)
     tag = new_tag()
-    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)
+    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38, endpoints=endpoints)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
-                                      tiff_path=tiff_path, header=values.fax_header or '', settings=settings)
+                                      tiff_path=tiff_path, header=header, settings=settings,
+                                      station=station, **({'subaddress': subaddress} if subaddress else {}))
     except BaseException:
         await forget_plan(ami, tag)
         raise
     job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
                       'Preset': values.sip_trunk_preset or '',
                       'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    if trunk and trunk != sip_trunk.PRIMARY:
+        job.submission['Trunk'] = trunk
+    learned = getattr(settings, 'learned', None)
+    if learned is not None and learned.changed():
+        job.submission['Learned'] = learned.payload()  # what this call used and why (fax_call_choices)
     return job
 
 
@@ -981,3 +1077,243 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
                                values=engine_values(details.get('negotiation_b64')), job_id=inbound_fax_id,
                                number=number)
     return recorded
+
+
+# Collecting a fax by polling (T.30 polling, routing/polling.py) -----------------------------------------------
+# HylaFAX+ 7.0.11 can poll: a job with a poll item and no document (hfaxd ``JPARM POLL "selector" ["password"]``,
+# hfaxd/Parser.c++ line 1255; faxsend's ``sendPoll`` and Class 1 ``pollBegin``, faxd/FaxSend.c++ and
+# faxd/Class1Poll.c++) dials, sends DTC (with SEP and PWD when the other machine's DIS lists them) and receives
+# the document the other fax server holds for it. What it receives goes to ``PollRcvdCmd`` (hylafax/bin/pollrcvd)
+# with the job's notify address first, which carries the request (``poll-<request>@faxbot.invalid``).
+#
+# Stock HylaFAX+ cannot be polled: faxd never sets DIS bit 9 and ends a call that brings DTC (Class1Recv.c++,
+# E107). Faxbot's engine can (hylafax/patches/0002-polled-transmit.patch): a document held in its pollq for a
+# caller's number (``hold_document`` below, a TIFF with a ".poll" sidecar) is offered in the DIS that caller gets
+# and sent when it answers DTC; faxgetty then runs ``PolledCmd`` (hylafax/bin/polled), whose report reaches
+# ``/_internal/hylafax/polled`` (``polled_outcome``).
+
+POLL_ADDRESS = 'poll-{}@faxbot.invalid'
+HELD_PREFIX = 'pollq/faxhold-'
+
+
+def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', password: str = '',
+                    settings: CallSettings | None = None, host=None, port=SUBMIT_PORT,
+                    timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
+    """Create (not submit) one job that dials ``tag`` once and polls for a document (blocking). The job's tag
+    is ``<request>.<request>``, so its result reaches ``routing.polling``; ``selective`` is the T.30 selective
+    polling address (SEP digits) and ``password`` the polling password (PWD), each sent only when the other
+    machine's DIS lists it. The password goes to the engine's job only, never into a log."""
+    if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(request_id):
+        raise ValueError('Unsupported fax engine job')
+    selective = re.sub(r'[^0-9#*]', '', selective or '')[:20]
+    poll_password = re.sub(r'[^0-9#*]', '', password or '')[:20]
+    password = engine_secrets(values)['submit_password']
+    session = ftplib.FTP()
+    prepared = PreparedJob(session, tag=tag)
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        reply = session.sendcmd('JNEW')
+        job = _JOB.search(reply)
+        if job is None:
+            raise EngineError('The fax engine did not create a job.')
+        prepared.engine_job = job.group(1)
+        commands = [
+            f'JPARM DIALSTRING {_quote(tag)}',
+            f'JPARM JOBINFO {_quote(request_id + "." + request_id)}',
+            f'JPARM FROMUSER {_quote("faxbot")}',
+            f'JPARM NOTIFYADDR {_quote(POLL_ADDRESS.format(request_id))}',
+            'JPARM MAXDIALS 1',
+            'JPARM MAXTRIES 1',
+            f'JPARM LASTTIME {LAST_TIME}',
+            f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
+            f'JPARM POLL {_quote(selective)}' + (f' {_quote(poll_password)}' if poll_password else ''),
+        ]
+        if settings is not None:
+            commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
+                         f'JPARM USEECM {"YES" if settings.ecm else "NO"}']
+        for command in commands:
+            reply = session.sendcmd(command)
+            if not reply.startswith('2'):
+                raise EngineError('The fax engine refused the job settings.')
+        return prepared
+    except (*ftplib.all_errors, EngineError, ValueError) as error:
+        prepared.discard()
+        if isinstance(error, (EngineError, ValueError)):
+            raise
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+
+
+async def prepare_poll(values, ami, *, request_id, number, selective='', password='', trunk=None) -> PreparedJob:
+    """Store the call plan in Asterisk and create the engine's poll job; nothing is dialed yet. The plan's job
+    and attempt are the poll request, so the trunk call is recorded like any other (``sip_call_records``)."""
+    from . import sip_trunk
+    from .ami import originate_fields_for, trunk_values
+    endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
+    full_values = values
+    values, _ = trunk_values(values, trunk)
+    settings = call_settings(values, number, engine=True)
+    # No document goes out; the path only satisfies the shared field checks.
+    fields = originate_fields_for(full_values, request_id, number, 'poll', attempt_id=request_id, trunk=trunk)
+    tag = new_tag()
+    plan = call_plan(fields, request_id, request_id, t38=settings.t38, endpoints=endpoints)
+    await ami.db_put(ENGINE_FAMILY, tag, plan)
+    try:
+        job = await asyncio.to_thread(create_poll_job, values, tag=tag, request_id=request_id,
+                                      selective=selective, password=password, settings=settings)
+    except BaseException:
+        await forget_plan(ami, tag)
+        raise
+    job.submission = {'JobID': request_id, 'AttemptID': request_id, 'Called': number,
+                      'CallerID': fields['CallerID'], 'Preset': values.sip_trunk_preset or '', 'FaxPreference': 'no'}
+    return job
+
+
+def poll_outcome(payload: dict) -> tuple[str, str]:
+    """(outcome, one sentence) for an engine poll job's result: 'received', 'nothing_waiting', 'refused',
+    'failed' (nothing came: never dialed, or the call ended before any fax data) or 'uncertain' (a document
+    may have started arriving; it is never collected again by itself). HylaFAX+ 7.0.11 defines poll_no_document,
+    poll_rejected and poll_failed (faxd/Job.h) but never sets them: a machine whose DIS does not say it holds a
+    document ends the job "done" with the notice "remote has no document to poll" (faxd/FaxSend.c++ sendPoll),
+    so the notice is read first."""
+    why = payload.get('why') if isinstance(payload.get('why'), str) else ''
+    dials = max(_int(payload.get('dials')), _int(payload.get('total_dials')))
+    status_text = _text64(payload, 'status_b64')
+    if why == 'poll_no_document' or re.search(r'no document to poll', status_text, re.IGNORECASE):
+        return 'nothing_waiting', 'The other fax server had no fax waiting for you.'
+    if why == 'done':
+        return 'received', 'The other fax server sent the fax it held for you.'
+    if why == 'poll_rejected' or re.search(r'cannot be polled|E220|E266|DIS/DTC', status_text, re.IGNORECASE):
+        return 'refused', 'The other fax machine does not let faxes be collected from it.'
+    if re.search(r'got DCN|E103', status_text, re.IGNORECASE) and not _int(payload.get('pages')):
+        # The other server offered a document and then hung up on Faxbot's request for it before any page (DCN
+        # right after DTC, T.30 5.3.6.1.4): it holds nothing for the selective polling address or password given.
+        return 'refused', ('The other fax server refused to send: check the selective polling address and the '
+                           'polling password you set for it.')
+    if dials == 0:
+        return 'failed', failure_sentence(status_text, 0)
+    if not exchanged(payload) and ended_before_fax_data(payload, status_text):
+        return 'failed', failure_sentence(status_text, 0)
+    return 'uncertain', ('The call ended while the fax was being collected; check with the other site before '
+                         'collecting it again.')
+
+
+# Holding a fax for another machine to collect (polled transmission) ------------------------------------------
+# The engine's pollq holds each document as pollq/faxhold-<hold>.tif with a sidecar pollq/faxhold-<hold>.poll
+# (key=value lines read by faxd/polldoc.h in the patch: number, selective, password, job, tsi, tagline, held).
+# hfaxd lets Faxbot's login store and delete files there whose names start with "fax" (hfaxd/FileSystem.c++,
+# the /pollq/ row; RecvQueue.c++ isVisibleRecvQFile), and faxgetty (as uucp) reads them through the group.
+
+HELD_SUFFIX = '.tif'
+HELD_SIDECAR = '.poll'
+
+
+def held_sidecar(*, number: str, selective: str = '', password: str = '', job: str, tsi: str = '', tagline: str = '',
+                 held_at: int | None = None) -> str:
+    """The sidecar text for one held document. Values are limited to what the engine reads: digits for the
+    number, T.30 characters for the selective address and password, one line each. ``held_at`` is the hold's
+    time in seconds since the epoch (the oldest held document goes first); None means now."""
+    import time
+    digits = re.sub(r'[^0-9]', '', number or '')
+    if not digits or not _HEX32.fullmatch(job or ''):
+        raise ValueError('Unsupported held document')
+    values = {
+        'number': digits,
+        'selective': re.sub(r'[^0-9#*]', '', selective or '')[:20],
+        'password': re.sub(r'[^0-9#*]', '', password or '')[:20],
+        'job': job,
+        'tsi': re.sub(r'[^+0-9 ]', '', tsi or '')[:20],
+        'tagline': re.sub(r'[\r\n]', ' ', tagline or '')[:200],
+        'held': int(time.time()) if held_at is None else int(held_at),
+    }
+    return ''.join(f'{key}={value}\n' for key, value in values.items())
+
+
+def hold_document(values, *, hold_id: str, tiff_path: str, sidecar: str, host=None, port=SUBMIT_PORT,
+                  timeout=SUBMIT_TIMEOUT_SECONDS) -> str:
+    """Put a fax image and its sidecar into the engine's pollq, so the number the sidecar names can collect it
+    (blocking). Returns the engine's name for the document. The image goes first and the sidecar last, so a
+    caller that polls in between finds no half-held document."""
+    if not _HEX32.fullmatch(hold_id or ''):
+        raise ValueError('Unsupported held document')
+    password = engine_secrets(values)['submit_password']
+    document = f'{HELD_PREFIX}{hold_id}{HELD_SUFFIX}'
+    session = ftplib.FTP()
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        session.voidcmd('TYPE I')
+        with open(tiff_path, 'rb') as handle:
+            reply = session.storbinary(f'STOR {document}', handle)
+        if not reply.startswith('226'):
+            raise EngineError('The fax engine did not keep the held fax.')
+        reply = session.storbinary(f'STOR {HELD_PREFIX}{hold_id}{HELD_SIDECAR}', io.BytesIO(sidecar.encode()))
+        if not reply.startswith('226'):
+            try:
+                session.delete(document)
+            except ftplib.all_errors:
+                pass
+            raise EngineError('The fax engine did not keep the held fax.')
+        return document
+    except (*ftplib.all_errors, EngineError, ValueError) as error:
+        if isinstance(error, (EngineError, ValueError)):
+            raise
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+    finally:
+        try:
+            session.quit()
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+
+def withdraw_held(values, *, hold_id: str, host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> bool:
+    """Take a held document out of the engine's pollq (blocking): the sidecar first, so no caller gets it while
+    the image goes. True when it was there; False when the engine already had no such document."""
+    if not _HEX32.fullmatch(hold_id or ''):
+        raise ValueError('Unsupported held document')
+    password = engine_secrets(values)['submit_password']
+    session = ftplib.FTP()
+    found = False
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        for name in (f'{HELD_PREFIX}{hold_id}{HELD_SIDECAR}', f'{HELD_PREFIX}{hold_id}{HELD_SUFFIX}'):
+            try:
+                session.delete(name)
+                found = True
+            except ftplib.error_perm:
+                continue
+        return found
+    except ftplib.all_errors:
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+    finally:
+        try:
+            session.quit()
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+
+def polled_outcome(payload: dict) -> tuple[str, str]:
+    """(outcome, one sentence) for the engine's report on a call in which another machine collected, or tried to
+    collect, a held fax (hylafax/bin/polled): 'sent', 'refused' (no document for its selective polling address
+    or password) or 'failed' (the call ended before every page was confirmed; the fax stays held)."""
+    outcome = payload.get('outcome') if isinstance(payload.get('outcome'), str) else ''
+    reason = _text64(payload, 'reason_b64', 200)
+    caller = payload.get('caller') if isinstance(payload.get('caller'), str) and payload.get('caller') else None
+    who = caller or 'the other fax machine'
+    if outcome == 'sent':
+        pages = _int(payload.get('pages'))
+        return 'sent', f'Collected by {who}' + (f' ({pages} page{"s" if pages != 1 else ""}).' if pages else '.')
+    if outcome == 'refused':
+        if 'password' in reason.lower():
+            return 'refused', f'{who} asked for it with the wrong polling password; the fax stays held.'
+        if 'selective' in reason.lower():
+            return 'refused', f'{who} asked for it with a different selective polling address; the fax stays held.'
+        return 'refused', f'{who} asked for a fax Faxbot does not hold for it; the fax stays held.'
+    return 'failed', f'{who} tried to collect it and the call ended before every page was confirmed; the fax stays held.'

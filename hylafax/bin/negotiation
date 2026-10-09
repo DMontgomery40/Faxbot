@@ -12,6 +12,37 @@
 # error correction are reported only when the call agreed them (a training
 # succeeded, or the pages went over SSL Fax); null means not reported. Only
 # protocol lines are read: never the other machine's ID or numbers.
+#
+# Sent calls also report what the other machine said it accepts (its DIS, as
+# "REMOTE max ..." and "REMOTE best vres ..."): page_length ("A4", "B4" or
+# "unlimited"), page_width ("A4", "B4" or "A3") and fine (1 when its best
+# vertical resolution is finer than 3.85 line/mm, else 0), remote_ecm (1 when
+# it offers error correction, else 0) and scan_ms (its minimum time per scan
+# line at 7.7 line/mm, from "REMOTE best ... ms/scanline"), remote_codings (the
+# codings it takes, from "REMOTE format support: MH, MR, MMR, JBIG", HylaFAX+
+# 7.0.11 faxd/FaxSend.c++ line 749: "MH,MR,MMR,JBIG" in that order); and the time
+# between pages: boundary_ms, the average milliseconds from each "SEND end
+# page" to the next "SEND begin page" (the end-of-page exchange and the next
+# training), over boundaries pages, never for SSL Fax. Faxbot packs pages for
+# this machine from them (api/app/pages); null means not reported.
+#
+# Sent calls also report the other machine's answer to each page ("SEND recv
+# MCF", "RTP" or "RTN"): clean_pages, how many pages it answered MCF (received
+# fine) before any other answer, and flagged_page, the page the first other
+# answer was about (RTP: kept with damaged lines; RTN: not received well), or
+# null. Without error correction Faxbot counts only clean_pages as confirmed
+# when it offers to send the rest of a broken fax (api/app/routing/
+# continuation.py), because the engine's own page count can include a page the
+# other machine answered RTN. Both are left out when the log has no page answer.
+# Lossless tuning (hylafax/patches/0003): only when the log has "LOSSLESS TUNING" lines, one per page faxd coded
+# in JBIG or MR, the call also reports tuning_jbig_pages and tuning_mr_pages (pages coded), tuning_jbig_tuned (JBIG
+# pages sent with settings other than options 0, MX 0) and tuning_mr_tuned (MR pages whose schedule was smaller
+# than the fixed one), tuning_jbig_bytes/tuning_jbig_plain and tuning_mr_bytes/tuning_mr_plain (bytes sent, and
+# what plain coding would have sent), tuning_jbig_settings ("8/32,72/8": options/MX of each tuned JBIG page),
+# tuning_digests (the SHA-256 of each page's coded raster, in order), tuning_refused (tuned pages the receiving
+# machine answered with RTN, or that error correction could not get through) and tuning_unconfirmed (1 when the
+# last tuned page was never confirmed). Faxbot uses plain settings for that number afterwards when a tuned page was
+# refused (api/app/pages/tuning.py).
 set -u
 
 log=${1:-}
@@ -51,12 +82,114 @@ function one(kind) {
   return distinct[kind] > 1 ? "\"mixed\"" : "\"" only[kind] "\""
 }
 function number(value) { return value ? value : "null" }
+function quoted(value) { return value != "" ? "\"" value "\"" : "null" }
+function width_of(text) {
+  if (text == "A4 page width (215 mm)") return "A4"
+  if (text == "B4 page width (255 mm)") return "B4"
+  if (text == "A3 page width (303 mm)") return "A3"
+  return ""
+}
+function length_of(text) {
+  if (text == "A4 page length (297 mm)") return "A4"
+  if (text == "B4 page length (364 mm)") return "B4"
+  if (text ~ /^unlimited page length/) return "unlimited"
+  return ""
+}
+function answered() {
+  if (answers) printf ",\"clean_pages\":%d,\"flagged_page\":%s", clean, (flagged ? flagged : "null")
+}
+function capability() {
+  printf ",\"page_length\":%s,\"page_width\":%s,\"fine\":%s", quoted(page_length), quoted(page_width), (fine == "" ? "null" : fine)
+  # Error correction and the scan line time are known only when the DIS was logged (its page length).
+  printf ",\"remote_ecm\":%s,\"scan_ms\":%s", (page_length == "" ? "null" : (remote_ecm ? 1 : 0)), (page_length == "" || scan == "" ? "null" : scan)
+  printf ",\"remote_codings\":%s", quoted(codings)
+  if (boundaries && !sslfax) printf ",\"boundary_ms\":%d,\"boundaries\":%d}", (boundary_total * 1000 / boundaries + 0.5), boundaries
+  else printf ",\"boundary_ms\":null,\"boundaries\":null}"
+}
 function seconds(clock,   part) {
   split(clock, part, ":")
   return part[1] * 3600 + part[2] * 60 + part[3]
 }
+function number_after(text, pattern, skip,   found) {
+  if (!match(text, pattern)) return 0
+  found = substr(text, RSTART + skip, RLENGTH - skip)
+  sub(/[^0-9].*$/, "", found)
+  return found + 0
+}
+function tuning() {
+  if (!tuned_lines) return
+  printf ",\"tuning_jbig_pages\":%d,\"tuning_jbig_tuned\":%d,\"tuning_jbig_bytes\":%d,\"tuning_jbig_plain\":%d", jbig_pages, jbig_tuned, jbig_bytes, jbig_plain
+  printf ",\"tuning_jbig_settings\":%s", quoted(jbig_settings)
+  printf ",\"tuning_mr_pages\":%d,\"tuning_mr_tuned\":%d,\"tuning_mr_bytes\":%d,\"tuning_mr_plain\":%d", mr_pages, mr_tuned, mr_bytes, mr_plain
+  printf ",\"tuning_digests\":%s,\"tuning_refused\":%d,\"tuning_unconfirmed\":%d", quoted(digests), refused, (pending_tuned ? 1 : 0)
+}
 {
   text = message($0)
+  if (text ~ /^LOSSLESS TUNING /) {
+    tuned_lines++
+    page_tuned = 0
+    if (text ~ /^LOSSLESS TUNING JBIG /) {
+      jbig_pages++
+      options = number_after(text, "options [0-9]+", 8)
+      mx = number_after(text, "MX [0-9]+", 3)
+      if (match(text, /, [0-9]+ bytes/)) bytes = substr(text, RSTART + 2, RLENGTH - 8) + 0
+      jbig_bytes += bytes
+      plain = (text ~ /\(plain [0-9]+ bytes\)/) ? number_after(text, "[(]plain [0-9]+", 7) : bytes
+      jbig_plain += plain
+      if (options || mx) {
+        jbig_tuned++
+        page_tuned = 1
+        jbig_settings = jbig_settings (jbig_settings == "" ? "" : ",") options "/" mx
+      }
+    } else if (text ~ /^LOSSLESS TUNING MR /) {
+      mr_pages++
+      bytes = 0
+      if (match(text, /one-dimensional, [0-9]+ bytes/)) bytes = substr(text, RSTART + 17, RLENGTH - 23) + 0
+      plain = number_after(text, "fixed schedule [0-9]+", 15)
+      mr_bytes += bytes
+      mr_plain += plain
+      if (bytes < plain) { mr_tuned++; page_tuned = 1 }
+    }
+    if (match(text, /sha256 [0-9a-f]+$/)) digests = digests (digests == "" ? "" : ",") substr(text, RSTART + 7)
+    if (page_tuned) pending_tuned = 1
+  }
+  else if (text ~ /^SEND recv MCF/) pending_tuned = 0
+  else if (text ~ /^SEND recv RTN/ && pending_tuned) { refused++; pending_tuned = 0 }
+  else if (text ~ /Failure to transmit clean ECM image data/ && pending_tuned) { refused++; pending_tuned = 0 }
+  if (text ~ /^REMOTE max .*page width/) page_width = width_of(substr(text, 12))
+  else if (text ~ /^REMOTE max .*page length/) page_length = length_of(substr(text, 12))
+  else if (text ~ /^REMOTE best vres /) fine = (substr(text, 18) ~ /^(3\.85 line\/mm|200 x 100 dpi)$/) ? 0 : 1
+  else if (text ~ /^REMOTE supports .*ECM$/ && text !~ /no ECM$/) remote_ecm = 1
+  else if (text ~ /^REMOTE format support: /) {
+    # Only the four codings Faxbot sends, in a fixed order; anything else in the line is left out.
+    listed = substr(text, 24)
+    codings = "MH"
+    if (listed ~ /(^|, )MR(,|$)/) codings = codings ",MR"
+    if (listed ~ /(^|, )MMR(,|$)/) codings = codings ",MMR"
+    if (listed ~ /(^|, )JBIG(,|$)/) codings = codings ",JBIG"
+  }
+  else if (text ~ /^REMOTE best [0-9]+ ms.*\/scanline$/) {
+    # "20 ms, 10 ms/scanline": the time at 3.85 line/mm, then at 7.7 line/mm; the last one is for fine pages.
+    if (match(text, /[0-9]+ ms\/scanline$/)) scan = substr(text, RSTART, RLENGTH) + 0
+  }
+  else if (text ~ /^SEND end page$/) ended = seconds($3)
+  else if (text ~ /^SEND begin page$/) {
+    if (ended != "") {
+      now = seconds($3)
+      if (now < ended) now += 86400
+      boundary_total += now - ended
+      boundaries++
+    }
+    ended = ""
+  }
+  # Sent: how the other machine answered each page; after the first answer that is not MCF, nothing more counts.
+  if (text ~ /^SEND recv (MCF|RTP|RTN|PIP|PIN)( |$)/) {
+    answers++
+    if (!flagged) {
+      if (text ~ /^SEND recv MCF/) clean++
+      else flagged = clean + 1
+    }
+  }
   if (text ~ /^SESSION BEGIN/) begin = seconds($3)
   else if (text ~ /^SESSION END/) end = seconds($3)
   else if (text ~ /^(SEND|RECV) training at /) {
@@ -98,12 +231,18 @@ END {
   if (begin != "" && end != "" && end >= begin) session = sprintf("%d", end - begin + 0.5)
   if (!agreed && !sslfax) {
     printf "{\"rate_first\":null,\"rate_lowest\":null,\"rate_last\":null,\"trainings\":%s,", number(trainings)
-    printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s}", session
+    printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s", session
+    answered()
+    tuning()
+    capability()
     exit
   }
   ecm = "null"
   if (offers) ecm = corrected == 0 ? "\"off\"" : corrected >= offers ? "\"on\"" : "\"mixed\""
   if (sslfax) { first = 0; lowest = 0; last = 0 }
   printf "{\"rate_first\":%s,\"rate_lowest\":%s,\"rate_last\":%s,\"trainings\":%s,", number(first), number(lowest), number(last), number(trainings)
-  printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s}", one("compression"), one("resolution"), ecm, session
+  printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s", one("compression"), one("resolution"), ecm, session
+  answered()
+  tuning()
+  capability()
 }' "$log" | base64 | tr -d '\n'

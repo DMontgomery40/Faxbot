@@ -1,4 +1,4 @@
-"""The fast fax service (SSL Fax engine) on the command line: one fax machine's own limits."""
+"""The fax engine (SSL Fax engine) on the command line: one fax machine's own limits."""
 import typer
 
 from .. import state
@@ -40,4 +40,45 @@ def recipient_limits(number: str = typer.Argument(..., help='Fax number.'),
 
     def human(out):
         out.fields([('Fax number', view['number']), *limits_fields(view)])
+    state.out().result(view, human)
+
+
+def tuning_fields(view):
+    """The rows 'faxbot recipients tuning' prints for one number."""
+    smaller = ('off for this number' if view.get('tune') is False
+               else 'on' if view.get('setting') else 'off in your fax settings')
+    rows = [('Smaller pages', smaller), ('Smallest page format', view.get('jbig_sentence') or '')]
+    if view.get('reasons'):
+        rows.append(('Why', ' '.join(view['reasons'])))
+    return rows
+
+
+def recipient_tuning(number: str = typer.Argument(..., help='Fax number.'),
+                     smaller: str = typer.Option(None, '--smaller', metavar='DEFAULT|OFF',
+                                                 help='Smaller pages for this number: default (as set for all '
+                                                      'faxes) or off.'),
+                     smallest: str = typer.Option(None, '--smallest-format', metavar='ON|OFF',
+                                                  help='Also send this number the smallest page format. Turn this '
+                                                       'on only if its fax machine prints faxes from Faxbot '
+                                                       'correctly.')):
+    """Show or set whether Faxbot makes pages smaller for one number, without changing what it prints."""
+    api = state.api()
+    path = '/routing/destinations/' + segment(number) + '/coding-tuning'
+    view = api.get(path)
+    if smaller is not None or smallest is not None:
+        body = {'tune': view.get('tune'), 'tune_jbig': bool(view.get('tune_jbig'))}
+        if smaller is not None:
+            if smaller not in ('default', 'off'):
+                raise CliError('Choose default or off for smaller pages.')
+            body['tune'] = None if smaller == 'default' else False
+        if smallest is not None:
+            if smallest not in ('on', 'off'):
+                raise CliError('Choose on or off for the smallest page format.')
+            body['tune_jbig'] = smallest == 'on'
+        view = api.put(path, json=body)
+
+    def human(out):
+        out.fields([('Fax number', view['number']), *tuning_fields(view)])
+        if view.get('tune_jbig'):
+            out.line(view.get('warning') or '')
     state.out().result(view, human)

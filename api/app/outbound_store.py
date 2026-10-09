@@ -24,14 +24,18 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
-    'sent_together', 'batch_split', 'capacity_wait'})
+    'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
-    'partly_sent', 'pages_unconfirmed', 'local_not_delivered'})
+    'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing', 'person_answered'})
 # A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
-# failed or waiting for a person, never resent automatically (no other route takes it).
-NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed'})
+# failed or waiting for a person, never resent automatically (no other route takes it). ``notice_missing``: a
+# Direct message the recipient's HISP never confirmed within the wait (digital/direct_message.py).
+# ``person_answered``: a person or a voice line answered (sip_calls.PERSON_ANSWERED): calling again on another
+# route would ring that person again, so the fax fails and a person checks the number (research N9).
+NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
@@ -41,8 +45,10 @@ def _valid_actor(actor):
 
 def _failure_sentences():
     """Provider adapters' own failure sentences, the only reasons history shows."""
+    from .documo_service import FAILURE_SENTENCES as DOCUMO_SENTENCES
     from .humblefax_service import FAILURE_SENTENCES
-    return FAILURE_SENTENCES
+    from .sinch_service import FAILURE_SENTENCES as SINCH_SENTENCES
+    return FAILURE_SENTENCES | SINCH_SENTENCES | DOCUMO_SENTENCES
 
 
 def _safe_event_details(encoded):
@@ -117,11 +123,46 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
         details=json.dumps(details or {}, sort_keys=True, separators=(',', ':')), created_at=now))
 
 
-def record_acceptance(connection, tables, job_id, *, held, now):
-    """Part of the same transaction as FaxJob and its captured profile binding."""
+def _routes_reach(values):
+    """callable(number) -> whether any route of this revision may call ``number`` (``routing.dialing``)."""
+    if values is None:
+        return None
+    from .routing.dialing import reaches
+    routes = [values.effective_outbound, *values.outbound_route_providers]
+    return lambda number: any(reaches(route, number, values) for route in routes if route)
+
+
+def accepted_dial(connection, to_number, values):
+    """``(alternate or None, approval id or None)`` kept with a fax at acceptance (``routing.alternates``).
+
+    Reads the recipient's approval through the acceptance transaction; any
+    failure leaves the fax calling the number the sender entered.
+    """
+    from .routing import alternates
+    try:
+        approval = alternates.current(to_number, connection=connection)
+        number, approval_id = alternates.dialed_number_for(
+            {'to_number': to_number}, facts=alternates.DialFacts(approval, _routes_reach(values)))
+    except Exception:
+        return None, None
+    return (number, approval_id) if number != to_number else (None, None)
+
+
+def record_acceptance(connection, tables, job_id, *, held, now, to_number=None, values=None):
+    """Part of the same transaction as FaxJob and its captured profile binding.
+
+    With ``to_number``, the number the fax dials is decided here, once: an
+    approved alternate in force now stays with this fax (migration 0027).
+    """
     mode, state = ('held', 'held') if held else ('normal', 'ready')
-    connection.execute(tables['outbound_deliveries'].insert().values(id=job_id,
-        dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now))
+    deliveries = tables['outbound_deliveries']
+    dial = {}
+    if to_number and 'alternate_number' in deliveries.c:
+        alternate, approval_id = accepted_dial(connection, to_number, values)
+        if alternate is not None:
+            dial = {'alternate_number': alternate, 'alternate_approval': approval_id}
+    connection.execute(deliveries.insert().values(id=job_id,
+        dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now, **dial))
     _event(connection, tables['outbound_events'], job_id, 'accepted', now,
         details={'dispatch_mode': mode})
     if state == 'ready':
@@ -196,9 +237,27 @@ class OutboundStore:
             raise DeliveryConflict('Delivery account is unavailable.')
         profile = self.configuration._profile(connection, self.configuration._cipher(), head['installation_id'],
                                               attempt['profile_id'])
-        if profile.configuration.provider_id not in revision.values.outbound_route_providers:
+        if (profile.configuration.provider_id not in revision.values.outbound_route_providers
+                and not self._chosen_account(connection, revision, attempt, profile)):
             raise DeliveryConflict('Delivery route is not permitted by the accepted configuration.')
         return revision, profile
+
+    @staticmethod
+    def _chosen_account(connection, revision, attempt, profile):
+        """Whether the sending rules gave this attempt an account of the profile's provider in its revision.
+
+        ``assign_route`` records the account (``delivery_rule_choices``) in the same transaction that binds the
+        attempt, so results for a rule-chosen account (one not in ``FAX_OUTBOUND_ROUTES``) authenticate.
+        """
+        from .routing import envelope as envelopes
+        if attempt is None or not attempt.get('id'):
+            return False
+        choice = envelopes.choice_on(connection, attempt['id'])
+        if choice is None:
+            return False
+        from .accounts import account_named
+        account = account_named(revision.values, choice['account_key'])
+        return (account is not None and account.sends and account.provider == profile.configuration.provider_id)
 
     def attempt_context(self, job_id, attempt_id):
         """Authenticate the account that issued one attempt; for result authentication."""
@@ -399,12 +458,71 @@ class OutboundStore:
         return revision, profile
 
     def load_dispatch(self, claim):
-        """Read private submission inputs only while the preparation lease is held."""
+        """Read private submission inputs only while the preparation lease is held.
+
+        The job also carries the number choice kept at acceptance (``dial``) and
+        the number this attempt already recorded (``dialed_number``), if any.
+        """
         with self.configuration._locked() as connection:
             revision, profile = self._preparing(connection, claim, datetime.utcnow())
             job = connection.execute(sa.select(self.configuration.jobs).where(
                 self.configuration.jobs.c.id == claim.job_id)).mappings().one()
-            return revision, profile, dict(job)
+            job = dict(job)
+            if 'dialed_number' in self.attempts.c:
+                job['dial'] = self._dial_state_on(connection, claim.job_id)
+                job['dialed_number'] = connection.scalar(sa.select(self.attempts.c.dialed_number).where(
+                    self.attempts.c.id == claim.attempt_id))
+            return revision, profile, job
+
+    def _dial_state_on(self, connection, job_id):
+        """The alternate kept at acceptance, and whether an earlier attempt to it definitely failed."""
+        row = connection.execute(sa.select(self.deliveries.c.alternate_number, self.deliveries.c.alternate_approval)
+                                 .where(self.deliveries.c.id == job_id)).first()
+        alternate, approval = (row.alternate_number, row.alternate_approval) if row is not None else (None, None)
+        refused = False
+        if alternate:
+            # A definite failure only: the provider said the call failed. Uncertain attempts are never sent again,
+            # and pages that may have arrived (partly sent, unconfirmed) carry a category and never count.
+            refused = connection.execute(sa.select(self.attempts.c.id).where(
+                self.attempts.c.job_id == job_id, self.attempts.c.dialed_number == alternate,
+                self.attempts.c.submitted_at.is_not(None), self.attempts.c.phase == 'failed',
+                self.attempts.c.error_category.is_(None)).limit(1)).first() is not None
+        return {'alternate': alternate, 'approval': approval, 'refused': refused}
+
+    def dial_state(self, job_id):
+        """``{'alternate', 'approval', 'refused'}`` for a fax; ``alternate`` is None when it calls its own number."""
+        if 'dialed_number' not in self.attempts.c:
+            return {'alternate': None, 'approval': None, 'refused': False}
+        with self.configuration.engine.connect() as connection:
+            return self._dial_state_on(connection, job_id)
+
+    def record_dialed(self, claim, number, approval_id=None, *, now=None):
+        """Record the number this attempt dials (every fax in a shared call), before its durable submission marker.
+
+        Allowed only while this worker holds the preparation lease; once the
+        attempt is submitted its number can never change. Returns False when
+        there is nothing to record against (an older database).
+        """
+        if 'dialed_number' not in self.attempts.c:
+            return False
+        if not isinstance(number, str) or not number or len(number) > 32:
+            raise ValueError('Invalid dialed number.')
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if (not self._owns(row, member) or row['state'] != 'preparing'
+                        or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
+                    raise DeliveryConflict('Delivery preparation lease is no longer current.')
+                # ``approval_id`` may map each fax of a shared call to the approval it kept at acceptance.
+                approval = approval_id.get(member.job_id) if isinstance(approval_id, dict) else approval_id
+                updated = connection.execute(self.attempts.update().where(
+                    self.attempts.c.id == member.attempt_id, self.attempts.c.job_id == member.job_id,
+                    self.attempts.c.phase == 'preparing', self.attempts.c.submitted_at.is_(None)).values(
+                        dialed_number=number, dialed_approval=approval))
+                if updated.rowcount != 1:
+                    raise DeliveryConflict('Delivery preparation lease is no longer current.')
+            return True
 
     def grant_pdf(self, claim, *, url, token, expires_at):
         """Persist the captured provider's media capability before submission."""
@@ -485,8 +603,13 @@ class OutboundStore:
         """
         if not isinstance(owner, str) or not owner or len(owner) > 40 or not 1 <= lease_seconds <= 300:
             raise ValueError('Invalid delivery worker claim.')
-        # Idle: no fax is ready (alone or waiting for others), so no lock and no configuration read.
-        if not self._any(sa.select(self.deliveries.c.id).where(self.deliveries.c.state == 'ready')):
+        # Idle: no fax is ready (alone or waiting for others), so no lock and no configuration read. A fax that
+        # sending rules hold is not ready to go, so an installation with only held faxes stays idle too.
+        ready = sa.select(self.deliveries.c.id).where(self.deliveries.c.state == 'ready')
+        gate = self._hold_gate(datetime.utcnow() if now is None else now)
+        if gate is not None:
+            ready = ready.where(self.deliveries.c.id.not_in(gate))
+        if not self._any(ready):
             return None
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
@@ -499,8 +622,12 @@ class OutboundStore:
             if together is not None:
                 return together
             from .batching.store import waiting_ids
-            # A fax waiting to go with others is claimed only with its group.
+            # A fax waiting to go with others is claimed only with its group; a fax its sending rules hold
+            # (approval, a time window not yet open, or no allowed route) is not claimed at all.
             waiting = waiting_ids(self._batching(connection))
+            gate = self._hold_gate(now, connection)
+            if gate is not None:
+                waiting = sa.union_all(waiting, gate)
             if capacity is not None:
                 row = capacity.next_ready(connection, values, now, waiting=waiting, exclude=exclude)
             else:
@@ -514,6 +641,25 @@ class OutboundStore:
             if row is None:
                 return None
             return self._claim_row_on(connection, row, owner, now, lease_seconds)
+
+    def _hold_gate(self, now, connection=None):
+        """Faxes held by sending rules (``routing.holds.blocking``), or None before the holds table exists."""
+        tables = getattr(self, '_rule_tables', None)
+        if tables is None:
+            from .routing import envelope as envelopes
+            try:
+                if connection is not None:
+                    tables = envelopes.tables(connection)
+                else:
+                    with self.configuration.engine.connect() as own:
+                        tables = envelopes.tables(own)
+            except sa.exc.SQLAlchemyError:
+                tables = None
+            if tables is None:
+                return None
+            self._rule_tables = tables
+        from .routing.holds import blocking
+        return blocking(tables, now)
 
     def _claim_row_on(self, connection, row, owner, now, lease_seconds):
         binding = connection.execute(sa.select(self.configuration.job_bindings).where(
@@ -542,7 +688,15 @@ class OutboundStore:
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
-        group = batching.due_group_on(connection, t, now)
+        # A fax its sending rules hold never waits in a group: acceptance can decide a hold after the preview
+        # put it there (a rule published in between), and a group claim must not send it before its release.
+        gate = self._hold_gate(now, connection)
+        if gate is not None:
+            members = t['outbound_batch_members']
+            for job_id in connection.execute(sa.select(members.c.id).where(
+                    members.c.state == 'waiting', members.c.id.in_(gate))).scalars().all():
+                batching.separate_on(connection, t, job_id, now)
+        group = batching.due_group_on(connection, t, now, values=values)
         if group is None:
             return None
         if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
@@ -639,6 +793,11 @@ class OutboundStore:
                     if claim.members:
                         return_to_waiting_on(connection, self._batching(connection), member.job_id, member.attempt_id, now)
                 return False
+            refused = next((reason for reason in (self._route_permitted_on(connection, member) for member in everyone)
+                            if reason is not None), None)
+            if refused is not None:
+                self._refuse_submission_on(connection, claim, rows, refused, now)
+                return False
             for row, member in zip(rows, everyone):
                 self._update(connection, row, now, state='submitting')
                 connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
@@ -646,6 +805,22 @@ class OutboundStore:
                 _event(connection, self.events, member.job_id, 'submission_authorized', now,
                        attempt_id=member.attempt_id)
             return True
+
+    def _refuse_submission_on(self, connection, claim, rows, reason, now):
+        """Give back a claim the last check refused: every fax in it waits in Sent with ``reason``; nothing is sent."""
+        from .routing import envelope as envelopes, holds
+        from .batching.store import separate_on
+        t = envelopes.tables(connection)
+        for row, member in zip(rows, claim.everyone):
+            connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                phase='abandoned', completed_at=now))
+            self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                         claim_expires_at=None)
+            if t is not None and not holds.open_on(connection, t, member.job_id):
+                holds.create_on(connection, t, job_id=member.job_id, kind='no_route', decision_id=None, now=now,
+                                reason=reason)
+            _event(connection, self.events, member.job_id, 'route_held', now, attempt_id=member.attempt_id)
+            separate_on(connection, self._batching(connection), member.job_id, now)
 
     def record_uncertain(self, claim, *, category='transport_ambiguous', now=None):
         if category not in {'transport_ambiguous', 'response_unusable', 'submission_cancelled', 'worker_lost'}:
@@ -732,7 +907,7 @@ class OutboundStore:
         return _ObservationRefusal(message)
 
     def _observe(self, connection, row, *, attempt_id, profile_id, provider_sid, status, now, event_key=None,
-                 error=None, error_category=None):
+                 error=None, error_category=None, before_data=None):
         if status not in OBSERVED:
             raise DeliveryConflict('Provider status requires reconciliation.')
         if error_category is not None and (error_category not in NO_FALLBACK_CATEGORIES or status != 'failed'):
@@ -768,11 +943,16 @@ class OutboundStore:
                 connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(provider_sid=provider_sid))
             return False
         final_sid = provider_sid or attempt['provider_sid']
-        connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
-            phase=status, provider_sid=final_sid, error_category=error_category,
-            completed_at=now if status in TERMINAL else None))
+        values = dict(phase=status, provider_sid=final_sid, error_category=error_category,
+                      completed_at=now if status in TERMINAL else None)
+        if status == 'failed' and 'ended_before_data' in self.attempts.c:
+            # What the provider or engine said about the call: it ended before any fax data (1), after (0), or it
+            # did not say (NULL). A fax whose route a rule chose falls back only after 1 (owner's answer Q3).
+            values['ended_before_data'] = None if before_data is None else int(bool(before_data))
+        connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(**values))
         # A categorized failure (part of the fax may have arrived) waits for a person, never another route.
-        if status == 'failed' and error_category is None and self._fallback_due(connection, row, attempt_id):
+        if status == 'failed' and error_category is None and self._fallback_due(
+                connection, row, attempt_id, before_data=before_data):
             # The next route takes over in this same transaction, so the fax
             # never reads as failed while another route remains.
             self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None,
@@ -783,12 +963,23 @@ class OutboundStore:
             _event(connection, self.events, row['id'], 'route_fallback', now, attempt_id=attempt_id,
                    details={'category': 'provider_failed', **({'reason': error} if isinstance(error, str) else {})})
             return True
+        if status == 'failed' and error_category is None and before_data is True and self._hold_after_predata(
+                connection, row, attempt_id, now, error=error):
+            # No allowed try is left (the fallback limit, or no other account), and nothing was sent: the fax
+            # waits in Sent with its sentence instead of failing (owner's answer Q1).
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
+                status='queued', provider_sid=final_sid, error=None, updated_at=now))
+            return True
         self._update(connection, row, now, state=status, claim_expires_at=None)
         connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
             status=status, provider_sid=final_sid, error=error if status == 'failed' else None, updated_at=now))
         return True
 
-    def record_receipt(self, claim, *, provider_sid, status, now=None):
+    def record_receipt(self, claim, *, provider_sid, status, now=None, error=None):
+        """``error``: the adapter's plain sentence when the provider refused the fax at once.
+
+        A fax refused when it was handed over never reached a fax machine: it ended before any fax data.
+        """
         now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
             results = []
@@ -807,37 +998,45 @@ class OutboundStore:
                         profile_id = attempt_profile
                 # A shared SIP call identifies each fax by its own job, as a single SIP fax does.
                 results.append(self._observe(connection, row, attempt_id=member.attempt_id, profile_id=profile_id,
-                    provider_sid=member.job_id if claim.members else provider_sid, status=status, now=now))
+                    provider_sid=member.job_id if claim.members else provider_sid, status=status, now=now,
+                    error=error if status == 'failed' else None,
+                    before_data=True if status == 'failed' and not claim.members else None))
         for result in results:
             if isinstance(result, _ObservationRefusal):
                 raise DeliveryConflict(result.message)
         return results[0]
 
     def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None, error=None,
-                error_category=None):
+                error_category=None, before_data=None):
         """Call only after the transport owner authenticates the bounded event.
 
         ``error`` is one plain sentence shown with a final failure, never provider text.
         ``error_category`` (``partly_sent``) marks a failure that waits for a person: no route fallback.
+        ``before_data``: the provider's or engine's own classification of a failure, True when the call ended
+        before any fax data (busy, no answer, no fax machine), False when data was exchanged, None when it did
+        not say. Only True lets a fax whose route a rule chose go to its next account.
         """
         if not isinstance(event_key, str) or not event_key or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         with self.configuration._locked() as connection:
             result = self._observe(connection, self._row(connection, job_id), attempt_id=attempt_id,
                 profile_id=profile_id, provider_sid=provider_sid, status=status,
-                event_key=event_key, now=now or datetime.utcnow(), error=error, error_category=error_category)
+                event_key=event_key, now=now or datetime.utcnow(), error=error, error_category=error_category,
+                before_data=before_data)
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
         return result
 
     def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key, category='pages_unconfirmed',
                            now=None):
-        """A shared call ended without a confirmed page count: this fax may have arrived.
+        """A shared call ended without a confirmed page count, or a Direct message's notice never came
+        (``notice_missing``): this fax may have arrived.
 
         The fax waits for a person, exactly like an unacknowledged submission;
         nothing is sent again. A repeated report has no further effect.
         """
-        if category != 'pages_unconfirmed' or not isinstance(event_key, str) or not event_key or len(event_key) > 512:
+        if category not in ('pages_unconfirmed', 'notice_missing') or not isinstance(event_key, str) or not event_key \
+                or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
@@ -862,10 +1061,51 @@ class OutboundStore:
                    details={'category': category}, dedupe_key=dedupe)
             return True
 
-    def _fallback_due(self, connection, row, attempt_id):
+    def _strict_blocks(self, connection, job_id, before_data):
+        """Whether the fax's rules chose its route and the failure is not known to have ended before any fax data.
+
+        Today's fallback for faxes no rule decides is unchanged (owner's answer Q3); an unreadable decision
+        allows no fallback.
+        """
+        from .routing import envelope as envelopes
+        try:
+            pinned = envelopes.load_on(connection, job_id)
+        except envelopes.UnreadableDecision:
+            return True
+        return pinned is not None and pinned.strict and before_data is not True
+
+    def _hold_after_predata(self, connection, row, attempt_id, now, *, error=None):
+        """Hold, instead of failing, a fax whose rules chose its route after a call that ended before any fax data
+        when no allowed try is left; False for any other fax. Detaches the attempt, as a fallback does, so a late
+        result for it cannot move the fax."""
+        from .routing import envelope as envelopes, holds
+        if row['dispatch_mode'] != 'normal':
+            return False
+        try:
+            pinned = envelopes.load_on(connection, row['id'])
+        except envelopes.UnreadableDecision:
+            return False
+        t = envelopes.tables(connection) if pinned is not None and pinned.strict else None
+        if t is None:
+            return False
+        from .accounts import sending_accounts
+        revision, _ = self.configuration._outbound_context(connection, row['id'])
+        self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None, claim_token=None,
+                     claim_expires_at=None, next_poll_at=None)
+        holds.hold_after_predata_on(connection, t, job_id=row['id'], pinned=pinned,
+                                    accounts=sending_accounts(revision.values), now=now)
+        from .batching.store import separate_on
+        separate_on(connection, self._batching(connection), row['id'], now)  # a held fax never waits in a group
+        _event(connection, self.events, row['id'], 'route_held', now, attempt_id=attempt_id,
+               details={'category': 'provider_failed', **({'reason': error} if isinstance(error, str) else {})})
+        return True
+
+    def _fallback_due(self, connection, row, attempt_id, *, before_data=None):
         """Ask the installed route policy, within the fallback limit, whether another route remains."""
         policy = type(self).fallback_policy
         if policy is None or row['dispatch_mode'] != 'normal':
+            return False
+        if self._strict_blocks(connection, row['id'], before_data):
             return False
         used = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
             self.events.c.job_id == row['id'], self.events.c.kind == 'route_fallback'))
@@ -894,16 +1134,23 @@ class OutboundStore:
                 continue
         return store._select_profiles(connection, cipher, installation, {'outbound': configuration}, ())[0][1]
 
-    def assign_route(self, claim, configuration, *, now=None):
-        """Bind a preparing attempt to one route its accepted revision permits.
+    def assign_route(self, claim, configuration, *, account_key=None, choice=None, now=None):
+        """Bind a preparing attempt to one account its accepted revision, and its sending rules, permit.
 
         Allowed only while this worker holds the preparation lease, before the
         durable submission marker. Results for the attempt are then accepted
-        only from that route's account. Returns the claim to prepare with.
+        only from that account. ``account_key`` names the account (the provider
+        id for the first account of a provider). A fax with a routing decision
+        may use only an account its envelope allows (``accounts.account_permitted``)
+        and that is on now; ``choice`` (``{'place', 'skipped', 'unreliable'}``)
+        is recorded with the account in the same transaction. Returns the claim
+        to prepare with.
         """
         from .config_profiles import ProviderConfiguration
+        from .routing import envelope as envelopes
         if not isinstance(configuration, ProviderConfiguration):
             raise ValueError('Invalid delivery route.')
+        key = account_key or configuration.provider_id
         with self.configuration._locked() as connection:
             now = now or datetime.utcnow()
             row = self._row(connection, claim.job_id)
@@ -911,7 +1158,21 @@ class OutboundStore:
                     or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
                 raise DeliveryConflict('Delivery preparation lease is no longer current.')
             revision, bound = self.configuration._outbound_context(connection, claim.job_id)
-            if configuration == bound.configuration:
+            try:
+                pinned = envelopes.load_on(connection, claim.job_id)
+            except envelopes.UnreadableDecision:
+                raise DeliveryConflict('Delivery route is not permitted by the accepted configuration.') from None
+            if pinned is not None:
+                from .accounts import account_enabled, account_named, account_permitted
+                account = account_named(revision.values, key)
+                current = self._active_values(connection)
+                if (account is None or account.provider != configuration.provider_id
+                        or not account_permitted(revision, key, pinned.envelope)
+                        or (current is not None and not account_enabled(current, key))):
+                    raise DeliveryConflict("Delivery route is not permitted by the fax's sending rules.")
+                profile_id = bound.id if configuration == bound.configuration else \
+                    self._route_profile_on(connection, configuration)
+            elif configuration == bound.configuration:
                 profile_id = bound.id
             elif configuration.provider_id in revision.values.outbound_route_providers:
                 profile_id = self._route_profile_on(connection, configuration)
@@ -923,9 +1184,174 @@ class OutboundStore:
                     profile_id=profile_id))
             if updated.rowcount != 1:
                 raise DeliveryConflict('Delivery preparation lease is no longer current.')
+            if pinned is not None:
+                choice = choice or {}
+                envelopes.record_choice_on(connection, attempt_id=claim.attempt_id, job_id=claim.job_id,
+                                           pinned=pinned, account_key=key, place=choice.get('place', 0),
+                                           skipped=choice.get('skipped', ()), unreliable=choice.get('unreliable', ()),
+                                           now=now)
             _event(connection, self.events, claim.job_id, 'route_assigned', now, attempt_id=claim.attempt_id,
-                   details={'route': configuration.provider_id})
+                   details={'route': key if _ROUTE.fullmatch(key) else configuration.provider_id})
             return replace(claim, profile_id=profile_id)
+
+    def record_route_choice(self, claim, *, account_key, place=0, skipped=(), unreliable=(), now=None):
+        """Record the route an attempt was given (its account, ``local``, ``direct`` or a partner relay), before its
+        durable submission marker. Only for a fax with a routing decision; a second record keeps the first."""
+        from .routing import envelope as envelopes
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            recorded = False
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member) or row['state'] != 'preparing':
+                    raise DeliveryConflict('Delivery preparation lease is no longer current.')
+                pinned = envelopes.load_on(connection, member.job_id)
+                if pinned is None:
+                    continue
+                if not pinned.allows(account_key):
+                    raise DeliveryConflict("Delivery route is not permitted by the fax's sending rules.")
+                recorded |= envelopes.record_choice_on(connection, attempt_id=member.attempt_id, job_id=member.job_id,
+                                                       pinned=pinned, account_key=account_key, place=place,
+                                                       skipped=skipped, unreliable=unreliable, now=now)
+            return recorded
+
+    def hold_no_route(self, claim, *, reason, skipped=(), now=None):
+        """Nothing the fax's rules allow can take it now (owner's answer Q1): give the claim back, keep the fax
+        ``ready`` and hold it in Sent with ``reason``. Nothing was sent, nothing fails, and the claim never offers
+        it until someone checks again, sends it anyway, or refuses it."""
+        from .routing import envelope as envelopes, holds
+        from .batching.store import separate_on
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            t = envelopes.tables(connection)
+            held = False
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member) or row['state'] != 'preparing':
+                    continue
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='abandoned', completed_at=now))
+                self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                             claim_expires_at=None)
+                if t is not None:
+                    try:
+                        pinned = envelopes.load_on(connection, member.job_id)
+                    except envelopes.UnreadableDecision:
+                        pinned = None
+                    if skipped and pinned is not None:
+                        # What was skipped, for "send anyway": recorded against the abandoned attempt.
+                        envelopes.record_choice_on(connection, attempt_id=member.attempt_id, job_id=member.job_id,
+                                                   pinned=pinned, account_key='none', place=0, skipped=skipped,
+                                                   now=now)
+                    if not holds.open_on(connection, t, member.job_id):
+                        holds.create_on(connection, t, job_id=member.job_id, kind='no_route',
+                                        decision_id=pinned.decision_id if pinned else None, now=now, reason=reason)
+                _event(connection, self.events, member.job_id, 'route_held', now, attempt_id=member.attempt_id)
+                # Nothing waits to go together with a fax that is held.
+                separate_on(connection, self._batching(connection), member.job_id, now)
+                held = True
+            return held
+
+    def _route_permitted_on(self, connection, member):
+        """The last check before anything leaves Faxbot: a fax whose rules exclude its own (bound) account may go
+        only by a route recorded for this attempt that its rules allow. None when it may go, else the reason."""
+        from .routing import envelope as envelopes
+        try:
+            pinned = envelopes.load_on(connection, member.job_id)
+        except envelopes.UnreadableDecision:
+            return 'Faxbot could not read the routing decision for this fax, so nothing was sent. It waits for you in Sent.'
+        if pinned is None:
+            return None
+        from .accounts import default_sending_key
+        revision, bound = self.configuration._outbound_context(connection, member.job_id)
+        if pinned.allows(default_sending_key(revision.values)):
+            return None
+        choice = envelopes.choice_on(connection, member.attempt_id)
+        profile_id = connection.scalar(sa.select(self.attempts.c.profile_id).where(
+            self.attempts.c.id == member.attempt_id))
+        no_call = choice is not None and (choice['account_key'] in ('local', 'direct')
+                                          or envelopes.is_relay(choice['account_key'])
+                                          or envelopes.is_digital(choice['account_key']))
+        if choice is None or not pinned.allows(choice['account_key']) or (not no_call and profile_id == bound.id):
+            return ('Faxbot could not confirm that this fax was going by a route your rules allow, so nothing was '
+                    'sent. It waits for you in Sent.')
+        return None
+
+    # A call that broke part way, completed through an enrolled partner (direct/repair.py) -----------------------------
+
+    def _repair_attempt_on(self, connection, job_id, *, broken_attempt_id, attempt_id, sent, now):
+        """The repair's own attempt, written once beside the broken one (which is never changed); its row."""
+        attempt = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == attempt_id)).mappings().one_or_none()
+        if attempt is not None:
+            if attempt['job_id'] != job_id:
+                raise DeliveryConflict('This repair belongs to another fax.')
+            return dict(attempt)
+        row = self._row(connection, job_id)
+        broken = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == broken_attempt_id)).mappings().one_or_none()
+        if (row is None or row['state'] != 'failed' or row['attempt_id'] != broken_attempt_id or broken is None
+                or broken['job_id'] != job_id or broken['error_category'] != 'partly_sent'):
+            raise DeliveryConflict('Only a fax whose call broke part way can be completed through a partner.')
+        sequence = connection.scalar(sa.select(sa.func.max(self.attempts.c.sequence)).where(
+            self.attempts.c.job_id == job_id)) or 0
+        # Pages that go directly are submitted now; a partner that already holds every page needs nothing sent,
+        # so that attempt is never priced as a call.
+        values = dict(id=attempt_id, job_id=job_id, sequence=sequence + 1, profile_id=broken['profile_id'],
+                      phase='in_progress', created_at=now, submitted_at=now if sent else None)
+        connection.execute(self.attempts.insert().values(**values))
+        if sent:
+            _event(connection, self.events, job_id, 'repair_started', now, attempt_id=attempt_id)
+        return values
+
+    def begin_repair(self, job_id, *, broken_attempt_id, attempt_id, now=None):
+        """Write the attempt that sends only the pages a broken call left out, directly to the enrolled partner.
+
+        Only for a fax that failed part way through its call (``partly_sent``) and is still on that attempt;
+        raises DeliveryConflict otherwise. The broken attempt is kept as it was, and the fax stays failed until
+        the partner accepts the pages (``complete_repair``) or says it did not (``fail_repair``).
+        """
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            self._repair_attempt_on(connection, job_id, broken_attempt_id=broken_attempt_id, attempt_id=attempt_id,
+                                    sent=True, now=now)
+
+    def complete_repair(self, job_id, *, broken_attempt_id, attempt_id, sent=True, now=None):
+        """The partner holds the whole fax: the repair's attempt succeeded and the fax is delivered.
+
+        ``sent`` False: the partner already held every page, so nothing went again. Idempotent; False when the
+        fax was already completed, or has moved on (someone sent it again), which it then leaves alone.
+        """
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            attempt = self._repair_attempt_on(connection, job_id, broken_attempt_id=broken_attempt_id,
+                                              attempt_id=attempt_id, sent=sent, now=now)
+            if attempt['phase'] not in TERMINAL:
+                connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
+                    phase='success', completed_at=now))
+            row = self._row(connection, job_id)
+            if row is None or row['state'] != 'failed' or row['attempt_id'] != broken_attempt_id:
+                return False
+            # A late result for the broken attempt can no longer move the fax: it is no longer the current one.
+            self._update(connection, row, now, state='success', attempt_id=attempt_id, claim_owner=None,
+                         claim_token=None, claim_expires_at=None, next_poll_at=None)
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == job_id).values(
+                status='success', error=None, updated_at=now))
+            _event(connection, self.events, job_id, 'repair_completed', now, attempt_id=attempt_id)
+            return True
+
+    def fail_repair(self, job_id, *, attempt_id, now=None):
+        """The partner signed that the missing pages did not arrive: the repair's attempt failed, and the fax still
+        waits for a person, as a broken call does. False when there is no such unfinished attempt."""
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            changed = connection.execute(self.attempts.update().where(
+                self.attempts.c.id == attempt_id, self.attempts.c.job_id == job_id,
+                self.attempts.c.phase.not_in(tuple(TERMINAL))).values(
+                phase='failed', error_category='partner_not_received', completed_at=now)).rowcount
+            if changed:
+                _event(connection, self.events, job_id, 'repair_failed', now, attempt_id=attempt_id)
+            return bool(changed)
 
     def fallback_count(self, job_id):
         with self.configuration.engine.connect() as connection:
@@ -957,6 +1383,9 @@ class OutboundStore:
             if category == 'provider_failed':
                 definite = (row['state'] == 'failed' and attempt['phase'] == 'failed'
                             and attempt['error_category'] is None and attempt['completed_at'] is not None)
+                ended = attempt.get('ended_before_data')
+                if definite and self._strict_blocks(connection, job_id, None if ended is None else bool(ended)):
+                    return False
             else:
                 definite = row['state'] == 'reconciliation_required' and attempt['phase'] == 'uncertain'
             used = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(

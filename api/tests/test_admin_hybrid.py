@@ -76,6 +76,45 @@ def test_admin_inbound_callbacks_reflect_inbound_backend(isolated_installation, 
     assert data2["backend"] == "sip"
 
 
+def test_sinchs_incoming_webhook_url_is_given_exactly_and_never_with_the_password(isolated_installation, monkeypatch):
+    monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    monkeypatch.setenv("FAX_BACKEND", "sinch")
+    monkeypatch.setenv("INBOUND_ENABLED", "true")
+    where = ("In the Sinch dashboard, open Fax, then Services, click Edit beside your fax service and paste this "
+             "address into Incoming webhook URL.")
+    with TestClient(app, base_url="https://testserver") as client:
+        # By default the address is this server's public address.
+        [callback] = client.get("/admin/inbound/callbacks", headers=_admin_headers()).json()["callbacks"]
+        assert (callback["name"], callback["url"]) == ("Sinch incoming webhook URL", "https://testserver/sinch-inbound")
+        assert callback["notes"] == where + " Faxbot checks each fax with Sinch before it keeps it."
+        sinch = client.get("/admin/settings", headers=_admin_headers()).json()["sinch"]
+        assert (sinch["incoming_webhook_url"], sinch["incoming_webhook_login_url"]) == (
+            "https://testserver/sinch-inbound", None)
+        # Sinch reaches this server through another address, with a user name and password.
+        changed = client.put("/admin/settings", headers=_admin_headers(), json={
+            "sinch_webhook_base_url": "https://fax-hooks.example.com/",
+            "sinch_inbound_basic_user": "synthetic-hooks", "sinch_inbound_basic_pass": "synthetic-hooks-pass"})
+        assert changed.status_code == 200, changed.text
+        refused = client.put("/admin/settings", headers=_admin_headers(),
+                             json={"sinch_webhook_base_url": "https://someone:secret@fax-hooks.example.com"})
+        assert refused.status_code in (400, 422)
+        client.post("/admin/settings/reload", headers=_admin_headers())
+    with TestClient(app, base_url="https://testserver") as client:
+        answer = client.get("/admin/inbound/callbacks", headers=_admin_headers())
+        [callback] = answer.json()["callbacks"]
+        login = "https://synthetic-hooks:PASSWORD@fax-hooks.example.com/sinch-inbound"
+        assert callback["url"] == "https://fax-hooks.example.com/sinch-inbound"
+        assert callback["notes"] == (where + " Because you set a user name and password for received faxes, paste it "
+                                     f"as {login} with your password in place of PASSWORD; Sinch then shows the "
+                                     "password as ***.")
+        settings = client.get("/admin/settings", headers=_admin_headers())
+        assert settings.json()["sinch"]["incoming_webhook_login_url"] == login
+        assert "synthetic-hooks-pass" not in answer.text + settings.text
+
+
 def test_export_env_preserves_explicit_and_inherited_directional_values(isolated_installation, monkeypatch):
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
@@ -130,7 +169,9 @@ def test_humblefax_is_reported_configured_and_listed_like_other_cloud_providers(
         assert plugins.status_code == 200
         items = {item["id"]: item for item in plugins.json()["items"]}
         assert items["humblefax"]["categories"] == items["documo"]["categories"] == ["outbound"]
-        assert items["humblefax"]["capabilities"] == items["documo"]["capabilities"] == ["send", "get_status"]
+        assert items["documo"]["capabilities"] == ["send", "get_status"]
+        # HumbleFax also receives, by Faxbot asking it for received faxes (like eFax).
+        assert items["humblefax"]["capabilities"] == items["efax"]["capabilities"] == ["send", "get_status", "receive"]
         assert items["humblefax"]["enabled"] is True
         assert items["documo"]["enabled"] is False
 

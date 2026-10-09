@@ -1,8 +1,10 @@
 """What each fax call negotiated: the engines' reports, the detail sentence and the summary (migration 0023).
 
-Measurement only. Nothing here chooses a speed, a compression or error
-correction for a call, and recording runs after the fax's own result is saved
-(``hylafax_records.safely``), so it never changes delivery.
+Nothing here chooses a speed, a compression or error correction for a call,
+and recording runs after the fax's own result is saved
+(``hylafax_records.safely``), so it never changes delivery. What Faxbot learns
+from these records per number, and changes for later calls, is
+``engine_learning.py``.
 
 What each engine reports (checked against the source each engine runs:
 HylaFAX+ 7.0.11, Asterisk 22.11.0 with spandsp 0.0.6):
@@ -48,8 +50,10 @@ COLUMNS = ('negotiation_by', 'rate_first', 'rate_lowest', 'rate_last_page', 'tra
            'resolution_last_page', 'ecm')
 DAYS = (7, 30, 90)
 NOT_REPORTED = 'not reported by this engine'
-MEASURE_ONLY = ('Faxbot only measures these for now; it does not change speed, compression or error correction '
-                'because of them.')
+# What Faxbot does with these measurements (engine_learning.py, per number); the trunk page shows it.
+MEASURE_ONLY = ('For one number at a time, Faxbot starts slower or uses a more robust compression only after its '
+                'own calls to that number fail the same way more than once; it never turns error correction off or '
+                'lowers resolution.')
 
 
 def _rate(value):
@@ -103,15 +107,22 @@ def builtin_values(rate, resolution, pages):
     return {name: value for name, value in values.items() if value is not None}
 
 
-def engine_values(encoded):
-    """The SSL Fax engine's values for one call, from hylafax/bin/negotiation (base64 JSON); {} when absent."""
-    if not isinstance(encoded, str) or not encoded or len(encoded) > 1024:
+def _report(encoded):
+    """hylafax/bin/negotiation's object (base64 JSON), or {} when absent or not one. Up to 16 KiB: a long fax's
+    lossless tuning report carries a raster digest a page (pages/tuning.py)."""
+    if not isinstance(encoded, str) or not encoded or len(encoded) > 16384:
         return {}
     try:
         data = json.loads(base64.b64decode(encoded, validate=True).decode('ascii'))
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return {}
-    if not isinstance(data, dict):
+    return data if isinstance(data, dict) else {}
+
+
+def engine_values(encoded):
+    """The SSL Fax engine's values for one call, from hylafax/bin/negotiation (base64 JSON); {} when absent."""
+    data = _report(encoded)
+    if not data:
         return {}
     values = {'rate_first': _rate(data.get('rate_first')), 'rate_lowest': _rate(data.get('rate_lowest')),
               'rate_last_page': _rate(data.get('rate_last')), 'trainings': _count(data.get('trainings'), 99),
@@ -126,6 +137,46 @@ def engine_values(encoded):
     if not values['trainings']:
         values['trainings'] = None
     return {name: value for name, value in values.items() if value is not None}
+
+
+PAGE_LENGTHS = {'A4': 'a4', 'B4': 'b4', 'unlimited': 'unlimited'}
+PAGE_WIDTHS = {'A4': 'a4', 'B4': 'b4', 'A3': 'a3'}
+
+
+def page_capability(encoded):
+    """What the other machine said it accepts on a sent call (its DIS, from the session log) and the call's
+    measured time between pages: {'max_length', 'max_width', 'fine', 'ecm', 'scan_ms', 'boundary_ms',
+    'boundaries', 'codings'} with only what was reported ('codings': the codings it takes, such as
+    'MH,MR,MMR,JBIG'); {} when the log named no page length (``pages.capability``)."""
+    data = _report(encoded)
+    length = PAGE_LENGTHS.get(data.get('page_length')) if isinstance(data.get('page_length'), str) else None
+    if length is None:
+        return {}
+    values = {'max_length': length,
+              'max_width': PAGE_WIDTHS.get(data['page_width']) if isinstance(data.get('page_width'), str) else None,
+              'fine': data.get('fine') if data.get('fine') in (0, 1) and not isinstance(data.get('fine'), bool)
+              else None,
+              'ecm': data.get('remote_ecm') if data.get('remote_ecm') in (0, 1)
+              and not isinstance(data.get('remote_ecm'), bool) else None,
+              'scan_ms': _count(data.get('scan_ms'), 40),
+              'boundary_ms': _count(data.get('boundary_ms'), 600000), 'boundaries': _count(data.get('boundaries'), 999)}
+    if not values['boundaries'] or values['boundary_ms'] is None:
+        values['boundary_ms'] = values['boundaries'] = None
+    values['codings'] = codings_text(data.get('remote_codings'))
+    return {name: value for name, value in values.items() if value is not None}
+
+
+REMOTE_CODINGS = ('MH', 'MR', 'MMR', 'JBIG')
+
+
+def codings_text(value):
+    """'MH,MR,MMR,JBIG' (in that order) from a receiving machine's reported codings, or None when not usable."""
+    if not isinstance(value, str) or len(value) > 32:
+        return None
+    found = {part.strip() for part in value.split(',')}
+    if 'MH' not in found or not found <= set(REMOTE_CODINGS):
+        return None
+    return ','.join(name for name in REMOTE_CODINGS if name in found)
 
 
 # Reading ---------------------------------------------------------------------------

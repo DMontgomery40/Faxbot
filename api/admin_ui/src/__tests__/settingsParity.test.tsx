@@ -62,6 +62,8 @@ function settingsHandlers(data: Json, put: (body: Json) => Response | null = () 
       faxbot_direct: 1, organization: 'County Clinic', fax_number: '+12025550123', endpoint: 'https://fax.example',
       signing_key: 'public-signing', exchange_key: 'public-exchange', signature: 'signed',
     } })),
+    // The Setup Wizard's Suggested Packs step (BE): no plan suggested yet.
+    http.get('/setup/plans/latest', () => HttpResponse.json({ plan: null, mailboxes: [] })),
   );
   return writes;
 }
@@ -70,7 +72,7 @@ const apply = () => fireEvent.click(screen.getByRole('button', { name: 'Apply se
 const section = async (title: string) => (await screen.findByText(title)).closest('.MuiPaper-root') as HTMLElement;
 // The Receiving section, found by its switch (other sections also say "Receiving").
 const receivingSection = async () => {
-  await screen.findByLabelText('Receiving is on');
+  await screen.findByLabelText(/^Receiving is (on|off)$/);
   return screen.getByTestId('switch-inbound_enabled').closest('.MuiPaper-root') as HTMLElement;
 };
 
@@ -111,6 +113,51 @@ describe('Settings delivery routes', () => {
     apply();
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
+  });
+
+  it('keeps shaded areas with a fax-friendly pattern where it saves time by default and saves another', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const choice = within(routes).getByLabelText('Fax-friendly shading on documents you send') as HTMLSelectElement;
+    expect(choice.value).toBe('where_it_saves');
+    expect([...choice.querySelectorAll('option')].map((option) => option.textContent)).toEqual(
+      ['Where it saves time', 'Always', 'Never']);
+    expect(routes.textContent).toContain('when that makes the call cost less');
+    expect(routes.textContent).toContain('a page with a shaded table went from 61 to 27 seconds');
+    expect(routes.textContent).toContain('Text and marks stay exactly as they are.');
+    fireEvent.change(choice, { target: { value: 'never' } });
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: 'never' });
+  });
+
+  it('makes light areas white only when you opt in, with its warning beside the switch', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
+    expect(whiten.checked).toBe(false);
+    expect(routes.textContent).toContain('This may erase pale text and light marks');
+    fireEvent.click(whiten);
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_whiten: true });
+  });
+
+  it('turns the whitening switch off for Never, where it does nothing', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'never', fax_friendly_whiten: false };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
+    expect(whiten.disabled).toBe(true);
+    expect(routes.textContent).toContain('Faxbot sends the pages of your documents as they are.');
   });
 });
 
@@ -399,21 +446,21 @@ describe('Settings authentication and receiving', () => {
     expect(screen.queryByText(/Yes \(Required\)/)).toBeNull();
   });
 
-  it('warns that HumbleFax cannot receive when it would handle receiving', async () => {
+  it('receives through HumbleFax when it handles receiving', async () => {
     settingsHandlers(settingsFixture((data) => {
       data.backend.type = 'humblefax';
       data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'humblefax', outbound_override: '', inbound_override: '' };
       data.inbound.enabled = true;
     }));
     render(<Settings client={client()} />);
-    const warning = /HumbleFax cannot receive faxes, so Faxbot will not save receiving with it/;
-    expect(await screen.findByText(warning)).toBeTruthy();
+    expect(await screen.findByText('HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.')).toBeTruthy();
+    expect(screen.queryByText(/HumbleFax cannot receive faxes/)).toBeNull();
     const inbound = await receivingSection();
+    expect(within(inbound).getByText('Faxes arrive through HumbleFax.')).toBeTruthy();
     fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
-    await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
-    // Off, it cannot be turned on again with a provider that only sends.
-    expect(within(inbound).getByText('HumbleFax cannot receive faxes. To receive, choose Add or change a provider.')).toBeTruthy();
-    expect((within(inbound).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(true);
+    // Off, it can be turned on again: HumbleFax receives by Faxbot asking it for faxes.
+    expect(within(inbound).getByText('Turn this on to receive faxes through HumbleFax.')).toBeTruthy();
+    expect((within(inbound).getByLabelText('Receiving is off') as HTMLInputElement).disabled).toBe(false);
   });
 
   it('turns receiving off and on again with one switch, keeping the trunk as the receiving provider', async () => {
@@ -427,7 +474,7 @@ describe('Settings authentication and receiving', () => {
     expect(within(inbound).getByText('Turn this on to receive faxes through Carrier trunk.')).toBeTruthy();
     expect(screen.queryByText('Enable Inbound Fax Receiving')).toBeNull();
     expect(screen.queryByText('Feature Flags')).toBeNull();
-    fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
+    fireEvent.click(within(inbound).getByLabelText(/^Receiving is (on|off)$/));
     expect(within(inbound).getByText('Faxes arrive through Carrier trunk.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(writes).toHaveLength(1));
@@ -470,6 +517,8 @@ describe('Setup Wizard delivery options', () => {
     // Moving on saves this step's changes.
     next();
     await screen.findByText('Settings saved.');
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
+    next();
     expect(await screen.findByText('Finish', { selector: 'h6' })).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 }]);
     // The last step offers one test fax, sent only when asked; this installation does not receive.
@@ -550,7 +599,7 @@ describe('Installation country', () => {
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
     next();
-    await screen.findByText('Finish', { selector: 'h6' });
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '01782 684953' });
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect((screen.getByLabelText('Our fax number') as HTMLInputElement).value).toBe('+441782684953'));
@@ -758,7 +807,7 @@ describe('Settings placed on their own pages', () => {
   it('asks before turning sending off, and not before turning it on', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
-    const sending = await screen.findByLabelText('Sending is on') as HTMLInputElement;
+    const sending = await screen.findByLabelText(/^Sending is (on|off)$/) as HTMLInputElement;
     fireEvent.click(sending);
     const dialog = await screen.findByRole('dialog', { name: 'Turn off sending?' });
     expect(within(dialog).getByText('Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.')).toBeTruthy();
@@ -774,6 +823,23 @@ describe('Settings placed on their own pages', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(sending.checked).toBe(true);
     expect(writes).toEqual([]);
+  });
+
+  it('says off beside a switch that is off, as with FAX_DISABLED (click-through, 2026-10-07)', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.disabled = true;
+      data.features.fax_disabled = true;
+    }));
+    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
+    const sending = await screen.findByLabelText('Sending is off') as HTMLInputElement;
+    expect(sending.checked).toBe(false);
+    const receiving = screen.getByLabelText('Receiving is off') as HTMLInputElement;
+    expect(receiving.checked).toBe(false);
+    expect(screen.queryByText('Sending is on')).toBeNull();
+    expect(screen.queryByText('Receiving is on')).toBeNull();
+    // Turning sending on changes the words with the switch.
+    fireEvent.click(sending);
+    expect((await screen.findByLabelText('Sending is on') as HTMLInputElement).checked).toBe(true);
   });
 
   it('sets the address phones use on the local network on Keys & phones', async () => {
@@ -806,7 +872,7 @@ describe('Settings placed on their own pages', () => {
     const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
     await receivingSection();
     expect(screen.queryByText('Use provider plugins')).toBeNull();
-    expect(screen.getByLabelText('Sending is on')).toBeTruthy();
+    expect(screen.getByLabelText(/^Sending is (on|off)$/)).toBeTruthy();
     unmount();
     render(<Settings client={client()} sections={['plugins']} title="Provider plugins" canWrite />);
     fireEvent.click(await screen.findByLabelText('Use provider plugins'));
@@ -936,7 +1002,7 @@ describe('Owner-only settings everywhere', () => {
     expect(within(receiving).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
     expect(minutes).toBeTruthy();
     // Receiving itself is not owner-only and stays changeable.
-    expect((within(receiving).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
+    expect((within(receiving).getByLabelText(/^Receiving is (on|off)$/) as HTMLInputElement).disabled).toBe(false);
     unmount();
     render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
     await screen.findByText('Require HTTPS for document links');

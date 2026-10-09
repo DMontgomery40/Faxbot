@@ -4,12 +4,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import AdminAPIClient from '../api/client';
-import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts } from '../api/deliveryTypes';
+import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, RateCard, ReceivedCosts, ReceivedFaxCosts, TollFreeTerms } from '../api/deliveryTypes';
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
+import FindPartners from './delivery/FindPartners';
+import PlanBudgets from './delivery/PlanBudgets';
+import PlanAllocation from './delivery/PlanAllocation';
 import RateCards from './delivery/RateCards';
+import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
+import RelayCosts from './delivery/RelayCosts';
+import LoadFailed, { saysFailure } from './common/LoadFailed';
 
 export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners';
 
@@ -43,30 +49,48 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [providers, setProviders] = useState<ProviderCosts[]>([]);
   const [received, setReceived] = useState<ReceivedCosts[]>([]);
+  const [receivedFaxes, setReceivedFaxes] = useState<ReceivedFaxCosts[]>([]);
   const [carrier, setCarrier] = useState<CarrierChargeStatus | null>(null);
   const [cards, setCards] = useState<RateCard[]>([]);
+  const [tollFree, setTollFree] = useState<TollFreeTerms[]>([]);
   const [partners, setPartners] = useState<DirectPartner[]>([]);
+  // Numbers whose recipient runs Faxbot (Partners → Find partners), for the recipients list.
+  const [suggested, setSuggested] = useState<string[] | null>(null);
+  // Partners or suggestions that could not be read are said where they would be (quiet without permission).
+  const [unread, setUnread] = useState<{ partners: boolean; suggestions: boolean }>({ partners: false, suggestions: false });
   const shows = (part: DeliveryRoutesSection) => !section || section === part;
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
     const wants = (part: DeliveryRoutesSection) => !section || section === part;
+    const failed = { partners: false, suggestions: false };
+    const noted = (part: keyof typeof failed) => (failure: unknown) => {
+      failed[part] = saysFailure(failure);
+      return null;
+    };
     try {
-      const [routes, costs, rates, peers] = await Promise.all([
+      const [routes, costs, rates, peers, discovery] = await Promise.all([
         wants('numbers') ? client.listDestinations() : null,
         wants('spending') ? client.getRouteCosts() : null,
         wants('rates') ? client.listRateCards() : null,
         // The recipients list names the partner each number belongs to, when partners can be read.
-        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(() => null) : null,
+        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(noted('partners')) : null,
+        section === 'numbers' ? client.getDiscovery().catch(noted('suggestions')) : null,
       ]);
+      setUnread(failed);
       if (routes) setDestinations(routes.destinations);
       if (costs) {
         setProviders(costs.providers);
         setReceived(costs.received ?? []);
+        setReceivedFaxes(costs.received_faxes ?? []);
         setCarrier(costs.carrier_charges ?? null);
       }
-      if (rates) setCards(rates.cards);
+      if (rates) {
+        setCards(rates.cards);
+        setTollFree(rates.toll_free ?? []);
+      }
       if (peers) setPartners(peers.peers);
+      if (discovery) setSuggested(discovery.suggestions.map((item) => item.number));
       setState('ready');
     } catch (failure) {
       setState(loadFailure(failure));
@@ -90,15 +114,41 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
       {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} /> : (
         <>
           {shows('spending') && part('spending',
-            <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
-              onChanged={() => void load()} />)}
+            <>
+              <Spending client={client} providers={providers} received={received} receivedFaxes={receivedFaxes}
+                carrier={carrier} canWrite={canWrite}
+                onChanged={() => void load()} />
+              <RelayCosts client={client} />
+            </>)}
           {shows('numbers') && part('numbers',
-            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
-              partners={section === 'numbers' ? partners : null} />)}
+            <>
+              {section === 'numbers' && unread.partners && <LoadFailed testId="numbers-partners-unread"
+                text="Your direct partners could not be loaded, so numbers are shown without them. Try again." />}
+              {section === 'numbers' && unread.suggestions && <LoadFailed testId="numbers-suggestions-unread"
+                text="Numbers whose recipient runs Faxbot could not be loaded. Try again." />}
+              <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
+                partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />
+            </>)}
           {shows('rates') && part('rates',
-            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />)}
+            <>
+              <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
+              <TollFreePrices items={tollFree} />
+              <PlanBudgets client={client} canWrite={canWrite} />
+              <PlanAllocation client={client} />
+            </>)}
           {shows('partners') && part('partners',
-            <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />)}
+            <>
+              {unread.partners
+                ? <LoadFailed testId="partners-unread" text="Your direct partners could not be loaded. Try again." />
+                : <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />}
+              <Box component="section" mt={4}>
+                <Typography variant="h6" component="h2">Find partners</Typography>
+                <Typography variant="body2" color="text.secondary" mb={2}>
+                  Recipients that run Faxbot, found from your fax calls, your partners' introductions and directories you trust.
+                </Typography>
+                <FindPartners client={client} canWrite={canWrite} onChanged={() => void load()} />
+              </Box>
+            </>)}
         </>
       )}
     </Box>

@@ -15,12 +15,29 @@ TRANSPORTS = {'tls': 'Encrypted (TLS)', 'tcp': 'TCP', 'udp': 'UDP'}
 KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system'}
 SIGN_IN = {'registration': 'Username and password', 'ip': 'IP address'}
 NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it'}
+# Several trunks: which trunk account a command is about (its key from 'faxbot providers accounts list').
+ACCOUNT = typer.Option(None, '--account', metavar='KEY',
+                       help="Which trunk, by its key from 'faxbot providers accounts list'; the first trunk when left "
+                            'out.')
+
+
+def _account(account):
+    return {'account': account.strip()} if account and account.strip() else None
 
 
 def _status_lines(out, result):
     out.line(result.get('message') or '')
+    for problem in (result.get('trunk_problems') or {}).values():
+        out.line(problem)
+    for note in result.get('carrier_notes') or []:
+        out.line(note)
     if not result.get('configured'):
         return
+    trunks = result.get('trunks') or []
+    if len(trunks) > 1:
+        current = next((item['label'] for item in trunks if item['key'] == result.get('account')), 'the first trunk')
+        others = ', '.join(f"{item['label']} ({item['key']})" for item in trunks if item['key'] != result.get('account'))
+        out.line(f'This is {current}. Your other trunks: {others}. Add --account KEY to see one of them.')
     phone = result.get('kind') == 'phone_system'
     out.fields([('Phone system' if phone else 'Carrier', result.get('preset_label')),
                 ('Transport', TRANSPORTS.get(result.get('registration_transport') or result.get('transport'))),
@@ -59,9 +76,9 @@ def _status_lines(out, result):
 
 
 @trunk.command('status')
-def trunk_status():
+def trunk_status(account: str = ACCOUNT):
     """Check the SIP trunk: registration with the carrier, Faxbot's public IP address, and the last call."""
-    result = state.api().get('/admin/sip/status')
+    result = state.api().get('/admin/sip/status', params=_account(account))
     state.out().result(result, lambda out: _status_lines(out, result))
 
 
@@ -133,7 +150,7 @@ def _number(value):
 @trunk.command('negotiation')
 def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
                                                help='How many days to count: 7, 30 or 90.')):
-    """Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot only measures these; it changes nothing because of them."""
+    """Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot changes speed or compression for one number only after its own calls to it fail the same way more than once, and never turns error correction off."""
     if days not in (7, 30, 90):
         raise typer.BadParameter('Use 7, 30 or 90.', param_hint='--days')
     result = state.api().get('/admin/sip/negotiation', params={'days': days})
@@ -155,7 +172,7 @@ def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
 
 @trunk.command('restart-engine')
 def trunk_restart_engine():
-    """Restart the fast fax service once no fax is being sent or received."""
+    """Restart the fax engine once no fax is being sent or received."""
     result = state.api().post('/admin/sip/engine/restart')
     state.out().result(result, lambda out: out.line(result.get('message') or ''))
 
@@ -297,19 +314,58 @@ def _telnyx_lines(out, result):
 
 
 @telnyx.command('status')
-def telnyx_status():
+def telnyx_status(account: str = ACCOUNT):
     """Show whether Telnyx has fax over IP (T.38) turned on for each trunk number, from the last check."""
-    result = state.api().get('/admin/sip/telnyx')
+    result = state.api().get('/admin/sip/telnyx', params=_account(account))
     state.out().result(result, lambda out: _telnyx_lines(out, result))
 
 
 @telnyx.command('t38-on')
 def telnyx_t38_on(number: str = typer.Argument(..., metavar='NUMBER',
-                                               help='The trunk number, for example +17208565062.')):
+                                               help='The trunk number, for example +17208565062.'),
+                  account: str = ACCOUNT):
     """Turn on fax over IP (T.38) at Telnyx for one trunk number. Only that setting changes."""
     from urllib.parse import quote
-    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/t38')
+    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/t38',
+                              params=_account(account))
     state.out().result(result, lambda out: _telnyx_lines(out, result))
+
+
+def _names_lines(out, result):
+    if not result.get('applies'):
+        out.line('This needs the Telnyx trunk with a Telnyx API key (the key Faxbot also uses for call charges).')
+        return
+    if result.get('message'):
+        out.line(result['message'])
+    out.line(result.get('text') or '')
+    rows = [[entry['display'], {True: 'On', False: 'Off'}.get(entry.get('lookup'), 'Not known'), entry['text']]
+            for entry in result.get('numbers') or []]
+    if rows:
+        out.table(['Number', 'Caller-name lookup', 'What Telnyx shows'], rows, empty='')
+    price = result.get('price') or {}
+    if price.get('text'):
+        out.line(f"Telnyx's price: {price['text']}, read {local_date(price.get('read_on'))} from "
+                 f"{price.get('source_url')}.")
+    if any(entry.get('can_turn_off') for entry in result.get('numbers') or []):
+        out.line('To turn it off, run faxbot providers trunk telnyx name-lookup-off followed by the number.')
+    if result.get('checked_at'):
+        out.fields([('Checked', local_time(result.get('checked_at')))])
+
+
+@telnyx.command('names')
+def telnyx_names():
+    """Show whether Telnyx looks up callers' names on each trunk number, and what that costs, from the last check."""
+    result = state.api().get('/admin/sip/telnyx/names')
+    state.out().result(result, lambda out: _names_lines(out, result))
+
+
+@telnyx.command('name-lookup-off')
+def telnyx_name_lookup_off(number: str = typer.Argument(..., metavar='NUMBER',
+                                                        help='The trunk number, for example +17208565062.')):
+    """Turn off caller-name lookup at Telnyx for one trunk number. Faxbot never shows callers' names; only that setting changes."""
+    from urllib.parse import quote
+    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/name-lookup-off')
+    state.out().result(result, lambda out: _names_lines(out, result))
 
 
 @trunk.command('presets')
@@ -407,3 +463,54 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
         kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'
         out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot providers trunk apply to connect it.")
     state.out().result({'preset': preset, 'changed': bool(result.get('changed'))}, human)
+
+
+# -- send-only numbers (B9) ----------------------------------------------------------------------------------
+
+send_only = typer.Typer(help='Numbers you show on faxes you send but never receive on here, such as your main office '
+                             'number.', no_args_is_help=True)
+trunk.add_typer(send_only, name='send-only')
+
+
+def _send_only_lines(out, result):
+    numbers = result.get('numbers') or []
+    if numbers:
+        out.table(['Number', 'Where it shows'], [[item['number'], item['sentence']] for item in numbers], empty='')
+        for item in numbers:
+            for rule in item.get('carrier_rules') or []:
+                out.line(f"{rule['trunk']}: {rule['sentence']} ({rule['source_url']}, read {rule['read_on']})")
+    else:
+        out.line('You have no send-only numbers. Faxes show the caller ID and station ID set on each trunk.')
+    for item in result.get('advice') or []:
+        out.line(item['sentence'])
+
+
+@send_only.command('list')
+def send_only_list():
+    """Show your send-only numbers, where each shows, and numbers you rent only to send from."""
+    result = state.api().get('/admin/sip/send-only')
+    state.out().result(result, lambda out: _send_only_lines(out, result))
+
+
+def _save_send_only(numbers):
+    api = state.api()
+    api.put('/admin/sip/send-only', json={'numbers': numbers})
+    result = api.get('/admin/sip/send-only')
+    state.out().result(result, lambda out: _send_only_lines(out, result))
+
+
+@send_only.command('add')
+def send_only_add(number: str = typer.Argument(..., metavar='NUMBER',
+                                               help='The number with its country code, such as +13035550100.')):
+    """Add a send-only number. To show it, set it as a trunk's caller ID or as the station ID too."""
+    current = [item['number'] for item in state.api().get('/admin/sip/send-only').get('numbers') or []]
+    _save_send_only(current + [number.strip()])
+
+
+@send_only.command('remove')
+def send_only_remove(number: str = typer.Argument(..., metavar='NUMBER', help='The send-only number to remove.')):
+    """Remove a send-only number; it counts as one of your numbers again only if an account receives on it."""
+    current = [item['number'] for item in state.api().get('/admin/sip/send-only').get('numbers') or []]
+    if number.strip() not in current:
+        raise CliError(f'{number.strip()} is not one of your send-only numbers.')
+    _save_send_only([item for item in current if item != number.strip()])

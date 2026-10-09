@@ -26,6 +26,7 @@ export default defineConfig({
       '^/admin/(?!ui(?:/|$))': { target: api, ws: true },
       '/auth': api,
       '/access': api,
+      '/analysis': api,
       '/fax': api,
       '/inbound': api,
       '/plugins': api,

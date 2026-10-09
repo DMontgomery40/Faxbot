@@ -31,8 +31,11 @@ from .plan import route_label
 
 
 # Trunk presets whose carrier charges Faxbot reads, and the providers it asks itself.
-CARRIER_PRESETS = ('telnyx',)
-REPORTING_PROVIDERS = ('signalwire',)
+# Telnyx (routing/telnyx.py) and every carrier with a call-record reader (routing/carrier_records.py).
+CARRIER_PRESETS = ('telnyx', 'signalwire', 'flowroute')
+REPORTING_PROVIDERS = ('signalwire', 'sinch', 'phaxio')
+# Cloud providers Faxbot receives faxes from (inbound_imports.source); the trunk's received faxes are its calls.
+CLOUD_RECEIVING = ('sinch', 'phaxio', 'humblefax', 'efax', 'signalwire', 'documo')
 
 
 def _add(bucket, currency, micros):
@@ -263,6 +266,70 @@ class Spending:
             entry['total_micros'] = self.total(entry)
         return [totals[key] for key in sorted(totals)]
 
+    def received_faxes(self, since):
+        """Per cloud provider: faxes it received, what it charged for them, estimates for the rest, and the unknown.
+
+        A provider's reported charge (``provider_received_charges``, migration 0051: Sinch and Phaxio) counts
+        first; otherwise the receiving account's rate card estimates the fax by its pages; a fax with neither is
+        counted in ``unpriced``, never added as 0. A fax on a flat plan is ``included``: the plan's fee is already
+        on the account's sending line. Faxes received over the SIP trunk are the trunk's calls, never here.
+        """
+        from .billing import ReceivedChargeStore
+        from .database import DeliveryStoreError
+        imports, faxes = self.carriers.imports, self.carriers.faxes
+        received = sa.func.coalesce(imports.c.source_received_at, imports.c.imported_at)
+        key = imports.c.account_key if 'account_key' in imports.c else sa.null()
+        with read_connection(self.routes.engine) as connection:
+            rows = connection.execute(
+                sa.select(imports.c.inbound_fax_id, imports.c.source, key.label('account_key'),
+                          imports.c.reported_pages, faxes.c.pages)
+                .select_from(imports.join(faxes, faxes.c.id == imports.c.inbound_fax_id))
+                .where(imports.c.source.in_(CLOUD_RECEIVING), imports.c.state == 'received',
+                       imports.c.revision == '', received >= since)
+                .order_by(imports.c.inbound_fax_id)).all()
+        try:
+            effective = ReceivedChargeStore(self.routes.engine).in_effect(sorted({row.inbound_fax_id for row in rows}))
+        except DeliveryStoreError:
+            effective = {}  # before migration 0051: nothing reported
+        cards, totals, open_costs, seen = {}, {}, {}, set()
+        for row in rows:
+            if row.inbound_fax_id in seen:
+                continue
+            seen.add(row.inbound_fax_id)
+            entry = totals.setdefault(row.source, {
+                'provider_id': row.source, 'faxes': 0, 'reported': 0, 'reported_cost_micros': {}, 'included': 0,
+                'unreported': 0, 'unreported_estimate_micros': {}, 'unpriced': 0})
+            entry['faxes'] += 1
+            reports = effective.get(row.inbound_fax_id) or []
+            if reports:
+                entry['reported'] += 1
+                for report in reports:
+                    _add(entry['reported_cost_micros'], report['currency'], report['amount_micros'])
+                continue
+            account = row.account_key or row.source
+            if account not in cards:
+                card = self.routes.card_for_route(account, row.source, 'inbound')
+                if card is None:
+                    # An account on a flat plan with no receiving price of its own: the plan covers what it receives.
+                    sending = self.routes.card_for_route(account, row.source, 'outbound')
+                    card = sending if sending is not None and sending.flat_plan else None
+                cards[account] = card
+            card = cards[account]
+            if card is not None and card.flat_plan:
+                entry['included'] += 1
+                continue
+            entry['unreported'] += 1
+            pages = row.pages if row.pages is not None else row.reported_pages
+            estimate = (Money.of(attempt_cost(card, seconds=None, pages=pages, delivered=True), card.currency)
+                        if card is not None else None)
+            open_costs.setdefault(row.source, Tally()).add(estimate)
+        for provider, tally in open_costs.items():
+            totals[provider]['unreported_estimate_micros'] = tally.known
+            totals[provider]['unpriced'] = tally.unknown
+        for entry in totals.values():
+            entry['total_micros'] = self.total(entry)
+        return [totals[key] for key in sorted(totals)]
+
     # One fax ---------------------------------------------------------------------
     def _shares(self, connection, job_id):
         """{call attempt: (this fax's place, every fax's pages)} for calls this fax shared with other faxes.
@@ -426,7 +493,7 @@ class Spending:
                         'summary': f'{carrier_label(next(iter(carriers)))} charged {money_list_text(total)} for this call.'}
             if backend == 'sip':
                 return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
-            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+            return self._received_charge(inbound_id, backend)
         for row in rows:
             for charge in effective.get(row.id, []):
                 _add(total, charge['currency'], charge['amount_micros'])
@@ -444,3 +511,29 @@ class Spending:
             return {'state': 'unmatched', 'reported_cost': {},
                     'summary': f'Faxbot could not match this call to one {who} record, so its cost is unknown.'}
         return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
+
+    def _received_charge(self, inbound_id, backend):
+        """What Sinch or Phaxio reported for a fax it received (``billing.ReceivedChargeReconciler``, 0051)."""
+        from .billing import RECEIVED_PROVIDERS, ReceivedChargeStore
+        from .database import DeliveryStoreError
+        if backend not in RECEIVED_PROVIDERS:
+            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+        try:
+            store = ReceivedChargeStore(self.routes.engine)
+            reports, state = store.in_effect([inbound_id]).get(inbound_id, []), store.state(inbound_id)
+        except DeliveryStoreError:
+            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+        who = route_label(backend)
+        total = {}
+        for report in reports:
+            _add(total, report['currency'], report['amount_micros'])
+        if total:
+            return {'state': 'reported', 'reported_cost': total,
+                    'summary': f'{who} charged {money_list_text(total)} for this fax.'}
+        if state == 'unreported':
+            return {'state': 'none', 'reported_cost': {},
+                    'summary': f'{who} never reported a price for this fax, so its cost is unknown.'}
+        if state == 'waiting':
+            return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
+        # Received before Faxbot read received-fax charges, or not asked about yet.
+        return {'state': 'none', 'summary': None, 'reported_cost': {}}

@@ -32,7 +32,7 @@ check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
 unready_seconds=${FAXBOT_ENGINE_UNREADY_SECONDS:-30}
 ready_seconds=${FAXBOT_ENGINE_READY_SECONDS:-120}
 # Faxbot asks for a restart by writing a new request (a fax call no free line answered, or a person's
-# Restart the fast fax service). One written before this start is done by this start: read before the
+# Restart the fax engine). One written before this start is done by this start: read before the
 # start time, so Faxbot's "restarted" (start time at or after the request) is never early.
 restart_request=$shared/engine-restart
 request_sum() {
@@ -47,14 +47,19 @@ log() { printf 'faxbot-engine: %s\n' "$*" >&2; }
 # refuse <sentence for the console> [detail for the container log]
 refuse() { log "${2:-$1}"; write_status failed "$1"; exit 1; }
 # Status sentences an office administrator reads on the trunk page (checked with Jev, 0.65-0.82).
-NOT_STARTED="Faxbot's fast fax service could not start; select Apply and connect to try again."
-LINE_DOWN="Faxbot's fast fax service lost a fax line and is starting again."
+NOT_STARTED="Faxbot's fax engine could not start; select Apply and connect to try again."
+LINE_DOWN="Faxbot's fax engine lost a fax line and is starting again."
+
+# The engine's build (the release and a digest of Faxbot's patches), written into the image.
+engine_version=$(tr -cd 'A-Za-z0-9 .+_-' < "${FAXBOT_ENGINE_VERSION_FILE:-/usr/share/faxbot/engine-version}" \
+  2>/dev/null | head -c 120 || true)
+engine_version=${engine_version:-7.0.11}
 
 write_status() {
   local temporary
   temporary=$(mktemp "$out/.engine.status.XXXXXX")
-  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "started": %s, "version": "7.0.11"}\n' \
-    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" "$started_at" > "$temporary"
+  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "started": %s, "version": "%s"}\n' \
+    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" "$started_at" "$engine_version" > "$temporary"
   chmod 644 "$temporary"
   mv -f "$temporary" "$status"
 }
@@ -62,7 +67,7 @@ write_status() {
 conf_sum() { if [ -f "$conf" ] && [ ! -L "$conf" ]; then cksum < "$conf"; else echo none; fi; }
 
 if [ ! -f "$conf" ] || [ -L "$conf" ]; then
-  write_status waiting "Faxbot's fast fax service starts when you select Apply and connect."
+  write_status waiting "Faxbot's fax engine starts when you select Apply and connect."
   log 'waiting for Faxbot to write the engine settings'
   while [ ! -f "$conf" ] || [ -L "$conf" ]; do sleep "$check_seconds"; done
 fi
@@ -135,7 +140,7 @@ if ! { [ -f "$pem" ] && head -1 "$pem" | grep -q 'BEGIN CERTIFICATE' && grep -q 
   workdir=$(mktemp -d)
   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj '/CN=Faxbot SSL Fax' \
     -keyout "$workdir/key.pem" -out "$workdir/cert.pem" >/dev/null 2>&1 \
-    || refuse "Faxbot's fast fax service could not start; it will try again by itself." \
+    || refuse "Faxbot's fax engine could not start; it will try again by itself." \
               'could not make the SSL Fax certificate'
   cat "$workdir/cert.pem" "$workdir/key.pem" > "$pem.new"
   mv -f "$pem.new" "$pem"
@@ -164,6 +169,10 @@ mkdir -p "$state/received" "$state/results" "$out/inbound"
 chown uucp:uucp "$state/received" "$state/results" "$out/inbound"
 chmod 700 "$state/received" "$state/results" "$out/inbound"
 chmod 711 "$state"
+# Faxes held for another machine to collect (hfaxd puts them here; faxgetty reads them when that machine calls).
+mkdir -p "$spool/pollq"
+chown uucp:uucp "$spool/pollq"
+chmod 700 "$spool/pollq"
 
 # This start, for Faxbot: every fax this engine took before now and never
 # reported on has no result coming (kept until Faxbot has it, like every report).
@@ -187,6 +196,7 @@ MaxDials:		1
 MaxTries:		1
 MaxBatchJobs:		1
 NotifyCmd:		/usr/local/lib/faxbot-engine/notify
+JobControlCmd:		/usr/local/lib/faxbot-engine/jobcontrol
 EOF
 chown uucp:uucp "$spool/etc/config"
 
@@ -197,7 +207,7 @@ for attempt in $(seq 1 60); do
   [ -n "$asterisk_address" ] && break
   sleep 1
 done
-[ -n "$asterisk_address" ] || refuse "Faxbot's fast fax service cannot reach the phone connection." \
+[ -n "$asterisk_address" ] || refuse "Faxbot's fax engine cannot reach the phone connection." \
                                      "cannot resolve the Asterisk host $asterisk_host"
 
 # The lines register only once Asterisk has loaded them: Apply writes them and
@@ -211,7 +221,7 @@ lines_loaded() {
   done
 }
 if [ -f "$shared/asterisk-started" ] && ! lines_loaded; then
-  write_status waiting "Faxbot's fast fax service is waiting for the phone connection to restart."
+  write_status waiting "Faxbot's fax engine is waiting for the phone connection to restart."
   log 'waiting for Asterisk to load the fax lines'
   until lines_loaded; do sleep "$check_seconds"; done
   sleep "$check_seconds"
@@ -269,6 +279,8 @@ EOF
     printf 'CountryCode:\t\t1\nAreaCode:\t\t\nLongDistancePrefix:\t1\nInternationalPrefix:\t011\n'
     printf 'FAXNumber:\t\t%s\n' "$fax_number"
     printf 'LocalIdentifier:\t"%s"\n' "$station_id"
+    # Each job may send its own station ID (Faxbot's reply number, JPARM TSI); faxsend ignores it otherwise.
+    printf 'UseJobTSI:\t\tyes\n'
     printf 'ServerTracing:\t\t0x00201\nSessionTracing:\t\t%s\n' "$session_tracing"
     printf 'RecvFileMode:\t\t0600\nLogFileMode:\t\t0600\nDeviceMode:\t\t0600\n'
     printf 'RingsBeforeAnswer:\t1\nSpeakerVolume:\t\toff\nGettyArgs:\t\t"-h %%l dx_%%s"\n'
@@ -282,6 +294,10 @@ EOF
     # name for the call (in the caller name); the receive script gets them in this order.
     printf 'CallIDPattern:\t\t"NMBR="\nCallIDPattern:\t\t"NAME="\nCallIDPattern:\t\t"DNIS="\n'
     printf 'FaxRcvdCmd:\t\t/usr/local/lib/faxbot-engine/received\n'
+    # A fax Faxbot collected by polling (faxsend reads PollRcvdCmd from the line's own config).
+    printf 'PollRcvdCmd:\t\t/usr/local/lib/faxbot-engine/pollrcvd\n'
+    # A fax another machine collected from this engine (polled transmission, hylafax/patches/0002).
+    printf 'PolledCmd:\t\t/usr/local/lib/faxbot-engine/polled\n'
     printf 'Class1SSLFaxSupport:\t%s\nClass1SSLFaxCert:\tetc/ssl.pem\n' "$ssl_support"
     if [ "$sslfax" = yes ] && [ -n "$listener" ]; then
       printf 'Class1SSLFaxInfo:\t"%s"\n' "$listener"
@@ -432,13 +448,13 @@ while sleep "$check_seconds"; do
       /usr/local/lib/faxbot-engine/deliver || true
   fi
   if registration_refused && idle; then
-    write_status restarting "Faxbot's fast fax service is reconnecting to the phone connection."
+    write_status restarting "Faxbot's fax engine is reconnecting to the phone connection."
     log 'a fax line was refused by Asterisk; restarting to register again'
     exit 1
   fi
   for daemon in faxq hfaxd iaxmodem faxgetty; do
     if ! pgrep -x "$daemon" >/dev/null; then
-      write_status failed "Faxbot's fast fax service stopped and is starting again."
+      write_status failed "Faxbot's fax engine stopped and is starting again."
       log "$daemon stopped; restarting the engine"
       exit 1
     fi
@@ -457,13 +473,13 @@ while sleep "$check_seconds"; do
     line_down=''
   fi
   if [ "$(request_sum)" != "$restart_seen" ] && idle; then
-    write_status restarting "Faxbot's fast fax service is starting again."
+    write_status restarting "Faxbot's fax engine is starting again."
     log 'Faxbot asked for a restart; starting again'
     exit 0
   fi
   current=$(conf_sum)
   if [ "$current" != "$loaded" ] && idle; then
-    write_status restarting "Faxbot's fast fax service is loading new settings."
+    write_status restarting "Faxbot's fax engine is loading new settings."
     log 'settings changed; restarting to load them'
     exit 0
   fi

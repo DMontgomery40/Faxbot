@@ -49,7 +49,10 @@ def test_rate_cards_round_trip_as_money(client):
     cards = {card['provider_id']: card for card in response.json()['cards']}
     assert cards['sip']['per_minute'] == '0.005' and cards['sip']['per_page'] == '0.00'
     assert cards['phaxio']['per_page'] == '0.07' and cards['sip']['captured_on'] == '2026-10-03'
-    assert client.get('/routing/rate-cards', headers=ADMIN).json()['cards'] == response.json()['cards']
+    # GET adds each card's prices by where calls start (origin_rates), saved on their own; none here.
+    listed = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']
+    assert all(card['rows'] == [] for card in listed)
+    assert [{key: value for key, value in card.items() if key != 'rows'} for card in listed] == response.json()['cards']
     bad = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [{**PHAXIO, 'per_page': '-1'}]})
     assert bad.status_code == 400 and 'six decimal places' in bad.json()['detail']
 
@@ -210,7 +213,8 @@ def test_reconcile_records_telnyx_charges_and_the_console_reads_them(telnyx_clie
     assert sip['carrier'] == 'Telnyx' and sip['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}]
     assert (sip['attempts_with_reported_cost'], sip['awaiting_carrier_bill'], sip['unmatched_charges']) == (1, 0, 0)
     assert sip['billed_minutes'] == 1.0
-    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True, 'sentence':
+                                        "Telnyx publishes each call's charge; Faxbot reads it with the Telnyx API key."}
     assert 'KEYsynthetic-telnyx' not in response.text + str(costs)
     assert telnyx_client.get('/routing/faxes/' + '0' * 32 + '/cost', headers=ADMIN).status_code == 404
     assert telnyx_client.get(f'/routing/faxes/{job}/cost').status_code == 401

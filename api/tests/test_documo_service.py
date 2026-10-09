@@ -161,7 +161,10 @@ def test_documented_statuses_and_only_safe_receipt_fields(document, operation, w
         'resultCode': '0', 'accountId': PRIVATE, 'errorInfo': PRIVATE})
     result = asyncio.run(service.send_fax_file(DESTINATION, document) if operation == 'create'
                          else service.get_fax_status(SID))
-    assert result == {'provider_sid': SID, 'status': expected}
+    # A failed fax also says whether the call ended before any fax data (routing/predata.py, WP-C); result
+    # code 0 does not say, so it is unknown. Nothing else from Documo's response is kept.
+    assert result == {'provider_sid': SID, 'status': expected,
+                      **({'before_fax_data': None} if expected == 'failed' else {})}
     assert len(requests) == 1
 
 

@@ -106,6 +106,15 @@ def _database_view(url: str) -> dict[str, Any]:
     }
 
 
+def _call_records(values):
+    from .routing.carrier_records import trunk_records
+    try:
+        found = trunk_records(values)
+    except Exception:
+        return None
+    return {'published': found['published'], 'readable': found['readable'], 'sentence': found['sentence']}
+
+
 def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iterable[str] = (),
                            env_managed: Iterable[str] = (),
                            environment: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -117,6 +126,13 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
     """
     values = snapshot.desired.values
     return {
+        'analysis': {
+            'enabled': values.analysis_enabled, 'provider': values.analysis_provider,
+            'base_url': values.analysis_base_url, 'model': values.analysis_model,
+            'api_key': mask_secret(values.analysis_api_key),
+            'interval_hours': values.analysis_interval_hours,
+            'configured': bool(values.analysis_api_key and values.analysis_model),
+        },
         'backend': {'type': values.fax_backend, 'disabled': values.fax_disabled},
         'hybrid': {
             'outbound_backend': values.effective_outbound,
@@ -144,6 +160,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'access_key': mask_secret(values.humblefax_access_key),
             'secret_key': mask_secret(values.humblefax_secret_key),
             'from_number': values.humblefax_from_number,
+            # Receiving: the switch, and how often Faxbot asks HumbleFax for received faxes.
+            'receive': values.humblefax_receive_enabled,
+            'poll_seconds': values.humblefax_poll_seconds,
             # The account's own numbers as HumbleFax reports them (cached read; empty until known).
             'account_numbers': list(_humblefax_numbers(values)),
             'configured': bool(values.humblefax_access_key and values.humblefax_secret_key),
@@ -166,6 +185,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'api_key': mask_secret(values.sinch_api_key),
             'api_secret': mask_secret(values.sinch_api_secret),
             'configured': bool(values.sinch_project_id and values.sinch_api_key and values.sinch_api_secret),
+            'webhook_base_url': values.sinch_webhook_base_url,
+            'incoming_webhook_url': values.sinch_incoming_webhook_url,
+            'incoming_webhook_login_url': values.sinch_incoming_webhook_login_url,
         },
         'signalwire': {
             'space_url': values.signalwire_space_url,
@@ -220,6 +242,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_ecm': values.sip_fax_ecm,
                 'fax_compression': values.sip_fax_compression,
                 'fax_fine': values.sip_fax_fine,
+                'fax_tune_coding': values.sip_fax_tune_coding,
                 'sslfax_enabled': values.sip_sslfax_enabled,
                 'fax_lines': values.sip_fax_lines,
                 # Calls at once on the trunk and new calls a second, as set (0: the default) and as in effect.
@@ -238,6 +261,12 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             # Lets Faxbot read what Telnyx charged for each call; never shown.
             'telnyx_api_key': mask_secret(values.telnyx_api_key),
             'telnyx_api_key_set': bool(values.telnyx_api_key),
+            # Lets Faxbot read what Flowroute charged for each call; the secret key is never shown.
+            'flowroute_access_key': values.flowroute_access_key,
+            'flowroute_secret_key': mask_secret(values.flowroute_secret_key),
+            'flowroute_secret_key_set': bool(values.flowroute_secret_key),
+            # Whether the trunk's carrier publishes call records with charges, and whether Faxbot can read them.
+            'call_records': _call_records(values),
         },
         'security': {
             'api_key': mask_secret(values.api_key),
@@ -302,6 +331,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'min_success_percent': values.route_min_success_percent,
             # Faxes to the installation's own numbers become received faxes here, with no call.
             'local_delivery': values.local_delivery_enabled,
+            # Fax-friendly shading on documents you send (pages/friendly.py), and the opt-in to make light areas
+            # white (off by default).
+            'fax_friendly_documents': values.fax_friendly_documents,
+            'fax_friendly_whiten': values.fax_friendly_whiten,
         },
         'intake': {
             'email_enabled': values.intake_email_enabled,
@@ -317,6 +350,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'work': {
             'acknowledge_hours': values.work_acknowledge_hours,
         },
+        # Case checklists: whether Faxbot suggests possible matches for missing items (off by default).
+        'cases': {'suggestions': values.case_suggestions_enabled},
         # What every sent fax carries: the header text and the station ID (your fax number).
         'sender': {'header': values.fax_header, 'station_id': values.fax_station_id},
         'direct': {

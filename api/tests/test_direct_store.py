@@ -39,13 +39,52 @@ def test_not_received_answer_fences_a_later_acceptance(store):
     # Asking again keeps answering from the same fence.
     assert store.answer_or_fence('b' * 32, {'id': 'peer-1'})['state'] == 'refused'
     assert store.recent() == []
+    # A fence is never filed as a received fax.
+    assert store.unfiled() == []
 
 
 def test_acceptance_first_is_reported_as_received(store):
     row, created = accept(store, 'c' * 32)
-    assert created is True and row['state'] == 'accepted'
+    assert created is True and row['state'] == 'accepted' and row['kind'] is None
     assert store.answer_or_fence('c' * 32, {'id': 'peer-1'})['id'] == row['id']
-    assert len(store.intake.list_items()) == 1
+    # Filing makes it a received fax with its email item (filing.py); until then it waits to be filed.
+    assert store.intake.list_items() == []
+    assert [item['message_id'] for item in store.unfiled()] == ['c' * 32]
+
+
+def test_an_arrival_from_before_peer_fax_keeps_its_email_item_and_is_never_filed_again(store):
+    row, _ = accept(store, 'd' * 32)
+    with store.engine.begin() as connection:
+        store.intake.add_direct(connection, direct_delivery_id=row['id'], received_at=row['accepted_at'], pages=1,
+                                from_number='+15550100001', to_number='+15550100002', now=row['accepted_at'])
+    assert store.unfiled() == []
+
+
+def test_only_a_newer_signed_statement_changes_what_a_partner_accepts(store):
+    early, late = datetime(2026, 10, 7, 9, 0), datetime(2026, 10, 7, 10, 0)
+    assert store.note_capabilities('peer-1', fax_images=True, peer_calls=False, said_at=late) is True
+    assert store.note_capabilities('peer-1', fax_images=False, peer_calls=False, said_at=early) is False
+    peer = store.get_peer('peer-1')
+    assert (peer['partner_receives_fax_images'], peer['partner_peer_calls'], peer['partner_said_at']) == (1, None, late)
+    # Signed in the same second: the statement that arrives later is kept.
+    assert store.note_capabilities('peer-1', fax_images=False, peer_calls=True, said_at=late) is True
+    peer = store.get_peer('peer-1')
+    assert (peer['partner_receives_fax_images'], peer['partner_peer_calls']) == (None, 1)
+
+
+def test_fax_images_are_on_by_default_and_every_partner_is_told_until_it_has_the_current_choice(store):
+    from api.app.direct.store import accepts_fax_images
+    peer = store.get_peer('peer-1')
+    # A partner enrolled before 0034 reads NULL: on, with no row rewritten, and not told yet.
+    assert peer['receive_fax_images'] is None and accepts_fax_images(peer) is True
+    assert [item['id'] for item in store.untold()] == ['peer-1']
+    assert store.mark_told('peer-1', fax_images=True, peer_calls=False) is True and store.untold() == []
+    off = store.set_receive_fax_images('peer-1', False)
+    assert off['receive_fax_images'] == 0 and accepts_fax_images(off) is False
+    assert [item['id'] for item in store.untold()] == ['peer-1']
+    # A statement of the earlier choice does not count as telling the current one.
+    assert store.mark_told('peer-1', fax_images=True, peer_calls=False) is False and len(store.untold()) == 1
+    assert store.set_receive_fax_images('peer-1', True)['receive_fax_images'] == 1
 
 
 def test_codes_lock_after_five_wrong_tries(store):

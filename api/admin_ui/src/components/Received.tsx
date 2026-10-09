@@ -53,12 +53,16 @@ import {
 } from './delivery/InboxDelivery';
 import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
-import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
+import { CostsUnread, InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
 import ImportDocument from './ImportDocument';
+import UncertainQueue from './work/UncertainQueue';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 import { providerLabel } from '../providerLabels';
+import MarkJunk from './MarkJunk';
+import type { ReceivedForm } from '../api/formsTypes';
+import ReceivedFormLine from './forms/ReceivedFormLine';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -142,10 +146,13 @@ interface ReceivedProps {
   onShowChange?: (show: ReceivedFilter) => void;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
+  // Opens a sent fax in Sent, for the sent faxes to settle shown here beside the received work.
+  onOpenSentFax?: (faxId: string) => void;
 }
 
 export default function Received({
   client, docsBase, inboundEnabled, onNavigate, permissions, canList = true, canWork = true, show = 'all', onShowChange, onSendFax,
+  onOpenSentFax,
 }: ReceivedProps) {
   const canReadProviders = !!permissions?.has('providers:read');
   const canChangeProviders = !!permissions?.has('providers:write');
@@ -153,6 +160,7 @@ export default function Received({
   // that cannot read it see the list without it.
   const canReadDelivery = !!permissions?.has('mailboxes:read');
   const canRetryDelivery = !!permissions?.has('settings:write');
+  const canBlockSender = !!permissions?.has('settings:write');
   const canOpenEmailSettings = !!permissions?.has('settings:read') && !!onNavigate;
   const receiving = inboundEnabled !== false;
 
@@ -171,6 +179,8 @@ export default function Received({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [deliveries, setDeliveries] = useState<IntakeItem[] | null>(null);
+  // Registered forms partners delivered whose pages matched, with their values.
+  const [receivedForms, setReceivedForms] = useState<ReceivedForm[] | null>(null);
   const [notDelivered, setNotDelivered] = useState<number | null>(null);
   const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
   const [callbacks, setCallbacks] = useState<any | null>(null);
@@ -224,6 +234,11 @@ export default function Received({
     } catch {
       setConnectors(null);
     }
+    try {
+      setReceivedForms((await client.listReceivedForms()).received);
+    } catch {
+      setReceivedForms(null);
+    }
   }, [client, receiving, canReadDelivery]);
 
   // How received faxes reach Faxbot: one line for the trunk or eFax.
@@ -270,7 +285,12 @@ export default function Received({
 
   const deliveryFor = useMemo(() => new Map((deliveries ?? []).filter((item) => item.inbound_fax_id)
     .map((item) => [item.inbound_fax_id as string, item])), [deliveries]);
-  const directItems = (deliveries ?? []).filter((item) => item.source === 'direct');
+  // Direct deliveries from before peer fax have no received fax; later ones are filed in the list above.
+  const directItems = (deliveries ?? []).filter((item) => item.source === 'direct' && !item.inbound_fax_id);
+  const formByItem = useMemo(() => new Map((receivedForms ?? []).filter((form) => form.intake_item_id)
+    .map((form) => [form.intake_item_id as string, form])), [receivedForms]);
+  const formByFax = useMemo(() => new Map((receivedForms ?? []).filter((form) => form.inbound_fax_id)
+    .map((form) => [form.inbound_fax_id as string, form])), [receivedForms]);
 
   const rows = useMemo<Row[]>(() => {
     const byFax = new Map((work ?? []).map((item) => [item.inbound_fax_id, item]));
@@ -407,6 +427,7 @@ export default function Received({
     if (!row.fax) return '-';
     // A fax sent to one of this installation's own numbers was delivered here, with no call.
     if (row.fax.backend === 'local') return 'This Faxbot';
+    if (row.fax.backend === 'direct') return 'Direct delivery';
     return row.fax.backend === 'import' ? 'Imported' : providerName(row.fax.backend);
   };
 
@@ -499,6 +520,9 @@ export default function Received({
         {item && can(item, 'export') && (
           <Button size="small" onClick={() => void exportEvidence(item)}>Export</Button>
         )}
+        {fax && canBlockSender && fax.fr && (
+          <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
+        )}
       </Stack>
     );
   };
@@ -553,6 +577,9 @@ export default function Received({
         </Box>
       </Box>
 
+      {/* Sent faxes Faxbot could not confirm: owned work too, settled in Sent. Nothing shows when there are none. */}
+      <UncertainQueue client={client} onOpenSentFax={onOpenSentFax} />
+
       {!receiving && (
         <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}
           action={onNavigate && permissions?.has('settings:read') && (
@@ -585,6 +612,7 @@ export default function Received({
 
       {(receiving || work !== null) && (
         <Box>
+          {shown.length > 0 && <CostsUnread costs={costs} />}
           {loading && rows.length === 0 ? (
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}><CircularProgress /></Paper>
           ) : shown.length === 0 ? (
@@ -613,6 +641,7 @@ export default function Received({
                         {pages(row) ? ` · ${pages(row)} ${pages(row) === 1 ? 'page' : 'pages'}` : ''}
                       </Typography>
                       {row.fax && <InboundCostLine cost={costs.get(row.fax.id)} />}
+                      {row.fax && formByFax.get(row.fax.id) && <ReceivedFormLine form={formByFax.get(row.fax.id)!} />}
                       <OwnerAndState row={row} />
                       {deliveries !== null && row.fax && (
                         <Box>
@@ -655,6 +684,7 @@ export default function Received({
                         <TableCell>
                           <Typography variant="body2">{through(row)}</Typography>
                           {row.fax && <InboundCostLine cost={costs.get(row.fax.id)} />}
+                          {row.fax && formByFax.get(row.fax.id) && <ReceivedFormLine form={formByFax.get(row.fax.id)!} />}
                         </TableCell>
                         <TableCell><Typography variant="body2">{pages(row) || '-'}</Typography></TableCell>
                         <TableCell sx={{ maxWidth: 300 }}><OwnerAndState row={row} /></TableCell>
@@ -676,7 +706,8 @@ export default function Received({
       )}
 
       {receiving && (
-        <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)} />
+        <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)}
+          forms={formByItem} />
       )}
 
 

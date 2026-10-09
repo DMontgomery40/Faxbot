@@ -114,9 +114,9 @@ class Docker:
     def put(self, container, path, text):
         """Write a file as root (mode 0600), as Faxbot writes its settings. A plain "docker cp" keeps this
         computer's user ID, which root in a container without a file override (docker-compose.yml) cannot
-        read; a tar stream names root."""
+        read; a tar stream names root. ``text`` may be bytes (a fax image)."""
         import tarfile
-        data = text.encode()
+        data = text if isinstance(text, bytes) else text.encode()
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode='w') as tar:
             entry = tarfile.TarInfo(os.path.basename(path))
@@ -334,8 +334,11 @@ except (urllib.error.URLError, OSError) as error:
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
              carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False,
-             carrier_empty_preambles=False, peer_ecm=True):
-    """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
+             carrier_empty_preambles=False, peer_ecm=True, api_extra=None):
+    """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once.
+
+    ``api_extra`` adds settings to Faxbot's own (case o: a second trunk number for the reply number).
+    """
     docker = Docker(label)
     made.append(docker)
     images = {
@@ -373,6 +376,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'ASTERISK_AMI_HOST': 'asterisk', 'ASTERISK_INBOUND_SECRET': inbound_secret, 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES': '0',
         'INBOUND_ENABLED': 'true',
         **ami_env,
+        **(api_extra or {}),
     }
     api_container = docker.create('api', images['api'], env=api_env, alias='api',
                                   volumes=[(faxdata, '/faxdata'), (settings_volume, '/faxdata/hylafax'),
@@ -501,7 +505,12 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     for container, commands in expected.items():
         names = {command.split()[1 if 'python' in command.split()[0] else 0].rsplit('/', 1)[-1]
                  for command in commands}
-        assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
+        # A second daemon stays; hfaxd's own child for one client (the engine's status check runs faxstat every
+        # few seconds) is gone within moments, so the list must settle to exactly one of each.
+        try:
+            wait_for(lambda: daemons(docker, container, names) == commands, 20, f'one of each daemon in {container}')
+        except AssertionError:
+            assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
     for container, lines in ((engine, 2), (peer, 1)):
         assert udp_ports(docker, container) == [4569 + n for n in range(1, lines + 1)], container
     docker.run('exec', '--detach', api_container, 'bash', '-c', AMI_LISTENER)
@@ -570,9 +579,9 @@ def page_match(sent, received):
     return None
 
 
-def send_and_collect(tmp_path, context):
+def send_and_collect(tmp_path, context, document=None):
     docker, key = context['docker'], context['key']
-    pdf = proof_pdf()
+    pdf = document or proof_pdf()
     local = tmp_path / 'proof.pdf'
     local.write_bytes(pdf)
     docker.run('cp', str(local), f'{context["api"]}:/tmp/proof.pdf')
@@ -1005,7 +1014,7 @@ def test_g_a_t38_call_with_no_t38_data_back_moves_only_the_engine_to_audio(tmp_p
              'engine_call': first['engine_call'], 'faxbot_log': first['faxbot_log'][-1500:]}
     print('\nSSLFAX_PROOF_G1 ' + json.dumps(proof, indent=2, default=str))
     assert str(proof['job_status']).lower() == 'failed', proof
-    assert proof['job_error'] == 'The call connected but the fast fax service heard no fax machine on the line.'
+    assert proof['job_error'] == 'The call connected but the fax engine heard no fax machine on the line.'
     assert found['call']['t38'] == 'yes' and found['call']['pages'] == 0, proof
     assert '"mode": "audio"' in mode and proof['installation_t38'] is True, proof
     assert proof['engine_call'] and proof['engine_call'].get('GwStatus'), proof
@@ -1315,8 +1324,8 @@ def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_pat
     assert proof['status']['state'] == 'running' and proof['status']['started'] >= request['asked'], proof
     assert proof['engine_state'] == 'running', proof
     text = proof['engine_text'] or ''
-    assert text.startswith("Faxbot's fast fax service did not answer the "), proof
-    assert text.endswith('so that fax was received the ordinary way; Faxbot restarted the fast fax service.'), proof
+    assert text.startswith("Faxbot's fax engine did not answer the "), proof
+    assert text.endswith('so that fax was received the ordinary way; Faxbot restarted the fax engine.'), proof
     # The restart wrote the engine's own settings back: the next call reaches line 1 through the engine.
     assert proof['next']['fax']['pages'] == 2, proof
     assert proof['next']['call'] and proof['next']['call'][0]['call_id'].startswith('engine.'), proof
@@ -1324,7 +1333,7 @@ def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_pat
 
 
 def test_n_asterisk_as_its_own_user_sends_and_receives_with_its_built_in_engine(tmp_path, loopback):
-    """Asterisk runs as its own user (uid 5060), as docker-compose.yml runs it. With the fast fax service
+    """Asterisk runs as its own user (uid 5060), as docker-compose.yml runs it. With the fax engine
     stopped, Faxbot's built-in engine does the work: SendFAX reads the pages the API wrote (mode 0640, the
     data folder's group), ReceiveFAX writes the received fax into Faxbot's inbound folder, and the hand-over
     script reads the inbound secret the API wrote (mode 0640) and gets the fax into Received."""
@@ -1374,3 +1383,536 @@ def test_n_asterisk_as_its_own_user_sends_and_receives_with_its_built_in_engine(
     assert fax['from_number'] == PEER_NUMBER and fax['to_number'] == FAXBOT_NUMBER and fax['pages'] == 2, proof
     assert received.endswith('asterisk:asterisk') and proof['handover_failures'] == [], proof
 
+
+
+REPLY_NUMBER = '+15555550177'
+
+
+def test_o_the_ssl_fax_engine_sends_the_reply_number_as_its_station_id(tmp_path, loopback):
+    """Numbers -> Sender identity: a reply number (a second number on the trunk, routed to a mailbox) is the
+    station ID the SSL Fax engine sends (JPARM TSI with UseJobTSI), not the line's own number."""
+    context = loopback('o', faxbot_t38=False, carrier_gateway=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',
+                       api_extra={'SIP_TRUNK_DIDS': f'{FAXBOT_NUMBER},{REPLY_NUMBER}'})
+    docker, key = context['docker'], context['key']
+    version = api(docker, 'GET', '/auth/me', key=key)['json']['policy_version']
+    box = api(docker, 'POST', '/access/mailboxes', key=key,
+              body={'label': 'Replies', 'enabled': True, 'expected_policy_version': version})
+    assert box['status'] == 200, box
+    version = api(docker, 'GET', '/auth/me', key=key)['json']['policy_version']
+    rule = api(docker, 'POST', '/access/inbound-rules', key=key,
+               body={'to_number': REPLY_NUMBER, 'mailbox_id': box['json']['mailbox']['id'],
+                     'expected_policy_version': version})
+    assert rule['status'] == 200, rule
+    saved = api(docker, 'PUT', '/numbers/reply', key=key, body={'number': REPLY_NUMBER})
+    assert saved['status'] == 200 and saved['json']['number'] == REPLY_NUMBER, saved
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    print('\nSSLFAX_PROOF_O ' + json.dumps({'received_info': proof['received_info']}, indent=2))
+    assert_delivered(outcome, proof)
+    assert proof['received_info'].get('Sender') == REPLY_NUMBER, proof['received_info']
+
+
+def shaded_pdf():
+    """Three pages of lightly shaded table rows: Ghostscript draws the shading as dots, which MH codes smaller than
+    MMR (about 264,000 against 349,000 bits a page), so Faxbot asks the engine for MH."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=letter, invariant=1)
+    for number in range(1, PAGES + 1):
+        page.setFont('Helvetica-Bold', 28)
+        page.drawString(72, 720, f'SHADED PROOF PAGE {number} OF {PAGES}')
+        for row in range(6):
+            top = 680 - row * 30
+            page.setFillGray(0.9)
+            page.rect(72, top - 6, 468, 20, fill=1, stroke=0)
+            page.setFillGray(0)
+            page.setFont('Helvetica', 12)
+            page.drawString(80, top, f'Row {row + 1} of page {number}')
+        page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def test_p_the_coding_measured_on_the_pages_reaches_the_engines_call(tmp_path, loopback):
+    """Measured fax coding (api/app/pages/coding.py): shaded pages measure smallest in MH, so Faxbot asks the SSL
+    Fax engine for MH as the job's data format (JPARM DATAFORMAT "G31D", the job's desireddf 0), and the engine's
+    job controls (hylafax/bin/jobcontrol) make faxsend honour it. The compression setting stops at MMR, so JBIG is
+    not usable; the peer's machine takes MR and MMR, yet the call agrees MH, and every page arrives intact.
+    Shading is kept as it is (FAX_FRIENDLY_DOCUMENTS never), so the measurement is of the pages as drawn.
+    Without the job controls (8 October 2026) faxsend's software conversion ignored the job's data format."""
+    context = loopback('p', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mmr'})
+    docker, key = context['docker'], context['key']
+    outcome = send_and_collect(tmp_path, context, document=shaded_pdf())
+    proof = evidence(outcome)
+    job_id = outcome['job']['id']
+    found = records(context, job_id)
+    coded = database(context, coding=f"SELECT requested, measured, compared, pages, bits, reason "
+                                      f"FROM fax_coding_choices WHERE job_id = '{job_id}'")['coding']
+    negotiated = database(context, engine=f"SELECT compression, ecm FROM fax_engine_calls WHERE job_id = '{job_id}'")
+    detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+    desired = re.findall(r'^desireddf:(\d+)$', outcome['done_qfile'], re.MULTILINE)
+    proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'engine_record': found['engine'],
+                  'desireddf': desired, 'sent_detail': detail.get('coding'),
+                  'dcs': [line for line in outcome['faxbot_log'].splitlines() if 'MH' in line or 'MMR' in line][:8]})
+    print('\nSSLFAX_PROOF_P ' + json.dumps(proof, indent=2, default=str))
+    assert_delivered(outcome, proof)
+    assert coded and coded[0]['requested'] == 'MH' and coded[0]['measured'] == 1 and coded[0]['pages'] == PAGES, proof
+    # The job's data format reached the engine (sendq(5) desireddf: 0 is 1-D MH) and the call agreed MH.
+    assert desired and set(desired) == {'0'}, proof
+    assert negotiated['engine'] and negotiated['engine'][0]['compression'] == 'MH', proof
+    assert found['engine']['engine'] == 'hylafax', proof
+    # The Sent detail says it: asked for MH, the call took MH.
+    assert detail['coding']['requested'] == 'MH' and detail['coding']['negotiated'] == 'MH', proof
+    assert detail['coding']['sentence'].startswith('Sent with MH: '), proof
+
+
+def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(tmp_path, loopback):
+    """JBIG end to end (M7). The API image has jbigkit, so the shaded pages are measured in JBIG too, with the
+    engine's own T.85 options. First fax: the peer's machine is not on record, so JBIG is not priced (MH, the
+    smallest of the others, is) and the SSL Fax engine is asked for nothing: it negotiates JBIG itself, and its
+    session log ("REMOTE format support") puts the machine's codings on record. Second fax, the same pages:
+    JBIG is chosen by its measured size, asked of the engine, and the call uses it. Every page of both arrives
+    with identical pixels below the header line."""
+    context = loopback('q', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    # Pages as drawn on both faxes: once the first call puts the peer's unlimited page length on record, dense
+    # pages would pack the second fax onto one long page (it did, on 8 October 2026, intact and in JBIG).
+    kept = api(docker, 'PUT', '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/pages', key=key,
+               body={'packing': 'never'})
+    assert kept['status'] == 200, kept
+    proofs = {}
+    for name in ('first', 'second'):
+        folder = tmp_path / name
+        folder.mkdir()
+        outcome = send_and_collect(folder, context, document=shaded_pdf())
+        proof = evidence(outcome)
+        job_id = outcome['job']['id']
+        coded = database(context, coding=f"SELECT requested, measured, compared, bits, reason "
+                                          f"FROM fax_coding_choices WHERE job_id = '{job_id}'")['coding']
+        negotiated = database(context, engine=f"SELECT compression FROM fax_engine_calls WHERE job_id = '{job_id}'")
+        known = database(context, known="SELECT codings, engine FROM page_capability_observations "
+                                        "ORDER BY observed_at DESC")['known']
+        detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+        proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'receiver_on_record': known,
+                      'desireddf': re.findall(r'^desireddf:(\d+)$', outcome['done_qfile'], re.MULTILINE),
+                      'sent_detail': detail.get('coding'),
+                      'received_info_raw': outcome['received_info'][:400]})
+        proofs[name] = proof
+        print(f'\nSSLFAX_PROOF_Q_{name.upper()} ' + json.dumps(proof, indent=2, default=str))
+        assert_delivered(outcome, proof)
+    print('\nSSLFAX_PROOF_Q ' + json.dumps(proofs, indent=2, default=str))
+    first, second = proofs['first'], proofs['second']
+    # Measured in JBIG on the API image, smaller than every other coding.
+    bits = json.loads(first['coding'][0]['bits'])
+    assert set(bits) == {'MH', 'MR', 'MMR', 'JBIG'} and bits['JBIG'] < min(bits['MH'], bits['MR'], bits['MMR']), proofs
+    # First: not on record, so priced at MH; the engine chose JBIG itself; the machine is on record after it.
+    assert (first['coding'][0]['requested'], first['coding'][0]['measured']) == ('MH', 1), proofs
+    assert first['negotiated'] and first['negotiated'][0]['compression'] == 'JBIG', proofs
+    assert first['receiver_on_record'] and first['receiver_on_record'][0]['codings'] == 'MH,MR,MMR,JBIG', proofs
+    # Second: JBIG chosen by its measured size, and the call used it.
+    assert (second['coding'][0]['requested'], second['coding'][0]['measured']) == ('JBIG', 1), proofs
+    assert second['coding'][0]['reason'].startswith('JBIG: '), proofs
+    assert second['negotiated'] and second['negotiated'][0]['compression'] == 'JBIG', proofs
+    assert second['sent_detail']['requested'] == 'JBIG' and second['sent_detail']['negotiated'] == 'JBIG', proofs
+
+
+# The polling password the proof uses: distinctive, so a coincidental digit string in a log cannot fail its check.
+PASSWORD = '1357924'
+
+
+def held_pages(count):
+    """A document to hold for collection: ``count`` pages of large distinct shapes as a Group 4 fax TIFF (bytes),
+    and the same pages as bitmaps."""
+    from PIL import Image, ImageDraw
+    frames = []
+    for number in range(1, count + 1):
+        page = Image.new('1', (1728, 2200), 1)
+        draw = ImageDraw.Draw(page)
+        draw.rectangle((200, 300, 200 + number * 300, 700), fill=0)
+        draw.ellipse((900, 900, 1500, 1500 + number * 100), fill=0)
+        for row in range(number):
+            draw.rectangle((100, 1700 + row * 80, 1600, 1730 + row * 80), fill=0)
+        frames.append(page)
+    # One strip per page, as faxq prepares documents and as HylaFAX's sender reads them (its first strip only).
+    from app.conversion import _fax_tiff_bytes
+    return _fax_tiff_bytes(frames), frames
+
+
+def hold_on_peer(context, hold_id, count, *, selective='', password=''):
+    """Hold a document on the peer for Faxbot's number to collect, exactly as Faxbot's own engine holds one
+    (hylafax/patches/0002-polled-transmit.patch, hylafax_engine.hold_document): a TIFF in pollq with its
+    sidecar, owned so faxgetty (uucp) can read them. Returns the pages held."""
+    docker, peer = context['docker'], context['peer']
+    image, frames = held_pages(count)
+    sidecar = hylafax_engine.held_sidecar(number=FAXBOT_NUMBER, selective=selective, password=password, job=hold_id,
+                                         tsi=PEER_NUMBER, tagline='Held for collection|%c|Page %%P of %%T')
+    folder = '/var/spool/hylafax/pollq'
+    docker.put(peer, f'{folder}/faxhold-{hold_id}.tif', image)
+    docker.put(peer, f'{folder}/faxhold-{hold_id}.poll', sidecar)
+    docker.sh(peer, f'chown uucp:uucp {folder}/faxhold-{hold_id}.* && chmod 640 {folder}/faxhold-{hold_id}.*',
+              check=True)
+    return frames
+
+
+def collect_once(context, *, selective=None, password=None):
+    """Turn collecting on for the peer's number with these settings and collect once; (request id, result row)."""
+    docker, key = context['docker'], context['key']
+    route = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/polling'
+    body = {'enabled': True, 'label': 'Peer site', 'selective': selective}
+    if password is not None:
+        body['password'] = password
+    saved = api(docker, 'PUT', route, key=key, body=body)
+    assert saved['status'] == 200, saved
+    asked = api(docker, 'POST', route + '/collect', key=key)
+    assert asked['status'] == 202, asked
+    request_id = asked['json']['id']
+
+    def finished():
+        found = database(context, result=f"SELECT outcome, sentence, pages, inbound_fax_id FROM poll_results "
+                                          f"WHERE request_id = '{request_id}'")['result']
+        return found[0] if found else None
+    return request_id, wait_for(finished, 300, 'the collection result')
+
+
+def polled_evidence(context):
+    """What the peer's side shows: its POLLED FAX log lines, the reports its polled script kept (Faxbot is
+    unreachable from the peer, so they stay in its volume), and what is still held."""
+    docker, peer = context['docker'], context['peer']
+    log = session_logs(docker, peer)
+    reports = docker.sh(peer, 'cat /var/lib/faxbot-engine/results/*polled.report 2>/dev/null').stdout
+    held = docker.sh(peer, 'ls /var/spool/hylafax/pollq 2>/dev/null').stdout.split()
+    return {
+        'peer_polled_lines': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                              if re.search(r'POLLED FAX|REMOTE (DTC|SEP|CIG|PWD)|DIS offers|TRAINING|USE ', line)][:40],
+        'peer_reports': [json.loads(line) for line in reports.splitlines() if line.strip().startswith('{')],
+        'still_held': held,
+    }
+
+
+def received_in_faxbot(context, inbound_fax_id, workdir):
+    """The pages of a fax in Faxbot's Received, from the image the engine's hand-over put in its out folder."""
+    from PIL import Image, ImageSequence
+    docker = context['docker']
+    rows = database(context, fax=f"SELECT id, from_number, to_number, pages, tiff_path FROM inbound_faxes "
+                                 f"WHERE id = '{inbound_fax_id}'")['fax']
+    assert rows, inbound_fax_id
+    path = rows[0]['tiff_path']
+    local = workdir / f'received-{inbound_fax_id}.tif'
+    local.write_bytes(docker.read_bytes(context['api'], path))
+    return rows[0], [frame.convert('1').copy() for frame in ImageSequence.Iterator(Image.open(local))]
+
+
+def test_s_a_held_fax_is_collected_by_polling_and_an_unknown_selective_address_is_refused(tmp_path, loopback):
+    """Polled transmission (hylafax/patches/0002-polled-transmit.patch, the other half of M21). The peer runs
+    the same patched engine image and holds two documents for Faxbot's number: one plain, one behind the
+    selective polling address 77. Faxbot collects (poll-receive): the peer's DIS offers a document (bit 9),
+    Faxbot's engine answers DTC, the peer turns the line around and sends the plain document, which lands in
+    Faxbot's Received with identical pixels below the header line and is no longer held. A collection with a
+    selective polling address the peer holds nothing for (42) is refused with DCN right after the DTC, recorded
+    as refused, and leaves the protected document held. Case r (a peer that holds nothing) stays as it is."""
+    context = loopback('s', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    plain = hold_on_peer(context, 'a' * 32, 2)
+    hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
+    proof = {}
+    try:
+        request, result = collect_once(context)
+        proof['collected'] = result
+        assert result['outcome'] == 'received', (result, polled_evidence(context))
+        fax, pages = received_in_faxbot(context, result['inbound_fax_id'], tmp_path)
+        proof['received_fax'] = {key: fax[key] for key in ('from_number', 'to_number', 'pages')}
+        proof['header_offsets'] = [page_match(a, b) for a, b in zip(plain, pages)]
+        proof['page_sizes'] = [list(page.size) for page in pages]
+        time.sleep(3)
+        proof['after_first'] = polled_evidence(context)
+        refused_request, refused = collect_once(context, selective='42')
+        proof['refused'] = refused
+        time.sleep(3)
+        proof['after_second'] = polled_evidence(context)
+        proof['faxbot_poll_lines'] = [line.split(']: ', 1)[-1] for line in session_logs(context['docker'], context['engine']).splitlines()
+                                      if re.search(r'POLL|DTC|SEP|REMOTE best|got DCN|E103', line)][:30]
+    finally:
+        print('\nSSLFAX_PROOF_S ' + json.dumps(proof, indent=2, default=str))
+    assert fax['from_number'] == PEER_NUMBER and fax['pages'] == 2 and len(pages) == 2, proof
+    assert all(offset is not None for offset in proof['header_offsets']), proof
+    first = proof['after_first']
+    assert any('REMOTE DTC' in line for line in first['peer_polled_lines']), proof
+    assert any(line.startswith('POLLED FAX: pollq/faxhold-' + 'a' * 32) and 'sent to' in line
+               for line in first['peer_polled_lines']), proof
+    assert [report['outcome'] for report in first['peer_reports']] == ['sent'], proof
+    assert first['peer_reports'][0]['job'] == 'a' * 32 and first['peer_reports'][0]['pages'] == 2, proof
+    assert sorted(first['still_held']) == ['faxhold-' + 'b' * 32 + '.poll', 'faxhold-' + 'b' * 32 + '.tif'], proof
+    assert refused['outcome'] == 'refused', proof
+    second = proof['after_second']
+    assert any('no document is held for that selective polling address' in line for line in second['peer_polled_lines']), proof
+    assert [report['outcome'] for report in second['peer_reports']] == ['sent', 'refused'], proof
+    assert sorted(second['still_held']) == sorted(first['still_held']), proof
+
+
+def test_s2_a_held_fax_behind_a_password_goes_only_to_the_caller_that_gives_it(tmp_path, loopback):
+    """Polled transmission with a polling password: the peer holds one document behind the selective polling
+    address 77 and the password 2468. Faxbot asks with the wrong password and is refused with DCN right after
+    its DTC (the document stays held); with the right password, sent with the call from its sealed setting, the
+    document is collected and lands in Received with identical pixels below the header line."""
+    context = loopback('s2', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    protected = hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
+    proof = {}
+    try:
+        wrong_request, wrong = collect_once(context, selective='77', password='0000000')
+        proof['wrong_password'] = wrong
+        time.sleep(3)
+        proof['after_wrong'] = polled_evidence(context)
+        right_request, right = collect_once(context, selective='77', password=PASSWORD)
+        proof['right_password'] = right
+        if right['outcome'] == 'received':
+            fax, pages = received_in_faxbot(context, right['inbound_fax_id'], tmp_path)
+            proof['received_fax'] = {key: fax[key] for key in ('from_number', 'to_number', 'pages')}
+            proof['header_offsets'] = [page_match(a, b) for a, b in zip(protected, pages)]
+            proof['page_sizes'] = [list(page.size) for page in pages]
+        time.sleep(3)
+        proof['after_right'] = polled_evidence(context)
+        proof['faxbot_poll_lines'] = [line.split(']: ', 1)[-1] for line in session_logs(context['docker'], context['engine']).splitlines()
+                                      if re.search(r'POLL|DTC|SEP|got DCN|E103', line)][:30]
+    finally:
+        print('\nSSLFAX_PROOF_S2 ' + json.dumps(proof, indent=2, default=str))
+    assert wrong['outcome'] == 'refused', proof
+    first = proof['after_wrong']
+    assert any('the polling password (PWD) does not match' in line for line in first['peer_polled_lines']), proof
+    assert [report['outcome'] for report in first['peer_reports']] == ['refused'], proof
+    assert sorted(first['still_held']) == ['faxhold-' + 'b' * 32 + '.poll', 'faxhold-' + 'b' * 32 + '.tif'], proof
+    assert right['outcome'] == 'received' and proof['received_fax']['pages'] == 1, proof
+    assert proof['header_offsets'] == [proof['header_offsets'][0]] and proof['header_offsets'][0] is not None, proof
+    second = proof['after_right']
+    assert [report['outcome'] for report in second['peer_reports']] == ['refused', 'sent'], proof
+    assert second['peer_reports'][1]['job'] == 'b' * 32 and second['still_held'] == [], proof
+    # The password itself is in no log the run writes: both engines' session logs (stock HylaFAX+ printed it in the
+    # poller's; patch 0002 hides it) and every container's own log.
+    docker = context['docker']
+    for name in ('peer', 'engine'):
+        assert PASSWORD not in session_logs(docker, context[name]), name
+    for name in ('api', 'asterisk', 'engine', 'carrier', 'peer'):
+        logs = docker.run('logs', context[name], check=False)
+        assert PASSWORD not in logs.stdout + logs.stderr, name
+
+
+def test_r_a_collection_from_a_fax_server_that_holds_nothing_calls_once_and_says_so(tmp_path, loopback):
+    """Collecting by polling (M21) against a stock HylaFAX+ 7.0.11 peer, which cannot be polled: its DIS never
+    sets bit 9 ("ready to transmit"), so Faxbot's engine places the call once, hears that the other machine holds
+    no document (faxd/FaxSend.c++ sendPoll: "remote has no document to poll"), and the collection says so.
+    Nothing reaches Received, the call is recorded like any other, and nothing is collected again by itself.
+    Collecting is refused until it is turned on for the number."""
+    context = loopback('r', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    docker, key = context['docker'], context['key']
+    route = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/polling'
+    refused = api(docker, 'POST', route + '/collect', key=key)
+    assert refused['status'] == 409, refused
+    turned_on = api(docker, 'PUT', route, key=key, body={'enabled': True, 'label': 'Peer site', 'selective': None})
+    assert turned_on['status'] == 200 and turned_on['json']['enabled'] is True, turned_on
+    asked = api(docker, 'POST', route + '/collect', key=key)
+    assert asked['status'] == 202, asked
+    request_id = asked['json']['id']
+
+    def finished():
+        found = database(context, result=f"SELECT outcome, sentence FROM poll_results "
+                                          f"WHERE request_id = '{request_id}'")['result']
+        return found[0] if found else None
+    result = wait_for(finished, 300, 'the collection result')
+    time.sleep(5)
+    rows = database(context,
+                    calls=f"SELECT disposition, connected_seconds, called FROM sip_call_records "
+                          f"WHERE job_id = '{request_id}' AND direction = 'outbound'",
+                    requests="SELECT id FROM poll_requests",
+                    received="SELECT id FROM inbound_faxes")
+    shown = api(docker, 'GET', route, key=key)['json'] or {}
+    log = session_logs(docker, context['engine'])
+    proof = {'result': result, 'calls': rows['calls'], 'requests': rows['requests'], 'received': rows['received'],
+             'shown': shown.get('requests'),
+             'engine_poll_lines': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                                   if re.search(r'POLL|poll|DTC|REMOTE best|document', line)][:16]}
+    print('\nSSLFAX_PROOF_R ' + json.dumps(proof, indent=2, default=str))
+    assert result['outcome'] == 'nothing_waiting', proof
+    assert result['sentence'] == 'The other fax server had no fax waiting for you.', proof
+    assert len(rows['calls']) == 1 and rows['calls'][0]['disposition'] == 'answered', proof
+    assert [row['id'] for row in rows['requests']] == [request_id] and rows['received'] == [], proof
+    assert shown['requests'][0]['state'] == 'Nothing waiting', proof
+
+
+# Lossless encoder tuning (hylafax/patches/0003, pages/tuning.py) ---------------------------------------------
+
+def tuning_pdf():
+    """A tinted form, a photograph and a shaded table: the pages lossless tuning shrinks most. Ghostscript draws
+    the tints and the photograph's grey levels as dots (FAX_FRIENDLY_DOCUMENTS never keeps them)."""
+    from PIL import Image
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=letter)
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'TINTED FORM PROOF PAGE 1 OF 3')
+    for box in range(8):
+        top = 680 - box * 70
+        page.setFillGray(0.8)
+        page.rect(72, top - 40, 468, 50, fill=1, stroke=1)
+        page.setFillGray(0)
+        page.setFont('Helvetica', 12)
+        page.drawString(80, top - 10, f'Field {box + 1}: synthetic value {box * 37 + 11}')
+    page.showPage()
+    photo = Image.new('L', (400, 500))
+    photo.putdata([int(128 + 120 * ((x - 200) * (y - 250)) / (200 * 250)) for y in range(500) for x in range(400)])
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'PHOTOGRAPH PROOF PAGE 2 OF 3')
+    page.drawImage(ImageReader(photo), 106, 120, width=400, height=560)
+    page.showPage()
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'SHADED TABLE PROOF PAGE 3 OF 3')
+    for row in range(16):
+        top = 690 - row * 36
+        page.setFillGray(0.9 if row % 2 else 0.75)
+        page.rect(72, top - 8, 468, 26, fill=1, stroke=0)
+        page.setFillGray(0)
+        page.setFont('Helvetica', 12)
+        page.drawString(80, top, f'Row {row + 1}   item {row * 13 + 7}   amount {row * 101 + 3}.00')
+    page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def received_bies(docker, peer, workdir):
+    """The BIE header of each page of the peer's newest received fax, as it arrived (HylaFAX+ keeps a JBIG page
+    undecoded in its TIFF): MX (BIH byte 16), options (byte 19) and L0 (bytes 12-15), T.82 6.2."""
+    name = docker.sh(peer, 'ls -t /var/spool/hylafax/recvq/fax*.tif 2>/dev/null | head -1').stdout.strip()
+    if not name:
+        return []
+    path = workdir / 'received-raw.tif'
+    path.write_bytes(docker.read_bytes(peer, name))
+    import struct
+    data, found = path.read_bytes(), []
+    # Pillow does not open JBIG TIFFs, so the directories are read here (TIFF 6.0 section 2).
+    order = '<' if data[:2] == b'II' else '>'
+    directory = struct.unpack(order + 'I', data[4:8])[0]
+    while directory and len(found) < 50:
+        count = struct.unpack(order + 'H', data[directory:directory + 2])[0]
+        tags = {}
+        for index in range(count):
+            entry = data[directory + 2 + 12 * index:directory + 14 + 12 * index]
+            tag, kind, _ = struct.unpack(order + 'HHI', entry[:8])
+            tags[tag] = struct.unpack(order + ('H' if kind == 3 else 'I'), entry[8:10] if kind == 3 else entry[8:12])[0]
+        if tags.get(259) == 9:  # TIFF Compression 9: JBIG (T.85); one strip a page
+            bih = data[tags[273]:tags[273] + 20]
+            found.append({'compression': 'JBIG', 'mx': bih[16], 'options': bih[19],
+                          'l0': int.from_bytes(bih[12:16], 'big')})
+        else:
+            found.append({'compression': tags.get(259)})
+        directory = struct.unpack(order + 'I', data[directory + 2 + 12 * count:directory + 6 + 12 * count])[0]
+    return found
+
+
+def row_check(sent, received, header=140):
+    """Row by row below the header band (the sender's tag line is drawn over the top): how many rows both pages
+    have, which of them differ and by how many pixels, and whether a row only one page has is blank."""
+    width = min(sent.size[0], received.size[0])
+    rows = min(sent.size[1], received.size[1])
+    stride = (width + 7) // 8
+    a, b = sent.crop((0, 0, width, sent.size[1])).tobytes(), received.crop((0, 0, width, received.size[1])).tobytes()
+    differing = []
+    for y in range(header, rows):
+        left, right = a[y * stride:(y + 1) * stride], b[y * stride:(y + 1) * stride]
+        if left != right:
+            differing.append([y, sum(bin(x ^ z).count('1') for x, z in zip(left, right))])
+    longer, extra = (a, sent.size[1]) if sent.size[1] > received.size[1] else (b, received.size[1])
+    # Pillow's one-bit pages: a set bit is paper, so a blank row is all 0xff bytes.
+    blank = all(byte == 0xff for byte in longer[rows * stride:extra * stride])
+    return {'sent_rows': sent.size[1], 'received_rows': received.size[1], 'common_rows': rows,
+            'differing_rows_below_header': len(differing), 'first_differences': differing[:5],
+            'unmatched_rows_blank': blank}
+
+
+def tuning_proof(tmp_path, context, name, *, exact=True):
+    folder = tmp_path / name
+    folder.mkdir()
+    outcome = send_and_collect(folder, context, document=tuning_pdf())
+    proof = evidence(outcome)
+    job_id = outcome['job']['id']
+    proof['lossless_lines'] = [line.split(']: ', 1)[-1] for line in outcome['faxbot_log'].splitlines()
+                               if 'LOSSLESS TUNING' in line]
+    proof['page_answers'] = re.findall(r'SEND recv (MCF|RTN|PPR)', outcome['faxbot_log'])
+    proof['tuning_rows'] = database(context, rows=f"SELECT coding, pages, tuned_pages, tuned_bytes, plain_bytes, "
+                                                  f"settings, sslfax, refused FROM coding_tuning_calls "
+                                                  f"WHERE job_id = '{job_id}'")['rows']
+    proof['records'] = records(context, job_id)
+    detail = api(context['docker'], 'GET', f'/admin/fax-jobs/{job_id}', key=context['key'])['json'] or {}
+    proof['sent_detail'] = detail.get('coding')
+    proof['comments'] = re.findall(r'^comments:(.*)$', outcome['done_qfile'], re.MULTILINE)
+    proof['received_bies'] = received_bies(context['docker'], context['peer'], folder)
+    transfer = (proof['records'].get('engine') or {}).get('transfer_seconds')
+    proof['seconds_per_page'] = round(transfer / PAGES, 2) if transfer else None
+    proof['rows'] = [row_check(a, b) for a, b in zip(outcome['sent_pages'], outcome['received_pages'])]
+    print(f'\nSSLFAX_PROOF_{name.upper()} ' + json.dumps(proof, indent=2, default=str))
+    if exact:
+        assert_delivered(outcome, proof)
+    else:
+        assert proof['job_status'].upper() == 'SUCCESS' and proof['received_pages'] == PAGES, proof
+    return proof
+
+
+def test_s_tuned_jbig_over_ssl_fax_keeps_every_pixel_and_is_sent_plain_when_you_turn_it_off(tmp_path, loopback):
+    """Tuned JBIG between two patched engines over SSL Fax (TuneJBIG "sslfax", the default): the BIE the peer
+    received carries the tuned options and MX, the engine's session log and Faxbot's records say what was sent,
+    and every page arrives with identical pixels below the header line. Then the same pages with smaller pages off
+    for the number: plain JBIG (options 0, MX 0), for the transfer time against stock settings."""
+    context = loopback('s', faxbot_t38=False, carrier_gateway=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    tuned = tuning_proof(tmp_path, context, 's_tuned')
+    off = api(docker, 'PUT', number + '/coding-tuning', key=key, body={'tune': False, 'tune_jbig': False})
+    assert off['status'] == 200 and off['json']['jbig'] == 'never', off
+    plain = tuning_proof(tmp_path, context, 's_plain')
+    print('\nSSLFAX_PROOF_S ' + json.dumps({'tuned_seconds_per_page': tuned['seconds_per_page'],
+                                            'plain_seconds_per_page': plain['seconds_per_page'],
+                                            'tuned_bies': tuned['received_bies'],
+                                            'plain_bies': plain['received_bies']}, indent=2, default=str))
+    assert tuned['received_info'].get('SignalRate') == 'SSL Fax', tuned
+    assert tuned['comments'] == ['faxbot-tuning mr=on jbig=sslfax'], tuned
+    assert len(tuned['lossless_lines']) >= PAGES and all('JBIG tuned' in line for line in tuned['lossless_lines'])
+    assert any(page.get('options') or page.get('mx') for page in tuned['received_bies']), tuned
+    assert all(page.get('l0') == 128 for page in tuned['received_bies']), tuned
+    rows = {row['coding']: row for row in tuned['tuning_rows']}
+    assert rows['JBIG']['tuned_pages'] >= 1 and rows['JBIG']['tuned_bytes'] < rows['JBIG']['plain_bytes'], tuned
+    assert rows['JBIG']['sslfax'] == 1 and rows['JBIG']['refused'] == 0, tuned
+    assert tuned['sent_detail']['tuned'] == ['JBIG'], tuned
+    assert plain['comments'] == ['faxbot-tuning mr=off jbig=never'], plain
+    assert all(page.get('options') == 0 and page.get('mx') == 0 for page in plain['received_bies']), plain
+
+
+def test_t_the_mr_schedule_without_error_correction_keeps_every_pixel(tmp_path, loopback):
+    """MR without ECM (the peer's modem has error correction off): faxd codes the MR file again with the
+    fewest-bytes reset schedule even though the session is MR too, and every page arrives intact. Then the same
+    pages with smaller pages off for the number, for the transfer time against stock settings."""
+    context = loopback('t', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       peer_ecm=False, api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mr'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    tuned = tuning_proof(tmp_path, context, 't_tuned', exact=False)
+    off = api(docker, 'PUT', number + '/coding-tuning', key=key, body={'tune': False, 'tune_jbig': False})
+    assert off['status'] == 200 and not off['json']['mr'], off
+    plain = tuning_proof(tmp_path, context, 't_plain', exact=False)
+    print('\nSSLFAX_PROOF_T ' + json.dumps({'tuned_seconds_per_page': tuned['seconds_per_page'],
+                                            'plain_seconds_per_page': plain['seconds_per_page'],
+                                            'tuned_lines': tuned['lossless_lines'],
+                                            'tuned_coding': (tuned['records'].get('engine') or {}).get('data_format'),
+                                            'plain_coding': (plain['records'].get('engine') or {}).get('data_format'),
+                                            'tuned_rows': tuned['rows'], 'plain_rows': plain['rows']},
+                                           indent=2, default=str))
+    if str((tuned['records'].get('engine') or {}).get('data_format') or '').startswith('2-D MR'):
+        assert tuned['lossless_lines'] and all('MR schedule' in line for line in tuned['lossless_lines']), tuned
+        rows = {row['coding']: row for row in tuned['tuning_rows']}
+        assert rows['MR']['tuned_bytes'] <= rows['MR']['plain_bytes'], tuned
+    assert not plain['lossless_lines'], plain

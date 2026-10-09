@@ -116,10 +116,15 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
     api = state.api()
     view = api.get('/routing/destinations/' + segment(number), params={'pages': pages})
     from .sslfax import limits_fields
+    from .pages import page_fields
     try:
         limits = api.get('/routing/destinations/' + segment(number) + '/fax-limits')
     except CliError:
         limits = None
+    try:
+        page_view = api.get('/routing/destinations/' + segment(number) + '/pages')
+    except CliError:
+        page_view = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -129,7 +134,7 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
-                    *(limits_fields(limits) if limits else [])])
+                    *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):
@@ -157,9 +162,39 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         "'default' for one at a time."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
                                    help='Whether this recipient accepts case packets that reference documents '
-                                        'they already received instead of resending them.')):
-    """Change a number's name, notes, preferred route, calls at once, or whether it accepts case packets."""
+                                        'they already received instead of resending them.'),
+                               index_page: bool = typer.Option(False, '--index-page',
+                                   help="Faxes sent together to this number start with one index page listing "
+                                        "each document's pages, instead of a separator page before each document. "
+                                        "Records that the recipient agreed to it. Sending together must be on "
+                                        "('faxbot recipients together set')."),
+                               page_headers: bool = typer.Option(False, '--page-headers',
+                                   help='Faxes sent together to this number have a line at the top of every page '
+                                        'naming its document and page, with no separator or index page. Records '
+                                        'that the recipient agreed to it. Needs your header text and sending number '
+                                        '(faxbot system settings set fax_header=... fax_station_id=...).'),
+                               separator_pages: bool = typer.Option(False, '--separator-pages',
+                                   help='Go back to a separator page before each document sent together to this '
+                                        'number.'),
+                               pages_per_sheet: str = typer.Option(None, '--pages-per-sheet', metavar='MACHINE|NEVER',
+                                   help='Several pages on one long page: machine (as the receiving machine allows) '
+                                        'or never.'),
+                               blank_space: str = typer.Option(None, '--blank-space', metavar='ON|OFF|DEFAULT',
+                                   help='Leave out the blank bottom of pages when this machine has no error '
+                                        'correction: on, off, or default for the setting all faxes use.'),
+                               shading: str = typer.Option(None, '--shading', metavar='ON|OFF|DEFAULT',
+                                   help='Fax-friendly shading on documents sent to this recipient: on (always '
+                                        'when it shortens the call), off (never), or default for the setting all '
+                                        'faxes use.')):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
     api = state.api()
+    chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
+                                        (separator_pages, 'separators')) if flag]
+    if len(chosen) > 1:
+        raise CliError('Choose one of --index-page, --page-headers or --separator-pages.')
+    boundaries = chosen[0] if chosen else None
+    from .pages import recipient_page_body
+    page_body = recipient_page_body(pages_per_sheet, blank_space, shading)
     body = {}
     if name is not None:
         body['display_name'] = name
@@ -176,11 +211,36 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body:
+    if not body and not page_body and boundaries is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
-    current = api.get('/routing/destinations/' + segment(number))
-    view = api.patch('/routing/destinations/' + segment(number), json={**body, 'version': current.get('version', 0)})
-    state.out().result(view, lambda out: out.line(f"Destination {view['number']} updated."))
+    # How documents are marked is part of sending together (/batching); set it first, so a refusal changes nothing.
+    together = _set_boundaries(api, number, boundaries) if boundaries is not None else None
+    view = None
+    if page_body:
+        view = api.put('/routing/destinations/' + segment(number) + '/pages', json=page_body)
+    if body:
+        current = api.get('/routing/destinations/' + segment(number))
+        view = api.patch('/routing/destinations/' + segment(number),
+                         json={**body, 'version': current.get('version', 0)})
+    result = together if view is None else view if together is None else {**view, 'sending_together': together}
+
+    def human(out):
+        if view is not None:
+            out.line(f"Destination {view['number']} updated.")
+        if together is not None:
+            out.line(together.get('boundaries_sentence')
+                     or 'Sending together is off for this number, so each fax goes in its own call.')
+    state.out().result(result, human)
+
+
+def _set_boundaries(api, number, boundaries):
+    """Choose how a number's shared calls mark each document, recording the recipient's agreement to it."""
+    current = api.get('/batching/numbers/' + segment(number))
+    if boundaries == 'separators' and current.get('boundaries', 'separators') == 'separators':
+        return current  # already separators: nothing to record
+    return api.put('/batching/numbers/' + segment(number), json={
+        'enabled': current['enabled'], 'boundaries': boundaries, 'boundaries_agreed': boundaries != 'separators',
+        'version': current.get('version', 0)})
 
 
 def _monthly(card):
@@ -226,8 +286,10 @@ def _not_billed(item, unreported):
 
 
 def _not_priced_line(result):
-    """How many sent faxes and received calls have no charge and no estimate, so no total counts them."""
-    sent = sum(item.get('attempts_not_priced') or 0 for item in result.get('providers') or [])
+    """How many faxes (sent, or received from a cloud provider) and received calls have no charge and no estimate,
+    so no total counts them."""
+    sent = sum(item.get('attempts_not_priced') or 0 for item in result.get('providers') or []) + sum(
+        item.get('faxes_not_priced') or 0 for item in result.get('received_faxes') or [])
     calls = sum(item.get('calls_not_priced') or 0 for item in result.get('received') or [])
     parts = ([f"{sent} {'fax' if sent == 1 else 'faxes'}"] if sent else []) + (
         [f"{calls} {'call' if calls == 1 else 'calls'}"] if calls else [])
@@ -293,6 +355,8 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
                         money(item['reported_cost']), _not_billed(item, 'calls_without_reported_cost'),
                         item.get('calls_not_priced', 0), item['awaiting_carrier_bill'], item['unmatched_charges']]
                        for item in received])
+        for item in result.get('received_faxes') or []:
+            out.line(item['summary'])  # "Received faxes: Sinch $0.42 for 6 faxes."
         _unrecorded_lines(out, [*result.get('providers', []), *received])
         if result.get('total_cost'):
             out.line(f"Total: {money(result['total_cost'])} (charges, estimates for faxes not billed yet, and plan fees "
@@ -303,9 +367,11 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
         _never_priced_lines(out, result)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
-            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
-                     f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
-                     "--secret telnyx_api_key.")
+            # Another carrier's sentence names what it needs; Telnyx's text names the command that saves its key.
+            out.line(carrier['sentence'] if carrier.get('sentence') and carrier['carrier'] != 'Telnyx' else (
+                f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
+                f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
+                "--secret telnyx_api_key."))
     state.out().result(result, human)
 
 
@@ -317,13 +383,40 @@ def routing_reconcile():
 
 
 @routing.command('fax-cost')
-def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot sent list --ids' or, with --received, "
-                                                           "from 'faxbot received list --ids'."),
-                     received: bool = typer.Option(False, '--received', help='The fax is a received fax.')):
-    """Show what one fax cost: the carrier's charge, or why it is not known yet."""
+def routing_fax_cost(fax_id: str = typer.Argument(None, help="Fax ID from 'faxbot sent list --ids' or, with --received, "
+                                                            "from 'faxbot received list --ids'."),
+                     received: bool = typer.Option(False, '--received', help='The fax is a received fax.'),
+                     to: str = typer.Option(None, '--to', metavar='NUMBER',
+                                            help='Instead of a sent fax: what a fax to this number would cost by each '
+                                                 'account your rules allow.'),
+                     pages: int = typer.Option(1, '--pages', min=1, max=1000, help='With --to: pages in the fax.'),
+                     from_site: str = typer.Option(None, '--from-site', metavar='SITE',
+                                                   help="With --to: price calls from this site's accounts first.")):
+    """Show what one fax cost (the carrier's charge, or why it is not known yet), or with --to what one would cost."""
+    if to:
+        from .accounts import quote_command
+        return quote_command(to=to, pages=pages, from_site=from_site)
+    if not fax_id:
+        raise CliError("Give a fax ID, or --to NUMBER for what a fax would cost.")
+    api = state.api()
     path = ('/routing/inbound/' if received else '/routing/faxes/') + segment(fax_id) + '/cost'
-    result = state.api().get(path)
-    state.out().result(result, lambda out: out.line(result.get('summary') or 'No call was placed for this fax.'))
+    result = api.get(path)
+    coding = None
+    if not received:
+        # The coding the fax's newest attempt asked for, measured on its pages (as Sent details show it).
+        try:
+            coding = api.get('/admin/fax-jobs/' + segment(fax_id)).get('coding')
+        except CliError:
+            coding = None
+        if coding:
+            result = {**result, 'coding': coding}
+
+    def human(out):
+        out.line(result.get('summary') or 'No call was placed for this fax.')
+        for sentence in ((coding or {}).get('sentence'), (coding or {}).get('measured_sentence')):
+            if sentence:
+                out.line(sentence)
+    state.out().result(result, human)
 
 
 def _received_cost_rows(costs, items):
@@ -351,8 +444,16 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
         ['From', 'Received', 'Cost'], _received_cost_rows(costs, items), empty='No received faxes.'))
 
 
-SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
-                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'))
+SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'Separator pages left out'),
+                ('direct_delivery', 'Direct delivery'), ('direct_fax_images', 'Direct fax images'),
+                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
+                ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'),
+                ('encoding', 'Pages saved by encoding (experimental)'), ('fax_friendly', 'Shaded pages lightened'),
+                ('cheapest_route', 'Cheapest route per delivered fax'), ('plan_first', 'Faxes through your plan'),
+                ('relay', 'Partner relays'), ('continuation', 'Only the missing pages'),
+                ('partner_repair', 'Missing pages to partners'), ('blocked_calls', 'Junk callers turned away'),
+                ('t38', 'Fax over IP (T.38)'), ('digital', 'Direct messages and FHIR'),
+                ('coding', 'Smallest page coding'), ('tunnel_calls', 'Partner fax over a private tunnel'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
@@ -373,7 +474,42 @@ def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help=
             out.line(counted)
         if result.get('sentence'):
             out.line(result['sentence'])
+        # Bytes partners did not need sent again: kept out of the money table, because they are not money.
+        if (result.get('direct_bytes') or {}).get('sentence'):
+            out.line('Bytes saved by reuse and patches: ' + result['direct_bytes']['sentence'])
     state.out().result(result, human)
+
+
+def mechanism_lines(result):
+    """Every way Faxbot saves money, grouped by stage, in the server's own sentences; the console's Overview map
+    shows the same (admin_ui/src/__tests__/savingsMap.json keeps the two identical). Never any money."""
+    lines = [result['title'], result['sentence']]
+    for stage in result['stages']:
+        lines += ['', stage['title']]
+        if stage.get('sentence'):
+            lines.append(stage['sentence'])
+        for item in stage['mechanisms']:
+            lines.append(f"  {item['name']}: {item['enabled']['label']} · {item['works']['label']} · "
+                         f"{item['evidence']['label']}")
+            lines.append(f"    {item['sentence']}")
+            for sentence in (item['enabled']['sentence'], item['works']['sentence'], item['here']['sentence']):
+                if sentence:
+                    lines.append(f'    {sentence}')
+            if item['turn_on']:
+                lines.append(f"    Turn it on in {item['page_label']}.")
+            # Advice and charge checks keep their own figures elsewhere; savings are all in faxbot costs savings.
+            if not item['part'] and item.get('command'):
+                lines.append(f"    See: {item['command']}")
+    lines.append('')
+    lines += [f"{entry['label']}: {entry['sentence']}" for entry in result['legend']]
+    lines.append('What each one saved: faxbot costs savings')
+    return lines
+
+
+def routing_mechanisms():
+    """List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot costs savings."""
+    result = state.api().get('/routing/savings/mechanisms')
+    state.out().result(result, lambda out: [out.line(line) for line in mechanism_lines(result)])
 
 
 # -- costs recommendations ----------------------------------------------------------------
@@ -398,6 +534,12 @@ def _show_sending(out, result):
         out.line(item['sentence'])
         out.line(f"To send by {item['suggested']['label']}: faxbot recipients set {item['number']} "
                  f"--preferred-route {item['suggested']['route']}")
+    # A rule for a whole country, where one account was cheaper for several of its numbers.
+    for country in result.get('country_rules') or []:
+        out.line(country['sentence'])
+        rule = country['rule_suggestion']
+        out.line(f"To add it to your draft rules: faxbot providers rules add '{rule['name']}' "
+                 f"--when to-country={country['country']} --use {country['route']}")
 
 
 def _line_advice(row):
@@ -497,16 +639,247 @@ def show_plans(out, result):
                   title=f"{plan['name']}, {money(plan.get('monthly_fee'))} a month")
 
 
+def _read_fax_marker(api):
+    return api.get('/routing/recommendations/fax-marker')
+
+
+def show_fax_marker(out, result):
+    """Calls marked as fax against calls not marked, from history; the setting never changes."""
+    out.line(result.get('sentence') or '')
+    if result.get('state') == 'compared':
+        rows = [('Calls', 'calls'), ('Delivered', 'delivered_percent'), ('Used fax over IP (T.38)', 't38_percent'),
+                ('Seconds a page', 'seconds_per_page'), ('Cost per delivered fax', 'cost_text')]
+
+        def cell(side, key):
+            value = (result.get(side) or {}).get(key)
+            if value is None:
+                return '-'
+            return f'{value}%' if key.endswith('percent') else value
+        out.table(['', 'Marked as fax', 'Not marked'], [[label, cell('marked', key), cell('not_marked', key)]
+                                                         for label, key in rows],
+                  title=f"Fax marker, last {result.get('days', 90)} days")
+    for key in ('caveat', 'left_out_sentence', 'setting_sentence'):
+        if result.get(key):
+            out.line(result[key])
+
+
+def _read_billing_steps(api):
+    return api.get('/routing/recommendations/billing-steps')
+
+
+def show_billing_steps(out, result):
+    """Numbers whose calls end just past a billed minute, and what a shorter call would have saved."""
+    out.line(result.get('sentence') or '')
+    numbers = result.get('numbers') or []
+    if numbers:
+        out.table(['Fax number', 'Name', 'Calls', 'Just past a step', 'Seconds past', 'Would have saved (estimate)'],
+                  [[item['number'], item.get('display_name'), item['calls'], item['calls_near'],
+                    f"{item['seconds_past']['least']}–{item['seconds_past']['most']} s"
+                    if item['seconds_past']['least'] != item['seconds_past']['most']
+                    else f"{item['seconds_past']['least']} s", money([item['saving']])] for item in numbers])
+    step = result.get('step') or {}
+    if step.get('seconds'):
+        from .trunk import local_date
+        out.line(f"{result.get('carrier') or 'Your carrier'} bills in {step['seconds']}-second steps of "
+                 f"{step['price_text']}, from your rate card dated {local_date(step.get('read_on'))}.")
+
+
+def _read_partners(api):
+    return api.get('/routing/recommendations/partners')
+
+
+def show_partners(out, result):
+    """Numbers whose faxes cost the most again and again, and how to enroll one as a direct partner."""
+    out.line(result.get('sentence') or '')
+    items = result.get('items') or []
+    if items:
+        out.table(['Fax number', 'Name', 'Faxes', 'Average pages', 'A month (estimate)'],
+                  [[item['number'], item.get('display_name'), item['faxes'], item.get('average_pages') or '-',
+                    money([item['monthly_cost']]) if item.get('monthly_cost') else item['cost_text']]
+                   for item in items])
+        for item in items:
+            out.line(item['sentence'])
+        out.line('To enroll a recipient as a direct partner, run faxbot recipients partners add.')
+
+
+def _read_service_numbers(api):
+    return api.get('/routing/recommendations/receiving')
+
+
+def show_service_numbers(out, result):
+    """Quiet numbers at every fax service: the carrier line's numbers and the HumbleFax and eFax numbers."""
+    days = result.get('days', 30)
+    quiet = result.get('quiet_numbers') or {}
+    out.line(quiet.get('sentence') or '')
+    if quiet.get('numbers'):
+        out.table(['Number', 'Received', 'Sent', 'Rental a month (estimate)'],
+                  [[row['number'], row['received'], row['sent'], money(row.get('monthly_rental'))]
+                   for row in quiet['numbers']], title=f'Carrier numbers with few calls in the last {days} days')
+        for row in quiet['numbers']:
+            if row.get('question'):
+                out.line(row['question'])
+    services = result.get('provider_numbers') or {}
+    out.line('')
+    out.line(services.get('sentence') or '')
+    if services.get('numbers'):
+        out.table(['Fax service', 'Number', 'Received', 'Sent', 'Plan a month'],
+                  [[row['name'], row['number'], row['received'], row['sent'], money(row.get('plan_fee'), empty='No price yet')]
+                   for row in services['numbers']], title=f'Fax service numbers, last {days} days')
+        for row in services['numbers']:
+            out.line(row['sentence'])
+            if row.get('question'):
+                out.line(row['question'])
+
+
+def _read_toll_free(api):
+    return api.get('/routing/recommendations/toll-free')
+
+
+def show_toll_free(out, result):
+    """Recipients with a toll-free fax number on file, approved or not; the recipient pays for those calls."""
+    out.line(result.get('sentence') or '')
+    items = result.get('items') or []
+    if items:
+        out.table(['Fax number', 'Name', 'Toll-free number', 'Approved'],
+                  [[item['number'], item.get('display_name'), item['alternate_display'],
+                    'Yes' if item['approved'] else 'Not yet'] for item in items])
+        for item in items:
+            out.line(item['sentence'])
+        out.line('To record an approval, run faxbot recipients toll-free approve.')
+
+
+def _read_carriers(api):
+    return api.get('/routing/recommendations/carriers')
+
+
+def _left_out(row):
+    """What a carrier's figure leaves out because it publishes no price for it."""
+    parts = []
+    if row.get('not_priced'):
+        parts.append(f"{row['not_priced']} {'fax' if row['not_priced'] == 1 else 'faxes'}")
+    if row.get('numbers_not_priced'):
+        parts.append(f"{row['numbers_not_priced']} {'number' if row['numbers_not_priced'] == 1 else 'numbers'}")
+    return ', '.join(parts) or '-'
+
+
+def show_carriers(out, result):
+    """What your last 30 days of faxing would have cost at each carrier's published prices. Advice only."""
+    out.line(result.get('sentence') or '')
+    rows = result.get('carriers') or []
+    if rows:
+        def name(row):
+            notes = [note for note, on in (('yours', row.get('yours')), ('cheapest', row.get('cheapest'))) if on]
+            return row['name'] + (f" ({', '.join(notes)})" if notes else '')
+        out.table(['Carrier', 'Estimate', 'Left out (no published price)', 'Less than now', 'Prices read on'],
+                  [[name(row), money(row.get('total')), _left_out(row), money(row.get('difference')),
+                    _day(row.get('advertised_on'))] for row in rows],
+                  title=f"Your last {result.get('days', 30)} days at each carrier's published prices")
+        for row in rows:
+            out.line(f"{row['name']}: {row['sentence']}")
+    if result.get('unpublished_sentence'):
+        out.line(result['unpublished_sentence'])
+    out.line(result.get('switching_sentence') or '')
+
+
+def _read_friendly(api):
+    return api.get('/routing/recommendations/fax-friendly')
+
+
+def show_friendly(out, result):
+    """Fax-friendly shading: with the setting at never, what it would have saved."""
+    choice = result.get('choice')
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    elif choice in ('where_it_saves', 'always'):
+        out.line('Nothing to suggest: shaded areas are kept with a fax-friendly pattern '
+                 + ('where it saves time.' if choice == 'where_it_saves' else 'on every document.'))
+    else:
+        out.line('Faxbot has no recent faxes to check yet.')
+    if result.get('action'):
+        out.line(result['action'] + ' Or run: faxbot system settings set fax_friendly_documents=where_it_saves')
+
+
+def _read_discovery_advice(api):
+    return api.get('/direct/discovery')
+
+
+def _show_discovery_advice(out, result):
+    items = result.get('suggestions') or []
+    if not items:
+        out.line('No recipient that runs Faxbot has been found yet.')
+    for item in items:
+        out.line(item['sentence'])
+    if items:
+        out.line('Review these with faxbot recipients partners discover list.')
+
+
+def _read_relay_advice(api):
+    return api.get('/direct/relay/recommendations')
+
+
+def _show_relay_advice(out, result):
+    items = result.get('recommendations') or []
+    if not items:
+        out.line('No partner would have sent your recent faxes for less.')
+    for item in items:
+        out.line(f"{item['sentence']} {item['action']}")
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
     ('plans', 'Plans', _read_plans, show_plans),
+    ('fax_marker', 'Fax marker', _read_fax_marker, show_fax_marker),
+    ('billing_steps', 'Billing steps', _read_billing_steps, show_billing_steps),
+    ('partners', 'Partner candidates', _read_partners, show_partners),
+    ('discovery', 'Recipients that run Faxbot', _read_discovery_advice, _show_discovery_advice),
+    ('relays', 'Partner relays', _read_relay_advice, _show_relay_advice),
+    ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
+    ('carriers', 'Other carriers', _read_carriers, show_carriers),
+    ('pages', 'Shaded areas', _read_friendly, show_friendly),
+    ('trunks', 'Your trunks', lambda api: _read_trunks(api), lambda out, result: show_trunks(out, result)),
+    ('numbers', 'Where each number should live', lambda api: _number_advice().read_numbers(api),
+     lambda out, result: _number_advice().show_numbers(out, result)),
+    ('sites', 'Which site calls cost less from', lambda api: _number_advice().read_sites(api),
+     lambda out, result: _number_advice().show_sites(out, result)),
 ]
 
 
-def routing_recommendations():
-    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee."""
+def _number_advice():
+    from . import number_advice
+    return number_advice
+
+
+def _read_trunks(api):
+    return api.get('/routing/recommendations/trunks')
+
+
+def show_trunks(out, result):
+    """Each trunk's fee, lines, faxes and cost per delivered fax, then whether one's traffic fits on another."""
+    trunks = result.get('trunks') or []
+    if trunks:
+        out.table(['Trunk', 'A month', 'Lines', 'Most at once', 'Faxes sent', 'Faxes received', 'Each sent fax'],
+                  [[row['label'], row.get('monthly') or 'Not known', row['lines'], row['peak_lines'], row['sent'],
+                    row['received'], row.get('cost_per_delivered') or '-'] for row in trunks],
+                  empty='')
+    for item in result.get('items') or []:
+        out.line(item['sentence'])
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    if result.get('items'):
+        out.line('This is advice only: Faxbot never cancels a trunk. To keep faxes off a trunk, add a sending limit '
+                 "with 'faxbot providers rules add'.")
+
+recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
+                                   'every section.', invoke_without_command=True)
+
+
+@recommendations.callback()
+def routing_recommendations(context: typer.Context):
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time the fax-friendly shading pattern would save, whether one trunk's faxes fit on another, where each number should live, and which site's trunk costs less. Every figure is an estimate."""
+    if context.invoked_subcommand is not None:
+        return
     api = state.api()
     result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
 
@@ -516,6 +889,192 @@ def routing_recommendations():
                 out.line()
             out.line(heading)
             show(out, result[key])
+    state.out().result(result, human)
+
+
+def _section(read, show):
+    def command():
+        result = read(state.api())
+        state.out().result(result, lambda out: show(out, result))
+    return command
+
+
+for _name, _read, _show, _help in (
+        ('sending', _read_sending, _show_sending,
+         'Show numbers where another route cost less per delivered fax in the last 30 days.'),
+        ('receiving', _read_receiving, print_receiving,
+         'Show which numbers could share incoming lines, numbers with few calls, and your fax services\' monthly fees.'),
+        ('plans', _read_plans, show_plans, 'Show whether each monthly plan is worth its fee at your traffic.'),
+        ('fax-marker', _read_fax_marker, show_fax_marker,
+         'Compare calls marked as fax with calls not marked: delivery, fax over IP (T.38), time and cost. Changes no '
+         'setting.'),
+        ('billing-steps', _read_billing_steps, show_billing_steps,
+         'Show numbers whose calls end just past a billed minute, where one page less or a faster mode would have '
+         'cost less.'),
+        ('partners', _read_partners, show_partners,
+         'Show the numbers whose faxes cost the most again and again: candidates to enroll as direct partners.'),
+        ('service-numbers', _read_service_numbers, show_service_numbers,
+         'Show quiet numbers at your carrier and at HumbleFax and eFax, with what each costs to keep.'),
+        ('toll-free', _read_toll_free, show_toll_free,
+         'Show recipients with a toll-free fax number on file and whether their approval is recorded.'),
+        ('carriers', _read_carriers, show_carriers,
+         "Show what your last 30 days of faxing would have cost at each carrier's published prices. Advice only: "
+         'switching carriers means moving your numbers, and Faxbot never switches anything.'),
+        ('shading', _read_friendly, show_friendly,
+         'Show how much time the fax-friendly shading pattern would save on your recent faxes, while the '
+         'setting is Never.'),
+        ('trunks', _read_trunks, show_trunks,
+         "Compare your trunks' monthly fees, busiest times and cost per fax, and show when one trunk's faxes fit on "
+         'another and what that would save. Advice only.'),
+        ('numbers', lambda api: _number_advice().read_numbers(api),
+         lambda out, result: _number_advice().show_numbers(out, result),
+         'Show where each of your fax numbers costs least to receive on, and the steps to move one. Advice only: '
+         'Faxbot never moves a number.'),
+        ('sites', lambda api: _number_advice().read_sites(api),
+         lambda out, result: _number_advice().show_sites(out, result),
+         "Show whether your carriers price US calls by state, and when another site's trunk would send faxes to a "
+         'state for less. Advice only.')):
+    recommendations.command(_name, help=_help)(_section(_read, _show))
+
+
+# -- recipients toll-free -------------------------------------------------------------------------------
+
+toll_free = typer.Typer(help="A recipient's toll-free fax number, used only after you record who at the recipient "
+                             'agreed. The recipient pays for those calls.', no_args_is_help=True)
+
+
+def _toll_free_human(view):
+    def human(out):
+        current = view.get('current') or {}
+        out.line(view.get('sentence') or 'No toll-free number is on file for this recipient.')
+        if view.get('history'):
+            from .trunk import local_date
+            out.table(['Recorded', 'Toll-free number', 'What', 'Who agreed', 'Day agreed', 'Evidence', 'Recorded by'],
+                      [[local_time(row['recorded_at']), row['alternate_display'],
+                        {'noted': 'On file', 'approved': 'Approved', 'withdrawn': 'Withdrawn'}[row['action']],
+                        row.get('approved_by') or '-', local_date(row.get('approved_on')) if row.get('approved_on') else '-',
+                        row.get('evidence') or '-', row.get('recorded_by_name') or '-'] for row in view['history']],
+                      title='History')
+        if current.get('action') == 'noted':
+            out.line(f"To record the approval, run faxbot recipients toll-free approve {view['number']} "
+                     f"{current['alternate_number']} --by NAME --on DATE --evidence TEXT.")
+    return human
+
+
+def _toll_free_post(number, body):
+    view = state.api().post('/routing/destinations/' + segment(number) + '/toll-free', json=body)
+    state.out().result(view, _toll_free_human(view))
+
+
+@toll_free.command('show')
+def toll_free_show(number: str = typer.Argument(..., help="The recipient's own fax number.")):
+    """Show a recipient's toll-free fax number and every approval recorded for it."""
+    view = state.api().get('/routing/destinations/' + segment(number) + '/toll-free')
+    state.out().result(view, _toll_free_human(view))
+
+
+@toll_free.command('note')
+def toll_free_note(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                   toll_free_number: str = typer.Argument(..., metavar='TOLL_FREE',
+                                                          help='The toll-free fax number the recipient publishes.')):
+    """Put a recipient's toll-free fax number on file without approving it; Faxbot does not use it yet."""
+    _toll_free_post(number, {'action': 'noted', 'alternate_number': toll_free_number})
+
+
+@toll_free.command('approve')
+def toll_free_approve(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                      toll_free_number: str = typer.Argument(..., metavar='TOLL_FREE',
+                                                             help='The toll-free fax number the recipient approved.'),
+                      by: str = typer.Option(..., '--by', help='Who at the recipient agreed, for example "Dana, intake lead".'),
+                      on: str = typer.Option(..., '--on', metavar='DATE', help='The day they agreed, as 2026-10-03.'),
+                      evidence: str = typer.Option(..., '--evidence',
+                                                   help='Where the agreement is recorded, such as an email and its date.')):
+    """Record that the recipient agreed to faxes on its toll-free number: who, when and the evidence. The recipient pays for those calls."""
+    _toll_free_post(number, {'action': 'approved', 'alternate_number': toll_free_number, 'approved_by': by,
+                             'approved_on': on, 'evidence': evidence})
+
+
+@toll_free.command('withdraw')
+def toll_free_withdraw(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                       evidence: str = typer.Option(None, '--evidence', help='Why, or where the withdrawal is recorded.')):
+    """Withdraw a recipient's toll-free number; Faxbot sends to its own number again. The history is kept."""
+    _toll_free_post(number, {'action': 'withdrawn', 'evidence': evidence})
+
+
+@toll_free.command('lookup')
+def toll_free_lookup(number: str = typer.Argument(..., help="The recipient's own fax number."),
+                     npi: str = typer.Option(None, '--npi', help="The provider's ten-digit NPI."),
+                     name: str = typer.Option(None, '--name', help='Or the organization name, with --city or --state.'),
+                     city: str = typer.Option(None, '--city', help='City, with --name.'),
+                     us_state: str = typer.Option(None, '--state', help='Two-letter state, with --name.')):
+    """Look up toll-free fax numbers the NPI registry (NPPES) lists for a provider. It suggests only; nothing is approved."""
+    params = {key: value for key, value in (('npi', npi), ('name', name), ('city', city), ('state', us_state)) if value}
+    result = state.api().get('/routing/destinations/' + segment(number) + '/toll-free/suggestions', params=params)
+
+    def human(out):
+        out.line(result.get('sentence') or '')
+        out.table(['Toll-free fax number', 'Where', 'Address', 'Evidence'],
+                  [[item['fax_display'], item.get('address_purpose') or '-', item.get('address') or '-',
+                    item.get('evidence') or '-'] for item in result.get('items') or []], empty='')
+        if result.get('items'):
+            out.line(f"To record an approval, run faxbot recipients toll-free approve {result['number']} "
+                     f"{result['items'][0]['fax_number']} --by NAME --on DATE --evidence TEXT.")
+
+def _line_time(seconds):
+    """'about 52 s' for the time column; '-' when unknown."""
+    if seconds is None:
+        return '-'
+    whole = int(round(seconds))
+    return f'about {whole // 60} min {whole % 60} s' if whole >= 60 else f'about {whole} s'
+
+
+def _predicted_cost(route):
+    if route.get('cost') is None:
+        return 'Unknown'
+    amount = money([route['cost']])
+    if not route.get('marginal'):
+        return amount
+    return 'Nothing extra' if float(route['cost']['amount']) == 0 else f'{amount} extra'
+
+
+def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to price, for example +12025550123.'),
+                    pages: int = typer.Option(1, '--pages', min=1, max=1000, help='Pages in the fax.'),
+                    layout: str = typer.Option('normal', '--layout',
+                                               help='normal, or dense for pages packed with more text.'),
+                    resolution: str = typer.Option('fine', '--resolution',
+                                                   help='standard, fine, superfine, 300 or 400.'),
+                    file: Path = typer.Option(None, '--file', exists=True, dir_okay=False, readable=True,
+                                              help='Price this document (PDF or plain text) instead: Faxbot measures '
+                                                   'each fax coding on its own pages. --pages, --layout and '
+                                                   '--resolution then come from the document.')):
+    """Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent."""
+    if file is not None:
+        media = 'application/pdf' if file.suffix.lower() == '.pdf' else 'text/plain'
+        with file.open('rb') as handle:
+            result = state.api().post('/routing/predict', data={'to': to},
+                                      files={'file': (file.name, handle.read(), media)})
+    else:
+        result = state.api().get('/routing/predict', params={'to': to, 'pages': pages, 'layout': layout,
+                                                             'resolution': resolution})
+
+    def human(out):
+        out.line(f"{result['to']} is {result['number_class_text']}; {result['pages']} "
+                 f"page{'' if result['pages'] == 1 else 's'}.")
+        if result.get('measured_sentence'):
+            out.line(result['measured_sentence'])
+        routes = result.get('routes') or []
+        if routes:
+            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within'],
+                      [[route['label'], _predicted_cost(route), _line_time(route.get('seconds')),
+                        _line_time(route.get('p90_seconds')) if route.get('finish_sentence') else '-']
+                       for route in routes])
+            for route in routes:
+                out.line(f"{route['label']}: {route['basis']}")
+                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence')):
+                    if sentence:
+                        out.line(f"{route['label']}: {sentence}")
+        out.line(result['sentence'])
+        out.line(result['note'])
     state.out().result(result, human)
 
 
@@ -536,17 +1095,54 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
     else:
         result = api.get('/routing/rate-cards')
     from .trunk import local_date
-    # Money as money and the provider's name, as Costs → Prices & plans shows them.
-    state.out().result(result, lambda out: out.table(
-        ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
-         'Advertised on'],
-        [[card.get('provider_name') or card['provider_id'], card['label'],
-          'Receiving' if card.get('direction') == 'inbound' else 'Sending',
-          _card_price(card, 'per_minute'), _card_price(card, 'per_page'), _card_price(card, 'per_call'),
-          (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
-           else _monthly(card) if card.get('monthly_fee') else '-'),
-          _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
-         for card in result.get('cards', [])], empty='No rate cards.'))
+
+    def human(out):
+        # Money as money and the provider's name, as Costs → Prices & plans shows them.
+        out.table(
+            ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
+             'Advertised on'],
+            [[card.get('provider_name') or card['provider_id'], card['label'],
+              'Receiving' if card.get('direction') == 'inbound' else 'Sending',
+              _card_price(card, 'per_minute'), _card_price(card, 'per_page'), _card_price(card, 'per_call'),
+              (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
+               else _monthly(card) if card.get('monthly_fee') else '-'),
+              _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
+             for card in result.get('cards', [])], empty='No rate cards.')
+        # Each sending card's prices by where calls start (origin-rated rows), with source and date.
+        from .accounts import origin_rows
+        for card in result.get('cards', []):
+            if card.get('rows'):
+                out.line()
+                origin_rows(out, card)
+        # What each sending route publishes about calling a recipient's approved toll-free number.
+        if result.get('toll_free'):
+            out.line()
+            out.table(['Provider', 'Calls to toll-free numbers', 'Price', 'Caller ID it needs', 'Advertised on'],
+                      [[item.get('provider_name') or item['provider_id'], item['reach_text'], item['price_text'],
+                        item.get('caller_id_text') or '-', local_date(item['advertised_on'])]
+                       for item in result['toll_free']], title='Calls to toll-free numbers')
+    state.out().result(result, human)
+
+
+@routing.command('rate-rows')
+def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
+                                                  help="The sending card's route, as 'faxbot costs rate-cards' lists "
+                                                       'it, such as sip-gamma or sinch-uk.'),
+                      replace: str = typer.Option(..., '--replace', metavar='FILE',
+                                                  help='Your prices by where calls start for that card, from this JSON '
+                                                       'file ({"rows": [...]}, or \'-\' for standard input).')):
+    """Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history."""
+    try:
+        document = json.loads(_read_document(replace))
+    except ValueError:
+        raise CliError('The file is not valid JSON.') from None
+    if isinstance(document, list):
+        document = {'rows': document}
+    from urllib.parse import quote
+    result = state.api().put(f'/routing/rate-cards/{quote(route.strip(), safe="")}/rows', json=document)
+    from .accounts import origin_rows
+    state.out().result(result, lambda out: origin_rows(out, {'label': route.strip(), 'rows': result.get('rows') or []})
+                       if result.get('rows') else out.line('No prices by where calls start for this card.'))
 
 
 # -- routing batching --------------------------------------------------------------------
@@ -554,15 +1150,24 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 def _batching_human(view):
     def human(out):
         agreement = view.get('agreement') or {}
+        marks = view.get('boundaries_agreement') or {}
+        labels = {choice['value']: choice['label'] for choice in view.get('boundaries_choices') or []}
         out.line(view['state_sentence'])
         out.line(view['route_sentence'])
+        if view.get('boundaries_sentence'):
+            out.line(view['boundaries_sentence'])
         out.fields([('Fax number', view['number']), ('Sending together', 'on' if view['enabled'] else 'off'),
                     ('Longest wait', f"{view['max_wait_minutes']} minutes"),
                     ('Most pages in one call', view['max_pages']),
                     ('Different senders may share a call', view['mixed_senders']),
                     ('Recipient agreement recorded by', agreement.get('by')),
-                    ('Recorded', local_time(agreement.get('at')) if agreement else None)])
+                    ('Recorded', local_time(agreement.get('at')) if agreement else None),
+                    ('Each document is marked by', labels.get(view.get('boundaries'))),
+                    ('Agreement to that recorded by', marks.get('by')),
+                    ('Agreement to that recorded', local_time(marks.get('at')) if marks else None)])
         out.line(view['savings']['sentence'])
+        if (view['savings'].get('separator_pages') or {}).get('calls'):
+            out.line(view['savings']['separator_pages']['sentence'])
     return human
 
 
@@ -656,6 +1261,207 @@ def routing_plans(provider: str = typer.Argument(None, help='The fax service, fo
             out.line('To use the first plan as your estimate, add it as a rate card in Costs, Prices and plans, '
                      'or with faxbot costs rate-cards --replace.')
     state.out().result(result, human)
+
+
+# -- costs plans: budgets, the contract view and published plans ---------------------------------
+
+from typer.core import TyperGroup  # noqa: E402
+
+
+class _PlansGroup(TyperGroup):
+    """`faxbot costs plans efax` and `faxbot costs plans --in-use` still list published plans.
+
+    A first word that is not one of the group's commands goes to `published`, so
+    the older command keeps working beside `show` and `budget`.
+    """
+    def parse_args(self, ctx, args):
+        if not args or (args[0] not in self.commands and args[0] not in ('--help', '-h')):
+            args = ['published', *args]
+        return super().parse_args(ctx, args)
+
+
+plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or allowance this month and what is "
+                                          'committed (show), which waiting faxes get its last pages (allocation), '
+                                          'setting a budget (budget), and the plans a fax service publishes '
+                                          '(published, or name the service: faxbot costs plans efax).')
+plans.command('published')(routing_plans)
+
+
+def _day(value):
+    """'15 Oct' for a date the server sends as YYYY-MM-DD."""
+    from datetime import date
+    try:
+        day = date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return text(value)
+    return f'{day.day} {day:%b}'
+
+
+def _ordinal(day):
+    """'The 1st', 'The 22nd'"""
+    suffix = 'th' if 11 <= day % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    return f'The {day}{suffix}'
+
+
+def _count(value, empty='-'):
+    return empty if value is None else f'{value:,}'
+
+
+def show_contract(out, result, *, burn_down=False):
+    """Each plan this billing period: its budget or allowance, what is left, what is committed; all estimates."""
+    plans_ = result.get('plans') or []
+    if not plans_:
+        out.line(result.get('empty_sentence') or '')
+        return
+    for index, plan in enumerate(plans_):
+        if index:
+            out.line('')
+        budget, used, left, period = plan['budget'], plan['used'], plan['left'], plan['period']
+        fee = money(plan.get('monthly_fee'), empty='')
+        out.line(plan['sentence'])
+        rows = [['Pages sent and received', _count(used['pages'])], ['Faxes sent and received', _count(used['faxes'])]]
+        if budget.get('pages') is not None or budget.get('faxes') is not None:
+            rows.append(['Normal-use budget a month', ' and '.join(
+                part for part in (f"{budget['pages']:,} pages" if budget.get('pages') is not None else '',
+                                  f"{budget['faxes']:,} faxes" if budget.get('faxes') is not None else '') if part)])
+            rows.append(['Left of the budget', ' and '.join(
+                part for part in (f"{max(0, left['pages']):,} pages" if left.get('pages') is not None else '',
+                                  f"{max(0, left['faxes']):,} faxes" if left.get('faxes') is not None else '')
+                if part)])
+        if budget.get('included_pages'):
+            rows.append(['Pages the plan includes', _count(budget['included_pages'])])
+            rows.append(['Included pages left', _count(max(0, left['allowance']))])
+            rows.append(['Price of each extra page', money(budget.get('page_overage'), empty='Not known')])
+        if budget.get('included_minutes'):
+            rows.append(['Minutes the plan includes', _count(budget['included_minutes'])])
+            rows.append(['Minutes used', _count(used.get('minutes'))])
+        if budget.get('commitment'):
+            rows.append(['Monthly commitment', money(budget['commitment'])])
+            rows.append(['Spent so far', money(used.get('spend'), empty='Not known')])
+        overage = plan.get('overage') or {}
+        if overage.get('pages') or overage.get('minutes'):
+            rows.append(['Past the allowance so far', 'Not known' if overage.get('cost_unknown')
+                         else money(overage.get('cost'))])
+        rows.append(['Committed this period', money(plan.get('committed'), empty='Nothing')])
+        rows.append(['Bill so far', money(plan.get('bill_so_far'), empty='Not known')])
+        rows.append(['Billing day', _ordinal(budget['day'])])
+        rows.append(['Counts start again', _day(period.get('next_day'))])
+        out.table(['Estimate', 'This period'], rows,
+                  title=f"{plan['name']}" + (f', {fee} a month' if fee else ''))
+        for sentence in (budget.get('sentence'), plan.get('pace_sentence'), plan.get('bill_sentence'),
+                         plan.get('count_sentence'), plan.get('untimed_sentence')):
+            if sentence:
+                out.line(sentence)
+        for row in plan.get('own_accounts') or []:
+            out.line(row['sentence'])
+        if burn_down and plan.get('burn_down'):
+            out.table(['Day', 'Pages so far', 'Faxes so far'],
+                      [[_day(row['date']), _count(row['pages']), _count(row['faxes'])] for row in plan['burn_down']],
+                      title=f"{plan['name']}, day by day since {_day(period.get('first_day'))}")
+    out.line('')
+    out.line('To change a budget, run faxbot costs plans budget <plan>, for example faxbot costs plans budget '
+             'humblefax --pages 500.')
+
+
+@plans.command('show')
+def plans_show(burn_down: bool = typer.Option(False, '--by-day', help='Also show the pages and faxes carried each day '
+                                                                       'of this billing period.')):
+    """Show each plan's normal-use budget or allowance this billing period, what is committed, and faxes between your own accounts. Every figure is an estimate."""
+    result = state.api().get('/routing/plans')
+    state.out().result(result, lambda out: show_contract(out, result, burn_down=burn_down))
+
+
+_OUTCOMES = {'plan': 'Gets the plan', 'forced': 'Takes the plan', 'other': 'Goes another way'}
+
+
+def show_allocation(out, result):
+    """Each limited plan: what is left, which waiting faxes get it, what goes another way, what is kept for later."""
+    plans_ = result.get('plans') or []
+    if not plans_:
+        out.line(result.get('empty_sentence') or '')
+        return
+    for index, plan in enumerate(plans_):
+        if index:
+            out.line('')
+        out.line(plan['sentence'])
+        if plan.get('faxes'):
+            unit = 'Minutes' if plan.get('unit') == 'minutes' else 'Pages counted'
+            out.table(['To', 'Pages', unit, 'Waiting since', 'Outcome', 'Route', 'Cost (estimate)'],
+                      [[item['to'], _count(item['pages']), _count(item['units']), local_time(item.get('queued_at')),
+                        _OUTCOMES.get(item['outcome'], item['outcome']), item.get('route_label') or '-',
+                        money(item.get('cost'), empty='-')] for item in plan['faxes']],
+                      title=f"{plan['name']}, waiting faxes")
+        for sentence in (plan.get('saving_sentence'), plan.get('reserve_sentence'), plan.get('bound_sentence'),
+                         plan.get('left_sentence')):
+            if sentence:
+                out.line(sentence)
+
+
+@plans.command('allocation')
+def plans_allocation():
+    """Show who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate."""
+    result = state.api().get('/routing/plans/allocation')
+    state.out().result(result, lambda out: show_allocation(out, result))
+
+
+def _limit(value, name):
+    """A whole number for a budget, or None for 'none' (no limit)."""
+    if value is None:
+        return None
+    word = value.strip().lower()
+    if word in ('none', 'no-limit'):
+        return 'none'
+    if not word.isdigit() or not 0 < int(word) <= 1_000_000:
+        raise CliError(f'Give {name} as a whole number from 1 to 1,000,000, or none.')
+    return int(word)
+
+
+@plans.command('budget')
+def plans_budget(plan: str = typer.Argument(..., help='The plan, for example humblefax or efax; the carrier trunk '
+                                                      'is sip.'),
+                 pages: str = typer.Option(None, '--pages', metavar='COUNT', help='Normal-use pages a month, or none for no limit.'),
+                 faxes: str = typer.Option(None, '--faxes', metavar='COUNT', help='Normal-use faxes a month, or none for no limit.'),
+                 billing_day: int = typer.Option(None, '--billing-day', min=1, max=31,
+                                                 help="The day of the month the plan's counts start again."),
+                 included_pages: str = typer.Option(None, '--included-pages', metavar='COUNT',
+                                                    help='Pages the plan includes each month, or none.'),
+                 page_overage: str = typer.Option(None, '--page-overage', metavar='PRICE',
+                                                  help='The price of each page past them, such as 0.10.'),
+                 included_minutes: str = typer.Option(None, '--included-minutes', metavar='COUNT',
+                                                      help='Minutes the plan includes each month, or none.'),
+                 commitment: str = typer.Option(None, '--commitment', metavar='AMOUNT',
+                                                help='A monthly amount you have committed to spend, such as 50.'),
+                 default: bool = typer.Option(False, '--default',
+                                              help="Go back to Faxbot's starting budget for this plan.")):
+    """Set a plan's monthly normal-use budget, allowance or commitment, and the day its counts start again. Faxbot never changes the plan itself."""
+    from ...routing.plan_budget import InvalidBudget, parse_budgets, with_entry
+    from ..settings_write import write_settings
+    api = state.api()
+    view = api.get('/routing/plans')
+    current = view.get('plan_budgets') or ''
+    changes = {'pages': _limit(pages, '--pages'), 'faxes': _limit(faxes, '--faxes'), 'day': billing_day,
+               'included_pages': _limit(included_pages, '--included-pages'), 'page_overage': page_overage,
+               'included_minutes': _limit(included_minutes, '--included-minutes'), 'commitment': commitment}
+    given = {key: value for key, value in changes.items() if value is not None}
+    if default and given:
+        raise CliError('Use --default on its own: it goes back to the starting budget.')
+    if not default and not given:
+        raise CliError('Give at least one of --pages, --faxes, --billing-day, --included-pages, --page-overage, '
+                       '--included-minutes or --commitment, or --default.')
+    try:
+        key = plan.strip().lower()
+        known = dict(parse_budgets(current).get('sip' if key.startswith('sip') else key) or {})
+        if not default:
+            # Only the values given change; the rest keep what you set before, else Faxbot's starting values.
+            entry_text = ','.join(f'{name}={value}' for name, value in given.items())
+            parsed = parse_budgets(f'{key}:{entry_text}')
+            known.update(next(iter(parsed.values())))
+        updated = with_entry(current, key, None if default else known)
+    except InvalidBudget as error:
+        raise CliError(str(error)) from None
+    write_settings(api, {'plan_budgets': updated})
+    result = api.get('/routing/plans')
+    state.out().result(result, lambda out: show_contract(out, result))
 
 
 # -- intake ------------------------------------------------------------------------------
@@ -822,9 +1628,65 @@ def _peer(api, reference):
 def peers_list():
     """List your partners."""
     items = state.api().get('/direct/peers')['peers']
-    state.out().result(items, lambda out: out.table(['Partner', 'Fax number', 'State', 'Status', 'Verified'],
-        [[item['organization'], item['fax_number'], item['state'], item['status'],
+    state.out().result(items, lambda out: out.table(['Partner', 'Fax number', 'State', 'Status', 'Fax images', 'Verified'],
+        [[item['organization'], item['fax_number'], item['state'], item['status'], item.get('fax_images_text') or '-',
           local_time(item.get('verified_at'), empty='-')] for item in items], empty='No partners.'))
+
+
+@peers.command('fax-images')
+def peers_fax_images(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
+                     choice: str = typer.Argument(..., metavar='on|off',
+                                                  help="on (the default) accepts the partner's faxes as the exact fax "
+                                                       'image, filed like any received fax; off accepts only original '
+                                                       'documents.')):
+    """Accept faxes from a partner as the exact fax image (on, the default) or only as original documents (off)."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/fax-images", json={'accept': choice == 'on'})
+    state.out().result(result, lambda out: out.line(result['detail']))
+
+
+@peers.command('tunnel-calls')
+def peers_tunnel_calls(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
+                       choice: str = typer.Argument(..., metavar='on|off',
+                                                    help="on takes the partner's fax calls inside your encrypted "
+                                                         'tunnel; off stops taking them.'),
+                       address: str = typer.Option(None, '--address', metavar='ADDRESS',
+                                                   help="The partner's address inside the tunnel, such as 10.20.0.2 or "
+                                                        '10.20.0.2:5070. Faxes to them go there when the tunnel is up.'),
+                       check: bool = typer.Option(False, '--check',
+                                                  help='Also check now whether a fax to them would go inside the '
+                                                       'tunnel.')):
+    """Fax calls with a partner inside an encrypted tunnel, with no carrier. You set up the WireGuard tunnel yourself,
+    inside the fax engine's network; Faxbot only places and takes calls through it."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls",
+                      json={'accept': choice == 'on', 'address': address or peer.get('peer_call_address')})
+    checked = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check") if check else None
+
+    def show(out):
+        out.line(result['detail'])
+        if result.get('peer_calls_text'):
+            out.line(result['peer_calls_text'])
+        if checked:
+            out.line(checked['sentence'])
+    state.out().result({'partner': result, 'check': checked}, show)
+
+
+@peers.command('tunnel-check')
+def peers_tunnel_check(partner: str = typer.Argument(..., help='Partner organization, fax number or id.')):
+    """Check now whether a fax to a partner would go inside the encrypted tunnel, as the fax engine's network sees
+    it. Places no call."""
+    api = state.api()
+    peer = _peer(api, partner)
+    result = api.post(f"/direct/peers/{segment(peer['id'])}/peer-calls/check")
+    state.out().result(result, lambda out: (out.line(result['sentence']), None if result['applies']
+                                            else out.line(result['note'])))
 
 
 @peers.command('add')
@@ -881,12 +1743,13 @@ def direct_deliveries():
 
 @cases.command('list')
 def cases_list(limit: int = typer.Option(50, '--limit', min=1, max=200, help='How many cases to show.')):
-    """List the newest cases you sent packets for: who received them, documents sent and received, and when."""
+    """List the newest cases you sent packets for: who received them, what was delivered and acknowledged, and when."""
     result = state.api().get('/cases', params={'limit': limit})
     items = result.get('cases') or []
     state.out().result(result, lambda out: out.table(
         ['Case', 'Recipient', 'Documents', 'Pages', 'Last sent'],
-        [[item['case_id'], item['to'], f"{item['documents']} sent, {item['accepted']} received", item['pages'],
+        [[item['case_id'], item['to'],
+          f"{item['documents']} sent, {item.get('sent', 0)} delivered, {item['accepted']} acknowledged", item['pages'],
           local_time(item.get('last_sent_at'))] for item in items],
         empty='No case packets sent yet.'))
 
@@ -894,15 +1757,23 @@ def cases_list(limit: int = typer.Option(50, '--limit', min=1, max=200, help='Ho
 @cases.command('documents')
 def cases_documents(case_id: str = typer.Argument(..., help='Your case reference.'),
                     to: str = typer.Option(..., '--to', help='Recipient fax number.'),
-                    ids: bool = typer.Option(False, '--ids', help='Also show the fax ID each document was sent in.')):
-    """List the documents of a case already sent to a recipient, and which they accepted."""
+                    ids: bool = typer.Option(False, '--ids', help='Also show the fax ID each document was last sent in.')):
+    """List the documents of a case sent to a recipient: delivered, acknowledged, too old, or not found by them."""
+    from .cases import detail, state_text
     result = state.api().get(f'/cases/{segment(case_id)}/documents', params={'to': to})
 
     def human(out):
-        out.line(f"Recipient accepts references: {text(result.get('accepts_references'))}")
-        out.table(['Document', 'Pages', 'Accepted', 'Reference'] + (['Fax ID'] if ids else []),
-                  [[item['title'], item['pages'], local_time(item.get('accepted_at'), empty='no'), item['reference']]
-                   + ([item.get('fax_id')] if ids else []) for item in result.get('documents', [])],
+        out.line('This recipient accepts a one-page list instead of documents it acknowledged.'
+                 if result.get('accepts_references') else 'This recipient wants every document in full.')
+        if result.get('reuse_days') == 0:
+            out.line('Its acknowledgements are trusted with no time limit.')
+        else:
+            out.line(f"Its acknowledgements are trusted for {result.get('reuse_days')} days.")
+        out.table(['Document', 'Version and source', 'Purpose', 'Pages', 'State', 'Reference']
+                  + (['Fax ID'] if ids else []),
+                  [[item['title'], detail(item), item.get('purpose') or '-', item['pages'], state_text(item),
+                    item['reference']] + ([item.get('fax_id')] if ids else [])
+                   for item in result.get('documents', [])],
                   empty='Nothing has been sent for this case to this recipient.')
     state.out().result(result, human)
 
@@ -914,18 +1785,28 @@ def cases_send(case_id: str = typer.Argument(..., help='Your case reference.'),
                                                   help='PDF documents for the packet, in order.'),
                title: list[str] = typer.Option(None, '--title', help='Title for each document, in the same order. '
                                                                      'Default: the file name.'),
+               purpose: str = typer.Option('', '--purpose', help='What the packet is for. The same document sent '
+                                           'for another purpose is sent in full.'),
+               source: list[str] = typer.Option(None, '--source', help='Where each document came from, in order.'),
+               version: list[str] = typer.Option(None, '--version', help='Version of each document, in order.'),
+               kind: list[str] = typer.Option(None, '--type', help='Document type of each document, in order.'),
+               date: list[str] = typer.Option(None, '--date', help='The date on each document, in order, as '
+                                                                   'year-month-day.'),
                preview: bool = typer.Option(False, '--preview', help='Show what would be sent without sending.')):
-    """Send a case packet, leaving out documents the recipient already has."""
+    """Send a case packet, listing documents the recipient acknowledged instead of sending them again."""
+    from .cases import WHY_TEXT
     with ExitStack() as stack:
         uploads = [('documents', (path.name, stack.enter_context(path.open('rb')), 'application/pdf'))
                    for path in files]
-        data = {'to': to, 'preview': 'true' if preview else 'false', 'titles': list(title or [])}
+        data = {'to': to, 'preview': 'true' if preview else 'false', 'titles': list(title or []), 'purpose': purpose,
+                'sources': list(source or []), 'versions': list(version or []), 'types': list(kind or []),
+                'dates': list(date or [])}
         result = state.api().post(f'/cases/{segment(case_id)}/faxes', data=data, files=uploads)
 
     def human(out):
-        out.table(['Document', 'Pages', 'In this packet'],
-                  [[item['title'], item['pages'], 'included' if item['status'] == 'included' else 'referred to']
-                   for item in result.get('documents', [])])
+        out.table(['Document', 'Pages', 'In this packet', 'Why'],
+                  [[item['title'], item['pages'], 'included' if item['status'] == 'included' else 'listed only',
+                    WHY_TEXT.get(item.get('why'), '-')] for item in result.get('documents', [])])
         out.line(f"{result['pages']} pages to send, {result['pages_saved']} pages saved.")
         if result.get('fax_id'):
             out.line(f"Sent as fax {result['fax_id']}. Check on it with: faxbot status {result['fax_id']}")

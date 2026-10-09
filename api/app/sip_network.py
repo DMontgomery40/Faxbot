@@ -957,7 +957,7 @@ async def check_at_start(runtime, *, delay=START_DELAY_SECONDS, confirm=CONFIRM_
         from .config_runtime import run_lifecycle_step
         from . import telnyx_t38
         values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
-        await run_lifecycle_step(lambda: telnyx_t38.check(values))
+        await run_lifecycle_step(lambda: telnyx_t38.check_all(values))
     except asyncio.CancelledError:
         raise
     except Exception:

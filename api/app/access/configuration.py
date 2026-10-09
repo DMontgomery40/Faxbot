@@ -17,8 +17,10 @@ from ..config_profiles import ConfigurationDocument
 # Everything not explicitly ordinary is Owner-protected, including future fields.
 # These sets classify canonical values, never submitted aliases or secret masks.
 _ORDINARY_FIELDS = frozenset({
-    'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours',
+    'route_min_success_percent', 'intake_email_subject', 'work_acknowledge_hours', 'case_suggestions_enabled',
+    'plan_budgets', 'fax_friendly_documents', 'fax_friendly_whiten',
     'max_file_size_mb', 'fax_disabled', 'fax_header', 'fax_station_id', 'fax_default_country',
+    'fax_reply_number', 'fax_reply_numbers', 'fax_send_only_numbers', 'stir_trust_anchors',
     'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days', 'time_zone',
 })
 _PROVIDER_FIELDS = frozenset({
@@ -30,19 +32,21 @@ _PROVIDER_FIELDS = frozenset({
     'sip_trunk_username', 'sip_trunk_password', 'sip_trunk_outbound_proxy', 'sip_trunk_caller_id',
     'sip_trunk_dids', 'sip_t38_enabled', 'sip_fax_preference_header', 'sip_trunk_codecs',
     'sip_t38_error_correction', 'sip_t38_max_datagram', 'sip_fax_max_rate', 'sip_fax_ecm', 'sip_fax_compression',
-    'sip_fax_fine', 'sip_sslfax_enabled', 'sip_fax_lines', 'sip_sslfax_listener_port',
+    'sip_fax_fine', 'sip_fax_tune_coding', 'sip_sslfax_enabled', 'sip_fax_lines', 'sip_sslfax_listener_port',
     'sip_trunk_max_calls', 'sip_trunk_calls_per_second',
     'sip_trunk_dial_format', 'sip_trunk_dial_prefix',
     'sip_external_address', 'sip_public_address_check_minutes', 'sip_router_ports', 'telnyx_api_key',
+    'flowroute_access_key', 'flowroute_secret_key',
     'phaxio_api_key', 'phaxio_api_secret', 'phaxio_callback_token',
     'phaxio_status_callback_url',
-    'sinch_base_url', 'sinch_project_id', 'sinch_api_key', 'sinch_api_secret',
+    'sinch_base_url', 'sinch_project_id', 'sinch_api_key', 'sinch_api_secret', 'sinch_webhook_base_url',
     'signalwire_space_url', 'signalwire_project_id', 'signalwire_api_token',
     'signalwire_fax_from_e164', 'signalwire_sms_from_e164',
     'signalwire_status_callback_url', 'signalwire_webhook_signing_key',
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
-    'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number',
+    'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number', 'humblefax_receive_enabled',
+    'humblefax_poll_seconds',
     'efax_app_id', 'efax_api_key', 'efax_user_id', 'efax_caller_id', 'efax_csid', 'efax_poll_seconds',
     'efax_delete_after_download', 'efax_webhook_secret',
     'outbound_routes', 'direct_delivery_enabled', 'direct_organization', 'direct_fax_number',

@@ -35,7 +35,8 @@ htmlcov/
 !.env.example
 
 # Node / JavaScript
-node_modules/
+# No trailing slash: a node_modules symlink (a worktree pointing at the main checkout) is ignored too.
+node_modules
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
@@ -62,6 +63,8 @@ AGENTS.md
 _site/
 docs/_site/
 vendor/
+# The browser fax decoder ships its vendored zstd reader (tools/fax-decoder/README.md).
+!tools/fax-decoder/vendor/
 .bundle/
 
 site/

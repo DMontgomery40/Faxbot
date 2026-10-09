@@ -52,7 +52,9 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
                 for i in inspector.get_indexes('sip_call_records')} == {
             (name, columns, unique) for name, columns, unique in schema_sip.INDEXES} | later
         columns = {c['name']: c for c in inspector.get_columns('sip_call_records')}
-        assert set(columns) == {column.name for column in table.columns}
+        # Every frozen column is there; later revisions only add nullable ones (0030: the call's trunk).
+        frozen = {column.name for column in table.columns}
+        assert frozen <= set(columns) and all(columns[name]['nullable'] for name in set(columns) - frozen)
         assert not columns['disposition']['nullable'] and columns['answered_at']['nullable']
     schema.upgrade_schema(database)
     assert snapshot(database) == after
@@ -213,7 +215,8 @@ async def test_ami_events_flow_into_records_without_touching_delivery_listeners(
             with use_configuration(values):
                 task = asyncio.create_task(client.originate_sendfax(JOB, '+15555550123', '/fax/a.tif',
                                                                     attempt_id=ATTEMPT))
-            await writer.requests.get()
+            # A call that fails before its Originate is written fails here with its own error, never hangs the run.
+            await writer.request(task)
             feed_response(client, f'faxbot:{JOB}:{ATTEMPT}')
             await task
             frame = ''.join(f'{key}: {value}\r\n' for key, value in fax_result().items()) + '\r\n'
@@ -236,7 +239,8 @@ async def test_a_broken_record_store_never_blocks_the_call(monkeypatch):
         try:
             task = asyncio.create_task(client.originate_sendfax(JOB, '+15555550123', '/fax/a.tif',
                                                                 attempt_id=ATTEMPT))
-            await writer.requests.get()
+            # A call that fails before its Originate is written fails here with its own error, never hangs the run.
+            await writer.request(task)
             feed_response(client, f'faxbot:{JOB}:{ATTEMPT}')
             assert await task is None
         finally:
@@ -281,6 +285,10 @@ ANSWERED = {'Answered': str(_epoch(NOW + timedelta(seconds=8))), 'Ended': str(_e
      'no_media_back'),
     ({'Status': 'FAILED', 'Error': 'Timed out waiting for initial communication', 'Pages': '0', 'Mode': 'audio',
       'RtpRx': '1500'}, 'no_fax_answer'),
+    # Sound came back, no fax message, and the far end hung up first: a person or a voice line answered.
+    ({'Status': 'FAILED', 'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'audio', 'RtpRx': '1500'},
+     'person_answered'),
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0', 'Mode': 'audio', 'RtpRx': '240'}, 'person_answered'),
     # A far end that answered as a fax machine: the network carried the call.
     ({'Status': 'FAILED', 'Error64': _b64('Received no response to DCS or TCF'), 'Pages': '0', 'Mode': 'T38'},
      'remote_fax_failed'),

@@ -10,7 +10,8 @@
       "needs_storage",
       "outbound_status_only"
     ],
-    "notes": "This file is JSON (no comments). Traits apply to provider ids. Manifest traits override these defaults."
+    "notes": "This file is JSON (no comments). Traits apply to provider ids. Manifest traits override these defaults.",
+    "pages_notes": "pages: how each route bills and whether it sends a long page unchanged (dense pages, api/app/pages). billing: per_page, per_minute, plan or carrier (the trunk carrier's card). how_sent: image (Faxbot's own engine sends the fax image), pdf_upload (Faxbot uploads a PDF) or pdf_url (the provider fetches the PDF the attempt chose from a link Faxbot serves). long_pages: receiver (the receiving machine's DIS decides), accepts, or not_documented (off until a person turns it on). page_rule page_or_60_seconds: a page that takes more than 60 seconds may be billed as more than one."
   },
   "phaxio": {
     "id": "phaxio",
@@ -23,6 +24,15 @@
       "inbound_verification": "hmac",
       "needs_storage": true,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "per_page",
+      "how_sent": "pdf_url",
+      "long_pages": "not_documented",
+      "page_cap": 200,
+      "source": "https://www.phaxio.com/docs/api/v2.1/faxes/create_and_send_fax",
+      "read_on": "2026-10-07",
+      "note": "Faxbot gives Phaxio a link to fetch the PDF each attempt chose, packed pages included once long pages are turned on. Phaxio allows at most 200 pages a fax and does not document what it does with a page longer than letter or A4."
     }
   },
   "sinch": {
@@ -36,6 +46,14 @@
       "inbound_verification": "hmac",
       "needs_storage": true,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "per_page",
+      "how_sent": "pdf_upload",
+      "long_pages": "not_documented",
+      "source": "https://developers.sinch.com/docs/fax/api-reference/fax/faxes",
+      "read_on": "2026-10-07",
+      "note": "Sinch reports each fax's page count and price but does not document what it does with a page longer than letter or A4; check with a test fax before turning long pages on."
     }
   },
   "signalwire": {
@@ -49,6 +67,14 @@
       "inbound_verification": "none",
       "needs_storage": false,
       "outbound_status_only": true
+    },
+    "pages": {
+      "billing": "per_minute",
+      "how_sent": "pdf_url",
+      "long_pages": "not_documented",
+      "source": "https://signalwire.com/pricing/fax",
+      "read_on": "2026-10-07",
+      "note": "SignalWire fetches the PDF each attempt chose from a link, packed pages included once long pages are turned on; it bills by the minute."
     }
   },
   "documo": {
@@ -62,6 +88,14 @@
       "inbound_verification": "none",
       "needs_storage": false,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "per_page",
+      "how_sent": "pdf_upload",
+      "long_pages": "not_documented",
+      "source": "https://www.documo.com/pricing/",
+      "read_on": "2026-10-07",
+      "note": "Plans include pages and charge per page after that; Documo does not document what it does with a page longer than letter or A4."
     }
   },
   "humblefax": {
@@ -71,10 +105,19 @@
       "requires_ghostscript": true,
       "requires_ami": false,
       "requires_tiff": false,
-      "supports_inbound": false,
+      "supports_inbound": true,
       "inbound_verification": "none",
-      "needs_storage": false,
+      "needs_storage": true,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "plan",
+      "how_sent": "pdf_upload",
+      "long_pages": "not_documented",
+      "page_cap": 100,
+      "source": "https://www.humblefax.com/pricing",
+      "read_on": "2026-10-07",
+      "note": "A flat monthly plan with no charge per page; the 100-page cap per fax comes from review sites, because HumbleFax's own pricing page did not load on 2026-10-07. Fewer pages leave more room under the plan's fair use."
     }
   },
   "efax": {
@@ -88,6 +131,15 @@
       "inbound_verification": "none",
       "needs_storage": true,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "per_page",
+      "how_sent": "pdf_upload",
+      "long_pages": "not_documented",
+      "page_rule": "page_or_60_seconds",
+      "source": "https://enterprise.efax.com/resources/faq",
+      "read_on": "2026-10-07",
+      "note": "eFax Corporate: \"Graphic intensive fax pages may take longer than 60 seconds and may be charged as multiple pages.\""
     }
   },
   "sip": {
@@ -101,6 +153,14 @@
       "inbound_verification": "internal_secret",
       "needs_storage": true,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "carrier",
+      "how_sent": "image",
+      "long_pages": "receiver",
+      "source": "https://www.itu.int/rec/T-REC-T.30",
+      "read_on": "2026-10-07",
+      "note": "Faxbot's own fax engine sends its fax image; the receiving machine's DIS (T.30 Table 2, bits 19-20) says the longest page it takes: A4, B4 or unlimited."
     }
   },
   "freeswitch": {
@@ -114,6 +174,14 @@
       "inbound_verification": "none",
       "needs_storage": false,
       "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "carrier",
+      "how_sent": "image",
+      "long_pages": "receiver",
+      "source": "https://www.itu.int/rec/T-REC-T.30",
+      "read_on": "2026-10-07",
+      "note": "Faxbot's own fax engine sends its fax image; the receiving machine's DIS (T.30 Table 2, bits 19-20) says the longest page it takes: A4, B4 or unlimited."
     }
   }
 }

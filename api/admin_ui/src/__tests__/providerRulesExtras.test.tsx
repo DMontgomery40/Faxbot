@@ -1,0 +1,210 @@
+import { useState } from 'react';
+import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { AdminAPIError } from '../api/client';
+import { ReceivedTry, ReceivingOptionsFields } from '../components/ProviderRulesReceiving';
+import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendOptions } from '../components/ProviderRulesSendFields';
+import { AddAsRuleButton } from '../components/ProviderRulesSuggest';
+import { FaxRouteItems, WaitingForYouCard } from '../components/ProviderRulesHeld';
+import { ReceivingSummary } from '../components/ProviderRules';
+import { MailboxSendingRulesPicker } from '../components/MailboxSendingRules';
+import { OriginRates, TrunkPicker } from '../components/ProviderAccountsTrunks';
+import ProviderRulesTry, { ExplainAnswer } from '../components/ProviderRulesTry';
+import { CheckPanel } from '../components/ProviderRulesDraft';
+import { NO_RECEIVING_OPTIONS, ORGANIZATION, type ReceivingOptions, type RulesApi } from '../components/ProviderRulesApi';
+import { FakeRules } from './providerRulesFake';
+
+function choose(name: string, option: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name }));
+  fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: option }));
+}
+
+const accounts = [{ key: 'sip', label: 'Telnyx' }, { key: 'sinch-uk', label: 'Sinch (UK)' }];
+
+describe('receiving rules on Numbers', () => {
+  it('turns each option into the fields of the number rule', () => {
+    let latest: ReceivingOptions = NO_RECEIVING_OPTIONS;
+    function Harness() {
+      const [value, setValue] = useState<ReceivingOptions>(NO_RECEIVING_OPTIONS);
+      latest = value;
+      return <ReceivingOptionsFields value={value} onChange={setValue} accounts={accounts} timeZone="America/Denver"
+        connectors={[{ key: 'c-night', label: 'Night inbox' }]} />;
+    }
+    render(<Harness />);
+    choose('Only faxes received on', 'Sinch (UK)');
+    fireEvent.change(screen.getByLabelText('Only faxes from'), { target: { value: '+13035550100, +1303*' } });
+    fireEvent.click(screen.getByLabelText('Only at certain times (America/Denver)'));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '18:00' } });
+    fireEvent.change(screen.getByLabelText('Until'), { target: { value: '07:00' } });
+    choose('Email', 'No email');
+    fireEvent.click(screen.getByLabelText('Mark these faxes urgent'));
+    fireEvent.change(screen.getByLabelText('Keep for (days)'), { target: { value: '30' } });
+    expect(screen.getByText(/It is not a legal hold/)).toBeTruthy();
+    expect(latest).toEqual({ ...NO_RECEIVING_OPTIONS, account_key: 'sinch-uk', from_numbers: ['+13035550100', '+1303*'],
+      days: ['mon', 'tue', 'wed', 'thu', 'fri'], start_minute: 1080, end_minute: 420, email_off: true, urgent: true, keep_days: 30 });
+    choose('Email', 'Through Night inbox');
+    expect(latest).toMatchObject({ email_off: false, email_connector_id: 'c-night' });
+  });
+
+  it('tries a received fax and says where it would go', async () => {
+    const fake = new FakeRules();
+    render(<ReceivedTry api={fake.api()} accounts={accounts} timeZone="America/Denver" />);
+    fireEvent.change(screen.getByLabelText('Sent to your number'), { target: { value: '+17208565062' } });
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '+13035550100' } });
+    choose('Received on', 'Telnyx');
+    fireEvent.click(screen.getByRole('button', { name: 'Try it' }));
+    expect(await screen.findByText(/It would go to Front desk, marked urgent/)).toBeTruthy();
+    expect(fake.sent('POST', '/access/inbound-rules/explain')).toEqual([
+      { to_number: '+17208565062', from_number: '+13035550100', account_key: 'sip', at: null }]);
+  });
+});
+
+describe('Send a fax: mailbox, workflow and labels', () => {
+  it('shows nothing when the organization uses none of them', () => {
+    const { container } = render(<ProviderRulesSendFields choices={{ mailboxes: [], workflows: [], labels: [] }}
+      value={NO_SEND_OPTIONS} onChange={() => undefined} />);
+    expect(container.textContent).toBe('');
+  });
+
+  it('adds only what was chosen to the fax', () => {
+    let latest: SendOptions = NO_SEND_OPTIONS;
+    function Harness() {
+      const [value, setValue] = useState<SendOptions>(NO_SEND_OPTIONS);
+      latest = value;
+      return <ProviderRulesSendFields value={value} onChange={setValue} choices={{
+        mailboxes: [{ id: 'm-leeds', label: 'Leeds intake' }], workflows: [{ key: 'referrals', name: 'Referrals' }],
+        labels: ['legal', 'clinical'] }} />;
+    }
+    render(<Harness />);
+    expect(sendBody(latest)).toEqual({});
+    choose('Send from mailbox', 'Leeds intake');
+    fireEvent.click(screen.getByLabelText('clinical'));
+    expect(sendBody(latest)).toEqual({ mailbox: 'm-leeds', labels: ['clinical'] });
+    choose('Workflow', 'Referrals');
+    expect(sendBody(latest)).toEqual({ mailbox: 'm-leeds', workflow: 'referrals', labels: ['clinical'] });
+  });
+});
+
+describe('Costs → Recommendations: Add as rule', () => {
+  it('puts the suggested rule first in the draft and never publishes', async () => {
+    const fake = new FakeRules();
+    let notice = '';
+    render(<AddAsRuleButton api={fake.api()} onDone={(sentence) => { notice = sentence; }} onError={() => undefined}
+      onNavigate={() => undefined}
+      suggestion={{ name: 'Faxes to +44 numbers go through Sinch (UK)', when: { destination: { prefixes: ['+44'] } },
+        then: { use: 'sinch-uk' } }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add as rule' }));
+    expect(await screen.findByRole('button', { name: 'Open your draft rules' })).toBeTruthy();
+    const saved = fake.sent('PUT', '/routing/rules/draft')[0] as { document: { routes: Array<{ id: string }> }; expected_version: number };
+    expect(saved.expected_version).toBe(0);
+    expect(saved.document.routes.map((rule) => rule.id)).toEqual(['r-faxes-to-44-numbers-go-through-sinch-uk', 'r-uk']);
+    expect(fake.sent('POST', '/routing/rules/publish')).toEqual([]);
+    expect(notice).toBe('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.');
+  });
+});
+
+describe('several trunks and prices by where calls start', () => {
+  it('shows a trunk picker only when there is more than one trunk', async () => {
+    const fake = new FakeRules();
+    const { unmount } = render(<TrunkPicker api={fake.api()} value={null} onChange={() => undefined} />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('combobox', { name: 'Trunk' })).toBeNull();
+    unmount();
+    fake.accounts.accounts.push({ ...fake.accounts.accounts[0], key: 'sip-leeds', label: 'Leeds trunk (Gamma)', primary: false });
+    let chosen = '';
+    render(<TrunkPicker api={fake.api()} value={null} onChange={(key) => { chosen = key; }} />);
+    expect((await screen.findByRole('combobox', { name: 'Trunk' })).textContent).toBe('Telnyx');
+    choose('Trunk', 'Leeds trunk (Gamma)');
+    expect(chosen).toBe('sip-leeds');
+  });
+
+  it('lists origin-rated prices with their source and the day they were read', () => {
+    render(<OriginRates cardLabel="Gamma SIP trunk" rows={[
+      { origin_label: 'Leeds office', destination_prefix: '+44113', currency: 'GBP', per_minute: '0.004', per_page: '0',
+        per_call: '0', billing_increment_seconds: 60, minimum_seconds: 60, source_url: 'https://example.com/gamma-rates',
+        captured_on: '2026-10-07' },
+      { origin_label: 'Anywhere', destination_prefix: '+44', currency: 'GBP', per_minute: '0.01', per_page: '0', per_call: '0.02',
+        billing_increment_seconds: 1, minimum_seconds: 0, source_url: null, captured_on: null },
+    ]} />);
+    const table = screen.getByRole('table', { name: 'Gamma SIP trunk prices by where calls start' });
+    expect(within(table).getByText('whole minutes, at least 60 seconds')).toBeTruthy();
+    expect(within(table).getByText('1-second steps')).toBeTruthy();
+    expect(within(table).getByText(/read on .*2026/)).toBeTruthy();
+    expect(within(table).getByText('Entered here')).toBeTruthy();
+  });
+});
+
+describe('answers from the live rules engine read as sentences', () => {
+  it('names the condition that did not match, says a held fax once, and has no "0 of 0"', () => {
+    const sentence = 'Waits for approval: the rule ‘UK faxes need approval’ matched.';
+    render(<ExplainAnswer result={{ outcome: 'held', sentence, routes: [], holds: [sentence], dial: null, page_layout: null,
+      trace: [{ kind: 'limit', result: 'not_matched', scope: 'organization', name: 'UK faxes need approval',
+        failed: 'the recipient group' }] }} />);
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
+    fireEvent.click(screen.getByText('Every rule Faxbot read for this fax'));
+    expect(screen.getByText('Its condition on the recipient group did not match.')).toBeTruthy();
+    render(<CheckPanel check={{ errors: [], warnings: [], replay: { checked: 0, changed: 0, approximate: 0, items: [] } }} />);
+    expect(screen.getByText('There are no recent faxes to try these rules on yet.')).toBeTruthy();
+  });
+});
+
+describe('Overview: faxes waiting for you', () => {
+  it('counts held faxes by why they wait', async () => {
+    let opened = false;
+    render(<WaitingForYouCard api={new FakeRules().api()} onOpen={() => { opened = true; }} />);
+    expect(await screen.findByText('2 faxes are waiting for you')).toBeTruthy();
+    expect(screen.getByText('1 waiting for approval, 1 with no route your rules allow. Nothing has been sent for them.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Sent' }));
+    expect(opened).toBe(true);
+  });
+});
+
+// Every endpoint these views read exists now: a failure is said in one sentence, and only someone without
+// permission sees the view left out.
+describe('rules views say when they cannot load', () => {
+  const GONE = 'This item no longer exists. Reload and try again.';
+  const refused = (status: number) => new AdminAPIError(status, 'Error', status === 403 ? 'Forbidden' : 'Not Found');
+  const failing = (status: number): RulesApi => ({ ...new FakeRules().api(),
+    faxRoute: () => Promise.reject(refused(status)), holds: () => Promise.reject(refused(status)),
+    accounts: () => Promise.reject(refused(status)), revisions: () => Promise.reject(refused(status)) });
+
+  it('says why a fax route, the held faxes or the trunks could not load, and hides them without permission', async () => {
+    const views = (status: number) => (
+      <>
+        <ul><FaxRouteItems api={failing(status)} jobId="job-1" /></ul>
+        <WaitingForYouCard api={failing(status)} onOpen={() => undefined} />
+        <TrunkPicker api={failing(status)} value={null} onChange={() => undefined} />
+      </>
+    );
+    const { unmount } = render(views(404));
+    await waitFor(() => expect(screen.getAllByText(GONE)).toHaveLength(3));
+    unmount();
+    const hidden = render(views(403));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(hidden.queryAllByRole('alert')).toHaveLength(0));
+    expect(hidden.container.textContent).toBe('');
+  });
+
+  it('says why the mailboxes, the number rules or the rule history could not load', async () => {
+    const fake = new FakeRules();
+    const state = fake.state('organization', fake.scopes.get('organization')!);
+    render(
+      <>
+        <MailboxSendingRulesPicker api={fake.api()} loadMailboxes={() => Promise.reject(refused(404))} canWrite />
+        <ReceivingSummary load={() => Promise.reject(refused(404))} />
+        <ProviderRulesTry api={failing(404)} scope={ORGANIZATION} state={state} document={state.active!.document} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByText(GONE)).toHaveLength(3));
+  });
+
+  it('leaves the mailbox picker and the number rules out for someone who may not see them', async () => {
+    const { container } = render(
+      <MailboxSendingRulesPicker api={new FakeRules().api()} loadMailboxes={() => Promise.reject(refused(403))} canWrite />,
+    );
+    const summary = render(<ReceivingSummary load={() => Promise.reject(refused(403))} />);
+    expect(await summary.findByText('Which mailbox each of your numbers delivers to is set on Numbers.')).toBeTruthy();
+    await waitFor(() => expect(summary.queryAllByRole('alert')).toHaveLength(0));
+    expect(container.textContent).toBe('');
+  });
+});

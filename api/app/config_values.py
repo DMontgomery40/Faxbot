@@ -147,6 +147,9 @@ class ConfigurationValues(BaseModel):
     # The best compression Faxbot may agree with the other machine (mh < mr < mmr < jbig).
     sip_fax_compression: str = Field('jbig', validation_alias='SIP_FAX_COMPRESSION', pattern=r'^(?:mh|mr|mmr|jbig)$')
     sip_fax_fine: bool = Field(True, validation_alias='SIP_FAX_FINE')
+    # Lossless tuning (hylafax/patches/0003, pages/tuning.py): the fewest-bytes MR schedule on every call, and
+    # tuned JBIG only where the receiving machine is known to decode it; the same pixels either way.
+    sip_fax_tune_coding: bool = Field(True, validation_alias='SIP_FAX_TUNE_CODING')
     # SSL Fax engine (HylaFAX+): offered on every call; fax lines at once; the receiving listener's port,
     # used only when docker-compose.sslfax.yml publishes it.
     sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')
@@ -177,6 +180,10 @@ class ConfigurationValues(BaseModel):
     # to place calls.
     telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
                                 pattern=r'^[!-~]{0,256}$')
+    # Flowroute API keys, used only to read what Flowroute charged for each trunk call (routing/carrier_records.py).
+    flowroute_access_key: str = Field('', validation_alias='FLOWROUTE_ACCESS_KEY', pattern=r'^[!-~]{0,256}$')
+    flowroute_secret_key: str = Field('', validation_alias='FLOWROUTE_SECRET_KEY', repr=False,
+                                      json_schema_extra={'secret': True}, pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})
@@ -203,6 +210,10 @@ class ConfigurationValues(BaseModel):
     humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),
                                       repr=False, json_schema_extra={'secret': True})
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
+    # Receiving through HumbleFax: Faxbot asks HumbleFax for received faxes every humblefax_poll_seconds.
+    # Off until turned on; HumbleFax as the receiving provider also turns it on (inbound/humblefax.py).
+    humblefax_receive_enabled: bool = Field(False, validation_alias='HUMBLEFAX_RECEIVE_ENABLED')
+    humblefax_poll_seconds: int = Field(60, validation_alias='HUMBLEFAX_POLL_SECONDS', ge=30, le=3600)
     # eFax Enterprise API (eFax Corporate): the app ID, API key and user ID from eFax's welcome email.
     efax_app_id: str = Field('', validation_alias='EFAX_APP_ID', repr=False, json_schema_extra={'secret': True},
                              pattern=r'^[!-9;-~]{0,256}$')
@@ -222,6 +233,19 @@ class ConfigurationValues(BaseModel):
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     # The fax number printed for the receiving machine; empty means the trunk's caller ID, or none.
     fax_station_id: str = Field('', validation_alias='FAX_LOCAL_STATION_ID')
+    # The number replies to your faxes reach (routing/reply_number.py): printed in each page's header line
+    # and sent as the station ID. Empty: Faxbot uses your cheapest number that receives into a mailbox.
+    fax_reply_number: str = Field('', validation_alias='FAX_REPLY_NUMBER', pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    # Mailboxes with a reply number of their own: "<mailbox ID>=<number>" pairs separated by semicolons.
+    fax_reply_numbers: str = Field('', validation_alias='FAX_REPLY_NUMBERS', pattern=(
+        r'^(?:[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}(?:;[A-Za-z0-9_-]{1,40}=\+[1-9][0-9]{6,14}){0,99})?$'))
+    # Send-only numbers (routing/send_only.py): numbers shown as caller ID and station ID on faxes you send that
+    # never receive faxes here, such as your main office number; comma-separated E.164.
+    fax_send_only_numbers: str = Field('', validation_alias='FAX_SEND_ONLY_NUMBERS', pattern=(
+        r'^(?:\+[1-9][0-9]{6,14}(?:,\+[1-9][0-9]{6,14}){0,49})?$'))
+    # Certificate authorities you trust for forwarded calls (inbound/trust.py; STIR/SHAKEN STI-CAs): a JSON list of
+    # {"pem", "source", "added_on"}. A forwarding is verified only when its signing certificate chains to one.
+    stir_trust_anchors: str = Field('', validation_alias='STIR_TRUST_ANCHORS', max_length=1_000_000)
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
@@ -243,6 +267,10 @@ class ConfigurationValues(BaseModel):
     phaxio_inbound_verify_signature: bool = Field(True, validation_alias='PHAXIO_INBOUND_VERIFY_SIGNATURE')
     sinch_inbound_basic_user: str = Field('', validation_alias='SINCH_INBOUND_BASIC_USER')
     sinch_inbound_basic_pass: str = Field('', validation_alias='SINCH_INBOUND_BASIC_PASS', repr=False, json_schema_extra={'secret': True})
+    # Where Sinch reaches Faxbot with received faxes when that is not PUBLIC_API_URL, such as a
+    # tunnel that passes only /sinch-inbound. Empty uses PUBLIC_API_URL.
+    sinch_webhook_base_url: str = Field('', validation_alias='SINCH_WEBHOOK_BASE_URL',
+                                        pattern=r'^(?:|https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~/-]*)?)$')
     storage_backend: str = Field('local', validation_alias='STORAGE_BACKEND')
     s3_bucket: str = Field('', validation_alias='S3_BUCKET')
     s3_prefix: str = Field('inbound/', validation_alias='S3_PREFIX')
@@ -274,8 +302,19 @@ class ConfigurationValues(BaseModel):
     # rate a route needs at a number before it stops being chosen first.
     outbound_routes: str = Field('', validation_alias='FAX_OUTBOUND_ROUTES', pattern=r'^[a-z0-9_.,\s-]*$')
     route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
+    # Monthly normal-use budgets, allowances and billing days of flat and allowance plans, one entry a route
+    # ("humblefax:pages=200,faxes=50,day=1"); empty uses Faxbot's cautious defaults (routing/plan_budget.py).
+    plan_budgets: str = Field('', validation_alias='FAX_PLAN_BUDGETS', max_length=2000)
     # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
     local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
+    # Fax-friendly shading on documents you send (pages/friendly.py): 'where_it_saves' (the default: shaded areas
+    # kept with a fax-friendly pattern when the attempt's expected bill is lower, or for a named reason), 'always'
+    # or 'never'. The earlier on and off values read as always and never.
+    fax_friendly_documents: str = Field('where_it_saves', validation_alias='FAX_FRIENDLY_DOCUMENTS',
+                                        pattern=r'^(where_it_saves|always|never)$')
+    # Also make light areas white (and remove specks): an opt-in, off by default, because it may erase pale text
+    # and light marks. Never applies while fax_friendly_documents is 'never'.
+    fax_friendly_whiten: bool = Field(False, validation_alias='FAX_FRIENDLY_WHITEN')
     # Default intake email connector; more connectors are managed in the console.
     intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
     intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')
@@ -295,6 +334,9 @@ class ConfigurationValues(BaseModel):
     # Work queue: the team's operational target for acknowledging a received
     # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
     work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)
+    # Case checklists: suggest documents that may match a missing item. Off unless turned on;
+    # a suggestion is never sent unless a person adds it to the packet.
+    case_suggestions_enabled: bool = Field(False, validation_alias='CASE_SUGGESTIONS')
     # The address paired phones use on the installation's own network; empty offers none.
     mobile_local_base: str = Field('', validation_alias='MOBILE_LOCAL_BASE')
     # Where the console's help links point.
@@ -304,12 +346,45 @@ class ConfigurationValues(BaseModel):
     # other than UTC; empty means UTC.
     time_zone: str = Field('', validation_alias=AliasChoices('FAX_TIME_ZONE', 'TZ'))
 
+    # Optional operational analysis. New fields remain owner-protected by default.
+    analysis_enabled: bool = Field(False, validation_alias='ANALYSIS_ENABLED')
+    analysis_provider: str = Field('openai', validation_alias='ANALYSIS_PROVIDER', pattern=r'^(openai|openrouter|compatible)$')
+    analysis_base_url: str = Field('https://api.openai.com/v1', validation_alias='ANALYSIS_BASE_URL', max_length=512)
+    analysis_model: str = Field('', validation_alias='ANALYSIS_MODEL', max_length=200, pattern=r'^[!-~]*$')
+    analysis_api_key: str = Field('', validation_alias='ANALYSIS_API_KEY', repr=False,
+                                  json_schema_extra={'secret': True}, max_length=4096, pattern=r'^[!-~]*$')
+    analysis_interval_hours: int = Field(24, validation_alias='ANALYSIS_INTERVAL_HOURS', ge=0, le=168)
+
+    @field_validator('analysis_base_url')
+    @classmethod
+    def validate_analysis_url(cls, value):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(value)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or any(char.isspace() for char in value)):
+            raise ValueError('Use an HTTPS API base address without credentials, query, or fragment.')
+        try:
+            parsed.port
+        except ValueError:
+            raise ValueError('Use a valid HTTPS API address.') from None
+        return value.rstrip('/')
+
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
+    # The extra provider accounts of the configuration revision these values were read from (accounts.py):
+    # a read-only view for code that has only the values. Revisions write accounts from their own record,
+    # never from here.
+    _provider_accounts: object = PrivateAttr(default=None)
 
     @field_validator("fax_backend", "outbound_backend", "inbound_backend", "storage_backend", mode="before")
     @classmethod
     def normalize_selector(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("plan_budgets")
+    @classmethod
+    def normalize_plan_budgets(cls, value):
+        from .routing.plan_budget import normalize_budgets
+        return normalize_budgets(value)
 
     @field_validator("fax_default_country", mode="before")
     @classmethod
@@ -319,6 +394,18 @@ class ConfigurationValues(BaseModel):
             value = value.strip().upper()
             if value not in SUPPORTED_COUNTRIES:
                 raise ValueError("unsupported country")
+        return value
+
+    @field_validator("fax_friendly_documents", mode="before")
+    @classmethod
+    def normalize_friendly_documents(cls, value):
+        # On and off (a switch before the three choices) are always and never.
+        if isinstance(value, bool):
+            return 'always' if value else 'never'
+        if isinstance(value, str):
+            value = value.strip().lower()
+            return {'true': 'always', 'on': 'always', 'yes': 'always', '1': 'always',
+                    'false': 'never', 'off': 'never', 'no': 'never', '0': 'never'}.get(value, value)
         return value
 
     @field_validator("sip_fax_max_rate")
@@ -482,15 +569,47 @@ class ConfigurationValues(BaseModel):
                 value = self._saved_number(name, value, changes)
             environment[key] = ("true" if value else "false") if isinstance(value, bool) else str(value)
         values = type(self).from_environment(environment)
+        values._provider_accounts = self._provider_accounts
         if ({"sinch_inbound_basic_user", "sinch_inbound_basic_pass"} & set(changes)
                 and values.sinch_inbound_basic_user and not values.sinch_inbound_basic_pass):
             raise ConfigurationValueError([{"field": "SINCH_INBOUND_BASIC_PASS", "reason": "required_with_user"}])
         return values
 
     @property
+    def provider_accounts(self) -> dict:
+        """The extra provider accounts, {key: document}, as their revision stores them; {} when there are none."""
+        document = self._provider_accounts
+        return document.as_dict() if document is not None else {}
+
+    def with_provider_accounts(self, document) -> "ConfigurationValues":
+        """A copy of these values whose read-only accounts view is ``document`` (a ConfigurationDocument)."""
+        values = self.model_copy()
+        values._explicit_keys = self._explicit_keys
+        values._provider_accounts = document if document is not None and document.as_dict() else None
+        return values
+
+    @property
     def sinch_inbound_basic_configured(self) -> bool:
         """Sinch's basic auth is in force only with both a user name and a password."""
         return bool(self.sinch_inbound_basic_user and self.sinch_inbound_basic_pass)
+
+    @property
+    def sinch_incoming_webhook_url(self) -> str:
+        """The exact address to paste into Sinch's fax service as its Incoming webhook URL."""
+        return (self.sinch_webhook_base_url or self.public_api_url).rstrip('/') + '/sinch-inbound'
+
+    @property
+    def sinch_incoming_webhook_login_url(self) -> str | None:
+        """That address with the basic-auth user name in it and PASSWORD where the password goes; None without one.
+
+        Sinch takes webhook credentials inside the address, as https://username:password@host
+        (Fax API v3 reference, WebhookBasicAuth, read 2026-10-07).
+        """
+        from urllib.parse import quote
+        if not self.sinch_inbound_basic_configured:
+            return None
+        scheme, _, rest = self.sinch_incoming_webhook_url.partition('://')
+        return f"{scheme}://{quote(self.sinch_inbound_basic_user, safe='')}:PASSWORD@{rest}"
 
     def _saved_number(self, name, value, changes):
         """Save numbers entered nationally for the installation country in E.164.

@@ -61,7 +61,12 @@ interface Group { id: string; name: string; description: string; enabled: boolea
 interface Membership { id: string; group_id: string; principal_id: string; version: number }
 interface Role { id: string; name: string; description: string; builtin: boolean; enabled: boolean; permissions: string[]; version: number }
 interface Mailbox { id: string; label: string; enabled: boolean; resource_id: string; version: number }
-interface Rule { id: string; to_number: string; mailbox_id: string; version: number }
+interface Rule { id: string; to_number: string; mailbox_id: string; version: number; [option: string]: unknown }
+
+// A number rule's receiving options (design §4.9), each optional on create and change.
+const RECEIVING_OPTIONS = ['position', 'enabled', 'any_number', 'account_key', 'site_key', 'subaddress', 'from_numbers',
+  'days', 'start_minute', 'end_minute', 'email_connector_id', 'email_off', 'urgent', 'keep_days'];
+const optionsIn = (body: Json) => Object.fromEntries(RECEIVING_OPTIONS.filter((key) => key in body).map((key) => [key, body[key]]));
 interface Assignment { id: string; subject: { kind: 'principal' | 'group'; id: string }; role_id: string; resource_id: string; version: number }
 
 interface Captured { method: string; path: string; body: Json | null; headers: Record<string, string> }
@@ -145,6 +150,17 @@ const s = () => backend.state;
 const nextId = (prefix: string) => `${prefix}_${++s().sequence}`;
 const json = (body: JsonBodyType, status = 200) => HttpResponse.json(body, { status });
 
+// GET /routing/recommendations/fax-marker for a new installation: no calls yet.
+export function newFaxMarkerAdvice() {
+  const side = { calls: 0, delivered: 0, failed: 0, result_unknown: 0, delivered_percent: null, t38: 0, audio: 0,
+    mode_unknown: 0, t38_percent: null, average_seconds: null, seconds_per_page: null, cost_per_delivered: null,
+    cost_text: 'None delivered', settled: 0, reported: 0, estimated: 0, unpriced: 0 };
+  return { days: 90, min_calls: 10, state: 'no_calls', enough: false, setting_on: true, difference: null, caveat: null,
+    sentence: 'Faxbot placed no calls over your carrier line in the last 90 days, so there is nothing to compare yet.',
+    setting_sentence: 'Mark calls as fax is on, and Faxbot leaves it on: this comparison never changes a setting.',
+    left_out: 0, left_out_sentence: null, marked: side, not_marked: side };
+}
+
 // GET /routing/recommendations/receiving for a new installation: too little call history to advise.
 export function newReceivingAdvice() {
   const window = (start: string, end: string) => ({ start, end, days: 30 });
@@ -175,6 +191,8 @@ export function emptySavings() {
     sending_together: { ...part('No faxes were sent together in the last 30 days.'),
       numbers: 0, calls: 0, faxes: 0, calls_saved: 0, priced_calls: 0 },
     direct_delivery: { ...part('No documents went straight to a partner in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    direct_fax_images: { ...part('No fax went to a partner as a fax image in the last 30 days.'),
       faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
     case_packets: { ...part('No case packet in the last 30 days left out a document the recipient already had.'),
       counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0, documents_left_out: 0,
@@ -599,23 +617,25 @@ const accessHandlers = [
   guarded('get', '/access/inbound-rules', () => page([...s().rules.values()].map((r) => ({
     ...r, mailbox_label: s().mailboxes.get(r.mailbox_id)?.label ?? '' })))),
   guarded('post', '/access/inbound-rules', ({ body }) => {
-    const invalid = strict(body, ['to_number', 'mailbox_id', 'expected_policy_version']) ?? stale(body);
+    const invalid = strict(body, ['to_number', 'mailbox_id', 'expected_policy_version'], RECEIVING_OPTIONS) ?? stale(body);
     if (invalid) return invalid;
     const toNumber = s().resolveNumber(body.to_number);
     if (toNumber === null) return fail(400, NUMBER_DETAIL);
-    const rule: Rule = { id: nextId('rule'), to_number: toNumber, mailbox_id: body.mailbox_id, version: 1 };
+    const rule: Rule = { id: nextId('rule'), to_number: toNumber, mailbox_id: body.mailbox_id, version: 1, ...optionsIn(body) };
     s().rules.set(rule.id, rule);
     return committed({ rule });
   }),
   guarded('patch', '/access/inbound-rules/:id', ({ body, params }) => {
     const r = s().rules.get(params.id);
     if (!r) return fail(404, 'Access target not found.');
-    const invalid = strict(body, ['version', 'expected_policy_version'], ['to_number', 'mailbox_id']) ?? stale(body, [body.version, r.version]);
+    const invalid = strict(body, ['version', 'expected_policy_version'], ['to_number', 'mailbox_id', ...RECEIVING_OPTIONS])
+      ?? stale(body, [body.version, r.version]);
     if (invalid) return invalid;
     const toNumber = 'to_number' in body ? s().resolveNumber(body.to_number) : r.to_number;
     if (toNumber === null) return fail(400, NUMBER_DETAIL);
     if ('to_number' in body) r.to_number = toNumber;
     if ('mailbox_id' in body) r.mailbox_id = body.mailbox_id;
+    Object.assign(r, optionsIn(body));
     r.version += 1;
     return committed({ rule: r });
   }),
@@ -623,6 +643,8 @@ const accessHandlers = [
 
 // Console sections that load on entry; minimal replies keep tests quiet.
 const consoleHandlers = [
+  http.get('/analysis', () => HttpResponse.json({ configured: false, enabled: false, state: 'not_configured',
+    message: null, last_run: null, next_run_at: null, stale: false })),
   http.get('/admin/health-status', () => json({ timestamp: now(), backend: 'phaxio', backend_healthy: true,
     jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })),
   http.get('/admin/config', () => json({ fax_disabled: true, max_file_size_mb: 10 })),
@@ -632,14 +654,48 @@ const consoleHandlers = [
   http.get('/admin/fax-jobs', () => json({ total: 0, jobs: [] })),
   http.get('/inbound', () => json([])),
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),
+  // Receiving through HumbleFax: off until a test says otherwise.
+  http.get('/admin/inbound/humblefax', () => json({ account: 'humblefax', receiving: false, turned_on: false,
+    reason: 'Receive faxes from HumbleFax is off.', receiving_provider: false, poll_seconds: 60, checked_at: null,
+    found: null, problem: null })),
   // Delivery routes, intake and direct delivery: empty until a test says otherwise.
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
   // One fax's cost: nothing to say for a fax that placed no call.
   http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
+  // Provider rules (tests of their screens use providerRulesFake.ts): nothing held, a fax with no routing
+  // decision to explain, and no provider accounts yet.
+  http.get('/routing/holds', () => json({ holds: [] })),
+  http.get('/routing/rules', () => json({ scope: { kind: 'organization', name: 'Organization' }, active: null, draft: null,
+    organization: null, matches_30_days: {}, can_write: true, time_zone: 'America/Denver',
+    choices: { accounts: [], people: [], keys: [], groups: [], mailboxes: [] } })),
+  http.get('/routing/faxes/:jobId/route', ({ params }) => json({ job_id: params.jobId, sentence: null, attempts: [],
+    hold: null, trace: [] })),
+  http.get('/admin/providers/accounts', () => json({ generation: 1, default_sending: null, default_receiving: null,
+    accounts: [], providers: [], sites: [] })),
+  // Several trunks (WP-T): send-only numbers on the trunk page, and trunk advice under Recommendations.
+  http.get('/admin/sip/send-only', () => json({ numbers: [], advice: [], quiet_days: 90 })),
+  // Number advice (BG): placement, site advice, your NPI record and the check before a first fax.
+  http.get('/routing/recommendations/numbers', () => json({ days: 30, estimate: true, state: 'no_numbers',
+    sentence: 'Faxbot knows none of your fax numbers yet, so there is nothing to place.', numbers: [], accounts: [],
+    note: 'Faxbot only advises: it never moves, releases or cancels a number or an account.' })),
+  http.get('/routing/recommendations/sites', () => json({ days: 30, estimate: true, sentence: '', carriers: [],
+    items: [], prices: [], caller_id: '' })),
+  http.get('/routing/npi', () => json({ npis: [], sentence: 'Add your NPI so Faxbot can tell you when a number you '
+    + 'might give up is still printed on your NPI record.', source_url: 'https://npiregistry.cms.hhs.gov/api-page' })),
+  http.get('/routing/recipient-check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
+    first_send: true, checked: false, state: 'no_name', warning: false, sentence: null, name: null, listed: [],
+    source_url: 'https://npiregistry.cms.hhs.gov/api-page' })),
+  http.get('/routing/recommendations/trunks', () => json({ window_days: 30, trunks: [], items: [],
+    sentence: 'Trunk advice needs two or more trunks; with one, there is nothing to move.' })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.
   http.get('/routing/savings', () => json(emptySavings())),
+  // Pricing the document itself: refused by default, so Send a fax keeps its page-count price.
+  http.post('/routing/predict', () => json({ detail: 'This operation is not permitted.' }, 403)),
+  // The Overview's savings map: an answer with no mechanisms draws no map.
+  http.get('/routing/savings/mechanisms', () => json({ days: 30, title: 'How Faxbot saves money',
+    sentence: 'Every way Faxbot saves money, in the order a fax meets them.', legend: [], stages: [] })),
   // Sending recommendations: no number has enough delivered faxes on two routes yet.
   http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),
@@ -648,6 +704,45 @@ const consoleHandlers = [
   // Plans: no fax service with a monthly fee.
   http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
     empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
+  // Plans this month (Prices & plans) and other carriers (Recommendations): no plan, and no faxes to compare yet.
+  http.get('/routing/plans', () => json({ plans: [], estimate: true, plan_budgets: '',
+    empty_sentence: 'You pay no monthly fee for a fax service and set no allowance or commitment, so there is no plan to show.' })),
+  http.get('/routing/plans/allocation', () => json({ plans: [], estimate: true,
+    empty_sentence: 'None of your plans has a limited allowance or a normal-use budget this month, so there is nothing to share out.' })),
+  http.get('/routing/recommendations/carriers', () => json({ days: 30, estimate: true, advice_only: true, sent: 0,
+    received: 0, sentence: 'You sent and received no faxes in the last 30 days, so there is nothing to compare yet.',
+    switching_sentence: 'Changing carriers means moving (porting) your fax numbers to the new carrier and opening an '
+      + 'account there, often under a contract; Faxbot only compares published prices and never switches anything.',
+    unpublished_sentence: null, cheapest: null, current: null, carriers: [] })),
+  // The advice from history (fax marker, billing steps, partner candidates, toll-free numbers): nothing yet.
+  http.get('/routing/recommendations/fax-marker', () => json(newFaxMarkerAdvice())),
+  http.get('/routing/recommendations/billing-steps', () => json({ days: 30, estimate: true, carrier: null,
+    state: 'no_trunk', sentence: 'Faxbot has no carrier line set up, so there are no calls to measure.', min_calls: 3,
+    step: null, numbers: [], numbers_total: 0, calls_near: 0, saving: null })),
+  http.get('/routing/recommendations/partners', () => json({ days: 30, min_faxes: 3, estimate: true, state: 'none',
+    sentence: 'Nothing to suggest: in the last 30 days no fax went by a route that charges per call, or every number '
+      + 'you fax is already a partner.', items: [], items_total: 0, link: 'recipients/partners' })),
+  http.get('/routing/recommendations/toll-free', () => json({ state: 'none', days: 30, items: [],
+    sentence: 'No recipient has a toll-free fax number on file. If one publishes a toll-free number for the same '
+      + 'intake, add it under Recipients → Details; Faxbot uses it only once you record their approval, because the '
+      + 'recipient pays for those calls.' })),
+  // A recipient's toll-free number: none on file.
+  http.get('/routing/destinations/:number/toll-free', ({ params }) => json({ number: String(params.number), current: null,
+    history: [], approved_alternate: null, sentence: null })),
+  // Direct messages and FHIR: no account, no address on file, no message sent or received.
+  http.get('/digital/accounts', () => json({ generation: 1, accounts: [], kinds: [], presets: [] })),
+  http.get('/digital/recipients/:number', ({ params }) => json({ number: String(params.number), addresses: [],
+    accounts: [], sentence: 'Faxes to this number go only by fax until you confirm a Direct address or FHIR endpoint.' })),
+  http.get('/digital/messages', () => json({ messages: [] })),
+  http.get('/digital/faxes/:job', ({ params }) => json({ job_id: String(params.job), messages: [] })),
+  // Caller-name lookup at Telnyx: nothing to show until a test says otherwise.
+  http.get('/admin/sip/telnyx/names', () => json({ applies: false, numbers: [], text: null,
+    price: { text: '$0.40 a month for each number', monthly: { currency: 'USD', amount: '0.40' },
+      source_url: 'https://support.telnyx.com/en/articles/4366901-your-number-lookup-guide', read_on: '2026-10-07' } })),
+  // Shaded areas: kept with a fax-friendly pattern where it saves time, so nothing to recommend.
+  http.get('/routing/recommendations/fax-friendly', () => json({ choice: 'where_it_saves',
+    label: 'Fax-friendly shading on documents you send', measured_sentence: '', days: 30,
+    recommend: false, faxes_checked: 0, faxes_changed: 0, seconds_saved: 0, sentence: null, action: null })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.
@@ -667,13 +762,27 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // Notice faxes, documents sent in pieces and repaired calls: none until a test adds them.
+  http.get('/direct/notices', () => json({ notices: [], notice_text: null })),
+  http.get('/direct/transfers', () => json({ transfers: [] })),
+  http.get('/direct/repairs', () => json({ repairs: [] })),
+  // Partner relays: none until a test offers one.
+  http.get('/direct/relay/agreements', () => json({ agreements: [] })),
+  http.get('/direct/relay/costs', () => json({ days: 30, agreements: [] })),
+  http.get('/direct/relay/recommendations', () => json({ days: 30, recommendations: [] })),
+  http.get('/direct/relay/faxes', () => json({ faxes: [] })),
+  // Find partners: nothing found, nothing published, direct delivery off.
+  http.get('/direct/discovery', () => json(emptyDiscovery())),
+  http.get('/forms', () => json({ forms: [], renderer: 'faxbot-forms-1' })),
+  http.get('/forms/received', () => json({ received: [] })),
+  http.get('/forms/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
   // What fax calls negotiated (measurement only): no calls, and no call for any received fax.
   http.get('/admin/sip/negotiation', ({ request }) => json({
     days: Number(new URL(request.url).searchParams.get('days') ?? 30), calls: 0, measured_calls: 0, groups: [],
     sentence: 'No answered fax calls on your phone line in the last 30 days.',
-    note: 'Faxbot only measures these for now; it does not change speed, compression or error correction because of them.' })),
+    note: 'For one number at a time, Faxbot starts slower or uses a more robust compression only after its own calls to that number fail the same way more than once; it never turns error correction off or lowers resolution.' })),
   http.get('/admin/sip/negotiation/received/:id', () => json({ detail: 'No phone-line call carried this fax.' }, 404)),
   // The network check for fax over IP: nothing to show until a test says otherwise.
   http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),
@@ -681,6 +790,13 @@ const consoleHandlers = [
   http.get('/admin/sip/telnyx', () => json({ applies: false, numbers: [], connection_texts: [], text: null })),
   // Published plans for providers in use with no rate card yet: none.
   http.get('/routing/published-plans/in-use', () => json({ items: [] })),
+  // Sent faxes Faxbot could not confirm: none until a test says otherwise.
+  http.get('/certainty/items', () => json({ items: [] })),
+  http.get('/certainty/counts', () => json({ open: 0, mine: 0, unassigned: 0, overdue: 0, settled: 0 })),
+  http.get('/certainty/faxes/:faxId', () => json({ items: [], about: null })),
+  http.get('/continuations/faxes/:faxId', ({ params }) => json({ fax_id: params.faxId, offer: null, continued_by: null,
+    continues: null })),
+  http.get('/certainty/settings', () => json({ settle_hours: 24, version: 0, fallback: null, people: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
   http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
   // Sending together: no number sends faxes together until a test says otherwise.
@@ -695,5 +811,21 @@ const consoleHandlers = [
       sentence: 'No faxes to this number have been sent together in the last 30 days.' },
     agreement_text: 'This recipient has agreed to receive several documents in one call.' })),
 ];
+
+export function emptyDiscovery(): Json {
+  return {
+    direct_delivery: false,
+    settings: { well_known: true, from_calls: true, directories: [], private_allowed: false },
+    texts: { well_known: 'Turn on "Use direct delivery" under Recipients → Partners → Direct delivery to answer '
+      + 'lookups and to find partners.',
+      from_calls: 'When a fax call shows the other side runs Faxbot, Faxbot asks that address once whether it takes '
+        + 'faxes directly. This never places a call.',
+      directories: 'Faxbot looks numbers up only in directories you trust. None is listed, so nothing is looked up.',
+      private: null, well_known_url: 'https://fax.example.test/.well-known/faxbot-direct' },
+    suggestions: [], partners: [], introductions: [], publications: [], lookups: [],
+    publishable: { number: null, receives: false, sentence: 'Turn on "Use direct delivery" under Recipients → Partners → '
+      + 'Direct delivery first; senders reach this Faxbot through it.' },
+  };
+}
 
 export const server = setupServer(...accessHandlers, ...consoleHandlers);

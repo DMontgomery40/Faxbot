@@ -34,6 +34,36 @@ export interface SipPreset {
   admin_steps?: string[];
 }
 
+// Recipients, Details: how long a page this fax machine takes (learned from calls) and this number's page
+// settings. packing: 'allow' (as the receiving machine allows) or 'never'. trim_blank: null follows the
+// installation's setting (trim_blank_default).
+export interface RecipientPages {
+  number: string;
+  page_limit: 'a4' | 'b4' | 'unlimited';
+  learned: boolean;
+  learned_at: string | null;
+  ecm: boolean | null;
+  packing: 'allow' | 'never';
+  trim_blank: boolean | null;
+  trim_blank_default: boolean;
+  capability_sentence: string;
+  ecm_sentence: string | null;
+  // Lighten shaded areas for this recipient: always, never, or null for the setting all faxes use.
+  shading?: 'always' | 'never' | null;
+  shading_default?: 'where_it_saves' | 'always' | 'never';
+}
+
+// Providers: long pages for one route. trim_blank is the installation's setting, on the phone line's row only.
+export interface RoutePages {
+  route: string;
+  label: string;
+  long_pages: boolean;
+  long_pages_chosen: boolean;
+  long_pages_possible: boolean;
+  trim_blank: boolean | null;
+  sentence: string;
+}
+
 // Recipients, Details: one fax machine's own limits and whether it takes SSL Fax (learned from calls).
 export interface RecipientFaxLimits {
   number: string;
@@ -42,6 +72,20 @@ export interface RecipientFaxLimits {
   max_rate: number | null;
   ecm: boolean | null;
   sslfax_sentence: string | null;
+}
+
+// Recipients, Details: smaller pages (lossless tuning) for one number. tune: null as set for all faxes, false off;
+// tune_jbig: the smallest page format for this number too (with its warning). jbig: what the calls use.
+export interface RecipientCodingTuning {
+  number: string;
+  tune: false | null;
+  tune_jbig: boolean;
+  setting: boolean;
+  mr: boolean;
+  jbig: 'always' | 'sslfax' | 'never';
+  reasons: string[];
+  jbig_sentence: string;
+  warning: string;
 }
 
 export interface SipTrunkSettings {
@@ -75,6 +119,7 @@ export interface SipTrunkSettings {
   fax_ecm?: boolean;
   fax_compression?: 'mh' | 'mr' | 'mmr' | 'jbig';
   fax_fine?: boolean;
+  fax_tune_coding?: boolean;
   sslfax_enabled?: boolean;
   fax_lines?: number;
   // Calls at once on the trunk (0: as many as the fax lines) and new calls a second (0: the carrier's limit).
@@ -96,6 +141,10 @@ export type SipReachability = 'reachable' | 'unreachable' | 'unknown';
 
 export interface SipTrunkStatus {
   configured: boolean;
+  // Several trunks: trunk accounts on one carrier that Faxbot can't tell apart as one account, one sentence each.
+  carrier_notes?: string[];
+  // Trunk accounts that are on but not in Asterisk's file yet, and why.
+  trunk_problems?: Record<string, string>;
   preset?: string;
   preset_label?: string;
   kind?: 'carrier' | 'phone_system';
@@ -135,7 +184,7 @@ export interface SipTrunkStatus {
   // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
   handover_ready?: boolean | null;
   handover_text?: string | null;
-  // The fast fax service (SSL Fax engine): its state and one sentence; null outside the Compose install.
+  // The fax engine (SSL Fax engine): its state and one sentence; null outside the Compose install.
   engine_state?: 'running' | 'starting' | 'not_set_up' | 'stopped' | null;
   engine_text?: string | null;
   // The engine went to audio fax on its own after a T.38 call that heard no fax machine.

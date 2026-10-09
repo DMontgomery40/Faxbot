@@ -8,7 +8,7 @@ from alembic.config import Config
 import pytest
 import sqlalchemy as sa
 
-from api.app import schema, schema_inbound, schema_inbound_sources
+from api.app import schema, schema_inbound, schema_inbound_sources, schema_receiving_rules
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
 from api.tests.test_work_schema import without_later_access_changes
@@ -101,9 +101,12 @@ def test_0015_upgrade_keeps_every_row_and_validates_the_frozen_shape(database):
         assert set(checks) == {c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
         assert all(f"'{source}'" in checks['ck_inbound_imports_source'] for source in schema_inbound_sources.SOURCES)
         assert {f['name'] for f in inspector.get_foreign_keys('inbound_imports')} == {'fk_inbound_imports_inbound_fax'}
+        # 0030 adds an index on the receiving account.
         assert {(i['name'], tuple(i['column_names']), bool(i['unique']))
                 for i in inspector.get_indexes('inbound_imports')} == {
-            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES}
+            (name, columns, unique) for name, columns, unique in schema_inbound.INDEXES} | {
+            (name, columns, unique) for name, table, columns, unique in schema_receiving_rules.ADDED_INDEXES
+            if table == 'inbound_imports'}
         assert '_inbound_imports_0015' not in inspector.get_table_names()
     schema.upgrade_schema(database)
     assert snapshot(database) == after

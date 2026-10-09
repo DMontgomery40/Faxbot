@@ -83,6 +83,7 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
     body = bare_client.get('/admin/sip/status', headers=ADMIN).json()
     assert body == {'configured': False, 'applied': False, 'asterisk_connected': False,
+                    'account': 'sip', 'trunks': [], 'trunk_problems': {}, 'carrier_notes': [],
                     'registration': 'unknown', 'registration_transport': None,
                     'registration_text': 'Registration status is not available.',
                     'reachability': 'unknown',
@@ -100,7 +101,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
 
 
 def test_restart_the_fast_fax_service_asks_the_engine_and_never_touches_asterisk(client, isolated_installation):
-    """The console's Restart the fast fax service and `faxbot providers trunk restart-engine`: the engine reads
+    """The console's Restart the fax engine and `faxbot providers trunk restart-engine`: the engine reads
     the request and starts again once no fax is going through; before Apply, or while the engine is not
     running, there is nothing to restart and the answer says so."""
     from app import hylafax_engine
@@ -299,7 +300,13 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('GET', '/admin/sip/negotiation'): [('providers:read', False)],
                         # One received fax's call: that fax's own read check, as its detail (route policy coverage).
                         ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [],
-                        ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)]}
+                        ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)],
+                        # Caller-name lookup at Telnyx (Costs advice): read it, and turn it off per number.
+                        ('GET', '/admin/sip/telnyx/names'): [('providers:read', False)],
+                        ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): [('providers:write', True)],
+                        # Send-only numbers (WP-T): read with the trunk, saved like the reply number.
+                        ('GET', '/admin/sip/send-only'): [('providers:read', False)],
+                        ('PUT', '/admin/sip/send-only'): [('settings:write', False)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):

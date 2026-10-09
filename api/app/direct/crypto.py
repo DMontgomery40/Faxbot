@@ -27,6 +27,23 @@ MESSAGE_ID = re.compile(r'[a-f0-9]{32}')
 _B64 = re.compile(r'[A-Za-z0-9_-]{43}')
 _HEX64 = re.compile(r'[a-f0-9]{64}')
 _NUMBER = re.compile(r'\+[1-9][0-9]{7,14}')
+_MANIFEST_KEYS = frozenset({'version', 'message_id', 'created_at', 'sender', 'recipient', 'document', 'encryption'})
+# A fax image: the exact TIFF a fax engine would send, with the planned fax facts beside it.
+FAX_IMAGE = 'fax_image'
+FAX_IMAGE_TYPE = 'image/tiff'
+FAX_FACTS = frozenset({'resolution', 'x_dpi', 'y_dpi', 'width', 'compression', 'header_line'})
+# T.30 page widths at 8 dots per millimetre (A4, B4, A3), vertical resolutions (standard, fine, superfine).
+FAX_WIDTHS = (1728, 2048, 2432)
+FAX_LINES = {98: 'standard', 196: 'fine', 391: 'superfine'}
+FAX_COMPRESSIONS = ('MH', 'MR', 'MMR')
+# A registered form (api/app/forms): field values and the page hashes a pinned renderer must reproduce.
+FORM = 'form'
+FORM_TYPE = 'application/vnd.faxbot.form+json'
+# A document a partner relays as a local fax call in its own country (direct/relay.py): the original PDF, with
+# the agreement it travels under, the number to dial and whether it may share a call with other partners' faxes.
+RELAY = 'relay'
+RELAY_FACTS = frozenset({'agreement', 'destination', 'together'})
+_AGREEMENT = re.compile(r'[a-f0-9]{32}')
 
 
 class DirectProtocolError(ValueError):
@@ -63,6 +80,59 @@ def parse_timestamp(value):
     if not isinstance(value, str) or re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', value) is None:
         raise DirectProtocolError('malformed', 'The message is not in the direct delivery format.')
     return datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+
+
+def _fax_facts(facts, pages):
+    """Whether ``facts`` are well-formed planned fax facts for a fax image of ``pages`` pages."""
+    if not isinstance(facts, dict) or set(facts) != FAX_FACTS or type(pages) is not int or pages < 1:
+        return False
+    if any(type(facts[name]) is not int for name in ('x_dpi', 'y_dpi', 'width')):
+        return False
+    return (facts['x_dpi'] == 204 and FAX_LINES.get(facts['y_dpi']) == facts['resolution']
+            and facts['width'] in FAX_WIDTHS and facts['compression'] in FAX_COMPRESSIONS
+            and isinstance(facts['header_line'], str) and 0 < len(facts['header_line']) <= 200)
+
+
+def _relay_facts(facts):
+    """Whether ``facts`` are well-formed relay facts: an agreement ID, an E.164 destination and a yes/no."""
+    return (isinstance(facts, dict) and set(facts) == RELAY_FACTS and isinstance(facts['agreement'], str)
+            and _AGREEMENT.fullmatch(facts['agreement']) is not None and isinstance(facts['destination'], str)
+            and _NUMBER.fullmatch(facts['destination']) is not None and type(facts['together']) is bool)
+
+
+def capabilities(*, fax_images, peer_calls, said_at=None, own_engine=None):
+    """What this installation accepts from one partner, as a signed statement carries it. ``own_engine`` (optional):
+    whether this installation's own Faxbot fax engine answers its fax number (pages/tuning.py)."""
+    found = {'fax_images': bool(fax_images), 'peer_calls': bool(peer_calls), 'said_at': said_at or timestamp()}
+    if own_engine is not None:
+        found['own_engine'] = bool(own_engine)
+    return found
+
+
+def parse_own_engine(value):
+    """Whether a partner's signed capabilities say its own Faxbot fax engine answers its number; None when they do
+    not say (older partners)."""
+    found = value.get('own_engine') if isinstance(value, dict) else None
+    return found if type(found) is bool else None
+
+
+def parse_capabilities(value):
+    """A partner's capabilities from a statement it signed: (fax_images, peer_calls, said_at), or None. The
+    optional ``own_engine`` is read by ``parse_own_engine``."""
+    if (not isinstance(value, dict) or set(value) - {'own_engine'} != {'fax_images', 'peer_calls', 'said_at'}
+            or type(value['fax_images']) is not bool or type(value['peer_calls']) is not bool
+            or ('own_engine' in value and type(value['own_engine']) is not bool)):
+        return None
+    try:
+        return value['fax_images'], value['peer_calls'], parse_timestamp(value['said_at'])
+    except DirectProtocolError:
+        return None
+
+
+def kind_of(manifest):
+    """``fax_image``, ``form``, ``relay`` or ``original``."""
+    kind = manifest.get('kind')
+    return kind if kind in (FAX_IMAGE, FORM, RELAY) else 'original'
 
 
 class Identity:
@@ -106,8 +176,15 @@ def _aad(manifest):
 
 
 def seal(identity, *, message_id, organization, fax_number, recipient_number, recipient_signing_key,
-         recipient_exchange_key, document, pages=None, created_at=None):
-    """Encrypt ``document`` to the recipient; returns (manifest bytes, signature, ciphertext)."""
+         recipient_exchange_key, document, pages=None, created_at=None, fax=None, form=False, relay=None):
+    """Encrypt ``document`` to the recipient; returns (manifest bytes, signature, ciphertext).
+
+    ``fax`` makes it a fax image: ``document`` is the TIFF and ``fax`` holds the
+    planned fax facts (``faximage.facts``), which the signed manifest carries.
+    ``form=True`` makes it a registered form: ``document`` is the form payload (``forms/exchange.py``).
+    ``relay`` makes it a document the recipient relays as a local fax call (``relay.py``): ``document`` is the
+    original PDF and ``relay`` holds the relay facts (``RELAY_FACTS``), which the signed manifest carries.
+    """
     content_key, nonce, key_nonce = AESGCM.generate_key(bit_length=256), os.urandom(12), os.urandom(12)
     ephemeral = X25519PrivateKey.generate()
     ephemeral_public = ephemeral.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -117,9 +194,15 @@ def seal(identity, *, message_id, organization, fax_number, recipient_number, re
         'version': PROTOCOL, 'message_id': message_id, 'created_at': created_at or timestamp(),
         'sender': {'organization': organization, 'signing_key': identity.signing_key, 'fax_number': fax_number},
         'recipient': {'fax_number': recipient_number, 'signing_key': recipient_signing_key},
-        'document': {'media_type': 'application/pdf', 'sha256': hashlib.sha256(document).hexdigest(),
-                     'size': len(document), 'pages': pages},
+        'document': {'media_type': FAX_IMAGE_TYPE if fax is not None else FORM_TYPE if form else 'application/pdf',
+                     'sha256': hashlib.sha256(document).hexdigest(), 'size': len(document), 'pages': pages},
     }
+    if fax is not None:
+        manifest.update(kind=FAX_IMAGE, fax=dict(fax))
+    elif form:
+        manifest['kind'] = FORM
+    elif relay is not None:
+        manifest.update(kind=RELAY, relay=dict(relay))
     ciphertext = AESGCM(content_key).encrypt(nonce, document, _aad(manifest))
     wrapped = AESGCM(_kek(shared, ephemeral_public, recipient_public, message_id)).encrypt(
         key_nonce, content_key, canonical({'message_id': message_id}))
@@ -138,8 +221,15 @@ def parse_manifest(encoded):
         manifest = json.loads(encoded)
         if canonical(manifest) != encoded:
             raise ValueError
-        if (set(manifest) != {'version', 'message_id', 'created_at', 'sender', 'recipient', 'document', 'encryption'}
+        image, form = manifest.get('kind') == FAX_IMAGE, manifest.get('kind') == FORM
+        relay = manifest.get('kind') == RELAY
+        extra = {'kind', 'fax'} if image else {'kind'} if form else {'kind', 'relay'} if relay else set()
+        if (set(manifest) != _MANIFEST_KEYS | extra
                 or manifest['version'] != PROTOCOL or not MESSAGE_ID.fullmatch(manifest['message_id'])):
+            raise ValueError
+        if image and not _fax_facts(manifest['fax'], manifest['document']['pages']):
+            raise ValueError
+        if relay and not _relay_facts(manifest['relay']):
             raise ValueError
         sender, recipient = manifest['sender'], manifest['recipient']
         document, encryption = manifest['document'], manifest['encryption']
@@ -151,7 +241,9 @@ def parse_manifest(encoded):
         if set(recipient) != {'fax_number', 'signing_key'} or not _NUMBER.fullmatch(recipient['fax_number']) \
                 or not _B64.fullmatch(recipient['signing_key']):
             raise ValueError
-        if (set(document) != {'media_type', 'sha256', 'size', 'pages'} or document['media_type'] != 'application/pdf'
+        if (set(document) != {'media_type', 'sha256', 'size', 'pages'}
+                or document['media_type'] != (FAX_IMAGE_TYPE if image
+                                              else FORM_TYPE if form else 'application/pdf')
                 or not _HEX64.fullmatch(document['sha256']) or type(document['size']) is not int
                 or not 0 < document['size'] <= 100 * 1024 * 1024
                 or not (document['pages'] is None or (type(document['pages']) is int and 0 < document['pages'] <= 10000))):

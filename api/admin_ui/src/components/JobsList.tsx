@@ -33,12 +33,19 @@ import {
 } from '@mui/material';
 import { Refresh as RefreshIcon, Send as SendIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
-import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { CostsUnread, FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
+import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
+import { FaxCertaintyItem } from './work/SentCertainty';
+import { SentContinuation } from './work/SentContinuation';
+import { DigitalFaxOutcome } from './delivery/DigitalMessages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
+import type { AdminDestination } from '../navigation';
+import { FaxRequestedByItem } from './delivery/Connectors';
 
 
 interface JobsListProps {
@@ -48,6 +55,9 @@ interface JobsListProps {
   onOpened?: () => void;
   // Opens Send a fax; absent for people who may not send.
   onSendFax?: () => void;
+  // Holds the "Approve faxes" permission: may approve, refuse or send anyway the faxes rules held.
+  canApprove?: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
 }
 
 const statusOptions = [
@@ -104,6 +114,9 @@ const eventLabels: Record<string, string> = {
   operator_identity_bound: 'Receipt confirmed with the provider fax ID',
   route_assigned: 'Route chosen',
   route_fallback: 'Trying the next route',
+  repair_started: 'Sending only the missing pages directly to the partner',
+  repair_completed: 'Completed directly by the partner after the call broke',
+  repair_failed: 'The partner did not receive the missing pages',
 };
 
 const categoryLabels: Record<string, string> = {
@@ -121,6 +134,7 @@ const categoryLabels: Record<string, string> = {
   local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
+  person_answered: 'A person answered, not a fax machine, so Faxbot did not call again',
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct
@@ -128,7 +142,8 @@ const categoryLabels: Record<string, string> = {
 // fax after a refusal has the direct attempt among its earlier events.
 type DirectOutcome = { text: string; severity: 'success' | 'info' | 'warning'; hideFaxId: boolean };
 
-function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliveryRecord[] | null): DirectOutcome | null {
+function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliveryRecord[] | null,
+  jobId: string | null = null): DirectOutcome | null {
   if (!delivery || !records) return null;
   const current = delivery.attempt?.id ?? null;
   const attempts = new Set([current, ...delivery.events.map((event) => event.attempt_id)].filter(Boolean));
@@ -136,8 +151,20 @@ function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliver
   const forCurrent = sent.find((record) => record.message_id === current);
   const partner = (record: DirectDeliveryRecord) => record.partner || 'the partner';
   if (forCurrent?.state === 'accepted') {
-    return { text: `Delivered directly to ${partner(forCurrent)}.`, severity: 'success', hideFaxId: true };
+    // A fax image went directly, with no telephone call; it is never called "faxed". Nor is an original that
+    // went with a one-page notice fax: only the notice page was faxed.
+    // Sent once to a partner's intake, or as a reference or the changes to a copy it held: the server's sentence.
+    const text = forCurrent.send_once ? forCurrent.send_once : forCurrent.kind === 'fax_image'
+      ? `Delivered directly as a fax image to ${partner(forCurrent)}; no telephone call.`
+      : forCurrent.notice
+        ? `Delivered directly to ${partner(forCurrent)}; only a one-page notice went by fax.`
+        : `Delivered directly to ${partner(forCurrent)}.`;
+    return { text, severity: 'success', hideFaxId: true };
   }
+  // A call that broke part way, completed by sending only the missing pages directly to the partner.
+  const repaired = records.find((record) => record.direction === 'outbound' && record.kind === 'repair'
+    && record.state === 'accepted' && jobId !== null && record.job_id === jobId);
+  if (repaired) return { text: repaired.status, severity: 'success', hideFaxId: false };
   if (forCurrent && (forCurrent.state === 'sending' || forCurrent.state === 'uncertain')) {
     return { text: "Waiting for the partner's answer.", severity: 'info', hideFaxId: true };
   }
@@ -182,7 +209,7 @@ export function routeText(backend: string, cost?: FaxCost | null): string {
   return earlier.length ? `${last} (after ${earlier.join(', ')})` : last;
 }
 
-function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
+function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -433,7 +460,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
     } finally { finishDetailAction(selection, action); }
   };
 
-  const direct = directOutcome(delivery, directRecords);
+  const direct = directOutcome(delivery, directRecords, selectedJob?.id ?? null);
   const canAttachFaxId = Boolean(delivery?.can_bind_provider_identity) && !direct?.hideFaxId;
 
   const detailJob = selectedJob && delivery
@@ -454,6 +481,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
             Faxes sent from this installation, newest first. Select one to see its delivery attempts.
           </Typography>
         </Box>
+      <HeldFaxes api={rulesApiFor(client)} canApprove={canApprove} onNavigate={onNavigate} />
         <Box display="flex" gap={1}>
           {onSendFax && (
             <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}>
@@ -516,6 +544,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
               </Typography>
             </Box>
           ) : (
+            <>
+            <CostsUnread costs={costs} />
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small">
                 <TableHead>
@@ -606,8 +636,9 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                 </TableBody>
               </Table>
             </TableContainer>
+            </>
           )}
-          
+
           {jobs.length > 0 && (
             <Box mt={2}>
               <Typography variant="caption" color="text.secondary">
@@ -683,6 +714,14 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                         {detailJob.waiting_reason}
                       </Typography>
                     )}
+                    {/* The send-by time, and whether the fax may miss it. */}
+                    {detailJob.send_by && (
+                      <Typography component="span" variant="body2" display="block"
+                        color={detailJob.send_by.at_risk ? 'warning.main' : 'text.secondary'}
+                        data-testid="job-send-by">
+                        {detailJob.send_by.sentence}
+                      </Typography>
+                    )}
                     {detailJob.urgent && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-urgent">
@@ -701,6 +740,18 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                         {costs.get(detailJob.id)?.route_explanation}
                       </Typography>
                     )}
+                    {costs.get(detailJob.id)?.dialed?.sentence && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-dialed-number">
+                        {costs.get(detailJob.id)?.dialed?.sentence}
+                      </Typography>
+                    )}
+                    {costs.get(detailJob.id)?.recipient_warning?.sentence && (
+                      <Typography component="span" variant="body2" color="warning.main" display="block"
+                        data-testid="job-recipient-warning">
+                        {costs.get(detailJob.id)?.recipient_warning?.sentence}
+                      </Typography>
+                    )}
                   </>}
                 />
               </ListItem>
@@ -716,12 +767,44 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   <ListItemText primary="How the pages went" secondary={detailJob.fax_engine.sentence} />
                 </ListItem>
               )}
+              {detailJob.page_layout?.sentences?.length ? (
+                <ListItem data-testid="job-pages">
+                  <ListItemText primary="How the pages were sent" secondary={detailJob.page_layout.sentences.join(' ')} />
+                </ListItem>
+              ) : null}
+              {detailJob.coding?.sentence && (
+                <ListItem data-testid="job-coding">
+                  <ListItemText primary="Fax coding" secondary={<>
+                    <Typography component="span" variant="body2" color="text.secondary" display="block">
+                      {detailJob.coding.sentence}
+                    </Typography>
+                    {detailJob.coding.measured_sentence && (
+                      <Typography component="span" variant="caption" color="text.secondary" display="block">
+                        {detailJob.coding.measured_sentence}
+                      </Typography>
+                    )}
+                    {detailJob.coding.tuning_sentence && (
+                      <Typography component="span" variant="caption" color="text.secondary" display="block"
+                        data-testid="job-coding-tuning">
+                        {detailJob.coding.tuning_sentence}
+                      </Typography>
+                    )}
+                  </>} />
+                </ListItem>
+              )}
               {detailJob.fax_engine?.negotiation?.sentence && (
                 <ListItem data-testid="job-call-negotiation">
                   <ListItemText primary="How the call went" secondary={detailJob.fax_engine.negotiation.sentence} />
                 </ListItem>
               )}
+              {detailJob.fax_engine?.changes?.length ? (
+                <ListItem data-testid="job-call-changes">
+                  <ListItemText primary="Changed for this call" secondary={detailJob.fax_engine.changes.join(' ')} />
+                </ListItem>
+              ) : null}
               <FaxCostItem client={client} jobId={detailJob.id} />
+              <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
+              <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <Divider />
               <ListItem>
@@ -763,6 +846,10 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
               )}
             </List>
           )}
+          {/* A fax Faxbot could not confirm: its owner, the checks cheapest first, and settling it. */}
+          {detailJob && <FaxCertaintyItem client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
+          {/* A fax whose call broke part way: send only its remaining pages, and the link both ways. */}
+          {detailJob && <SentContinuation client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
           <Divider sx={{ my: 2 }} />
           <Typography variant="h6" component="h2" gutterBottom>Delivery attempts</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -772,6 +859,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
           {reviewRequired && !detailBusy && !deliveryError && !jobActionError && <Alert severity="warning" sx={{ mb: 2 }}>
             Select Reload to see the latest details before confirming receipt.
           </Alert>}
+          {selectedJob && <DigitalFaxOutcome client={client} jobId={selectedJob.id} />}
           {delivery && <>
             {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>

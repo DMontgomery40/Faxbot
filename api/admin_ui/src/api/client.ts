@@ -1,8 +1,19 @@
 import type {
-  CallNegotiation, NegotiationSummary, RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
+  CallNegotiation, NegotiationSummary, RecipientCodingTuning, RecipientFaxLimits, RecipientPages, RoutePages, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
 } from './sipTypes';
-import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
+import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
+import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
+import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
+import type {
+  DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
+} from './digitalTypes';
+import type {
+  CaseChecklist, CaseChecklists, CaseOriginal, CaseOriginalDraft, CaseRecipient, CaseRepair, ChecklistBuild,
+  ChecklistBuildRequest, ChecklistItem,
+} from './caseTypes';
+import type { Connector, ConnectorChoices, ConnectorInput, ConnectorItem, ConnectorUpdate, FaxRequester } from './connectorTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -42,29 +53,71 @@ import type {
   Destination,
   DestinationDetail,
   DestinationPatch,
+  PredictionAnswer,
+  DocumentPrediction,
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
+  DirectFaxImagesResult,
+  DirectNotice,
+  DirectNoticeCandidate,
+  DirectNoticeFaxResult,
+  DirectNoticePaired,
+  DirectRepair,
+  DirectTransfer,
+  DirectTunnelCheck,
+  RelayAcceptance,
+  RelayAgreement,
+  RelayCost,
+  RelayedFax,
+  RelayGrant,
+  RelayRecommendation,
+  SendOnceAgreement,
+  SendOnceList,
   EmailConnector,
   EmailConnectorInput,
   FaxCost,
   IntakeCounts,
   IntakeItem,
-  PublishedPlans, RateCard,
+  PublishedPlans, RateCard, TollFreeTerms,
   ReconcileResult,
   RouteCostsResponse,
   CaseDocuments,
   CasePacket,
   CaseSummary,
   Savings,
+  SavingsMechanisms,
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
+  PlanContracts,
+  PlanAllocation,
+  CarrierComparison,
+  FaxMarkerAdvice,
+  BillingSteps,
+  PartnerCandidates,
+  TollFreeRecommendations,
+  TollFreeState,
+  TollFreeChange,
+  TollFreeSuggestions,
+  FaxFriendlyRecommendation,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
-import type { EfaxStatus } from './types';
+import type { EfaxStatus, ForwardedTrust, HumbleFaxStatus } from './types';
+import type { ReceivingOptions } from '../components/ProviderRulesApi';
+import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
+import type {
+  FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
+} from './formsTypes';
+import type { RecipientSchedule, RecipientScheduleSave } from './types';
+import type { RecipientHold, RecipientHoldSave, RecipientPolling, RecipientPollingSave } from './types';
+import type {
+  CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
+} from './certaintyTypes';
+import type { ContinuationView } from './continuationTypes';
+import type { RecipientCheck, StatePrices } from './numberAdviceTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -172,6 +225,26 @@ export function isForbidden(error: unknown): boolean {
 
 export function isConflict(error: unknown): boolean {
   return error instanceof AdminAPIError && error.status === 409;
+}
+
+// The patient a fax is about, for a recipient that files documents in its health records (POST /fax's patient_*).
+export interface FaxPatient {
+  recordNumber: string;
+  recordSystem?: string;
+  familyName?: string;
+  givenName?: string;
+  birthDate?: string;   // YYYY-MM-DD
+}
+
+export function patientForm(patient?: FaxPatient | null): Record<string, string> {
+  if (!patient) return {};
+  const fields: Array<[string, string | undefined]> = [
+    ['patient_record_number', patient.recordNumber], ['patient_record_system', patient.recordSystem],
+    ['patient_family_name', patient.familyName], ['patient_given_name', patient.givenName],
+    ['patient_birth_date', patient.birthDate],
+  ];
+  return Object.fromEntries(fields.map(([name, value]) => [name, (value ?? '').trim()])
+    .filter(([, value]) => value)) as Record<string, string>;
 }
 
 // One plain sentence for an access-management failure.
@@ -564,11 +637,11 @@ class AdminAPIClient {
     return this.json('/access/inbound-rules?limit=200');
   }
 
-  async createInboundRule(data: { to_number: string; mailbox_id: string }) {
+  async createInboundRule(data: { to_number: string; mailbox_id: string } & Partial<ReceivingOptions>) {
     return this.accessWrite<{ rule?: InboundRule }>('/access/inbound-rules', data);
   }
 
-  async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number }) {
+  async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number } & Partial<ReceivingOptions>) {
     return this.accessWrite<{ rule?: InboundRule }>(`/access/inbound-rules/${id(ruleId)}`, data, 'PATCH');
   }
 
@@ -648,7 +721,7 @@ class AdminAPIClient {
     return this.json('/admin/sip/apply', { method: 'POST' });
   }
 
-  // Restart the fast fax service: it starts again as soon as no fax is going through.
+  // Restart the fax engine: it starts again as soon as no fax is going through.
   async restartSipEngine(): Promise<{ ok: boolean; message: string }> {
     return this.json('/admin/sip/engine/restart', { method: 'POST' });
   }
@@ -682,6 +755,15 @@ class AdminAPIClient {
 
   async turnOnTelnyxT38(number: string): Promise<TelnyxT38Report> {
     return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/t38`, { method: 'POST' });
+  }
+
+  // Telnyx's caller-name lookup on each trunk number with its price, and turning it off for one number.
+  async getTelnyxNames(): Promise<TelnyxNamesReport> {
+    return this.json('/admin/sip/telnyx/names');
+  }
+
+  async turnOffTelnyxNameLookup(number: string): Promise<TelnyxNamesReport> {
+    return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/name-lookup-off`, { method: 'POST' });
   }
 
   // Bring in faxes the SIP trunk received but could not hand to Faxbot.
@@ -830,6 +912,16 @@ class AdminAPIClient {
     return this.json('/admin/inbound/efax');
   }
 
+  // Whether Faxbot is checking HumbleFax for received faxes, when it last checked and what it found.
+  async getHumbleFaxStatus(): Promise<HumbleFaxStatus> {
+    return this.json('/admin/inbound/humblefax');
+  }
+
+  // Check HumbleFax for received faxes now.
+  async checkHumbleFaxNow(): Promise<HumbleFaxStatus> {
+    return this.json('/admin/inbound/humblefax/check', { method: 'POST', body: '{}' });
+  }
+
   async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {
     return this.json('/admin/inbound/simulate', { method: 'POST', body: JSON.stringify(opts) });
   }
@@ -841,7 +933,9 @@ class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean; urgent?: boolean } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
+    urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
+    patient?: FaxPatient } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -852,6 +946,14 @@ class AdminAPIClient {
     if (options.byCall) formData.append('send_by_call', 'true');
     // Goes before other faxes waiting for the same line, and does not wait to go together with others.
     if (options.urgent) formData.append('urgent', 'true');
+    // What sending rules can match: the mailbox it is sent from, its workflow and its labels.
+    if (options.mailbox) formData.append('mailbox', options.mailbox);
+    if (options.workflow) formData.append('workflow', options.workflow);
+    for (const label of options.labels ?? []) formData.append('labels', label);
+    // The time it must be sent by, as an exact moment (ISO 8601 with its offset).
+    if (options.sendBy) formData.append('send_by', options.sendBy);
+    // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
+    for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 
     const res = await this.send('/fax', {
       method: 'POST',
@@ -970,6 +1072,16 @@ class AdminAPIClient {
     };
   }
 
+  // One request from the provider-rules table (components/ProviderRulesApi.ts): rules, approvals and accounts.
+  // An empty answer (204 after discarding a draft) reads as undefined.
+  async call<T>(request: { method: string; path: string; body?: unknown }): Promise<T> {
+    const res = await this.fetch(request.path, {
+      method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
+    });
+    const text = res.status === 204 ? '' : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
   // Delivery routes, intake and direct delivery
   async listDestinations(): Promise<{ window_days: number; destinations: Destination[] }> {
     return this.json('/routing/destinations');
@@ -978,6 +1090,37 @@ class AdminAPIClient {
   // The route order for the next fax to a number; with `pages`, each estimate is for a fax that long.
   async getDestination(number: string, pages?: number): Promise<DestinationDetail> {
     return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
+  }
+
+  // Before a first fax: whether the NPI registry lists `to` for the provider `name`. A warning at most; never a block.
+  async recipientCheck(to: string, name?: string): Promise<RecipientCheck> {
+    return this.json(`/routing/recipient-check${query({ to: normalizeFaxDestination(to), name: name || undefined })}`);
+  }
+
+  // A carrier's US prices for calls within one state and between states, from its published price file (CSV).
+  async importStatePrices(carrier: string, file: File, options: { sourceUrl?: string; readOn?: string } = {}):
+    Promise<{ prices: StatePrices[] }> {
+    const form = new FormData();
+    form.append('carrier', carrier);
+    form.append('file', file);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    if (options.readOn) form.append('read_on', options.readOn);
+    const res = await this.fetch('/routing/jurisdiction-rates', { method: 'POST', body: form });
+    return res.json();
+  }
+
+  // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
+  async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
+    return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
+  }
+
+  // The same for the document itself: its pages drawn and each coding measured on them; nothing is sent or kept.
+  // Only the number and the file go: never a patient's details.
+  async predictDocument(to: string, file: File): Promise<DocumentPrediction> {
+    const form = new FormData();
+    form.append('to', normalizeFaxDestination(to));
+    form.append('file', file);
+    return this.json('/routing/predict', { method: 'POST', body: form });
   }
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
@@ -998,6 +1141,44 @@ class AdminAPIClient {
     return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
   }
 
+  // Costs → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
+  async getCharges(days = 30): Promise<ChargesView> {
+    return this.json(`/routing/charges${query({ days })}`);
+  }
+
+  // List one account's (or every account's) faxes at its provider now; read only, never changes a fax.
+  async sweepCharges(account?: string | null, days = 7): Promise<SweepResponse> {
+    return this.json('/routing/charges/sweep', { method: 'POST', body: JSON.stringify({ account: account || null, days }) });
+  }
+
+  // Costs → Invoices: each invoice entered, with the part your faxes don't explain.
+  async listInvoices(): Promise<InvoicesView> {
+    return this.json('/routing/invoices');
+  }
+
+  async getInvoice(invoiceId: string): Promise<InvoiceDetail> {
+    return this.json(`/routing/invoices/${id(invoiceId)}`);
+  }
+
+  // Enter an invoice total; entering the same period again adds a corrected version and keeps the earlier one.
+  async addInvoice(input: InvoiceInput): Promise<Invoice> {
+    const formData = new FormData();
+    formData.append('account', input.account);
+    formData.append('total', input.total);
+    formData.append('currency', input.currency);
+    if (input.month) formData.append('month', input.month);
+    if (input.firstDay) formData.append('first_day', input.firstDay);
+    if (input.lastDay) formData.append('last_day', input.lastDay);
+    if (input.note) formData.append('note', input.note);
+    if (input.file) formData.append('file', input.file);
+    return this.json('/routing/invoices', { method: 'POST', body: formData });
+  }
+
+  async downloadInvoiceFile(invoiceId: string): Promise<Blob> {
+    const res = await this.fetch(`/routing/invoices/${id(invoiceId)}/file`);
+    return res.blob();
+  }
+
   async getFaxCost(jobId: string): Promise<FaxCost> {
     return this.json(`/routing/faxes/${id(jobId)}/cost`);
   }
@@ -1014,6 +1195,77 @@ class AdminAPIClient {
 
   async saveFaxLimits(number: string, body: { max_rate: number | null; ecm: boolean | null }): Promise<RecipientFaxLimits> {
     return this.json(`/routing/destinations/${id(number)}/fax-limits`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Smaller pages (lossless tuning) for one number: your choice, what its calls use, and why.
+  async getCodingTuning(number: string): Promise<RecipientCodingTuning> {
+    return this.json(`/routing/destinations/${id(number)}/coding-tuning`);
+  }
+
+  async saveCodingTuning(number: string, body: { tune: false | null; tune_jbig: boolean }): Promise<RecipientCodingTuning> {
+    return this.json(`/routing/destinations/${id(number)}/coding-tuning`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // How long a page one fax machine takes, and this number's pages per sheet and blank-space settings.
+  async getRecipientPages(number: string): Promise<RecipientPages> {
+    return this.json(`/routing/destinations/${id(number)}/pages`);
+  }
+
+  async saveRecipientPages(number: string, body: {
+    packing?: 'allow' | 'never'; trim_blank?: boolean | null; shading?: 'always' | 'never' | null;
+  }): Promise<RecipientPages> {
+    return this.json(`/routing/destinations/${id(number)}/pages`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Long pages for each delivery route, and the installation's blank-space setting (the phone line's row).
+  async getRoutePages(): Promise<{ routes: RoutePages[] }> {
+    return this.json('/routing/page-routes');
+  }
+
+  async saveRoutePages(route: string, body: { long_pages?: boolean | null; trim_blank?: boolean | null }): Promise<RoutePages> {
+    return this.json(`/routing/page-routes/${id(route)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // When Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+  async getSchedule(number: string): Promise<RecipientSchedule> {
+    return this.json(`/routing/destinations/${id(number)}/schedule`);
+  }
+
+  async saveSchedule(number: string, body: RecipientScheduleSave): Promise<RecipientSchedule> {
+    return this.json(`/routing/destinations/${id(number)}/schedule`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  // Collecting faxes this number's fax server holds for you (polling): the setting, the advice, and Collect now.
+  async getPolling(number: string): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`);
+  }
+
+  async savePolling(number: string, body: RecipientPollingSave): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async collectPolling(number: string): Promise<RecipientPolling & { id: string; sentence: string }> {
+    return this.json(`/routing/destinations/${id(number)}/polling/collect`, { method: 'POST' });
+  }
+
+  // Faxes this number collects from Faxbot (polled transmission).
+  async getHold(number: string): Promise<RecipientHold> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold`);
+  }
+
+  async saveHold(number: string, body: RecipientHoldSave): Promise<RecipientHold> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async holdFax(number: string, file: File): Promise<RecipientHold & { id: string; sentence: string }> {
+    const body = new FormData();
+    body.append('file', file);
+    return this.json(`/routing/destinations/${id(number)}/polling/hold/faxes`, { method: 'POST', body });
+  }
+
+  async withdrawHeldFax(number: string, heldId: string): Promise<RecipientHold & { id: string; outcome: string }> {
+    return this.json(`/routing/destinations/${id(number)}/polling/hold/faxes/${encodeURIComponent(heldId)}`,
+      { method: 'DELETE' });
   }
 
   // Sending short faxes to the same number together in one call.
@@ -1041,6 +1293,29 @@ class AdminAPIClient {
     return this.json(`/batching/faxes/${id(jobId)}/send-now`, { method: 'POST', body: '{}' });
   }
 
+  // Encoded pages (experimental): the per-number opt-in, a sent fax's line, a received fax's decode result.
+  async getCodecNumber(number: string): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`);
+  }
+
+  async saveCodecNumber(number: string, body: CodecSave): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async turnOffCodecNumber(number: string): Promise<CodecNumber> {
+    return this.json(`/codec/numbers/${id(number)}`, { method: 'DELETE' });
+  }
+
+  async getCodecReceived(inboundId: string): Promise<CodecReceived> {
+    return this.json(`/codec/received/${id(inboundId)}`);
+  }
+
+  async downloadDecodedDocument(inboundId: string): Promise<Blob> {
+    const res = await this.send(`/codec/received/${id(inboundId)}/document`);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    return res.blob();
+  }
+
   async getInboundCost(inboundId: string): Promise<FaxCost> {
     return this.json(`/routing/inbound/${id(inboundId)}/cost`);
   }
@@ -1050,7 +1325,7 @@ class AdminAPIClient {
     return this.json(`/routing/inbound-costs${query({ ids: inboundIds.join(',') })}`);
   }
 
-  async listRateCards(): Promise<{ cards: RateCard[] }> {
+  async listRateCards(): Promise<{ cards: RateCard[]; toll_free?: TollFreeTerms[] }> {
     return this.json('/routing/rate-cards');
   }
 
@@ -1096,6 +1371,47 @@ class AdminAPIClient {
     return this.json(`/intake/connectors/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
   }
 
+  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Numbers, Email and folders).
+  async listConnectors(): Promise<{ connectors: Connector[] }> {
+    return this.json('/intake/sources');
+  }
+
+  async connectorChoices(): Promise<ConnectorChoices> {
+    return this.json('/intake/sources/choices');
+  }
+
+  async listConnectorItems(params: { connector?: string; limit?: number } = {}): Promise<{ items: ConnectorItem[] }> {
+    return this.json(`/intake/sources/items${query(params)}`);
+  }
+
+  async createConnector(input: ConnectorInput): Promise<Connector> {
+    return this.json('/intake/sources', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateConnector(connectorId: string, input: ConnectorUpdate): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async testConnector(connectorId: string): Promise<{ ok: boolean; detail: string }> {
+    return this.json(`/intake/sources/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
+  }
+
+  async pauseConnector(connectorId: string): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}/pause`, { method: 'POST', body: '{}' });
+  }
+
+  async resumeConnector(connectorId: string): Promise<Connector> {
+    return this.json(`/intake/sources/${id(connectorId)}/resume`, { method: 'POST', body: '{}' });
+  }
+
+  async removeConnector(connectorId: string): Promise<{ removed: boolean }> {
+    return this.json(`/intake/sources/${id(connectorId)}`, { method: 'DELETE' });
+  }
+
+  async faxRequester(jobId: string): Promise<FaxRequester> {
+    return this.json(`/intake/sources/faxes/${id(jobId)}`);
+  }
+
   async getDirectCard(): Promise<{ card: DirectCard }> {
     return this.json('/direct/card');
   }
@@ -1120,8 +1436,161 @@ class AdminAPIClient {
     return this.json('/direct/deliveries');
   }
 
+  // Accept fax images from a partner, or stop; the partner is told with a signed statement.
+  async setDirectFaxImages(partnerId: string, accept: boolean): Promise<DirectFaxImagesResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/fax-images`, { method: 'POST', body: JSON.stringify({ accept }) });
+  }
+
+  // Notice fax: each document goes directly with a one-page notice by fax (direct/notice.py).
+  async setDirectNoticeFax(partnerId: string, on: boolean): Promise<DirectNoticeFaxResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/notice-fax`, { method: 'POST', body: JSON.stringify({ on }) });
+  }
+
+  async listDirectNotices(): Promise<{ notices: DirectNotice[] }> {
+    return this.json('/direct/notices');
+  }
+
+  // The notice a received fax was paired as, with the sentence for its Received detail.
+  async getDirectNoticeForFax(faxId: string): Promise<{ notices: DirectNotice[]; notice_text: string | null }> {
+    return this.json(`/direct/notices?fax=${encodeURIComponent(faxId)}`);
+  }
+
+  async listDirectNoticeFaxes(noticeId: string): Promise<{ faxes: DirectNoticeCandidate[] }> {
+    return this.json(`/direct/notices/${id(noticeId)}/faxes`);
+  }
+
+  async pairDirectNotice(noticeId: string, pairing: { code?: string; fax_id?: string }): Promise<DirectNoticePaired> {
+    return this.json(`/direct/notices/${id(noticeId)}/pair`, { method: 'POST', body: JSON.stringify(pairing) });
+  }
+
+  async listDirectTransfers(): Promise<{ transfers: DirectTransfer[] }> {
+    return this.json('/direct/transfers');
+  }
+
+  async listDirectRepairs(): Promise<{ repairs: DirectRepair[] }> {
+    return this.json('/direct/repairs');
+  }
+
+  // Fax calls with a partner inside an encrypted tunnel set up outside Faxbot: take its calls, its address there.
+  // Certificate authorities you trust for forwarded calls; each change is an audited configuration change.
+  async listForwardedTrust(): Promise<ForwardedTrust> {
+    return this.json('/admin/forwarded-trust');
+  }
+
+  async addForwardedTrust(body: { pem?: string; url?: string }): Promise<ForwardedTrust> {
+    return this.json('/admin/forwarded-trust', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async removeForwardedTrust(fingerprint: string): Promise<ForwardedTrust> {
+    return this.json(`/admin/forwarded-trust/${id(fingerprint)}`, { method: 'DELETE' });
+  }
+
+  async setDirectTunnelCalls(partnerId: string, accept: boolean, address: string | null): Promise<DirectFaxImagesResult> {
+    return this.json(`/direct/peers/${id(partnerId)}/peer-calls`, { method: 'POST', body: JSON.stringify({ accept, address }) });
+  }
+
+  async checkDirectTunnel(partnerId: string): Promise<DirectTunnelCheck> {
+    return this.json(`/direct/peers/${id(partnerId)}/peer-calls/check`, { method: 'POST', body: '{}' });
+  }
+
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Send once: a partner's intake files one copy of a fax for each of its numbers, or yours files theirs.
+  async listSendOnce(): Promise<SendOnceList> {
+    return this.json('/direct/send-once');
+  }
+
+  async offerSendOnce(partnerId: string, numbers: string[], intake: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/peers/${id(partnerId)}/send-once`, { method: 'POST', body: JSON.stringify({ numbers, intake }) });
+  }
+
+  async acceptSendOnce(agreementId: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/send-once/${id(agreementId)}/accept`, { method: 'POST', body: '{}' });
+  }
+
+  async endSendOnce(agreementId: string): Promise<SendOnceAgreement> {
+    return this.json(`/direct/send-once/${id(agreementId)}/withdraw`, { method: 'POST', body: '{}' });
+  }
+
+  // Partner relays: a partner sends your faxes as local calls in its country, or you send theirs.
+  async listRelayAgreements(partnerId?: string): Promise<{ agreements: RelayAgreement[] }> {
+    return this.json(partnerId ? `/direct/relay/agreements?partner=${id(partnerId)}` : '/direct/relay/agreements');
+  }
+
+  async offerRelay(grant: RelayGrant): Promise<RelayAgreement> {
+    return this.json('/direct/relay/agreements', { method: 'POST', body: JSON.stringify(grant) });
+  }
+
+  async acceptRelay(agreementId: string, acceptance: RelayAcceptance): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/accept`, { method: 'POST', body: JSON.stringify(acceptance) });
+  }
+
+  async withdrawRelay(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/withdraw`, { method: 'POST', body: '{}' });
+  }
+
+  async refreshRelayPrice(agreementId: string): Promise<RelayAgreement> {
+    return this.json(`/direct/relay/agreements/${id(agreementId)}/price`, { method: 'POST', body: '{}' });
+  }
+
+  async askRelayQuote(partnerId: string, countries: string[]): Promise<{ detail: string }> {
+    return this.json(`/direct/relay/partners/${id(partnerId)}/quote`, { method: 'POST', body: JSON.stringify({ countries }) });
+  }
+
+  async getRelayCosts(days = 30): Promise<{ days: number; agreements: RelayCost[] }> {
+    return this.json(`/direct/relay/costs?days=${days}`);
+  }
+
+  async getRelayRecommendations(days = 30): Promise<{ days: number; recommendations: RelayRecommendation[] }> {
+    return this.json(`/direct/relay/recommendations?days=${days}`);
+  }
+
+  async listRelayedFaxes(days = 30): Promise<{ faxes: RelayedFax[] }> {
+    return this.json(`/direct/relay/faxes?days=${days}`);
+  }
+
+  // Find partners: suggestions, introductions, the lookup settings and publishing your number.
+  async getDiscovery(): Promise<Discovery> {
+    return this.json('/direct/discovery');
+  }
+
+  async saveDiscoverySettings(change: DiscoverySettingsChange): Promise<Discovery & { detail: string }> {
+    return this.json('/direct/discovery/settings', { method: 'PUT', body: JSON.stringify(change) });
+  }
+
+  async enrollSuggestion(suggestionId: string): Promise<DirectPartner & { detail: string }> {
+    return this.json(`/direct/discovery/suggestions/${id(suggestionId)}/enroll`, { method: 'POST', body: '{}' });
+  }
+
+  async dismissSuggestion(suggestionId: string): Promise<{ detail: string }> {
+    return this.json(`/direct/discovery/suggestions/${id(suggestionId)}/dismiss`, { method: 'POST', body: '{}' });
+  }
+
+  async lookUpPartner(number: string): Promise<{ detail: string; suggestion_id: string | null }> {
+    return this.json('/direct/discovery/lookup', { method: 'POST', body: JSON.stringify({ number }) });
+  }
+
+  async setMayIntroduce(partnerId: string, allowed: boolean): Promise<{ may_introduce: boolean; detail: string }> {
+    return this.json(`/direct/discovery/partners/${id(partnerId)}/may-introduce`, {
+      method: 'POST', body: JSON.stringify({ allowed }) });
+  }
+
+  async introducePartners(first: string, second: string): Promise<{ detail: string }> {
+    return this.json('/direct/discovery/introductions', { method: 'POST', body: JSON.stringify({ first, second }) });
+  }
+
+  async publishNumber(number: string, directory: string): Promise<DiscoveryPublication & { detail: string }> {
+    return this.json('/direct/discovery/publications', { method: 'POST', body: JSON.stringify({ number, directory }) });
+  }
+
+  async checkPublication(publicationId: string): Promise<{ state: string; detail: string }> {
+    return this.json(`/direct/discovery/publications/${id(publicationId)}/check`, { method: 'POST', body: '{}' });
+  }
+
+  async withdrawPublication(publicationId: string): Promise<{ detail: string }> {
+    return this.json(`/direct/discovery/publications/${id(publicationId)}/withdraw`, { method: 'POST', body: '{}' });
   }
 
   // Work queue
@@ -1166,6 +1635,20 @@ class AdminAPIClient {
     return res.blob();
   }
 
+  // Expected faxes (components/expected/expectedApi.ts): the import upload and the evidence download.
+  async importExpected<T>(source: string, file: File, fullExport: boolean): Promise<T> {
+    const form = new FormData();
+    form.append('source', source);
+    form.append('full_export', fullExport ? 'true' : 'false');
+    form.append('file', file);
+    return this.json('/expected-faxes/imports', { method: 'POST', body: form });
+  }
+
+  async exportExpected(expectedId: string): Promise<Blob> {
+    const res = await this.fetch(`/expected-faxes/${id(expectedId)}/export`);
+    return res.blob();
+  }
+
   async getWorkSettings(): Promise<WorkSettings> {
     return this.json('/work/settings');
   }
@@ -1174,9 +1657,74 @@ class AdminAPIClient {
     return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
   }
 
+  // Sent faxes Faxbot could not confirm: an owner, checks ranked by cost, and a person settles each.
+  async listUncertain(params: { view?: 'all' | 'mine' | 'unassigned' | 'overdue'; state?: 'open' | 'settled' | 'any'; limit?: number } = {}): Promise<{ items: CertaintyItem[] }> {
+    return this.json(`/certainty/items${query(params)}`);
+  }
+
+  async uncertainCounts(): Promise<CertaintyCounts> {
+    return this.json('/certainty/counts');
+  }
+
+  async uncertainForFax(faxId: string): Promise<CertaintyForFax> {
+    return this.json(`/certainty/faxes/${id(faxId)}`);
+  }
+
+  async getUncertain(itemId: string): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}`);
+  }
+
+  async uncertainHistory(itemId: string): Promise<{ events: CertaintyEvent[] }> {
+    return this.json(`/certainty/items/${id(itemId)}/history`);
+  }
+
+  async uncertainAssignees(itemId: string): Promise<{ people: CertaintyPerson[] }> {
+    return this.json(`/certainty/items/${id(itemId)}/assignees`);
+  }
+
+  async assignUncertain(itemId: string, principalId: string, version: number): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/assign`, { method: 'POST', body: JSON.stringify({ principal_id: principalId, version }) });
+  }
+
+  // The one-page receipt query, to check before sending; reading it sends nothing.
+  async receiptQueryPdf(itemId: string): Promise<Blob> {
+    const res = await this.fetch(`/certainty/items/${id(itemId)}/receipt-query`);
+    return res.blob();
+  }
+
+  async sendReceiptQuery(itemId: string, version: number): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/receipt-query`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async settleUncertain(itemId: string, body: { outcome: CertaintyOutcome; reason: string; version: number; send_again: boolean }): Promise<CertaintyItem> {
+    return this.json(`/certainty/items/${id(itemId)}/settle`, { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  // A fax whose call broke part way: which pages are left to send, and sending only those (a person's click).
+  async continuationForFax(faxId: string): Promise<ContinuationView> {
+    return this.json(`/continuations/faxes/${id(faxId)}`);
+  }
+
+  async sendContinuation(faxId: string, body: { first_page: number; reason?: string; version?: number }): Promise<ContinuationView> {
+    return this.json(`/continuations/faxes/${id(faxId)}`, { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async getUncertainSettings(): Promise<CertaintySettings> {
+    return this.json('/certainty/settings');
+  }
+
+  async saveUncertainSettings(body: { fallback_principal_id: string | null; settle_hours: number; version: number }): Promise<CertaintySettings> {
+    return this.json('/certainty/settings', { method: 'PUT', body: JSON.stringify(body) });
+  }
+
   // What sending together, direct delivery and case packets saved in the last `days` (estimates).
   async getSavings(days?: number): Promise<Savings> {
     return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // Every way Faxbot saves money: whether each is on, works here and has been tested (Overview's savings map).
+  async getSavingsMechanisms(): Promise<SavingsMechanisms> {
+    return this.json('/routing/savings/mechanisms');
   }
 
   // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →
@@ -1190,6 +1738,117 @@ class AdminAPIClient {
     return this.json('/routing/recommendations/plans');
   }
 
+  // Each plan this billing period: budget or allowance used and left, what is committed, the burn-down (Costs →
+  // Prices & plans). The budgets are the setting plan_budgets, saved with updateSettings.
+  async getPlans(): Promise<PlanContracts> {
+    return this.json('/routing/plans');
+  }
+
+  // Who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what is kept for
+  // faxes not sent yet (estimates; Costs → Prices & plans).
+  async getPlanAllocation(): Promise<PlanAllocation> {
+    return this.json('/routing/plans/allocation');
+  }
+
+  // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).
+  async getCarrierRecommendations(): Promise<CarrierComparison> {
+    return this.json('/routing/recommendations/carriers');
+  }
+
+  // Calls marked as fax against calls not marked, from history (Costs → Recommendations → Fax marker).
+  async getFaxMarkerAdvice(): Promise<FaxMarkerAdvice> {
+    return this.json('/routing/recommendations/fax-marker');
+  }
+
+  // Numbers whose calls end just past a billed minute (Costs → Recommendations → Billing steps).
+  async getBillingSteps(): Promise<BillingSteps> {
+    return this.json('/routing/recommendations/billing-steps');
+  }
+
+  // Numbers whose faxes cost the most again and again (Costs → Recommendations → Partner candidates).
+  async getPartnerCandidates(): Promise<PartnerCandidates> {
+    return this.json('/routing/recommendations/partners');
+  }
+
+  // Recipients with a toll-free fax number on file (Costs → Recommendations → Toll-free numbers).
+  async getTollFreeRecommendations(): Promise<TollFreeRecommendations> {
+    return this.json('/routing/recommendations/toll-free');
+  }
+
+  // A recipient's toll-free fax number and its approvals (Recipients → Details); each change is a new row.
+  async getTollFree(number: string): Promise<TollFreeState> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free`);
+  }
+
+  async recordTollFree(number: string, change: TollFreeChange): Promise<TollFreeState> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free`, { method: 'POST', body: JSON.stringify(change) });
+  }
+
+  // Toll-free fax numbers the NPI registry (NPPES) lists for a provider: suggestions, never approvals.
+  async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
+    : Promise<TollFreeSuggestions> {
+    return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
+  }
+
+  // Direct messages and FHIR (Providers → In use): the HISP account and FHIR clients; secrets are write-only.
+  async getDigitalAccounts(): Promise<DigitalAccountsState> {
+    return this.json('/digital/accounts');
+  }
+
+  async addDigitalAccount(account: DigitalAccountInput, expectedGeneration: number): Promise<DigitalAccountsState> {
+    return this.json('/digital/accounts', { method: 'POST',
+      body: JSON.stringify({ ...account, expected_generation: expectedGeneration }) });
+  }
+
+  async updateDigitalAccount(key: string, change: DigitalAccountPatch, expectedGeneration: number)
+    : Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}`, { method: 'PATCH',
+      body: JSON.stringify({ ...change, expected_generation: expectedGeneration }) });
+  }
+
+  async makeDigitalSigningKey(key: string, algorithm: 'RS384' | 'ES384' | null, expectedGeneration: number)
+    : Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}/signing-key`, { method: 'POST',
+      body: JSON.stringify({ algorithm, expected_generation: expectedGeneration }) });
+  }
+
+  async loadDigitalTrustBundle(key: string, bundle: { url?: string; content?: string }): Promise<DigitalAccountsState> {
+    return this.json(`/digital/accounts/${id(key)}/trust-bundle`, { method: 'POST', body: JSON.stringify(bundle) });
+  }
+
+  // A recipient's Direct address and FHIR endpoint (Recipients → Details); used only once confirmed.
+  async getDigitalRecipient(number: string): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}`);
+  }
+
+  async addDigitalAddress(number: string, address: DigitalAddressInput): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}`, { method: 'POST', body: JSON.stringify(address) });
+  }
+
+  async changeDigitalAddress(number: string, addressId: string, action: 'confirm' | 'withdraw' | 'dismiss',
+    note?: string | null): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}/addresses/${id(addressId)}`, { method: 'POST',
+      body: JSON.stringify({ action, note: note || null }) });
+  }
+
+  async suggestDigitalFromNppes(number: string, npi: string): Promise<DigitalRecipient> {
+    return this.json(`/digital/recipients/${id(number)}/nppes`, { method: 'POST', body: JSON.stringify({ npi }) });
+  }
+
+  // Direct messages and FHIR documents sent and received (Sent, Received).
+  async listDigitalMessages(direction?: 'out' | 'in'): Promise<{ messages: DigitalMessage[] }> {
+    return this.json(`/digital/messages${query({ direction })}`);
+  }
+
+  async getFaxDigitalMessages(jobId: string): Promise<{ job_id: string; messages: DigitalMessage[] }> {
+    return this.json(`/digital/faxes/${id(jobId)}`);
+  }
+
+  // Whether lightening shaded areas and removing specks would have saved time on recent faxes, or what it saved.
+  async getFaxFriendlyRecommendation(): Promise<FaxFriendlyRecommendation> {
+    return this.json('/routing/recommendations/fax-friendly');
+  }
+
   // The newest cases this installation sent packets for, with recipient and counts.
   async listCases(): Promise<{ cases: CaseSummary[] }> {
     return this.json('/cases');
@@ -1200,15 +1859,189 @@ class AdminAPIClient {
     return this.json(`/cases/${id(caseId)}/documents${query({ to: normalizeFaxDestination(to) })}`);
   }
 
-  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string }>, preview: boolean): Promise<CasePacket> {
+  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string; version?: string; source?: string }>,
+    preview: boolean, purpose = ''): Promise<CasePacket> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('preview', preview ? 'true' : 'false');
+    formData.append('purpose', purpose);
     for (const document of documents) {
       formData.append('documents', document.file);
       formData.append('titles', document.title);
+      formData.append('versions', document.version ?? '');
+      formData.append('sources', document.source ?? '');
     }
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
+  }
+
+  // Numbers → Sender identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
+  async getReplyNumber(): Promise<ReplyNumberView> {
+    return this.json('/numbers/reply');
+  }
+
+  async setReplyNumber(number: string): Promise<{ ok: true; number: string | null }> {
+    return this.json('/numbers/reply', { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async setMailboxReplyNumber(mailboxId: string, number: string): Promise<{ ok: true; number: string }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'PUT', body: JSON.stringify({ number }) });
+  }
+
+  async clearMailboxReplyNumber(mailboxId: string): Promise<{ ok: true }> {
+    return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
+  }
+
+  // Numbers → Blocked senders: callers turned away before the call is answered.
+  async getBlockedSenders(): Promise<BlockedSendersView> {
+    return this.json('/screening');
+  }
+
+  async blockSender(body: { number?: string; inbound_id?: string; reason: string; days?: number }): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json('/screening/senders', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async unblockSender(entryId: string): Promise<{ ok: true; entry: BlockedSender }> {
+    return this.json(`/screening/senders/${id(entryId)}`, { method: 'DELETE' });
+  }
+
+  // Recipients → Details, "Their fax machine": what it said on recent calls, what Faxbot learned, and IAF.
+  async getFaxMachine(number: string): Promise<FaxMachineView> {
+    return this.json(`/fax-machines/numbers/${id(number)}`);
+  }
+
+  // Forget that fax over IP or audio fax failed with this number; its next calls use the usual settings.
+  async forgetFaxMachine(number: string): Promise<{ ok: true; forgotten: number; sentence: string }> {
+    return this.json(`/fax-machines/numbers/${id(number)}/forget`, { method: 'POST' });
+  }
+
+  async listIafServers(): Promise<{ servers: IafServer[]; partners: string[] }> {
+    return this.json('/fax-machines/iaf');
+  }
+
+  async approveIaf(body: { number: string; kind: 'peer' | 'endpoint'; label: string }): Promise<{ ok: true; server: IafServer }> {
+    return this.json('/fax-machines/iaf', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async removeIaf(serverId: string): Promise<{ ok: true; server: IafServer }> {
+    return this.json(`/fax-machines/iaf/${id(serverId)}`, { method: 'DELETE' });
+  }
+
+  // The recipient confirmed it has these documents (a note, or the fax in which it said so).
+  async acceptCaseDocuments(caseId: string, body: { to: string; documents: string[]; note?: string; received_fax_id?: string }): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/accept`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // The recipient could not find these documents: the next packet sends them in full.
+  async invalidateCaseDocuments(caseId: string, body: { to: string; documents: string[]; note?: string }): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/invalidate`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // Every document of the case again, as a new fax, for a person's reason (preview first).
+  async repairCasePacket(caseId: string, body: { to: string; reason: string; preview: boolean }): Promise<CaseRepair> {
+    return this.json(`/cases/${id(caseId)}/repair`, { method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  async setCaseReuseDays(to: string, reuseDays: number | null, version: number): Promise<CaseRecipient> {
+    return this.json(`/case-recipients/${id(normalizeFaxDestination(to))}`, {
+      method: 'PATCH', body: JSON.stringify({ reuse_days: reuseDays, version }) });
+  }
+
+  async listCaseOriginals(caseId: string): Promise<{ case_id: string; retention_days?: number; originals: CaseOriginal[] }> {
+    return this.json(`/cases/${id(caseId)}/originals`);
+  }
+
+  async addCaseOriginals(caseId: string, documents: CaseOriginalDraft[]): Promise<{ case_id: string; originals: CaseOriginal[] }> {
+    const formData = new FormData();
+    for (const document of documents) {
+      formData.append('documents', document.file);
+      formData.append('titles', document.title);
+      formData.append('types', document.type ?? '');
+      formData.append('dates', document.date ?? '');
+      formData.append('versions', document.version ?? '');
+      formData.append('sources', document.source ?? '');
+    }
+    return this.json(`/cases/${id(caseId)}/originals`, { method: 'POST', body: formData });
+  }
+
+  async listCaseChecklists(): Promise<CaseChecklists> {
+    return this.json('/case-checklists');
+  }
+
+  async addCaseChecklist(body: { name: string; items: ChecklistItem[]; to?: string }): Promise<CaseChecklist> {
+    return this.json('/case-checklists', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async buildChecklistPacket(caseId: string, body: ChecklistBuildRequest): Promise<ChecklistBuild> {
+    return this.json(`/cases/${id(caseId)}/checklist-packets`, {
+      method: 'POST', body: JSON.stringify({ ...body, to: normalizeFaxDestination(body.to) }) });
+  }
+
+  // Registered forms (Faxes → Forms): forms and their immutable versions.
+  async listForms(): Promise<{ forms: RegisteredForm[]; renderer: string }> {
+    return this.json('/forms');
+  }
+
+  // A new form, or (with formId) the next version of one; earlier versions never change.
+  async importForm(file: File, options: { name?: string; formId?: string; positions?: File | null }): Promise<FormImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options.positions) formData.append('positions', options.positions);
+    if (options.formId) return this.json(`/forms/${id(options.formId)}/versions`, { method: 'POST', body: formData });
+    formData.append('name', options.name ?? '');
+    return this.json('/forms', { method: 'POST', body: formData });
+  }
+
+  async getFormVersion(versionId: string): Promise<FormVersionDetail> {
+    return this.json(`/forms/versions/${id(versionId)}`);
+  }
+
+  // The blank page as it is faxed, optionally with each field's box outlined.
+  async formPagePicture(versionId: string, page: number, outlined: boolean): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/pages/${page}${query({ fields: outlined ? 'true' : undefined })}`);
+    return res.blob();
+  }
+
+  async downloadFormTemplate(versionId: string): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/template`);
+    return res.blob();
+  }
+
+  // The filled pages exactly as they would be faxed (a PDF, or one page as a picture); nothing is sent.
+  async renderForm(versionId: string, values: Record<string, FormValue>, format: 'pdf' | 'png', page = 1): Promise<Blob> {
+    const res = await this.fetch(`/forms/versions/${id(versionId)}/render${query({ format, page })}`, {
+      method: 'POST', body: JSON.stringify({ values }),
+    });
+    return res.blob();
+  }
+
+  // Sending is never retried here: a lost answer may mean the form went.
+  async sendForm(request: SendFormRequest): Promise<FormDelivery> {
+    return this.json('/forms/send', {
+      method: 'POST', body: JSON.stringify({ ...request, to: normalizeFaxDestination(request.to) }),
+    });
+  }
+
+  async listFormDeliveries(): Promise<{ deliveries: FormDelivery[] }> {
+    return this.json(`/forms/deliveries${query({ direction: 'outbound' })}`);
+  }
+
+  async getFormDelivery(deliveryId: string): Promise<FormDelivery> {
+    return this.json(`/forms/deliveries/${id(deliveryId)}`);
+  }
+
+  // A person's decision to send a form's pages as an ordinary fax; Faxbot never does this by itself.
+  async faxFormDelivery(deliveryId: string): Promise<FormDelivery> {
+    return this.json(`/forms/deliveries/${id(deliveryId)}/fax`, { method: 'POST', body: '{}' });
+  }
+
+  // Forms partners delivered whose pages matched, with their values (Faxes → Received).
+  async listReceivedForms(): Promise<{ received: ReceivedForm[] }> {
+    return this.json('/forms/received');
+  }
+
+  // Which form versions a partner holds, asked of the partner now.
+  async getPartnerForms(peerId: string): Promise<PartnerForms> {
+    return this.json(`/forms/partners/${id(peerId)}`);
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

@@ -57,6 +57,11 @@ RECEIVED = log(
     end='10:00:45.00')
 
 
+# What a call reports about the other machine's pages (dense pages, migration 0028) when its log names nothing.
+NO_PAGE_LIMITS = {'page_length': None, 'page_width': None, 'fine': None, 'remote_ecm': None, 'scan_ms': None,
+                  'boundary_ms': None, 'boundaries': None}
+
+
 def parsed(spool, environment, text):
     path = spool / 'log' / 'c000000011'
     path.write_text(text)
@@ -71,14 +76,14 @@ def test_a_sent_call_reports_its_whole_call_speeds_compression_resolution_and_er
     spool, _, _, environment = engine
     assert parsed(spool, environment, SENT) == {
         'rate_first': 14400, 'rate_lowest': 7200, 'rate_last': 7200, 'trainings': 4, 'compression': 'MMR',
-        'resolution': 'fine', 'ecm': 'on', 'session': 60}
+        'resolution': 'fine', 'ecm': 'on', 'session': 60, **NO_PAGE_LIMITS, 'page_width': 'A4'}
 
 
 def test_a_received_call_reports_each_pages_values_and_no_error_correction_when_none_was_asked(engine):
     spool, _, _, environment = engine
     assert parsed(spool, environment, RECEIVED) == {
         'rate_first': 9600, 'rate_lowest': 9600, 'rate_last': 9600, 'trainings': 1, 'compression': 'MR',
-        'resolution': 'fine', 'ecm': 'off', 'session': 45}
+        'resolution': 'fine', 'ecm': 'off', 'session': 45, **NO_PAGE_LIMITS}
 
 
 def test_pages_that_differ_are_mixed_and_the_senders_own_id_is_never_read(engine):
@@ -100,7 +105,7 @@ def test_a_call_that_never_trained_reports_only_its_tries(engine):
                                             'TRAINING failed', 'SEND training at v.17 12000 bit/s', 'TRAINING failed',
                                             end=None))
     assert values == {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': 2,
-                      'compression': None, 'resolution': None, 'ecm': None, 'session': None}
+                      'compression': None, 'resolution': None, 'ecm': None, 'session': None, **NO_PAGE_LIMITS}
     assert fax_negotiation.engine_values(base64.b64encode(json.dumps(values).encode()).decode()) == {'trainings': 2}
 
 
@@ -453,8 +458,8 @@ def _columns(engine):
         return {column['name'] for column in sa.inspect(connection).get_columns('fax_engine_calls')}
 
 
-def test_negotiation_is_head_after_history():
-    assert schema.HEAD == schema_negotiation.REVISION == '0023_negotiation'
+def test_negotiation_follows_history():
+    assert schema.NEGOTIATION == schema_negotiation.REVISION == '0023_negotiation'
     assert schema.HISTORY == '0022_history' and schema_negotiation.TABLES == frozenset()
 
 

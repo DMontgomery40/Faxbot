@@ -388,7 +388,9 @@ from api.app.schema import create_database_engine, upgrade_schema
 args = {'options': '-csearch_path='+os.environ['SCHEMA']} if os.environ['SCHEMA'] else {}
 engine = create_database_engine(os.environ['TARGET'], connect_args=args)
 try:
-    upgrade_schema(engine)
+    # This tests convergence, not the production lock-wait budget. A fresh
+    # migration and head validation serialize and can outlast that budget.
+    upgrade_schema(engine, lock_timeout=60)
 finally:
     engine.dispose()
 """
@@ -398,7 +400,7 @@ finally:
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
     try:
         for process in processes:
-            stdout, stderr = process.communicate(timeout=20)
+            stdout, stderr = process.communicate(timeout=90)
             assert process.returncode == 0, stdout + stderr
     finally:
         for process in processes:

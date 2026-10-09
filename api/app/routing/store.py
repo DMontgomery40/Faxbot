@@ -50,6 +50,13 @@ class CaptureTarget:
     submitted_at: object
     completed_at: object
     has_decision: bool
+    # The number the attempt dialed when it was not the destination's own (an approved toll-free number).
+    dialed: str | None = None
+    # The account the attempt went by (``sinch-uk``); its own rate card is used first, then its provider's.
+    route: str | None = None
+    # Where ``pages`` came from: 'sent' (the pages the attempt's chosen layout actually sent: dense pages or the
+    # experimental encoded pages), or 'original' (the accepted document's pages).
+    pages_source: str = 'original'
 
 
 def _configured_sip_preset():
@@ -99,6 +106,17 @@ class RouteStore:
             return read(connection)
         with read_connection(self.engine) as conn:
             return read(conn)
+
+    def card_for_route(self, route, provider_id=None, direction='outbound', connection=None):
+        """The card for one account: its own card (``sinch-uk``) first, then its provider's (``card_for``).
+
+        A provider's first account has the provider id as its key, so its card is found exactly as before.
+        """
+        if route and provider_id and route != provider_id and not route.startswith('relay'):
+            card = self.card_for(route, direction, connection)
+            if card is not None:
+                return card
+        return self.card_for(provider_id or route, direction, connection)
 
     def card_for(self, provider_id, direction='outbound', connection=None):
         """The current card for a provider; native SIP uses its trunk carrier's card.
@@ -244,14 +262,24 @@ class RouteStore:
                         **changes, version=row['version'] + 1, updated_at=now))
             return self.get_destination(number, connection)
 
-    def verified_peer(self, number, connection=None, *, now=None):
-        """The verified, unexpired direct peer for a number, if exactly one exists."""
+    def verified_peer(self, number, connection=None, *, now=None, covered=False):
+        """The verified, unexpired direct peer for a number, if exactly one exists.
+
+        ``covered=True`` (the route planner) also counts a partner whose active "send once" agreement covers the
+        number (``direct/distribute.py``); a number two partners could take has no direct partner.
+        """
         def read(conn):
             moment = now or utcnow()
-            rows = conn.execute(sa.select(self.peers).where(
+            rows = [dict(row) for row in conn.execute(sa.select(self.peers).where(
                 self.peers.c.phone_number == number, self.peers.c.state == 'verified',
-                sa.or_(self.peers.c.expires_at.is_(None), self.peers.c.expires_at > moment))).mappings().all()
-            return dict(rows[0]) if len(rows) == 1 else None
+                sa.or_(self.peers.c.expires_at.is_(None), self.peers.c.expires_at > moment))).mappings().all()]
+            if covered:
+                from ..direct.distribute import peer_for_number
+                found = {row['id']: row for row in rows}
+                for row in peer_for_number(conn, number, moment, self.peers):
+                    found.setdefault(row['id'], row)
+                rows = list(found.values()) if len(rows) <= 1 else rows
+            return rows[0] if len(rows) == 1 else None
         if connection is not None:
             return read(connection)
         with read_connection(self.engine) as conn:
@@ -309,7 +337,26 @@ class RouteStore:
         with read_connection(self.engine) as connection:
             return connection.execute(riders.where(m.c.attempt_id == attempt_id)).first() is not None
 
+    def _sent_pages_tables(self):
+        """AF's ``fax_page_changes``, or None before it exists."""
+        found = getattr(self, '_page_tables', None)
+        if found is None:
+            found = {}
+            for name in ('fax_page_changes',):
+                try:
+                    found[name] = reflect(self.engine, (name,))[name]
+                except DeliveryStoreError:
+                    found[name] = None
+            self._page_tables = found
+        return found
+
     def pending_captures(self, *, limit=100):
+        """Finished attempts to cost, each with the pages it actually sent.
+
+        An attempt whose chosen layout changed its pages (dense pages or the experimental encoded pages) costs by
+        the pages it sent (``fax_page_changes.sent_pages``, by attempt; each attempt chooses for its own route);
+        every other attempt by the accepted document's pages, as before.
+        """
         a, j, c = self.attempts, self.jobs, self.costs
         # A fax that rode in another fax's call is never costed on its own: the call is counted once, on the
         # attempt that placed it, so its cost row keeps no outcome of its own and no reliability sample.
@@ -317,20 +364,37 @@ class RouteStore:
         finished = sa.or_(a.c.completed_at.is_not(None), a.c.phase == 'uncertain')
         stale = sa.or_(c.c.id.is_(None), c.c.outcome == 'pending',
                        sa.and_(c.c.outcome == 'uncertain', a.c.phase != 'uncertain'))
+        dialed = a.c.dialed_number if 'dialed_number' in a.c else sa.null()
+        pages = self._sent_pages_tables()
+        changes = pages['fax_page_changes']
+        source = a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id)
+        sent = sa.null()
+        if changes is not None:
+            source = source.outerjoin(changes, changes.c.attempt_id == a.c.id)
+            sent = changes.c.sent_pages
         query = (sa.select(a.c.id, a.c.job_id, a.c.phase, a.c.provider_sid, a.c.submitted_at, a.c.completed_at,
                            j.c.to_number, j.c.pages, j.c.backend, c.c.id.label('decision'),
-                           c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'))
-                 .select_from(a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id))
+                           c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'),
+                           c.c.route.label('decided_route'), dialed.label('dialed'), sent.label('sent_pages'))
+                 .select_from(source)
                  .where(a.c.submitted_at.is_not(None), a.c.phase.in_(tuple(OUTCOMES)), finished, stale,
                         *(() if riders is None else (a.c.id.not_in(riders),)))
                  .order_by(a.c.created_at, a.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).mappings().all()
-        return [CaptureTarget(row['id'], row['job_id'], destination_key(row['to_number']),
-                              row['decided_provider'] or row['backend'],
-                              row['provider_sid'] or row['decided_sid'], row['phase'], row['pages'],
-                              row['submitted_at'], row['completed_at'], row['decision'] is not None)
-                for row in rows]
+        targets = []
+        for row in rows:
+            provider = row['decided_provider'] or row['backend']
+            count, origin = row['pages'], 'original'
+            if row['sent_pages'] is not None:
+                count, origin = row['sent_pages'], 'sent'
+            targets.append(CaptureTarget(
+                row['id'], row['job_id'], destination_key(row['to_number']), provider,
+                row['provider_sid'] or row['decided_sid'], row['phase'], count, row['submitted_at'],
+                row['completed_at'], row['decision'] is not None,
+                row['dialed'] if row['dialed'] != destination_key(row['to_number']) else None,
+                route=row['decided_route'] or provider, pages_source=origin))
+        return targets
 
     def capture(self, target, *, observed_seconds=None, now=None):
         """Estimate one finished attempt from the provider's current rate card.
@@ -343,7 +407,11 @@ class RouteStore:
         """
         now = now or utcnow()
         outcome = OUTCOMES[target.phase]
-        card = self.card_for(target.provider_id)
+        card = self.card_for_route(target.route, target.provider_id)
+        if target.dialed:
+            # Priced by the class of the number called: a toll-free call by the route's toll-free price.
+            from .dialing import class_card
+            card = class_card(card, target.provider_id, target.dialed, sip_preset=self.sip_preset())
         seconds = observed_seconds
         if seconds is None and target.completed_at is not None and target.submitted_at is not None:
             seconds = max(0, int((target.completed_at - target.submitted_at).total_seconds()))
@@ -369,8 +437,8 @@ class RouteStore:
             else:
                 connection.execute(self.costs.insert().values(
                     id=target.attempt_id, job_id=target.job_id, destination=target.destination,
-                    route=target.provider_id, route_reason='configured', provider_id=target.provider_id,
-                    billing_checks=0, created_at=now, **values))
+                    route=target.route or target.provider_id, route_reason='configured',
+                    provider_id=target.provider_id, billing_checks=0, created_at=now, **values))
         return values
 
     # Provider charges ---------------------------------------------------------

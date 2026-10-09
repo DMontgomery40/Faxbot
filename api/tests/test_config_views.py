@@ -123,10 +123,12 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
 
 # Every masked value in the editor view; each is a credential or the database URL.
 MASKED_PATHS = {
+    'analysis.api_key',
     'security.api_key', 'phaxio.api_key', 'phaxio.api_secret', 'phaxio.callback_token', 'sinch.api_key',
     'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
     'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',
     'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'sip.telnyx_api_key', 'fs.esl_password',
+    'sip.flowroute_secret_key',
     'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'intake.smtp_password',
     'database.url',
 }
@@ -239,7 +241,8 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
         'DIRECT_DELIVERY_ENABLED': 'false', 'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': '+12025550123',
     }))
     # The raw list is kept as written so an editor can show and save it unchanged.
-    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0, 'local_delivery': True}
+    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0, 'local_delivery': True,
+                               'fax_friendly_documents': 'where_it_saves', 'fax_friendly_whiten': False}
     assert view['intake'] == {
         'email_enabled': True, 'smtp_host': 'smtp.example.invalid', 'smtp_port': 465, 'smtp_security': 'tls',
         'smtp_username': 'fax', 'smtp_password': '', 'email_from': 'fax@example.invalid',
@@ -249,7 +252,8 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
                               'allow_private_peers': False}
 
     defaults = project_admin_settings(snapshot())
-    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80, 'local_delivery': True}
+    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80, 'local_delivery': True,
+                                   'fax_friendly_documents': 'where_it_saves', 'fax_friendly_whiten': False}
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
     assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}
     assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}
@@ -273,3 +277,15 @@ def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret(
     assert view['ENABLE_ADMIN_EXEC'] == {'set': False, 'value': None, 'effective': True}
     assert deployment_view({'ENABLE_LOCAL_ADMIN': 'true', 'ENABLE_ADMIN_EXEC': 'false'})['ENABLE_ADMIN_EXEC']['effective'] is False
     assert deployment_view({})['ENABLE_ADMIN_EXEC']['effective'] is False
+
+
+def test_the_trunk_view_says_whether_faxbot_can_read_its_carriers_call_records():
+    """Read from the real carrier_records.trunk_records: Flowroute publishes charges, readable once both keys are set."""
+    from api.app.config_views import project_admin_settings
+    trunk = {'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'flowroute'}
+    unread = project_admin_settings(snapshot(trunk))['sip']['call_records']
+    assert (unread['published'], unread['readable']) == (True, False)
+    assert 'add your Flowroute API access key and secret key under Providers → Flowroute' in unread['sentence']
+    keys = {'FLOWROUTE_ACCESS_KEY': 'synthetic-access', 'FLOWROUTE_SECRET_KEY': 'synthetic-secret'}
+    read = project_admin_settings(snapshot({**trunk, **keys}))['sip']['call_records']
+    assert (read['published'], read['readable']) == (True, True)

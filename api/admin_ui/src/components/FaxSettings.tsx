@@ -19,7 +19,7 @@ import type { SipTrunkSettings as TrunkValues } from '../api/sipTypes';
 // The trunk page's collapsed "Fax settings": the options other fax servers offer, for both of
 // Faxbot's fax engines. Each has one plain line and starts at the recommended value; the trunk
 // form saves them with its other fields (sip_t38_error_correction, sip_t38_max_datagram,
-// sip_fax_max_rate, sip_fax_ecm, sip_fax_compression, sip_fax_fine, sip_sslfax_enabled,
+// sip_fax_max_rate, sip_fax_ecm, sip_fax_compression, sip_fax_fine, sip_fax_tune_coding, sip_sslfax_enabled,
 // sip_fax_lines, sip_sslfax_listener_port, sip_trunk_max_calls, sip_trunk_calls_per_second).
 
 interface FaxSettingsProps {
@@ -103,6 +103,16 @@ export default function FaxSettings({ form, update }: FaxSettingsProps) {
             <FormControlLabel label="Fine resolution (recommended)"
               control={<Switch checked={form.fax_fine ?? true} onChange={(event) => update('fax_fine', event.target.checked)} />} />
             <Hint>Sharper text in the faxes you send; off sends half as many lines per page.</Hint>
+          </div>
+
+          <div>
+            <FormControlLabel label="Make pages smaller without changing them (recommended)"
+              control={<Switch checked={form.fax_tune_coding ?? true}
+                onChange={(event) => update('fax_tune_coding', event.target.checked)} />} />
+            <Hint>
+              Faxbot packs each page into fewer bytes, so it arrives sooner; the other fax machine prints exactly the
+              same page.
+            </Hint>
           </div>
 
           <div>

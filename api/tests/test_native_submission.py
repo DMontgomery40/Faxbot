@@ -167,11 +167,21 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
         "Return",
         "Gosub",
     }
-    # The only subroutine is the base64 helper, which itself only sets variables.
-    assert all("Gosub(faxbot-b64,s,1(" in line for line in send + terminal if ",Gosub(" in line)
+    # The subroutines are the base64 helper, which only sets variables, and patch 0004's far-end frames,
+    # which only reports them (one FaxFrames event, never a second result, a call or an answer).
+    assert all("Gosub(faxbot-b64,s,1(" in line or "Gosub(faxbot-frames,s,1(" in line
+               for line in send + terminal if ",Gosub(" in line)
     helper = contexts["faxbot-b64"]
     assert all(re.search(r",(Set|GotoIf|Return)\(", line) for line in helper if not line.startswith("#"))
-    assert applications.count("SendFAX") == 1
+    frames = contexts["faxbot-frames"]
+    assert all(re.search(r",(GotoIf|UserEvent|Return)\(", line) for line in frames)
+    assert sum("UserEvent(FaxFrames," in line for line in frames) == 1
+    assert not any("FaxResult" in line for line in frames)
+    # One send per call: the usual SendFAX, or audio fax for this call only (FAXBOT_AUDIO, engine_learning.py);
+    # each is followed at once by Hangup, so no path sends twice.
+    sends = [index for index, line in enumerate(send) if ",SendFAX(" in line]
+    assert applications.count("SendFAX") == len(sends) == 2
+    assert all(",Hangup()" in send[index + 1] for index in sends)
     assert sum("UserEvent(FaxResult," in line for line in send) == 0
     assert sum("UserEvent(FaxResult," in line for line in terminal) == 1
     assert (
@@ -210,6 +220,27 @@ class StreamWriter:
     def write(self, data):
         self.writes.append(data)
         self.requests.put_nowait(data)
+
+    async def request(self, *tasks, timeout=10.0):
+        """The next frame written, within ``timeout`` seconds. If one of ``tasks`` (the actions that should write
+        it) ends first with an error, that error is raised: a call that failed before its frame was written says
+        why, instead of the test waiting for a frame that never comes."""
+        frame = asyncio.ensure_future(self.requests.get())
+        waiting = {frame, *tasks}
+        try:
+            while True:
+                done, _ = await asyncio.wait(waiting, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+                if frame in done:
+                    return frame.result()
+                if not done:
+                    raise AssertionError(f'No frame was written within {timeout:g} s.')
+                for task in done:
+                    if not task.cancelled() and task.exception() is not None:
+                        raise task.exception()
+                waiting -= done
+        finally:
+            if not frame.done():
+                frame.cancel()
 
     async def drain(self):
         await asyncio.sleep(0)
@@ -261,7 +292,7 @@ async def test_ami_adapter_issues_captured_metadata_even_when_environment_change
                 )
             )
         try:
-            raw = (await writer.requests.get()).decode()
+            raw = (await writer.request(task)).decode()
             fields = dict(line.split(": ", 1) for line in raw.splitlines() if line)
             variables = dict(
                 part.split("=", 1) for part in fields["Variable"].split(",")
@@ -296,7 +327,7 @@ async def test_ami_drain_is_not_acceptance_and_only_matching_response_acknowledg
             client.originate_sendfax(JOB, "+15555550123", "/fax data/fax.tif")
         )
         try:
-            raw = (await writer.requests.get()).decode()
+            raw = (await writer.request(task)).decode()
             await asyncio.sleep(0)
             assert not task.done(), "socket drain was incorrectly treated as acceptance"
             action_id = next(
@@ -338,7 +369,7 @@ async def test_ami_concurrent_responses_keep_attempt_identity_and_listener_separ
             for value in (ATTEMPT, second_attempt)
         ]
         try:
-            first, second = [(await writer.requests.get()).decode() for _ in range(2)]
+            first, second = [(await writer.request(*tasks)).decode() for _ in range(2)]
             assert f"ActionID: faxbot:{JOB}:{ATTEMPT}\r\n" in first
             assert f"FAXATTEMPT={ATTEMPT}" in first
             assert f"ActionID: faxbot:{JOB}:{second_attempt}\r\n" in second
@@ -391,7 +422,7 @@ async def test_ami_uncertain_failure_cleans_pending_without_replaying(
                 JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
             )
         )
-        await writer.requests.get()
+        await writer.request(task)
         if failure == "error":
             feed_response(client, f"faxbot:{JOB}:{ATTEMPT}", response="Error")
         elif failure == "disconnect":
@@ -486,7 +517,7 @@ async def test_ami_duplicate_pending_attempt_does_not_replace_the_first_future(
             )
         )
         try:
-            await writer.requests.get()
+            await writer.request(first)
             with pytest.raises(ConnectionError):
                 await client.originate_sendfax(
                     JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
@@ -515,7 +546,7 @@ async def test_ami_acknowledgement_can_arrive_before_drain_returns(monkeypatch):
             )
         )
         try:
-            await writer.requests.get()
+            await writer.request(task)
             client.reader.feed_data(
                 (
                     f"rEsPoNsE: Success\r\naCtIoNiD: faxbot:{JOB}:{ATTEMPT}\r\n\r\n"
@@ -930,9 +961,19 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
                             "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
-                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION"}, variable
+                            "FAXMODE", "UNIQUEID", "FAXBITRATE", "FAXRESOLUTION", "FAXBOT_FAR_SUB",
+                            "FAXBOT_TRUNK", "FAXBOT_PEER"}, variable
+    # The subaddress (hex) and the trunk key reach the shell only through FILTER.
+    assert "${FILTER(0123456789abcdef,${FAXBOT_FAR_SUB})}" in command
+    # The partner of a peer fax call (its endpoint's set_var), checked whole on arrival and filtered again.
+    assert "peer=${FILTER(0123456789abcdef,${FAXBOT_PEER})}" in command
+    assert any('Set(FAXBOT_PEER=${IF($[${REGEX("^[a-f0-9]{32}$" ${FAXBOT_PEER})}]' in line for line in receive)
+    # The trunk key was checked whole when the call came in (faxbot-inbound-receive), never caller-chosen.
+    assert "trunk=${FAXBOT_TRUNK})" in command
+    assert any('Set(FAXBOT_TRUNK=${IF($[${REGEX("^[a-z0-9][a-z0-9_-]*$" ${FAXBOT_TRUNK})}]' in line
+               for line in receive)
     for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
-                "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}"):
+                "${FAXBOT_CALLID64}", "${FAXBITRATE}", "${FAXRESOLUTION}", "${FAXBOT_FAR_SUB}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw
     assert done[-1].endswith("Return()")
 
@@ -942,7 +983,7 @@ async def test_status_query_keeps_allowlisted_fields_and_drops_auth_details(monk
     """PJSIPShowRegistrationsOutbound also emits AuthDetail with the SIP password; it must vanish."""
     async with connected_stream(monkeypatch) as (client, writer):
         task = asyncio.create_task(client.status_query({"Action": "PJSIPShowRegistrationsOutbound"}, collect=True))
-        raw = (await writer.requests.get()).decode()
+        raw = (await writer.request(task)).decode()
         action_id = next(line.split(": ", 1)[1] for line in raw.splitlines() if line.startswith("ActionID: "))
         assert action_id.startswith("faxbot-status:")
         frames = [
@@ -977,7 +1018,7 @@ async def test_status_query_never_connects_and_cleans_up_on_disconnect(monkeypat
     assert not client._queries and client._connection_task is None
     async with connected_stream(monkeypatch) as (client, writer):
         task = asyncio.create_task(client.status_query({"Action": "Getvar", "Variable": "X"}))
-        await writer.requests.get()
+        await writer.request(task)
         client.reader.feed_eof()
         with pytest.raises(ConnectionError):
             await asyncio.wait_for(task, CONDITION_TIMEOUT)

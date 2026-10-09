@@ -80,11 +80,14 @@ class RequestIdentity:
                    tuple(legacy_fingerprints))
 
 
-def intent_fingerprint(*, version, to, queue_only, document_sha256, by_call=False, urgent=False):
+def intent_fingerprint(*, version, to, queue_only, document_sha256, by_call=False, urgent=False, send_by=None,
+                       routing=None):
     """Version 1 binds ``to`` as entered; version 2 binds the canonical destination.
 
-    ``by_call`` (a real call even to one of the installation's own numbers) and ``urgent`` are
-    bound only when set, so requests made before they existed keep their fingerprints.
+    ``by_call`` (a real call even to one of the installation's own numbers), ``urgent``,
+    ``send_by`` (the send-by time, naive UTC) and ``routing`` (the send form's mailbox, workflow and
+    labels, which sending rules read) are bound only when set, so requests made before they
+    existed keep their fingerprints.
     """
     if (version not in (1, 2) or not isinstance(to, str) or type(queue_only) is not bool
             or type(by_call) is not bool or type(urgent) is not bool):
@@ -94,11 +97,17 @@ def intent_fingerprint(*, version, to, queue_only, document_sha256, by_call=Fals
         intent['by_call'] = True
     if urgent:
         intent['urgent'] = True
+    if send_by is not None:
+        intent['send_by'] = send_by.replace(microsecond=0).isoformat()
+    if routing:
+        intent['routing'] = {key: (sorted(value) if isinstance(value, (list, tuple)) else value)
+                             for key, value in sorted(routing.items()) if value}
     intent = json.dumps(intent, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(intent.encode()).hexdigest()
 
 
-def request_fingerprints(*, entered, destination, queue_only, document_sha256, by_call=False, urgent=False):
+def request_fingerprints(*, entered, destination, queue_only, document_sha256, by_call=False, urgent=False,
+                         send_by=None, routing=None):
     """Return ``(fingerprint, legacy_fingerprints)`` for one request.
 
     ``destination`` is the canonical number resolved for this request, or None
@@ -106,12 +115,12 @@ def request_fingerprints(*, entered, destination, queue_only, document_sha256, b
     """
     legacy = intent_fingerprint(version=1, to=entered, queue_only=queue_only,
                                 document_sha256=document_sha256, by_call=by_call,
-                                urgent=urgent)
+                                urgent=urgent, send_by=send_by, routing=routing)
     if destination is None:
         return legacy, ()
     return intent_fingerprint(version=2, to=destination, queue_only=queue_only,
                               document_sha256=document_sha256, by_call=by_call,
-                                urgent=urgent), (legacy,)
+                                urgent=urgent, send_by=send_by, routing=routing), (legacy,)
 
 
 async def digest_upload(upload, *, max_bytes):

@@ -19,6 +19,10 @@ from .routing.numbers import canonical_number
 _PRODUCTION_ORIGIN = 'https://api.documo.com'
 _SANDBOX_ORIGIN = 'https://api.sandbox.documo.com'
 _UUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+# A failed fax whose pages Documo reports as partly completed (``pagesComplete``); delivery history shows a reason only
+# from this set.
+PARTLY_SENT = 'Documo sent only some of the pages, so Faxbot did not send the fax again.'
+FAILURE_SENTENCES = frozenset({PARTLY_SENT})
 
 
 def _origin(base_url: str, sandbox: bool) -> str:
@@ -64,7 +68,20 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         status = {'processing': 'in_progress', 'success': 'success', 'failed': 'failed'}.get(wire_status)
         if status is None:
             raise ValueError
-    return {'provider_sid': provider_sid, 'status': status}
+    receipt = {'provider_sid': provider_sid, 'status': status}
+    if status == 'failed':
+        # Whether the call ended before any fax data, by Documo's result code (routing/predata.py).
+        from .routing.predata import documo as before_fax_data
+        receipt['before_fax_data'] = before_fax_data(payload.get('resultCode'))
+        # Documo's own count of pages completed and in the fax (routing/continuation.py), kept as evidence.
+        from .routing.continuation import documo_pages
+        sent, total = documo_pages(payload)
+        if sent is not None:
+            receipt['pages_sent'], receipt['pages_total'] = sent, total
+        if sent:
+            # Pages reached the fax machine before it failed: never sent again whole by itself; a person decides.
+            receipt['failure'], receipt['failure_category'] = PARTLY_SENT, 'partly_sent'
+    return receipt
 
 
 @dataclass(frozen=True, slots=True)

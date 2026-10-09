@@ -14,6 +14,21 @@ from .outbound_worker import PreparationFailure, SubmissionReceipt
 from .provider_execution import service_from_profile, ProviderExecutionError
 
 
+def _layout_rule(engine, job_id):
+    """``pages.capability.long_pages_allowed``'s rule from the fax's envelope: 'allow', 'never' or None."""
+    if engine is None:
+        return None
+    from .routing import envelope as envelopes
+    try:
+        pinned = envelopes.load(engine, job_id)
+    except envelopes.UnreadableDecision:
+        return 'never'  # the pages go as they are
+    except Exception:
+        return None
+    layout = pinned.envelope.page_layout if pinned is not None else None
+    return {'as_receiver_allows': 'allow', 'one_per_sheet': 'never'}.get(layout)
+
+
 def normalize_status(value):
     if not isinstance(value, str):
         raise ValueError('Unusable provider status.')
@@ -61,6 +76,8 @@ class PreparedSubmission:
     engine_choice: object = field(default=None, repr=False)
     call: object = field(default=None, repr=False)
     records: object = field(default=None, repr=False)
+    # The trunk account a SIP fax goes over (its key); None is the first trunk (sip_trunk.py).
+    trunk: str | None = None
 
     def _record_engine(self):
         """The engine record for this attempt; evidence only, never stops the fax."""
@@ -83,7 +100,13 @@ class PreparedSubmission:
                 attempt_id=self.claim.attempt_id)
             return _receipt(result)
         if pid == 'sinch':
-            return _receipt(await self.service.send_fax_file(to, self.pdf_path), sinch=True)
+            from .sinch_service import SinchRefused
+            try:
+                result = await self.service.send_fax_file(to, self.pdf_path)
+            except SinchRefused as refused:
+                # Sinch provably did not take the fax: a definite failure another route may send.
+                return SubmissionReceipt(None, 'failed', error=refused.sentence)
+            return _receipt(result, sinch=True)
         if pid == 'documo':
             return _receipt(await self.service.send_fax_file(to, self.pdf_path))
         if pid == 'humblefax':
@@ -104,7 +127,7 @@ class PreparedSubmission:
         if pid == 'sip':
             await asyncio.to_thread(self._record_engine)
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
-                attempt_id=self.claim.attempt_id, call=self.call)
+                attempt_id=self.claim.attempt_id, call=self.call, **({'trunk': self.trunk} if self.trunk else {}))
             return SubmissionReceipt(self.claim.job_id, 'in_progress')
         if pid == 'freeswitch':
             from .freeswitch_service import originate_txfax
@@ -124,6 +147,8 @@ class CapturedTransport:
         values = revision.values
         configuration = profile.configuration
         pid = configuration.provider_id
+        # A trunk account after the first names itself in its settings; its calls use its own endpoint.
+        trunk = configuration.settings.get('trunk') if pid == 'sip' else None
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None:
             raise PreparationFailure('artifact_unavailable')
         root = Path(values.fax_data_dir)
@@ -136,14 +161,24 @@ class CapturedTransport:
                 raise PreparationFailure('preparation_failed')
             # One call carries every fax in the claim: separator pages and each fax's own image.
             from .batching.transport import call_image
-            tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim))
-        from .routing.numbers import InvalidNumber, accepted_destination
+            from .pages.friendly import call_lightener
+            # Each fax's shaded areas lightened when this call's route and recipient say so (pages/friendly.py).
+            tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim, lighten=call_lightener(
+                getattr(getattr(self.store, 'configuration', None), 'engine', None), values, pid,
+                job.get('to_number'), root, claim)))
+        from .routing.numbers import InvalidNumber, accepted_destination, is_canonical
         try:
             # Every adapter below receives this canonical number and only formats it.
-            job = {**job, 'to_number': accepted_destination(job['to_number'],
-                                                            country=values.fax_default_country)}
+            recipient = accepted_destination(job['to_number'], country=values.fax_default_country)
         except InvalidNumber:
             raise PreparationFailure('preparation_failed') from None
+        # The fax keeps its recipient; the call goes to the number recorded for this attempt (an approved
+        # alternate, ``routing.alternates``), or to the recipient's own number.
+        dialed = job.get('dialed_number') or await run_lifecycle_step(
+            lambda: self._choose_dialed(claim, job, recipient, values, pid))
+        if not is_canonical(dialed):
+            raise PreparationFailure('preparation_failed')
+        job = {**job, 'to_number': dialed, 'recipient_number': recipient}
         service = None
         manifest = configuration.manifest
         if manifest is not None or pid not in {'sip', 'freeswitch'}:
@@ -171,7 +206,7 @@ class CapturedTransport:
                 if pid == 'sip':
                     from .ami import originate_fields_for
                     originate_fields_for(values, claim.job_id, job['to_number'], str(tiff) if tiff else None,
-                        attempt_id=claim.attempt_id)
+                        attempt_id=claim.attempt_id, trunk=trunk)
                 else:
                     from .freeswitch_service import build_originate_command
                     build_originate_command(job['to_number'], str(tiff) if tiff else None, claim.job_id,
@@ -213,47 +248,103 @@ class CapturedTransport:
                         and parsed.hostname not in {'localhost', '127.0.0.1', '::1'})):
                 raise PreparationFailure('provider_unavailable')
             token = secrets.token_urlsafe(32)
-            media_url = base + '/fax/' + claim.job_id + '/pdf?token=' + token
+            # The attempt names the pages this attempt chose (pages/sending.fetched_pdf); the token alone opens them.
+            media_url = base + '/fax/' + claim.job_id + '/pdf?token=' + token + '&attempt=' + claim.attempt_id
             try:
                 await run_lifecycle_step(lambda: self.store.grant_pdf(claim, url=media_url, token=token,
                     expires_at=datetime.utcnow() + timedelta(minutes=values.pdf_token_ttl_minutes)))
             except ValueError:
                 raise PreparationFailure('provider_unavailable') from None
+        # One layout for this attempt (pages/sending.py): the pages as they are, dense pages (several original
+        # pages on one long page when the receiving machine and the route allow it), or the experimental encoded
+        # pages for a recipient who agreed, whichever costs least; then blank page bottoms left out, standard
+        # resolution kept and shading lightened where that applies. The fax's own files never change; a provider
+        # that fetches the document gets this attempt's pages at the link above; this never stops a send.
+        from .pages import sending as page_sending
+        store_configuration = getattr(self.store, 'configuration', None)
+        store_engine = getattr(store_configuration, 'engine', None)
+        # The page layout the fax's sending rules chose (routing/envelope.py): "as the receiver allows" turns long
+        # pages on, "one per sheet" keeps every page on its own sheet; with no rule, Faxbot's own default applies.
+        layout_rule = await run_lifecycle_step(lambda: _layout_rule(store_engine, claim.job_id))
+        from .codec.store import KeySeal
+        seal = KeySeal(store_configuration) if store_configuration is not None else None
+        changed = await run_lifecycle_step(lambda: page_sending.prepare(
+            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule, seal=seal))
+        if changed is not None:
+            pdf = Path(changed.pdf) if changed.pdf else pdf
+            tiff = Path(changed.tiff) if changed.tiff else tiff
         engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
-            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff)
+            # The coding measured smallest for this attempt's pages goes with the call (pages/coding.py).
+            engine_job, choice, call, records = await self._prepare_engine(
+                values, claim, job, tiff, trunk=trunk, coding=getattr(changed, 'coding', None))
         try:
             with self.runtime.frame(revision):
                 yield PreparedSubmission(claim, profile, job, str(pdf), str(tiff) if tiff else None,
-                                         service, media_url, self.ami, engine_job, choice, call, records)
+                                         service, media_url, self.ami, engine_job, choice, call, records, trunk)
         finally:
             if engine_job is not None:
                 await self._finish_engine(engine_job)
 
-    async def _prepare_engine(self, values, claim, job, tiff):
+    def _choose_dialed(self, claim, job, recipient, values, pid):
+        """The number this attempt calls when no route choice recorded one, recorded before the submission marker."""
+        if 'dial' not in job:
+            return recipient  # a store without dialed numbers: the fax calls its recipient
+        from .routing.alternates import attempt_number, claim_dial_state
+        from .routing.dialing import reaches
+        dial = claim_dial_state(self.store, claim, job['dial'])
+        alternate = dial['alternate']
+        number, _ = attempt_number(recipient, alternate=alternate, refused=dial['refused'],
+                                   route_reaches=bool(alternate) and reaches(pid, alternate, values))
+        self.store.record_dialed(claim, number, dial['approvals'] if number != recipient else None)
+        return number
+
+    async def _prepare_engine(self, values, claim, job, tiff, trunk=None, *, coding=None):
         """(engine job or None, engine choice, call settings, engine records) for this trunk fax.
 
         Runs before the durable marker: the call plan and the engine job exist,
         nothing is dialed. When the engine cannot take the job the built-in
-        engine places the call; the attempt's engine record says why.
+        engine places the call; the attempt's engine record says why. ``coding``
+        (``pages.coding.CodingChoice``) is the coding measured smallest for the
+        pages, asked of each engine as the most compact one the call may use
+        (``hylafax_engine.with_coding``); the built-in engine has no JBIG.
         """
         from . import hylafax_engine, hylafax_records
+        from .ami import trunk_values
+        full_values = values
+        try:
+            values, _ = trunk_values(values, trunk)  # this trunk's own T.38 and number settings
+        except ValueError:
+            raise PreparationFailure('preparation_failed') from None
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
         records = hylafax_records.records_for(engine) if engine is not None else None
         recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
         choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami)
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
-            call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
+            call = hylafax_engine.with_coding(
+                hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True),
+                coding.request('hylafax') if coding is not None else None)
+            # Lossless tuning for this call: your setting, your choice for the number and what Faxbot learned.
+            from dataclasses import replace
+            from .pages import tuning
+            chosen = await asyncio.to_thread(tuning.for_call, values, engine, job['to_number'])
+            call = replace(call, tuning=chosen.comment())
+            # The T.33 subaddress the fax asks for, as on the built-in engine (ami.fax_subaddress): a notice fax's
+            # notice ID first (direct/notice.py), then one its sending rules chose.
+            from .ami import fax_subaddress
+            subaddress = await asyncio.to_thread(fax_subaddress, claim.job_id)
             try:
-                engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
-                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
+                engine_job = await hylafax_engine.prepare_job(full_values, self.ami, job_id=claim.job_id,
+                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call,
+                    subaddress=subaddress, trunk=trunk)
                 return engine_job, choice, call, records
             except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError):
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
-        call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient)
+        call = hylafax_engine.with_coding(hylafax_engine.call_settings(values, job['to_number'], recipient=recipient),
+                                          coding.request('builtin') if coding is not None else None)
         logging.getLogger(__name__).info('Fax %s: %s', claim.job_id, choice.reason)
         return None, choice, call, records
 

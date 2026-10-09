@@ -278,11 +278,26 @@ class ConsoleNavigationResponse(AuthOutput):
     work: bool = False
 
 
+class ConsoleSendMailbox(AuthOutput):
+    id: str
+    label: str
+
+
+class ConsoleSendWorkflow(AuthOutput):
+    key: str
+    name: str
+
+
 class ConsoleSendResponse(AuthOutput):
     fax_disabled: bool
     max_file_size_mb: int
     default_country: str
     number_example: str
+    # What sending rules can match on Send a fax: mailboxes this person may send from, and the organization's
+    # workflows and labels; each offered only when there are some.
+    mailboxes: list[ConsoleSendMailbox] = []
+    workflows: list[ConsoleSendWorkflow] = []
+    labels: list[str] = []
 
 
 class ConsoleBrandingResponse(AuthOutput):
