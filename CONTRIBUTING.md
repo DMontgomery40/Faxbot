@@ -72,6 +72,8 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 
 Before running the full backend suite or `tests/test_console_cli_parity.py`, run `npm ci --prefix api/admin_ui` once. The parity check uses the installed TypeScript compiler to resolve the console's actual request methods and paths. It needs Node 24 and the console dependencies even when you are testing only the backend. The API CI job installs them before its tests.
 
+CI divides the complete backend collection into eight isolated jobs. Each test file stays together, every collected case belongs to exactly one job, and the `test-api` check passes only when all eight pass. Each job has its own PostgreSQL service and installation files. The local full-suite command remains sequential. To reproduce a CI group from `api/`, use the same test environment with `python -m pytest -q -p ci_shard --faxbot-test-shard 1/8` (replace `1` with the group number).
+
 `make test-local` sets the CI environment:
 
 - `FAX_DISABLED=true` (no faxes are sent)

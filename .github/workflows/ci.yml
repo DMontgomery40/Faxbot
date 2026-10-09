@@ -15,8 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-api:
+  test-api-shard:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     services:
       postgres:
         image: postgres:16
@@ -66,7 +70,24 @@ jobs:
         working-directory: api
         run: |
           mkdir -p faxdata
-          pytest -q
+          python -m pytest -q -p ci_shard --faxbot-test-shard ${{ matrix.shard }}/8 --junitxml=backend-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-results-${{ matrix.shard }}
+          path: api/backend-results.xml
+          if-no-files-found: ignore
+
+  # Preserve one required check: every isolated group must finish successfully.
+  test-api:
+    needs: test-api-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every backend shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.test-api-shard.result }}
+        run: test "$SHARD_RESULT" = success
 
   build-admin-ui:
     runs-on: ubuntu-latest
