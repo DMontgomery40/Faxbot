@@ -449,6 +449,29 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
     return {'status': 'ok', 'summary': (row or {}).get('summary')}
 
 
+@router.post('/_internal/hylafax/polled')
+async def engine_polled(request: Request, payload: dict = Body(...),
+                        x_internal_secret: Optional[str] = Header(default=None)):
+    """Another machine collected, or tried to collect, a fax Faxbot holds for it (hylafax/bin/polled): one
+    collection row on the held fax, once per report."""
+    import sqlalchemy as sa
+    from .routing import polling
+    _require_engine(x_internal_secret)
+    engine_id = payload.get('engine_id') if isinstance(payload.get('engine_id'), str) else ''
+    key = payload.get('key') if isinstance(payload.get('key'), str) else ''
+    if not re.fullmatch(r'[a-f0-9]{16}', engine_id) or not re.fullmatch(r'[0-9]{1,12}-[0-9]{1,12}', key):
+        raise HTTPException(400, detail='Unknown fax engine call')
+    engine = _engine_for(request)
+    try:
+        recorded = await run_lifecycle_step(lambda: polling.record_polled(engine, payload))
+    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+        raise HTTPException(503, detail='Fax engine results cannot be saved now; try again.') from None
+    if recorded is None:
+        raise HTTPException(404, detail='Unknown held fax')
+    outcome, sentence = recorded
+    return {'status': 'ok', 'outcome': outcome, 'sentence': sentence}
+
+
 # Engine restarts: a fax the engine took before it started again has no result coming.
 RESTART_WINDOW = timedelta(days=7)
 

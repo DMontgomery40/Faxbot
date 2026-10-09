@@ -73,6 +73,7 @@ config.attributes["schema_routing_learning"] = importlib.import_module(package +
 config.attributes["schema_expected_faxes"] = importlib.import_module(package + ".schema_expected_faxes")
 config.attributes["schema_fact_advice"] = importlib.import_module(package + ".schema_fact_advice")
 config.attributes["schema_encoder_tuning"] = importlib.import_module(package + ".schema_encoder_tuning")
+config.attributes["schema_polled_transmit"] = importlib.import_module(package + ".schema_polled_transmit")
 
 
 def migrate(connection):

@@ -138,6 +138,13 @@ export interface RecipientPolling {
   enabled: boolean;
   label: string | null;
   selective: string | null;
+  // Whether a polling password is set; the password itself is never shown.
+  has_password: boolean;
+  collect_times: string | null;
+  collect_days: string | null;
+  time_zone: string | null;
+  // One sentence for the timetable, or null when Faxbot collects only when asked.
+  timetable: string | null;
   advice: string | null;
   note: string;
   requests: { id: string; requested_at: string; requested: string; requested_by: string | null; state: string;
@@ -148,6 +155,30 @@ export interface RecipientPollingSave {
   enabled: boolean;
   label: string | null;
   selective: string | null;
+  // null keeps the password set, '' clears it, digits set a new one. The timetable fields work the same way.
+  password?: string | null;
+  collect_times?: string | null;
+  collect_days?: string | null;
+  time_zone?: string | null;
+}
+
+// Faxes this number collects from Faxbot (polled transmission): the setting and the faxes held for it.
+export interface RecipientHold {
+  number: string;
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  has_password: boolean;
+  note: string;
+  held: { id: string; held_at: string; held: string; held_by: string | null; pages: number; name: string | null;
+    selective: string | null; has_password: boolean; state: string; sentence: string; gone: boolean }[];
+}
+
+export interface RecipientHoldSave {
+  enabled: boolean;
+  label: string | null;
+  selective: string | null;
+  password?: string | null;
 }
 
 export interface RecipientScheduleSave {

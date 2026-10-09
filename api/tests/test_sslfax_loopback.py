@@ -114,9 +114,9 @@ class Docker:
     def put(self, container, path, text):
         """Write a file as root (mode 0600), as Faxbot writes its settings. A plain "docker cp" keeps this
         computer's user ID, which root in a container without a file override (docker-compose.yml) cannot
-        read; a tar stream names root."""
+        read; a tar stream names root. ``text`` may be bytes (a fax image)."""
         import tarfile
-        data = text.encode()
+        data = text if isinstance(text, bytes) else text.encode()
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode='w') as tar:
             entry = tarfile.TarInfo(os.path.basename(path))
@@ -1518,6 +1518,184 @@ def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(t
     assert second['coding'][0]['reason'].startswith('JBIG: '), proofs
     assert second['negotiated'] and second['negotiated'][0]['compression'] == 'JBIG', proofs
     assert second['sent_detail']['requested'] == 'JBIG' and second['sent_detail']['negotiated'] == 'JBIG', proofs
+
+
+# The polling password the proof uses: distinctive, so a coincidental digit string in a log cannot fail its check.
+PASSWORD = '1357924'
+
+
+def held_pages(count):
+    """A document to hold for collection: ``count`` pages of large distinct shapes as a Group 4 fax TIFF (bytes),
+    and the same pages as bitmaps."""
+    from PIL import Image, ImageDraw
+    frames = []
+    for number in range(1, count + 1):
+        page = Image.new('1', (1728, 2200), 1)
+        draw = ImageDraw.Draw(page)
+        draw.rectangle((200, 300, 200 + number * 300, 700), fill=0)
+        draw.ellipse((900, 900, 1500, 1500 + number * 100), fill=0)
+        for row in range(number):
+            draw.rectangle((100, 1700 + row * 80, 1600, 1730 + row * 80), fill=0)
+        frames.append(page)
+    # One strip per page, as faxq prepares documents and as HylaFAX's sender reads them (its first strip only).
+    from app.conversion import _fax_tiff_bytes
+    return _fax_tiff_bytes(frames), frames
+
+
+def hold_on_peer(context, hold_id, count, *, selective='', password=''):
+    """Hold a document on the peer for Faxbot's number to collect, exactly as Faxbot's own engine holds one
+    (hylafax/patches/0002-polled-transmit.patch, hylafax_engine.hold_document): a TIFF in pollq with its
+    sidecar, owned so faxgetty (uucp) can read them. Returns the pages held."""
+    docker, peer = context['docker'], context['peer']
+    image, frames = held_pages(count)
+    sidecar = hylafax_engine.held_sidecar(number=FAXBOT_NUMBER, selective=selective, password=password, job=hold_id,
+                                         tsi=PEER_NUMBER, tagline='Held for collection|%c|Page %%P of %%T')
+    folder = '/var/spool/hylafax/pollq'
+    docker.put(peer, f'{folder}/faxhold-{hold_id}.tif', image)
+    docker.put(peer, f'{folder}/faxhold-{hold_id}.poll', sidecar)
+    docker.sh(peer, f'chown uucp:uucp {folder}/faxhold-{hold_id}.* && chmod 640 {folder}/faxhold-{hold_id}.*',
+              check=True)
+    return frames
+
+
+def collect_once(context, *, selective=None, password=None):
+    """Turn collecting on for the peer's number with these settings and collect once; (request id, result row)."""
+    docker, key = context['docker'], context['key']
+    route = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/polling'
+    body = {'enabled': True, 'label': 'Peer site', 'selective': selective}
+    if password is not None:
+        body['password'] = password
+    saved = api(docker, 'PUT', route, key=key, body=body)
+    assert saved['status'] == 200, saved
+    asked = api(docker, 'POST', route + '/collect', key=key)
+    assert asked['status'] == 202, asked
+    request_id = asked['json']['id']
+
+    def finished():
+        found = database(context, result=f"SELECT outcome, sentence, pages, inbound_fax_id FROM poll_results "
+                                          f"WHERE request_id = '{request_id}'")['result']
+        return found[0] if found else None
+    return request_id, wait_for(finished, 300, 'the collection result')
+
+
+def polled_evidence(context):
+    """What the peer's side shows: its POLLED FAX log lines, the reports its polled script kept (Faxbot is
+    unreachable from the peer, so they stay in its volume), and what is still held."""
+    docker, peer = context['docker'], context['peer']
+    log = session_logs(docker, peer)
+    reports = docker.sh(peer, 'cat /var/lib/faxbot-engine/results/*polled.report 2>/dev/null').stdout
+    held = docker.sh(peer, 'ls /var/spool/hylafax/pollq 2>/dev/null').stdout.split()
+    return {
+        'peer_polled_lines': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                              if re.search(r'POLLED FAX|REMOTE (DTC|SEP|CIG|PWD)|DIS offers|TRAINING|USE ', line)][:40],
+        'peer_reports': [json.loads(line) for line in reports.splitlines() if line.strip().startswith('{')],
+        'still_held': held,
+    }
+
+
+def received_in_faxbot(context, inbound_fax_id, workdir):
+    """The pages of a fax in Faxbot's Received, from the image the engine's hand-over put in its out folder."""
+    from PIL import Image, ImageSequence
+    docker = context['docker']
+    rows = database(context, fax=f"SELECT id, from_number, to_number, pages, tiff_path FROM inbound_faxes "
+                                 f"WHERE id = '{inbound_fax_id}'")['fax']
+    assert rows, inbound_fax_id
+    path = rows[0]['tiff_path']
+    local = workdir / f'received-{inbound_fax_id}.tif'
+    local.write_bytes(docker.read_bytes(context['api'], path))
+    return rows[0], [frame.convert('1').copy() for frame in ImageSequence.Iterator(Image.open(local))]
+
+
+def test_s_a_held_fax_is_collected_by_polling_and_an_unknown_selective_address_is_refused(tmp_path, loopback):
+    """Polled transmission (hylafax/patches/0002-polled-transmit.patch, the other half of M21). The peer runs
+    the same patched engine image and holds two documents for Faxbot's number: one plain, one behind the
+    selective polling address 77. Faxbot collects (poll-receive): the peer's DIS offers a document (bit 9),
+    Faxbot's engine answers DTC, the peer turns the line around and sends the plain document, which lands in
+    Faxbot's Received with identical pixels below the header line and is no longer held. A collection with a
+    selective polling address the peer holds nothing for (42) is refused with DCN right after the DTC, recorded
+    as refused, and leaves the protected document held. Case r (a peer that holds nothing) stays as it is."""
+    context = loopback('s', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    plain = hold_on_peer(context, 'a' * 32, 2)
+    hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
+    proof = {}
+    try:
+        request, result = collect_once(context)
+        proof['collected'] = result
+        assert result['outcome'] == 'received', (result, polled_evidence(context))
+        fax, pages = received_in_faxbot(context, result['inbound_fax_id'], tmp_path)
+        proof['received_fax'] = {key: fax[key] for key in ('from_number', 'to_number', 'pages')}
+        proof['header_offsets'] = [page_match(a, b) for a, b in zip(plain, pages)]
+        proof['page_sizes'] = [list(page.size) for page in pages]
+        time.sleep(3)
+        proof['after_first'] = polled_evidence(context)
+        refused_request, refused = collect_once(context, selective='42')
+        proof['refused'] = refused
+        time.sleep(3)
+        proof['after_second'] = polled_evidence(context)
+        proof['faxbot_poll_lines'] = [line.split(']: ', 1)[-1] for line in session_logs(context['docker'], context['engine']).splitlines()
+                                      if re.search(r'POLL|DTC|SEP|REMOTE best|got DCN|E103', line)][:30]
+    finally:
+        print('\nSSLFAX_PROOF_S ' + json.dumps(proof, indent=2, default=str))
+    assert fax['from_number'] == PEER_NUMBER and fax['pages'] == 2 and len(pages) == 2, proof
+    assert all(offset is not None for offset in proof['header_offsets']), proof
+    first = proof['after_first']
+    assert any('REMOTE DTC' in line for line in first['peer_polled_lines']), proof
+    assert any(line.startswith('POLLED FAX: pollq/faxhold-' + 'a' * 32) and 'sent to' in line
+               for line in first['peer_polled_lines']), proof
+    assert [report['outcome'] for report in first['peer_reports']] == ['sent'], proof
+    assert first['peer_reports'][0]['job'] == 'a' * 32 and first['peer_reports'][0]['pages'] == 2, proof
+    assert sorted(first['still_held']) == ['faxhold-' + 'b' * 32 + '.poll', 'faxhold-' + 'b' * 32 + '.tif'], proof
+    assert refused['outcome'] == 'refused', proof
+    second = proof['after_second']
+    assert any('no document is held for that selective polling address' in line for line in second['peer_polled_lines']), proof
+    assert [report['outcome'] for report in second['peer_reports']] == ['sent', 'refused'], proof
+    assert sorted(second['still_held']) == sorted(first['still_held']), proof
+
+
+def test_s2_a_held_fax_behind_a_password_goes_only_to_the_caller_that_gives_it(tmp_path, loopback):
+    """Polled transmission with a polling password: the peer holds one document behind the selective polling
+    address 77 and the password 2468. Faxbot asks with the wrong password and is refused with DCN right after
+    its DTC (the document stays held); with the right password, sent with the call from its sealed setting, the
+    document is collected and lands in Received with identical pixels below the header line."""
+    context = loopback('s2', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    protected = hold_on_peer(context, 'b' * 32, 1, selective='77', password=PASSWORD)
+    proof = {}
+    try:
+        wrong_request, wrong = collect_once(context, selective='77', password='0000000')
+        proof['wrong_password'] = wrong
+        time.sleep(3)
+        proof['after_wrong'] = polled_evidence(context)
+        right_request, right = collect_once(context, selective='77', password=PASSWORD)
+        proof['right_password'] = right
+        if right['outcome'] == 'received':
+            fax, pages = received_in_faxbot(context, right['inbound_fax_id'], tmp_path)
+            proof['received_fax'] = {key: fax[key] for key in ('from_number', 'to_number', 'pages')}
+            proof['header_offsets'] = [page_match(a, b) for a, b in zip(protected, pages)]
+            proof['page_sizes'] = [list(page.size) for page in pages]
+        time.sleep(3)
+        proof['after_right'] = polled_evidence(context)
+        proof['faxbot_poll_lines'] = [line.split(']: ', 1)[-1] for line in session_logs(context['docker'], context['engine']).splitlines()
+                                      if re.search(r'POLL|DTC|SEP|got DCN|E103', line)][:30]
+    finally:
+        print('\nSSLFAX_PROOF_S2 ' + json.dumps(proof, indent=2, default=str))
+    assert wrong['outcome'] == 'refused', proof
+    first = proof['after_wrong']
+    assert any('the polling password (PWD) does not match' in line for line in first['peer_polled_lines']), proof
+    assert [report['outcome'] for report in first['peer_reports']] == ['refused'], proof
+    assert sorted(first['still_held']) == ['faxhold-' + 'b' * 32 + '.poll', 'faxhold-' + 'b' * 32 + '.tif'], proof
+    assert right['outcome'] == 'received' and proof['received_fax']['pages'] == 1, proof
+    assert proof['header_offsets'] == [proof['header_offsets'][0]] and proof['header_offsets'][0] is not None, proof
+    second = proof['after_right']
+    assert [report['outcome'] for report in second['peer_reports']] == ['refused', 'sent'], proof
+    assert second['peer_reports'][1]['job'] == 'b' * 32 and second['still_held'] == [], proof
+    # The password itself is in no log the run writes: both engines' session logs (stock HylaFAX+ printed it in the
+    # poller's; patch 0002 hides it) and every container's own log.
+    docker = context['docker']
+    for name in ('peer', 'engine'):
+        assert PASSWORD not in session_logs(docker, context[name]), name
+    for name in ('api', 'asterisk', 'engine', 'carrier', 'peer'):
+        logs = docker.run('logs', context[name], check=False)
+        assert PASSWORD not in logs.stdout + logs.stderr, name
 
 
 def test_r_a_collection_from_a_fax_server_that_holds_nothing_calls_once_and_says_so(tmp_path, loopback):

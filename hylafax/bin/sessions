@@ -36,6 +36,8 @@ mark() { printf '%s\n' "$1" >> "$seen"; }
 scan() {
   log=$1 commid=$2
   grep -qx "$commid" "$seen" && return 0
+  # A call on which the other machine collected a held fax (polled transmission): bin/polled reports it.
+  if grep -q 'POLLED FAX: begin' "$log"; then mark "$commid"; return 0; fi
   reason=''
   if ! grep -q 'SESSION END' "$log"; then
     # Still in progress, unless it began before this engine's start: then that start cut it off.

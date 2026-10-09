@@ -1,0 +1,81 @@
+#!/bin/sh
+# A caller polled this engine for a fax Faxbot holds for it (polled transmission, hylafax/patches/0002).
+# faxgetty runs this (as uucp, in the spool folder) through PolledCmd with:
+#   document device commid reason pages caller cig sep job [caller number] [Asterisk's call name] [called]
+# The document is the held TIFF in pollq (empty when none was chosen), the reason is empty when it was sent
+# and says why otherwise, and the job is Faxbot's reference from the document's sidecar. The report is kept
+# in the engine's volume first and then sent (bin/deliver) until Faxbot answers. A document that was sent
+# is removed with its sidecar: a fax is collected once. A document that was not sent stays held. Nothing
+# here talks to the network.
+set -u
+
+document=$(printf '%s' "${1:-}" | tr -cd 'A-Za-z0-9/._-')
+commid=$(printf '%s' "${3:-}" | tr -cd '0-9')
+reason=$(printf '%s' "${4:-}" | tr -cd 'A-Za-z0-9 .,:(){}_-' | cut -c1-200)
+pages=$(printf '%s' "${5:-}" | tr -cd '0-9')
+caller=$(printf '%s' "${6:-}" | tr -cd '0-9+' | cut -c1-20)
+cig=$(printf '%s' "${7:-}" | tr -cd '0-9+ ' | cut -c1-20)
+sep=$(printf '%s' "${8:-}" | tr -cd '0-9*#' | cut -c1-20)
+job=$(printf '%s' "${9:-}" | tr -cd 'a-f0-9' | cut -c1-32)
+# Asterisk names the call <token>.<called digits>[.<trunk>] in the caller name (bin/received).
+name=$(printf '%s' "${11:-}" | tr -cd '0-9a-z._-' | cut -c1-90)
+token=$(printf '%s' "${name%%.*}" | tr -cd '0-9' | cut -c1-40)
+called='' trunk=''
+case $name in *.*) called=${name#*.} ;; esac
+case $called in *.*) trunk=${called#*.}; called=${called%%.*} ;; esac
+called=$(printf '%s' "$called" | tr -cd '0-9' | cut -c1-20)
+trunk=$(printf '%s' "$trunk" | tr -cd 'a-z0-9_-' | cut -c1-32)
+[ -n "$called" ] || called=$(printf '%s' "${12:-}" | tr -cd '0-9+' | cut -c1-20)
+
+config=etc/faxbot.conf
+engine=$(sed -n 's/^engine=//p' "$config" 2>/dev/null | head -1 | tr -cd 'a-f0-9')
+outbox=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}/results
+[ -n "$engine" ] && [ -d "$outbox" ] && [ ! -L "$outbox" ] || { printf 'faxbot-polled: no report folder\n' >&2; exit 1; }
+
+case $document in
+  ''|pollq/fax*.tif) ;;
+  *) printf 'faxbot-polled: unexpected document %s\n' "$document" >&2; exit 1 ;;
+esac
+
+if [ -z "$reason" ] && [ -n "$document" ] && [ "${pages:-0}" -gt 0 ]; then
+  outcome=sent
+elif [ -z "$reason" ] && [ -n "$document" ]; then
+  outcome=failed
+  reason='no page was confirmed'
+else
+  case $reason in 'Polling refused'*) outcome=refused ;; *) outcome=failed ;; esac
+fi
+
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+
+# What the call negotiated and how long the pages took, from the session log (bin/negotiation; base64 JSON).
+log=''
+[ -n "$commid" ] && [ -f "log/c$commid" ] && log="log/c$commid"
+negotiation=''
+seconds=''
+sslfax=false
+if [ -n "$log" ]; then
+  negotiation=$(sh "$(dirname "$0")/negotiation" "$log" | tr -cd 'A-Za-z0-9+/=')
+  seconds=$(grep -E 'POLLED FAX: .* sent to .*, [0-9]+ pages in [0-9:]+' "$log" | tail -1 \
+    | sed -E 's/.* pages in ([0-9:]+).*/\1/' | awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }')
+  grep -q -E 'SSL Fax connection (was successful|detected)' "$log" && sslfax=true
+fi
+
+now=$(date +%s)
+body=$(printf '{"engine_id":"%s","commid":"%s","key":"%s","job":%s,"document":%s,"outcome":"%s","reason_b64":"%s","pages":%s,"caller":%s,"cig":%s,"sep":%s,"called":%s,"token":%s,"trunk":%s,"seconds":%s,"sslfax":%s,"negotiation_b64":"%s"}' \
+  "$engine" "$commid" "$commid-$now" "$(text "$job")" "$(text "$document")" "$outcome" "$(b64 "$reason")" \
+  "$(number "${pages:-0}")" "$(text "$caller")" "$(text "$cig")" "$(text "$sep")" "$(text "$called")" \
+  "$(text "$token")" "$(text "$trunk")" "$(number "$seconds")" "$sslfax" "$negotiation")
+
+temporary=$(mktemp "$outbox/.polled.XXXXXX") || { printf 'faxbot-polled: report not kept\n' >&2; exit 1; }
+printf '%s\n' "$body" > "$temporary" || { rm -f "$temporary"; exit 1; }
+mv -f "$temporary" "$outbox/$now-c$commid-polled.report" || { rm -f "$temporary"; exit 1; }
+
+# Collected once: the document and its sidecar go; a failed or refused collection keeps them held.
+if [ "$outcome" = sent ]; then
+  rm -f "$document" "${document%.tif}.poll"
+fi
+FAXBOT_HYLAFAX_SPOOL=$(pwd) sh "$(dirname "$0")/deliver" || true
+exit 0
