@@ -8,6 +8,7 @@ import {
 import AdminAPIClient from '../../api/client';
 import type { BatchingNumber, Boundaries, FaxTogether, FaxTogetherSummary } from '../../api/batchingTypes';
 import { DeliveryError } from './shared';
+import LoadFailed, { saysFailure } from '../common/LoadFailed';
 import { formatServerTime } from '../../api/time';
 
 // "10:40 PM" today, or "Oct 4, 10:40 PM" on another day, in the viewer's time zone.
@@ -44,13 +45,17 @@ export function FaxTogetherItem({ client, jobId, together, onChanged }: {
   const [detail, setDetail] = useState<FaxTogether | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // The shared call's details could not be read (said in one sentence; quiet without permission).
+  const [unread, setUnread] = useState(false);
 
   useEffect(() => {
     let live = true;
     setDetail(null);
     setError(null);
+    setUnread(false);
     if (!together) return undefined;
-    client.getFaxTogether(jobId).then((value) => { if (live) setDetail(value); }).catch(() => undefined);
+    client.getFaxTogether(jobId).then((value) => { if (live) setDetail(value); })
+      .catch((failure) => { if (live && saysFailure(failure)) setUnread(true); });
     return () => { live = false; };
   }, [client, jobId, together]);
 
@@ -85,6 +90,8 @@ export function FaxTogetherItem({ client, jobId, together, onChanged }: {
                 </span>
               )}
               {detail?.share && <span>{detail.share.sentence}</span>}
+              {unread && <LoadFailed testId="together-unread"
+                text="The details of sending together could not be loaded. Try again." />}
             </Stack>
           }
         />

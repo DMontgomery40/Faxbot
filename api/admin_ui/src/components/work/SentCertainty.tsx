@@ -2,7 +2,7 @@
 // Nothing here sends anything by itself: the receipt query and "send it again" go only when the person selects them.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, Checkbox, Chip, Divider, FormControl, FormControlLabel, InputLabel, List, ListItem, ListItemText,
+  Alert, Box, Button, Checkbox, Chip, Divider, FormControl, FormControlLabel, InputLabel, Link, List, ListItem, ListItemText,
   MenuItem, Radio, RadioGroup, Select, Stack, TextField, Typography,
 } from '@mui/material';
 import type AdminAPIClient from '../../api/client';
@@ -64,6 +64,9 @@ function CheckRow({ check, index, item, busy, onDraft, onSendQuery }: {
       </Stack>
       <Typography variant="body2" sx={{ mt: 0.5 }}>{check.text}</Typography>
       {check.meaning && <Typography variant="body2" color="text.secondary">{check.meaning}</Typography>}
+      {check.kind === 'npi_lookup' && check.source_url && (
+        <Link variant="body2" href={check.source_url} target="_blank" rel="noopener noreferrer">The NPI registry</Link>
+      )}
       {open && check.kind === 'phone_call' && check.script && (
         <Box component="ol" sx={{ pl: 3, my: 1 }}>
           {check.script.map((line) => <li key={line}><Typography variant="body2">{line}</Typography></li>)}

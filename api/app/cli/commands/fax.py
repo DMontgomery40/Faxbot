@@ -172,7 +172,24 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
          recipient: str = typer.Option(None, '--recipient', metavar='NAME',
                                        help='The provider or person the fax is for. Before a first fax to a number, '
                                             'Faxbot warns when the NPI registry lists that number for someone else; '
-                                            'it still sends.')):
+                                            'it still sends.'),
+         patient_record_number: str = typer.Option(
+             None, '--patient-record-number', metavar='NUMBER',
+             help="Only for a recipient that takes documents into its health records (FHIR): the patient's medical "
+                  "record number there. Faxbot keeps it with the fax's document and never prints it."),
+         patient_record_system: str = typer.Option(
+             None, '--patient-record-system', metavar='SYSTEM',
+             help="The system that medical record number belongs to, such as urn:oid:2.16.840.1.113883.19.5. Leave "
+                  "it out to use the FHIR client's own."),
+         patient_family_name: str = typer.Option(None, '--patient-family-name', metavar='NAME',
+                                                 help="The patient's family name, for a recipient that confirms the "
+                                                      'patient.'),
+         patient_given_name: str = typer.Option(None, '--patient-given-name', metavar='NAME',
+                                                help="The patient's given name, for a recipient that confirms the "
+                                                     'patient.'),
+         patient_birth_date: str = typer.Option(None, '--patient-birth-date', metavar='DAY',
+                                                help="The patient's birth date, such as 1980-04-30, for a recipient "
+                                                     'that confirms the patient.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     warning = _first_send_warning(api, to, recipient)
@@ -193,6 +210,13 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['labels'] = list(label)
     if by:
         data['send_by'] = by
+    # The patient goes only into the request; no output repeats it.
+    for name, value in (('patient_record_number', patient_record_number),
+                        ('patient_record_system', patient_record_system),
+                        ('patient_family_name', patient_family_name), ('patient_given_name', patient_given_name),
+                        ('patient_birth_date', patient_birth_date)):
+        if value:
+            data[name] = value
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])

@@ -544,7 +544,10 @@ def _handle_fax_result(event):
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
     try:
         # A call that carried several faxes gives each its own outcome from the confirmed pages.
-        if batching_results.apply_fax_result(_deliveries(), event, failure_sentence=sip_calls.result_summary(event)):
+        # A person or a voice line answered: the fax fails and takes no other route (sip_calls.PERSON_ANSWERED).
+        answered_by = sip_calls.category_for(sip_calls.verdict(event))
+        if batching_results.apply_fax_result(_deliveries(), event, failure_sentence=sip_calls.result_summary(event),
+                                             failure_category=answered_by):
             return
         status = fields.get('status', '')
         # Without the SSL Fax engine: a failure with no page transferred, and no fax machine that named itself,
@@ -558,7 +561,8 @@ def _handle_fax_result(event):
                             error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
             return
         _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                        error=sip_calls.result_summary(event), before_data=native_event(event))
+                        error=sip_calls.result_summary(event), before_data=native_event(event),
+                        **({'error_category': answered_by} if answered_by else {}))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
 
@@ -1870,6 +1874,19 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                               "organization's sending rules."),
                    labels: Optional[List[str]] = Form(None, description="Labels for this fax from your "
                                                       "organization's list, such as legal; repeat the field."),
+                   # The patient the fax is about, used only when it goes to a FHIR server (digital/patient.py).
+                   patient_record_number: Optional[str] = Form(None, description="Only for a recipient that takes "
+                                                               "documents into its health records (FHIR): the "
+                                                               "patient's medical record number there."),
+                   patient_record_system: Optional[str] = Form(None, description="The system that medical record "
+                                                               "number belongs to, as a web address or OID; the FHIR "
+                                                               "client's own is used when left out."),
+                   patient_family_name: Optional[str] = Form(None, description="The patient's family name, for a "
+                                                             "recipient that confirms the patient."),
+                   patient_given_name: Optional[str] = Form(None, description="The patient's given name, for a "
+                                                            "recipient that confirms the patient."),
+                   patient_birth_date: Optional[str] = Form(None, description="The patient's birth date, such as "
+                                                            "1980-04-30, for a recipient that confirms the patient."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1895,6 +1912,16 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     labels = sorted({label.strip() for label in labels or () if isinstance(label, str) and label.strip()})
     routing_intent = {key: value for key, value in (('mailbox', mailbox), ('workflow', workflow),
                                                     ('labels', labels)) if value}
+    # The patient, for FHIR routes only. Checked here with sentences that never repeat what was typed; it is document
+    # content, folded into the request's one-way fingerprint only, so a replay with other details is refused.
+    from .digital import patient as fax_patient
+    try:
+        patient = fax_patient.parse(patient_record_number, patient_record_system, patient_family_name,
+                                    patient_given_name, patient_birth_date)
+    except fax_patient.PatientError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    if patient is not None:
+        routing_intent['patient'] = patient.canonical()
     # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
     # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
@@ -1977,6 +2004,20 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise HTTPException(error.status_code, detail=str(error)) from None
     pdf_path = prepared.pdf_path
     tiff_path = prepared.tiff_path or ""
+    if patient is not None:
+        # Kept beside the document before acceptance: the worker may take the fax as soon as it is accepted.
+        try:
+            fax_patient.write(settings.fax_data_dir, job_id, patient)
+        except OSError:
+            prepared.cleanup()
+            raise HTTPException(503, detail="Faxbot could not keep the patient's details with the fax, so it was not "
+                                            'accepted. Try again in a moment.') from None
+
+    def discard():
+        """A fax that was not accepted leaves neither its document nor its patient's details behind."""
+        prepared.cleanup()
+        if patient is not None:
+            fax_patient.remove(settings.fax_data_dir, job_id)
     # The sending rules' envelope for this fax, decided from its facts (the acceptance transaction decides again
     # on its own connection and keeps that decision). Without it nothing is accepted: no fax goes outside its rules.
     try:
@@ -1986,12 +2027,12 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             size_bytes=_file_size(pdf_path), mailbox=mailbox, workflow=workflow, labels=labels, urgent=urgent,
             by_call=send_by_call, document_sha256=_document_sha256(pdf_path)))
     except Exception:
-        prepared.cleanup()
+        discard()
         logging.getLogger(__name__).warning('Sending rules could not be read; the fax was not accepted.')
         raise HTTPException(503, detail='Faxbot could not read your sending rules, so the fax was not accepted. '
                                         'Try again in a moment.') from None
     if engine_down and _engine_down_refuses(rules_plan):
-        prepared.cleanup()
+        discard()
         raise HTTPException(503, detail=ami_client.engine_message())
     hold = None
     try:
@@ -2038,20 +2079,20 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             rules_acceptance.recorder(rules_plan, job_id, identity.actor, control=access.control),
             None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor))))
     except IdempotentReplay as replay:
-        prepared.cleanup()
+        discard()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
     except rules_acceptance.RulesAcceptanceError as error:
-        prepared.cleanup()
+        discard()
         raise HTTPException(400, detail=str(error)) from None
     except IdempotencyConflict as error:
-        prepared.cleanup()
+        discard()
         raise HTTPException(409, detail=str(error)) from None
     except ConfigurationCommitUncertain:
         # COMMIT can succeed after the acknowledgement is lost. Keep the document
         # and never automatically resubmit an uncertain accepted fax.
         raise HTTPException(503, detail=f"Fax acceptance is uncertain. Retain job {job_id} for reconciliation.") from None
     except Exception:
-        prepared.cleanup()
+        discard()
         raise
     # Serialize before COMMIT; a second database read must not turn confirmed
     # acceptance into an unidentifiable error and invite duplicate submission.
@@ -2260,8 +2301,10 @@ def _cleanup_outbound_documents(cutoff):
         identities = connection.execute(sa.select(delivery.deliveries.c.id).where(
             delivery.deliveries.c.state.in_(tuple(TERMINAL)),
             delivery.deliveries.c.updated_at < cutoff)).scalars().all()
+    # The patient given with a fax (digital/patient.py) is document content: it goes with the document.
+    from .digital.patient import SUFFIX as PATIENT_SUFFIX
     for identity in identities:
-        for suffix in ('.pdf', '.tiff'):
+        for suffix in ('.pdf', '.tiff', PATIENT_SUFFIX):
             try:
                 path = _outbound_document_path(identity, suffix)
                 if not path.is_symlink():
@@ -2808,6 +2851,10 @@ class FSOutboundResultIn(BaseModel):
     fax_document_transferred_pages: Optional[int] = None
     fax_document_total_pages: Optional[int] = None
     uuid: Optional[str] = None
+    # Optional, from the hook: the other fax machine's ID (``fax_remote_station_id``) and the audio packets that
+    # came back (FreeSWITCH's ``rtp_audio_in_packet_count``), so a person who answered is never called again.
+    fax_remote_station_id: Optional[str] = None
+    rtp_audio_in_packet_count: Optional[int] = None
 
 
 @app.post("/_internal/freeswitch/outbound_result", deprecated=True,
@@ -2826,6 +2873,12 @@ def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: O
             applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
                 event_key='fs-result:' + status, secret=x_internal_secret, error=failure_sentence('', pages),
                 before_data=False, error_category='partly_sent')
+        elif sip_calls.freeswitch_verdict(status, pages, payload.fax_remote_station_id, payload.fax_result_text,
+                                          payload.rtp_audio_in_packet_count) == sip_calls.PERSON_ANSWERED:
+            # A person or a voice line answered: the fax fails and takes no other route by itself.
+            applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+                event_key='fs-result:' + status, secret=x_internal_secret, error=sip_calls.PERSON,
+                before_data=True, error_category=sip_calls.PERSON_ANSWERED)
         else:
             applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
                 event_key='fs-result:' + status, secret=x_internal_secret)

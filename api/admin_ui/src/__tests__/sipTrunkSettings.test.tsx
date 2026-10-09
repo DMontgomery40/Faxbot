@@ -187,7 +187,7 @@ describe('SIP trunk settings', () => {
         last_call_text: 'The call connected but no fax data came back from the carrier.',
         last_call_at: '2026-10-03T12:00:00Z', message: 'The trunk is ready.',
         engine_state: 'running', engine_audio: true,
-        engine_text: "Faxbot's fast fax service is running on 2 fax lines and sends pages faster when the other fax machine allows it. It sends audio fax because its last T.38 call heard no fax machine." })),
+        engine_text: "Faxbot's fax engine is running on 2 fax lines and sends pages faster when the other fax machine allows it. It sends audio fax because its last T.38 call heard no fax machine." })),
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
@@ -203,15 +203,15 @@ describe('SIP trunk settings', () => {
     expect(screen.getByText('Automatic: Faxbot found 198.51.100.7. Enter an address only to override it.')).toBeTruthy();
     expect(within(status).getByText(/^Last call, .*: The call connected but no fax data came back from the carrier\.$/)).toBeTruthy();
     expect(status.textContent).not.toMatch(/registered|reachable[^.]|no_t38|tls[^.]/);
-    // The console names its own button to try T.38 again after the fast fax service chose audio fax.
+    // The console names its own button to try T.38 again after the fax engine chose audio fax.
     expect(within(status).getByTestId('engine-text').textContent).toMatch(
       /last T\.38 call heard no fax machine\. To try T\.38 again, select Apply and connect\.$/);
   });
 
-  it('says when the fast fax service missed a call and restarts it by hand on request', async () => {
+  it('says when the fax engine missed a call and restarts it by hand on request', async () => {
     let restarts = 0;
-    const missed = "Faxbot's fast fax service did not answer the 9:14 PM MDT fax call, so that fax was received the "
-      + 'ordinary way; Faxbot restarted the fast fax service.';
+    const missed = "Faxbot's fax engine did not answer the 9:14 PM MDT fax call, so that fax was received the "
+      + 'ordinary way; Faxbot restarted the fax engine.';
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
       http.get('/admin/settings', () => HttpResponse.json(settings())),
@@ -221,7 +221,7 @@ describe('SIP trunk settings', () => {
       http.post('/admin/sip/engine/restart', () => {
         restarts += 1;
         return HttpResponse.json({ ok: true,
-          message: 'The fast fax service will restart when no fax is being sent or received.' });
+          message: 'The fax engine will restart when no fax is being sent or received.' });
       }),
     );
     render(<SipTrunkSettings client={client()} />);
@@ -229,28 +229,28 @@ describe('SIP trunk settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     const status = await screen.findByTestId('sip-trunk-status');
     expect(within(status).getByTestId('engine-text').textContent).toBe(missed);
-    fireEvent.click(within(status).getByRole('button', { name: 'Restart the fast fax service' }));
-    expect(await screen.findByText('The fast fax service will restart when no fax is being sent or received.'))
+    fireEvent.click(within(status).getByRole('button', { name: 'Restart the fax engine' }));
+    expect(await screen.findByText('The fax engine will restart when no fax is being sent or received.'))
       .toBeTruthy();
     expect(restarts).toBe(1);
   });
 
-  it('offers no restart while the fast fax service is not running', async () => {
+  it('offers no restart while the fax engine is not running', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
       http.get('/admin/settings', () => HttpResponse.json(settings())),
       http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
         message: 'The trunk is ready.', engine_state: 'stopped', engine_audio: false,
-        engine_text: "Faxbot's fast fax service is not running, so faxes are sent the ordinary way." })),
+        engine_text: "Faxbot's fax engine is not running, so faxes are sent the ordinary way." })),
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     const status = await screen.findByTestId('sip-trunk-status');
     expect(within(status).getByTestId('engine-text').textContent)
-      .toBe("Faxbot's fast fax service is not running, so faxes are sent the ordinary way.");
-    expect(within(status).queryByRole('button', { name: 'Restart the fast fax service' })).toBeNull();
+      .toBe("Faxbot's fax engine is not running, so faxes are sent the ordinary way.");
+    expect(within(status).queryByRole('button', { name: 'Restart the fax engine' })).toBeNull();
   });
 
   it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {
@@ -653,5 +653,34 @@ describe('SIP trunk to a phone system', () => {
   it('says why BT One Voice starts with audio fax', () => {
     expect(audioReason('carrier', null, 'BT One Voice'))
       .toBe('Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax.');
+  });
+});
+
+describe('SIP trunk checks that could not be read', () => {
+  const status = (code: number) => http.get('/admin/sip/status', () => HttpResponse.json({ detail: 'Synthetic' }, { status: code }));
+
+  it("says when the phone system's reach could not be checked, and nothing without permission", async () => {
+    const shared = [http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null }))];
+    server.use(...shared, status(500));
+    const failed = render(<SipTrunkSettings client={client()} />);
+    expect((await screen.findByTestId('phone-system-reach-unread')).textContent).toBe(
+      'How your phone system reaches Faxbot could not be checked. Select Check trunk status to try again.');
+    failed.unmount();
+    server.use(...shared, status(403));
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('phone-system-reach-unread')).toBeNull();
+  });
+
+  it('says when it could not check whether received faxes reach Faxbot', async () => {
+    server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })), status(500));
+    render(<SipTrunkSettings client={client()} showReceiving />);
+    expect((await screen.findByTestId('sip-handover-unread')).textContent).toBe(
+      'Whether received faxes can reach Faxbot could not be checked. Select Check trunk status to try again.');
   });
 });

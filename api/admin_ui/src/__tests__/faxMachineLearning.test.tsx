@@ -16,7 +16,7 @@ const VIEW = {
     {
       when: '2026-10-07T18:00:00Z', direction: 'out', mode: 'audio', status: 'SUCCESS', rate_first: 9600, rate_lowest: 9600,
       trainings: 1, failures_to_train: 0, t38_after_ms: null, t38_by: null, iaf: null, subaddress: null,
-      engine: 'hylafax', engine_label: "Faxbot's fast fax service", mode_label: 'Audio fax',
+      engine: 'hylafax', engine_label: "Faxbot's fax engine", mode_label: 'Audio fax',
       outcome: 'Sent: 2 pages confirmed by the receiving machine.',
       sentences: ['The call used JBIG compression with error correction at 9600 bit/s, fine resolution; 2 pages in 18 s.'],
       changes: [AUDIO],
@@ -62,7 +62,7 @@ describe('Recipients → Details, their fax machine: what Faxbot learned', () =>
     const panel = await screen.findByTestId('fax-machine');
     const calls = within(panel).getAllByTestId('fax-machine-call');
     expect(calls).toHaveLength(2);
-    expect(within(calls[0]).getByText(/Sent · Audio fax · Faxbot's fast fax service/)).toBeTruthy();
+    expect(within(calls[0]).getByText(/Sent · Audio fax · Faxbot's fax engine/)).toBeTruthy();
     expect(within(calls[0]).getByText(VIEW.calls[0].outcome)).toBeTruthy();
     expect(within(calls[0]).getByText(AUDIO)).toBeTruthy();
     expect(within(calls[1]).getByText(/Sent · Fax over IP \(T\.38\)$/)).toBeTruthy();

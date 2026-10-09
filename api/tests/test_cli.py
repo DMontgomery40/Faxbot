@@ -1259,7 +1259,7 @@ def trunk_cli(monkeypatch, tmp_path):
 
 
 def test_trunk_restart_engine_asks_the_engine_or_says_why_there_is_nothing_to_restart(trunk_cli):
-    """`faxbot providers trunk restart-engine`, the console's Restart the fast fax service."""
+    """`faxbot providers trunk restart-engine`, the console's Restart the fax engine."""
     import json as json_module
     from app import hylafax_engine
     refused = trunk_cli('providers', 'trunk', 'restart-engine')

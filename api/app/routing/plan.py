@@ -375,7 +375,7 @@ class RoutePlanner:
             # A relay is ranked by its partner's signed price like any account; an unknown price sorts last.
             prices = {**(prices or {}), **relay_prices}
         digital, digital_prices, digital_skipped = self._digital(destination, pages, values, pinned, current, prices,
-                                                                 now)
+                                                                 now, job_id=job_id)
         skipped += digital_skipped
         if digital:
             prices = {**(prices or {}), **digital_prices}
@@ -453,7 +453,7 @@ class RoutePlanner:
                     return 'over_cap'
         return None
 
-    def _digital(self, destination, pages, values, pinned, current, prices, now):
+    def _digital(self, destination, pages, values, pinned, current, prices, now, *, job_id=None):
         """Recipients' confirmed Direct addresses and FHIR endpoints (``digital.routes.candidates``), with prices.
 
         Returns (candidates, {key: Price}, skipped). A key the fax's rules name that has no usable address now is
@@ -464,7 +464,7 @@ class RoutePlanner:
         from .database import DeliveryStoreError
         try:
             found, skipped = digital_candidates(self.store.engine, values, destination, pages, pinned=pinned,
-                                                current=current, now=now)
+                                                current=current, now=now, job_id=job_id)
         except DeliveryStoreError:
             # The digital route records cannot be read (a database before 0052): the fax goes by its other routes.
             logging.getLogger(__name__).warning('Digital route records are unavailable; no Direct or FHIR route.')

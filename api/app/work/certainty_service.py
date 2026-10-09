@@ -45,6 +45,7 @@ CATEGORY_TEXT = {
     'worker_lost': 'Faxbot stopped while the fax was being sent.',
     'pages_unconfirmed': 'The call ended without confirming which pages arrived.',
     'partly_sent': 'The call failed part way through, so some pages may have arrived.',
+    'person_answered': 'A person answered at this number; check the fax number with the recipient.',
 }
 OWNER_SOURCE_TEXT = {
     'sender': 'the person who sent it',
@@ -294,6 +295,12 @@ class CertaintyService:
                 .order_by(self.store.events.c.created_at).limit(1)).scalar()
             row = {**row, 'query_sent_at': sent}
         when = people_time.short(self._sent_at(row))
+        if row['category'] == 'person_answered':
+            # Nothing arrived, and calling the number again would ring the person: check the number instead.
+            return [checks.person_answered_check(),
+                    checks.number_check(row, organization=self._organization(),
+                                        number=number or mask(row['to_number']), when_text=when),
+                    *checks.npi_checks(self.store.engine, row)]
         return [
             checks.partner_check(sources, connection, row, job, answer),
             checks.call_record_check(sources, connection, row, job, now=now),
@@ -370,7 +377,8 @@ class CertaintyService:
                 actions.append('assign')
             if row['state'] == 'open' and may_act:
                 actions.append('settle')
-                if not row['query_job_id']:
+                # A receipt query would ring the person who answered again.
+                if not row['query_job_id'] and row['category'] != 'person_answered':
                     actions.append('send_query')
             person = lambda identity: {'id': identity, 'name': names.get(identity)} if identity else None  # noqa: E731
             link = links.get(row['resend_job_id'])
@@ -580,6 +588,10 @@ class CertaintyService:
                 raise CertaintyConflict('This fax is already settled.')
             if row['query_job_id']:
                 raise CertaintyConflict('The receipt query for this fax was already sent.')
+            if row['category'] == 'person_answered':
+                # The number reached a person, not a fax machine: a query page would ring them again.
+                raise CertaintyConflict('A person answered at this number, so Faxbot does not fax it a receipt '
+                                        'query. Check the fax number with the recipient.')
         document, name, row = self.draft(actor, item_id)
         job_id = query_id(item_id)
         send(to_number=row['to_number'], document=document, file_name=name, pages=1, job_id=job_id)

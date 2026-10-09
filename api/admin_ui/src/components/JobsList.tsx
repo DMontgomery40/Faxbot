@@ -33,7 +33,7 @@ import {
 } from '@mui/material';
 import { Refresh as RefreshIcon, Send as SendIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
-import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
+import { CostsUnread, FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
 import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
@@ -134,6 +134,7 @@ const categoryLabels: Record<string, string> = {
   local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
+  person_answered: 'A person answered, not a fax machine, so Faxbot did not call again',
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct
@@ -543,6 +544,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               </Typography>
             </Box>
           ) : (
+            <>
+            <CostsUnread costs={costs} />
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small">
                 <TableHead>
@@ -633,8 +636,9 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                 </TableBody>
               </Table>
             </TableContainer>
+            </>
           )}
-          
+
           {jobs.length > 0 && (
             <Box mt={2}>
               <Typography variant="caption" color="text.secondary">

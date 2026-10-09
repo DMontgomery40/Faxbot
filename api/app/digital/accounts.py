@@ -29,6 +29,7 @@ DIGITAL = 'digital'
 KINDS = ('hisp', 'fhir')
 SECURITY = ('faxbot', 'hisp')
 ALGORITHMS = ('RS384', 'ES384')
+PATIENT_MODES = ('optional', 'required', 'matched')     # how a FHIR client's server takes a patient (digital/patient.py)
 MAX_PEM = 32 * 1024
 CURRENCIES = ('USD', 'CAD', 'GBP', 'EUR', 'AUD')
 # Published plan evidence a person can start from (source and the day it was read).
@@ -102,7 +103,15 @@ FIELDS = {
               help='Faxbot can make one for you; give the recipient\'s system its public key set.'),
         Field('author', 'Your organization\'s name on each document'),
         Field('document_type', 'Document type code (LOINC)',
-              help='Leave it empty to send no type, or use the code the recipient asks for.'),
+              help='Leave it empty to send the type as unknown, or use the code the recipient asks for.'),
+        # How the recipient's server takes the patient a document is about (digital/patient.py).
+        Field('patient', 'Patient on each document', 'choice', default='optional', choices=PATIENT_MODES,
+              help="optional: Faxbot adds the patient when the fax gives one. required: the server needs the "
+                   "patient's medical record number, and Faxbot looks the patient up by it. matched: the server "
+                   'also needs the name and birth date, and confirms the patient. A fax without them goes by fax.'),
+        Field('patient_record_system', 'Medical record number system',
+              help="How the recipient's server names its medical record numbers, such as "
+                   'urn:oid:2.16.840.1.113883.19.5. Faxbot uses it when a fax gives none.'),
     ) + PLAN_FIELDS,
 }
 LABELS = {'hisp': 'Direct messages (HISP)', 'fhir': 'FHIR client'}
@@ -237,6 +246,12 @@ def _clean(definition, value):
         raise AccountsError(f'{label} is a server name, such as smtp.hisp.example.')
     if definition.name in ('token_url', 'price_source') and re.fullmatch(r'https://[^\s]{3,1000}', text) is None:
         raise AccountsError(f'{label} is a web address starting with https://.')
+    if definition.name == 'patient_record_system':
+        from .patient import PatientError, normalized_system
+        try:
+            return normalized_system(text)
+        except PatientError as error:
+            raise AccountsError(str(error)) from None
     return text
 
 

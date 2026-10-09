@@ -64,29 +64,29 @@ SUBMIT_TIMEOUT_SECONDS = 15.0
 LAST_TIME = '000010'
 
 # One sentence for each reason a fax uses Faxbot's built-in engine (an ordinary
-# fax); "fast fax service" is the engine in operator words (Jev 0.64-0.74).
+# fax); "fax engine" is the engine in operator words (Jev 0.64-0.74).
 SENDING_TOGETHER = 'Faxes sent together in one call are sent as ordinary faxes.'
-NOT_RUNNING = "Faxbot's fast fax service is not running, so this fax was sent as an ordinary fax."
-NOT_SET_UP = "Faxbot's fast fax service starts when you select Apply and connect."
-LINES_NOT_READY = "Faxbot's fast fax service is still starting, so this fax was sent as an ordinary fax."
-ASTERISK_NOT_CURRENT = ("Faxbot's fast fax service is waiting for the phone connection to restart, "
+NOT_RUNNING = "Faxbot's fax engine is not running, so this fax was sent as an ordinary fax."
+NOT_SET_UP = "Faxbot's fax engine starts when you select Apply and connect."
+LINES_NOT_READY = "Faxbot's fax engine is still starting, so this fax was sent as an ordinary fax."
+ASTERISK_NOT_CURRENT = ("Faxbot's fax engine is waiting for the phone connection to restart, "
                         'so this fax was sent as an ordinary fax.')
 # Engine states for the trunk page and System diagnostics.
-STOPPED = "Faxbot's fast fax service is not running, so faxes are sent the ordinary way."
-STARTING = "Faxbot's fast fax service is still starting."
-WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connection to restart."
+STOPPED = "Faxbot's fax engine is not running, so faxes are sent the ordinary way."
+STARTING = "Faxbot's fax engine is still starting."
+WAITING_FOR_RESTART = "Faxbot's fax engine is waiting for the phone connection to restart."
 # What the engine does after a T.38 call that heard no fax machine; each screen adds its own way to
 # try T.38 again (the console's button, the command line's command).
 ENGINE_AUDIO = 'It sends audio fax because its last T.38 call heard no fax machine.'
 # The engine's own sentence for a line that stopped taking calls (hylafax/entrypoint.sh LINE_DOWN).
-LINE_DOWN = "Faxbot's fast fax service lost a fax line and is starting again."
-# A restart Faxbot asked for (a fax call no line answered, or Restart the fast fax service).
-RESTART_REQUESTED = "Faxbot's fast fax service is starting again."
-RESTART_ASKED = 'The fast fax service will restart when no fax is being sent or received.'
+LINE_DOWN = "Faxbot's fax engine lost a fax line and is starting again."
+# A restart Faxbot asked for (a fax call no line answered, or Restart the fax engine).
+RESTART_REQUESTED = "Faxbot's fax engine is starting again."
+RESTART_ASKED = 'The fax engine will restart when no fax is being sent or received.'
 # Nothing reads a restart request while the engine is not running; it starts afresh on its own.
-RESTART_NOT_RUNNING = ("Faxbot's fast fax service is not running, so there is nothing to restart; faxes are "
+RESTART_NOT_RUNNING = ("Faxbot's fax engine is not running, so there is nothing to restart; faxes are "
                        'sent the ordinary way until it starts.')
-# How long the trunk page says that a fax call went unanswered by the fast fax service.
+# How long the trunk page says that a fax call went unanswered by the fax engine.
 MISSED_SHOWN = 24 * 3600
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
@@ -145,7 +145,7 @@ def restart_request(values):
 
 
 def missed_sentence(values, status, now=None):
-    """One sentence for a fax call the fast fax service did not answer in the last day, or None."""
+    """One sentence for a fax call the fax engine did not answer in the last day, or None."""
     import time
     from datetime import datetime, timezone
     from .people_time import clock
@@ -156,8 +156,8 @@ def missed_sentence(values, status, now=None):
     when = clock(datetime.fromtimestamp(request['at'], timezone.utc).replace(tzinfo=None),
                  getattr(values, 'time_zone', '') or None)
     restarted = status.started is not None and status.started >= request['asked']
-    return (f"Faxbot's fast fax service did not answer the {when} fax call, so that fax was received the "
-            f"ordinary way; Faxbot {'restarted' if restarted else 'is restarting'} the fast fax service.")
+    return (f"Faxbot's fax engine did not answer the {when} fax call, so that fax was received the "
+            f"ordinary way; Faxbot {'restarted' if restarted else 'is restarting'} the fax engine.")
 
 
 def out_dir(values) -> Path:
@@ -438,14 +438,14 @@ class EngineStatus:
 
 # The sentences hylafax/entrypoint.sh writes; anything else from the engine's folder is not shown.
 STATUS_SENTENCES = frozenset({
-    "Faxbot's fast fax service could not start; select Apply and connect to try again.",
-    "Faxbot's fast fax service starts when you select Apply and connect.",
-    "Faxbot's fast fax service could not start; it will try again by itself.",
-    "Faxbot's fast fax service cannot reach the phone connection.",
-    "Faxbot's fast fax service is waiting for the phone connection to restart.",
-    "Faxbot's fast fax service is reconnecting to the phone connection.",
-    "Faxbot's fast fax service stopped and is starting again.",
-    "Faxbot's fast fax service is loading new settings.",
+    "Faxbot's fax engine could not start; select Apply and connect to try again.",
+    "Faxbot's fax engine starts when you select Apply and connect.",
+    "Faxbot's fax engine could not start; it will try again by itself.",
+    "Faxbot's fax engine cannot reach the phone connection.",
+    "Faxbot's fax engine is waiting for the phone connection to restart.",
+    "Faxbot's fax engine is reconnecting to the phone connection.",
+    "Faxbot's fax engine stopped and is starting again.",
+    "Faxbot's fax engine is loading new settings.",
     LINE_DOWN,
     RESTART_REQUESTED,
     *(f'Fax line {number} did not start.' for number in range(1, MAX_LINES + 1)),
@@ -586,7 +586,7 @@ def engine_t38_failed(at=None) -> bool:
     try:
         changed = note_t38_failure(settings, at)
     except OSError:
-        logging.getLogger(__name__).warning('Faxbot could not record audio fax for its fast fax service.')
+        logging.getLogger(__name__).warning('Faxbot could not record audio fax for its fax engine.')
         return False
     if not changed:
         return False
@@ -713,10 +713,10 @@ async def engine_summary(values, ami=None) -> tuple[str, str]:
         # What happened, in one sentence; the audio note stays (each screen adds its way to try T.38 again).
         return 'running', missed + (' ' + ENGINE_AUDIO if engine_audio(values) else '')
     lines = f'{ready} fax line' + ('' if ready == 1 else 's')
-    sentence = (f"Faxbot's fast fax service is running on {lines} and sends pages faster "
+    sentence = (f"Faxbot's fax engine is running on {lines} and sends pages faster "
                 'when the other fax machine allows it.')
     if not getattr(values, 'sip_sslfax_enabled', True):
-        sentence = f"Faxbot's fast fax service is running on {lines}; faster pages are turned off."
+        sentence = f"Faxbot's fax engine is running on {lines}; faster pages are turned off."
     elif status.listener:
         sentence += ' Fax machines that call Faxbot can also send their pages faster.'
     if engine_audio(values):

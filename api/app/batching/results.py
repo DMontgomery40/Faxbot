@@ -66,7 +66,7 @@ def _apply(delivery, outcomes, event_key):
         raise DeliveryConflict('Some faxes in a shared call need reconciliation.')
 
 
-def apply_fax_result(delivery, event, *, failure_sentence=None):
+def apply_fax_result(delivery, event, *, failure_sentence=None, failure_category=None):
     """True when the event's call carried several faxes (each now has its outcome); False for a single fax."""
     fields = {str(key).lower(): value for key, value in event.items()}
     found = _members(delivery, fields.get('jobid'), fields.get('attemptid'))
@@ -78,7 +78,7 @@ def apply_fax_result(delivery, event, *, failure_sentence=None):
         outcomes = map_call(members, succeeded=True, confirmed_pages=_pages(fields.get('pages')))
     elif status == 'FAILED':
         outcomes = map_call(members, succeeded=False, confirmed_pages=_pages(fields.get('pages')),
-                            failure_sentence=failure_sentence)
+                            failure_sentence=failure_sentence, failure_category=failure_category)
     else:
         # Without a recognised ending, no page is known to be confirmed or unconfirmed.
         outcomes = map_call(members, succeeded=False, confirmed_pages=None)

@@ -15,6 +15,7 @@ import RateCards from './delivery/RateCards';
 import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
 import RelayCosts from './delivery/RelayCosts';
+import LoadFailed, { saysFailure } from './common/LoadFailed';
 
 export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners';
 
@@ -55,20 +56,28 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
   const [partners, setPartners] = useState<DirectPartner[]>([]);
   // Numbers whose recipient runs Faxbot (Partners → Find partners), for the recipients list.
   const [suggested, setSuggested] = useState<string[] | null>(null);
+  // Partners or suggestions that could not be read are said where they would be (quiet without permission).
+  const [unread, setUnread] = useState<{ partners: boolean; suggestions: boolean }>({ partners: false, suggestions: false });
   const shows = (part: DeliveryRoutesSection) => !section || section === part;
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
     const wants = (part: DeliveryRoutesSection) => !section || section === part;
+    const failed = { partners: false, suggestions: false };
+    const noted = (part: keyof typeof failed) => (failure: unknown) => {
+      failed[part] = saysFailure(failure);
+      return null;
+    };
     try {
       const [routes, costs, rates, peers, discovery] = await Promise.all([
         wants('numbers') ? client.listDestinations() : null,
         wants('spending') ? client.getRouteCosts() : null,
         wants('rates') ? client.listRateCards() : null,
         // The recipients list names the partner each number belongs to, when partners can be read.
-        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(() => null) : null,
-        section === 'numbers' ? client.getDiscovery().catch(() => null) : null,
+        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(noted('partners')) : null,
+        section === 'numbers' ? client.getDiscovery().catch(noted('suggestions')) : null,
       ]);
+      setUnread(failed);
       if (routes) setDestinations(routes.destinations);
       if (costs) {
         setProviders(costs.providers);
@@ -112,8 +121,14 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               <RelayCosts client={client} />
             </>)}
           {shows('numbers') && part('numbers',
-            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
-              partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />)}
+            <>
+              {section === 'numbers' && unread.partners && <LoadFailed testId="numbers-partners-unread"
+                text="Your direct partners could not be loaded, so numbers are shown without them. Try again." />}
+              {section === 'numbers' && unread.suggestions && <LoadFailed testId="numbers-suggestions-unread"
+                text="Numbers whose recipient runs Faxbot could not be loaded. Try again." />}
+              <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
+                partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />
+            </>)}
           {shows('rates') && part('rates',
             <>
               <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
@@ -123,7 +138,9 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
             </>)}
           {shows('partners') && part('partners',
             <>
-              <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />
+              {unread.partners
+                ? <LoadFailed testId="partners-unread" text="Your direct partners could not be loaded. Try again." />
+                : <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />}
               <Box component="section" mt={4}>
                 <Typography variant="h6" component="h2">Find partners</Typography>
                 <Typography variant="body2" color="text.secondary" mb={2}>

@@ -8,6 +8,7 @@ import {
 import AdminAPIClient from '../../api/client';
 import type { OriginRateRow } from '../ProviderAccountsTrunks';
 import { rulesApiFor } from '../ProviderRulesApi';
+import LoadFailed, { saysFailure } from '../common/LoadFailed';
 
 export interface EnteredRow {
   origin: string;
@@ -42,10 +43,14 @@ export default function OriginRateRows({ client, route, label, existing, onSaved
 }) {
   const [open, setOpen] = useState(false);
   const [sites, setSites] = useState<Array<{ key: string; name: string }>>([]);
+  // Your sites could not be read: prices can still be entered for anywhere or a country, and the failure is said.
+  const [sitesUnread, setSitesUnread] = useState(false);
   useEffect(() => {
     if (!open) return undefined;
     let live = true;
-    rulesApiFor(client).accounts().then((state) => { if (live) setSites(state.sites ?? []); }).catch(() => undefined);
+    setSitesUnread(false);
+    rulesApiFor(client).accounts().then((state) => { if (live) setSites(state.sites ?? []); })
+      .catch((failure) => { if (live && saysFailure(failure)) setSitesUnread(true); });
     return () => { live = false; };
   }, [client, open]);
   const [row, setRow] = useState<EnteredRow>(EMPTY_ROW);
@@ -88,6 +93,8 @@ export default function OriginRateRows({ client, route, label, existing, onSaved
               <MenuItem value="country">A country</MenuItem>
               {sites.map((site) => <MenuItem key={site.key} value={site.key}>{site.name}</MenuItem>)}
             </TextField>
+            {sitesUnread && <LoadFailed testId="origin-sites-unread"
+              text="Your sites could not be loaded, so only Anywhere and A country are offered. Try again." />}
             {row.origin === 'country' && (
               <TextField size="small" label="Country code" placeholder="GB" value={country}
                 onChange={(event) => setCountry(event.target.value)} />

@@ -38,6 +38,7 @@ import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { NumberFormat, Settings, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import LoadFailed, { saysFailure } from './common/LoadFailed';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 import InboundRecovery from './InboundRecovery';
@@ -204,6 +205,9 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const [connecting, setConnecting] = useState(false);
   const [handover, setHandover] = useState<{ ready: boolean; text: string } | null>(null);
   const [reach, setReach] = useState<Reach | null>(null);
+  // The trunk check behind the received-fax line or the phone system's reach could not be read (said, never hidden).
+  const [handoverUnread, setHandoverUnread] = useState(false);
+  const [reachUnread, setReachUnread] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
   // Several trunks: the trunk account this page shows; null and 'sip' are the first trunk (full page below).
@@ -250,13 +254,17 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   useEffect(() => {
     if (!showReceiving) return;
     let current = true;
+    setHandoverUnread(false);
     client.getSipStatus().then((result) => {
       if (current && result.handover_text) setHandover({ ready: !!result.handover_ready, text: result.handover_text });
-    }).catch(() => undefined);
+    }).catch((failure) => { if (current && saysFailure(failure)) setHandoverUnread(true); });
     return () => { current = false; };
   }, [client, showReceiving]);
   useEffect(() => {
-    if (status?.handover_text) setHandover({ ready: !!status.handover_ready, text: status.handover_text });
+    if (status?.handover_text) {
+      setHandover({ ready: !!status.handover_ready, text: status.handover_text });
+      setHandoverUnread(false);
+    }
   }, [status]);
   // A saved phone system: say at once how it reaches Faxbot, from the same check as trunk status.
   const savedPhone = isPhoneSystem(presets.find((item) => item.id === saved.preset));
@@ -266,11 +274,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       return;
     }
     let current = true;
-    client.getSipStatus().then((result) => { if (current) setReach(result); }).catch(() => undefined);
+    setReachUnread(false);
+    client.getSipStatus().then((result) => { if (current) setReach(result); })
+      .catch((failure) => { if (current && saysFailure(failure)) setReachUnread(true); });
     return () => { current = false; };
   }, [client, savedPhone, saved.preset]);
   useEffect(() => {
-    if (status && status.kind === 'phone_system') setReach(status);
+    if (status && status.kind === 'phone_system') {
+      setReach(status);
+      setReachUnread(false);
+    }
   }, [status]);
   useEffect(() => { if (showCalls) void loadCalls(); }, [showCalls, loadCalls]);
 
@@ -419,7 +432,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
-  // Faxbot restarts the fast fax service by itself after a fax call it did not answer; this is the same by hand.
+  // Faxbot restarts the fax engine by itself after a fax call it did not answer; this is the same by hand.
   const restartEngine = async () => {
     setBusy(true);
     try {
@@ -427,7 +440,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       setNotice({ severity: 'success', text: result.message });
       setStatus(await client.getSipStatus());
     } catch (error) {
-      setNotice({ severity: 'error', text: failure(error, 'The fast fax service could not be restarted. Try again.') });
+      setNotice({ severity: 'error', text: failure(error, 'The fax engine could not be restarted. Try again.') });
     } finally {
       setBusy(false);
     }
@@ -721,6 +734,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
         </>
       )}
 
+      {phone && reachUnread && !reach && (
+        <LoadFailed testId="phone-system-reach-unread"
+          text="How your phone system reaches Faxbot could not be checked. Select Check trunk status to try again." />
+      )}
       {phone && reach && (reach.ports_text || reach.phone_system_command) && (
         <Box data-testid="phone-system-reach">
           <Typography variant="subtitle2">Reaching Faxbot from your phone system</Typography>
@@ -756,6 +773,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       {showReceiving && handover && (
         <Alert severity={handover.ready ? 'success' : 'warning'} data-testid="sip-handover">{handover.text}</Alert>
       )}
+      {showReceiving && !handover && handoverUnread && (
+        <LoadFailed testId="sip-handover-unread"
+          text="Whether received faxes can reach Faxbot could not be checked. Select Check trunk status to try again." />
+      )}
 
       <Fade in={!!notice} unmountOnExit>
         <Alert severity={notice?.severity ?? 'info'} onClose={() => setNotice(null)}>{notice?.text}</Alert>
@@ -781,7 +802,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               )}
               {(status.engine_state === 'running' || status.engine_state === 'starting') && (
                 <Button size="small" variant="outlined" sx={{ mt: 1, alignSelf: 'flex-start' }} onClick={restartEngine}
-                  disabled={busy}>Restart the fast fax service</Button>
+                  disabled={busy}>Restart the fax engine</Button>
               )}
               {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
                 && <Typography variant="body2">{status.ports_text}</Typography>}

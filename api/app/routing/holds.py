@@ -137,7 +137,8 @@ def no_route_sentence(label_by_key, skipped):
     why = {'turned_off': 'is turned off', 'not_ready': 'is not ready', 'busy': 'has no free line',
            'over_cap': "is over the rule's cost cap", 'unknown_cost': "has no known price under the rule's cost cap",
            'spending_limit': 'reached its daily spending limit', 'unavailable': 'is not set up to send',
-           'tried': 'was already tried'}
+           'tried': 'was already tried',
+           'needs_patient': "needs the patient's details, which this fax does not have"}
     parts = [f'{label_by_key(key)} {why.get(reason, "is not available")}' for key, reason in skipped]
     if not parts:
         return 'No account your rules allow can send this fax now. It waits for you in Sent; nothing was sent.'

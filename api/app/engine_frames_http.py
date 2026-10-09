@@ -156,8 +156,8 @@ def _endpoint_view(row):
 
 
 MODE_WORDS = {'t38': 'Fax over IP (T.38)', 'audio': 'Audio fax'}
-# Only the fast fax service is named to people; the built-in engine is simply Faxbot.
-ENGINE_WORDS = {'hylafax': "Faxbot's fast fax service"}
+# Only the fax engine is named to people; the built-in engine is simply Faxbot.
+ENGINE_WORDS = {'hylafax': "Faxbot's fax engine"}
 
 
 def _call_view(view):

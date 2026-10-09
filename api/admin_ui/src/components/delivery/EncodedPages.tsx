@@ -9,6 +9,7 @@ import type AdminAPIClient from '../../api/client';
 import type { CodecNumber, CodecReceived } from '../../api/codecTypes';
 import { formatServerTime } from '../../api/time';
 import { DeliveryError } from './shared';
+import LoadFailed, { saysFailure } from '../common/LoadFailed';
 
 const STYLES = [
   { value: 'dense', label: 'Dense pages' },
@@ -168,13 +169,26 @@ export function ReceivedEncodedPages({ client, faxId, canDownload }: {
 }) {
   const [view, setView] = useState<CodecReceived | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // A fax without encoded pages answers with no sentence; only a failed read is said.
+  const [unread, setUnread] = useState(false);
   useEffect(() => {
     let live = true;
     setView(null);
+    setUnread(false);
     if (!faxId) return undefined;
-    client.getCodecReceived(faxId).then((value) => { if (live) setView(value); }).catch(() => undefined);
+    client.getCodecReceived(faxId).then((value) => { if (live) setView(value); })
+      .catch((failure) => { if (live && saysFailure(failure)) setUnread(true); });
     return () => { live = false; };
   }, [client, faxId]);
+  if (faxId && unread) {
+    return (
+      <Box my={1} data-testid="received-encoded-pages">
+        <Typography variant="caption" color="text.secondary">Encoded pages</Typography>
+        <LoadFailed testId="received-encoded-pages-unread"
+          text="Whether this fax holds encoded pages could not be checked. Try again." />
+      </Box>
+    );
+  }
   if (!faxId || !view?.sentence) return null;
   const download = async () => {
     try {

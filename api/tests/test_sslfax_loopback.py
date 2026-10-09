@@ -1014,7 +1014,7 @@ def test_g_a_t38_call_with_no_t38_data_back_moves_only_the_engine_to_audio(tmp_p
              'engine_call': first['engine_call'], 'faxbot_log': first['faxbot_log'][-1500:]}
     print('\nSSLFAX_PROOF_G1 ' + json.dumps(proof, indent=2, default=str))
     assert str(proof['job_status']).lower() == 'failed', proof
-    assert proof['job_error'] == 'The call connected but the fast fax service heard no fax machine on the line.'
+    assert proof['job_error'] == 'The call connected but the fax engine heard no fax machine on the line.'
     assert found['call']['t38'] == 'yes' and found['call']['pages'] == 0, proof
     assert '"mode": "audio"' in mode and proof['installation_t38'] is True, proof
     assert proof['engine_call'] and proof['engine_call'].get('GwStatus'), proof
@@ -1324,8 +1324,8 @@ def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_pat
     assert proof['status']['state'] == 'running' and proof['status']['started'] >= request['asked'], proof
     assert proof['engine_state'] == 'running', proof
     text = proof['engine_text'] or ''
-    assert text.startswith("Faxbot's fast fax service did not answer the "), proof
-    assert text.endswith('so that fax was received the ordinary way; Faxbot restarted the fast fax service.'), proof
+    assert text.startswith("Faxbot's fax engine did not answer the "), proof
+    assert text.endswith('so that fax was received the ordinary way; Faxbot restarted the fax engine.'), proof
     # The restart wrote the engine's own settings back: the next call reaches line 1 through the engine.
     assert proof['next']['fax']['pages'] == 2, proof
     assert proof['next']['call'] and proof['next']['call'][0]['call_id'].startswith('engine.'), proof
@@ -1333,7 +1333,7 @@ def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_pat
 
 
 def test_n_asterisk_as_its_own_user_sends_and_receives_with_its_built_in_engine(tmp_path, loopback):
-    """Asterisk runs as its own user (uid 5060), as docker-compose.yml runs it. With the fast fax service
+    """Asterisk runs as its own user (uid 5060), as docker-compose.yml runs it. With the fax engine
     stopped, Faxbot's built-in engine does the work: SendFAX reads the pages the API wrote (mode 0640, the
     data folder's group), ReceiveFAX writes the received fax into Faxbot's inbound folder, and the hand-over
     script reads the inbound secret the API wrote (mode 0640) and gets the fax into Received."""

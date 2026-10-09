@@ -7,7 +7,9 @@ predictor (``routing.predict.predict_from``) by the account's plan. A missing
 plan is an unknown cost, never zero. Keys are ``dsm:<id>`` and ``fhir:<id>``;
 a rule can name one, name them all as ``digital``, or forbid them. A key a
 fax's rules name that has no usable address now is reported as skipped
-(``unavailable``), never silently dropped.
+(``unavailable``), never silently dropped. A FHIR endpoint whose server needs
+the patient (``digital/patient.py``) is skipped as ``needs_patient`` for a fax
+that lacks the details, so that fax goes by fax.
 
 ``DigitalRoute`` has the relay route's contract (``prepare(claim, plan, job,
 choice)``): its submission raises ``DirectRefused`` when nothing reached the
@@ -136,8 +138,22 @@ def _usable(account, current, store):
     return None if state == 'ready' else 'not_ready'
 
 
-def candidates(engine, values, destination, pages, *, pinned=None, current=None, now=None, store=None):
-    """(DigitalCandidate list cheapest first, skipped ``(key, why)``) for a fax to ``destination`` now."""
+def _lacks_patient(account, values, job_id):
+    """Whether the fax ``job_id`` lacks the patient details the FHIR client's server needs (never for a dry run)."""
+    from . import patient as fax_patient
+    mode = fax_patient.mode_of(account)
+    if job_id is None or mode == 'optional':
+        return False
+    try:
+        found = fax_patient.read(getattr(values, 'fax_data_dir', None) or '.', job_id)
+    except fax_patient.PatientUnreadable:
+        found = None
+    return found is None or found.missing_for(mode)
+
+
+def candidates(engine, values, destination, pages, *, pinned=None, current=None, now=None, store=None, job_id=None):
+    """(DigitalCandidate list cheapest first, skipped ``(key, why)``) for a fax to ``destination`` now; ``job_id``
+    names the fax when it is a real one (not a preview), so a FHIR server that needs a patient can be skipped."""
     from ..rules import model
     if pinned is not None and (pinned.envelope.require_direct or any(
             item.account == model.DIGITAL and item.why == 'never' for item in pinned.decision.excluded)):
@@ -155,6 +171,8 @@ def candidates(engine, values, destination, pages, *, pinned=None, current=None,
         if account is not None and account.kind != kind:
             account = None
         why = _usable(account, current, store)
+        if why is None and view['kind'] == 'fhir' and _lacks_patient(account, current or values, job_id):
+            why = 'needs_patient'
         if why is not None:
             skipped.append((key, why))
             continue
@@ -210,6 +228,14 @@ class DigitalRoute:
         if re.fullmatch('[a-f0-9]{32}', claim.job_id) is None or pdf.is_symlink() or not pdf.is_file():
             raise DirectRefused('The fax document is unavailable; nothing was sent.')
         document = await run_lifecycle_step(pdf.read_bytes)
+        patient = None
+        if kind == 'fhir':
+            # The patient given with the fax, kept beside its document (digital/patient.py); document content.
+            from . import patient as fax_patient
+            try:
+                patient = await run_lifecycle_step(lambda: fax_patient.read(current.fax_data_dir, claim.job_id))
+            except fax_patient.PatientUnreadable:
+                raise DirectRefused("The fax's patient details cannot be read; nothing was sent.") from None
         private = lambda: bool(getattr(current, 'direct_allow_private_peers', False))  # noqa: E731
         if kind == 'direct':
             from .direct_message import DirectSender, Transport
@@ -220,7 +246,8 @@ class DigitalRoute:
         from . import certificates, smime
         try:
             submission = await run_lifecycle_step(lambda: sender.prepare(
-                claim=claim, job=job, view=view, document=document, values=current))
+                claim=claim, job=job, view=view, document=document, values=current,
+                **({'patient': patient} if kind == 'fhir' else {})))
         except (certificates.CertificateRefused, smime.SmimeError) as refusal:
             # The account's own certificate, key or trust bundle cannot be used: nothing was built or sent.
             raise DirectRefused(f'{refusal} Nothing was sent.') from None

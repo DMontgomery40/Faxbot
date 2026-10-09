@@ -598,7 +598,8 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
-        if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer'):
+        if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
+                                          sip_calls.PERSON_ANSWERED):
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
@@ -609,8 +610,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # sound came back, sound came back but no fax machine answered, or the other machine answered
         # (sent its ID) and the fax did not finish.
         found = (row or {}).get('verdict')
-        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed'):
+        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed',
+                     sip_calls.PERSON_ANSWERED):
             sentence = sip_calls.verdict_sentence(found)
+        # A person or a voice line answered: the fax fails and takes no other route by itself.
+        category = sip_calls.category_for(found)
     if status == hylafax_engine.UNCERTAIN:
         # Pages that may have arrived unconfirmed, or a job removed or rejected after it dialed: the fax may
         # have arrived. It waits for a person and is never sent again by itself (no other route takes it).
@@ -633,7 +637,7 @@ async def engine_result(request: Request, payload: dict = Body(...),
             event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category,
             # The engine fails a call plainly only when it never dialed or ended before any fax data
             # (hylafax_engine.result_outcome); every other ending waits for a person.
-            before_data=True if status == 'failed' and category is None else None))
+            before_data=True if status == 'failed' and category in (None, 'person_answered') else None))
     except DeliveryConflict:
         raise HTTPException(409, detail='The fax engine result does not match the fax.') from None
     except UnboundProviderProfile:

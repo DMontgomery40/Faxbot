@@ -113,6 +113,9 @@ def uncertain_probe(fax_id: str = typer.Argument(..., help=FAX_ID_HELP),
             out.line('Phone script:')
             for line in phone['script']:
                 out.line('  ' + line)
+        npi = next((check for check in item.get('checks') or [] if check['kind'] == 'npi_lookup'), None)
+        if npi and npi.get('source_url'):
+            out.line(f"NPI registry: {npi['source_url']}")
         if (item.get('moved_on') or {}).get('text'):
             out.line(item['moved_on']['text'])
         if item.get('suggestion'):

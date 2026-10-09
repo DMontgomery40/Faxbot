@@ -184,7 +184,7 @@ export interface SipTrunkStatus {
   // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
   handover_ready?: boolean | null;
   handover_text?: string | null;
-  // The fast fax service (SSL Fax engine): its state and one sentence; null outside the Compose install.
+  // The fax engine (SSL Fax engine): its state and one sentence; null outside the Compose install.
   engine_state?: 'running' | 'starting' | 'not_set_up' | 'stopped' | null;
   engine_text?: string | null;
   // The engine went to audio fax on its own after a T.38 call that heard no fax machine.
