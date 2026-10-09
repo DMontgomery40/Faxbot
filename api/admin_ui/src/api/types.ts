@@ -197,6 +197,7 @@ export interface ApiKey {
 }
 
 export interface Settings {
+  analysis?: import('./analysisTypes').AnalysisSettings;
   _meta?: {
     active_revision_id: string;
     desired_revision_id: string;

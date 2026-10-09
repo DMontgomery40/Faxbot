@@ -70,6 +70,9 @@ config.attributes["schema_engine_extras"] = importlib.import_module(package + ".
 config.attributes["schema_measured_codec"] = importlib.import_module(package + ".schema_measured_codec")
 
 
+config.attributes["schema_analysis"] = importlib.import_module(package + ".schema_analysis")
+
+
 def migrate(connection):
     with schema.guarded_migration(connection, lock_timeout=config.attributes.get("lock_timeout", schema.LOCK_TIMEOUT_SECONDS)):
         context.configure(connection=connection, target_metadata=legacy.frozen_metadata(),

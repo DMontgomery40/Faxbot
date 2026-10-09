@@ -10,6 +10,7 @@ import typer
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
 from .commands import certainty, continuation, discovery
+from .commands import analysis as analysis_commands
 from .commands import send_once
 from .commands import charges as charge_commands
 from .commands import setup_plan
@@ -193,6 +194,8 @@ costs.command('predict')(delivery.routing_predict)
 costs.add_typer(charge_commands.charges, name='charges')
 costs.add_typer(charge_commands.invoices, name='invoices')
 
+costs.command('analysis')(analysis_commands.analysis_status)
+
 # -- access --------------------------------------------------------------------------
 
 people = _group('Who can use Faxbot and what each person may do: people, groups, roles, keys, sign-ins and paired '
@@ -219,6 +222,7 @@ system = _group('Look after the installation: settings, checks, logs, the securi
 # Suggested packs from what Faxbot knows: the Setup page's Suggested packs.
 system.add_typer(setup_plan.setup, name='setup')
 system.add_typer(settings.settings, name='settings')
+system.add_typer(analysis_commands.analysis, name='analysis')
 checks = _copy(settings.diagnostics)
 checks.command('test-fax')(fax.inbound_simulate)
 system.add_typer(checks, name='diagnostics')

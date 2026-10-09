@@ -126,6 +126,13 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
     """
     values = snapshot.desired.values
     return {
+        'analysis': {
+            'enabled': values.analysis_enabled, 'provider': values.analysis_provider,
+            'base_url': values.analysis_base_url, 'model': values.analysis_model,
+            'api_key': mask_secret(values.analysis_api_key),
+            'interval_hours': values.analysis_interval_hours,
+            'configured': bool(values.analysis_api_key and values.analysis_model),
+        },
         'backend': {'type': values.fax_backend, 'disabled': values.fax_disabled},
         'hybrid': {
             'outbound_backend': values.effective_outbound,

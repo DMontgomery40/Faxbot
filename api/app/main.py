@@ -58,6 +58,9 @@ from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
 from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL
 from .outbound_worker import OutboundWorker
+from .analysis.http import router as analysis_router
+from .analysis.store import AnalysisStore
+from .analysis.worker import AnalysisWorker
 from .outbound_polling import OutboundPoller
 from .provider_execution import UnsupportedProviderExecutionError
 from .outbound_transport import CapturedTransport, normalize_status
@@ -155,6 +158,9 @@ async def lifespan(application: FastAPI):
                     for mount in mounts:
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
+                    analysis_worker = AnalysisWorker(AnalysisStore(runtime.manager.store.engine),
+                        lambda: runtime.manager.store.read().active.values)
+                    tasks.append(asyncio.create_task(analysis_worker.run(), name='faxbot-operational-analysis'))
                     delivery = OutboundStore(runtime.manager.store)
                     # Faxes to the installation's own numbers are delivered inside Faxbot (routing/local.py).
                     from .routing.local import installation_route
@@ -205,6 +211,7 @@ app = FastAPI(
 app.add_middleware(ConfigurationMiddleware)
 app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
+app.include_router(analysis_router)
 app.include_router(authentication_router)
 app.include_router(management_router)
 app.include_router(routing_router)

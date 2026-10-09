@@ -123,6 +123,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
 
 # Every masked value in the editor view; each is a credential or the database URL.
 MASKED_PATHS = {
+    'analysis.api_key',
     'security.api_key', 'phaxio.api_key', 'phaxio.api_secret', 'phaxio.callback_token', 'sinch.api_key',
     'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
     'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',

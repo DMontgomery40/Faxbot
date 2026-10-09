@@ -340,6 +340,29 @@ class ConfigurationValues(BaseModel):
     # other than UTC; empty means UTC.
     time_zone: str = Field('', validation_alias=AliasChoices('FAX_TIME_ZONE', 'TZ'))
 
+    # Optional operational analysis. New fields remain owner-protected by default.
+    analysis_enabled: bool = Field(False, validation_alias='ANALYSIS_ENABLED')
+    analysis_provider: str = Field('openai', validation_alias='ANALYSIS_PROVIDER', pattern=r'^(openai|openrouter|compatible)$')
+    analysis_base_url: str = Field('https://api.openai.com/v1', validation_alias='ANALYSIS_BASE_URL', max_length=512)
+    analysis_model: str = Field('', validation_alias='ANALYSIS_MODEL', max_length=200, pattern=r'^[!-~]*$')
+    analysis_api_key: str = Field('', validation_alias='ANALYSIS_API_KEY', repr=False,
+                                  json_schema_extra={'secret': True}, max_length=4096, pattern=r'^[!-~]*$')
+    analysis_interval_hours: int = Field(24, validation_alias='ANALYSIS_INTERVAL_HOURS', ge=0, le=168)
+
+    @field_validator('analysis_base_url')
+    @classmethod
+    def validate_analysis_url(cls, value):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(value)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or any(char.isspace() for char in value)):
+            raise ValueError('Use an HTTPS API base address without credentials, query, or fragment.')
+        try:
+            parsed.port
+        except ValueError:
+            raise ValueError('Use a valid HTTPS API address.') from None
+        return value.rstrip('/')
+
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
     # The extra provider accounts of the configuration revision these values were read from (accounts.py):
     # a read-only view for code that has only the values. Revisions write accounts from their own record,
