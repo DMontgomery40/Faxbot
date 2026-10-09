@@ -16,6 +16,7 @@ from .commands import send_once
 from .commands import charges as charge_commands
 from .commands import setup_plan
 from .commands import number_advice
+from .commands import fact_advice
 from .commands import digital
 from .commands import forwarded_trust
 from .commands import expected as expected_commands
@@ -189,6 +190,7 @@ costs.command('reconcile')(delivery.routing_reconcile)
 costs.command('fax')(delivery.routing_fax_cost)
 costs.command('received')(delivery.routing_received_costs)
 costs.command('savings')(delivery.routing_savings)
+costs.command('advice')(fact_advice.costs_advice)
 costs.add_typer(delivery.recommendations, name='recommendations')
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('rate-rows')(delivery.routing_rate_rows)

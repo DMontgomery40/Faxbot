@@ -76,6 +76,7 @@ import Savings from './components/delivery/Savings';
 import Charges from './components/delivery/Charges';
 import Invoices from './components/delivery/Invoices';
 import Recommendations from './components/delivery/Recommendations';
+import FactAdvice from './components/delivery/FactAdvice';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import UncertainSettingsPanel from './components/work/UncertainSettingsPanel';
 import Terminal from './components/Terminal';
@@ -394,6 +395,9 @@ export const NAVIGATION: NavArea[] = [
       { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
           onNavigate={ctx.navigate} /> },
+      // What one missing fact (a partner, a recipient's approval, a price, a plan's allowance) cost you.
+      { id: 'advice', label: 'Advice', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <FactAdvice client={ctx.client} /> },
     ],
   },
   {

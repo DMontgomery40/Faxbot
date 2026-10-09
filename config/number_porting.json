@@ -267,5 +267,32 @@
       },
       "port_out": {"needs": "Ask Telstra.", "fee": null, "restriction": null, "sources": []}
     }
-  }
+  },
+  "carrier_facts_description": "Carrier rules about moving or keeping a line, by country (ISO codes), each with its source and the date read. about names the dependency it concerns (broadband, other_lines) or all. Faxbot shows them beside the line advice and a move's dependencies (routing/number_placement.py carrier_facts).",
+  "carrier_facts": [
+    {
+      "id": "bt-digital-voice-broadband",
+      "countries": ["GB"],
+      "about": "broadband",
+      "sentence": "BT Digital Voice for Business cannot currently take a number from a line that carries broadband, because moving it would end the broadband; BT suggests its Cloud Voice instead.",
+      "source": {"url": "https://business.bt.com/help/guides/guide-to-digital-voice-for-business/setting-up-digital-voice-for-business/number-porting-for-digital-voice-for-business/", "label": "BT Business: number porting for Digital Voice for Business"},
+      "read_on": "2026-10-08"
+    },
+    {
+      "id": "bt-digital-voice-other-services",
+      "countries": ["GB"],
+      "about": "other_lines",
+      "sentence": "BT Digital Voice for Business cannot currently take a number from a line that supports other services, such as certain alarms, lifts and fax machines; a move from another provider takes at least 7 working days for a single line.",
+      "source": {"url": "https://business.bt.com/help/guides/guide-to-digital-voice-for-business/setting-up-digital-voice-for-business/number-porting-for-digital-voice-for-business/", "label": "BT Business: number porting for Digital Voice for Business"},
+      "read_on": "2026-10-08"
+    },
+    {
+      "id": "openreach-pstn-closure",
+      "countries": ["GB"],
+      "about": "all",
+      "sentence": "Openreach closes the UK's old telephone network (PSTN) on 31 January 2027, so a fax line still on it has to move to a digital service before then; its stopgap service (EVAc) is temporary and costs providers £35 a month for a basic line.",
+      "source": {"url": "https://www.openreach.com/news/openreach-to-protect-broadband--connections-as-pstn-closure---approaches/", "label": "Openreach: protecting connections as the PSTN closure approaches (24 September 2026)"},
+      "read_on": "2026-10-08"
+    }
+  ]
 }
