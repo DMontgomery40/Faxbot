@@ -40,15 +40,20 @@ RUN curl --fail --location --retry 3 --output hylafax.tar.gz \
 # metadata, multicast and reserved addresses (except this engine's own
 # listener), keep the session passcode out of logs, and let the listener bind
 # again right after a call. The policy is tested here; a failure stops the build,
-# and so does a hunk that does not apply exactly (--fuzz=0).
+# and so does a hunk that does not apply exactly (--fuzz=0). 0003 tunes the page
+# coding without changing a pixel: the fewest-bytes MR reset schedule, and the
+# smallest of 12 T.85 settings for JBIG on SSL Fax or where a job asks for it
+# (faxd/LosslessTuning.h, written by 0003).
 COPY patches/ /usr/src/patches/
-COPY tests/sslfax_policy_test.c++ /usr/src/tests/
+COPY tests/sslfax_policy_test.c++ tests/lossless_tuning_test.c++ /usr/src/tests/
 WORKDIR /usr/src/hylafax-7.0.11
 RUN for patch in /usr/src/patches/*.patch; do patch -p1 --forward --batch --fuzz=0 < "$patch" || exit 1; done \
     && g++ -Wall -Werror -I faxd -o /usr/src/sslfax-policy-test /usr/src/tests/sslfax_policy_test.c++ \
     && /usr/src/sslfax-policy-test
 
-# Serial make: parallel builds race on libfaxutil.
+# Serial make: parallel builds race on libfaxutil. Then Faxbot's lossless tuning (patches/0003) is tested
+# against the built libraries: the MR schedule against brute force, exact decodes of every coding tried, and
+# the bytes Faxbot's own measurement must equal (api/tests/test_encoder_tuning.py). A failure stops the build.
 RUN ./configure --nointeractive --disable-pam \
        --with-DIR_BIN=/usr/bin --with-DIR_SBIN=/usr/sbin --with-DIR_LIB=/usr/lib \
        --with-DIR_LIBDATA=/etc/hylafax --with-DIR_LIBEXEC=/usr/sbin \
@@ -60,6 +65,10 @@ RUN ./configure --nointeractive --disable-pam \
     && grep -q '^#define HAVE_SSL 1' config.h \
     && grep -q '^#define HAVE_JBIG 1' config.h \
     && make \
+    && g++ -Wall -D__ANSI_CPP__ -I. -Ifaxd -Iutil -o /usr/src/lossless-tuning-test /usr/src/tests/lossless_tuning_test.c++ \
+       faxd/libfaxserver.so.7.0.11 util/libfaxutil.so.7.0.11 -ltiff -lz port/libport.a -lcrypt -lutil -lm \
+       -ljbig -ljpeg -lssl -lcrypto -lpthread \
+    && LD_LIBRARY_PATH=faxd:util /usr/src/lossless-tuning-test \
     && make install INSTALLROOT=/opt/install \
     && test -x /opt/install/usr/sbin/faxgetty && test -x /opt/install/usr/sbin/faxq \
     && test -x /opt/install/usr/sbin/hfaxd && test -d /opt/install/var/spool/hylafax/bin \

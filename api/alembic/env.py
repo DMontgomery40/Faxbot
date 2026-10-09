@@ -72,6 +72,7 @@ config.attributes["schema_shading_method"] = importlib.import_module(package + "
 config.attributes["schema_routing_learning"] = importlib.import_module(package + ".schema_routing_learning")
 config.attributes["schema_expected_faxes"] = importlib.import_module(package + ".schema_expected_faxes")
 config.attributes["schema_fact_advice"] = importlib.import_module(package + ".schema_fact_advice")
+config.attributes["schema_encoder_tuning"] = importlib.import_module(package + ".schema_encoder_tuning")
 
 
 def migrate(connection):

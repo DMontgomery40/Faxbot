@@ -490,6 +490,9 @@ class CallSettings:
     # The coding measured smallest for this attempt's pages ('MH', 'MR', 'MMR' or 'JBIG', pages/coding.py), when
     # Faxbot chose one; ``compression`` then holds it as the setting's value.
     coding: str | None = None
+    # Lossless tuning for the SSL Fax engine's job (pages/tuning.py ``CallTuning.comment``), carried in the job's
+    # comments for hylafax/bin/jobcontrol; None leaves the engine's defaults.
+    tuning: str | None = None
 
 
 # The coding Faxbot measured, as the setting's value (``sip_trunk.COMPRESSIONS``) and as HylaFAX's job data format.
@@ -865,6 +868,10 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
                          f'JPARM USEECM {"YES" if settings.ecm else "NO"}',
                          f'JPARM DATAFORMAT {_quote(_DATA_FORMATS[settings.compression])}']
+            if settings.tuning and re.fullmatch(r'faxbot-tuning mr=(?:on|off) jbig=(?:sslfax|always|never)',
+                                                settings.tuning):
+                # Lossless tuning for this call (pages/tuning.py); HylaFAX+ uses comments only for cover pages.
+                commands.append(f'JPARM COMMENTS {_quote(settings.tuning)}')
         if header:
             from .routing.reply_number import tagline
             commands += [f'JPARM TAGLINE {_quote(tagline(header))}', 'JPARM USETAGLINE YES']

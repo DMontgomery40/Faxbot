@@ -2500,6 +2500,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one number you fax: its settings, how...
 * `set`: Change a number&#x27;s name, notes, preferred...
 * `limits`: Show or set the highest speed and error...
+* `tuning`: Show or set whether Faxbot makes pages...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
 * `schedule`: Show or set when Faxbot sends to one...
 * `polling`: Show or set whether Faxbot may collect...
@@ -2593,6 +2594,26 @@ $ faxbot recipients limits [OPTIONS] {number}
 
 * `--speed RATE`: Highest speed for this number: 14400, 9600, 7200, 4800, or default for the setting all faxes use.
 * `--error-correction ON|OFF`: Error correction for this number: on, off, or default.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients tuning`
+
+Show or set whether Faxbot makes pages smaller for one number, without changing what it prints.
+
+**Usage**:
+
+```console
+$ faxbot recipients tuning [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--smaller DEFAULT|OFF`: Smaller pages for this number: default (as set for all faxes) or off.
+* `--smallest-format ON|OFF`: Also send this number the smallest page format. Turn this on only if its fax machine prints faxes from Faxbot correctly.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients fax-machine`

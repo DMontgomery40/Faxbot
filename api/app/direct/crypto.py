@@ -100,15 +100,28 @@ def _relay_facts(facts):
             and _NUMBER.fullmatch(facts['destination']) is not None and type(facts['together']) is bool)
 
 
-def capabilities(*, fax_images, peer_calls, said_at=None):
-    """What this installation accepts from one partner, as a signed statement carries it."""
-    return {'fax_images': bool(fax_images), 'peer_calls': bool(peer_calls), 'said_at': said_at or timestamp()}
+def capabilities(*, fax_images, peer_calls, said_at=None, own_engine=None):
+    """What this installation accepts from one partner, as a signed statement carries it. ``own_engine`` (optional):
+    whether this installation's own Faxbot fax engine answers its fax number (pages/tuning.py)."""
+    found = {'fax_images': bool(fax_images), 'peer_calls': bool(peer_calls), 'said_at': said_at or timestamp()}
+    if own_engine is not None:
+        found['own_engine'] = bool(own_engine)
+    return found
+
+
+def parse_own_engine(value):
+    """Whether a partner's signed capabilities say its own Faxbot fax engine answers its number; None when they do
+    not say (older partners)."""
+    found = value.get('own_engine') if isinstance(value, dict) else None
+    return found if type(found) is bool else None
 
 
 def parse_capabilities(value):
-    """A partner's capabilities from a statement it signed: (fax_images, peer_calls, said_at), or None."""
-    if (not isinstance(value, dict) or set(value) != {'fax_images', 'peer_calls', 'said_at'}
-            or type(value['fax_images']) is not bool or type(value['peer_calls']) is not bool):
+    """A partner's capabilities from a statement it signed: (fax_images, peer_calls, said_at), or None. The
+    optional ``own_engine`` is read by ``parse_own_engine``."""
+    if (not isinstance(value, dict) or set(value) - {'own_engine'} != {'fax_images', 'peer_calls', 'said_at'}
+            or type(value['fax_images']) is not bool or type(value['peer_calls']) is not bool
+            or ('own_engine' in value and type(value['own_engine']) is not bool)):
         return None
     try:
         return value['fax_images'], value['peer_calls'], parse_timestamp(value['said_at'])

@@ -74,6 +74,20 @@ export interface RecipientFaxLimits {
   sslfax_sentence: string | null;
 }
 
+// Recipients, Details: smaller pages (lossless tuning) for one number. tune: null as set for all faxes, false off;
+// tune_jbig: the smallest page format for this number too (with its warning). jbig: what the calls use.
+export interface RecipientCodingTuning {
+  number: string;
+  tune: false | null;
+  tune_jbig: boolean;
+  setting: boolean;
+  mr: boolean;
+  jbig: 'always' | 'sslfax' | 'never';
+  reasons: string[];
+  jbig_sentence: string;
+  warning: string;
+}
+
 export interface SipTrunkSettings {
   preset: string;
   auth: SipAuthMode;
@@ -105,6 +119,7 @@ export interface SipTrunkSettings {
   fax_ecm?: boolean;
   fax_compression?: 'mh' | 'mr' | 'mmr' | 'jbig';
   fax_fine?: boolean;
+  fax_tune_coding?: boolean;
   sslfax_enabled?: boolean;
   fax_lines?: number;
   // Calls at once on the trunk (0: as many as the fax lines) and new calls a second (0: the carrier's limit).

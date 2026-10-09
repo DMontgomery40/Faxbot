@@ -80,7 +80,7 @@ const EMPTY: TrunkValues = {
   public_address_check_minutes: 5,
   // Fax settings: the recommended values.
   t38_error_correction: 'redundancy', t38_max_datagram: 400, fax_max_rate: 14400, fax_ecm: true,
-  fax_compression: 'jbig', fax_fine: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
+  fax_compression: 'jbig', fax_fine: true, fax_tune_coding: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
   max_calls: 0, calls_per_second: 0,
 };
 
@@ -313,7 +313,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       // Fax settings.
       ['t38_error_correction', 'sip_t38_error_correction'], ['t38_max_datagram', 'sip_t38_max_datagram'],
       ['fax_max_rate', 'sip_fax_max_rate'], ['fax_ecm', 'sip_fax_ecm'], ['fax_compression', 'sip_fax_compression'],
-      ['fax_fine', 'sip_fax_fine'], ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
+      ['fax_fine', 'sip_fax_fine'], ['fax_tune_coding', 'sip_fax_tune_coding'],
+      ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
       ['sslfax_listener_port', 'sip_sslfax_listener_port'],
       // How many calls the trunk takes: faxes beyond them wait for a free line.
       ['max_calls', 'sip_trunk_max_calls'], ['calls_per_second', 'sip_trunk_calls_per_second'],

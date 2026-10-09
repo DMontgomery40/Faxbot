@@ -23,4 +23,16 @@ df=$(sed -n 's/^desireddf:\([013]\)$/\1/p' "sendq/q$job" 2>/dev/null | tail -n 1
 if [ -n "$df" ]; then
   printf 'DesiredDF: %s\n' "$df"
 fi
+# Lossless tuning (patches/0003, faxd/LosslessTuning.h): Faxbot puts its choice for this call in the job's
+# comments (JPARM COMMENTS "faxbot-tuning mr=<on|off> jbig=<sslfax|always|never>"; HylaFAX+ uses comments only
+# for cover pages, which Faxbot never asks it to make). Unknown words leave the engine's defaults: the MR
+# schedule on, and tuned JBIG only over SSL Fax.
+tuning=$(sed -n 's/^comments:faxbot-tuning \(mr=[a-z]* jbig=[a-z]*\)$/\1/p' "sendq/q$job" 2>/dev/null | tail -n 1)
+case $tuning in
+  *mr=off*) printf 'TuneMR: no\n' ;;
+esac
+case $tuning in
+  *jbig=always*) printf 'TuneJBIG: always\n' ;;
+  *jbig=never*) printf 'TuneJBIG: never\n' ;;
+esac
 exit 0

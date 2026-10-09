@@ -728,8 +728,8 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
             shapes[key] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), key[1],
                                          boundary_seconds)
             continue
-        measured = (codings.measure_cached(pages, measure_cache) if measure_cache is not None
-                    else codings.measure(pages))
+        measured = (codings.measure_cached(pages, measure_cache, tuning=usable.tuning) if measure_cache is not None
+                    else codings.measure(pages, tuning=usable.tuning))
         choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
                                      negotiate=usable.left_out.get('JBIG') == codings.JBIG_NOT_ON_RECORD)
         choices[key] = choice

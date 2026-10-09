@@ -1560,3 +1560,181 @@ def test_r_a_collection_from_a_fax_server_that_holds_nothing_calls_once_and_says
     assert len(rows['calls']) == 1 and rows['calls'][0]['disposition'] == 'answered', proof
     assert [row['id'] for row in rows['requests']] == [request_id] and rows['received'] == [], proof
     assert shown['requests'][0]['state'] == 'Nothing waiting', proof
+
+
+# Lossless encoder tuning (hylafax/patches/0003, pages/tuning.py) ---------------------------------------------
+
+def tuning_pdf():
+    """A tinted form, a photograph and a shaded table: the pages lossless tuning shrinks most. Ghostscript draws
+    the tints and the photograph's grey levels as dots (FAX_FRIENDLY_DOCUMENTS never keeps them)."""
+    from PIL import Image
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=letter)
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'TINTED FORM PROOF PAGE 1 OF 3')
+    for box in range(8):
+        top = 680 - box * 70
+        page.setFillGray(0.8)
+        page.rect(72, top - 40, 468, 50, fill=1, stroke=1)
+        page.setFillGray(0)
+        page.setFont('Helvetica', 12)
+        page.drawString(80, top - 10, f'Field {box + 1}: synthetic value {box * 37 + 11}')
+    page.showPage()
+    photo = Image.new('L', (400, 500))
+    photo.putdata([int(128 + 120 * ((x - 200) * (y - 250)) / (200 * 250)) for y in range(500) for x in range(400)])
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'PHOTOGRAPH PROOF PAGE 2 OF 3')
+    page.drawImage(ImageReader(photo), 106, 120, width=400, height=560)
+    page.showPage()
+    page.setFont('Helvetica-Bold', 24)
+    page.drawString(72, 730, 'SHADED TABLE PROOF PAGE 3 OF 3')
+    for row in range(16):
+        top = 690 - row * 36
+        page.setFillGray(0.9 if row % 2 else 0.75)
+        page.rect(72, top - 8, 468, 26, fill=1, stroke=0)
+        page.setFillGray(0)
+        page.setFont('Helvetica', 12)
+        page.drawString(80, top, f'Row {row + 1}   item {row * 13 + 7}   amount {row * 101 + 3}.00')
+    page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def received_bies(docker, peer, workdir):
+    """The BIE header of each page of the peer's newest received fax, as it arrived (HylaFAX+ keeps a JBIG page
+    undecoded in its TIFF): MX (BIH byte 16), options (byte 19) and L0 (bytes 12-15), T.82 6.2."""
+    name = docker.sh(peer, 'ls -t /var/spool/hylafax/recvq/fax*.tif 2>/dev/null | head -1').stdout.strip()
+    if not name:
+        return []
+    path = workdir / 'received-raw.tif'
+    path.write_bytes(docker.read_bytes(peer, name))
+    import struct
+    data, found = path.read_bytes(), []
+    # Pillow does not open JBIG TIFFs, so the directories are read here (TIFF 6.0 section 2).
+    order = '<' if data[:2] == b'II' else '>'
+    directory = struct.unpack(order + 'I', data[4:8])[0]
+    while directory and len(found) < 50:
+        count = struct.unpack(order + 'H', data[directory:directory + 2])[0]
+        tags = {}
+        for index in range(count):
+            entry = data[directory + 2 + 12 * index:directory + 14 + 12 * index]
+            tag, kind, _ = struct.unpack(order + 'HHI', entry[:8])
+            tags[tag] = struct.unpack(order + ('H' if kind == 3 else 'I'), entry[8:10] if kind == 3 else entry[8:12])[0]
+        if tags.get(259) == 9:  # TIFF Compression 9: JBIG (T.85); one strip a page
+            bih = data[tags[273]:tags[273] + 20]
+            found.append({'compression': 'JBIG', 'mx': bih[16], 'options': bih[19],
+                          'l0': int.from_bytes(bih[12:16], 'big')})
+        else:
+            found.append({'compression': tags.get(259)})
+        directory = struct.unpack(order + 'I', data[directory + 2 + 12 * count:directory + 6 + 12 * count])[0]
+    return found
+
+
+def row_check(sent, received, header=140):
+    """Row by row below the header band (the sender's tag line is drawn over the top): how many rows both pages
+    have, which of them differ and by how many pixels, and whether a row only one page has is blank."""
+    width = min(sent.size[0], received.size[0])
+    rows = min(sent.size[1], received.size[1])
+    stride = (width + 7) // 8
+    a, b = sent.crop((0, 0, width, sent.size[1])).tobytes(), received.crop((0, 0, width, received.size[1])).tobytes()
+    differing = []
+    for y in range(header, rows):
+        left, right = a[y * stride:(y + 1) * stride], b[y * stride:(y + 1) * stride]
+        if left != right:
+            differing.append([y, sum(bin(x ^ z).count('1') for x, z in zip(left, right))])
+    longer, extra = (a, sent.size[1]) if sent.size[1] > received.size[1] else (b, received.size[1])
+    # Pillow's one-bit pages: a set bit is paper, so a blank row is all 0xff bytes.
+    blank = all(byte == 0xff for byte in longer[rows * stride:extra * stride])
+    return {'sent_rows': sent.size[1], 'received_rows': received.size[1], 'common_rows': rows,
+            'differing_rows_below_header': len(differing), 'first_differences': differing[:5],
+            'unmatched_rows_blank': blank}
+
+
+def tuning_proof(tmp_path, context, name, *, exact=True):
+    folder = tmp_path / name
+    folder.mkdir()
+    outcome = send_and_collect(folder, context, document=tuning_pdf())
+    proof = evidence(outcome)
+    job_id = outcome['job']['id']
+    proof['lossless_lines'] = [line.split(']: ', 1)[-1] for line in outcome['faxbot_log'].splitlines()
+                               if 'LOSSLESS TUNING' in line]
+    proof['page_answers'] = re.findall(r'SEND recv (MCF|RTN|PPR)', outcome['faxbot_log'])
+    proof['tuning_rows'] = database(context, rows=f"SELECT coding, pages, tuned_pages, tuned_bytes, plain_bytes, "
+                                                  f"settings, sslfax, refused FROM coding_tuning_calls "
+                                                  f"WHERE job_id = '{job_id}'")['rows']
+    proof['records'] = records(context, job_id)
+    detail = api(context['docker'], 'GET', f'/admin/fax-jobs/{job_id}', key=context['key'])['json'] or {}
+    proof['sent_detail'] = detail.get('coding')
+    proof['comments'] = re.findall(r'^comments:(.*)$', outcome['done_qfile'], re.MULTILINE)
+    proof['received_bies'] = received_bies(context['docker'], context['peer'], folder)
+    transfer = (proof['records'].get('engine') or {}).get('transfer_seconds')
+    proof['seconds_per_page'] = round(transfer / PAGES, 2) if transfer else None
+    proof['rows'] = [row_check(a, b) for a, b in zip(outcome['sent_pages'], outcome['received_pages'])]
+    print(f'\nSSLFAX_PROOF_{name.upper()} ' + json.dumps(proof, indent=2, default=str))
+    if exact:
+        assert_delivered(outcome, proof)
+    else:
+        assert proof['job_status'].upper() == 'SUCCESS' and proof['received_pages'] == PAGES, proof
+    return proof
+
+
+def test_s_tuned_jbig_over_ssl_fax_keeps_every_pixel_and_is_sent_plain_when_you_turn_it_off(tmp_path, loopback):
+    """Tuned JBIG between two patched engines over SSL Fax (TuneJBIG "sslfax", the default): the BIE the peer
+    received carries the tuned options and MX, the engine's session log and Faxbot's records say what was sent,
+    and every page arrives with identical pixels below the header line. Then the same pages with smaller pages off
+    for the number: plain JBIG (options 0, MX 0), for the transfer time against stock settings."""
+    context = loopback('s', faxbot_t38=False, carrier_gateway=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    tuned = tuning_proof(tmp_path, context, 's_tuned')
+    off = api(docker, 'PUT', number + '/coding-tuning', key=key, body={'tune': False, 'tune_jbig': False})
+    assert off['status'] == 200 and off['json']['jbig'] == 'never', off
+    plain = tuning_proof(tmp_path, context, 's_plain')
+    print('\nSSLFAX_PROOF_S ' + json.dumps({'tuned_seconds_per_page': tuned['seconds_per_page'],
+                                            'plain_seconds_per_page': plain['seconds_per_page'],
+                                            'tuned_bies': tuned['received_bies'],
+                                            'plain_bies': plain['received_bies']}, indent=2, default=str))
+    assert tuned['received_info'].get('SignalRate') == 'SSL Fax', tuned
+    assert tuned['comments'] == ['faxbot-tuning mr=on jbig=sslfax'], tuned
+    assert len(tuned['lossless_lines']) >= PAGES and all('JBIG tuned' in line for line in tuned['lossless_lines'])
+    assert any(page.get('options') or page.get('mx') for page in tuned['received_bies']), tuned
+    assert all(page.get('l0') == 128 for page in tuned['received_bies']), tuned
+    rows = {row['coding']: row for row in tuned['tuning_rows']}
+    assert rows['JBIG']['tuned_pages'] >= 1 and rows['JBIG']['tuned_bytes'] < rows['JBIG']['plain_bytes'], tuned
+    assert rows['JBIG']['sslfax'] == 1 and rows['JBIG']['refused'] == 0, tuned
+    assert tuned['sent_detail']['tuned'] == ['JBIG'], tuned
+    assert plain['comments'] == ['faxbot-tuning mr=off jbig=never'], plain
+    assert all(page.get('options') == 0 and page.get('mx') == 0 for page in plain['received_bies']), plain
+
+
+def test_t_the_mr_schedule_without_error_correction_keeps_every_pixel(tmp_path, loopback):
+    """MR without ECM (the peer's modem has error correction off): faxd codes the MR file again with the
+    fewest-bytes reset schedule even though the session is MR too, and every page arrives intact. Then the same
+    pages with smaller pages off for the number, for the transfer time against stock settings."""
+    context = loopback('t', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       peer_ecm=False, api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mr'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    tuned = tuning_proof(tmp_path, context, 't_tuned', exact=False)
+    off = api(docker, 'PUT', number + '/coding-tuning', key=key, body={'tune': False, 'tune_jbig': False})
+    assert off['status'] == 200 and not off['json']['mr'], off
+    plain = tuning_proof(tmp_path, context, 't_plain', exact=False)
+    print('\nSSLFAX_PROOF_T ' + json.dumps({'tuned_seconds_per_page': tuned['seconds_per_page'],
+                                            'plain_seconds_per_page': plain['seconds_per_page'],
+                                            'tuned_lines': tuned['lossless_lines'],
+                                            'tuned_coding': (tuned['records'].get('engine') or {}).get('data_format'),
+                                            'plain_coding': (plain['records'].get('engine') or {}).get('data_format'),
+                                            'tuned_rows': tuned['rows'], 'plain_rows': plain['rows']},
+                                           indent=2, default=str))
+    if str((tuned['records'].get('engine') or {}).get('data_format') or '').startswith('2-D MR'):
+        assert tuned['lossless_lines'] and all('MR schedule' in line for line in tuned['lossless_lines']), tuned
+        rows = {row['coding']: row for row in tuned['tuning_rows']}
+        assert rows['MR']['tuned_bytes'] <= rows['MR']['plain_bytes'], tuned
+    assert not plain['lossless_lines'], plain

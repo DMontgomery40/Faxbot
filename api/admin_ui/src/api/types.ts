@@ -73,6 +73,10 @@ export interface SentCoding {
   receiver_known: boolean;
   sentence: string | null;
   measured_sentence: string | null;
+  // Smaller pages (lossless tuning): the codings the engine tuned on the call, and one sentence about it.
+  tuned?: string[];
+  tuning_refused?: string[];
+  tuning_sentence?: string | null;
 }
 
 export interface FaxJob extends DeliveryMetadata {

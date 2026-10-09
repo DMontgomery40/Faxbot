@@ -25,7 +25,8 @@ from ..routing.database import utcnow
 from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
 from .crypto import (FAX_IMAGE, FORM, RELAY, DirectProtocolError, capabilities, card, canonical, check_card,
-                     check_signed, kind_of, open_document, parse_capabilities, parse_manifest, parse_timestamp, seal,
+                     check_signed, kind_of, open_document, parse_capabilities, parse_manifest, parse_own_engine,
+                     parse_timestamp, seal,
                      signed, timestamp, verify)
 from . import faximage
 from .filing import DirectFiling
@@ -226,10 +227,12 @@ class DirectService:
         except IdentityUnavailable:
             raise DirectUnavailable() from None
 
-    @staticmethod
-    def offered(peer):
-        """What this installation accepts from ``peer``, as its signed answers tell the partner."""
-        return capabilities(fax_images=accepts_fax_images(peer), peer_calls=_flag(peer.get('receive_peer_calls')))
+    def offered(self, peer):
+        """What this installation accepts from ``peer``, as its signed answers tell the partner, and whether its own
+        Faxbot fax engine answers its number (the partner may then tune JBIG for it, pages/tuning.py)."""
+        from ..pages.tuning import own_engine_answers
+        return capabilities(fax_images=accepts_fax_images(peer), peer_calls=_flag(peer.get('receive_peer_calls')),
+                            own_engine=own_engine_answers(self.values()))
 
     def _refusal(self, identity, message_id, reason, text, peer=None):
         statement = {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text}
@@ -247,7 +250,11 @@ class DirectService:
         if found is None:
             return False
         fax_images, peer_calls, said_at = found
-        return self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at)
+        kept = self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at)
+        if kept:
+            from ..pages.tuning import note_partner_engine
+            note_partner_engine(self.store.engine, peer['id'], parse_own_engine(statement.get('capabilities')), said_at)
+        return kept
 
     def receive(self, manifest_bytes, signature, ciphertext, *, now=None, routing=None, carriage=None):
         """Verify, decrypt, store unchanged and queue one document; returns (status, body).
