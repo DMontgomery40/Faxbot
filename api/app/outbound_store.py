@@ -25,7 +25,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',

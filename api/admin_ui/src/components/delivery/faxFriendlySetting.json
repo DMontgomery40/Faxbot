@@ -1,0 +1,30 @@
+{
+  "setting": "fax_friendly_documents",
+  "label": "Fax-friendly shading on documents you send",
+  "default": "where_it_saves",
+  "off": "never",
+  "choices": {
+    "where_it_saves": [
+      "Where it saves time",
+      "Faxbot keeps shaded areas with a fax-friendly pattern when that makes the call cost less, or when a fax must go by its send-by time or others are waiting for your phone line. Text and marks stay exactly as they are."
+    ],
+    "always": [
+      "Always",
+      "Faxbot keeps shaded areas with a fax-friendly pattern on every document whose pages it makes, whenever that shortens the call. Text and marks stay exactly as they are."
+    ],
+    "never": [
+      "Never",
+      "Faxbot sends the pages of your documents as they are."
+    ]
+  },
+  "whiten": {
+    "setting": "fax_friendly_whiten",
+    "label": "Also make light areas white",
+    "default": false,
+    "warning": "This may erase pale text and light marks, such as faint handwriting, and removes specks."
+  },
+  "help": "Shaded table rows, tinted form fields and highlights take most of a page's time on the line. Faxbot draws their inside with fine stripes that the fax line sends quickly and leaves every letter, line and mark exactly as it was: in Faxbot's tests a page with a shaded table went from 61 to 27 seconds, and pale text stayed as it was.",
+  "whiten_help": "Light shading then prints white where that makes the call cost less; in Faxbot's tests a shaded table went from 61 to 12 seconds. This may erase pale text and light marks, such as faint handwriting, and removes specks.",
+  "recipient_label": "Fax-friendly shading for this recipient",
+  "heading": "Shaded areas"
+}

@@ -28,6 +28,7 @@ import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
 import { RoutePagesPanel } from './PagesSettings';
 import { DeliveryError } from './shared';
+import friendlyWords from './faxFriendlySetting.json';
 
 type FormValue = string | number | boolean;
 type Values = Record<string, FormValue>;
@@ -36,20 +37,22 @@ const routeLabel = (id: string) => providerLabel(id);
 
 // One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
 export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
-// Fax-friendly pages (pages/friendly.py): "Where it saves time" by default, decided for each attempt; the measured
-// saving comes from Faxbot's benchmark (scripts/fax_friendly_benchmark.py).
-export const FRIENDLY_LABEL = 'Lighten shaded areas and remove specks on documents you send';
-export const FRIENDLY_OPTIONS = [
-  { value: 'where_it_saves', label: 'Where it saves time' }, { value: 'always', label: 'Always' },
-  { value: 'never', label: 'Never' },
-];
-export const FRIENDLY_HELP = '"Where it saves time" changes pages only on calls billed by time, such as your phone '
-  + 'line, and for fax machines without error correction; providers that charge per page save nothing, so their '
-  + 'pages go as they are. "Always" changes every document whose pages Faxbot makes, and "Never" changes none. '
-  + 'Shaded table rows, tinted form fields and gray scan backgrounds take most of a page\'s time on the line: in '
-  + 'Faxbot\'s tests a page with a shaded table went from 61 to 12 seconds, and a gray scanned page from over 3 '
-  + 'minutes to 37 seconds. Shaded areas then print white and photographs lose their lightest parts; black text and '
-  + 'anything darker stay exactly as they were.';
+// Fax-friendly shading (pages/friendly.py): "Where it saves time" by default, decided for each attempt. The words
+// are the server's own (friendly.console_words(), copied to faxFriendlySetting.json and kept equal by
+// tests/test_faithful_choice.py), so the console, the command line and guided setup say the same thing.
+type FriendlyChoice = 'where_it_saves' | 'always' | 'never';
+export const FRIENDLY_LABEL = friendlyWords.label;
+export const FRIENDLY_OPTIONS = (Object.keys(friendlyWords.choices) as FriendlyChoice[]).map((value) => (
+  { value, label: friendlyWords.choices[value][0] }));
+export const FRIENDLY_HELP = friendlyWords.help;
+export const WHITEN_LABEL = friendlyWords.whiten.label;
+export const WHITEN_HELP = friendlyWords.whiten_help;
+
+// The helper under the choice: what the chosen option does, then how the pattern works.
+export function friendlyHelp(choice: string): string {
+  const chosen = friendlyWords.choices[choice as FriendlyChoice] ?? friendlyWords.choices.where_it_saves;
+  return choice === 'never' ? chosen[1] : `${chosen[1]} ${FRIENDLY_HELP}`;
+}
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
@@ -69,6 +72,7 @@ export function deliveryEditorValues(data: Settings): Values {
     values.route_min_success_percent = data.routing.min_success_percent;
     values.local_delivery_enabled = data.routing.local_delivery ?? true;
     values.fax_friendly_documents = data.routing.fax_friendly_documents ?? 'where_it_saves';
+    values.fax_friendly_whiten = data.routing.fax_friendly_whiten ?? false;
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -172,12 +176,13 @@ export function RouteOrderEditor({ value, onChange, available, outbound, disable
   );
 }
 
-function SwitchField({ label, helper, checked, onChange }: {
-  label: string; helper: string; checked: boolean; onChange: (checked: boolean) => void;
+function SwitchField({ label, helper, checked, onChange, disabled = false }: {
+  label: string; helper: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean;
 }) {
   return (
     <Box>
-      <FormControlLabel control={<Switch checked={checked} onChange={(event) => onChange(event.target.checked)} />} label={label} />
+      <FormControlLabel control={<Switch checked={checked} disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)} />} label={label} />
       <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 6 }}>{helper}</Typography>
     </Box>
   );
@@ -255,7 +260,12 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             value={String(loaded.fax_friendly_documents ?? '')}
             editValue={String(form.fax_friendly_documents ?? 'where_it_saves')}
             onChange={(value) => onChange('fax_friendly_documents', value)}
-            type="select" options={FRIENDLY_OPTIONS} helperText={FRIENDLY_HELP} showCurrentValue={showCurrentValue} />
+            type="select" options={FRIENDLY_OPTIONS} helperText={friendlyHelp(String(form.fax_friendly_documents ?? ''))}
+            showCurrentValue={showCurrentValue} />
+          <SwitchField label={WHITEN_LABEL} checked={Boolean(form.fax_friendly_whiten)}
+            disabled={form.fax_friendly_documents === 'never'}
+            onChange={(checked) => onChange('fax_friendly_whiten', checked)}
+            helper={WHITEN_HELP} />
           <RoutePagesPanel client={client} canWrite={canWrite}
             routes={[outbound, ...parseRoutes(form.outbound_routes)]} />
         </ResponsiveFormSection>

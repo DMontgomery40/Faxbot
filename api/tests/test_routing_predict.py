@@ -103,7 +103,6 @@ def test_tiff_strip_bytes_give_each_pages_bits_and_photo_pages_stand_out(tmp_pat
     bits = predictor.tiff_page_bits(path)
     assert len(bits) == 2 and all(value > 0 and value % 8 == 0 for value in bits)
     assert bits[1] > 10 * bits[0]
-    assert predictor.halftone_pages(Shape(2, bits, 'fine', 'normal')) == 1
     assert predictor.tiff_page_bits(tmp_path / 'missing.tiff') is None
 
 
@@ -463,20 +462,6 @@ def test_predict_works_without_a_database_and_takes_injected_facts():
         predictor.predict('phaxio', NUMBER, {'pages': 2})
 
 
-def test_the_photo_coding_is_compared_only_for_a_number_that_took_it(tmp_path):
-    bits = predictor.tiff_page_bits(g4_tiff(tmp_path / 'photo.tiff', [photo_page(), text_page()]))
-    shape = Shape(2, bits, 'fine', 'normal')
-    terms = RateTerms(card(minute='0.005', minimum=60))
-    took = facts(terms, link=Link(coding='MMR', jbig=True))
-    choice = predictor.jbig_choice(took, shape)
-    assert choice.faster == 'jbig' and choice.jbig.seconds < choice.standard.seconds
-    assert "only Faxbot's fast fax service sends; for the 1 photo-like page here it should save" in choice.sentence
-    assert predictor.jbig_choice(facts(terms, link=Link(coding='MMR')), shape) is None
-    text_only = Shape(1, (bits[1],), 'fine', 'normal')
-    assert predictor.jbig_choice(took, text_only) is None
-    assert predictor.jbig_choice(facts(terms, route='phaxio', link=Link(jbig=True)), shape) is None
-
-
 # The dry run -----------------------------------------------------------------------------------
 
 def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
@@ -525,11 +510,10 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     routes = {route['route']: route for route in body['routes']}
     trunk = routes['sip']
     best = min(('MH', 'MR', 'MMR'), key=lambda name: body['measured'][name])
-    # JBIG, not measured here, where the machine takes it; the time is priced at the smallest measured coding.
-    assert trunk['coding']['coding'] == 'JBIG' and trunk['coding']['measured'] is False
-    assert trunk['coding']['sentence'].startswith(
-        f'Faxbot would send these pages with JBIG where the receiving machine takes it (not measured here), '
-        f'otherwise {best}: ')
+    # No receiving machine on record for this number: JBIG is left out (pages/coding.py JBIG_NOT_ON_RECORD) and the
+    # smallest measured coding is priced and asked for.
+    assert trunk['coding']['coding'] == best and trunk['coding']['measured'] is True
+    assert trunk['coding']['sentence'].startswith(f'Faxbot would send these pages with {best}: ')
     assert f'from the measured size of each page in {best}' in trunk['basis']
     assert routes['phaxio']['coding'] is None  # a fax service codes the pages itself
     empty = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},

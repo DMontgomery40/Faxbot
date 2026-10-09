@@ -11,12 +11,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DOCKER_CONTAINER=true
 
+# jbigkit-bin: jbigkit's T.85 tools (pbmtojbg85, jbgtopbm85), which measure each fax's pages in JBIG before
+# dialing (api/app/pages/coding.py). jbigkit 2.1 is GPL-2.0-or-later (Markus Kuhn; jbigkit-2.1/COPYING, and
+# "(at your option) any later version" in libjbig/jbig85.c). Faxbot only runs them as separate programs, so its
+# own code stays MIT. This file installs Debian's binary package; anyone who distributes a built image must
+# also offer its source under GPL-2.0 section 3: the matching Debian source package
+# (`apt-get source jbigkit` from the same archive), shipped with the image or offered in writing for three years.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ghostscript \
        curl \
        tini \
-    && rm -rf /var/lib/apt/lists/*
+       jbigkit-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && command -v pbmtojbg85 && command -v jbgtopbm85
 
 WORKDIR /app
 

@@ -1469,26 +1469,94 @@ def test_p_the_coding_measured_on_the_pages_reaches_the_engines_call(tmp_path, l
     assert detail['coding']['sentence'].startswith('Sent with MH: '), proof
 
 
-def test_q_jbig_that_cannot_be_measured_stays_with_the_ssl_fax_engine(tmp_path, loopback):
-    """The same shaded pages with the usual compression setting: JBIG cannot be measured here (no encoder in the
-    API image), so the SSL Fax engine keeps it where the machine takes it, and the call uses JBIG. Measured on 8
-    October 2026: 58 s of transfer in JBIG against 108 s in MH, the smallest of the codings measured."""
+def test_q_jbig_is_measured_and_chosen_once_the_receiving_machine_is_on_record(tmp_path, loopback):
+    """JBIG end to end (M7). The API image has jbigkit, so the shaded pages are measured in JBIG too, with the
+    engine's own T.85 options. First fax: the peer's machine is not on record, so JBIG is not priced (MH, the
+    smallest of the others, is) and the SSL Fax engine is asked for nothing: it negotiates JBIG itself, and its
+    session log ("REMOTE format support") puts the machine's codings on record. Second fax, the same pages:
+    JBIG is chosen by its measured size, asked of the engine, and the call uses it. Every page of both arrives
+    with identical pixels below the header line."""
     context = loopback('q', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
                        api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
     docker, key = context['docker'], context['key']
-    outcome = send_and_collect(tmp_path, context, document=shaded_pdf())
-    proof = evidence(outcome)
-    job_id = outcome['job']['id']
-    found = records(context, job_id)
-    coded = database(context, coding=f"SELECT requested, measured, compared, reason "
-                                      f"FROM fax_coding_choices WHERE job_id = '{job_id}'")['coding']
-    negotiated = database(context, engine=f"SELECT compression FROM fax_engine_calls WHERE job_id = '{job_id}'")
-    detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
-    proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'engine_record': found['engine'],
-                  'sent_detail': detail.get('coding')})
-    print('\nSSLFAX_PROOF_Q ' + json.dumps(proof, indent=2, default=str))
-    assert_delivered(outcome, proof)
-    assert coded and (coded[0]['requested'], coded[0]['measured'], coded[0]['compared']) == ('JBIG', 0, 'MH'), proof
-    assert negotiated['engine'] and negotiated['engine'][0]['compression'] == 'JBIG', proof
-    assert detail['coding']['sentence'] == ('Sent with JBIG where the receiving machine takes it (not measured '
-                                            'here), otherwise ' + coded[0]['reason']), proof
+    # Pages as drawn on both faxes: once the first call puts the peer's unlimited page length on record, dense
+    # pages would pack the second fax onto one long page (it did, on 8 October 2026, intact and in JBIG).
+    kept = api(docker, 'PUT', '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/pages', key=key,
+               body={'packing': 'never'})
+    assert kept['status'] == 200, kept
+    proofs = {}
+    for name in ('first', 'second'):
+        folder = tmp_path / name
+        folder.mkdir()
+        outcome = send_and_collect(folder, context, document=shaded_pdf())
+        proof = evidence(outcome)
+        job_id = outcome['job']['id']
+        coded = database(context, coding=f"SELECT requested, measured, compared, bits, reason "
+                                          f"FROM fax_coding_choices WHERE job_id = '{job_id}'")['coding']
+        negotiated = database(context, engine=f"SELECT compression FROM fax_engine_calls WHERE job_id = '{job_id}'")
+        known = database(context, known="SELECT codings, engine FROM page_capability_observations "
+                                        "ORDER BY observed_at DESC")['known']
+        detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+        proof.update({'coding': coded, 'negotiated': negotiated['engine'], 'receiver_on_record': known,
+                      'desireddf': re.findall(r'^desireddf:(\d+)$', outcome['done_qfile'], re.MULTILINE),
+                      'sent_detail': detail.get('coding'),
+                      'received_info_raw': outcome['received_info'][:400]})
+        proofs[name] = proof
+        print(f'\nSSLFAX_PROOF_Q_{name.upper()} ' + json.dumps(proof, indent=2, default=str))
+        assert_delivered(outcome, proof)
+    print('\nSSLFAX_PROOF_Q ' + json.dumps(proofs, indent=2, default=str))
+    first, second = proofs['first'], proofs['second']
+    # Measured in JBIG on the API image, smaller than every other coding.
+    bits = json.loads(first['coding'][0]['bits'])
+    assert set(bits) == {'MH', 'MR', 'MMR', 'JBIG'} and bits['JBIG'] < min(bits['MH'], bits['MR'], bits['MMR']), proofs
+    # First: not on record, so priced at MH; the engine chose JBIG itself; the machine is on record after it.
+    assert (first['coding'][0]['requested'], first['coding'][0]['measured']) == ('MH', 1), proofs
+    assert first['negotiated'] and first['negotiated'][0]['compression'] == 'JBIG', proofs
+    assert first['receiver_on_record'] and first['receiver_on_record'][0]['codings'] == 'MH,MR,MMR,JBIG', proofs
+    # Second: JBIG chosen by its measured size, and the call used it.
+    assert (second['coding'][0]['requested'], second['coding'][0]['measured']) == ('JBIG', 1), proofs
+    assert second['coding'][0]['reason'].startswith('JBIG: '), proofs
+    assert second['negotiated'] and second['negotiated'][0]['compression'] == 'JBIG', proofs
+    assert second['sent_detail']['requested'] == 'JBIG' and second['sent_detail']['negotiated'] == 'JBIG', proofs
+
+
+def test_r_a_collection_from_a_fax_server_that_holds_nothing_calls_once_and_says_so(tmp_path, loopback):
+    """Collecting by polling (M21) against a stock HylaFAX+ 7.0.11 peer, which cannot be polled: its DIS never
+    sets bit 9 ("ready to transmit"), so Faxbot's engine places the call once, hears that the other machine holds
+    no document (faxd/FaxSend.c++ sendPoll: "remote has no document to poll"), and the collection says so.
+    Nothing reaches Received, the call is recorded like any other, and nothing is collected again by itself.
+    Collecting is refused until it is turned on for the number."""
+    context = loopback('r', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    docker, key = context['docker'], context['key']
+    route = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+') + '/polling'
+    refused = api(docker, 'POST', route + '/collect', key=key)
+    assert refused['status'] == 409, refused
+    turned_on = api(docker, 'PUT', route, key=key, body={'enabled': True, 'label': 'Peer site', 'selective': None})
+    assert turned_on['status'] == 200 and turned_on['json']['enabled'] is True, turned_on
+    asked = api(docker, 'POST', route + '/collect', key=key)
+    assert asked['status'] == 202, asked
+    request_id = asked['json']['id']
+
+    def finished():
+        found = database(context, result=f"SELECT outcome, sentence FROM poll_results "
+                                          f"WHERE request_id = '{request_id}'")['result']
+        return found[0] if found else None
+    result = wait_for(finished, 300, 'the collection result')
+    time.sleep(5)
+    rows = database(context,
+                    calls=f"SELECT disposition, connected_seconds, called FROM sip_call_records "
+                          f"WHERE job_id = '{request_id}' AND direction = 'outbound'",
+                    requests="SELECT id FROM poll_requests",
+                    received="SELECT id FROM inbound_faxes")
+    shown = api(docker, 'GET', route, key=key)['json'] or {}
+    log = session_logs(docker, context['engine'])
+    proof = {'result': result, 'calls': rows['calls'], 'requests': rows['requests'], 'received': rows['received'],
+             'shown': shown.get('requests'),
+             'engine_poll_lines': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                                   if re.search(r'POLL|poll|DTC|REMOTE best|document', line)][:16]}
+    print('\nSSLFAX_PROOF_R ' + json.dumps(proof, indent=2, default=str))
+    assert result['outcome'] == 'nothing_waiting', proof
+    assert result['sentence'] == 'The other fax server had no fax waiting for you.', proof
+    assert len(rows['calls']) == 1 and rows['calls'][0]['disposition'] == 'answered', proof
+    assert [row['id'] for row in rows['requests']] == [request_id] and rows['received'] == [], proof
+    assert shown['requests'][0]['state'] == 'Nothing waiting', proof

@@ -2016,6 +2016,8 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or set the highest speed and error...
 * `fax-machine`: What a number&#x27;s fax machine said on recent...
 * `schedule`: Show or set when Faxbot sends to one...
+* `polling`: Show or set whether Faxbot may collect...
+* `collect`: Call another site&#x27;s fax server once and...
 * `check`: Before a first fax: check whether the NPI...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
@@ -2084,7 +2086,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--separator-pages`: Go back to a separator page before each document sent together to this number.
 * `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
-* `--shading ON|OFF|DEFAULT`: Lighten shaded areas and remove specks on documents sent to this recipient: on (always), off (never), or default for the setting all faxes use.
+* `--shading ON|OFF|DEFAULT`: Fax-friendly shading on documents sent to this recipient: on (always when it shortens the call), off (never), or default for the setting all faxes use.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`
@@ -2128,7 +2130,8 @@ $ faxbot recipients fax-machine [OPTIONS] {number}
 
 ### `faxbot recipients schedule`
 
-Show or set when Faxbot sends to one recipient: the hours it takes faxes and the busy hours Faxbot learned.
+Show or set when Faxbot sends to one recipient: the hours it takes faxes, and the busy hours and call hours
+Faxbot learned.
 
 **Usage**:
 
@@ -2147,7 +2150,46 @@ $ faxbot recipients schedule [OPTIONS] {number}
 * `--until HH:MM`: Time the recipient stops taking faxes, such as 18:00.
 * `--any-time`: The recipient takes faxes at any time (clears the days and hours).
 * `--time-zone ZONE`: The recipient&#x27;s time zone, such as America/New_York, or default for your installation&#x27;s.
-* `--learn / --no-learn`: Whether Faxbot learns the hours this number is usually busy and holds ordinary faxes out of them.
+* `--learn / --no-learn`: Whether Faxbot learns when this number is usually busy, slow or failing, and holds ordinary faxes for a better hour.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients polling`
+
+Show or set whether Faxbot may collect faxes from another site&#x27;s fax server by calling it.
+
+**Usage**:
+
+```console
+$ faxbot recipients polling [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
+* `--on / --off`: Allow or stop collecting faxes from this number. Faxbot never collects by itself.
+* `--name NAME`: A name for the other site, such as &quot;Denver office&quot;.
+* `--selective-address DIGITS`: The address the other fax server asks callers to give before it sends a held fax, if it asks for one.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients collect`
+
+Call another site&#x27;s fax server once and collect the fax it holds for you (it arrives in Received).
+
+**Usage**:
+
+```console
+$ faxbot recipients collect [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients check`
@@ -5886,7 +5928,7 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `service-numbers`: Show quiet numbers at your carrier and at...
 * `toll-free`: Show recipients with a toll-free fax...
 * `carriers`: Show what your last 30 days of faxing...
-* `shading`: Show how much time lightening shaded areas...
+* `shading`: Show how much time the fax-friendly...
 * `trunks`: Compare your trunks&#x27; monthly fees, busiest...
 * `numbers`: Show where each of your fax numbers costs...
 * `sites`: Show whether your carriers price US calls...
@@ -6019,7 +6061,7 @@ $ faxbot costs recommendations carriers [OPTIONS]
 
 #### `faxbot costs recommendations shading`
 
-Show how much time lightening shaded areas and removing specks saved, or would save, on your recent faxes.
+Show how much time the fax-friendly shading pattern would save on your recent faxes, while the setting is Never.
 
 **Usage**:
 
@@ -6075,7 +6117,7 @@ $ faxbot costs recommendations sites [OPTIONS]
 
 ### `faxbot costs plans`
 
-Your plans: each plan&#x27;s budget or allowance this month and what is committed (show), setting a budget (budget), and the plans a fax service publishes (published, or name the service: faxbot costs plans efax).
+Your plans: each plan&#x27;s budget or allowance this month and what is committed (show), which waiting faxes get its last pages (allocation), setting a budget (budget), and the plans a fax service publishes (published, or name the service: faxbot costs plans efax).
 
 **Usage**:
 
@@ -6091,6 +6133,7 @@ $ faxbot costs plans [OPTIONS] COMMAND [ARGS]...
 
 * `published`: Show the price plans a fax service...
 * `show`: Show each plan&#x27;s normal-use budget or...
+* `allocation`: Show who gets each limited plan&#x27;s last...
 * `budget`: Set a plan&#x27;s monthly normal-use budget,...
 
 #### `faxbot costs plans published`
@@ -6125,6 +6168,20 @@ $ faxbot costs plans show [OPTIONS]
 **Options**:
 
 * `--by-day`: Also show the pages and faxes carried each day of this billing period.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs plans allocation`
+
+Show who gets each limited plan&#x27;s last pages or minutes: the waiting faxes they save the most on, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate.
+
+**Usage**:
+
+```console
+$ faxbot costs plans allocation [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot costs plans budget`

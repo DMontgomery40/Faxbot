@@ -9,6 +9,7 @@ import typer
 
 from .commands import (access, accounts, admin, blocked, codec, connectors, delivery, fax, fax_machines, forms,
                        notices, operations, pages, relay, reply, rules, schedule, settings, setup, sslfax, trunk, work)
+from .commands import polling as polling_commands
 from .commands import certainty, continuation, discovery
 from .commands import send_once
 from .commands import charges as charge_commands
@@ -117,6 +118,8 @@ recipients.command('limits')(sslfax.recipient_limits)
 recipients.command('fax-machine')(fax_machines.fax_machine)
 recipients.add_typer(fax_machines.iaf, name='iaf')
 recipients.command('schedule')(schedule.recipient_schedule)
+recipients.command('polling')(polling_commands.recipient_polling)
+recipients.command('collect')(polling_commands.recipient_collect)
 recipients.add_typer(delivery.batching, name='together')
 recipients.add_typer(codec.numbers, name='encoded')
 partners = _group('Partners: other offices running Faxbot, which get your faxes over the internet instead of a phone '

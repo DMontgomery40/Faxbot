@@ -1,13 +1,14 @@
-// Costs → Recommendations → Shaded areas and specks: whether lightening shaded areas and removing specks on
-// documents you send would have saved time on your recent faxes (pages/friendly.py). It counts as a recommendation
-// only when it would have; otherwise the section shows what Faxbot found, or nothing at all.
+// Costs → Recommendations → Shaded areas: whether keeping shaded areas with a fax-friendly pattern on documents
+// you send would have saved time on your recent faxes (pages/friendly.py). It counts as a recommendation only when
+// it would have; otherwise the section shows what Faxbot found, or nothing at all.
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Chip, CircularProgress, Paper, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
 import type { FaxFriendlyRecommendation as Result } from '../../api/deliveryTypes';
 import { DeliveryError } from './shared';
+import friendlyWords from './faxFriendlySetting.json';
 
-export const FRIENDLY_HEADING = 'Shaded areas and specks';
+export const FRIENDLY_HEADING = friendlyWords.heading;
 
 export default function FaxFriendlyRecommendation({ client, onCount }: {
   client: AdminAPIClient;

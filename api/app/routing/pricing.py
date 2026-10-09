@@ -5,7 +5,9 @@ card for the number's class, the time on the line) and, for a monthly plan,
 from that plan's budget (``plan_budget``: what this one fax adds while the
 plan has room, its overage past an allowance, "over your normal-use budget"
 past a fair-use budget). So the route a fax takes, the cap it is checked
-against and the quote a person reads always agree.
+against and the quote a person reads agree, except where a scarce plan's room
+is held for other waiting faxes (below): a quote prices the plan against its
+whole room.
 
 - An unknown price stays unknown (``micros`` None), never $0.
 - A fax a monthly plan carries reads "In your plan" (or "In your plan; over
@@ -14,6 +16,10 @@ against and the quote a person reads always agree.
 - A provider's first account is priced exactly as before accounts existed. An
   extra account (``sinch-uk``) is priced by its own rate card when it has one,
   else by its provider's published terms, and counts only its own plan use.
+- A queued fax (``prices_for(..., job_id=...)``) sees a scarce plan's room after
+  the pages held for faxes already on their way, for other waiting faxes given
+  the plan, and for the reserve (``plan_allocation``); a fax not given the plan
+  ranks it at its marginal price after them. ``Price.held`` says what was held.
 """
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -35,6 +41,9 @@ class Price:
     sentence: str = ''                 # how it was worked out, one plain sentence
     number: str = 'original'           # 'alternate' when the route calls the recipient's approved alternate
     origin: str | None = None          # the origin-rated row that priced it ('any', a site, 'country:GB'); WP-T
+    held: object = None                # plan_allocation.Hold: part of the plan's room held for other faxes
+    unheld_micros: int | None = None   # with ``held``: what this fax would add with the whole room
+    unheld_over: bool = False          # with ``held``: whether the whole room would be past the normal-use budget
 
     @property
     def known(self):
@@ -74,11 +83,12 @@ def _now(now):
 
 
 def price(routes, values, key, destination, pages, *, provider=None, now=None, layout='normal', number='original',
-          site=None):
+          site=None, hold=None):
     """The ``Price`` of one fax of ``pages`` pages to ``destination`` by account ``key``.
 
     An origin-rated row for where the account's calls start prices it when one matches (``origin_rates``);
-    ``site`` prices it as if the call started from that site.
+    ``site`` prices it as if the call started from that site. ``hold`` (``plan_allocation.Hold``) is the part of
+    the plan's room this fax may not use.
     """
     from .plan_budget import budget_left, marginal, plan_use
     from .predict import Shape, predict_from
@@ -104,13 +114,19 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     except Exception:
         left = None
     found = marginal(left, shape.pages, prediction)
+    unheld = None
+    if hold is not None and left is not None:
+        from .plan_allocation import after_hold
+        unheld, found = found, marginal(after_hold(left, hold), shape.pages, prediction)
     cost = found.cost
     micros = cost.micros if cost is not None else None
     in_plan = bool(prediction.marginal and micros == 0) or bool(left is not None and micros == 0 and found.uses_budget)
     return Price(key, micros, cost.currency if cost is not None else None, in_plan=in_plan,
                  over_budget=bool(found.over_budget), uses_budget=bool(found.uses_budget),
                  sentence=found.sentence or prediction.basis, number=number,
-                 origin=getattr(facts, 'origin', None))
+                 origin=getattr(facts, 'origin', None), held=hold if unheld is not None else None,
+                 unheld_micros=(unheld.cost.micros if unheld is not None and unheld.cost is not None else None),
+                 unheld_over=bool(unheld is not None and unheld.over_budget))
 
 
 def _accounts(values):
@@ -121,10 +137,18 @@ def _accounts(values):
         return {}
 
 
-def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dial=None, keys=None, now=None):
-    """``{account key: Price}`` for the accounts a fax may use; an account that cannot be priced is left out."""
+def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dial=None, keys=None, now=None,
+               job_id=None):
+    """``{account key: Price}`` for the accounts a fax may use; an account that cannot be priced is left out.
+
+    ``job_id``: the queued fax being planned. Its scarce plans are priced after the room held for other faxes
+    (``plan_allocation.hold_for``); without it every plan is priced against its whole room, as for a quote.
+    """
+    import sqlalchemy as sa
     from . import dialing
     from .alternates import attempt_number
+    from .costs import InvalidRateCard
+    from .database import DeliveryStoreError
     from .plan import extra_routes
     from .store import destination_key
     destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
@@ -138,6 +162,10 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
     if (dial or {}).get('refused') or alternate == destination:
         alternate = None
     preset = getattr(values, 'sip_trunk_preset', '') or ''
+    holds = {}
+    if job_id is not None:
+        from .plan_allocation import hold_for
+        holds = hold_for(routes, values, job_id, [key for key in keys if key], now=now, dial=dial)
     found = {}
     for key in keys:
         if not key or key in found:
@@ -148,8 +176,12 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
                                    dialing.reaches(provider, alternate, values, sip_preset=preset))
         try:
             found[key] = price(routes, values, key, number, pages, provider=provider, now=now,
-                               number='alternate' if number != destination else 'original')
-        except Exception:
+                               number='alternate' if number != destination else 'original', hold=holds.get(key))
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError, InvalidRateCard) as error:
+            # This account's prices or plan could not be read: it is left out, and the cause logged. Anything else
+            # (a bug in pricing or in the plan's allocation) raises.
+            import logging
+            logging.getLogger(__name__).warning('Account %s could not be priced: %s', key, error)
             continue
     return found
 

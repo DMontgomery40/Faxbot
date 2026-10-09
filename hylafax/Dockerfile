@@ -18,11 +18,15 @@ FROM base AS build
 ENV DEBIAN_FRONTEND=noninteractive
 
 # configure records Ghostscript's path; HylaFAX's image preparation uses it
-# for any page it cannot send as it is.
+# for any page it cannot send as it is. libjbig-dev (jbigkit 2.1) gives
+# HylaFAX+ its JBIG (T.85) coding: configure defines HAVE_JBIG when it finds
+# jbg_enc_init, and faxsend then sends JBIG to machines whose DIS offers it
+# (faxd/MemoryDecoder.c++). libtiff-dev pulled it in by itself until now; it is
+# named here so the build stops if it ever goes missing.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        g++ make patch curl ca-certificates gawk sed file \
-       libtiff-dev libtiff-tools zlib1g-dev libssl-dev libjpeg62-turbo-dev ghostscript \
+       libtiff-dev libtiff-tools zlib1g-dev libssl-dev libjpeg62-turbo-dev libjbig-dev ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src
@@ -54,6 +58,7 @@ RUN ./configure --nointeractive --disable-pam \
        --with-TIFFBIN=/usr/bin --with-SENDMAIL=/bin/true \
        --with-PATH_VGETTY=/bin/vgetty --with-PATH_GETTY=/sbin/getty --with-PATH_EGETTY=/bin/egetty \
     && grep -q '^#define HAVE_SSL 1' config.h \
+    && grep -q '^#define HAVE_JBIG 1' config.h \
     && make \
     && make install INSTALLROOT=/opt/install \
     && test -x /opt/install/usr/sbin/faxgetty && test -x /opt/install/usr/sbin/faxq \
@@ -96,6 +101,12 @@ COPY entrypoint.sh /usr/local/sbin/faxbot-engine
 COPY bin/ /usr/local/lib/faxbot-engine/
 RUN chmod 755 /usr/local/sbin/faxbot-engine /usr/local/lib/faxbot-engine/* \
     && mkdir -p /var/lib/faxbot-engine /faxdata
+
+# libjbig0 (jbigkit 2.1, GPL-2.0-or-later) is linked into HylaFAX+'s fax server library for JBIG; HylaFAX+'s
+# own licence (COPYRIGHT: SGI/Leffler, permissive) allows that combination. This file installs Debian's
+# binary packages; anyone who distributes a built image must also offer the GPL source (the matching Debian
+# source packages, `apt-get source jbigkit iaxmodem`) with it or in writing for three years.
+RUN ldd /usr/lib/libfaxserver.so.7.0.11 | grep -q 'libjbig.so'
 
 # Port 4559 (job submission) stays on the private Compose network; the SSL Fax
 # listener is published only by docker-compose.sslfax.yml.

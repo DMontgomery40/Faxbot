@@ -89,6 +89,7 @@ import type {
   ReceivingRecommendations,
   PlanRecommendations,
   PlanContracts,
+  PlanAllocation,
   CarrierComparison,
   FaxMarkerAdvice,
   BillingSteps,
@@ -109,6 +110,7 @@ import type {
   FormDelivery, FormImportResult, FormValue, FormVersionDetail, PartnerForms, ReceivedForm, RegisteredForm, SendFormRequest,
 } from './formsTypes';
 import type { RecipientSchedule, RecipientScheduleSave } from './types';
+import type { RecipientPolling, RecipientPollingSave } from './types';
 import type {
   CertaintyCounts, CertaintyEvent, CertaintyForFax, CertaintyItem, CertaintyOutcome, CertaintyPerson, CertaintySettings,
 } from './certaintyTypes';
@@ -1190,6 +1192,19 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/schedule`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
+  // Collecting faxes this number's fax server holds for you (polling): the setting, the advice, and Collect now.
+  async getPolling(number: string): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`);
+  }
+
+  async savePolling(number: string, body: RecipientPollingSave): Promise<RecipientPolling> {
+    return this.json(`/routing/destinations/${id(number)}/polling`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async collectPolling(number: string): Promise<RecipientPolling & { id: string; sentence: string }> {
+    return this.json(`/routing/destinations/${id(number)}/polling/collect`, { method: 'POST' });
+  }
+
   // Sending short faxes to the same number together in one call.
   async getBatching(number: string): Promise<BatchingNumber> {
     return this.json(`/batching/numbers/${id(number)}`);
@@ -1645,6 +1660,12 @@ class AdminAPIClient {
   // Prices & plans). The budgets are the setting plan_budgets, saved with updateSettings.
   async getPlans(): Promise<PlanContracts> {
     return this.json('/routing/plans');
+  }
+
+  // Who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what is kept for
+  // faxes not sent yet (estimates; Costs → Prices & plans).
+  async getPlanAllocation(): Promise<PlanAllocation> {
+    return this.json('/routing/plans/allocation');
   }
 
   // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).

@@ -282,8 +282,20 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
     from .inbound.http import receive_handover
     _require_engine(x_internal_secret)
     _require_receiving('/_internal/hylafax/inbound')
+    poll = await run_lifecycle_step(lambda: _poll_of(request, payload))
+    if poll is not None:
+        # A fax collected by polling: from the number Faxbot called (the engine's line had no caller).
+        payload = {**payload, 'from_number': poll['number'],
+                   'call': {**(payload.get('call') if isinstance(payload.get('call'), dict) else {}),
+                            'caller': poll['number']}}
     answer = await run_lifecycle_step(
         lambda: receive_handover(request, payload, str(hylafax_engine.received_dir(settings))))
+    if poll is not None and answer.get('id'):
+        from .routing import polling
+        call = payload['call']
+        await run_lifecycle_step(lambda: polling.link_received(
+            _engine_for(request), poll["id"], answer["id"],
+            pages=call.get('pages') if isinstance(call.get('pages'), int) else None))
     # The engine's result decides this call's record, also when Asterisk's event for it came first.
     call = payload.get('call') if isinstance(payload.get('call'), dict) else {}
     pages = call.get('pages') if isinstance(call.get('pages'), int) else None
@@ -295,6 +307,23 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
     from .sip_calls import engine_audio_check
     engine_audio_check(row)
     return answer
+
+
+def _poll_of(request, payload):
+    """{'id', 'number'} of the collection a received fax came from (the engine's ticket names it), or None."""
+    import sqlalchemy as sa
+    from .routing import polling
+    request_id = payload.get('poll') if isinstance(payload.get('poll'), str) else ''
+    if not request_id:
+        return None
+    engine = _engine_for(request)
+    try:
+        asked = polling._tables(engine)['poll_requests']
+    except polling.PollStoreError:
+        return None
+    with engine.connect() as connection:
+        row = connection.execute(sa.select(asked.c.id, asked.c.number).where(asked.c.id == request_id)).first()
+    return {'id': row[0], 'number': row[1]} if row is not None else None
 
 
 def _engine_receive(request, call_id, **fields):
@@ -429,6 +458,24 @@ def _sweep(app):
     return False
 
 
+async def _poll_result(request, request_id, payload):
+    """The engine's report on a collection: nothing waiting, refused, failed or uncertain is its result; a
+    collection that brought a fax gets its result from the hand-over that carries it."""
+    import sqlalchemy as sa
+    from .routing import polling
+    engine = _engine_for(request)
+    try:
+        known = await run_lifecycle_step(lambda: polling.is_request(engine, request_id))
+        if not known:
+            raise HTTPException(404, detail='Unknown fax engine job')
+        outcome, sentence = hylafax_engine.poll_outcome(payload)
+        if outcome != 'received':
+            await run_lifecycle_step(lambda: polling.record_result(engine, request_id, outcome, sentence))
+    except (polling.PollStoreError, sa.exc.SQLAlchemyError):
+        raise HTTPException(503, detail='Fax engine results cannot be saved now; try again.') from None
+    return {'status': 'ok'}
+
+
 @router.post('/_internal/hylafax/result')
 async def engine_result(request: Request, payload: dict = Body(...),
                         x_internal_secret: Optional[str] = Header(default=None)):
@@ -437,6 +484,9 @@ async def engine_result(request: Request, payload: dict = Body(...),
     if identity is None:
         raise HTTPException(400, detail='Unknown fax engine job')
     job_id, attempt_id = identity
+    if job_id == attempt_id:
+        # A collection by polling (routing/polling.py) carries its request as both parts of its tag.
+        return await _poll_result(request, job_id, payload)
     status, sentence, category = hylafax_engine.result_outcome(payload)
     import sqlalchemy as sa
     from .config_store import ConfigurationStoreError, UnboundProviderProfile

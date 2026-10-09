@@ -62,6 +62,8 @@ function settingsHandlers(data: Json, put: (body: Json) => Response | null = () 
       faxbot_direct: 1, organization: 'County Clinic', fax_number: '+12025550123', endpoint: 'https://fax.example',
       signing_key: 'public-signing', exchange_key: 'public-exchange', signature: 'signed',
     } })),
+    // The Setup Wizard's Suggested Packs step (BE): no plan suggested yet.
+    http.get('/setup/plans/latest', () => HttpResponse.json({ plan: null, mailboxes: [] })),
   );
   return writes;
 }
@@ -113,23 +115,49 @@ describe('Settings delivery routes', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
   });
 
-  it('lightens shaded areas where it saves time by default, explains the choices and saves another', async () => {
+  it('keeps shaded areas with a fax-friendly pattern where it saves time by default and saves another', async () => {
     const writes = settingsHandlers(settingsFixture((data) => {
-      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves' };
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
     }));
     render(<Settings client={client()} />);
     const routes = await section('Delivery routes');
-    const choice = within(routes).getByLabelText(
-      'Lighten shaded areas and remove specks on documents you send') as HTMLSelectElement;
+    const choice = within(routes).getByLabelText('Fax-friendly shading on documents you send') as HTMLSelectElement;
     expect(choice.value).toBe('where_it_saves');
     expect([...choice.querySelectorAll('option')].map((option) => option.textContent)).toEqual(
       ['Where it saves time', 'Always', 'Never']);
-    expect(routes.textContent).toContain('changes pages only on calls billed by time');
-    expect(routes.textContent).toContain('a page with a shaded table went from 61 to 12 seconds');
+    expect(routes.textContent).toContain('when that makes the call cost less');
+    expect(routes.textContent).toContain('a page with a shaded table went from 61 to 27 seconds');
+    expect(routes.textContent).toContain('Text and marks stay exactly as they are.');
     fireEvent.change(choice, { target: { value: 'never' } });
     apply();
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_documents: 'never' });
+  });
+
+  it('makes light areas white only when you opt in, with its warning beside the switch', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
+    expect(whiten.checked).toBe(false);
+    expect(routes.textContent).toContain('This may erase pale text and light marks');
+    fireEvent.click(whiten);
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_friendly_whiten: true });
+  });
+
+  it('turns the whitening switch off for Never, where it does nothing', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.routing = { ...data.routing, fax_friendly_documents: 'never', fax_friendly_whiten: false };
+    }));
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
+    expect(whiten.disabled).toBe(true);
+    expect(routes.textContent).toContain('Faxbot sends the pages of your documents as they are.');
   });
 });
 
@@ -489,6 +517,8 @@ describe('Setup Wizard delivery options', () => {
     // Moving on saves this step's changes.
     next();
     await screen.findByText('Settings saved.');
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
+    next();
     expect(await screen.findByText('Finish', { selector: 'h6' })).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 }]);
     // The last step offers one test fax, sent only when asked; this installation does not receive.
@@ -569,7 +599,7 @@ describe('Installation country', () => {
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
     next();
-    await screen.findByText('Finish', { selector: 'h6' });
+    await screen.findByText('Suggested Packs', { selector: 'h6' });
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '01782 684953' });
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect((screen.getByLabelText('Our fax number') as HTMLInputElement).value).toBe('+441782684953'));

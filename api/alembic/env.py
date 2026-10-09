@@ -68,6 +68,8 @@ config.attributes["schema_number_advice"] = importlib.import_module(package + ".
 config.attributes["schema_digital_routes"] = importlib.import_module(package + ".schema_digital_routes")
 config.attributes["schema_engine_extras"] = importlib.import_module(package + ".schema_engine_extras")
 config.attributes["schema_measured_codec"] = importlib.import_module(package + ".schema_measured_codec")
+config.attributes["schema_shading_method"] = importlib.import_module(package + ".schema_shading_method")
+config.attributes["schema_routing_learning"] = importlib.import_module(package + ".schema_routing_learning")
 
 
 def migrate(connection):

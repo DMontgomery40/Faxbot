@@ -1069,3 +1069,108 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
                                values=engine_values(details.get('negotiation_b64')), job_id=inbound_fax_id,
                                number=number)
     return recorded
+
+
+# Collecting a fax by polling (T.30 polling, routing/polling.py) -----------------------------------------------
+# HylaFAX+ 7.0.11 can poll: a job with a poll item and no document (hfaxd ``JPARM POLL "selector" ["password"]``,
+# hfaxd/Parser.c++ line 1255; faxsend's ``sendPoll`` and Class 1 ``pollBegin``, faxd/FaxSend.c++ and
+# faxd/Class1Poll.c++) dials, sends DTC (with SEP when the other machine's DIS lists it) and receives the
+# document the other fax server holds for it. What it receives goes to ``PollRcvdCmd`` (hylafax/bin/pollrcvd)
+# with the job's notify address first, which carries the request (``poll-<request>@faxbot.invalid``). It cannot
+# be polled: faxd never sets DIS bit 9 and ends a call that brings DTC (Class1Recv.c++, E107).
+
+POLL_ADDRESS = 'poll-{}@faxbot.invalid'
+
+
+def create_poll_job(values, *, tag: str, request_id: str, selective: str = '', settings: CallSettings | None = None,
+                    host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
+    """Create (not submit) one job that dials ``tag`` once and polls for a document (blocking). The job's tag
+    is ``<request>.<request>``, so its result reaches ``routing.polling``; ``selective`` is the T.30 selective
+    polling address (SEP digits), sent only when the other machine's DIS lists SEP."""
+    if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(request_id):
+        raise ValueError('Unsupported fax engine job')
+    selective = re.sub(r'[^0-9#*]', '', selective or '')[:20]
+    password = engine_secrets(values)['submit_password']
+    session = ftplib.FTP()
+    prepared = PreparedJob(session, tag=tag)
+    try:
+        session.connect(host or ENGINE_HOST, port, timeout=timeout)
+        session.login(SUBMIT_USER, password)
+        reply = session.sendcmd('JNEW')
+        job = _JOB.search(reply)
+        if job is None:
+            raise EngineError('The fax engine did not create a job.')
+        prepared.engine_job = job.group(1)
+        commands = [
+            f'JPARM DIALSTRING {_quote(tag)}',
+            f'JPARM JOBINFO {_quote(request_id + "." + request_id)}',
+            f'JPARM FROMUSER {_quote("faxbot")}',
+            f'JPARM NOTIFYADDR {_quote(POLL_ADDRESS.format(request_id))}',
+            'JPARM MAXDIALS 1',
+            'JPARM MAXTRIES 1',
+            f'JPARM LASTTIME {LAST_TIME}',
+            f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
+            f'JPARM POLL {_quote(selective)}',
+        ]
+        if settings is not None:
+            commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
+                         f'JPARM USEECM {"YES" if settings.ecm else "NO"}']
+        for command in commands:
+            reply = session.sendcmd(command)
+            if not reply.startswith('2'):
+                raise EngineError('The fax engine refused the job settings.')
+        return prepared
+    except (*ftplib.all_errors, EngineError, ValueError) as error:
+        prepared.discard()
+        if isinstance(error, (EngineError, ValueError)):
+            raise
+        raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
+
+
+async def prepare_poll(values, ami, *, request_id, number, selective='', trunk=None) -> PreparedJob:
+    """Store the call plan in Asterisk and create the engine's poll job; nothing is dialed yet. The plan's job
+    and attempt are the poll request, so the trunk call is recorded like any other (``sip_call_records``)."""
+    from . import sip_trunk
+    from .ami import originate_fields_for, trunk_values
+    endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
+    full_values = values
+    values, _ = trunk_values(values, trunk)
+    settings = call_settings(values, number, engine=True)
+    # No document goes out; the path only satisfies the shared field checks.
+    fields = originate_fields_for(full_values, request_id, number, 'poll', attempt_id=request_id, trunk=trunk)
+    tag = new_tag()
+    plan = call_plan(fields, request_id, request_id, t38=settings.t38, endpoints=endpoints)
+    await ami.db_put(ENGINE_FAMILY, tag, plan)
+    try:
+        job = await asyncio.to_thread(create_poll_job, values, tag=tag, request_id=request_id,
+                                      selective=selective, settings=settings)
+    except BaseException:
+        await forget_plan(ami, tag)
+        raise
+    job.submission = {'JobID': request_id, 'AttemptID': request_id, 'Called': number,
+                      'CallerID': fields['CallerID'], 'Preset': values.sip_trunk_preset or '', 'FaxPreference': 'no'}
+    return job
+
+
+def poll_outcome(payload: dict) -> tuple[str, str]:
+    """(outcome, one sentence) for an engine poll job's result: 'received', 'nothing_waiting', 'refused',
+    'failed' (nothing came: never dialed, or the call ended before any fax data) or 'uncertain' (a document
+    may have started arriving; it is never collected again by itself). HylaFAX+ 7.0.11 defines poll_no_document,
+    poll_rejected and poll_failed (faxd/Job.h) but never sets them: a machine whose DIS does not say it holds a
+    document ends the job "done" with the notice "remote has no document to poll" (faxd/FaxSend.c++ sendPoll),
+    so the notice is read first."""
+    why = payload.get('why') if isinstance(payload.get('why'), str) else ''
+    dials = max(_int(payload.get('dials')), _int(payload.get('total_dials')))
+    status_text = _text64(payload, 'status_b64')
+    if why == 'poll_no_document' or re.search(r'no document to poll', status_text, re.IGNORECASE):
+        return 'nothing_waiting', 'The other fax server had no fax waiting for you.'
+    if why == 'done':
+        return 'received', 'The other fax server sent the fax it held for you.'
+    if why == 'poll_rejected' or re.search(r'cannot be polled|E220|E266|DIS/DTC', status_text, re.IGNORECASE):
+        return 'refused', 'The other fax machine does not let faxes be collected from it.'
+    if dials == 0:
+        return 'failed', failure_sentence(status_text, 0)
+    if not exchanged(payload) and ended_before_fax_data(payload, status_text):
+        return 'failed', failure_sentence(status_text, 0)
+    return 'uncertain', ('The call ended while the fax was being collected; check with the other site before '
+                         'collecting it again.')

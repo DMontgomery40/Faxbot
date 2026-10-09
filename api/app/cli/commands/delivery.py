@@ -183,8 +183,8 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                    help='Leave out the blank bottom of pages when this machine has no error '
                                         'correction: on, off, or default for the setting all faxes use.'),
                                shading: str = typer.Option(None, '--shading', metavar='ON|OFF|DEFAULT',
-                                   help='Lighten shaded areas and remove specks on documents sent to this '
-                                        'recipient: on (always), off (never), or default for the setting all '
+                                   help='Fax-friendly shading on documents sent to this recipient: on (always '
+                                        'when it shortens the call), off (never), or default for the setting all '
                                         'faxes use.')):
     """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
     api = state.api()
@@ -749,12 +749,12 @@ def _read_friendly(api):
 
 
 def show_friendly(out, result):
-    """Lightening shaded areas and removing specks: with the setting at never, what it would have saved."""
+    """Fax-friendly shading: with the setting at never, what it would have saved."""
     choice = result.get('choice')
     if result.get('sentence'):
         out.line(result['sentence'])
     elif choice in ('where_it_saves', 'always'):
-        out.line('Nothing to suggest: shaded areas are lightened '
+        out.line('Nothing to suggest: shaded areas are kept with a fax-friendly pattern '
                  + ('where it saves time.' if choice == 'where_it_saves' else 'on every document.'))
     else:
         out.line('Faxbot has no recent faxes to check yet.')
@@ -772,7 +772,7 @@ RECOMMENDATION_SECTIONS = [
     ('partners', 'Partner candidates', _read_partners, show_partners),
     ('toll_free', 'Toll-free numbers', _read_toll_free, show_toll_free),
     ('carriers', 'Other carriers', _read_carriers, show_carriers),
-    ('pages', 'Shaded areas and specks', _read_friendly, show_friendly),
+    ('pages', 'Shaded areas', _read_friendly, show_friendly),
     ('trunks', 'Your trunks', lambda api: _read_trunks(api), lambda out, result: show_trunks(out, result)),
     ('numbers', 'Where each number should live', lambda api: _number_advice().read_numbers(api),
      lambda out, result: _number_advice().show_numbers(out, result)),
@@ -812,7 +812,7 @@ recommendations = typer.Typer(help='Ways to pay less, from what your faxes and c
 
 @recommendations.callback()
 def routing_recommendations(context: typer.Context):
-    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time lightening shaded areas would save, whether one trunk's faxes fit on another, where each number should live, and which site's trunk costs less. Every figure is an estimate."""
+    """Show ways to pay less: cheaper routes, shared incoming lines, whether each plan is worth its fee, the fax marker, calls that end just past a billed minute, partner candidates, toll-free numbers, what other carriers would have cost, how much time the fax-friendly shading pattern would save, whether one trunk's faxes fit on another, where each number should live, and which site's trunk costs less. Every figure is an estimate."""
     if context.invoked_subcommand is not None:
         return
     api = state.api()
@@ -856,8 +856,8 @@ for _name, _read, _show, _help in (
          "Show what your last 30 days of faxing would have cost at each carrier's published prices. Advice only: "
          'switching carriers means moving your numbers, and Faxbot never switches anything.'),
         ('shading', _read_friendly, show_friendly,
-         'Show how much time lightening shaded areas and removing specks saved, or would save, on your recent '
-         'faxes.'),
+         'Show how much time the fax-friendly shading pattern would save on your recent faxes, while the '
+         'setting is Never.'),
         ('trunks', _read_trunks, show_trunks,
          "Compare your trunks' monthly fees, busiest times and cost per fax, and show when one trunk's faxes fit on "
          'another and what that would save. Advice only.'),
@@ -1216,8 +1216,9 @@ class _PlansGroup(TyperGroup):
 
 
 plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or allowance this month and what is "
-                                          'committed (show), setting a budget (budget), and the plans a fax service '
-                                          'publishes (published, or name the service: faxbot costs plans efax).')
+                                          'committed (show), which waiting faxes get its last pages (allocation), '
+                                          'setting a budget (budget), and the plans a fax service publishes '
+                                          '(published, or name the service: faxbot costs plans efax).')
 plans.command('published')(routing_plans)
 
 
@@ -1303,6 +1304,39 @@ def plans_show(burn_down: bool = typer.Option(False, '--by-day', help='Also show
     """Show each plan's normal-use budget or allowance this billing period, what is committed, and faxes between your own accounts. Every figure is an estimate."""
     result = state.api().get('/routing/plans')
     state.out().result(result, lambda out: show_contract(out, result, burn_down=burn_down))
+
+
+_OUTCOMES = {'plan': 'Gets the plan', 'forced': 'Takes the plan', 'other': 'Goes another way'}
+
+
+def show_allocation(out, result):
+    """Each limited plan: what is left, which waiting faxes get it, what goes another way, what is kept for later."""
+    plans_ = result.get('plans') or []
+    if not plans_:
+        out.line(result.get('empty_sentence') or '')
+        return
+    for index, plan in enumerate(plans_):
+        if index:
+            out.line('')
+        out.line(plan['sentence'])
+        if plan.get('faxes'):
+            unit = 'Minutes' if plan.get('unit') == 'minutes' else 'Pages counted'
+            out.table(['To', 'Pages', unit, 'Waiting since', 'Outcome', 'Route', 'Cost (estimate)'],
+                      [[item['to'], _count(item['pages']), _count(item['units']), local_time(item.get('queued_at')),
+                        _OUTCOMES.get(item['outcome'], item['outcome']), item.get('route_label') or '-',
+                        money(item.get('cost'), empty='-')] for item in plan['faxes']],
+                      title=f"{plan['name']}, waiting faxes")
+        for sentence in (plan.get('saving_sentence'), plan.get('reserve_sentence'), plan.get('bound_sentence'),
+                         plan.get('left_sentence')):
+            if sentence:
+                out.line(sentence)
+
+
+@plans.command('allocation')
+def plans_allocation():
+    """Show who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate."""
+    result = state.api().get('/routing/plans/allocation')
+    state.out().result(result, lambda out: show_allocation(out, result))
 
 
 def _limit(value, name):

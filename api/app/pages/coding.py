@@ -15,10 +15,11 @@ MH (T.4 one-dimensional), MR (T.4 two-dimensional, K = 2 at standard and 4 at
 fine resolution, as T.4 4.2.1.3.4 sets it) and MMR (T.6) through libtiff in
 Pillow, with the paper coded as white runs (``conversion._g4_data``'s
 convention), so the measured MMR bits are exactly ``conversion.frame_bits``.
-JBIG (T.85) only when jbigkit's ``pbmtojbg85`` is installed; without it JBIG
-is not measured and is left out of the result (neither this computer nor the
-API image has it today). Strip lengths leave out ECM framing, fill bits,
-retransmissions and negotiation: the bits are the page data, not the call.
+JBIG (T.85) through jbigkit's ``pbmtojbg85`` (Debian's jbigkit-bin, installed
+in the API image), with the options HylaFAX+ 7.0.11 sends on the line
+(``JBIG_OPTIONS``); without the tools JBIG is not measured and is left out of
+the result. Strip lengths leave out ECM framing, fill bits, retransmissions
+and negotiation: the bits are the page data, not the call.
 
 Requesting a coding (``best_coding``)
 --------------------------------------
@@ -39,9 +40,16 @@ coding it lacks:
 So the request is the measured smallest coding among the usable ones:
 
 - MH always (T.30 requires it of every machine);
-- MR, MMR and JBIG only when the receiving machine's own capabilities (its
-  DIS, ``engine_frames.decode_dis``) list them; with no DIS on record they may
-  still be requested, and the engine falls back to what the machine has;
+- MR and MMR only when the receiving machine's own capabilities (its DIS)
+  list them; with no DIS on record they may still be requested, and the
+  engine falls back to what the machine has;
+- JBIG only when a DIS on record lists it: the built-in engine's frames
+  (``engine_frames.decode_dis``) or the SSL Fax engine's session log
+  ("REMOTE format support", ``pages.capability.Capability.codings``),
+  whichever call was newer. With no DIS on record JBIG is left out, so the
+  time is never priced at a JBIG size the machine may not take; a request for
+  MMR then leaves the engine its own negotiation, and the call may still use
+  JBIG where the machine offers it;
 - MMR and JBIG only with error correction on this call, and error correction
   is never turned off to make one possible;
 - never a coding that failed to this number (``failing``: engine learning's
@@ -84,6 +92,13 @@ FROM_SETTING = {value: key for key, value in SETTING.items()}
 JBIG_ENCODER = 'pbmtojbg85'
 JBIG_DECODER = 'jbgtopbm85'
 JBIG_TIMEOUT_SECONDS = 60
+# The T.85 options HylaFAX+ 7.0.11 encodes with before sending (faxd/MemoryDecoder.c++, line 518:
+# jbg_enc_options(&jbigstate, 0, 0, 128, 0, 0)): no typical prediction (options byte 0), 128 lines a stripe
+# (L0) and no adaptive template moves (Mx 0). pbmtojbg85's own defaults (jbigkit 2.1 pbmtools/pbmtojbg85.c:
+# options 8 = TPBON, Mx up to 8) measured a scanned photo at a third of what the engine sends (152,048 bits
+# against 430,824). Neither tool takes "-" for both files: with no file names they read standard input and
+# write standard output.
+JBIG_OPTIONS = ('-p', '0', '-m', '0', '-s', '128')
 FINE_DPI = (204.0, 196.0)
 _INVERT = bytes(255 - value for value in range(256))
 _ID = re.compile(r'[A-Za-z0-9_-]{1,40}')
@@ -159,10 +174,10 @@ def _jbig_bits(page, tools, *, check=False):
     encoder, decoder = tools
     pbm = io.BytesIO()
     page.save(pbm, 'PPM')
-    encoded = subprocess.run([encoder, '-', '-'], input=pbm.getvalue(), capture_output=True, check=True,
+    encoded = subprocess.run([encoder, *JBIG_OPTIONS], input=pbm.getvalue(), capture_output=True, check=True,
                              timeout=JBIG_TIMEOUT_SECONDS).stdout
     if check:
-        decoded = subprocess.run([decoder, '-', '-'], input=encoded, capture_output=True, check=True,
+        decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
                                  timeout=JBIG_TIMEOUT_SECONDS).stdout
         with Image.open(io.BytesIO(decoded)) as back:
             if back.convert('1').tobytes() != page.tobytes():
@@ -258,6 +273,11 @@ class CodingChoice:
     compared: str | None = None          # the coding the sentence compares with, when there is one
     fallback: str | None = None          # for a JBIG not measured: the smallest measured coding, otherwise sent
     fallback_reason: str | None = None   # that coding's own sentence
+    # True when JBIG was left out only because the receiving machine's capabilities are not on record: the SSL Fax
+    # engine is then asked for nothing and negotiates the most compact coding itself (JBIG where the machine offers
+    # it), and Faxbot learns the machine's codings from that call; the time is priced at the measured coding, an
+    # estimate (the lead's rule, 2026-10-08).
+    negotiate: bool = False
 
     @property
     def bits(self) -> int:
@@ -268,8 +288,11 @@ class CodingChoice:
         """The coding the time is priced with: the request, or the fallback for a JBIG not measured."""
         return self.coding if self.measured else self.fallback
 
-    def request(self, engine) -> str:
-        """The coding to ask ``engine`` ('hylafax' or 'builtin') for: the built-in engine has no JBIG."""
+    def request(self, engine) -> str | None:
+        """The coding to ask ``engine`` ('hylafax' or 'builtin') for: the built-in engine has no JBIG. None for the
+        SSL Fax engine and a machine not on record: nothing is asked, so no job control narrows the engine."""
+        if engine == 'hylafax' and self.negotiate:
+            return None
         return self.coding if self.measured or engine == 'hylafax' else self.fallback
 
 
@@ -283,7 +306,7 @@ def _shorter(chosen, other, measured):
     return f'{chosen}: {percent}% shorter than {other} for these pages.'
 
 
-def best_coding(frames, allowed, *, ecm, measured=None) -> CodingChoice:
+def best_coding(frames, allowed, *, ecm, measured=None, negotiate=False) -> CodingChoice:
     """The coding to request for these pages: the usable coding with the fewest measured bits.
 
     ``allowed`` names the codings this call may use (MH is always added);
@@ -319,8 +342,9 @@ def best_coding(frames, allowed, *, ecm, measured=None) -> CodingChoice:
         # built-in engine, the smallest measured coding goes.
         return CodingChoice('JBIG', tuple(measured[best]), measured,
                             f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}',
-                            measured=False, compared=other, fallback=best, fallback_reason=reason)
-    return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other)
+                            measured=False, compared=other, fallback=best, fallback_reason=reason,
+                            negotiate=negotiate)
+    return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other, negotiate=negotiate)
 
 
 # What may be requested for a number ---------------------------------------------------------------------------
@@ -342,7 +366,9 @@ class Usable:
         """Whether ``engine`` ('hylafax' or 'builtin', which has no JBIG) must be told ``coding``: left alone, it
         would take a more compact one up to the ceiling that the receiving machine and error correction allow,
         either a usable one that measured larger or one that failed to this number. Equal to what it would take
-        anyway: no request is needed."""
+        anyway: no request is needed. None (nothing asked of the SSL Fax engine) needs none."""
+        if coding is None:
+            return False
         return any(_rank(coding) < _rank(other) <= _rank(self.ceiling)
                    and (other in self.codings or other in self.failed)
                    and not (engine == 'builtin' and other == 'JBIG') for other in CODINGS)
@@ -389,6 +415,30 @@ def failing(views, *, fails=None, minimum=None) -> dict:
     return found
 
 
+# Why JBIG is left out for a receiving machine Faxbot has not seen yet (lead's decision, 2026-10-08).
+JBIG_NOT_ON_RECORD = 'JBIG is used only after an earlier call shows that the receiving machine takes it.'
+
+
+def receiver_dis(views, capability=None):
+    """The receiving machine's newest capabilities as ``decode_dis`` gives them: from the built-in engine's frames
+    (``views``, newest first) or the SSL Fax engine's reported codings (``capability.codings`` with its error
+    correction), whichever was seen later; None when neither is on record."""
+    from .. import engine_frames
+    found, when = None, None
+    for view in views:
+        frame = view.get('frame') or {}
+        decoded = engine_frames.decode_dis(frame.get('dis')) if frame.get('dis') else None
+        if decoded:
+            found, when = decoded, view.get('when')
+            break
+    codings = getattr(capability, 'codings', None)
+    seen = getattr(capability, 'learned_at', None)
+    if codings and (found is None or (seen is not None and when is not None and seen > when)):
+        found = {'mr': 'MR' in codings, 'mmr': 'MMR' in codings, 'jbig': 'JBIG' in codings,
+                 'ecm': bool(getattr(capability, 'ecm', False))}
+    return found
+
+
 def usable_codings(*, ecm, far_ecm=None, dis=None, views=(), configured='jbig', learned=None) -> Usable:
     """What a call may request (pure): ``ecm`` this call's error correction, ``far_ecm`` whether the receiving
     machine has it (None: not known), ``dis`` its decoded DIS (None: not on record), ``views`` engine
@@ -414,6 +464,8 @@ def usable_codings(*, ecm, far_ecm=None, dis=None, views=(), configured='jbig', 
             left_out[coding] = f'{coding} needs error correction, which is off for this call.'
         elif coding in NEEDS_ECM and far_ecm is False:
             left_out[coding] = f'{coding} needs error correction, which the receiving machine does not have.'
+        elif coding == 'JBIG' and receiver is None:
+            left_out[coding] = JBIG_NOT_ON_RECORD
         elif receiver is not None and coding not in receiver:
             left_out[coding] = f'The receiving machine does not take {coding}.'
         elif coding in failed:
@@ -430,7 +482,7 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
     (``hylafax_engine.call_settings``, your settings, the number's own limits and what engine learning turned
     on), the receiving machine's newest DIS and error correction, engine learning's calls to the number and
     the compression it chose, and your compression setting. Unreadable records raise SQLAlchemy's error."""
-    from .. import engine_frames, engine_learning as learning, hylafax_engine
+    from .. import engine_learning as learning, hylafax_engine
     now = now or learning.utcnow()
     # Error correction is the same on either engine: your setting, the number's own limit, and what engine learning
     # turned on (never off).
@@ -442,13 +494,12 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
         joined = learning.joined_calls(engine, number, direction='outbound',
                                        since=learning.evidence_since(epoch, now, learning.LEARN_DAYS), limit=50)
         views = learning.on_trunk(joined, values)
-        for view in views:
-            frame = view.get('frame') or {}
-            dis = engine_frames.decode_dis(frame.get('dis')) if frame.get('dis') else None
-            if dis:
-                break
+        # The newest DIS from either engine: built-in frames or the SSL Fax engine's logged capabilities.
+        dis = receiver_dis(views, capability)
         # The compression engine learning chose for the number after failures (SSL Fax engine calls).
         learned, _ = learning.compression_rule(views, configured)
+    elif getattr(capability, 'codings', None):
+        dis = receiver_dis((), capability)
     far_ecm = getattr(capability, 'ecm', None)
     return usable_codings(ecm=settings.ecm, far_ecm=far_ecm, dis=dis, views=views, configured=configured,
                           learned=learned)

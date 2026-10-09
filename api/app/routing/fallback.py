@@ -78,7 +78,7 @@ class FallbackScheduler:
             from .pricing import prices_for
             key = default_sending_key(revision.values) or key
             prices = prices_for(self.routes, revision.values, job.to_number, job.pages, pinned=pinned, bound=key,
-                                dial=dial)
+                                dial=dial, job_id=job_id)
         plan = planner.plan(to_number=job.to_number, bound=key, values=revision.values,
                             pages=job.pages, alternates=True, dial=dial, tried=tried, pinned=pinned, prices=prices,
                             job_id=job_id)

@@ -8,19 +8,20 @@ import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-console-key' });
 const BASE = {
-  choice: 'never', label: 'Lighten shaded areas and remove specks on documents you send', measured_sentence: '',
+  choice: 'never', label: 'Fax-friendly shading on documents you send', measured_sentence: '',
   days: 30, recommend: false, faxes_checked: 0, faxes_changed: 0, seconds_saved: 0, sentence: null, action: null,
 };
 
-describe('Costs, Recommendations: shaded areas and specks', () => {
+describe('Costs, Recommendations: shaded areas', () => {
   it('recommends turning it on when recent faxes would have saved time, as an estimate', async () => {
     const counts: Array<number | null> = [];
     server.use(http.get('/routing/recommendations/fax-friendly', () => HttpResponse.json({
       ...BASE, recommend: true, faxes_checked: 10, faxes_changed: 3, seconds_saved: 144,
       sentence: 'Your last 10 faxes would have taken an estimated 2 minutes less on the line with shaded areas '
-        + 'lightened and specks removed; 3 of them have shaded areas or specks.',
-      action: 'Turn on "Lighten shaded areas and remove specks on documents you send" under Providers, In use, '
-        + 'Delivery routes. Shaded areas then print white and photographs lose their lightest parts.',
+        + 'kept in a fax-friendly pattern on calls billed by time; 3 of them have shaded areas.',
+      action: 'Choose "Where it saves time" for "Fax-friendly shading on documents you send" under Providers, In '
+        + 'use, Delivery routes. Text and marks stay exactly as they are; only the inside of shaded areas is drawn '
+        + 'differently.',
     })));
     render(<FaxFriendlyRecommendation client={client()} onCount={(count) => counts.push(count)} />);
     const sentence = await screen.findByTestId('fax-friendly-sentence');
@@ -28,6 +29,7 @@ describe('Costs, Recommendations: shaded areas and specks', () => {
     expect(screen.getByTestId('fax-friendly-action').textContent).toContain('under Providers, In use, Delivery routes');
     expect(screen.getByText('Worth turning on')).toBeTruthy();
     expect(screen.getByText('Estimate')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Shaded areas' })).toBeTruthy();
     expect(counts).toEqual([1]);
   });
 
@@ -36,7 +38,7 @@ describe('Costs, Recommendations: shaded areas and specks', () => {
     server.use(http.get('/routing/recommendations/fax-friendly', () => HttpResponse.json({
       ...BASE, faxes_checked: 2,
       sentence: 'Your last 2 faxes went by providers that charge per page, to machines with error correction, so '
-        + 'lightening shaded areas would have saved nothing.',
+        + 'the fax-friendly pattern would have saved nothing.',
     })));
     render(<FaxFriendlyRecommendation client={client()} onCount={(count) => counts.push(count)} />);
     expect((await screen.findByTestId('fax-friendly-sentence')).textContent).toContain('charge per page');
@@ -45,7 +47,7 @@ describe('Costs, Recommendations: shaded areas and specks', () => {
     expect(counts).toEqual([0]);
   });
 
-  it('shows nothing while shaded areas are lightened where it saves time', async () => {
+  it('shows nothing while shaded areas are kept with a fax-friendly pattern where it saves time', async () => {
     const counts: Array<number | null> = [];
     server.use(http.get('/routing/recommendations/fax-friendly', () => HttpResponse.json({
       ...BASE, choice: 'where_it_saves' })));
@@ -55,7 +57,7 @@ describe('Costs, Recommendations: shaded areas and specks', () => {
   });
 });
 
-describe('Recipients, Details: lightening shaded areas for one recipient', () => {
+describe('Recipients, Details: fax-friendly shading for one recipient', () => {
   it('shows the setting for all faxes and saves never for this recipient', async () => {
     const view = {
       number: '+15555550199', page_limit: 'a4', learned: false, learned_at: null, ecm: null, packing: 'allow',
@@ -73,7 +75,7 @@ describe('Recipients, Details: lightening shaded areas for one recipient', () =>
     );
     render(<RecipientPagesPanel client={client()} number="+15555550199" canWrite />);
     const panel = await screen.findByTestId('recipient-pages');
-    fireEvent.mouseDown(within(panel).getByLabelText('Lighten shaded areas for this recipient'));
+    fireEvent.mouseDown(within(panel).getByLabelText('Fax-friendly shading for this recipient'));
     expect(await screen.findByRole('option', { name: 'As set for all faxes (where it saves time)' })).toBeTruthy();
     fireEvent.click(await screen.findByRole('option', { name: 'Never' }));
     fireEvent.click(within(panel).getByRole('button', { name: 'Save for this number' }));

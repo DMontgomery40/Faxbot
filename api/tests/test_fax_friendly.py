@@ -1,11 +1,14 @@
-"""Fax-friendly pages (migration 0042): light shading left out and specks removed before a page goes on the line.
+"""Fax-friendly pages (migrations 0042 and 0058): shaded areas kept with a pattern by default, light areas made
+white and specks removed only with the opt-in.
 
-The transform is deterministic; every pixel darker than the light level stays exactly as Faxbot draws it today
-(so text stays as readable as it was); a page that is already black and white from a scanner is untouched unless
-the setting for your documents says so; pages Faxbot draws itself from text are unchanged; "where it saves time"
-by default, decided for each attempt; every sentence. SQLite and PostgreSQL. All synthetic."""
+The whitening transform is deterministic and every pixel darker than the light level stays exactly as Faxbot draws it
+today; the default screen leaves every mark as it is (tests/test_fax_screens.py measures it); a page that is already
+black and white from a scanner is untouched unless whitening is on; pages Faxbot draws itself are never changed;
+"where it saves time" by default, decided for each attempt by the layout chooser (the most faithful pages at the
+lowest expected bill); every sentence. SQLite and PostgreSQL. All synthetic."""
 from datetime import datetime, timedelta
 import io
+from pathlib import Path
 import shutil
 from types import SimpleNamespace
 
@@ -124,7 +127,12 @@ def test_a_black_and_white_scan_is_untouched_unless_the_setting_for_your_documen
     ImageDraw.Draw(scan).rectangle((10, 15, 25, 18), fill=0)
     gray = scan.convert('L')
     drawn = friendly.Request('drawn')
-    assert drawn.despeckle is False and friendly.Request('documents').despeckle is True
+    # Specks are removed only with whitening: the default screen removes nothing.
+    assert drawn.despeckle is False and friendly.Request('documents').despeckle is False
+    assert friendly.Request('documents', method='whitened').despeckle is True
+    assert friendly.Request('documents', despeckle=True).despeckle is False
+    with pytest.raises(ValueError):
+        friendly.Request('documents', method='erased')
     kept = friendly.friendly_page(gray, scan, despeckle_page=drawn.despeckle)
     assert not kept.changed and pixels(kept.page) == pixels(scan)
     cleaned = friendly.friendly_page(gray, scan, despeckle_page=True)
@@ -150,13 +158,35 @@ def shaded_pdf(path, *, header_gray=0.75):
 
 
 @needs_gs
-def test_a_shaded_table_goes_lighter_and_its_text_is_kept_pixel_for_pixel(tmp_path):
+def test_a_shaded_table_is_screened_by_default_and_every_mark_is_kept(tmp_path):
+    from PIL import ImageChops
+    from app.pages import fidelity
     shaded_pdf(tmp_path / 'table.pdf')
     conversion.pdf_to_tiff(str(tmp_path / 'table.pdf'), str(tmp_path / 'today.tiff'))
     request = friendly.Request('documents')
     conversion.pdf_to_tiff(str(tmp_path / 'table.pdf'), str(tmp_path / 'friendly.tiff'), friendly=request)
     result = request.result
-    assert result.pages == result.pages_changed == 1
+    assert result.method == 'screened' and result.pages == result.pages_changed == 1 and result.losses == ()
+    assert result.bits_after < result.bits_before * 0.6 and friendly.seconds_saved(result) >= 10
+    today = conversion.read_fax_frames(str(tmp_path / 'today.tiff'))[0]
+    after = conversion.read_fax_frames(str(tmp_path / 'friendly.tiff'))[0]
+    friendly._render_gray(str(tmp_path / 'table.pdf'), str(tmp_path / 'gray.tiff'), shutil.which('gs'))
+    with Image.open(tmp_path / 'gray.tiff') as gray:
+        gray = friendly.fit(gray.copy(), today.size)
+    differ = ImageChops.logical_xor(friendly.bits(today), friendly.bits(after)).convert('L')
+    assert ImageChops.darker(fidelity.marks(gray), differ).getbbox() is None  # every mark exactly as today
+    assert fidelity.assess(gray, today, after).kept
+
+
+@needs_gs
+def test_whitening_makes_light_shading_white_and_keeps_darker_pixels_pixel_for_pixel(tmp_path):
+    shaded_pdf(tmp_path / 'table.pdf')
+    conversion.pdf_to_tiff(str(tmp_path / 'table.pdf'), str(tmp_path / 'today.tiff'))
+    request = friendly.Request('documents', method='whitened')
+    conversion.pdf_to_tiff(str(tmp_path / 'table.pdf'), str(tmp_path / 'friendly.tiff'), friendly=request)
+    result = request.result
+    assert result.method == 'whitened' and result.pages == result.pages_changed == 1
+    assert 'shading' in result.losses  # the measure records what whitening took away
     assert result.bits_after < result.bits_before / 2 and friendly.seconds_saved(result) >= 10
     today = conversion.read_fax_frames(str(tmp_path / 'today.tiff'))[0]
     after = conversion.read_fax_frames(str(tmp_path / 'friendly.tiff'))[0]
@@ -213,8 +243,8 @@ def installation(database):
     return database
 
 
-def done(pages=3, changed=2, before=900_000, after=180_000):
-    return SimpleNamespace(scope='documents', result=friendly.Result(pages, changed, before, after))
+def done(pages=3, changed=2, before=900_000, after=180_000, method='screened'):
+    return SimpleNamespace(scope='documents', result=friendly.Result(pages, changed, before, after, method))
 
 
 def test_a_send_is_recorded_once_per_attempt_and_the_sent_detail_says_so(installation):
@@ -222,8 +252,10 @@ def test_a_send_is_recorded_once_per_attempt_and_the_sent_detail_says_so(install
     first = friendly.record_send(installation, job_id=JOB, attempt_id=ATTEMPT, request=request, now=NOW)
     assert friendly.record_send(installation, job_id=JOB, attempt_id=ATTEMPT, request=request, now=NOW) == first
     view = views.sent_view(installation, JOB)
-    assert view['sentences'] == ['Shaded areas on all 5 pages were lightened and specks removed before sending: '
-                                 'an estimated 50 seconds less on the line at full fax speed.']
+    assert view['sentences'] == ['Shaded areas on all 5 pages were kept with a fax-friendly pattern: an estimated '
+                                 '50 seconds less on the line at full fax speed.']
+    with installation.connect() as connection:
+        assert connection.execute(sa.text('SELECT method FROM fax_friendly_pages')).scalar() == 'screened'
     assert view['lightened'] == {'pages_changed': 5, 'seconds_saved': 50, 'at': '2026-10-07T09:00:00Z'}
     assert views.sent_view(installation, 'c' * 32) is None
     with pytest.raises(ValueError):
@@ -231,14 +263,23 @@ def test_a_send_is_recorded_once_per_attempt_and_the_sent_detail_says_so(install
 
 
 @pytest.mark.parametrize('run, sentence', [
-    ({'scope': 'documents', 'pages': 1, 'pages_changed': 1, 'seconds_saved': 49},
-     'Shaded areas on the page were lightened and specks removed before sending: an estimated 49 seconds less on '
+    ({'scope': 'documents', 'pages': 1, 'pages_changed': 1, 'seconds_saved': 49, 'method': 'screened'},
+     'Shaded areas on the page were kept with a fax-friendly pattern: an estimated 49 seconds less on the line at '
+     'full fax speed.'),
+    ({'scope': 'documents', 'pages': 4, 'pages_changed': 2, 'seconds_saved': 200, 'method': 'screened'},
+     'Shaded areas on 2 of the 4 pages were kept with a fax-friendly pattern: an estimated 3 minutes less on the '
+     'line at full fax speed.'),
+    ({'scope': 'documents', 'pages': 2, 'pages_changed': 1, 'seconds_saved': 0, 'method': 'screened'},
+     'Shaded areas on 1 of the 2 pages were kept with a fax-friendly pattern.'),
+    ({'scope': 'documents', 'pages': 1, 'pages_changed': 1, 'seconds_saved': 49, 'method': 'whitened'},
+     'Light areas on the page were made white and specks removed before sending: an estimated 49 seconds less on '
      'the line at full fax speed.'),
-    ({'scope': 'documents', 'pages': 4, 'pages_changed': 2, 'seconds_saved': 200},
-     'Shaded areas on 2 of the 4 pages were lightened and specks removed before sending: an estimated 3 minutes '
+    # A row from before migration 0058 has no method: Faxbot then only ever made light areas white.
+    ({'scope': 'documents', 'pages': 4, 'pages_changed': 2, 'seconds_saved': 200, 'method': None},
+     'Light areas on 2 of the 4 pages were made white and specks removed before sending: an estimated 3 minutes '
      'less on the line at full fax speed.'),
     ({'scope': 'documents', 'pages': 2, 'pages_changed': 1, 'seconds_saved': 0},
-     'Shaded areas on 1 of the 2 pages were lightened and specks removed before sending.'),
+     'Light areas on 1 of the 2 pages were made white and specks removed before sending.'),
     ({'scope': 'drawn', 'pages': 1, 'pages_changed': 1, 'seconds_saved': 1},
      'Shaded areas on the page Faxbot drew were lightened before sending: an estimated 1 second less on the line '
      'at full fax speed.'),
@@ -255,8 +296,8 @@ def test_the_estimate_uses_the_calls_own_speed_when_its_engine_reported_one(inst
     monkeypatch.setattr(hylafax_records, 'records_for', lambda engine: SimpleNamespace(
         sent_detail=lambda job_id: {'negotiation': negotiation}))
     view = views.sent_view(installation, JOB)
-    assert view['sentences'] == ["Shaded areas on 2 of the 3 pages were lightened and specks removed before sending: "
-                                 "an estimated 75 seconds less on the line at this call's speed of 9,600 bit/s."]
+    assert view['sentences'] == ["Shaded areas on 2 of the 3 pages were kept with a fax-friendly pattern: an "
+                                 "estimated 75 seconds less on the line at this call's speed of 9,600 bit/s."]
     assert view['lightened']['seconds_saved'] == 720_000 // 9600
     # The built-in engine reports only its last page's speed.
     negotiation.update(rate_first=None, rate_last_page=14400)
@@ -277,8 +318,8 @@ def test_the_command_line_section_says_one_thing_at_a_time():
     show_friendly(out, {'choice': 'never', 'sentence': 'Your last 2 faxes would have taken 50 seconds less.',
                         'action': 'Choose "Where it saves time".'})
     assert lines == ['Faxbot has no recent faxes to check yet.',
-                     'Nothing to suggest: shaded areas are lightened where it saves time.',
-                     'Nothing to suggest: shaded areas are lightened on every document.',
+                     'Nothing to suggest: shaded areas are kept with a fax-friendly pattern where it saves time.',
+                     'Nothing to suggest: shaded areas are kept with a fax-friendly pattern on every document.',
                      'Your last 2 faxes would have taken 50 seconds less.',
                      'Choose "Where it saves time". '
                      'Or run: faxbot system settings set fax_friendly_documents=where_it_saves']
@@ -346,23 +387,33 @@ def billed(monkeypatch):
     monkeypatch.setattr(sending, '_card', lambda engine, route: CARDS.get(route))
 
 
+# Codex's shaded table (AR's synthetic statement page): about 95 seconds on the line as it is and about 50 screened,
+# so screening saves a whole billed minute on a per-minute card. AR's smaller ``shaded_pdf`` stays in one minute.
+SHADED_TABLE = Path(__file__).parent / 'fixtures' / 'shading' / 'shaded_table.pdf'
+
+
 def attempt(database, tmp_path, configuration, *, attempt_id=ATTEMPT, choice='where_it_saves', now=NOW, number=PEER,
-            recipient=None):
+            recipient=None, whiten=False, job=None, small=False):
     """One attempt of the shaded fax JOB by ``configuration``'s route (the fax's own PDF and fax image); ``number``
     is the number dialed, ``recipient`` the one the person chose when an approved alternate is dialed instead."""
     pdf, tiff = tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff'
     if not pdf.exists():
-        shaded_pdf(pdf)
+        if small:
+            shaded_pdf(pdf)
+        else:
+            shutil.copyfile(SHADED_TABLE, pdf)
         conversion.pdf_to_tiff(str(pdf), str(tiff))
     image = configuration.provider_id in ('sip', 'freeswitch')
-    return sending.prepare(database, SimpleNamespace(sip_fax_fine=True, fax_friendly_documents=choice),
-                           configuration, SimpleNamespace(job_id=JOB, attempt_id=attempt_id, members=()),
-                           {'to_number': number, **({'recipient_number': recipient} if recipient else {})}, pdf,
-                           tiff if image else None, now=now)
+    values = SimpleNamespace(sip_fax_fine=True, fax_friendly_documents=choice, fax_friendly_whiten=whiten)
+    return sending.prepare(database, values, configuration, SimpleNamespace(job_id=JOB, attempt_id=attempt_id,
+                                                                            members=()),
+                           {'to_number': number, **({'recipient_number': recipient} if recipient else {}),
+                            **(job or {})}, pdf, tiff if image else None, now=now)
 
 
 @needs_gs
-def test_a_trunk_attempt_is_lightened_and_a_per_page_attempt_is_not(installation, tmp_path, billed):
+def test_a_trunk_attempt_is_screened_when_it_saves_a_billed_minute_and_a_per_page_attempt_is_not(installation,
+                                                                                                tmp_path, billed):
     assert attempt(installation, tmp_path, SINCH) is None
     assert friendly.run_for(installation, JOB) is None
     before = (tmp_path / f'{JOB}.tiff').read_bytes()
@@ -372,14 +423,28 @@ def test_a_trunk_attempt_is_lightened_and_a_per_page_attempt_is_not(installation
     own = conversion.read_fax_frames(str(tmp_path / f'{JOB}.tiff'))[0]
     assert sum(conversion.frame_bits([sent])) < sum(conversion.frame_bits([own])) / 2
     run = friendly.run_for(installation, JOB)
-    assert run['attempt_id'] == 'd' * 32 and run['pages_changed'] == 1
-    # The fax's own image is never changed: the lightened pages are the attempt's own file.
+    assert run['attempt_id'] == 'd' * 32 and run['pages_changed'] == 1 and run['method'] == 'screened'
+    # The fax's own image is never changed: the screened pages are the attempt's own file.
     assert (tmp_path / f'{JOB}.tiff').read_bytes() == before
     assert not list(tmp_path.glob('*.source.tiff'))
 
 
 @needs_gs
-def test_a_trunk_with_no_published_price_is_lightened_by_default(installation, tmp_path, monkeypatch):
+def test_pages_that_stay_in_the_same_billed_minute_go_as_they_are_unless_you_chose_always(installation, tmp_path,
+                                                                                        billed):
+    # AR's small table takes under a minute as it is and screened: the same bill, so the most faithful pages go.
+    assert sending.unchanged(attempt(installation, tmp_path, TRUNK, small=True))
+    assert friendly.run_for(installation, JOB) is None
+    made = friendly.Request('documents')
+    assert friendly.lightened_pages(tmp_path, JOB, tmp_path / f'{JOB}.pdf', tmp_path / f'{JOB}.tiff', made)
+    assert made.result.pages_changed == 1  # the screened pages were made and priced, and lost on fidelity
+    # Always is the administrator's choice: the faster pages win at the same bill.
+    chosen = attempt(installation, tmp_path, TRUNK, small=True, choice='always', attempt_id='d' * 32)
+    assert chosen is not None and friendly.run_for(installation, JOB)['method'] == 'screened'
+
+
+@needs_gs
+def test_a_trunk_with_no_published_price_is_screened_by_default(installation, tmp_path, monkeypatch):
     # The Sinch trunk preset's card has no price at all; Phaxio-style per-page cards stay untouched.
     monkeypatch.setattr(sending, '_card', lambda engine, route: card('sip-sinch') if route == 'sip' else None)
     assert attempt(installation, tmp_path, TRUNK) is not None
@@ -392,7 +457,7 @@ def test_a_second_attempt_draws_nothing_again_and_retention_removes_the_kept_pag
                                                                                     monkeypatch):
     first = attempt(installation, tmp_path, TRUNK)
     kept = sorted(path.name for path in tmp_path.glob(friendly.CACHE + '*'))
-    assert kept == [f'{friendly.CACHE}{JOB}.json', f'{friendly.CACHE}{JOB}.tiff']
+    assert kept == [f'{friendly.CACHE}{JOB}-screened.json', f'{friendly.CACHE}{JOB}-screened.tiff']
 
     def drawn_again(*args, **kwargs):
         raise AssertionError('Ghostscript ran again')
@@ -407,7 +472,7 @@ def test_a_second_attempt_draws_nothing_again_and_retention_removes_the_kept_pag
 
 
 @needs_gs
-def test_faxes_sent_together_on_the_trunk_are_lightened_and_their_separators_stay(installation, tmp_path):
+def test_faxes_sent_together_on_the_trunk_are_screened_and_their_separators_stay(installation, tmp_path):
     from app.batching.image import build_call_image, separator_line
     jobs = [('7' * 32, '8' * 32), ('9' * 32, 'a' * 32)]
     for job_id, _ in jobs:
@@ -434,13 +499,19 @@ def test_faxes_sent_together_on_the_trunk_are_lightened_and_their_separators_sta
 
 
 @needs_gs
-def test_a_machine_without_error_correction_is_lightened_on_any_route(installation, tmp_path, billed):
+def test_a_machine_without_error_correction_gets_candidates_and_the_bill_decides(installation, tmp_path, billed):
+    # No error correction is not a named reason (the lead, 2026-10-08): the screened pages are made and priced on any
+    # route, and on a per-page route they cost the same as the pages as they are, so the pages go as they are.
     from app.pages import capability
     capability.records_for(installation).record_observation(
         PEER, source='e' * 32, engine='hylafax', values={'max_length': 'a4', 'ecm': 0, 'fine': 1}, now=NOW)
-    changed = attempt(installation, tmp_path, SINCH)
-    assert changed.tiff is None and conversion.validate_pdf(changed.pdf) == 1
-    assert friendly.run_for(installation, JOB)['attempt_id'] == ATTEMPT
+    assert attempt(installation, tmp_path, SINCH) is None
+    assert sorted(path.name for path in tmp_path.glob(friendly.CACHE + '*')) == [
+        f'{friendly.CACHE}{JOB}-screened.json', f'{friendly.CACHE}{JOB}-screened.tiff']
+    assert friendly.run_for(installation, JOB) is None
+    # Over the trunk, the screened pages save a billed minute and go.
+    changed = attempt(installation, tmp_path, TRUNK, attempt_id='d' * 32)
+    assert changed.tiff is not None and friendly.run_for(installation, JOB)['attempt_id'] == 'd' * 32
 
 
 @needs_gs
@@ -475,7 +546,7 @@ def test_never_for_the_chosen_recipient_holds_when_an_approved_toll_free_number_
 
 
 @needs_gs
-def test_encoded_pages_are_never_lightened(installation, tmp_path, billed, monkeypatch):
+def test_encoded_pages_are_never_screened(installation, tmp_path, billed, monkeypatch):
     """When the experimental encoded pages win an attempt (codec/send.py), they go exactly as the codec made them:
     the lightened pages were only the pages as they are, so nothing lightened is sent or recorded for it."""
     from api.tests.test_dense_pages import opt_in
@@ -518,7 +589,7 @@ def _attempts(database, job_id, attempts):
 
 
 @needs_gs
-def test_a_retry_onto_the_trunk_is_lightened_on_that_attempt_only_and_the_sent_detail_follows_it(installation,
+def test_a_retry_onto_the_trunk_is_screened_on_that_attempt_only_and_the_sent_detail_follows_it(installation,
                                                                                                  tmp_path, billed):
     first, second, third = '1' * 32, '2' * 32, '3' * 32
     _attempts(installation, JOB, [first])
@@ -529,7 +600,8 @@ def test_a_retry_onto_the_trunk_is_lightened_on_that_attempt_only_and_the_sent_d
         connection.execute(attempts.insert().values(id=second, job_id=JOB, sequence=2, phase='prepared',
                                                     created_at=NOW))
     assert attempt(installation, tmp_path, TRUNK, attempt_id=second) is not None
-    assert views.sent_view(installation, JOB)['sentences'][0].startswith('Shaded areas on the page were lightened')
+    assert views.sent_view(installation, JOB)['sentences'][0].startswith(
+        'Shaded areas on the page were kept with a fax-friendly pattern')
     # A third attempt by Sinch sent the pages as they were: the Sent detail follows it.
     with installation.begin() as connection:
         connection.execute(attempts.insert().values(id=third, job_id=JOB, sequence=3, phase='prepared',
@@ -539,7 +611,7 @@ def test_a_retry_onto_the_trunk_is_lightened_on_that_attempt_only_and_the_sent_d
 
 
 @needs_gs
-def test_a_case_packet_is_lightened_on_the_trunk_and_its_index_page_stays_as_it_is(installation, tmp_path, billed):
+def test_a_case_packet_is_screened_on_the_trunk_and_its_index_page_stays_as_it_is(installation, tmp_path, billed):
     from datetime import datetime as moment
     from pypdf import PdfReader, PdfWriter
     from app.cases.ledger import index_page
@@ -557,11 +629,12 @@ def test_a_case_packet_is_lightened_on_the_trunk_and_its_index_page_stays_as_it_
     with open(tmp_path / f'{JOB}.pdf', 'wb') as handle:
         writer.write(handle)
     conversion.pdf_to_tiff(str(tmp_path / f'{JOB}.pdf'), str(tmp_path / f'{JOB}.tiff'))
-    sent = conversion.read_fax_frames(attempt(installation, tmp_path, TRUNK).tiff)
+    # Always (the administrator's choice): the screened pages go whether or not they save a billed minute.
+    sent = conversion.read_fax_frames(attempt(installation, tmp_path, TRUNK, choice='always').tiff)
     own = conversion.read_fax_frames(str(tmp_path / f'{JOB}.tiff'))
     assert pixels(sent[0]) == pixels(own[0]) and pixels(sent[1]) != pixels(own[1])
     assert views.sent_view(installation, JOB)['sentences'][0].startswith(
-        'Shaded areas on 1 of the 2 pages were lightened and specks removed before sending')
+        'Shaded areas on 1 of the 2 pages were kept with a fax-friendly pattern')
 
 
 # The recommendation: only while the setting is Never ---------------------------------------------------------------
@@ -595,11 +668,11 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
     assert view['recommend'] is True and (view['faxes_checked'], view['faxes_changed']) == (10, 3)
     assert view['seconds_saved'] == 3 * (700_000 // 14400)
     assert view['sentence'] == ('Your last 10 faxes would have taken an estimated 2 minutes less on the line with '
-                                'shaded areas lightened and specks removed on calls billed by time; 3 of them have '
-                                'shaded areas or specks.')
-    assert view['action'] == ('Choose "Where it saves time" for "Lighten shaded areas and remove specks on documents '
-                              'you send" under Providers, In use, Delivery routes. Shaded areas then print white on '
-                              'those calls, and photographs lose their lightest parts.')
+                                'shaded areas kept in a fax-friendly pattern on calls billed by time; 3 of them have '
+                                'shaded areas.')
+    assert view['action'] == ('Choose "Where it saves time" for "Fax-friendly shading on documents you send" under '
+                              'Providers, In use, Delivery routes. Text and marks stay exactly as they are; only the '
+                              'inside of shaded areas is drawn differently.')
     assert len(measured) == 10
     friendly.recommendation(installation, tmp_path, choice='never', now=NOW, measure=measure,
                             saves=lambda route, number: True)
@@ -608,8 +681,8 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
     per_page = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                        measure=measure, saves=lambda route, number: False)
     assert per_page['recommend'] is False and per_page['sentence'] == (
-        'Your last 10 faxes went by providers that charge per page, to machines with error correction, so lightening '
-        'shaded areas would have saved nothing.')
+        'Your last 10 faxes went by providers that charge per page, to machines with error correction, so the '
+        'fax-friendly pattern would have saved nothing.')
 
 
 def test_any_other_choice_has_nothing_to_recommend(installation, tmp_path):
@@ -641,7 +714,7 @@ def test_the_recommendation_stays_quiet_when_nothing_would_change(installation, 
     plain = friendly.recommendation(installation, tmp_path, choice='never', now=NOW,
                                     measure=lambda path: friendly.Result(1, 0, 0, 0), saves=lambda *_: True)
     assert plain['recommend'] is False
-    assert plain['sentence'] == 'Your last 2 faxes have no shaded areas or specks that slow them down.'
+    assert plain['sentence'] == 'Your last 2 faxes have no shaded areas that slow them down.'
     nothing = friendly.recommendation(installation, tmp_path / 'empty', choice='never', now=NOW,
                                       saves=lambda *_: True)
     assert nothing['recommend'] is False and nothing['sentence'] is None and nothing['faxes_checked'] == 0
@@ -651,9 +724,9 @@ def test_the_recommendation_stays_quiet_when_nothing_would_change(installation, 
 
 
 @pytest.mark.parametrize('shaded, sentence', [
-    (True, 'Your last fax would have taken an estimated 48 seconds less on the line with shaded areas lightened and '
-           'specks removed on calls billed by time; it has shaded areas or specks.'),
-    (False, 'Your last fax has no shaded areas or specks that slow it down.'),
+    (True, 'Your last fax would have taken an estimated 48 seconds less on the line with shaded areas kept in a '
+           'fax-friendly pattern on calls billed by time; it has shaded areas.'),
+    (False, 'Your last fax has no shaded areas that slow it down.'),
 ])
 def test_one_recent_fax_reads_as_one(installation, tmp_path, shaded, sentence):
     _jobs(installation, tmp_path, 1)
@@ -671,7 +744,7 @@ def test_one_recent_fax_by_a_per_page_provider_reads_as_one(installation, tmp_pa
                                    measure=lambda path: friendly.Result(1, 1, 800_000, 100_000),
                                    saves=lambda *_: False)
     assert view['sentence'] == ('Your last fax went by a provider that charges per page, to a machine with error '
-                                'correction, so lightening shaded areas would have saved nothing.')
+                                'correction, so the fax-friendly pattern would have saved nothing.')
 
 
 def test_a_fax_too_long_for_one_look_is_left_out_rather_than_half_measured(installation, tmp_path):
@@ -711,18 +784,18 @@ def test_the_settings_the_recipient_choice_and_the_recommendation_over_http_and_
         assert client.put(url, headers=admin, json={'shading': 'sometimes'}).status_code == 422
         result = cli('recipients', 'set', PEER, '--shading', 'off')
         assert result.exit_code == 0, (result.stdout, result.stderr)
-        assert 'Lighten shaded areas never' in ' '.join(cli('recipients', 'show', PEER).stdout.split())
+        assert 'Fax-friendly shading never' in ' '.join(cli('recipients', 'show', PEER).stdout.split())
         assert cli('recipients', 'set', PEER, '--shading', 'maybe').exit_code != 0
         assert cli('recipients', 'set', PEER, '--shading', 'default').exit_code == 0
         shown = ' '.join(cli('recipients', 'show', PEER).stdout.split())
-        assert 'Lighten shaded areas as set for all faxes (never)' in shown
+        assert 'Fax-friendly shading as set for all faxes (never)' in shown
         # The recommendation needs settings permission. This installation's Phaxio fetches each document from
         # Faxbot, which serves the attempt's own (lightened) pages, so it is measured like any route: no faxes yet.
         assert client.get('/routing/recommendations/fax-friendly').status_code in (401, 403)
         view = client.get('/routing/recommendations/fax-friendly', headers=admin).json()
         assert view['choice'] == 'never' and view['faxes_checked'] == 0 and view['sentence'] is None
         result = cli('costs', 'recommendations')
-        assert result.exit_code == 0 and 'Shaded areas and specks' in result.stdout
+        assert result.exit_code == 0 and 'Shaded areas' in result.stdout
 
         def unavailable(*args, **kwargs):
             raise sa.exc.OperationalError('SELECT', {}, Exception('synthetic'))
@@ -767,6 +840,9 @@ def test_0042_adds_its_tables_keeps_every_row_and_downgrades(database):
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
     friendly.record_send(database, job_id=JOB, attempt_id=ATTEMPT, request=done(), now=NOW)
     friendly.set_recipient_choice(database, PEER, 'never', now=NOW)
+    with database.begin() as connection:
+        # 0058 refuses to drop a recorded method (test_shading_method_schema.py); this test is about 0042's tables.
+        connection.execute(sa.text('UPDATE fax_friendly_pages SET method = NULL'))
     tables = {name: sa.Table(name, sa.MetaData(), autoload_with=database) for name in schema_friendly_pages.ORDER}
     with database.begin() as connection, pytest.raises(sa.exc.IntegrityError):
         connection.execute(tables['fax_friendly_pages'].insert().values(

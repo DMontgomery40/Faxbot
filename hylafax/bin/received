@@ -89,4 +89,6 @@ temporary=$state/received/.$key.ticket
   printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$received"
   printf 'negotiation64=%s\nsubaddr=%s\nremote_address64=%s\n' "$negotiation" "$subaddr" "$(b64 "$tsa")"
   printf 'trunk=%s\n' "$trunk"
+  # A fax Faxbot collected by polling names its collection (bin/pollrcvd).
+  printf 'poll=%s\n' "$(printf '%s' "${FAXBOT_POLL:-}" | tr -cd 'a-f0-9' | cut -c1-32)"
 } > "$temporary" && mv -f "$temporary" "$ticket"
