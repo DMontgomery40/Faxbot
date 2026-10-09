@@ -448,4 +448,30 @@ describe('How received faxes reach Faxbot', () => {
     expect(screen.getByText('https://fax.example/phaxio-inbound')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
   });
+
+  it.each(['blocked', 'unavailable'])('keeps the address available when the clipboard is %s', async (mode) => {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const writeText = vi.fn().mockRejectedValue(new Error('Clipboard access denied'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true,
+      value: mode === 'blocked' ? { writeText } : undefined });
+    try {
+      server.use(http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'phaxio',
+        callbacks: [{ name: 'Phaxio inbound', url: 'https://fax.example/phaxio-inbound' }] })));
+      render(<ReceivingAddresses client={client()} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
+      expect(await screen.findByText('Could not copy the address. Select it above and copy it manually.')).toBeTruthy();
+      expect(screen.queryByText('Address copied.')).toBeNull();
+      expect(screen.getByText('https://fax.example/phaxio-inbound')).toBeTruthy();
+      if (mode === 'blocked') {
+        writeText.mockResolvedValue(undefined);
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+        expect(await screen.findByText('Address copied.')).toBeTruthy();
+        expect(writeText).toHaveBeenLastCalledWith('https://fax.example/phaxio-inbound');
+      }
+    } finally {
+      if (previous) Object.defineProperty(navigator, 'clipboard', previous);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
 });
