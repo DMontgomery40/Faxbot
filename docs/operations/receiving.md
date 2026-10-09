@@ -97,6 +97,14 @@ The provided Docker setup shares one `/faxdata` folder between Asterisk and Faxb
 
 Faxbot keeps the document in the data folder as `<fax ID>-<first 12 characters of its SHA-256>.pdf`. When inbound storage is S3, it goes to S3. Received documents follow `INBOUND_RETENTION_DAYS` as before.
 
+## Encoded documents
+
+When a received fax carries encoded pages, Faxbot checks the recovered original's fingerprint and keeps the fax as received. **Faxes → Received** shows the decode result in the fax's details. Select **Download the original document**, or run `faxbot received decoded ID --output original.pdf`, to save a recovered original. Email delivery attaches it beside the fax as received.
+
+If recovery fails, the details say why and email delivery includes the fax as received. After you change a stored shared key, reopen the fax's details or try the original download to check it again. For encrypted pages, the receiving Faxbot needs the same key stored against the sender's fax number. The current per-number control also enables encoded outbound faxes to that number, so use it only with that recipient's agreement.
+
+Recovered originals stay in Faxbot's local data folder even when received fax PDFs use S3. They expire with the received fax. The decode result remains visible after expiration, but the original can no longer be downloaded.
+
 ## What is kept as evidence
 
 For each received fax, Faxbot keeps:
