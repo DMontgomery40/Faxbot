@@ -3,7 +3,10 @@ predictor (``predict_from`` over ``facts_for``) and the real number placement. N
 
 Prices are the shipped, dated cards (``config/rate_cards.json``): Telnyx $0.005 a minute in 60-second steps,
 Phaxio $0.07 a page, a HumbleFax $10 plan. The predictor's typical page with the default coding (MR) takes about
-12.3 seconds on the line, so a 4-page fax runs just past a minute and with the most compact coding (MMR) just under.
+12.3 seconds on the line, so a 4-page fax runs 60.0 seconds and with the most compact coding (MMR) 50 seconds.
+Each call is priced by its expected bill over the predictor's stated default spread (85%, 100% and 115% of the
+predicted time, with odds of 1/4, 1/2 and 1/4): a 4-page MR fax bills one minute a quarter of the time and two
+minutes otherwise, $0.00875; an MMR one always one minute, $0.005.
 """
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -102,14 +105,14 @@ def test_a_partner_suggestion_prices_direct_delivery_minus_the_enrollment_fax(da
     suggest_partner(database, PARTNER)
     result = fact_advice.advice(database, values(), routes=routes, now=NOW)
     item, rows = facts_by_key(result, PARTNER)
-    # A 4-page fax by Telnyx: 11 s setup + 4 x 12.3 s = 60.0 s, billed 2 minutes = $0.010; Phaxio would be $0.28.
-    assert money(item['baseline']) == '0.03'
+    # A 4-page fax by Telnyx: $0.00875 expected (see above); Phaxio would be $0.28.
+    assert money(item['baseline']) == '0.02625'
     partner = rows['partner']
     assert (partner['kind'], partner['boundary'], partner['faxes']) == ('authorization', True, 3)
-    assert money(partner['saving']) == '0.03'
-    # The enrollment fax is one page by the best route: $0.005, subtracted.
-    assert money(partner['establish_cost']) == '0.005' and money(partner['net']) == '0.025'
-    assert partner['sentence'].startswith('Would have cost $0.03 less over 3 faxes (estimate).')
+    assert money(partner['saving']) == '0.02625'
+    # The enrollment fax is one page by the best route: 23 s, always one minute, $0.005, subtracted.
+    assert money(partner['establish_cost']) == '0.005' and money(partner['net']) == '0.02125'
+    assert partner['sentence'].startswith('Would have cost $0.026 less over 3 faxes (estimate).')
     assert 'one enrollment fax (about $0.005)' in partner['sentence']
     assert 'Synthetic Partner Clinic must confirm the code' in partner['confirm']
     assert partner['realized'] is False and result['realized'].startswith('These figures are what your faxes')
@@ -129,10 +132,10 @@ def test_a_toll_free_number_on_file_is_a_boundary_never_a_cheaper_route(database
     result = fact_advice.advice(database, values(), routes=routes, now=NOW)
     item, rows = facts_by_key(result, TOLL)
     # Telnyx calls toll-free numbers for nothing, yet the best allowed route stays the recipient's own number.
-    assert money(item['baseline']) == '0.02'
+    assert money(item['baseline']) == '0.0175'
     toll = rows['toll_free']
     assert (toll['kind'], toll['boundary']) == ('authorization', True)
-    assert money(toll['saving']) == '0.02' and toll['establish_cost'] == []
+    assert money(toll['saving']) == '0.0175' and toll['establish_cost'] == []
     assert 'they pay for those calls' in toll['confirm'] and '+1 800-555-0199' in toll['confirm']
     assert toll['sentence'].endswith('Faxbot will not use it until then.')
     # No penalty or score exists that a cheap route could outweigh.
@@ -153,10 +156,10 @@ def test_no_record_of_the_far_machine_prices_the_compact_coding_as_an_upper_boun
     result = fact_advice.advice(database, values(), routes=routes, now=NOW)
     _, rows = facts_by_key(result, QUIET)
     coding = rows['capabilities']
-    # MR: 60.0 s, two minutes; MMR: 11 + 4 x 9.75 = 50 s, one minute: $0.005 less a fax.
+    # MR: $0.00875 expected; MMR: 11 + 4 x 9.75 = 50 s, one minute, $0.005: $0.00375 less a fax.
     assert coding['kind'] == 'information' and coding['boundary'] is False
-    assert money(coding['saving']) == '0.01'
-    assert coding['sentence'].startswith('Would have cost up to $0.01 less over 2 faxes (estimate), if its fax '
+    assert money(coding['saving']) == '0.0075'
+    assert coding['sentence'].startswith('Would have cost up to $0.0075 less over 2 faxes (estimate), if its fax '
                                          'machine accepts the most compact coding.')
     assert 'next call through Telnyx records' in coding['confirm']
 
@@ -188,8 +191,9 @@ def test_documents_they_already_acknowledged_price_the_one_page_index(database):
     result = fact_advice.advice(database, values(), routes=routes, now=NOW)
     _, rows = facts_by_key(result, CASES)
     reuse = rows['case_reuse']
-    # 10 pages: 133.6 s, 3 minutes ($0.015); 10 - 6 + the one-page list = 5 pages: 72.3 s, 2 minutes ($0.010).
-    assert reuse['kind'] == 'authorization' and money(reuse['saving']) == '0.005' and reuse['faxes'] == 1
+    # 10 pages: 133.6 s, 2 minutes a quarter of the time and 3 otherwise ($0.01375); 10 - 6 + the one-page list
+    # = 5 pages: 72.3 s, always 2 minutes ($0.010).
+    assert reuse['kind'] == 'authorization' and money(reuse['saving']) == '0.00375' and reuse['faxes'] == 1
     assert 'one-page list' in reuse['confirm']
 
 
@@ -204,8 +208,8 @@ def test_a_route_with_no_price_gives_a_count_and_a_break_even_never_a_saving(dat
     assert price['kind'] == 'price' and price['saving'] == [] and price['net'] == [] and price['unknown']
     assert price['faxes'] == 2
     assert 'Documo publishes no price for these calls' in price['sentence']
-    # $0.020 over 8 pages, or over Documo's predicted 2 minutes each.
-    assert price['break_even']['per_page'] == [{'currency': 'USD', 'amount': '0.0025'}]
+    # $0.0175 over 8 pages ($0.0021875, shown to the micro), or over Documo's predicted 2 minutes each.
+    assert price['break_even']['per_page'] == [{'currency': 'USD', 'amount': '0.002187'}]
     assert 'If it charges less than' in price['sentence']
 
 
@@ -221,7 +225,7 @@ def test_a_plan_at_faxbots_cautious_budget_prices_the_faxes_it_pushed_elsewhere(
     item, rows = facts_by_key(result, QUIET)
     allowance = rows['plan_allowance']
     assert allowance['kind'] == 'information'
-    assert money(item['baseline']) == '0.02' and money(allowance['saving']) == '0.02'
+    assert money(item['baseline']) == '0.0175' and money(allowance['saving']) == '0.0175'
     assert allowance['sentence'].startswith('2 faxes went another way because your HumbleFax plan was past the '
                                             'cautious budget')
     assert 'HumbleFax must tell you in writing' in allowance['confirm']
@@ -251,8 +255,8 @@ def test_a_suggested_fhir_endpoint_with_a_priced_account_is_priced_by_the_predic
                                                                  'price_per_message': '0.002'}}}))
     result = fact_advice.advice(database, priced, routes=routes, now=NOW)
     _, rows = facts_by_key(result, QUIET)
-    # Each fax costs $0.010 by Telnyx and $0.002 as a message: $0.008 less each.
-    assert money(rows['digital_address']['saving']) == '0.016'
+    # Each fax costs $0.00875 by Telnyx and $0.002 as a message: $0.00675 less each.
+    assert money(rows['digital_address']['saving']) == '0.0135'
 
 
 def test_a_receiving_account_with_no_price_is_a_count_for_your_number(database):  # noqa: F811
@@ -278,8 +282,8 @@ def test_the_largest_single_fact_ranks_recipients_and_facts_are_never_added(data
     order = [item['number'] for item in result['recipients']]
     assert order.index(PARTNER) < order.index(TOLL)
     toll, rows = facts_by_key(result, TOLL)
-    # The toll-free number ($0.020) and the compact coding ($0.010) each stand alone; the figure is the larger.
-    assert money(toll['largest']) == '0.02'
+    # The toll-free number ($0.0175) and the compact coding ($0.0075) each stand alone; the figure is the larger.
+    assert money(toll['largest']) == '0.0175'
     assert result['state'] == 'advice' and result['note'].startswith('Faxbot only advises')
 
 
