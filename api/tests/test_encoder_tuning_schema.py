@@ -1,4 +1,4 @@
-"""Actual 0059 to 0063 upgrade and downgrade: per-number lossless tuning choices and what the engine reported tuning
+"""Actual 0065 to 0063 upgrade and downgrade: per-number lossless tuning choices and what the engine reported tuning
 on each call (SQLite and PostgreSQL)."""
 from datetime import datetime
 
@@ -14,8 +14,8 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 8, 9, 0)
-# The migration chain follows merge order: 0063 comes after 0059 (routing learning) on this branch.
-PRIOR = '0059_routing_learning'
+# The migration chain follows the recovered integration order.
+PRIOR = '0065_fact_advice'
 
 
 def _downgrade(engine, revision):
@@ -37,9 +37,9 @@ def _call(**changes):
             'digests': None, 'sslfax': 1, 'refused': 0, 'reason': None, 'created_at': NOW, **changes}
 
 
-def test_encoder_tuning_follows_routing_learning():
-    assert schema_encoder_tuning.REVISION == '0063_encoder_tuning' == schema.HEAD
-    assert schema.ROUTING_LEARNING == PRIOR
+def test_encoder_tuning_follows_integrated_predecessor():
+    assert schema_encoder_tuning.REVISION == '0063_encoder_tuning' == schema.ENCODER_TUNING
+    assert schema.FACT_ADVICE == PRIOR
     assert schema_encoder_tuning.TABLES == frozenset({'recipient_coding_tuning', 'coding_tuning_calls',
                                                      'partner_fax_engines'})
     assert schema_encoder_tuning.TABLES <= schema.STRICT_TABLES

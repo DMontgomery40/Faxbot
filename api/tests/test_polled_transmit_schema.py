@@ -1,4 +1,4 @@
-"""Actual 0059 to 0062 upgrade and downgrade: faxes held for another site to collect, their collections, and
+"""Actual 0063 to 0062 upgrade and downgrade: faxes held for another site to collect, their collections, and
 the polling password and timetable on poll_sources (SQLite and PostgreSQL)."""
 from datetime import datetime
 
@@ -14,8 +14,8 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 8, 9, 0)
-# The migration chain follows merge order: 0062 comes after 0059 (routing learning).
-PRIOR = '0059_routing_learning'
+# The migration chain follows the recovered integration order.
+PRIOR = '0063_encoder_tuning'
 
 
 def _downgrade(engine, revision):
@@ -40,9 +40,9 @@ def _source(**changes):
     return {'id': 'a' * 32, 'number': '+15555550123', 'enabled': 1, 'created_at': NOW, **changes}
 
 
-def test_polled_transmit_follows_routing_learning():
+def test_polled_transmit_follows_integrated_predecessor():
     assert schema_polled_transmit.REVISION == '0062_polled_transmit' == schema.HEAD
-    assert schema.ROUTING_LEARNING == PRIOR
+    assert schema.ENCODER_TUNING == PRIOR
     assert schema_polled_transmit.TABLES == frozenset({'poll_held', 'poll_collections'})
     assert schema_polled_transmit.TABLES <= schema.STRICT_TABLES
 
