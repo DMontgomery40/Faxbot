@@ -840,7 +840,8 @@ def newest_coding(engine, job_id):
 def sent_sentence(record, phase=None) -> str | None:
     """The Sent detail's coding line for the attempt's state: "Sent with MH: 20% shorter than MMR for these
     pages." (delivered, or not known), "Going with ..." (on its way), "Tried with ..." (the call failed),
-    "Prepared with ..." (cancelled); and, when the call used another coding, which one ("The call used MMR."),
+    "Prepared with ..." (cancelled), "Sent with ...; whether it arrived is not confirmed yet." (uncertain); and,
+    when the call used another coding, which one ("The call used MMR."),
     as a fact without a cause: the machine, or an engine that does not yet take the request, may be why."""
     if not record:
         return None
@@ -865,13 +866,18 @@ def sent_sentence(record, phase=None) -> str | None:
     from .tuning import sent_suffix
     tuned = record.get('tuning') or {}
     if agreed and agreed not in expected:
-        return f'{verb} {reason} The call used {agreed}{sent_suffix(tuned, agreed)}.'
+        sentence = f'{verb} {reason} The call used {agreed}{sent_suffix(tuned, agreed)}.'
+        if phase == 'uncertain':
+            sentence = f"Sent with {reason.rstrip('.')}; whether it arrived is not confirmed yet. The call used {agreed}{sent_suffix(tuned, agreed)}."
+        return sentence
     used = agreed or requested
     suffix = sent_suffix(tuned, used)
     if suffix and reason.startswith(f'{used}:'):
         reason = f'{used}{suffix}:' + reason[len(used) + 1:]
     elif suffix:
         reason += f' The call used {used}{suffix}.'
+    if phase == 'uncertain':
+        return f"Sent with {reason.rstrip('.')}; whether it arrived is not confirmed yet."
     return f'{verb} {reason}'
 
 

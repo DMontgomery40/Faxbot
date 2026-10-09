@@ -54,6 +54,7 @@ import type {
   DestinationDetail,
   DestinationPatch,
   PredictionAnswer,
+  DocumentPrediction,
   DirectCard,
   DirectDeliveryRecord,
   DirectPartner,
@@ -85,6 +86,7 @@ import type {
   CasePacket,
   CaseSummary,
   Savings,
+  SavingsMechanisms,
   SendingRecommendations,
   ReceivingRecommendations,
   PlanRecommendations,
@@ -1112,6 +1114,15 @@ class AdminAPIClient {
     return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
   }
 
+  // The same for the document itself: its pages drawn and each coding measured on them; nothing is sent or kept.
+  // Only the number and the file go: never a patient's details.
+  async predictDocument(to: string, file: File): Promise<DocumentPrediction> {
+    const form = new FormData();
+    form.append('to', normalizeFaxDestination(to));
+    form.append('file', file);
+    return this.json('/routing/predict', { method: 'POST', body: form });
+  }
+
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
@@ -1709,6 +1720,11 @@ class AdminAPIClient {
   // What sending together, direct delivery and case packets saved in the last `days` (estimates).
   async getSavings(days?: number): Promise<Savings> {
     return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // Every way Faxbot saves money: whether each is on, works here and has been tested (Overview's savings map).
+  async getSavingsMechanisms(): Promise<SavingsMechanisms> {
+    return this.json('/routing/savings/mechanisms');
   }
 
   // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →

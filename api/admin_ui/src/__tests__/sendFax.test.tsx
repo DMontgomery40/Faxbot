@@ -37,7 +37,39 @@ async function send(number: string, file: File) {
   fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));
 }
 
-const lostAnswer = /^Couldn't reach the server, so the fax may or may not have been submitted\. To retry without creating a duplicate, send the same document to the same number again, even after reloading this page\./;
+const twoPages = () => new File(['%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n'
+  + '3 0 obj << /Type /Pages /Count 2 >> endobj\n'], 'two.pdf', { type: 'application/pdf' });
+
+// The number's recommended route: Telnyx, priced by the minute.
+const destinationAnswer = () => http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({
+  number: params.number, display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0,
+  routes: [], estimated_cost_30_days: [], direct_partner: null, available_routes: [],
+  recommended_routes: [{ route: 'sip', label: 'Telnyx', reason: 'cheapest', explanation: 'Cheapest.',
+    estimated_cost_one_page: { currency: 'USD', amount: '0.005' }, pages: 2,
+    estimated_cost: { currency: 'USD', amount: '0.01' }, rate: '$0.005 a minute, at least 1 minute',
+    included_in_plan: false, monthly_fee: null }] }));
+
+const routeAnswer = (amount: string, headline: string, basis: string) => ({
+  route: 'sip', label: 'Telnyx', billed_pages: 0, seconds: 46, billed_seconds: 60, seconds_to_next_step: 14,
+  cost: { currency: 'USD', amount }, cost_text: null, marginal: false, headline, basis });
+
+// The price from the page count alone (GET /routing/predict).
+const pageCountPrediction = () => http.get('/routing/predict', () => HttpResponse.json({
+  to: '+12025550123', number_class: 'local', number_class_text: 'a local number', pages: 2, layout: 'normal',
+  resolution: 'fine', sentence: '', note: '',
+  routes: [routeAnswer('0.01', 'About $0.01 for this 2-page fax.', 'Typical pages.')] }));
+
+// The price of the document itself (POST /routing/predict), with the coding measured on its pages.
+const documentAnswer = (to: string, amount: string) => ({
+  to, number_class: 'local', number_class_text: 'a local number', pages: 2, layout: 'normal', resolution: 'fine',
+  sentence: '', note: '', measured: { MH: 500000, MR: 288000, MMR: 432000 }, measured_sentence: null,
+  jbig_measured: false,
+  routes: [{ ...routeAnswer(amount, `About $${amount} for this measured 2-page fax.`, 'Measured on these pages.'),
+    finish_sentence: "9 in 10 such calls should finish within 50 seconds, from Telnyx's calls.",
+    coding: { coding: 'MR', measured: true,
+      sentence: 'Faxbot would send these pages with MR: 33% shorter than MMR for these pages.' } }] });
+
+const lostAnswer =/^Couldn't reach the server, so the fax may or may not have been submitted\. To retry without creating a duplicate, send the same document to the same number again, even after reloading this page\./;
 
 describe('Send keeps the send identity across a reload', () => {
   beforeEach(() => window.sessionStorage.clear());
@@ -311,6 +343,70 @@ describe('Before sending', () => {
     expect(screen.queryByTestId('send-cost-basis')).toBeNull();
     expect(screen.queryByText(/Forbidden/)).toBeNull();
   });
+
+  it('prices the document itself once the number and file settle, with its measured coding', async () => {
+    const posted: string[] = [];
+    server.use(destinationAnswer(), pageCountPrediction(), http.post('/routing/predict', async ({ request }) => {
+      const form = await request.formData();
+      posted.push(`${form.get('to')} ${(form.get('file') as File).name} ${[...form.keys()].sort().join(',')}`);
+      return HttpResponse.json(documentAnswer(String(form.get('to')), '0.02'));
+    }));
+    openSend();
+    const box = screen.getByRole('textbox', { name: /Destination Number/ });
+    // Typed digit by digit, then the file: one request for the settled number and file.
+    for (const typed of ['+1202', '+120255', '+12025550123']) fireEvent.change(box, { target: { value: typed } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
+      .toBe('What would this cost? About $0.02 for this measured 2-page fax.'), { timeout: 3000 });
+    expect(screen.getByTestId('send-cost-coding').textContent).toBe(
+      'Faxbot would send these pages with MR: 33% shorter than MMR for these pages.');
+    expect(screen.getByTestId('send-cost-basis').textContent).toBe('Measured on these pages.');
+    expect(screen.getByTestId('send-cost-finish').textContent).toBe('9 in 10 such calls should finish within 50 seconds, from Telnyx\'s calls.');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    // Only the number and the file: never a patient's details.
+    expect(posted).toEqual(['+12025550123 two.pdf file,to']);
+  });
+
+  it('drops an answer for a number that changed while it was on its way', async () => {
+    const answers: Array<(value: Response) => void> = [];
+    server.use(destinationAnswer(), pageCountPrediction(), http.post('/routing/predict', async ({ request }) => {
+      const to = String((await request.formData()).get('to'));
+      if (to === '+12025550123') {
+        // The first number's answer comes late, after the number changed.
+        await new Promise<void>((resolve) => { answers.push(() => resolve()); });
+      }
+      return HttpResponse.json(documentAnswer(to, to === '+12025550123' ? '9.99' : '0.03'));
+    }));
+    openSend();
+    const box = screen.getByRole('textbox', { name: /Destination Number/ });
+    fireEvent.change(box, { target: { value: '+12025550123' } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(answers).toHaveLength(1), { timeout: 3000 });
+    fireEvent.change(box, { target: { value: '+12025550199' } });
+    await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
+      .toBe('What would this cost? About $0.03 for this measured 2-page fax.'), { timeout: 3000 });
+    answers[0](new Response());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.getByTestId('send-cost').textContent).toBe('What would this cost? About $0.03 for this measured 2-page fax.');
+  });
+
+  for (const [status, why] of [[403, 'refused'], [400, 'cannot read the document']] as const) {
+    it(`keeps the page-count price when pricing the document is ${why}`, async () => {
+      let posts = 0;
+      server.use(destinationAnswer(), pageCountPrediction(), http.post('/routing/predict', () => {
+        posts += 1;
+        return HttpResponse.json({ detail: 'Synthetic refusal' }, { status });
+      }));
+      openSend();
+      fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+      fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+      await waitFor(() => expect(posts).toBe(1), { timeout: 3000 });
+      await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
+        .toBe('What would this cost? About $0.01 for this 2-page fax.'), { timeout: 3000 });
+      expect(screen.queryByTestId('send-cost-coding')).toBeNull();
+      expect(screen.queryByText(/Synthetic refusal/)).toBeNull();
+    });
+  }
 
   it('offers a real call for one of your own numbers and sends that choice', async () => {
     server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,

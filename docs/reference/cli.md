@@ -2510,6 +2510,10 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `schedule`: Show or set when Faxbot sends to one...
 * `polling`: Show or set whether Faxbot may collect...
 * `collect`: Call another site&#x27;s fax server once and...
+* `hold`: Show or set whether another site&#x27;s fax...
+* `hold-fax`: Hold a document for another site to...
+* `held`: List the faxes held for another site to...
+* `withdraw`: Take a held fax back so the other site can...
 * `check`: Before a first fax: check whether the NPI...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
@@ -2667,7 +2671,8 @@ $ faxbot recipients schedule [OPTIONS] {number}
 
 ### `faxbot recipients polling`
 
-Show or set whether Faxbot may collect faxes from another site&#x27;s fax server by calling it.
+Show or set whether Faxbot may collect faxes from another site&#x27;s fax server by calling it, the password it
+sends, and a timetable for collecting by itself.
 
 **Usage**:
 
@@ -2684,6 +2689,11 @@ $ faxbot recipients polling [OPTIONS] {number}
 * `--on / --off`: Allow or stop collecting faxes from this number. Faxbot never collects by itself.
 * `--name NAME`: A name for the other site, such as &quot;Denver office&quot;.
 * `--selective-address DIGITS`: The address the other fax server asks callers to give before it sends a held fax, if it asks for one.
+* `--password DIGITS`: The polling password the other fax server asks for; kept sealed, never shown. Give &quot;&quot; to clear it.
+* `--collect-at TIMES`: Times of day to collect by themselves, such as 08:00,16:00. Needs --collect-days.
+* `--collect-days DAYS`: Days to collect by themselves, such as mon,tue,wed,thu,fri.
+* `--time-zone ZONE`: The other site&#x27;s time zone for the timetable, such as America/Denver.
+* `--no-timetable`: Clear the timetable: Faxbot collects only when you ask.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients collect`
@@ -2699,6 +2709,85 @@ $ faxbot recipients collect [OPTIONS] {number}
 **Arguments**:
 
 * `number`: Fax number of the other site.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients hold`
+
+Show or set whether another site&#x27;s fax server may call Faxbot and collect the faxes held for it, and
+what it must give to get them.
+
+**Usage**:
+
+```console
+$ faxbot recipients hold [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
+* `--on / --off`: Allow or stop this number collecting faxes from Faxbot.
+* `--name NAME`: A name for the other site, such as &quot;Denver office&quot;.
+* `--selective-address DIGITS`: The address the other site must give to get its faxes; leave empty for none.
+* `--password DIGITS`: The polling password the other site must give; kept sealed, never shown. Give &quot;&quot; to clear it.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients hold-fax`
+
+Hold a document for another site to collect: it goes out when that site calls Faxbot and asks for it.
+
+**Usage**:
+
+```console
+$ faxbot recipients hold-fax [OPTIONS] {number} {document}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+* `document`: The PDF or fax TIFF to hold for it.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients held`
+
+List the faxes held for another site to collect, and what happened to each.
+
+**Usage**:
+
+```console
+$ faxbot recipients held [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients withdraw`
+
+Take a held fax back so the other site can no longer collect it.
+
+**Usage**:
+
+```console
+$ faxbot recipients withdraw [OPTIONS] {number} {HELD-FAX}
+```
+
+**Arguments**:
+
+* `number`: Fax number of the other site.  [required]
+* `HELD-FAX`: The held fax, from &#x27;faxbot recipients held&#x27;.  [required]
 
 **Options**:
 
@@ -6247,6 +6336,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
 * `advice`: Show what one missing fact cost you per...
+* `mechanisms`: List every way Faxbot saves money, grouped...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `rate-rows`: Replace the prices by where calls start...
 * `state-prices`: Import a carrier&#x27;s US prices for calls...
@@ -6355,6 +6445,20 @@ $ faxbot costs advice [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days of sent faxes to price again.  [default: 90; 7&lt;=x&lt;=183]
+* `--help`: Show this message and exit.
+
+### `faxbot costs mechanisms`
+
+List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot costs savings.
+
+**Usage**:
+
+```console
+$ faxbot costs mechanisms [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot costs rate-cards`

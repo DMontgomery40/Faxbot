@@ -1,0 +1,1482 @@
+{
+  "about": "The savings map in words. The console (SavingsMap.tsx on Overview) and the faxbot command (faxbot costs mechanisms, cli/commands/delivery.py mechanism_lines) both show exactly what the server says. The response is GET /routing/savings/mechanisms evaluated on a real synthetic installation (api/tests/test_savings_mechanisms.py scenario); its catalogue fields must match app/routing/mechanisms.py.",
+  "response": {
+    "days": 30,
+    "title": "How Faxbot saves money",
+    "sentence": "Every way Faxbot saves money, in the order a fax meets them.",
+    "legend": [
+      {
+        "label": "On or Off",
+        "sentence": "Whether it is switched on for your faxes."
+      },
+      {
+        "label": "Works here or Not here",
+        "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+      },
+      {
+        "label": "Live call, Test lab or Sample data",
+        "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
+      }
+    ],
+    "stages": [
+      {
+        "key": "document",
+        "title": "Preparing the document",
+        "path": true,
+        "sentence": null,
+        "mechanisms": [
+          {
+            "key": "case_packets",
+            "name": "Case packets",
+            "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient accepts a list of the documents they already have yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "case_packets",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=case_packets",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": true
+          },
+          {
+            "key": "dense_pages",
+            "name": "Dense pages",
+            "sentence": "Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "packing",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "link": "costs/savings?part=packing",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "encoded_pages",
+            "name": "Encoded pages (experimental)",
+            "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has agreed to encoded pages yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "encoding",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=encoding",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": true
+          },
+          {
+            "key": "fax_friendly",
+            "name": "Lighter shading",
+            "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "fax_friendly",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "link": "costs/savings?part=fax_friendly",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": true
+          }
+        ]
+      },
+      {
+        "key": "route",
+        "title": "Choosing the route",
+        "path": true,
+        "sentence": null,
+        "mechanisms": [
+          {
+            "key": "own_numbers",
+            "name": "Faxes to your own numbers",
+            "sentence": "Delivers a fax to one of your own numbers straight into Received, with no phone call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "own_numbers",
+            "page": "providers/sending",
+            "page_label": "Providers → In use → Delivery routes",
+            "link": "costs/savings?part=own_numbers",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "direct_delivery",
+            "name": "Direct delivery",
+            "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "direct_delivery",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=direct_delivery",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "fax_images",
+            "name": "Fax images to partners",
+            "sentence": "Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "direct_fax_images",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=direct_fax_images",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "reuse",
+            "name": "Send once and reuse",
+            "sentence": "Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "direct_bytes",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=direct_bytes",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "partner_tunnel",
+            "name": "Partner fax over a private tunnel",
+            "sentence": "Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Used on 1 fax in 30 days"
+            },
+            "part": "tunnel_calls",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=tunnel_calls",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "relay",
+            "name": "Partner relays",
+            "sentence": "Sends faxes abroad through a partner that places them as local calls in its own country.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off until you and a partner both sign a relay agreement."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "relay",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=relay",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "toll_free",
+            "name": "Approved toll-free numbers",
+            "sentence": "Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 recipient who approved a toll-free number."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "toll_free",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=toll_free",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "cheapest_route",
+            "name": "Cheapest route per delivered fax",
+            "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; a preferred route for a number still comes first."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 2,
+              "sentence": "Used on 2 faxes in 30 days"
+            },
+            "part": "cheapest_route",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=cheapest_route",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "plan_first",
+            "name": "Your plan's faxes first",
+            "sentence": "Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "plan_first",
+            "page": "costs/prices",
+            "page_label": "Costs → Prices & plans",
+            "link": "costs/savings?part=plan_first",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "busy_hours",
+            "name": "Calls at the right hour",
+            "sentence": "Waits out a number's usual busy hours when a failed call there could be charged.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; urgent faxes still go at once."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Faxbot keeps no count of the faxes that waited"
+            },
+            "part": null,
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": false
+          },
+          {
+            "key": "free_line",
+            "name": "Wait for a free line",
+            "sentence": "Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; each number takes one call at a time unless you allow more."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Faxbot keeps no count of the faxes that waited"
+            },
+            "part": null,
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": false
+          },
+          {
+            "key": "digital_routes",
+            "name": "Direct messages and FHIR",
+            "sentence": "Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has a confirmed Direct address or FHIR server yet."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a Direct messaging (HISP) or FHIR account; none is set up yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "digital",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=digital",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "call",
+        "title": "On the call",
+        "path": true,
+        "sentence": null,
+        "mechanisms": [
+          {
+            "key": "fax_over_ip",
+            "name": "Fax over IP (T.38)",
+            "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "live",
+              "label": "Live call"
+            },
+            "here": {
+              "used": 10,
+              "sentence": "Used on 10 calls in 30 days"
+            },
+            "part": "t38",
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "link": "costs/savings?part=t38",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "measured_coding",
+            "name": "Smallest page coding",
+            "sentence": "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Used on 1 fax in 30 days"
+            },
+            "part": "coding",
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "link": "costs/savings?part=coding",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "sending_together",
+            "name": "Sending together",
+            "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 recipient who agreed."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "sending_together",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=sending_together",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "separator_pages",
+            "name": "Fewer separator pages",
+            "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has agreed to an index page or page marks yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "separator_pages",
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": "costs/savings?part=separator_pages",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": true
+          },
+          {
+            "key": "sslfax",
+            "name": "Faster pages",
+            "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "sslfax",
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "link": "costs/savings?part=sslfax",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "after",
+        "title": "After the call",
+        "path": true,
+        "sentence": null,
+        "mechanisms": [
+          {
+            "key": "continuation",
+            "name": "Only the missing pages",
+            "sentence": "Finishes a fax whose call broke by sending only the pages the call did not confirm.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On; you choose it for each fax whose call broke."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "continuation",
+            "page": "faxes/sent",
+            "page_label": "Faxes → Sent",
+            "link": "costs/savings?part=continuation",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "partner_repair",
+            "name": "Missing pages to partners",
+            "sentence": "After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "Off while direct delivery is off."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "part": "partner_repair",
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "costs/savings?part=partner_repair",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          },
+          {
+            "key": "charge_checks",
+            "name": "Charge checks",
+            "sentence": "Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/charges",
+            "page_label": "Costs → Charges",
+            "link": "costs/charges",
+            "link_label": "Costs → Charges",
+            "command": "faxbot costs charges",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "receiving",
+        "title": "Receiving",
+        "path": true,
+        "sentence": null,
+        "mechanisms": [
+          {
+            "key": "blocked_senders",
+            "name": "Junk callers turned away",
+            "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": "On for 1 number on your blocked list."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 1,
+              "sentence": "Turned away 1 call in 30 days"
+            },
+            "part": "blocked_calls",
+            "page": "numbers/blocked",
+            "page_label": "Numbers → Blocked senders",
+            "link": "costs/savings?part=blocked_calls",
+            "link_label": "Costs → Savings",
+            "command": "faxbot costs savings",
+            "turn_on": false
+          }
+        ]
+      },
+      {
+        "key": "advice",
+        "title": "Advice you act on",
+        "path": false,
+        "sentence": "Advice only: nothing changes until you act on it.",
+        "mechanisms": [
+          {
+            "key": "advice_sending",
+            "name": "Cheaper routes per number",
+            "sentence": "Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=sending",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations sending",
+            "turn_on": false
+          },
+          {
+            "key": "advice_plans",
+            "name": "Plans worth their fee",
+            "sentence": "Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a monthly plan; none of your fax services has one."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=plans",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations plans",
+            "turn_on": false
+          },
+          {
+            "key": "advice_receiving",
+            "name": "Receiving lines and numbers",
+            "sentence": "Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=receiving",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations receiving",
+            "turn_on": false
+          },
+          {
+            "key": "advice_carriers",
+            "name": "Other carriers' prices",
+            "sentence": "Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=carriers",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations carriers",
+            "turn_on": false
+          },
+          {
+            "key": "advice_billing_steps",
+            "name": "Calls just past a billed minute",
+            "sentence": "Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=steps",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations billing-steps",
+            "turn_on": false
+          },
+          {
+            "key": "advice_partners",
+            "name": "Partner candidates",
+            "sentence": "Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=partners",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations partners",
+            "turn_on": false
+          },
+          {
+            "key": "advice_discovery",
+            "name": "Recipients that run Faxbot",
+            "sentence": "Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=discovery",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot recipients partners discover",
+            "turn_on": false
+          },
+          {
+            "key": "advice_relays",
+            "name": "Partners that could relay",
+            "sentence": "Names partners whose signed local price would have cost less than your own calls.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=relays",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot recipients partners relay",
+            "turn_on": false
+          },
+          {
+            "key": "advice_toll_free",
+            "name": "Toll-free numbers on file",
+            "sentence": "Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=tollFree",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations toll-free",
+            "turn_on": false
+          },
+          {
+            "key": "advice_fax_marker",
+            "name": "Fax marker on calls",
+            "sentence": "Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=marker",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations fax-marker",
+            "turn_on": false
+          },
+          {
+            "key": "advice_shading",
+            "name": "Time lighter shading would save",
+            "sentence": "While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=pages",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations shading",
+            "turn_on": false
+          },
+          {
+            "key": "advice_trunks",
+            "name": "Your trunks compared",
+            "sentence": "Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs two or more trunks to compare; you have one."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=trunks",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations trunks",
+            "turn_on": false
+          },
+          {
+            "key": "advice_numbers",
+            "name": "Where each number should live",
+            "sentence": "Says where each of your fax numbers costs least to receive on, and the steps to move it.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=numbers",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations numbers",
+            "turn_on": false
+          },
+          {
+            "key": "advice_sites",
+            "name": "Calls by state",
+            "sentence": "Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Costs → Recommendations",
+            "link": "costs/recommendations?section=sites",
+            "link_label": "Costs → Recommendations",
+            "command": "faxbot costs recommendations sites",
+            "turn_on": false
+          },
+          {
+            "key": "advice_caller_names",
+            "name": "Caller-name lookup",
+            "sentence": "Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs your Telnyx key saved on the Telnyx page."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "providers/trunk",
+            "page_label": "Providers → Telnyx",
+            "link": "providers/trunk",
+            "link_label": "Providers → Telnyx",
+            "command": "faxbot providers trunk telnyx names",
+            "turn_on": false
+          },
+          {
+            "key": "advice_setup_packs",
+            "name": "Suggested packs",
+            "sentence": "Gathers the settings and rules that would save money here into packs you review and apply.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "system/setup",
+            "page_label": "System → Setup",
+            "link": "system/setup",
+            "link_label": "System → Setup",
+            "command": "faxbot system setup plan",
+            "turn_on": false
+          }
+        ]
+      }
+    ]
+  },
+  "cli": [
+    "How Faxbot saves money",
+    "Every way Faxbot saves money, in the order a fax meets them.",
+    "",
+    "Preparing the document",
+    "  Case packets: Off · Works here · Sample data",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    No recipient accepts a list of the documents they already have yet.",
+    "    Not used in 30 days",
+    "    Turn it on in Recipients → Details.",
+    "  Dense pages: On · Works here · Sample data",
+    "    Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
+    "    Not used in 30 days",
+    "  Encoded pages (experimental): Off · Works here · Sample data",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    No recipient has agreed to encoded pages yet.",
+    "    Not used in 30 days",
+    "    Turn it on in Recipients → Details.",
+    "  Lighter shading: Off · Works here · Sample data",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    Not used in 30 days",
+    "    Turn it on in Providers → In use → Delivery routes.",
+    "",
+    "Choosing the route",
+    "  Faxes to your own numbers: On · Works here · Sample data",
+    "    Delivers a fax to one of your own numbers straight into Received, with no phone call.",
+    "    Not used in 30 days",
+    "  Direct delivery: Off · Not here · Sample data",
+    "    Sends documents to verified partners over the internet instead of placing a fax call.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used in 30 days",
+    "  Fax images to partners: Off · Not here · Sample data",
+    "    Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used in 30 days",
+    "  Send once and reuse: Off · Not here · Sample data",
+    "    Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used in 30 days",
+    "  Partner fax over a private tunnel: Off · Not here · Test lab",
+    "    Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Used on 1 fax in 30 days",
+    "  Partner relays: Off · Not here · Sample data",
+    "    Sends faxes abroad through a partner that places them as local calls in its own country.",
+    "    Off until you and a partner both sign a relay agreement.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used in 30 days",
+    "  Approved toll-free numbers: On · Works here · Sample data",
+    "    Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
+    "    On for 1 recipient who approved a toll-free number.",
+    "    Not used in 30 days",
+    "  Cheapest route per delivered fax: On · Not here · Sample data",
+    "    Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+    "    On; a preferred route for a number still comes first.",
+    "    Needs a second sending route to compare with; you send through Telnyx only.",
+    "    Used on 2 faxes in 30 days",
+    "  Your plan's faxes first: On · Not here · Sample data",
+    "    Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
+    "    Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan.",
+    "    Not used in 30 days",
+    "  Calls at the right hour: On · Works here · Sample data",
+    "    Waits out a number's usual busy hours when a failed call there could be charged.",
+    "    On; urgent faxes still go at once.",
+    "    Faxbot keeps no count of the faxes that waited",
+    "  Wait for a free line: On · Works here · Sample data",
+    "    Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
+    "    On; each number takes one call at a time unless you allow more.",
+    "    Faxbot keeps no count of the faxes that waited",
+    "  Direct messages and FHIR: Off · Not here · Sample data",
+    "    Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
+    "    No recipient has a confirmed Direct address or FHIR server yet.",
+    "    Needs a Direct messaging (HISP) or FHIR account; none is set up yet.",
+    "    Not used in 30 days",
+    "",
+    "On the call",
+    "  Fax over IP (T.38): On · Works here · Live call",
+    "    Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+    "    Used on 10 calls in 30 days",
+    "  Smallest page coding: On · Works here · Test lab",
+    "    Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+    "    Used on 1 fax in 30 days",
+    "  Sending together: On · Works here · Test lab",
+    "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
+    "    On for 1 recipient who agreed.",
+    "    Not used in 30 days",
+    "  Fewer separator pages: Off · Works here · Sample data",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    No recipient has agreed to an index page or page marks yet.",
+    "    Not used in 30 days",
+    "    Turn it on in Recipients → Details.",
+    "  Faster pages: On · Not here · Test lab",
+    "    Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+    "    Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+    "    Not used in 30 days",
+    "",
+    "After the call",
+    "  Only the missing pages: On · Works here · Sample data",
+    "    Finishes a fax whose call broke by sending only the pages the call did not confirm.",
+    "    On; you choose it for each fax whose call broke.",
+    "    Not used in 30 days",
+    "  Missing pages to partners: Off · Not here · Sample data",
+    "    After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
+    "    Off while direct delivery is off.",
+    "    Needs a verified partner; you have none yet.",
+    "    Not used in 30 days",
+    "  Charge checks: On · Works here · Sample data",
+    "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
+    "    See: faxbot costs charges",
+    "",
+    "Receiving",
+    "  Junk callers turned away: On · Works here · Sample data",
+    "    Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+    "    On for 1 number on your blocked list.",
+    "    Turned away 1 call in 30 days",
+    "",
+    "Advice you act on",
+    "Advice only: nothing changes until you act on it.",
+    "  Cheaper routes per number: On · Not here · Sample data",
+    "    Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
+    "    Needs a second sending route to compare with; you send through Telnyx only.",
+    "    See: faxbot costs recommendations sending",
+    "  Plans worth their fee: On · Not here · Sample data",
+    "    Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
+    "    Needs a monthly plan; none of your fax services has one.",
+    "    See: faxbot costs recommendations plans",
+    "  Receiving lines and numbers: On · Works here · Sample data",
+    "    Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
+    "    See: faxbot costs recommendations receiving",
+    "  Other carriers' prices: On · Works here · Sample data",
+    "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
+    "    See: faxbot costs recommendations carriers",
+    "  Calls just past a billed minute: On · Works here · Sample data",
+    "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
+    "    See: faxbot costs recommendations billing-steps",
+    "  Partner candidates: On · Works here · Sample data",
+    "    Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
+    "    See: faxbot costs recommendations partners",
+    "  Recipients that run Faxbot: On · Works here · Sample data",
+    "    Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
+    "    See: faxbot recipients partners discover",
+    "  Partners that could relay: On · Not here · Sample data",
+    "    Names partners whose signed local price would have cost less than your own calls.",
+    "    Needs a verified partner; you have none yet.",
+    "    See: faxbot recipients partners relay",
+    "  Toll-free numbers on file: On · Works here · Sample data",
+    "    Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
+    "    See: faxbot costs recommendations toll-free",
+    "  Fax marker on calls: On · Works here · Sample data",
+    "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
+    "    See: faxbot costs recommendations fax-marker",
+    "  Time lighter shading would save: On · Works here · Sample data",
+    "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
+    "    See: faxbot costs recommendations shading",
+    "  Your trunks compared: On · Not here · Sample data",
+    "    Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
+    "    Needs two or more trunks to compare; you have one.",
+    "    See: faxbot costs recommendations trunks",
+    "  Where each number should live: On · Works here · Sample data",
+    "    Says where each of your fax numbers costs least to receive on, and the steps to move it.",
+    "    See: faxbot costs recommendations numbers",
+    "  Calls by state: On · Works here · Sample data",
+    "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+    "    See: faxbot costs recommendations sites",
+    "  Caller-name lookup: On · Not here · Sample data",
+    "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
+    "    Needs your Telnyx key saved on the Telnyx page.",
+    "    See: faxbot providers trunk telnyx names",
+    "  Suggested packs: On · Works here · Sample data",
+    "    Gathers the settings and rules that would save money here into packs you review and apply.",
+    "    See: faxbot system setup plan",
+    "",
+    "On or Off: Whether it is switched on for your faxes.",
+    "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
+    "Live call, Test lab or Sample data: How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only.",
+    "What each one saved: faxbot costs savings"
+  ]
+}

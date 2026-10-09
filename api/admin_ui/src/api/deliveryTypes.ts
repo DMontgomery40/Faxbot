@@ -160,6 +160,19 @@ export interface PredictionAnswer {
   note: string;
 }
 
+// POST /routing/predict: the same for the document itself, its codings measured on its own pages; nothing is kept.
+// `coding` is set only for Faxbot's own engines (route 'sip'): the coding they would be asked for, in one sentence.
+export interface DocumentRoutePrediction extends RoutePrediction {
+  coding: { coding: string; measured: boolean; sentence: string } | null;
+}
+
+export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
+  routes: DocumentRoutePrediction[];
+  measured: Record<string, number>;
+  measured_sentence: string | null;
+  jbig_measured: boolean;
+}
+
 export interface DestinationDetail extends Destination {
   direct_partner: { organization: string; verified: boolean } | null;
   recommended_routes: RecommendedRoute[];
@@ -769,6 +782,65 @@ export interface Savings {
   // Bytes partners did not need sent again (a reference or only the changes): counted exactly, never money, and
   // never part of the money total. Optional for older servers.
   direct_bytes?: SendOnceBytes;
+  // The parts the savings map added (routing/mechanism_parts.py); optional for older servers. Lightened pages are
+  // an estimate of time and the relay is priced from its own records; the rest are exact counts with no money.
+  fax_friendly?: SavingPart & { faxes: number; pages: number; seconds_saved: number };
+  relay?: SavingPart & { faxes: number; priced: number; unpriced: number };
+  cheapest_route?: CountedPart & { faxes: number };
+  plan_first?: CountedPart & { faxes: number; plans: number };
+  continuation?: CountedPart & { faxes: number; pages_not_resent: number };
+  partner_repair?: CountedPart & { faxes: number; pages_not_resent: number };
+  blocked_calls?: CountedPart & { calls: number };
+  // Seconds a page on fax over IP (T.38) calls against audio fax calls, measured on the trunk's own calls.
+  t38?: CountedPart & {
+    calls: number; audio_calls: number; seconds_per_page: number | null; audio_seconds_per_page: number | null;
+  };
+  digital?: CountedPart & { faxes: number };
+  // Faxes whose page coding was measured, and the time a smaller coding than the engine's own choice saved.
+  coding?: SavingPart & { faxes: number; smaller: number; seconds_saved: number };
+  tunnel_calls?: CountedPart & { faxes: number };
+}
+
+// A Savings part that counts exactly and carries no money.
+interface CountedPart {
+  estimate: false;
+  saved: Money[];
+  sentence: string;
+}
+
+// GET /routing/savings/mechanisms: every way Faxbot saves money and how each stands on this installation, for the
+// Overview's map and `faxbot costs mechanisms`. Every sentence comes from the server; never any money.
+export interface SavingsMechanism {
+  key: string;
+  name: string;
+  sentence: string;
+  enabled: { on: boolean; label: string; sentence: string | null };
+  works: { here: boolean; label: string; sentence: string | null };
+  evidence: { level: 'live' | 'lab' | 'built'; label: string };
+  // One short line about this installation ("Used on 14 faxes in 30 days"), or null for advice.
+  here: { used: number; sentence: string | null };
+  // Its part on Costs → Savings, or null when it has none.
+  part: string | null;
+  // The console page that holds its setting ('recipients/list'), and that page's name.
+  page: string;
+  page_label: string;
+  // Where selecting it leads ('costs/savings?part=sslfax', 'costs/recommendations?section=plans'), or null,
+  // with that page's name; and the command that prints the same.
+  link: string | null;
+  link_label: string | null;
+  command: string | null;
+  // Off and works here: the map offers to turn it on at its page.
+  turn_on: boolean;
+}
+
+export interface SavingsMechanisms {
+  days: number;
+  title: string;
+  sentence: string;
+  legend: Array<{ label: string; sentence: string }>;
+  // `path`: a stage on a fax's own path, drawn with arrows; advice sits beside it.
+  // `sentence`: said once under the stage's title (the advice stage's "Advice only…").
+  stages: Array<{ key: string; title: string; path: boolean; sentence: string | null; mechanisms: SavingsMechanism[] }>;
 }
 
 // GET /direct/send-once: "send once" agreements both ways, and the bytes reuse and changes saved.

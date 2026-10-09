@@ -599,7 +599,8 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
     """What sending together, direct delivery and case packets saved in the last ``days`` (estimates)."""
     from .savings import SENTENCE, savings as count_savings
     store = _store(request)
-    result = await _call(lambda: count_savings(store, store.engine, days=days))
+    home = request.scope['faxbot.configuration'].active.values.fax_default_country
+    result = await _call(lambda: count_savings(store, store.engine, days=days, home=home))
 
     def direct_bytes():
         # Bytes partners did not need sent again (a reference or only the changes): counted, never money.
@@ -624,7 +625,31 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             # Pages saved by packing them onto long pages, and blank page bottoms left out (pages/).
             'packing': _saving_view(result['packing']),
             # Pages saved by the experimental encoded pages (pages/views.encoding_sentence).
-            'encoding': _saving_view(result['encoding'])}
+            'encoding': _saving_view(result['encoding']),
+            # The parts the savings map added (routing/mechanism_parts.py). Lightened pages are an estimate of time
+            # and the relay is priced from its own records; the rest are exact counts or measurements, no money.
+            'fax_friendly': _saving_view(result['fax_friendly']),
+            'coding': _saving_view(result['coding']),
+            'relay': _saving_view(result['relay']),
+            **{key: _count_view(result[key]) for key in COUNTED_PARTS}}
+
+
+# Savings parts that count or measure what a mechanism did, exactly, and carry no money.
+COUNTED_PARTS = ('cheapest_route', 'plan_first', 'continuation', 'partner_repair', 'blocked_calls', 't38', 'digital',
+                 'tunnel_calls')
+
+
+def _count_view(part):
+    return {**{key: value for key, value in part.items() if key != 'saved'}, 'estimate': False, 'saved': []}
+
+
+@router.get('/savings/mechanisms', dependencies=[Depends(require_permission('settings:read'))])
+async def savings_mechanisms(request: Request):
+    """Every way Faxbot saves money, each with whether it is on, works here and has been tested; never money."""
+    from .mechanisms import evaluate
+    store = _store(request)
+    values = request.scope['faxbot.configuration'].active.values
+    return await _call(lambda: evaluate(values, store, store.engine))
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])

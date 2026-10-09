@@ -448,7 +448,12 @@ SAVING_PARTS = (('sending_together', 'Sending together'), ('separator_pages', 'S
                 ('direct_delivery', 'Direct delivery'), ('direct_fax_images', 'Direct fax images'),
                 ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'),
                 ('toll_free', 'Approved toll-free numbers'), ('packing', 'Pages saved by packing'),
-                ('encoding', 'Pages saved by encoding (experimental)'))
+                ('encoding', 'Pages saved by encoding (experimental)'), ('fax_friendly', 'Shaded pages lightened'),
+                ('cheapest_route', 'Cheapest route per delivered fax'), ('plan_first', 'Faxes through your plan'),
+                ('relay', 'Partner relays'), ('continuation', 'Only the missing pages'),
+                ('partner_repair', 'Missing pages to partners'), ('blocked_calls', 'Junk callers turned away'),
+                ('t38', 'Fax over IP (T.38)'), ('digital', 'Direct messages and FHIR'),
+                ('coding', 'Smallest page coding'), ('tunnel_calls', 'Partner fax over a private tunnel'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
@@ -473,6 +478,38 @@ def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help=
         if (result.get('direct_bytes') or {}).get('sentence'):
             out.line('Bytes saved by reuse and patches: ' + result['direct_bytes']['sentence'])
     state.out().result(result, human)
+
+
+def mechanism_lines(result):
+    """Every way Faxbot saves money, grouped by stage, in the server's own sentences; the console's Overview map
+    shows the same (admin_ui/src/__tests__/savingsMap.json keeps the two identical). Never any money."""
+    lines = [result['title'], result['sentence']]
+    for stage in result['stages']:
+        lines += ['', stage['title']]
+        if stage.get('sentence'):
+            lines.append(stage['sentence'])
+        for item in stage['mechanisms']:
+            lines.append(f"  {item['name']}: {item['enabled']['label']} · {item['works']['label']} · "
+                         f"{item['evidence']['label']}")
+            lines.append(f"    {item['sentence']}")
+            for sentence in (item['enabled']['sentence'], item['works']['sentence'], item['here']['sentence']):
+                if sentence:
+                    lines.append(f'    {sentence}')
+            if item['turn_on']:
+                lines.append(f"    Turn it on in {item['page_label']}.")
+            # Advice and charge checks keep their own figures elsewhere; savings are all in faxbot costs savings.
+            if not item['part'] and item.get('command'):
+                lines.append(f"    See: {item['command']}")
+    lines.append('')
+    lines += [f"{entry['label']}: {entry['sentence']}" for entry in result['legend']]
+    lines.append('What each one saved: faxbot costs savings')
+    return lines
+
+
+def routing_mechanisms():
+    """List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot costs savings."""
+    result = state.api().get('/routing/savings/mechanisms')
+    state.out().result(result, lambda out: [out.line(line) for line in mechanism_lines(result)])
 
 
 # -- costs recommendations ----------------------------------------------------------------
