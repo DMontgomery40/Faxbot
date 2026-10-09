@@ -90,7 +90,9 @@ def received_decoded(inbound_id: str = typer.Argument(..., help="A received fax'
     api = state.api()
     response = received_id(api, inbound_id, lambda fax_id: api.get(
         f'/codec/received/{segment(fax_id)}/document', raw=True))
-    _report_saved(save_document(response, output, f'decoded_{inbound_id}.pdf', force), len(response.content))
+    content_type = response.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
+    extension = '.txt' if content_type == 'text/plain' else '.pdf'
+    _report_saved(save_document(response, output, f'decoded_{inbound_id}{extension}', force), len(response.content))
 
 
 @tools.command('decode')

@@ -307,7 +307,10 @@ READER_RULE = """Who reads these pages: the administrator who set Faxbot up and 
 SCREEN_PATH_RULE = (
     "Check every screen path written like **Costs → Prices & plans** against "
     "api/admin_ui/src/navigation.tsx, which lists each top-level area and its pages (their label: values); "
-    "a path whose area or page is not there is wrong, so fix it to the page that now holds that setting or button."
+    "a path whose area or page is not there is wrong, so fix it to the page that now holds that setting or button. "
+    "A valid page label alone is not enough: follow its mounted component and section filters to confirm "
+    "that the specific setting or control actually appears there. Shared settings components can expose "
+    "different controls on different pages."
 )
 
 GENERATED_CLI_RULE = (
