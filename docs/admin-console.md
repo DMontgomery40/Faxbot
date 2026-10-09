@@ -13,11 +13,11 @@ The left panel lists eight areas. Each holds a few pages.
   [Open](admin-console/overview.md)
 
 - :material-fax: **Faxes**
-  Received, Sent and Send a fax.
+  Received, Sent, Send a fax, Forms and Expected.
   [Open](admin-console/faxes.md)
 
 - :material-dialpad: **Numbers**
-  Your numbers, mailboxes, email delivery and sender identity.
+  Your numbers, mailboxes, email delivery, Email and folders, and sender identity.
   [Open](admin-console/numbers.md)
 
 - :material-contacts: **Recipients**
@@ -25,7 +25,7 @@ The left panel lists eight areas. Each holds a few pages.
   [Open](admin-console/recipients.md)
 
 - :material-cloud: **Providers**
-  What sends and receives, and each provider in use.
+  What sends and receives, provider accounts and rules, and each provider in use.
   [Open](admin-console/providers.md)
 
 - :material-cash: **Costs**
@@ -37,7 +37,7 @@ The left panel lists eight areas. Each holds a few pages.
   [Open](admin-console/access.md)
 
 - :material-cog: **System**
-  Setup, security, storage, audit log, diagnostics, logs and Developer.
+  Setup, AI analysis, security, storage, audit log, diagnostics, logs and Developer.
   [Open](admin-console/system.md)
 
 </div>
@@ -61,7 +61,7 @@ The console is served when the deployment sets `ENABLE_LOCAL_ADMIN=true` and the
 
 ## The command line
 
-`faxbot`, the command line, follows the same eight areas: `faxbot received`, `sent`, `numbers`, `recipients`, `providers`, `costs`, `access` and `system`. See the [command line reference](reference/cli.md).
+The command line has commands for sending and managing faxes, forms and expected faxes, as well as for numbers, recipients, providers, costs, access and the system. See the [command line reference](reference/cli.md).
 
 ## Demo (simulated)
 

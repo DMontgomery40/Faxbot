@@ -1,6 +1,8 @@
 # Overview
 
-**Overview** (`#/overview`) is the first page for most people. It has no developer panels.
+**Overview** (`#/overview`) is the first page for most people. It shows server status and delivery information, and may also show AI analysis and faxes waiting for you.
+
+The **AI analysis** card shows generated advice from recorded costs and delivery outcomes. Check suggestions against the figures; the analysis does not change settings or send faxes. **Faxes waiting for you** shows faxes held by sending rules when there are any you may act on.
 
 ## Needs attention
 
