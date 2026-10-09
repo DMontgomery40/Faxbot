@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # measure each fax's pages in JBIG, plain and tuned (hylafax/patches/0003), before
 # dialing (api/app/pages/coding.py). jbigkit 2.1 is GPL-2.0-or-later (Markus Kuhn; jbigkit-2.1/COPYING, and
 # "(at your option) any later version" in libjbig/jbig85.c). Faxbot only runs them as separate programs, so its
-# own code stays MIT. This file installs Debian's binary package; anyone who distributes a built image must
+# own code stays under Faxbot's licence (LICENSE). This file installs Debian's binary package; anyone who distributes a built image must
 # also offer its source under GPL-2.0 section 3: the matching Debian source package
 # (`apt-get source jbigkit` from the same archive), shipped with the image or offered in writing for three years.
 RUN apt-get update \
