@@ -24,8 +24,8 @@ router = APIRouter(prefix='/codec', tags=['Encoded pages (experimental)'])
 
 AGREEMENT = ('The recipient agreed to receive documents as encoded pages that their Faxbot, or the decoder at '
              'faxbot.net/decode, turns back into the original.')
-LIMITS = ('Experimental. Use it only for recipients outside HIPAA-style rules: an encoded page is not readable '
-          'as a fax until it is decoded.')
+LIMITS = ('Experimental. The recipient must decode the pages to read the document and agree that encoded pages '
+          'meet their document-handling requirements.')
 STYLE_TEXT = {'dense': 'Dense pages', 'picture': 'A picture of the first page'}
 LEVEL_TEXT = {'low': 'Low', 'medium': 'Medium', 'high': 'High'}
 

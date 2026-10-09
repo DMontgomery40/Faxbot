@@ -132,7 +132,8 @@ class _Receipts:
         return self.rows[fax]
 
 
-def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_path, monkeypatch):
+@pytest.mark.parametrize('layout', ['grid', 'enumerative'])
+def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_path, monkeypatch, layout):
     receipts = _Receipts(monkeypatch)
     original = tmp_path / 'original.pdf'
     from reportlab.pdfgen import canvas
@@ -140,9 +141,10 @@ def test_a_received_payload_fax_is_decoded_checked_and_kept_beside_the_fax(tmp_p
     page.drawString(72, 720, 'Synthetic referral letter, page one.')
     page.save()
     document = codec.Document(original.read_bytes(), 'application/pdf', 'referral.pdf')
-    data, _ = _payload_pdf(tmp_path, document, layout='grid')
+    data, _ = _payload_pdf(tmp_path, document, layout=layout)
     receipt = receive.check_document(None, 'fax-1', data, folder=tmp_path)
     assert receipt['state'] == 'decoded' and receipt['document_sha256'] == document.sha256
+    assert receipt['layout'] == layout
     assert Path(receipt['document_path']).read_bytes() == document.data
     assert receive.sentence(receipt) == ('Carried an encoded document on 1 page; Faxbot decoded it and checked its '
                                          'fingerprint (experimental).')
@@ -197,7 +199,9 @@ def test_a_number_opts_in_only_with_the_recipients_agreement_and_keeps_its_histo
     assert off.status_code == 200, off.text
     assert off.json()['enabled'] is False and off.json()['state_sentence'] == (
         'Off: faxes to this number go as normal pages.')
-    assert 'HIPAA' in off.json()['limits_text'] and 'Experimental' in off.json()['limits_text']
+    assert 'Experimental' in off.json()['limits_text']
+    assert 'decode the pages' in off.json()['limits_text']
+    assert 'document-handling requirements' in off.json()['limits_text']
     refused = client.put(f'/codec/numbers/{NUMBER}', headers=ADMIN, json={'enabled': True})
     assert refused.status_code == 400
     assert refused.json()['detail'] == 'Record that the recipient agreed before turning encoded pages on.'
