@@ -1,6 +1,6 @@
 # Intake
 
-Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.md), goes into one intake queue. Faxbot then delivers each one to where your staff already look. Today that is an email inbox, with the original PDF attached.
+Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.md), goes into one intake queue. Faxbot can deliver each one to an email inbox, with the original PDF attached. To bring documents in from a mailbox or folder, or to send faxes from email or files, set up [Email and folders](connectors.md).
 
 In the Admin Console, **Faxes → Received** shows each received fax with its email delivery, and **Numbers → Email delivery** holds the email delivery setup. Select **Email delivery settings** at the top of Received to go there.
 

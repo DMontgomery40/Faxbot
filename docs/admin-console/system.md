@@ -4,6 +4,10 @@
 
 **System → Setup** (`#/system/setup`) is the [Setup wizard](setup-wizard.md): providers, their accounts, security, delivery options and test faxes. Its first step also sets the installation country and the office's time zone, so the times in fax emails match your clocks.
 
+## AI analysis
+
+**System → AI analysis** (`#/system/analysis`) sets whether Faxbot runs scheduled analyses, which AI service and model to use, and how often to run them. Add the service's API key here. The page also shows the latest result and its evidence. Analysis provides suggestions only; it does not change settings or send faxes.
+
 ## Security
 
 **System → Security** (`#/system/security`): how people sign in and how this server is reached. **Require HTTPS for document links**, **Restore from the recovery copy on a fresh start** and **This server's public address**, then, read-only, **Sign-in without HTTPS on a private network**, **Console addresses allowed to sign in** and **Console served by this installation**.
