@@ -64,18 +64,21 @@ async def test_ambiguous_transport_error_is_never_automatically_retried(installa
 async def test_shutdown_during_submission_preserves_uncertainty(installation):
     _, store, _ = installation
     job = accept(installation)
-    issued = asyncio.Event()
     async def pending():
-        issued.set()
+        # Cancel the actual worker only after submission starts, independent of claim/setup speed.
+        asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
         await asyncio.Event().wait()
     transport = Transport(pending)
     task = asyncio.create_task(OutboundWorker(store, transport).step())
-    await asyncio.wait_for(issued.wait(), 5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     assert store.get(job)['state'] == 'reconciliation_required'
-    assert transport.closed == 1
+    assert transport.submissions == 1 and transport.closed == 1
     assert await OutboundWorker(store, transport).step() is False
 
 
