@@ -6,7 +6,9 @@ import shutil
 import subprocess
 
 import pytest
+from PIL import ImageFont
 
+from app import codec
 from app.codec import container
 
 TOOL = Path(__file__).resolve().parents[2] / 'tools' / 'fax-decoder'
@@ -19,17 +21,26 @@ def _make(folder):
     return module.make(folder)
 
 
-def test_the_committed_fixtures_are_what_the_encoder_makes_today(tmp_path):
+@pytest.mark.parametrize('raqm_available', [False, True], ids=['basic-fonts', 'raqm-installed'])
+def test_the_committed_fixtures_are_what_the_encoder_makes_today(tmp_path, monkeypatch, raqm_available):
+    if raqm_available and not ImageFont.core.HAVE_RAQM:
+        pytest.skip('Optional RAQM text shaping is not installed')
+    # Pillow otherwise changes its default font layout when this optional library is present.
+    monkeypatch.setattr(ImageFont.core, 'HAVE_RAQM', raqm_available)
     made = _make(tmp_path)
     committed = TOOL / 'test' / 'fixtures'
     expected = json.loads((committed / 'expected.json').read_text())
     for name in expected['files']:
         if name == 'zstd.tiff' and not container.zstd_available():
             continue
+        fresh_images = codec.read_images(made / name)
+        document, _ = codec.decode_images(fresh_images, secrets=[expected['secret']])
+        assert document.sha256 == expected['sha256'], name
+        assert document.name == expected['name'], name
+        assert document.content_type == 'text/plain', name
         if name.endswith('.pdf'):
             # A PDF carries its creation time; its fax images must be identical.
-            from app import codec
-            images = [image.convert('1').tobytes() for image in codec.read_images(made / name)]
+            images = [image.convert('1').tobytes() for image in fresh_images]
             assert images == [image.convert('1').tobytes() for image in codec.read_images(committed / name)], name
         else:
             assert (made / name).read_bytes() == (committed / name).read_bytes(), name

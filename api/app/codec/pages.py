@@ -229,7 +229,8 @@ def _caption_lines(geo, page_index, page_count):
     canvas = Image.new('L', (res.width, height_square), 255)
     draw = ImageDraw.Draw(canvas)
     size = max(10, round(res.xdpi * 7 / 72))
-    font = ImageFont.truetype(_font_path(), size)
+    # Keep these fixed captions identical whether optional RAQM shaping is installed or not.
+    font = ImageFont.truetype(_font_path(), size, layout_engine=ImageFont.Layout.BASIC)
     caption = ('Encoded document: needs a Faxbot decoder supporting enumerative profile 1.'
                if geo.layout == 'enumerative' else CAPTION)
     draw.text((geo.quiet, 0), caption, font=font, fill=0)
