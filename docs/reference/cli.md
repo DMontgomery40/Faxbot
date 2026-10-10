@@ -6866,7 +6866,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `card`: Show this installation&#x27;s partner card.
-* `list`: List your partners.
+* `list`: List your partners, or show one in full:...
 * `add`: Add a partner from their card.
 * `challenge`: Fax the partner a one-page code to enter...
 * `confirm`: Enter the code from a partner&#x27;s check fax...
@@ -6905,13 +6905,17 @@ $ faxbot recipients partners card [OPTIONS]
 
 #### `faxbot recipients partners list`
 
-List your partners.
+List your partners, or show one in full: what it accepts from you and which encoded pages its Faxbot reads.
 
 **Usage**:
 
 ```console
-$ faxbot recipients partners list [OPTIONS]
+$ faxbot recipients partners list [OPTIONS] [PARTNER]
 ```
+
+**Arguments**:
+
+* `[PARTNER]`: Show one partner in full: its organization, fax number or id.
 
 **Options**:
 

@@ -127,7 +127,29 @@ def _peer_view(peer, now=None):
             'receive_peer_calls': _flag(peer.get('receive_peer_calls')),
             'partner_peer_calls': _flag(peer.get('partner_peer_calls')),
             'peer_call_address': peer.get('peer_call_address'),
-            'peer_calls_text': peer_calls_text(peer)}
+            'peer_calls_text': peer_calls_text(peer),
+            # Which encoded pages the partner's Faxbot says it reads (codec/variants.py, migration 0082).
+            **payload_layouts_view(peer)}
+
+
+def payload_layouts_view(peer):
+    """The encoded pages a partner's Faxbot reads, as its newest signed statement says: the list (None when it has
+    not said) and one sentence (None for a removed partner)."""
+    from ..codec.send import announced_variants
+    from ..codec.variants import described
+    announced = announced_variants(peer)
+    if peer['state'] == 'revoked':
+        return {'payload_layouts': None, 'payload_layouts_text': None}
+    if announced is None:
+        text = ("Their Faxbot hasn't said which encoded pages it reads, so it gets only the ones every Faxbot reads "
+                '(grid, run-coded, picture), or capacity pages too if you recorded that its decoder reads them.')
+        return {'payload_layouts': None, 'payload_layouts_text': text}
+    names = described(announced)
+    if not names:
+        return {'payload_layouts': [], 'payload_layouts_text': "Their Faxbot reads none of the encoded pages yours "
+                                                               "makes, so faxes to them never go as encoded pages."}
+    return {'payload_layouts': names, 'payload_layouts_text': (
+        f"Their Faxbot reads these encoded pages, and only these go to them: {', '.join(names)}.")}
 
 
 # Operator routes ----------------------------------------------------------------

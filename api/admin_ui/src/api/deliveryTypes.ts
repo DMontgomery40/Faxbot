@@ -502,6 +502,10 @@ export interface DirectPartner {
   // A partner on your own network presented a certificate other than the one pinned for it; one sentence.
   certificate_changed?: boolean;
   certificate_text?: string | null;
+  // Which encoded pages the partner's Faxbot says, signed, that it reads (null until it says), and one sentence;
+  // encoded pages to the partner use only those. Optional for older servers.
+  payload_layouts?: string[] | null;
+  payload_layouts_text?: string | null;
 }
 
 // POST /direct/peers/{id}/notice-fax: the partner as it now stands, and the sentence to show.

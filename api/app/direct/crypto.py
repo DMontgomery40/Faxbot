@@ -100,13 +100,38 @@ def _relay_facts(facts):
             and _NUMBER.fullmatch(facts['destination']) is not None and type(facts['together']) is bool)
 
 
-def capabilities(*, fax_images, peer_calls, said_at=None, own_engine=None):
+def capabilities(*, fax_images, peer_calls, said_at=None, own_engine=None, payload_layouts=None):
     """What this installation accepts from one partner, as a signed statement carries it. ``own_engine`` (optional):
-    whether this installation's own Faxbot fax engine answers its fax number (pages/tuning.py)."""
+    whether this installation's own Faxbot fax engine answers its fax number (pages/tuning.py).
+    ``payload_layouts`` (optional): the encoded-page variants this installation's decoder reads
+    (``codec.DECODED_VARIANTS``); give it only to a partner whose own statement carried the key
+    (``parse_payload_layouts``), because a release before the tolerant parser refuses a statement with a key it does
+    not know."""
     found = {'fax_images': bool(fax_images), 'peer_calls': bool(peer_calls), 'said_at': said_at or timestamp()}
     if own_engine is not None:
         found['own_engine'] = bool(own_engine)
+    if payload_layouts is not None:
+        found['payload_layouts'] = sorted(set(payload_layouts))
     return found
+
+
+# One encoded-page variant a decoder reads: a layout name, with '/<profile>' for a layout that has profiles
+# ('grid', 'enumerative/1', 'capacity/3'). A future variant gets a new token, so a token never changes meaning.
+_VARIANT = re.compile(r'[a-z][a-z0-9_-]{0,23}(?:/[0-9]{1,3})?')
+MAX_VARIANTS = 32
+
+
+def parse_payload_layouts(value):
+    """The encoded-page variants a partner's signed capabilities say its decoder reads, as a frozenset of tokens;
+    None when the statement does not say (an older partner) or says it in a shape this release does not read.
+
+    A wrong shape never refuses the statement it came in: it reads as not said, so the partner gets only the
+    variants every Faxbot decodes. Items in a shape this release does not read are skipped, and tokens it does not
+    know are kept (a later release of this installation may read them) but chosen by nobody here."""
+    found = value.get('payload_layouts') if isinstance(value, dict) else None
+    if not isinstance(found, list) or len(found) > MAX_VARIANTS:
+        return None
+    return frozenset(item for item in found if isinstance(item, str) and _VARIANT.fullmatch(item))
 
 
 def parse_own_engine(value):
@@ -123,9 +148,11 @@ def parse_capabilities(value):
     """A partner's capabilities from a statement it signed: (fax_images, peer_calls, said_at), or None. The
     optional ``own_engine`` is read by ``parse_own_engine``.
 
-    Keys this release does not know are ignored, so a newer partner can add one (for example which encoded-page
-    layouts its decoder reads) without this installation refusing its whole statement; the known keys are still
-    required and checked. This release never sends a new key itself.
+    Keys this release does not know are ignored, so a newer partner can add one without this installation refusing
+    its whole statement; the known keys are still required and checked. The optional ``payload_layouts`` is read by
+    ``parse_payload_layouts``, which treats a wrong shape as not said rather than refusing the statement. Releases
+    before this parser refuse any key they do not know, so this installation sends ``payload_layouts`` only to a
+    partner whose own signed statement carried it (``direct/service.py``, ``DirectService.offered``).
 
     Because a release ignores keys newer than itself, a new key may only offer something (a capability the
     receiver may use). A restriction, a refusal or anything security depends on must never live only in a new

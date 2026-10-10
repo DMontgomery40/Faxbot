@@ -111,7 +111,7 @@ def test_quotes_are_kept_as_history_and_impossible_ones_are_refused(database):  
 
 def test_0079_is_the_head_and_its_downgrade_keeps_quotes(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_pots_quote.REVISION == '0079_pots_quote' == schema.HEAD
+    assert schema_pots_quote.REVISION == '0079_pots_quote' == schema.POTS_QUOTE
     assert schema.FAX_SERVER_RENEWAL == '0078_fax_server_renewal'
     assert schema_pots_quote.TABLES <= schema.STRICT_TABLES and schema_pots_quote.TABLES <= _tables(database)
     with database.connect() as connection:
