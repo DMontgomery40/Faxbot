@@ -331,6 +331,28 @@ class AuthorizedInboundQueries:
                 raise FaxAccessError('not_found')
             return self._with_acquisition(connection, [row])[0]
 
+    def visible_items(self, actor, inbound_ids):
+        """The ids among ``inbound_ids`` of received faxes this actor may read, in order, checked in one transaction.
+
+        Each id gets exactly ``item``'s check; an id it refuses, or a fax that no longer exists, is left out, never
+        explained, and does not hide the others. Anything other than a refusal fails the whole call, as it fails
+        ``item``. Lists ask with this, so a page of up to 100 faxes takes the lock once, not per fax.
+        """
+        wanted = list(dict.fromkeys(inbound_ids))
+        faxes = self.tables['inbound_faxes']
+        with self.store.transaction() as connection:
+            now = self._clock()
+            allowed = []
+            for inbound_id in wanted:
+                try:
+                    self.resources.require_inbound_on(connection, actor, inbound_id, 'inbound:read', now=now)
+                except FaxAccessError:
+                    continue
+                allowed.append(inbound_id)
+            found = set(connection.execute(sa.select(faxes.c.id).where(faxes.c.id.in_(allowed))).scalars()) \
+                if allowed else set()
+            return [inbound_id for inbound_id in allowed if inbound_id in found]
+
     def _with_acquisition(self, connection, rows):
         """Add each fax's acquisition state, read in one query; never duplicates a fax."""
         from ..inbound.acquisition import describe, failures_on, provider_copies_on

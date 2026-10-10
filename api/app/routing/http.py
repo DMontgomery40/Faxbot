@@ -586,20 +586,15 @@ def _measured_choice(request, engine, job_id):
 async def inbound_costs(request: Request, ids: str = Query(default='', max_length=4200),
                         identity=Depends(require_identity)):
     """Costs for up to 100 received faxes at once; faxes this person cannot read are left out."""
-    from ..access.fax_resources import FaxAccessError
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
     spending = _spending(request)
 
     def read():
-        costs = {}
-        for inbound_id in wanted:
-            try:
-                private_operation(lambda: runtime.inbound_queries.item(identity.actor, inbound_id))()
-            except FaxAccessError:
-                continue  # not visible to this person: left out, never explained
-            costs[inbound_id] = _cost_view(spending.inbound(inbound_id))
-        return costs
+        # Access is checked once for the whole list (one lock, not one per fax); faxes this person cannot read are
+        # left out, never explained. The costs are read after the access transaction has ended.
+        visible = private_operation(lambda: runtime.inbound_queries.visible_items(identity.actor, wanted))()
+        return {inbound_id: _cost_view(spending.inbound(inbound_id)) for inbound_id in visible}
     return {'costs': await _call(read)}
 
 
