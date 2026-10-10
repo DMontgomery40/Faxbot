@@ -493,3 +493,33 @@ def test_the_dns_client_joins_strings_checks_the_question_and_falls_back_to_tcp(
         dnstxt.txt_records(name, servers=[])
     query = dnstxt.query(name, 9)
     assert query[:2] == b'\x00\x09' and query.endswith(b'\x00\x00\x29\x04\xd0\x00\x00\x00\x00\x00\x00')
+
+
+@pytest.mark.asyncio
+async def test_the_discovery_step_builds_its_service_once_and_never_on_the_event_loop(caplog):
+    """Building the discovery service reflects the direct tables; on a busy installation that held the event loop
+    for seconds every five minutes. It is built once, in a worker thread; a storage failure is logged and retried."""
+    import threading
+    from fastapi import HTTPException
+    from app.direct import discovery_http
+    loop_thread, built, stepped = threading.get_ident(), [], []
+
+    class Service:
+        async def step(self):
+            stepped.append(1)
+            return False
+    outcomes = [HTTPException(503, detail='Direct delivery storage is unavailable.'), Service()]
+
+    def build():
+        built.append(threading.get_ident())
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+    step = discovery_http.discovery_step(object(), build=build)
+    with caplog.at_level('WARNING'):
+        assert await step() is False
+    assert 'partners are looked for later' in caplog.text and stepped == []
+    for _ in range(3):
+        assert await step() is False
+    assert len(built) == 2 and loop_thread not in built and len(stepped) == 3

@@ -9,6 +9,8 @@ introduction, authenticated by its Ed25519 signature and 404 while direct
 delivery is off). The router's background step reads hints from recent calls
 and makes the lookups (``discovery.py``).
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,16 +43,29 @@ def _background(app):
     engine, _ = installation_engine(app)
     if engine is None:
         return []
-
-    async def step():
-        try:
-            service = discovery_for(app)
-        except HTTPException:
-            return False
-        return await service.step()
-    return [('faxbot-direct-discovery', repeat_async(step, interval=STEP_SECONDS, initial_delay=45.0,
+    return [('faxbot-direct-discovery', repeat_async(discovery_step(app), interval=STEP_SECONDS, initial_delay=45.0,
                                                      warning='Looking for partners from recent calls is temporarily '
                                                              'unavailable; Faxbot tries again.'))]
+
+
+def discovery_step(app, *, build=None):
+    """The background step that looks for partners. The service is built once, in a worker thread, and kept:
+    building it reflects the direct tables, which held the event loop for seconds on a busy installation when it
+    ran on every step."""
+    build = build or (lambda: discovery_for(app))
+    service = None
+
+    async def step():
+        nonlocal service
+        if service is None:
+            try:
+                service = await run_lifecycle_step(build)
+            except HTTPException:
+                logging.getLogger(__name__).warning('Direct delivery storage is unavailable, so partners are '
+                                                    'looked for later.', exc_info=True)
+                return False
+        return await service.step()
+    return step
 
 
 router = APIRouter(tags=['Direct delivery'], lifespan=lifespan_tasks(_background))
