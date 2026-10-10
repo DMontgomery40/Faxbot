@@ -162,6 +162,9 @@ def test_with_error_correction_the_same_pages_cross_the_fewest_partial_page_edge
     # Measured on the pages as drawn, not only estimated: the same number of pages, one edge fewer.
     assert (partial_page_edges(originals, filled), partial_page_edges(originals, shared)) == (1, 0)
     assert all(sheet.height() <= rows('unlimited') for sheet in shared.sheets)
+    # A receiving Faxbot splits pages shared out this way back into the originals exactly.
+    back = unpack.split_frames(packing.render(originals, shared))
+    assert back is not None and len(back) == 4 and all(same(a, b) for a, b in zip(back, originals))
     # Nothing to gain (every page under an edge, or no sharing crosses fewer): exactly the pages filled in turn.
     light = [noisy(seed, 20) for seed in range(4)]
     heavy = [noisy(seed, 80) for seed in range(4)]
