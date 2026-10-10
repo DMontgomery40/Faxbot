@@ -712,8 +712,11 @@ def _units(routes, values, key, budget, unit, number, pages, now):
     return pages
 
 
-def _weights(routes, values, scarce, fax, now):
-    units = _units(routes, values, scarce.key, scarce.left.budget, scarce.unit, fax.to_number, fax.pages, now)
+def _weights(routes, values, scarce, fax, now, pages=None):
+    """A fax's weight on one plan; ``pages``: the pages it would really send on that plan's account (its measured
+    best pages, ``routing.joint``), else the document's own."""
+    units = _units(routes, values, scarce.key, scarce.left.budget, scarce.unit, fax.to_number,
+                   pages if pages else fax.pages, now)
     return tuple(1 if dim.name == 'faxes' else units for dim in scarce.room.dims)
 
 
@@ -980,10 +983,12 @@ def reserve_allowed(plan):
     return bool(budget.included_pages or budget.included_minutes or budget.source == 'set')
 
 
-def allocate(routes, values, now=None, *, include=None, dial=None):
+def allocate(routes, values, now=None, *, include=None, dial=None, sent=None):
     """The allocation of every scarce plan's room among the faxes waiting now (``Allocation``).
 
-    ``include`` is the fax being planned (read even past ``MAX_WAITING``); ``dial`` its kept number choice.
+    ``include`` is the fax being planned (read even past ``MAX_WAITING``); ``dial`` its kept number choice; ``sent``
+    ``{plan key: pages}`` the pages it would really send on each plan's account once measured (brief 84, M4), so it
+    takes the plan's room it would really use.
     """
     from .database import utcnow
     now = (now or utcnow()).replace(tzinfo=None, microsecond=0)
@@ -995,7 +1000,7 @@ def allocate(routes, values, now=None, *, include=None, dial=None):
     curves = {plan.key: curve_for(routes, values, plan, others, now) for plan in plans if reserve_allowed(plan)}
     queue = waiting(routes.engine, include=include, now=now)
     reserve_possible = any(any(curve.lower) for curve in curves.values())
-    if not reserve_possible and _fits(routes, values, plans, queue, now):
+    if not reserve_possible and _fits(routes, values, plans, queue, now, include=include, sent=sent):
         # Every waiting fax fits in the room left: nothing to allocate, and each is priced exactly as before.
         return Allocation(tuple(plans), (), tuple(queue), {}, None, {}, curves)
     claimants, features = [], {}
@@ -1004,7 +1009,8 @@ def allocate(routes, values, now=None, *, include=None, dial=None):
         features[fax.job_id] = found
         if found.group == 'never':
             continue
-        weights = {key: _weights(routes, values, next(plan for plan in plans if plan.key == key), fax, now)
+        weights = {key: _weights(routes, values, next(plan for plan in plans if plan.key == key), fax, now,
+                                 pages=(sent or {}).get(key) if fax.job_id == include else None)
                    for key in found.plans}
         claimants.append(Claimant(fax.job_id, fax.position, weights, alternative=found.alternative,
                                   forced=found.plans[0] if found.group == 'forced' else None,
@@ -1015,12 +1021,13 @@ def allocate(routes, values, now=None, *, include=None, dial=None):
                       in_turn(claimants, rooms))
 
 
-def _fits(routes, values, plans, queue, now):
+def _fits(routes, values, plans, queue, now, *, include=None, sent=None):
     """Whether every waiting fax fits in every plan's room at once, counted generously (no rules read)."""
     for plan in plans:
         totals = [0] * len(plan.room.dims)
         for fax in queue:
-            for d, weight in enumerate(_weights(routes, values, plan, fax, now)):
+            for d, weight in enumerate(_weights(routes, values, plan, fax, now, pages=(sent or {}).get(
+                    plan.key) if fax.job_id == include else None)):
                 totals[d] += weight
         if any(total > dim.room for total, dim in zip(totals, plan.room.dims)):
             return False
@@ -1050,14 +1057,14 @@ def in_turn(claimants, plans):
     return cost
 
 
-def hold_for(routes, values, job_id, keys, *, now=None, dial=None):
+def hold_for(routes, values, job_id, keys, *, now=None, dial=None, sent=None):
     """``{plan key: Hold}`` for one fax among ``keys`` (the accounts it is priced on); empty when nothing is held.
 
     Storage problems are logged and leave the fax priced as before (``DeliveryStoreError``); anything else raises.
     """
     from .database import DeliveryStoreError
     try:
-        found = allocate(routes, values, now, include=job_id, dial=dial)
+        found = allocate(routes, values, now, include=job_id, dial=dial, sent=sent)
     except DeliveryStoreError:
         logging.getLogger(__name__).warning('The plan allocation could not be read; this fax is priced as before.',
                                             exc_info=True)

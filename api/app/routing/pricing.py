@@ -196,7 +196,9 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
     holds = {}
     if job_id is not None:
         from .plan_allocation import hold_for
-        holds = hold_for(routes, values, job_id, [key for key in keys if key], now=now, dial=dial)
+        # The plan's room this fax would really use: its measured pages on each account, when measured.
+        sent = {key: shape.pages for key, (shape, _) in (measured or {}).items() if shape is not None}
+        holds = hold_for(routes, values, job_id, [key for key in keys if key], now=now, dial=dial, sent=sent or None)
     found = {}
     for key in keys:
         if not key or key in found:
