@@ -114,9 +114,9 @@ def test_the_stamp_is_kept_with_the_fax_and_your_list_is_an_audited_setting(monk
             return CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', BOOTSTRAP, *args],
                                       obj={'client_factory': lambda address, timeout: (client, False)},
                                       env={'COLUMNS': '220', 'TZ': 'UTC'})
-        shown = run('providers', 'trunk', 'caller-check', 'show')
+        shown = run('delivery', 'providers', 'trunk', 'caller-check', 'show')
         assert shown.exit_code == 0 and CALLER in shown.stdout
-        cleared = run('providers', 'trunk', 'caller-check', 'set')
+        cleared = run('delivery', 'providers', 'trunk', 'caller-check', 'set')
         assert cleared.exit_code == 0 and 'No registered senders yet' in ' '.join(cleared.stdout.split())
     # The stamp travels in the import report the hand-over writes (read back by for_fax).
     import sqlalchemy as sa

@@ -32,6 +32,7 @@ from .commands import capabilities as capability_commands
 from .commands import overview as overview_commands
 from .commands import countries as country_commands
 from .commands import destinations as destination_commands
+from .commands import teams_annex as teams_annex_commands
 
 # The console's six areas. Overview is one command; the others are groups.
 NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
@@ -71,6 +72,8 @@ received.command('done')(work.work_done)
 received.command('reopen')(work.work_reopen)
 received.command('export')(work.work_export)
 received.command('block')(blocked.received_block)
+# What the network asserted about who called, as Received details' Who called (formerly under providers trunk).
+received.command('who-called')(teams_annex_commands.caller_check_fax)
 deliveries = _group('Delivery of received faxes to email and other places, and any that failed.')
 deliveries.command('list')(delivery.intake_items)
 deliveries.command('retry')(delivery.intake_retry)
@@ -354,6 +357,7 @@ ALIASES = {
     ('delivery', 'numbers', 'move', 'closures'): ('delivery', 'numbers', 'closures'),
     ('delivery', 'numbers', 'move', 'import-closures'): ('delivery', 'numbers', 'import-closures'),
     ('delivery', 'numbers', 'move', 'notice'): ('delivery', 'numbers', 'line-notice'),
+    ('delivery', 'providers', 'trunk', 'caller-check', 'fax'): ('faxes', 'received', 'who-called'),
 }
 
 

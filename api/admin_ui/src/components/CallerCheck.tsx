@@ -38,6 +38,8 @@ export function ReceivedCallerCheck({ call, inboundId }: { call: Call; inboundId
 }
 
 // Providers → the trunk page: registered senders for received faxes (not the sending side's registered senders).
+// The received_registered_senders setting's place in the console: saved through its own route, which checks each
+// number and records the change.
 export function ReceivedRegisteredSenders({ call }: { call: Call }) {
   const [numbers, setNumbers] = useState<string | null>(null);
   const [sentence, setSentence] = useState('');

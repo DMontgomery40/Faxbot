@@ -201,7 +201,7 @@ def test_a_line_that_is_not_a_delivery_route_says_how_to_make_it_one(database): 
     view = analog.line_view(database, store, unrouted, 'sip-line')
     assert (view['routed'], view['routing']) == (False, 'off')
     assert view['route_sentence'] == ('Faxbot does not choose this line by itself: turn that on here, or name the '
-                                      'line in a sending rule under Providers → Rules.')
+                                      'line in a sending rule under Delivery setup → Routing rules.')
     listed = analog.line_view(database, store, values(), 'sip-line')
     assert (listed['routed'], listed['routing']) == (True, 'listed')
     # Turning it on appends the line after your routes; turning it off takes out only the line.

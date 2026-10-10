@@ -1,4 +1,4 @@
-// Costs → Recommendations → POTS replacement (N23): take the fax lines out of a POTS-replacement order, from the
+// Savings & optimization → Opportunities → POTS replacement (N23): take the fax lines out of a POTS-replacement order, from the
 // line inventory and the quote you enter. Advice only: nothing orders, ports or cancels a line.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Link, Paper, Stack, Typography } from '@mui/material';

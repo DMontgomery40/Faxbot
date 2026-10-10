@@ -1,4 +1,4 @@
-"""faxbot providers trunk teams-annex: Faxbot as the fax annex behind a Microsoft Teams Direct Routing SBC (N21)."""
+"""faxbot delivery providers trunk teams-annex: Faxbot as the fax annex behind a Microsoft Teams Direct Routing SBC (N21)."""
 import typer
 
 from .. import state
@@ -59,7 +59,7 @@ def teams_annex(vendor: str = typer.Option(..., '--vendor', metavar='audiocodes|
         for source in chosen['sources']:
             out.line(f"- {source['url']} (read {local_date(source['read_on'])})")
         out.line('')
-        out.line(f'Then choose this preset for the trunk: faxbot providers trunk use {preset_id} --host <SBC address>.')
+        out.line(f'Then choose this preset for the trunk: faxbot delivery providers trunk use {preset_id} --host <SBC address>.')
     state.out().result(result, human)
 
 
@@ -70,7 +70,7 @@ def copiers(copier: str = typer.Argument(None, metavar='[COPIER]', help='Show on
     if copier:
         chosen = next((item for item in items if item['id'] == copier), None)
         if chosen is None:
-            raise CliError(f"No copier is called '{copier}'. Run faxbot providers trunk copiers to list them.")
+            raise CliError(f"No copier is called '{copier}'. Run faxbot delivery providers trunk copiers to list them.")
 
         def detail(out):
             out.line(f"{chosen['label']}: {chosen['summary']}")
@@ -110,10 +110,10 @@ def caller_check_set(numbers: list[str] = typer.Argument(None, metavar='[NUMBER]
     state.out().result(view, lambda out: out.line(view['saved']))
 
 
-@caller_check.command('fax')
+@caller_check.command('fax', hidden=True)
 def caller_check_fax(fax_id: str = typer.Argument(..., help='Received fax ID.')):
     """Show what the network asserted about who called for one received fax."""
     from ..client import segment
     view = state.api().get('/caller-check/faxes/' + segment(fax_id))
     stamp = view.get('stamp') or {}
-    state.out().result(view, lambda out: out.line(stamp.get('sentence') or 'No caller check was kept for this fax.'))
+    state.out().result(view, lambda out: out.line(stamp.get('sentence') or 'Faxbot kept no caller check for this fax: the network said nothing about the caller.'))
