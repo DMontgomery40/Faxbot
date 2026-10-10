@@ -1,6 +1,6 @@
-# Access
+# People and access
 
-Access shows who may use Faxbot and what they may do. See [Access Control](../security/access-control.md) for the permissions behind each page.
+**Administration → People & access** shows who may use Faxbot and what they may do. See [Access Control](../security/access-control.md) for the permissions behind each page.
 
 | Page | Address | What it holds |
 | --- | --- | --- |

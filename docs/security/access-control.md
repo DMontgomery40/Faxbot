@@ -1,12 +1,12 @@
 # Access Control
 
-Faxbot decides what each person, app and device may do. You manage this in the admin console under **Access**: **Users**, **Groups**, **Roles**, **Who has access**, **Keys & phones** and **Sessions**. The console only shows the screens you are allowed to use, and the server checks every request again.
+Faxbot decides what each person, app and device may do. In the admin console, open **Administration** for **Users**, **Groups**, **Roles**, **Who has access**, **Keys & phones** and **Sessions**. The console only shows the screens you are allowed to use, and the server checks every request again.
 
 How people and apps sign in is covered in [Authentication](authentication.md).
 
 ## Users and integrations
 
-**Users** are people. They sign in with a username and password. Under **Administration → Users**, add a user to receive a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. You can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
+**Users** are people. They sign in with a username and password. Under **Administration → Users**, add a user and give them the temporary password Faxbot shows once. At first sign-in the new user must choose a password of at least 12 characters. You can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
 
 **Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them under **Administration → Users** too. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
 
