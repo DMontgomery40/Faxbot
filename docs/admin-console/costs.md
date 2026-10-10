@@ -10,6 +10,8 @@
 
 The page also shows plan budgets. Set included pages or minutes and any extra-page price for a plan there. An allowance applies only when the destination's tariff is covered by that plan; it does not fill in a missing destination price or cover a separate destination tariff.
 
+Under **Prices by caller ID**, select **Import a rate deck** to add a carrier's CSV rate deck. Choose the sending card, select the deck layout or let Faxbot recognise it, and record its source and publication or read date. You can also use `faxbot savings rate-rows ROUTE --caller-id-deck FILE --deck-format twilio --source URL --published DATE`. Faxbot uses a lower caller-ID price only after you confirm that your organization holds that number and may send from it on that account. Enter how you verified this; include a source link if available. Mark **This number was bought on this account** only when true. The account's caller ID does not change.
+
 ## Advice
 
 **Savings & optimization → Facts to establish** (`#/savings/facts`) includes **Compare setup plans**. It compares setup items using amounts you supply; it does not save the inputs, enroll a partner or change a route.
@@ -45,3 +47,7 @@ From the command line, use `faxbot savings capabilities --filter ready` to list 
 ## Recommendations
 
 **Savings & optimization → Opportunities** (`#/savings/opportunities`) compares delivered fax costs by number, suggests a cheaper route or a plan that already includes those faxes, and shows whether you could reduce receiving costs by sharing Telnyx channels or removing quiet numbers. Faxbot bases the advice on recorded calls and published prices; it recommends changes but does not change your routes or carrier account. Advice may be unavailable when there is not enough history or price information.
+
+The **Fax server renewal** section can compare a renewal with call records and numbers you run through Faxbot in parallel. Select **Import call records** to upload Asterisk Master.csv, Cisco Unified CM, RightFax DocTransport audit log (level 3 or 4), GFI FaxMaker activity export, or a CSV with start, end or duration, direction, channel and number. Enter the system name, licensed channel count if known, and the time zone if the file does not use the server's zone. You can leave an import out of the report without deleting it from history. Select **Enter a renewal** to record the product, renewal date and amount, currency, licensed channels, source and any parallel numbers and start date. Select **Import number routing** to upload a CSV with `number`, `user`, `email` and `cover sheet` columns; only `number` is required. The report shows the numbers still routed through the old server. These entries support planning only: Faxbot does not change a licence, cancel a renewal or contact a vendor.
+
+The **Fax lines in a POTS-replacement order** section compares a quote you enter with your line inventory and the shared-trunk option shown there. To populate the inventory, use **Delivery setup → Number moves**. Enter a quote in the Opportunities section, or choose a published price shown there. These are comparisons based on your inventory and the quote details, not a promised saving or an order to a provider.

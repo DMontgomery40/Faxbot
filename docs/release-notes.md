@@ -25,28 +25,28 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 
 ### Renamed commands
 
-Every `faxbot` command now sits under one of the console's eight areas, and the older names no longer work. Scripts that use an older name need the new one. The [command reference](reference/cli.md) lists every command.
+Commands now follow the console's six areas, with `faxbot send` and `faxbot status` at the top level. The former command groups such as `faxbot received`, `faxbot costs` and `faxbot system` remain as hidden aliases. Use the current paths in the right column for new scripts; older names such as `faxbot jobs list` are not aliases. The [command reference](reference/cli.md) lists every command.
 
-| Older command | Now |
+| Earlier command | Current command |
 | --- | --- |
-| `faxbot jobs …` | `faxbot sent …`; `jobs get` is `sent show`, `jobs history` is `sent evidence`, `jobs reconcile` is `sent confirm-receipt` |
-| `faxbot inbound …` | `faxbot received …`; `inbound get` is `received show`, `inbound simulate` is `system diagnostics test-fax` |
-| `faxbot work …` | `faxbot received …`; `work list` is `received owners`, `work show` is `received history`, `work settings` is `numbers mailboxes target` |
-| `faxbot import` | `faxbot received import` |
-| `faxbot routing …` | `faxbot recipients list`, `show` and `set` for destinations, `recipients together` for sending together, and `faxbot costs spending`, `reconcile`, `fax`, `rate-cards` and `plans` |
-| `faxbot intake …` | `faxbot received deliveries list` and `retry`, and `faxbot numbers email connectors …` |
+| `faxbot jobs …` | `faxbot faxes sent …`; `jobs get` is `faxes sent show`, `jobs history` is `faxes sent evidence`, `jobs reconcile` is `faxes sent confirm-receipt` |
+| `faxbot inbound …` | `faxbot faxes received …`; `inbound get` is `faxes received show`, `inbound simulate` is `admin diagnostics test-fax` |
+| `faxbot work …` | `faxbot faxes received …`; `work list` is `faxes received owners`, `work show` is `faxes received history`, `work settings` is `delivery mailboxes target` |
+| `faxbot import` | `faxbot faxes received import` |
+| `faxbot routing …` | `faxbot recipients list`, `show` and `set` for destinations, `recipients together` for sending together, and `faxbot savings spending`, `reconcile`, `fax`, `rate-cards` and `plans` |
+| `faxbot intake …` | `faxbot faxes received deliveries list` and `retry`, and `faxbot delivery connectors …` |
 | `faxbot direct …` | `faxbot recipients partners …` |
-| `faxbot cases …` | `faxbot recipients cases …` |
-| `faxbot trunk …` | `faxbot providers trunk …` |
-| `faxbot settings …`, `diagnostics …`, `logs …`, `health`, `restart` | `faxbot system settings …`, `system diagnostics …`, `system logs …`, `system health`, `system restart` |
-| `faxbot admin …` | `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` |
-| `faxbot config …` | `faxbot system profiles …`; `config set-profile` is `system profiles save`, `config show` is `system profiles list` |
-| `faxbot me`, `users …`, `integrations …`, `groups …`, `roles …`, `keys …`, `sessions …`, `owner …`, `resources …`, `pair …` | `faxbot access …`; each `get` is `show` |
-| `faxbot access grant`, `access list`, `access revoke` | `faxbot access grants add`, `grants list`, `grants remove` |
-| `faxbot mailboxes …` | `faxbot numbers mailboxes …` |
-| `faxbot audit list` | `faxbot system audit` |
-| `faxbot providers config` | `faxbot providers show` |
-| `faxbot providers registry import` | `faxbot providers import` |
+| `faxbot cases …` | `faxbot faxes cases …` |
+| `faxbot trunk …` | `faxbot delivery providers trunk …` |
+| `faxbot settings …`, `diagnostics …`, `logs …`, `health`, `restart` | `faxbot admin settings …`, `admin diagnostics …`, `admin logs …`, `admin health`, `admin restart` |
+| `faxbot admin status`, `migrate`, `recover-owner`, `backup`, `restore` | The same paths under `faxbot admin` |
+| `faxbot config …` | `faxbot admin profiles …`; `config set-profile` is `admin profiles save`, `config show` is `admin profiles list` |
+| `faxbot me`, `users …`, `integrations …`, `groups …`, `roles …`, `keys …`, `sessions …`, `owner …`, `resources …`, `pair …` | `faxbot admin access …`; each `get` is `show` |
+| `faxbot access grant`, `access list`, `access revoke` | `faxbot admin access grants add`, `grants list`, `grants remove` |
+| `faxbot mailboxes …` | `faxbot delivery mailboxes …` |
+| `faxbot audit list` | `faxbot admin audit` |
+| `faxbot providers config` | `faxbot delivery providers show` |
+| `faxbot providers registry import` | `faxbot delivery providers import` |
 
 ### Deprecated, removed in the next release
 
