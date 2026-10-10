@@ -317,6 +317,64 @@ def test_a_fax_from_a_mailbox_shows_that_mailbox_reply_number_on_both_engines(cl
     assert jobs[0]['station'] == DID_B and job.submission['CallerID'] == DID_B
 
 
+def test_a_shared_call_shows_a_mailbox_number_only_when_every_fax_in_it_comes_from_that_mailbox(client):
+    """Faxes sent together share one call and so one header line, TSI and caller ID (batching/)."""
+    from datetime import datetime
+    import sqlalchemy as sa
+    from api.tests.test_access_management_http import B
+    from api.tests.test_work_http import mailbox
+    front = mailbox(client, 'Front desk', DID_A)
+    billing = mailbox(client, 'Billing', DID_B)
+    assert client.put('/numbers/reply', headers=B, json={'number': DID_A}).status_code == 200
+    assert client.put(f"/numbers/reply/mailboxes/{billing['id']}", headers=B, json={'number': DID_B}).status_code == 200
+
+    def send(box):
+        sent = client.post('/fax', headers=B, data={'to': '+13035550150', 'mailbox': box['id']},
+                           files={'file': ('note.txt', b'Synthetic page', 'text/plain')})
+        assert sent.status_code == 202, sent.text
+        return sent.json()['id']
+    first, second, mixed = send(billing), send(billing), send(front)
+    from app.main import app
+    engine = app.state.configuration_runtime.manager.store.engine
+    now = datetime(2026, 10, 10, 9, 0)
+    members = sa.table('outbound_batch_members', *(sa.column(name) for name in (
+        'id', 'phone_number', 'sender_scope', 'pages', 'urgent', 'hold_until', 'state', 'batch_id', 'created_at',
+        'updated_at')))
+    with engine.begin() as connection:
+        for job, batch in ((first, 'batch-same'), (second, 'batch-same')):
+            connection.execute(members.insert().values(id=job, phone_number='+13035550150', sender_scope='b',
+                                                       pages=1, urgent=0, hold_until=now, state='together',
+                                                       batch_id=batch, created_at=now, updated_at=now))
+    running = app.state.configuration_runtime.manager.store.read().active.values
+    assert ami.job_mailbox(first) == billing['id']
+    fields = ami.originate_fields_for(running, first, '+13035550150', '/faxdata/batch.tiff')
+    assert _decoded(fields, 'FAXSTATION64') == DID_B
+    # A mailbox's fax in the same call as another mailbox's: the organization's number for the whole call.
+    with engine.begin() as connection:
+        connection.execute(members.insert().values(id=mixed, phone_number='+13035550150', sender_scope='b', pages=1,
+                                                   urgent=0, hold_until=now, state='together', batch_id='batch-same',
+                                                   created_at=now, updated_at=now))
+    assert ami.job_mailbox(first) is None
+    fields = ami.originate_fields_for(running, first, '+13035550150', '/faxdata/batch.tiff')
+    assert _decoded(fields, 'FAXSTATION64') == DID_A and fields['CallerID'] == DID_A
+
+
+def test_a_mailbox_that_cannot_be_read_falls_back_to_the_organization_number(monkeypatch, caplog):
+    """Reading the fax's mailbox never stops a call: a database error is logged and the organization's number shows."""
+    import sqlalchemy as sa
+
+    class Broken:
+        def connect(self):
+            raise sa.exc.OperationalError('SELECT', {}, Exception('database is locked'))
+    monkeypatch.setattr(ami, '_database', lambda: Broken())
+    with caplog.at_level('WARNING'):
+        assert ami.job_mailbox('f' * 32) is None
+    assert 'The mailbox of fax ' + 'f' * 32 + ' could not be read' in caplog.text
+    # With no mailbox, the call shows the organization's number (reply_number.choose without a mailbox).
+    settings = values(FAX_REPLY_NUMBER=DID_A, FAX_REPLY_NUMBERS=f'mbx-billing={DID_B}')
+    assert reply_number.choose(settings, routes=ROUTES, mailbox_id=ami.job_mailbox('f' * 32)).number == DID_A
+
+
 def test_reading_and_changing_the_reply_number_need_settings_permissions(client):
     unauthenticated = client.get('/numbers/reply')
     assert unauthenticated.status_code in (401, 403)

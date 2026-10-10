@@ -261,16 +261,38 @@ def reply_choice(values, *, mailbox_id=None):
 
 def job_mailbox(job_id) -> Optional[str]:
     """The mailbox a fax was sent from (its sending rules' facts, kept with the fax at acceptance), so it shows that
-    mailbox's own reply number; None for a fax sent from no mailbox, or accepted before sending rules existed."""
+    mailbox's own reply number; None for a fax sent from no mailbox, or accepted before sending rules existed.
+
+    A shared call (faxes sent together, batching/) shows one number for every fax in it: the mailbox's only when
+    all its faxes come from that same mailbox, else None, so the organization's number shows and no mailbox's
+    replies go to another. Never raises: a database that cannot be read now is logged with the fax and gives None,
+    so the call shows the organization's number, as reply_choice does."""
     engine = _database()
     if engine is None or not job_id:
         return None
+    import sqlalchemy as sa
     from .routing import envelope as envelopes
+    members = sa.table("outbound_batch_members", sa.column("id"), sa.column("batch_id"), sa.column("state"))
     try:
-        pinned = envelopes.load(engine, job_id)
-    except envelopes.UnreadableDecision:
+        with engine.connect() as connection:
+            batch = connection.execute(sa.select(members.c.batch_id).where(
+                members.c.id == job_id, members.c.state == "together",
+                members.c.batch_id.is_not(None))).scalar_one_or_none()
+            faxes = [job_id] if batch is None else connection.execute(sa.select(members.c.id).where(
+                members.c.batch_id == batch).order_by(members.c.id)).scalars().all()
+            found = set()
+            for fax in faxes:
+                try:
+                    pinned = envelopes.load_on(connection, fax)
+                except envelopes.UnreadableDecision:
+                    pinned = None
+                found.add(getattr(pinned.facts, "mailbox_id", None) if pinned is not None else None)
+    except sa.exc.SQLAlchemyError as error:
+        logging.getLogger(__name__).warning(
+            "The mailbox of fax %s could not be read (%s); it shows the organization's reply number.",
+            job_id, type(error).__name__)
         return None
-    return getattr(pinned.facts, "mailbox_id", None) if pinned is not None else None
+    return found.pop() if len(found) == 1 else None
 
 
 def sender_identity(job_id):

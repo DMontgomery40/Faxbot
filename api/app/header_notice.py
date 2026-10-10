@@ -1,9 +1,11 @@
 """The header notice (N6): a confidentiality notice in the header band, and a cover sent as that notice instead.
 
 Organizations fax a cover sheet mostly to carry a confidentiality notice and a
-reply number. The header line every page already carries (47 CFR 68.318(d):
-date and time, the sender, the reply number, the page; printed by the fax
-engine) covers the reply number, and this module adds the notice:
+reply number. The header line every page already carries covers the reply
+number: 47 CFR 68.318(d) asks for the date and time the fax is sent, the
+identity of the sender and the sending number, and the fax engine prints them
+(with the page number, which the rule does not ask for). This module adds the
+notice:
 
 - **The notice line.** The organization, and each mailbox, may set one line of
   notice text (``header_notices``; the mailbox's wins for faxes sent from that
@@ -193,13 +195,58 @@ def plan(engine, *, mailbox=None, destination, cover_requested=False, pages):
 
 # Drawing ----------------------------------------------------------------------------------------------------------
 
+def band_layout(width, notice):
+    """``(font, size, lines)``: how ``notice`` is drawn across a page ``width`` points wide.
+
+    The continuation band's font, from its note size down to ``MIN_POINTS`` and never smaller (smaller is not
+    readable on a standard-resolution fax); a page too narrow for one line takes two. Raises ``NoticeRefused`` when
+    even two lines do not fit."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from .routing.continuation import DASH, NOTE_POINTS, _note_font
+    font, dash = _note_font()
+    text = notice if dash else notice.replace(DASH, '-')
+    room = width - 36
+    size = NOTE_POINTS
+    while size > MIN_POINTS and stringWidth(text, font, size) > room:
+        size -= 0.5
+    size = max(size, MIN_POINTS)
+    if stringWidth(text, font, size) <= room:
+        return font, size, [text]
+    words, first = text.split(' '), ''
+    for count in range(len(words), 0, -1):
+        first = ' '.join(words[:count])
+        if stringWidth(first, font, MIN_POINTS) <= room:
+            rest = ' '.join(words[count:])
+            if rest and stringWidth(rest, font, MIN_POINTS) <= room:
+                return font, MIN_POINTS, [first, rest]
+            break
+    raise NoticeRefused('A page of this document is too narrow to carry your header notice; shorten the notice or '
+                        'send the document on wider pages.')
+
+
+def _band(width, height, notice):
+    """A page of ``width`` by ``height`` points with only ``notice`` on it, under the strip the engine prints in."""
+    from reportlab.pdfgen import canvas
+    from pypdf import PdfReader
+    from .routing.continuation import CLEAR_POINTS
+    font, size, lines = band_layout(width, notice)
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output, pagesize=(width, height))
+    pdf.setFont(font, size)
+    for index, line in enumerate(lines):
+        pdf.drawString(18, height - CLEAR_POINTS - size * (index + 1) - index, line)
+    pdf.showPage()
+    pdf.save()
+    return PdfReader(io.BytesIO(output.getvalue())).pages[0]
+
+
 def render(document, notice, *, drop_first=False):
     """The PDF ``document`` with the first page left out when asked, and ``notice`` in a band at the top of every page.
 
     Each page keeps its size; its content is scaled into the space below the band and centred, so nothing is
     covered, and the top strip stays clear for the header line the fax engine prints there."""
     from pypdf import PageObject, PdfReader, PdfWriter, Transformation
-    from .routing.continuation import BAND_POINTS, _band_page
+    from .routing.continuation import BAND_POINTS
     reader = PdfReader(io.BytesIO(document))
     pages = list(reader.pages)[1 if drop_first else 0:]
     if not pages:
@@ -217,7 +264,7 @@ def render(document, notice, *, drop_first=False):
                                     .translate(width * (1 - scale) / 2, 0))
         key = (round(width, 2), round(height, 2))
         if key not in bands:
-            bands[key] = _band_page(width, height, notice)
+            bands[key] = _band(width, height, notice)
         page.merge_page(bands[key])
         writer.add_page(page)
     output = io.BytesIO()
@@ -309,13 +356,23 @@ def fax_sentence(row):
 def fax_view(engine, job_id):
     """What Sent details say about a fax's header notice and cover, or None when it carried none."""
     table = _fax_notices()
+    changes = sa.table('fax_page_changes', sa.column('job_id'), sa.column('layout'))
     with engine.connect() as connection:
         row = connection.execute(sa.select(table).where(table.c.id == job_id)).mappings().one_or_none()
+        # Encoded pages (codec/) carry the document as data, so the notice is in what the recipient's Faxbot
+        # decodes, not on the fax pages; nothing is drawn into the encoded pages themselves.
+        encoded = row is not None and connection.execute(sa.select(changes.c.job_id).where(
+            changes.c.job_id == job_id, changes.c.layout == 'codec').limit(1)).first() is not None
     if row is None:
         return None
     return {'notice': row['notice'], 'cover': row['cover'], 'original_pages': row['original_pages'],
             'sent_pages': row['sent_pages'], 'sentence': fax_sentence(row),
+            'encoded': ENCODED_SENTENCE if encoded else None,
             'whose': 'mailbox' if row['scope'] == 'mailbox' else 'organization'}
+
+
+ENCODED_SENTENCE = ('This fax went as encoded pages, so your header notice is in the document the recipient’s Faxbot '
+                    'decodes, not on the fax pages.')
 
 
 def _when(value):

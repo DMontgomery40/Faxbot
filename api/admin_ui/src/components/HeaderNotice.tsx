@@ -189,10 +189,10 @@ export function RecipientCoverSwitch({ client, number, canWrite }: { client: Cli
 
 // Sent details: what happened to a fax's header notice and cover sheet.
 export function SentHeaderNotice({ client, jobId }: { client: Client; jobId: string }) {
-  const [view, setView] = useState<{ notice: string | null; sentence: string | null } | null>(null);
+  const [view, setView] = useState<{ notice: string | null; sentence: string | null; encoded?: string | null } | null>(null);
   useEffect(() => {
     let live = true;
-    read<{ notice: string | null; sentence: string | null }>(client, `/header-notice/faxes/${path(jobId)}`)
+    read<{ notice: string | null; sentence: string | null; encoded?: string | null }>(client, `/header-notice/faxes/${path(jobId)}`)
       .then((found) => { if (live) setView(found); })
       .catch(() => { if (live) setView(null); });
     return () => { live = false; };
@@ -201,6 +201,7 @@ export function SentHeaderNotice({ client, jobId }: { client: Client; jobId: str
   return (
     <Alert severity="info" sx={{ mt: 2 }} data-testid="sent-header-notice">
       <Typography variant="body2">{view.sentence}</Typography>
+      {view.encoded && <Typography variant="body2">{view.encoded}</Typography>}
       {view.notice && <Typography variant="caption" display="block">Notice: {view.notice}</Typography>}
     </Alert>
   );

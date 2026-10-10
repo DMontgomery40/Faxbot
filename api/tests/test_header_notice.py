@@ -69,6 +69,27 @@ def test_the_cover_is_left_out_and_every_page_carries_the_notice_without_coverin
         header_notice.render(document('Only page'), NOTICE, drop_first=True)
 
 
+@pytest.mark.parametrize('width', [612.0, 595.0])  # Letter and A4
+def test_the_longest_notice_is_never_drawn_smaller_than_the_readable_size(width):
+    text = ('Confidential: for the addressee only; if received in error, call us at 303-555-0101 and destroy '
+            'it. ') * 2
+    longest = header_notice.check_text(text[:header_notice.MAX_NOTICE])
+    assert longest is not None and len(longest) >= header_notice.MAX_NOTICE - 1
+    font, size, lines = header_notice.band_layout(width, longest)
+    assert size >= header_notice.MIN_POINTS and lines == [longest]
+    # The continuation band's own note size for a short notice.
+    assert header_notice.band_layout(width, 'Confidential.')[1] == 9.0
+
+
+def test_a_narrow_page_takes_two_lines_and_a_page_too_narrow_is_refused():
+    longest = header_notice.check_text(('Confidential: for the addressee only; if received in error, call us at '
+                                        '303-555-0101 and destroy it. ' * 2)[:header_notice.MAX_NOTICE])
+    font, size, lines = header_notice.band_layout(300.0, longest)  # a page about 4 inches wide
+    assert size == header_notice.MIN_POINTS and len(lines) == 2 and ' '.join(lines) == longest
+    with pytest.raises(header_notice.NoticeRefused, match='too narrow'):
+        header_notice.band_layout(150.0, NOTICE)
+
+
 def _rows(image, top, bottom):
     """How many black pixels lie in rows ``top`` to ``bottom`` (fax rows, 196 to the inch)."""
     strip = image.convert('1').crop((0, top, image.width, bottom))
@@ -212,6 +233,31 @@ def test_a_replay_with_another_cover_choice_is_not_the_same_request(client):  # 
     other = client.post('/fax', headers={**B, 'Idempotency-Key': 'synthetic-cover-1'},
                         data={'to': TO, 'cover_in_header': 'true'}, files={'file': ('a.pdf', data, 'application/pdf')})
     assert other.status_code == 409
+
+
+def test_a_fax_sent_as_encoded_pages_says_the_notice_is_in_the_decoded_document(client):  # noqa: F811
+    from datetime import datetime
+    import uuid
+    import sqlalchemy as sa
+    _set(client, '/header-notice', {'notice': NOTICE})
+    job = _send(client, document('Referral letter', 'Lab results')).json()['id']
+    assert _view(client, job)['encoded'] is None
+    from app.main import app
+    engine = app.state.configuration_runtime.manager.store.engine
+    changes = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=engine)
+    attempts = sa.table('outbound_attempts', sa.column('id'), sa.column('job_id'), sa.column('sequence'),
+                        sa.column('phase'), sa.column('created_at'))
+    attempt, now = uuid.uuid4().hex, datetime(2026, 10, 10, 9, 0)
+    required = {column.name for column in changes.columns if not column.nullable}
+    row = {'id': uuid.uuid4().hex, 'job_id': job, 'attempt_id': attempt, 'original_pages': 2, 'sent_pages': 1,
+           'layout': 'codec', 'reason': 'Encoded pages.', 'created_at': now}
+    for name in required - set(row):
+        row[name] = 0
+    with engine.begin() as connection:
+        connection.execute(attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='completed',
+                                                    created_at=now))
+        connection.execute(changes.insert().values(**row))
+    assert _view(client, job)['encoded'] == header_notice.ENCODED_SENTENCE
 
 
 def test_who_may_read_and_change_notices(client):  # noqa: F811
