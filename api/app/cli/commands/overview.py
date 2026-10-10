@@ -110,7 +110,7 @@ def attention(sources):
                 detail='Check your provider account before you send any of them again.')
         if jobs.get('recent_failures'):
             add('failed', 'failed', 'Sent faxes that failed in the last 24 hours', jobs['recent_failures'],
-                'faxbot sent list --status failed')
+                'faxbot sent list --status failed --hours 24')
     holds = (ready('holds') or {}).get('holds') or []
     if holds:
         add('held', 'decide', 'Faxes your rules are holding', len(holds), 'faxbot sent list --held',

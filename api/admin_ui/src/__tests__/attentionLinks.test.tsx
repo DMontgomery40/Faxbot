@@ -57,6 +57,23 @@ describe('Sent keeps its filter in the address', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/faxes/sent'));
   });
 
+  it('lists only the last hours the address names, says so, and shows every fax with that status on request', async () => {
+    const asked: Array<[string, string]> = [];
+    server.use(http.get('/admin/fax-jobs', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      asked.push([query.get('status') ?? '', query.get('since_hours') ?? '']);
+      return HttpResponse.json({ total: 0, jobs: [] });
+    }));
+    await signInAt('#/faxes/sent?status=failed&since=24h');
+    expect(await screen.findByText('Only faxes whose state changed in the last 24 hours are shown.')).toBeTruthy();
+    await waitFor(() => expect(asked).toContainEqual(['failed', '24']));
+    expect(asked).not.toContainEqual(['failed', '']);
+    fireEvent.click(screen.getByRole('button', { name: 'Show from any time' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/sent?status=failed'));
+    await waitFor(() => expect(asked).toContainEqual(['failed', '']));
+    expect(screen.queryByText('Only faxes whose state changed in the last 24 hours are shown.')).toBeNull();
+  });
+
   it('lists every sent fax for a status it does not know', async () => {
     await signInAt('#/faxes/sent?status=nonsense');
     await screen.findByRole('heading', { name: 'Sent' });

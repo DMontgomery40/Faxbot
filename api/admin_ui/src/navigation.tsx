@@ -54,7 +54,7 @@ import { providerLabel } from './providerLabels';
 import Dashboard from './components/Dashboard';
 import AIAnalysis from './components/AIAnalysis';
 import SetupWizard from './components/SetupWizard';
-import JobsList, { readSentStatus } from './components/JobsList';
+import JobsList, { readSentSince, readSentStatus } from './components/JobsList';
 import Plugins from './components/Plugins';
 import ApiKeys from './components/ApiKeys';
 import Settings, { type SettingsSection } from './components/Settings';
@@ -394,7 +394,12 @@ export const NAVIGATION: NavArea[] = [
         render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate}
           status={readSentStatus(ctx.params.get('status'))} heldOnly={ctx.params.get('show') === 'held'}
+          sinceHours={readSentSince(ctx.params.get('since'))}
           onStatusChange={(next) => ctx.navigate(next ? `faxes/sent?status=${next}` : 'faxes/sent')}
+          onShowAnyTime={() => {
+            const status = readSentStatus(ctx.params.get('status'));
+            ctx.navigate(status ? `faxes/sent?status=${status}` : 'faxes/sent');
+          }}
           onShowAll={() => ctx.navigate('faxes/sent')} /> },
       // Listed at the top of the panel as a persistent action rather than among the Faxes pages.
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true, inPanel: false,
