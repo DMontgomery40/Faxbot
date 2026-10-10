@@ -2198,9 +2198,13 @@ def header_line(page, rows=60):
         return None
     strip = page.convert('L').crop((0, 0, page.size[0], rows))
     ink = ImageOps.invert(strip).getbbox() or (0, 0, strip.size[0], rows)
-    strip = strip.crop((max(0, ink[0] - 10), 0, min(strip.size[0], ink[2] + 10), rows))
-    strip = ImageOps.expand(strip.resize((strip.size[0] * 2, strip.size[1] * 4), Image_NEAREST()), border=20,
-                            fill=255)
+    strip = strip.crop((max(0, ink[0] - 10), max(0, ink[1] - 4), min(strip.size[0], ink[2] + 10),
+                        min(rows, ink[3] + 4)))
+    # Scaled the same both ways on a fine page (rows about as tall as dots are wide: a 2-by-4 scale made Tesseract
+    # read the tag line's 5s as 9s); a normal-resolution page's rows are twice as tall, so twice as many there.
+    tall = 2 if page.size[1] < 1500 else 1
+    strip = ImageOps.expand(strip.resize((strip.size[0] * 2, strip.size[1] * 2 * tall), Image_NEAREST()),
+                            border=20, fill=255)
     with tempfile.TemporaryDirectory() as folder:
         picture = Path(folder) / 'header.png'
         strip.save(picture)
