@@ -162,6 +162,10 @@ def _refuse_if_held(connection, job_id):
     held = _hold_kind(pinned.decision) if pinned is not None else None
     if held is not None:
         raise RulesHold(held)
+    # Where Faxbot may dial (routing/guard.py) holds a number in a class it may not dial: refused here too.
+    from ..routing.guard import open_guard_hold_on
+    if open_guard_hold_on(connection, job_id):
+        raise RulesHold('approval')
 
 
 def _follow_envelope(connection, job_id, bound_key, now):

@@ -491,6 +491,37 @@ export interface ReceivedExplainResult {
   rule_to_number: string | null;
 }
 
+// -- where Faxbot may dial (routing/guard.py) --------------------------------------------------------
+
+// One class of numbers ("premium", "national_mobile") or one country ("country:GB").
+export interface DialingClass {
+  key: string;
+  label: string;
+  allowed: boolean;
+  // Why, in one sentence ("Allowed: the routing rule ‘UK faxes’ names it.").
+  sentence: string;
+  source: 'national' | 'delivered' | 'rule' | 'recipient' | 'administrator' | 'default' | null;
+  // Whether an administrator chose allowed or blocked (rather than Faxbot's default).
+  chosen: boolean;
+  // The highest price a minute a call may cost before the fax waits for approval, or null for none.
+  ceiling: { amount: string; currency: string; text: string } | null;
+  first_delivered_at: string | null;
+  changeable: boolean;
+}
+
+export interface DialingState {
+  classes: DialingClass[];
+  countries: DialingClass[];
+  prefixes: { prefix: string; rule: string }[];
+  other_countries: string;
+  where: string;
+  // After a change: what changed, in one sentence.
+  sentence?: string;
+  changed?: string;
+}
+
+export type DialingChoice = 'allowed' | 'blocked' | 'default';
+
 // -- requests ---------------------------------------------------------------------------------------
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -552,6 +583,12 @@ export const requests = {
   accountHealth: (key: string): ApiRequest => ({
     method: 'GET', path: `/admin/providers/accounts/${segment(key)}/health`,
   }),
+  dialing: (): ApiRequest => ({ method: 'GET', path: '/routing/dialing' }),
+  // `ceiling` left out keeps the class's ceiling; '' removes it.
+  changeDialing: (key: string, state: DialingChoice, ceiling?: string): ApiRequest => ({
+    method: 'PUT', path: `/routing/dialing/${segment(key)}`,
+    body: ceiling === undefined ? { state } : { state, ceiling },
+  }),
 };
 
 export interface RulesApi {
@@ -576,6 +613,8 @@ export interface RulesApi {
   updateAccount(key: string, patch: AccountPatch, generation: number): Promise<AccountsState>;
   accountHealth(key: string): Promise<AccountHealth>;
   explainReceived(body: ReceivedExplainRequest): Promise<ReceivedExplainResult>;
+  dialing(): Promise<DialingState>;
+  changeDialing(key: string, state: DialingChoice, ceiling?: string): Promise<DialingState>;
 }
 
 // The rules API of a console API client, one per client, so screens see the same object on every render.
@@ -613,5 +652,7 @@ export function rulesApi(send: Send): RulesApi {
     updateAccount: (key, patch, generation) => send(requests.updateAccount(key, patch, generation)),
     accountHealth: (key) => send(requests.accountHealth(key)),
     explainReceived: (body) => send(requests.explainReceived(body)),
+    dialing: () => send(requests.dialing()),
+    changeDialing: (key, state, ceiling) => send(requests.changeDialing(key, state, ceiling)),
   };
 }

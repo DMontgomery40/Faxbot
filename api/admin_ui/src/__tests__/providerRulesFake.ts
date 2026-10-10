@@ -4,7 +4,7 @@
 // Every request is recorded so a test can check exactly what a screen sent.
 import { AdminAPIError } from '../api/client';
 import type {
-  AccountsState, ApiRequest, Choices, Hold, RevisionDetail, RulesDocument, RulesState,
+  AccountsState, ApiRequest, Choices, DialingState, Hold, RevisionDetail, RulesDocument, RulesState,
 } from '../components/ProviderRulesApi';
 import { rulesApi } from '../components/ProviderRulesApi';
 
@@ -88,6 +88,27 @@ export class FakeRules {
       number: 1, note: 'First rules', actor_name: 'Ada Admin', created_at: '2026-10-07T15:00:00', document: organizationDocument(),
     }] });
   }
+
+  // Where Faxbot may dial (routing/guard.py): national numbers allowed, premium-rate not, one country by a rule.
+  dialing: DialingState = {
+    classes: [
+      { key: 'national_geographic', label: 'Numbers in your country', allowed: true, source: 'national', chosen: false,
+        sentence: 'Allowed: Faxbot dials numbers in your own country.', ceiling: null, first_delivered_at: null, changeable: true },
+      { key: 'premium', label: 'Premium-rate numbers', allowed: false, source: 'default', chosen: false,
+        sentence: 'Blocked: Faxbot never dials these unless you allow them.', ceiling: null, first_delivered_at: null, changeable: true },
+    ],
+    countries: [
+      { key: 'country:GB', label: 'United Kingdom', allowed: true, source: 'rule', chosen: false,
+        sentence: 'Allowed: the routing rule ‘UK numbers go through Sinch’ names it.', ceiling: null,
+        first_delivered_at: null, changeable: true },
+      { key: 'country:AU', label: 'Australia', allowed: true, source: 'delivered', chosen: false,
+        sentence: 'Allowed: Faxbot had already delivered faxes there before it started checking.', ceiling: null,
+        first_delivered_at: '2026-03-02T15:00:00', changeable: true },
+    ],
+    prefixes: [],
+    other_countries: 'Any other country: faxes wait for your approval until you allow it here, a routing rule names it, or a saved recipient is there.',
+    where: 'Providers → In use → Where Faxbot may dial',
+  };
 
   // Answers are copies, as from a real server, so a screen never shares objects with the fake.
   api() {
@@ -239,6 +260,18 @@ export class FakeRules {
       if (receiving) this.accounts.default_receiving = key;
       this.accounts.generation += 1;
       return this.accounts;
+    }
+    if (path === '/routing/dialing' && request.method === 'GET') return this.dialing;
+    if (path.startsWith('/routing/dialing/') && request.method === 'PUT') {
+      const key = decodeURIComponent(path.split('/')[3]);
+      const item = [...this.dialing.classes, ...this.dialing.countries].find((entry) => entry.key === key);
+      if (!item) fail(400, 'There is no such class of numbers.');
+      item!.allowed = body.state === 'allowed' || (body.state === 'default' && !key.startsWith('premium'));
+      item!.chosen = body.state !== 'default';
+      if (body.ceiling !== undefined) {
+        item!.ceiling = body.ceiling ? { amount: body.ceiling, currency: 'USD', text: `$${body.ceiling} a minute` } : null;
+      }
+      return { ...this.dialing, sentence: `Changed ${item!.label}.`, changed: key };
     }
     throw new AdminAPIError(404, 'Not Found', 'Not Found');
   }
