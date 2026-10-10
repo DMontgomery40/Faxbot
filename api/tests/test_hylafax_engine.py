@@ -660,6 +660,9 @@ def test_engine_scripts_keep_secrets_off_the_command_line_and_one_try_per_job():
     entry = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
     for line in ('MaxDials:\t\t1', 'MaxTries:\t\t1', 'MaxBatchJobs:\t\t1'):
         assert line in entry
+    # Each line loads a tag line font (HylaFAX+ has none by default, and then prints no header line), and the image
+    # build checks the font is there.
+    assert "printf 'TagLineFont:\\t\\tetc/lutRS18.pcf\\n'" in entry
     # A job a restart left in the send queue is moved aside, never sent again.
     assert 'mv -f "$spool"/sendq/q* "$moved"/' in entry
     # Session logs carry no HDLC frame dumps (they would hold the SSL Fax passcode).
