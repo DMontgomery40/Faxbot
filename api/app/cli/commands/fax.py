@@ -296,7 +296,7 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
               held: bool = typer.Option(False, '--held', help='Only faxes your rules are holding: waiting for approval, '
                                                               'for a time window or for a route the rules allow.'),
               hours: int = typer.Option(None, '--hours', min=1, max=8784,
-                                        help='Only faxes whose state changed in the last this many hours, such as 24.')):
+                                        help='Show only faxes whose state changed within this many hours, such as 24.')):
     """List sent faxes, newest first, with what each cost. Fax numbers are partly hidden."""
     if held:
         from .rules import held_list

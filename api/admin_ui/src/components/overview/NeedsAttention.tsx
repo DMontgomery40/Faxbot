@@ -5,33 +5,39 @@ import { darken } from '@mui/material/styles';
 import { ChevronRight as ChevronRightIcon } from '@mui/icons-material';
 import type { AdminDestination } from '../../navigation';
 import type { AttentionView } from './attention';
+import { clockText, STALE_AFTER_MS, staleText } from './blocks';
 
-function checkedText(at: number): string {
-  return `Checked ${new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}.`;
-}
-
-export default function NeedsAttention({ view, onNavigate }: {
+export default function NeedsAttention({ view, onNavigate, now }: {
   view: AttentionView;
   onNavigate?: (destination: AdminDestination) => void;
+  // The time now (milliseconds): an answer older than STALE_AFTER_MS is said to be stale.
+  now?: number;
 }) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
     : theme.palette.warning.main;
+  const stale = view.checkedAt !== null && now !== undefined && now - view.checkedAt > STALE_AFTER_MS;
   return (
     <Card sx={{ mb: 3, ...(view.serious ? { borderLeft: 4, borderColor: 'error.main' } : {}) }} data-testid="needs-attention"
-      data-serious={String(view.serious)} aria-busy={view.loading} aria-labelledby="needs-attention-title" component="section">
+      data-serious={String(view.serious)} data-state={view.loading ? 'loading' : stale ? 'stale' : 'ready'}
+      aria-busy={view.loading} aria-labelledby="needs-attention-title" component="section">
       <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
         <Box display="flex" justifyContent="space-between" alignItems="baseline" gap={2} flexWrap="wrap">
           <Typography variant="h6" component="h2" id="needs-attention-title" sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
             Needs attention
           </Typography>
-          {view.checkedAt !== null && (
+          {view.checkedAt !== null && !stale && (
             <Typography variant="caption" color="text.secondary" data-testid="needs-attention-checked">
-              {checkedText(view.checkedAt)}
+              {`Checked ${clockText(view.checkedAt)}.`}
             </Typography>
           )}
         </Box>
+        {stale && view.checkedAt !== null && (
+          <Typography variant="body2" color="warning.main" sx={{ mt: 1 }} data-testid="needs-attention-stale">
+            {staleText(view.checkedAt)}
+          </Typography>
+        )}
         {view.groups.map((group) => (
           <Box key={group.key} sx={{ mt: 1.5 }}>
             <Typography variant="subtitle2" component="h3" color={group.key === 'serious' ? 'error' : 'text.secondary'}>

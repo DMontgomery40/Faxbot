@@ -58,8 +58,9 @@ describe('Dashboard delivery cards', () => {
     const denied = () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 });
     server.use(http.get('/routing/costs', denied), http.get('/intake/items', denied), http.get('/direct/peers', denied));
     const navigate = vi.fn();
-    render(<Dashboard client={client()} onNavigate={navigate} />);
-    expect(await screen.findAllByText('Not available to this account.')).toHaveLength(3);
+    // A person who reads settings, so only these three cards are refused.
+    render(<Dashboard client={client()} onNavigate={navigate} canReadSettings />);
+    await waitFor(() => expect(screen.getAllByText('Not available to this account.')).toHaveLength(3));
     expect(screen.queryByRole('button', { name: 'Spending, last 30 days' })).toBeNull();
     fireEvent.click(screen.getByText('Spending, last 30 days'));
     expect(navigate).not.toHaveBeenCalled();
@@ -92,7 +93,7 @@ describe('Dashboard delivery cards', () => {
     const item = await screen.findByTestId('attention-t38-network');
     expect(item.textContent).toContain('One network change would let faxes go over the internet; faxes still go through meanwhile');
     fireEvent.click(item);
-    expect(opened).toEqual(['providers/trunk']);
+    expect(opened).toEqual(['delivery/trunk']);
   });
 
   it('has no network item when someone chose audio fax or the network allows fax over IP', async () => {
@@ -120,11 +121,18 @@ describe('Dashboard delivery cards', () => {
       backend: '', backend_healthy: false, backend_message: 'No fax provider set up yet.',
       jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: false, api_keys_configured: true, require_auth: true })));
     const navigate = vi.fn();
-    const { unmount } = render(<Dashboard client={client()} onNavigate={navigate} canSetUp />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up a fax provider' }));
-    expect(navigate).toHaveBeenCalledWith('setup');
+    // Whether or not the person reads settings (and so sees What Faxbot is doing), there is exactly one button.
+    for (const canReadSettings of [false, true]) {
+      const { unmount } = render(<Dashboard client={client()} onNavigate={navigate} canSetUp canReadSettings={canReadSettings} />);
+      await screen.findByText('No fax provider set up yet.');
+      await waitFor(() => expect(screen.getByTestId('overview-doing').getAttribute('data-state')).not.toBe('loading'));
+      const buttons = screen.getAllByRole('button', { name: 'Set up a fax provider' });
+      expect(buttons).toHaveLength(1);
+      fireEvent.click(buttons[0]);
+      expect(navigate).toHaveBeenLastCalledWith('setup');
+      unmount();
+    }
     expect(navigate).not.toHaveBeenCalledWith('diagnostics');
-    unmount();
     render(<Dashboard client={client()} onNavigate={navigate} />);
     expect(await screen.findByText('No fax provider set up yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();

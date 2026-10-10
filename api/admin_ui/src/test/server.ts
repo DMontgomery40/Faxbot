@@ -803,6 +803,11 @@ const consoleHandlers = [
   http.get('/certainty/settings', () => json({ settle_hours: 24, version: 0, fallback: null, people: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
   http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
+  // The Overview's value blocks: no capability yet, and no missing-fact advice.
+  http.get('/routing/capabilities', () => json({ days: 30, title: 'Capabilities', sentence: '', legend: [], filters: [],
+    outcomes: [] })),
+  http.get('/routing/recommendations/facts', () => json({ days: 90, state: 'none', estimate: true, sentence: '',
+    recipients: [], realized: '', note: '', catalogue: [], assumptions: [] })),
   // Expected faxes for Needs attention: none overdue, none to confirm.
   http.get('/expected-faxes/counts', () => json({ waiting: 0, overdue: 0, proposed: 0, missing: 0, conflicts: 0, matched: 0 })),
   // Sending together: no number sends faxes together until a test says otherwise.
