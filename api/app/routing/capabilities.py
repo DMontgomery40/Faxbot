@@ -382,20 +382,20 @@ def _pots_quote(here):
     return bool(quotes(here.engine))
 
 
-SENDS = Prerequisite('connection', 'A fax service account or your own SIP trunk that sends faxes.',
+SENDS = Prerequisite('connection', 'A fax service account or your own trunk that sends faxes.',
                      'delivery/connections', _sends)
-TRUNK_SENDS = Prerequisite('connection', 'Your own SIP trunk for sending, from a phone carrier or your phone system.',
+TRUNK_SENDS = Prerequisite('connection', 'Your own trunk for sending, from a phone carrier or your phone system.',
                            'delivery/trunk', _trunk_sends)
-TRUNK = Prerequisite('connection', 'Your own SIP trunk, from a phone carrier or your phone system.', 'delivery/trunk',
+TRUNK = Prerequisite('connection', 'Your own trunk, from a phone carrier or your phone system.', 'delivery/trunk',
                      _trunk)
-TRUNK_RECEIVES = Prerequisite('connection', 'Faxes received over your own SIP trunk.', 'delivery/trunk',
+TRUNK_RECEIVES = Prerequisite('connection', 'Faxes received over your own trunk.', 'delivery/trunk',
                               lambda here: here.trunk_receives)
 RECEIVING_NUMBER = Prerequisite('connection', 'A number this Faxbot receives faxes on.', 'delivery/numbers',
                                 _receiving_number)
-RECEIVES = Prerequisite('connection', 'A fax service account or SIP trunk that receives faxes for this Faxbot.',
+RECEIVES = Prerequisite('connection', 'A fax service account or your own trunk that receives faxes for this Faxbot.',
                         'delivery/connections', _receives)
 SECOND_ROUTE = Prerequisite('connection', 'A second sending route, such as another fax service account or your own '
-                                          'SIP trunk.', 'delivery/connections', _second_route)
+                                          'trunk.', 'delivery/connections', _second_route)
 PRICED_ROUTES = Prerequisite('prices', 'Prices for at least two sending routes that charge for each fax.',
                              'savings/prices', _priced_routes)
 CALLS_BILLED_WHOLE = Prerequisite('prices', 'Trunk prices that charge for each call or bill whole minutes, so one '
@@ -442,7 +442,7 @@ CAPABILITIES = {
         'A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks '
         'removed first, so each page takes fewer seconds to send.',
         'faxbot admin settings set fax_friendly_documents=where_it_saves',
-        (SENDS, Prerequisite('prices', 'A sending route billed by the minute or second, such as your own SIP trunk.',
+        (SENDS, Prerequisite('prices', 'A sending route billed by the minute or second, such as your own trunk.',
                              'savings/prices', _billed_by_time))),
     'own_numbers': Capability(
         'spend_less',
@@ -518,7 +518,7 @@ CAPABILITIES = {
                       'recipients/list', _digital_confirmed))),
     'fax_over_ip': Capability(
         'shorter_calls',
-        'A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.',
+        'A ten-page fax over your own trunk goes as fax data (T.38) instead of audio, so the call takes less time.',
         'faxbot delivery providers trunk mode t38',
         (TRUNK, Prerequisite('connection', 'A network and carrier that carry T.38. Faxbot checks this itself and '
                                            'switches T.38 back on when they do.', 'delivery/trunk',
@@ -567,7 +567,7 @@ CAPABILITIES = {
         "Your carrier's invoice lists three more calls than Faxbot recorded. Charges lists those three calls, so you "
         'can ask the carrier about them.',
         None,
-        (Prerequisite('connection', 'A fax service account or your own SIP trunk.', 'delivery/connections',
+        (Prerequisite('connection', 'A fax service account or your own trunk.', 'delivery/connections',
                       _sending_or_receiving),), findings=True),
     'blocked_senders': Capability(
         'receiving',
@@ -636,7 +636,7 @@ CAPABILITIES = {
         'receiving',
         "Your second trunk carried few faxes last month. The advice says its faxes would fit on your first trunk's "
         'free lines.',
-        Prerequisite('connection', 'Two or more SIP trunks to compare.', 'delivery/connections', _two_trunks)),
+        Prerequisite('connection', 'Two or more trunks to compare.', 'delivery/connections', _two_trunks)),
     'advice_numbers': advice(
         'receiving',
         'A number on a fax service costs more each month to receive on than it would on your trunk. The advice '
@@ -789,7 +789,7 @@ def _improvement(ready, experimental, prerequisites):
     return {'kind': kind, 'label': IMPROVEMENTS[kind]}
 
 
-def _view(key, capability, item, here, label, now):
+def _view(key, capability, item, here, label, now, findings):
     prerequisites = []
     for prerequisite in capability.prerequisites:
         found = prerequisite.met(here)
@@ -815,7 +815,9 @@ def _view(key, capability, item, here, label, now):
     filters = [name for name, matches in (('on', on), ('off', not on), ('ready', ready), ('needs', missing > 0),
                                           ('experimental', capability.experimental)) if matches]
     used = item['here']
-    counted = capability_here.line(key, here, now)
+    # Without ``findings`` (the Overview's read), advice and charge checks are not counted: the Overview never shows
+    # what they found, and counting it reads every advice section.
+    counted = capability_here.line(key, here, now) if findings or not capability.findings else None
     if counted is not None:
         # What it did here, counted from its own records (capability_here.py). Advice and charge checks find things
         # rather than act on faxes, so their count stays out of the Overview's "What Faxbot is doing".
@@ -843,8 +845,9 @@ def _view(key, capability, item, here, label, now):
     }
 
 
-def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
-    """Every catalogue entry for this installation, grouped by outcome; never any money."""
+def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS, findings=True):
+    """Every catalogue entry for this installation, grouped by outcome; never any money. With ``findings`` False,
+    what advice and charge checks found is left out (their line is None)."""
     evaluated = mechanisms.evaluate(values, routes, engine, now=now, days=days)
     items = {item['key']: item for stage in evaluated['stages'] for item in stage['mechanisms']}
     # What this installation has, for the prerequisites; the facts above already came from the same reads.
@@ -859,7 +862,8 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
             # taking the whole read down. api/tests/test_capabilities.py fails until the line is added.
             log.warning('Capability %s has no entry in routing/capabilities.py; listing it without one', mechanism.key)
             capability = UNMAPPED
-        grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label, now))
+        grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label, now,
+                                                       findings))
     return {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
         'legend': evaluated['legend'],

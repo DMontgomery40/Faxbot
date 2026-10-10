@@ -10,6 +10,7 @@ import Received from '../components/Received';
 import JobsList from '../components/JobsList';
 import { localToday } from '../components/delivery/RateCards';
 import { NOT_PRICED, formatMoney, formatMoneyList } from '../components/delivery/shared';
+import { setProviderNames } from '../providerLabels';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -88,10 +89,16 @@ describe('Delivery routes spending', () => {
   it('says how to turn on charges instead of offering a check without a key', async () => {
     routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0, total_cost: [usd('0.02')],
       attempts_without_reported_cost: 3 }], received: [], carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
-    render(<DeliveryRoutes client={client()} canWrite />);
-    expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Delivery setup → Telnyx.')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
-    expect(screen.getByText('estimated')).toBeTruthy();
+    // The trunk page is named after its carrier, as the menu names it for this installation.
+    setProviderNames({ sip: 'Telnyx' });
+    try {
+      render(<DeliveryRoutes client={client()} canWrite />);
+      expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Delivery setup → Telnyx.')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
+      expect(screen.getByText('estimated')).toBeTruthy();
+    } finally {
+      setProviderNames(null);
+    }
   });
 
   it('names a flat plan and an unknown cost in the route recommendation', async () => {

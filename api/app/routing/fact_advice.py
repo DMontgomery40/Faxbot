@@ -96,11 +96,11 @@ CATALOGUE = (
          'nothing beyond that fax'),
     Fact('toll_free', 'authorization', 'No recorded approval for their toll-free number',
          'Someone at {name} must agree that you fax {address}; they pay for those calls.',
-         'Record who agreed and when under Recipients → Details.',
+         "Record who agreed and when in the recipient's Details in Recipients.",
          'about 10 minutes of your time'),
     Fact('case_reuse', 'authorization', 'No recorded approval to list documents they already have',
          '{name} must agree to receive a one-page list in place of documents they already acknowledged.',
-         'Turn on "accepts a one-page index" for this recipient under Recipients → Details.',
+         'Turn on "accepts a one-page index" in the recipient\'s Details in Recipients.',
          'about 10 minutes of your time'),
     Fact('route_price', 'price', 'No price for a route you may use',
          'Only you can supply it: {route} publishes no price for these calls, so read it from your bill or '

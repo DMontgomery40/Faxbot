@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { Capabilities as CapabilitiesView, Capability } from '../api/capabilityTypes';
 import Capabilities from '../components/capabilities/Capabilities';
+import Dashboard from '../components/Dashboard';
 import { resolvesTo } from '../navigation';
 import { server } from '../test/server';
 import fixture from './capabilities.json';
@@ -201,6 +202,19 @@ describe('One capability (?key=)', () => {
     expect(await screen.findByText('This capability is not in the list.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'All capabilities' }).getAttribute('href')).toBe('#/savings/capabilities');
     expect(screen.queryByTestId('capability-page')).toBeNull();
+  });
+});
+
+describe("The Overview's read", () => {
+  it('asks for the capabilities without what advice and charge checks found', async () => {
+    const asked: string[] = [];
+    server.use(http.get('/routing/capabilities', ({ request }) => {
+      asked.push(request.url);
+      return HttpResponse.json(answer as never);
+    }));
+    render(<Dashboard client={client()} onNavigate={vi.fn()} canReadSettings />);
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    for (const url of asked) expect(new URL(url).searchParams.get('findings')).toBe('false');
   });
 });
 

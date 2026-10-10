@@ -511,7 +511,7 @@ def answer_cap(here):
     trunks = [account for account in here.sending if account.provider == 'sip']
     why = None
     if not trunks:
-        why = f'Needs your own SIP trunk for sending; {here.through()}.'
+        why = f'Needs your own trunk for sending; {here.through()}.'
     elif not any(bills_by_minute(here.card(account)) for account in trunks):
         why = ("Used only where calls are billed by the minute in steps of 60 seconds or more; your trunk's prices "
                'are not.')
@@ -541,7 +541,7 @@ def keys_after_answer(here):
     on, sentence = _agreed(sum(1 for digits in newest.values() if digits),
                            'No recipient has keys to press after it answers yet.',
                            what='behind a phone menu')
-    why = None if here.trunk_sends else f'Needs your own SIP trunk for sending; {here.through()}.'
+    why = None if here.trunk_sends else f'Needs your own trunk for sending; {here.through()}.'
     return State(on, why is None, sentence, why)
 
 
@@ -660,7 +660,7 @@ def _advice(key, name, sentence, section, command, check):
 CATALOGUE = (
     Mechanism('case_packets', 'Case packets',
               'Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.',
-              'document', 'built', 'case_packets', 'recipients/list', 'Recipients → Details', case_packets,
+              'document', 'built', 'case_packets', 'recipients/list', 'Recipients', case_packets,
               counts=('packets', 'case packet', 'case packets')),
     Mechanism('dense_pages', 'Dense pages',
               'Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank '
@@ -670,7 +670,7 @@ CATALOGUE = (
     Mechanism('encoded_pages', 'Encoded pages (experimental)',
               "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the "
               'original, for recipients who agreed.',
-              'document', 'built', 'encoding', 'recipients/list', 'Recipients → Details', encoded_pages),
+              'document', 'built', 'encoding', 'recipients/list', 'Recipients', encoded_pages),
     Mechanism('fax_friendly', 'Lighter shading',
               'Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages '
               'take less time to send.',
@@ -703,24 +703,24 @@ CATALOGUE = (
               'route', 'built', 'relay', 'recipients/partners', 'Recipients → Partners', relay),
     Mechanism('toll_free', 'Approved toll-free numbers',
               "Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
-              'route', 'built', 'toll_free', 'recipients/list', 'Recipients → Details', toll_free),
+              'route', 'built', 'toll_free', 'recipients/list', 'Recipients', toll_free),
     Mechanism('cheapest_route', 'Cheapest route per delivered fax',
               'Sends each number by the route that cost least per delivered fax once two routes have proven '
               'themselves.',
-              'route', 'built', 'cheapest_route', 'recipients/list', 'Recipients → Details', cheapest_route),
+              'route', 'built', 'cheapest_route', 'recipients/list', 'Recipients', cheapest_route),
     Mechanism('plan_first', "Your plan's faxes first",
               'Uses a monthly plan while it has room under its budget, before routes that charge per fax.',
               'route', 'built', 'plan_first', 'costs/prices', 'Savings & optimization → Prices & plans', plan_first,
               settings=('plan_budgets',)),
     Mechanism('busy_hours', 'Calls at the right hour',
               "Waits out a number's usual busy hours when a failed call there could be charged.",
-              'route', 'built', None, 'recipients/list', 'Recipients → Details', busy_hours),
+              'route', 'built', None, 'recipients/list', 'Recipients', busy_hours),
     Mechanism('free_line', 'Wait for a free line',
               'Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.',
-              'route', 'built', None, 'recipients/list', 'Recipients → Details', free_line),
+              'route', 'built', None, 'recipients/list', 'Recipients', free_line),
     Mechanism('digital_routes', 'Direct messages and FHIR',
               "Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
-              'route', 'built', 'digital', 'recipients/list', 'Recipients → Details', digital_routes),
+              'route', 'built', 'digital', 'recipients/list', 'Recipients', digital_routes),
     Mechanism('fax_over_ip', 'Fax over IP (T.38)',
               'Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls '
               'are shorter.',
@@ -733,11 +733,11 @@ CATALOGUE = (
               settings=('sip_fax_compression',)),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
-              'call', 'lab', 'sending_together', 'recipients/list', 'Recipients → Details', sending_together),
+              'call', 'lab', 'sending_together', 'recipients/list', 'Recipients', sending_together),
     Mechanism('separator_pages', 'Fewer separator pages',
               'Marks each document in a shared call with an index page or a line on each page instead of a '
               'separator page.',
-              'call', 'built', 'separator_pages', 'recipients/list', 'Recipients → Details', separator_pages,
+              'call', 'built', 'separator_pages', 'recipients/list', 'Recipients', separator_pages,
               counts=('calls', 'shared call', 'shared calls')),
     Mechanism('sslfax', 'Faster pages',
               'Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.',
@@ -857,7 +857,7 @@ CATALOGUE = (
     Mechanism('keys_after_answer', 'Keys after answer',
               'Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a '
               'menu goes through instead of failing and being retried.',
-              'call', 'lab', None, 'recipients/list', 'Recipients → Details', keys_after_answer),
+              'call', 'lab', None, 'recipients/list', 'Recipients', keys_after_answer),
     Mechanism('route_problems', 'Route problems told apart from number problems',
               'Notices when calls through one route fail together, holds that route back and keeps the lesson off '
               'each number, so working numbers are not retried or abandoned for a route problem.',
@@ -879,8 +879,8 @@ CATALOGUE = (
     Mechanism('advice_registered_senders', 'Registered senders',
               'Sends a recipient that accepts faxes only from a registered number by the account and caller ID '
               'registered with it, so its faxes are not refused and sent again.',
-              'advice', 'built', None, 'recipients/list', 'Recipients → Details', _sends,
-              link='recipients/list', link_label='Recipients → Details',
+              'advice', 'built', None, 'recipients/list', 'Recipients', _sends,
+              link='recipients/list', link_label='Recipients',
               command='faxbot recipients registered-senders'),
     Mechanism('advice_country_rules', 'Country service rules',
               "Shows the rules a country sets for fax services, with their sources, and which of your accounts "

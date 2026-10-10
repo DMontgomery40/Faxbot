@@ -453,7 +453,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert items['advice_plans']['here'] == {'used': 0, 'sentence': 'No suggestions now'}
     assert items['keys_after_answer']['here'] == {'used': 1, 'sentence': 'Pressed keys on 1 call in 30 days'}
     assert items['dialing_guard']['here'] == {'used': 0, 'sentence': 'Held no faxes in 30 days'}
-    assert items['charge_checks']['here']['sentence'] == "No charges in 30 days that your faxes don't explain"
+    assert items['charge_checks']['here']['sentence'] == 'Found no billed faxes in 30 days that Faxbot has no record of'
 
     if WRITE and installation.base['DATABASE_URL'].startswith('sqlite'):
         _write_fixture(body)
@@ -546,7 +546,6 @@ ONE_SUGGESTION = {
     'advice_billing_steps': ('app.routing.boundaries.billing_boundaries', {'numbers': [{'number': AGREED}]}),
     'advice_partners': ('app.routing.partners.partner_candidates', {'items': [{'number': AGREED}]}),
     'advice_fax_marker': ('app.routing.preference.fax_marker_report', {'state': 'compared'}),
-    'advice_shading': ('app.pages.friendly.recommendation', {'recommend': True}),
     'advice_trunks': ('app.routing.trunk_advice.advice', {'items': [{}]}),
     'advice_numbers': ('app.routing.number_placement.placement',
                        {'numbers': [{'state': 'move'}, {'state': 'keep'}], 'accounts': []}),
@@ -565,7 +564,9 @@ ONE_SUGGESTION = {
 
 # What each counter says about one record of its kind; advice says '1 suggestion now'.
 ONE = {
-    'charge_checks': "Found 1 charge in 30 days that your faxes don't explain",
+    'charge_checks': 'Found 1 billed fax in 30 days that Faxbot has no record of',
+    'advice_shading': ('While Lighter shading is set to Never, Faxbot measures your recent faxes for this when you '
+                       'open Opportunities'),
     'measured_account': 'Used on 1 fax in 30 days',
     'dialing_guard': 'Held 1 fax for your approval in 30 days',
     'power_aware': 'Held 1 fax or sent it another way during power cuts in 30 days',
@@ -644,7 +645,7 @@ def test_each_counter_counts_one_record_of_its_kind(installation, monkeypatch):
     assert items['caller_id_prices']['here'] == {
         'used': 0, 'sentence': 'Faxbot keeps no count of the calls it priced by caller ID'}
     listed = {item['key'] for item in used_capabilities(answer.json())}
-    assert set(ONE) - {'charge_checks'} <= listed
+    assert {key for key in ONE if not capabilities.CAPABILITIES[key].findings} <= listed
     assert [key for key in listed if capabilities.CAPABILITIES[key].findings] == []
 
 
@@ -671,15 +672,47 @@ def test_the_lines_read_no_network(installation, monkeypatch):
     _check_answer(body, mapped)
 
 
-def test_shading_advice_never_draws_a_fax_again(installation):
-    """The shading advice counts only measurements Faxbot already made: a recent fax it has not measured is left to
-    Opportunities, which draws it, and nothing is remembered for that fax in the meantime."""
+def _refuse_findings(monkeypatch):
+    """Every advice and charge-check counter raises: what is read without them never calls one."""
+    def refuse(here, now):
+        raise AssertionError('A findings counter ran')
+    for key in capability_here.COUNTERS:
+        if capabilities.CAPABILITIES[key].findings:
+            monkeypatch.setitem(capability_here.COUNTERS, key, refuse)
+
+
+def test_the_overview_read_never_counts_what_advice_and_charge_checks_found(installation, monkeypatch):
+    """GET /routing/capabilities?findings=false, the Overview's read, leaves advice and charge checks without a line
+    (the Overview never shows it) and still counts what acted on faxes; the shading advice never draws a fax."""
     from app.pages import friendly
-    before = dict(friendly._MEASURED)
-    body, _ = scenario(installation)
-    assert _by_key(body)['advice_shading']['here']['sentence'] == (
-        'Faxbot measures your recent faxes for this when you open Opportunities')
-    assert dict(friendly._MEASURED) == before
+
+    def refuse(*args, **kwargs):
+        raise AssertionError('The shading line drew a fax')
+    monkeypatch.setattr(friendly, 'recommendation', refuse)
+    monkeypatch.setattr(friendly, 'measure_document', refuse)
+    whole, _ = scenario(installation)
+    assert _by_key(whole)['advice_shading']['here'] == {'used': 0, 'sentence': (
+        'While Lighter shading is set to Never, Faxbot measures your recent faxes for this when you open '
+        'Opportunities')}
+    _refuse_findings(monkeypatch)
+    with installation.start() as client:
+        answer = client.get('/routing/capabilities', headers=ADMIN, params={'findings': 'false'})
+    assert answer.status_code == 200, answer.text
+    items = _by_key(answer.json())
+    for key, item in items.items():
+        if capabilities.CAPABILITIES[key].findings:
+            assert item['here'] == {'used': 0, 'sentence': None}, key
+        else:
+            assert item['here']['sentence'], key
+    assert items['keys_after_answer']['here'] == {'used': 1, 'sentence': 'Pressed keys on 1 call in 30 days'}
+
+
+def test_faxbot_overview_never_counts_what_advice_and_charge_checks_found(cli, monkeypatch):
+    """`faxbot overview` asks for the capabilities without findings, so no advice or charge-check counter runs."""
+    _refuse_findings(monkeypatch)
+    result = cli('overview')
+    assert result.exit_code == 0, result.stdout + (result.stderr or '')
+    assert 'What Faxbot is doing' in result.stdout.splitlines()
 
 
 def test_the_fixture_is_an_answer_from_the_modules():

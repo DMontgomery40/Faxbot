@@ -457,7 +457,7 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     assert 'Route SignalWire' in details and 'Why this route You chose this route for this number.' in details
 
     # A real call to the trunk's own number that its one line could not place (live pilot LC-P003): the route that
-    # took the fax says why, in Sent details and in `faxbot sent show`.
+    # took the fax says why, in Sent details and in `faxbot faxes sent show`.
     import app.main as main_module
     from app.routing.store import RouteStore
     engine = main_module.app.state.configuration_runtime.manager.store.engine

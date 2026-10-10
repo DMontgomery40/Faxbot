@@ -6,8 +6,8 @@ and the later mechanisms have no part there, so this module counts each from thi
 
 - **advice:** how many suggestions its section of Opportunities (or its own page) has now, from the same reader that
   section's HTTP read calls, counted the way the console counts them;
-- **charge checks:** the faxes and calls your providers and carrier billed that Faxbot has no record of, over the
-  window, as Savings & optimization → Charges lists them;
+- **charge checks:** the faxes your providers billed that Faxbot has no record of, over the window, exactly as
+  Savings & optimization → Charges lists them;
 - **the other mechanisms:** the faxes or calls each acted on over the window.
 
 ``capabilities.evaluate`` calls ``line`` for each key in ``COUNTERS``; the catalogue's own line stands for every other
@@ -188,23 +188,12 @@ def advice_fax_marker(here, now):
     return _advice(1 if fax_marker_report(here.engine, here.values, now=now, days=90)['state'] == 'compared' else 0)
 
 
-class _NotMeasured(Exception):
-    """A recent fax the shading advice has not measured yet; measuring it would draw the fax again."""
-
-
-def _not_measured(pdf_path):
-    raise _NotMeasured
-
-
 def advice_shading(here, now):
-    from ..pages.friendly import documents_choice, recommendation
-    try:
-        # Only the measurements Faxbot already made: drawing faxes again belongs to the section itself.
-        found = recommendation(here.engine, here.values.fax_data_dir, choice=documents_choice(here.values), now=now,
-                               measure=_not_measured)
-    except _NotMeasured:
-        return 0, 'Faxbot measures your recent faxes for this when you open Opportunities'
-    return _advice(1 if found['recommend'] else 0)
+    # The section draws recent faxes again to measure them, far too slow for this read, and no reader gives only the
+    # measurements already made (pages/friendly.py; asked of its owner after the freeze). So the line says where the
+    # advice comes from instead of a count, and never calls into that module.
+    return 0, ('While Lighter shading is set to Never, Faxbot measures your recent faxes for this when you open '
+               'Opportunities')
 
 
 def advice_trunks(here, now):
@@ -278,22 +267,18 @@ def advice_pots(here, now):
 # -- charge checks --------------------------------------------------------------------------------------------------
 
 def charge_checks(here, now):
-    from .carriers import CarrierChargeStore
     from .provider_sweep import unrecorded
     since = now - timedelta(days=here.days)
-    # Faxes a provider listed that Faxbot has no record of, as Charges lists them (stored by the sweep), and calls on
-    # the trunk carrier's records that fit no Faxbot call or received fax.
-    faxes = calls = 0
+    # Exactly what Charges lists, which this line links to: the faxes a provider billed that Faxbot has no record of,
+    # kept by the sweep. (The trunk carrier's calls with no record are on Spending, not Charges.)
+    count = 0
     if _any(here, 'provider_unrecorded_faxes', ('provider_time', '>=', since)):
-        faxes = len(unrecorded(here.engine, start=since))
-    if _any(here, 'carrier_records', ('applied', 1), ('started_at', '>=', since)):
-        calls = sum(1 for row in CarrierChargeStore(here.engine).unrecorded_in_effect(since=since)
-                    if row['inbound_fax_id'] is None)
-    count = faxes + calls
+        # unrecorded only reads the database; the sweep that asks providers (ProviderSweep) is never called here.
+        count = len(unrecorded(here.engine, start=since))
     if not count:
-        return 0, f"No charges in {here.days} days that your faxes don't explain"
-    return count, (f"Found {_plural(count, 'charge', 'charges')} in {here.days} days that your faxes "
-                   "don't explain")
+        return 0, f'Found no billed faxes in {here.days} days that Faxbot has no record of'
+    return count, (f"Found {_plural(count, 'billed fax', 'billed faxes')} in {here.days} days that Faxbot has no "
+                   'record of')
 
 
 # -- the faxes or calls each mechanism acted on ------------------------------------------------------------------
@@ -317,7 +302,9 @@ def dialing_guard(here, now):
     return count, f"Held {_plural(count, 'fax', 'faxes')} for your approval in {here.days} days"
 
 
-# The start of the reason power-aware sending gives a fax it holds (power.admission); the hold keeps only that reason.
+# The start of the reason power-aware sending gives a fax it holds (power.admission); the hold keeps only that reason,
+# so holds are counted by it. api/tests/test_capabilities.py pins it to power.admission's own sentence. A structured
+# hold kind for power is asked of the power module's owner after the freeze.
 POWER_HOLD = 'This office is on battery'
 
 
