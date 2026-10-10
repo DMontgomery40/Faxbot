@@ -54,7 +54,7 @@ import { providerLabel } from './providerLabels';
 import Dashboard from './components/Dashboard';
 import AIAnalysis from './components/AIAnalysis';
 import SetupWizard from './components/SetupWizard';
-import JobsList from './components/JobsList';
+import JobsList, { readSentStatus } from './components/JobsList';
 import Plugins from './components/Plugins';
 import ApiKeys from './components/ApiKeys';
 import Settings, { type SettingsSection } from './components/Settings';
@@ -99,7 +99,7 @@ import NpiRecordPanel from './components/NpiRecord';
 import NumberMoves from './components/NumberMoves';
 import BlockIcon from '@mui/icons-material/Block';
 import Forms from './components/forms/Forms';
-import ExpectedFaxes from './components/expected/ExpectedFaxes';
+import ExpectedFaxes, { readExpectedView } from './components/expected/ExpectedFaxes';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import TuneIcon from '@mui/icons-material/Tune';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -392,7 +392,10 @@ export const NAVIGATION: NavArea[] = [
         </>) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
         render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
-          canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
+          canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate}
+          status={readSentStatus(ctx.params.get('status'))} heldOnly={ctx.params.get('show') === 'held'}
+          onStatusChange={(next) => ctx.navigate(next ? `faxes/sent?status=${next}` : 'faxes/sent')}
+          onShowAll={() => ctx.navigate('faxes/sent')} /> },
       // Listed at the top of the panel as a persistent action rather than among the Faxes pages.
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true, inPanel: false,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
@@ -401,7 +404,9 @@ export const NAVIGATION: NavArea[] = [
       // outage recovery (faxbot expected).
       { id: 'expected', label: 'Expected', icon: <PendingActionsIcon />, gate: { anyOf: ['work:read', 'work:import'] },
         render: (ctx) => <ExpectedFaxes client={ctx.client} canImport={ctx.permissions.has('work:import')}
-          canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')} /> },
+          canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')}
+          show={readExpectedView(ctx.params.get('show'))}
+          onShowChange={(next) => ctx.navigate(next === 'waiting' ? 'faxes/expected' : `faxes/expected?show=${next}`)} /> },
       // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
       // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
       { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
