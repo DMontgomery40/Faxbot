@@ -273,8 +273,11 @@ describe('Send follows the installation country', () => {
 
   it('on an unconfirmed answer keeps the number and document, links Sent and names no status code', async () => {
     const keys = faxServer(['accepted']);
-    server.use(http.post('/fax', () => HttpResponse.json({ detail: 'Access service is temporarily unavailable.' },
-      { status: 503 }), { once: true }));
+    let unconfirmedKey: string | null = null;
+    server.use(http.post('/fax', ({ request }) => {
+      unconfirmedKey = request.headers.get('Idempotency-Key');
+      return HttpResponse.json({ detail: 'Access service is temporarily unavailable.' }, { status: 503 });
+    }, { once: true }));
     openFor(us);
     const picked = document();
     await send('2015550123', picked);
@@ -287,6 +290,8 @@ describe('Send follows the installation country', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));
     expect(await screen.findByText(/^Fax queued/)).toBeTruthy();
     expect(keys).toHaveLength(1);
+    expect(unconfirmedKey).toBeTruthy();
+    expect(keys[0]).toBe(unconfirmedKey);  // the retry is the same send, never a second fax
     expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
   });
 
