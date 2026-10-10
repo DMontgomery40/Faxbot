@@ -10,6 +10,7 @@ import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from '.
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type { Capabilities } from './capabilityTypes';
 import type { CourtFax, CourtProfile } from './courtTypes';
+import type { AdmissionSettings, PartnerAdmission } from './admissionTypes';
 import type {
   DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
 } from './digitalTypes';
@@ -1495,6 +1496,24 @@ class AdminAPIClient {
 
   async listDirectPartners(): Promise<{ peers: DirectPartner[] }> {
     return this.json('/direct/peers');
+  }
+
+  // Line windows and preflight with partners that take part (direct/admission.py, direct/preflight.py).
+  async partnerAdmission(): Promise<PartnerAdmission> {
+    return this.json('/direct/admission');
+  }
+
+  async admissionFax(jobId: string): Promise<{ sentences: string[]; waiting: boolean }> {
+    return this.json(`/direct/admission/faxes/${id(jobId)}`);
+  }
+
+  async saveAdmissionSettings(body: AdmissionSettings): Promise<PartnerAdmission> {
+    return this.json('/direct/admission/settings', { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async saveAdmissionPartner(peerId: string, body: { take_part: boolean; refused_classes: string[];
+    refusal_reason: string | null }): Promise<PartnerAdmission> {
+    return this.json(`/direct/admission/partners/${id(peerId)}`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   async addDirectPartner(card: string): Promise<DirectPartner> {

@@ -93,6 +93,7 @@ config.attributes["schema_fax_server_renewal"] = importlib.import_module(package
 config.attributes["schema_pots_quote"] = importlib.import_module(package + ".schema_pots_quote")
 config.attributes["schema_partner_layouts"] = importlib.import_module(package + ".schema_partner_layouts")
 config.attributes["schema_court_profile"] = importlib.import_module(package + ".schema_court_profile")
+config.attributes["schema_partner_admission"] = importlib.import_module(package + ".schema_partner_admission")
 
 
 def migrate(connection):

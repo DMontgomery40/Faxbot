@@ -234,7 +234,7 @@ def test_an_attempt_sends_a_court_fax_exactly_as_accepted(client):  # noqa: F811
 
 def test_0083_is_the_head_and_its_downgrade_keeps_court_rows(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_court_profile.REVISION == '0083_court_profile' == schema.HEAD
+    assert schema_court_profile.REVISION == '0083_court_profile' == schema.COURT_PROFILE
     assert schema.PARTNER_LAYOUTS == '0082_partner_layouts'
     assert schema_court_profile.TABLES <= schema.STRICT_TABLES and schema_court_profile.TABLES <= _tables(database)
     with database.connect() as connection:

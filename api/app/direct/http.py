@@ -13,11 +13,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..access.http import private_operation, require_identity
 from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine, lifespan_tasks, repeat_async
 from ..routing.database import DeliveryStoreError
 from ..routing.submit import accept_generated_fax
+from .admission import Requester
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
 from .service import CERTIFICATE_CHANGED, DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
@@ -61,7 +63,11 @@ def _background(app):
             # Partners learn what we accept from them after an upgrade, an enrollment or a change (signed).
             ('faxbot-direct-tell', repeat_async(service.tell_partners, interval=600.0, initial_delay=30.0,
                                                 warning='Partners could not be told about fax images yet; Faxbot '
-                                                        'tries again.'))]
+                                                        'tries again.')),
+            # Preflight answers and line windows for faxes going by phone to partners you take part with.
+            ('faxbot-direct-admission', repeat_async(Requester(service).step, interval=20.0, initial_delay=10.0,
+                                                     warning='Partners could not be asked about waiting faxes yet; '
+                                                             'Faxbot tries again.'))]
 
 
 router = APIRouter(prefix='/direct', tags=['Direct delivery'], lifespan=lifespan_tasks(_background))
@@ -434,3 +440,114 @@ async def receive_capabilities(payload: VerificationIn, request: Request):
     """A partner's signed statement of what it accepts from this installation now (fax images)."""
     service = service_for(request.app)
     return await _partner_call(lambda: service.note(payload.statement, payload.signature))
+
+
+# Line windows and preflight between partners that take part (admission.py, preflight.py) ----------------------------
+
+def _admission_answer(service, statement, signature, kind):
+    from . import admission, preflight
+    found, refused = preflight.check_request(service, statement, signature, kind)
+    if refused is not None:
+        return refused
+    peer, body = found
+    values = service.values()
+    if kind == 'grant_request':
+        if body.get('duration_class') not in admission.DURATIONS or not isinstance(body.get('job_ref'), str) \
+                or not 16 <= len(body['job_ref']) <= 64:
+            return 400, {'detail': 'This request could not be checked.'}
+        document = admission.issue(service.store.engine, values, peer, body)
+    else:
+        document = preflight.answer(service.store.engine, values, peer, body)
+    return 200, preflight.sign_answer(service, peer, document)
+
+
+@router.post('/admission/grants')
+async def receive_grant_request(payload: VerificationIn, request: Request):
+    """A partner's signed request for a line window for one fax; answered with a signed window."""
+    service = service_for(request.app)
+    return await _partner_call(lambda: _admission_answer(service, payload.statement, payload.signature,
+                                                         'grant_request'))
+
+
+@router.post('/preflight')
+async def receive_preflight(payload: VerificationIn, request: Request):
+    """A partner's signed preflight: whether this installation takes a document class from it now; signed answer."""
+    service = service_for(request.app)
+    return await _partner_call(lambda: _admission_answer(service, payload.statement, payload.signature, 'preflight'))
+
+
+class AdmissionSettingsIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    lines: int | None = Field(default=None, ge=0, le=500)
+    reserve: int = Field(default=1, ge=0, le=500)
+    window_minutes: int = Field(default=10, ge=1, le=240)
+    urgent: str = Field(default='go', pattern='^(go|wait)$')
+    deadline: str = Field(default='go', pattern='^(go|wait)$')
+
+
+class AdmissionPartnerIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    take_part: bool
+    refused_classes: list[str] = Field(default_factory=list, max_length=50)
+    refusal_reason: str | None = Field(default=None, max_length=300)
+
+
+def _admission_view(service):
+    from . import admission
+    return admission.view(service.store.engine, service.values(), service.store.list_peers())
+
+
+@router.get('/admission', dependencies=[Depends(require_permission('settings:read'))])
+async def admission_view(request: Request):
+    """Line windows and preflight with partners: your receiving settings, each partner's choice, the windows issued
+    and received, the preflight answers, and the measured retry picture."""
+    service = service_for(request.app)
+    return await run_lifecycle_step(lambda: _admission_view(service))
+
+
+@router.get('/admission/faxes/{job_id}')
+async def admission_fax(job_id: str, request: Request, identity=Depends(require_identity)):
+    """What Sent details say about one fax's preflight answer and line window, for anyone who may read that fax."""
+    from . import admission
+    runtime = request.app.state.access_runtime
+    await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
+    service = service_for(request.app)
+    found = await run_lifecycle_step(lambda: admission.fax_view(service.store.engine, job_id, service.values()))
+    return found or {'sentences': [], 'waiting': False}
+
+
+@router.put('/admission/settings')
+async def save_admission_settings(payload: AdmissionSettingsIn, request: Request,
+                                  identity=Depends(require_permission('settings:write'))):
+    from . import admission
+    service = service_for(request.app)
+    actor = {'name': getattr(getattr(identity, 'actor', None), 'display_name', None)}
+
+    def save():
+        admission.save_settings(service.store.engine, **payload.model_dump(), actor=actor)
+        return _admission_view(service)
+    try:
+        return await run_lifecycle_step(save)
+    except admission.AdmissionError as error:
+        raise HTTPException(400, detail=str(error)) from None
+
+
+@router.put('/admission/partners/{peer_id}')
+async def save_admission_partner(peer_id: str, payload: AdmissionPartnerIn, request: Request,
+                                 identity=Depends(require_permission('settings:write'))):
+    from . import admission
+    service = service_for(request.app)
+    actor = {'name': getattr(getattr(identity, 'actor', None), 'display_name', None)}
+
+    def save():
+        peer = service.store.get_peer(peer_id)
+        if peer is None or peer['state'] == 'revoked':
+            raise admission.AdmissionError('This partner is not enrolled.')
+        admission.save_partner(service.store.engine, peer_id, take_part=payload.take_part,
+                               refused_classes=payload.refused_classes, refusal_reason=payload.refusal_reason,
+                               actor=actor)
+        return _admission_view(service)
+    try:
+        return await run_lifecycle_step(save)
+    except admission.AdmissionError as error:
+        raise HTTPException(400, detail=str(error)) from None

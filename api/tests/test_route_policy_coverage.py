@@ -50,6 +50,8 @@ OWN_AUTHENTICATION = {
     ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
     ("POST", "/direct/verifications"): "signed partner code confirmation",
     ("POST", "/direct/capabilities"): "signed partner statement of what it accepts",
+    ("POST", "/direct/admission/grants"): "signed partner request for a line window",
+    ("POST", "/direct/preflight"): "signed partner preflight about a document class",
     ("POST", "/direct/relay/statements"): "signed partner relay statement (offer, acceptance, withdrawal, price, receipt)",
     ("GET", "/direct/relay/outcomes/{message_id}"): "signed partner request: the outcome of a fax it relayed here",
     ("POST", "/direct/introductions"): "signed partner introduction (a hint; the challenge fax still decides)",

@@ -447,6 +447,10 @@ def _sent_detail_sentences(api, fax_id):
         pass
     from .court import sentences as court_sentences  # a court fax: its case, the profile and its timing
     found += court_sentences(api, fax_id)
+    try:  # a fax to a partner you take part with: its preflight answer (never a receipt) and its line window
+        found += (api.get('/direct/admission/faxes/' + segment(fax_id)) or {}).get('sentences') or []
+    except CliError:
+        pass
     return found
 
 

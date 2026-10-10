@@ -8,6 +8,7 @@ import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, Ra
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
+import PartnerAdmission from './delivery/PartnerAdmission';
 import FindPartners from './delivery/FindPartners';
 import PlanBudgets from './delivery/PlanBudgets';
 import PlanAllocation from './delivery/PlanAllocation';
@@ -143,6 +144,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               {unread.partners
                 ? <LoadFailed testId="partners-unread" text="Your direct partners could not be loaded. Try again." />
                 : <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />}
+              {!unread.partners && <PartnerAdmission client={client} canWrite={canWrite} />}
               <Box component="section" mt={4}>
                 <Typography variant="h6" component="h2">Find partners</Typography>
                 <Typography variant="body2" color="text.secondary" mb={2}>
