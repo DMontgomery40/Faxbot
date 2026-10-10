@@ -125,6 +125,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
         page_view = api.get('/routing/destinations/' + segment(number) + '/pages')
     except CliError:
         page_view = None
+    try:
+        keys = api.get('/routing/after-answer/' + segment(number))
+    except CliError:
+        keys = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -134,7 +138,8 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
-                    *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else [])])
+                    *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else []),
+                    ('Keys pressed after it answers', (keys or {}).get('spoken'))])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):
@@ -194,8 +199,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         'and Sent says so) or refuse (Faxbot hangs up before any page).'),
                                expected_station: str = typer.Option(None, '--expected-station', metavar='NUMBER',
                                    help='A fax number this recipient\'s machine shows, such as the one on its '
-                                        'letterhead, so Faxbot expects it.')):
-    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
+                                        'letterhead, so Faxbot expects it.'),
+                               after_answer: str = typer.Option(None, '--after-answer', metavar='KEYS|none',
+                                   help="Keys to press once this number answers, before the fax starts, for a fax "
+                                        "machine behind a phone menu: such as 2, or 2w105 (w is a short pause, W a "
+                                        "one-second pause). 'none' presses none. Only calls over your trunk can press "
+                                        "keys, and the seconds in the menu are billed.")):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, or how faxes sent together to it mark each document."""
     api = state.api()
     chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
                                         (separator_pages, 'separators')) if flag]
@@ -221,7 +231,7 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
     if not body and not page_body and boundaries is None and needs_cover is None and station_check is None \
-            and expected_station is None:
+            and expected_station is None and after_answer is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
     if station_check is not None and station_check.lower() not in ('warn', 'refuse'):
         raise CliError('Use warn or refuse for --station-check.')
@@ -231,6 +241,10 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         station_body = {key: value for key, value in (('mode', station_check and station_check.lower()),
                                                       ('station', expected_station)) if value}
         station = api.put('/routing/stations/' + segment(number), json=station_body)
+    # Keys to press after the number answers (routing/after_answer.py); its own address, set before the rest.
+    keys = (api.put('/routing/after-answer/' + segment(number), json={
+        'digits': None if after_answer.strip().lower() in ('none', 'off', '') else after_answer})
+        if after_answer is not None else None)
     # Whether the recipient needs a cover sheet (header_notice.py); its own address, set before the rest.
     cover = (api.put('/header-notice/recipients/' + segment(number), json={'needs_cover': needs_cover})
              if needs_cover is not None else None)
@@ -248,8 +262,12 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         result = {**(result or {}), 'cover': cover}
     if station is not None:
         result = {**(result or {}), 'station_check': station}
+    if keys is not None:
+        result = {**(result or {}), 'after_answer': keys}
 
     def human(out):
+        if keys is not None:
+            out.line(keys['saved'])
         if cover is not None:
             out.line(cover['sentence'])
         if station is not None:

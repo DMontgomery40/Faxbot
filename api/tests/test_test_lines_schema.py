@@ -15,7 +15,7 @@ PRIOR = '0071_codec_decoder'  # re-chained at merge (was 0072_route_families)
 
 
 def test_test_lines_follow_the_station_check_and_are_the_only_head():
-    assert schema_test_lines.REVISION == '0075_test_lines' == schema.HEAD
+    assert schema_test_lines.REVISION == '0075_test_lines' == schema.TEST_LINES
     assert schema.CODEC_DECODER == PRIOR
     assert schema_test_lines.TABLES <= schema.STRICT_TABLES and len(schema_test_lines.TABLES) == 3
     from pathlib import Path

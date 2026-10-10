@@ -26,5 +26,5 @@ def test_current_schema_validation_builds_only_the_selected_description(database
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
     # One selected description and, if needed, one head description for checking
     # reserved names. Intermediate descriptions would immediately be discarded.
-    assert built and set(built) == {'schema_test_lines'}
+    assert built and set(built) == {'schema_after_answer'}
     assert len(built) <= 2

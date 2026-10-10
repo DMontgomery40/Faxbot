@@ -166,6 +166,8 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
         "UserEvent",
         "Return",
         "Gosub",
+        # Keys a phone menu needs after answer, before SendFAX (routing/after_answer.py); never a call.
+        "SendDTMF",
     }
     # The subroutines are the base64 helper, which only sets variables, and patch 0004's far-end frames,
     # which only reports them (one FaxFrames event, never a second result, a call or an answer).

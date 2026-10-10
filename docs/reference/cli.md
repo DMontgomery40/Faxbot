@@ -2868,7 +2868,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -2896,6 +2896,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--needs-cover / --no-cover-needed`: Whether this recipient needs a cover sheet: its faxes then keep their cover even when the sender sends the cover&#x27;s notice in the header.
 * `--station-check WARN|REFUSE`: When this number answers as another fax machine: warn (the fax goes on and Sent says so) or refuse (Faxbot hangs up before any page).
 * `--expected-station NUMBER`: A fax number this recipient&#x27;s machine shows, such as the one on its letterhead, so Faxbot expects it.
+* `--after-answer KEYS|none`: Keys to press once this number answers, before the fax starts, for a fax machine behind a phone menu: such as 2, or 2w105 (w is a short pause, W a one-second pause). &#x27;none&#x27; presses none. Only calls over your trunk can press keys, and the seconds in the menu are billed.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`

@@ -42,6 +42,7 @@ import { FaxCertaintyItem } from './work/SentCertainty';
 import { SentContinuation } from './work/SentContinuation';
 import { SentHeaderNotice } from './HeaderNotice';
 import { SentStationCheck } from './StationCheck';
+import { SentAfterAnswer } from './delivery/AfterAnswer';
 import { DigitalFaxOutcome } from './delivery/DigitalMessages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
@@ -859,6 +860,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           {detailJob && <SentHeaderNotice client={client} jobId={detailJob.id} />}
           {/* The station a call answered as, when it was not the one Faxbot expected (routing/stations.py). */}
           {detailJob && <SentStationCheck client={client} jobId={detailJob.id} />}
+          {detailJob && <SentAfterAnswer client={client} jobId={detailJob.id} />}
           <Divider sx={{ my: 2 }} />
           <Typography variant="h6" component="h2" gutterBottom>Delivery attempts</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

@@ -93,6 +93,15 @@ def peer_route_fields(token: str, address: str) -> Dict[str, str]:
             "Variable": f"FAXBOT_CHECK={token},FAXBOT_PEER_ADDRESS={address}"}
 
 
+DTMF_VARIABLE = re.compile(r"(?:^|,)FAXBOT_DTMF=([0-9*#wW]{1,32})(?=,|$)")
+
+
+def requested_keys(fields: Dict[str, str]) -> Optional[str]:
+    """The keys an Originate's fields press after answer (routing/after_answer.py), or None."""
+    found = DTMF_VARIABLE.search(fields.get("Variable", ""))
+    return found.group(1) if found else None
+
+
 def requested_subaddress(fields: Dict[str, str]) -> Optional[str]:
     """The subaddress an Originate's fields ask for, or None."""
     found = SUBADDRESS_VARIABLE.search(fields.get("Variable", ""))
@@ -122,6 +131,7 @@ def prepare_originate_fields(
     t0_ms: Optional[int] = None,
     csi_expect: Optional[str] = None,
     csi_refuse: bool = False,
+    dtmf: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -141,6 +151,8 @@ def prepare_originate_fields(
     end's machine says it takes one.
     ``t0_ms``, ``csi_expect`` and ``csi_refuse`` are patch 0007's T0 cap and station check
     (``routing/stations.py``): FAXBOT_T0_MS, FAXBOT_CSI_EXPECT (digits separated by dots) and FAXBOT_CSI_REFUSE.
+    ``dtmf`` is the keys pressed once the call is answered, before the fax starts (``routing/after_answer.py``,
+    FAXBOT_DTMF): 0-9, * and #, with w and W pauses.
     ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
     direct/peer_call.py): the call goes there, inside the tunnel, instead of
     over ``endpoint``. The caller checked the tunnel first.
@@ -226,6 +238,11 @@ def prepare_originate_fields(
         variables["FAXBOT_CSI_EXPECT"] = csi_expect
         if csi_refuse:
             variables["FAXBOT_CSI_REFUSE"] = "yes"
+    # Digits after answer (routing/after_answer.py): [faxbot-send] presses them before SendFAX.
+    if dtmf is not None:
+        if not isinstance(dtmf, str) or not re.fullmatch(r"[0-9*#wW]{1,32}", dtmf):
+            raise ValueError("Unsupported AMI keys after answer")
+        variables["FAXBOT_DTMF"] = dtmf
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -461,10 +478,18 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
         # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
         limits.update(peer=peer.endpoint, iaf="peer")
-    elif sip_trunk.configured(values) and tiff_path != "poll":
+    else:
+        # Keys to press after this number answers (routing/after_answer.py); raises rather than dial without them.
+        from .routing import after_answer
+        keys = after_answer.for_number(_database(), dest)
+        if keys:
+            limits["dtmf"] = keys
+            limits.pop("t38_now", None)  # the keys go out on the voice call, before any request for T.38
+    if peer is None and sip_trunk.configured(values) and tiff_path != "poll":
         # Patch 0007 (routing/stations.py): the station check before any page, and the cap on waiting for a fax
-        # answer on a trunk billed by the minute.
-        from .routing.stations import call_guard
+        # answer on a trunk billed by the minute; behind a phone menu, neither the cap nor the dialled number.
+        from .routing import after_answer, stations
+        call_guard = after_answer.call_guard if limits.get("dtmf") else stations.call_guard
         guard = call_guard(values, job_id, dest, engine=_database(), mailbox_id=mailbox_id)
         if guard.t0_ms:
             limits["t0_ms"] = guard.t0_ms
@@ -901,6 +926,10 @@ class AMIClient:
         subaddress = requested_subaddress(fields)
         if subaddress:
             submission["Subaddress"] = subaddress
+        # The keys pressed after answer, kept per attempt for Sent details (routing/after_answer.py).
+        keys = requested_keys(fields)
+        if keys:
+            submission["Digits"] = keys
         if peer is not None:
             submission["Peer"] = peer.peer_id
         if trunk and trunk != "sip":

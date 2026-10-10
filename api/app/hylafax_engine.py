@@ -739,9 +739,10 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
 
     The sixth field says whether this call may use T.38 (1) or stays audio (0). A call over a trunk other than
     the first adds a seventh: the trunk's endpoint, which must be one of ``endpoints``, the trunks Faxbot
-    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``).
+    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``). A call that presses keys after answer
+    (``routing/after_answer.py``) always has the seventh and adds an eighth: the keys, for ``Dial``'s ``D()``.
     """
-    from .ami import FAX_PREFERENCE_VARIABLE
+    from .ami import FAX_PREFERENCE_VARIABLE, requested_keys
     channel = fields['Channel']
     match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
                          channel)
@@ -754,6 +755,9 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
         raise ValueError('Unsupported engine call plan')
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
     plan = f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    keys = requested_keys(fields)
+    if keys:
+        return f'{plan}/{match.group(2)}/{keys}'
     return plan if match.group(2) == 'trunk-endpoint' else f'{plan}/{match.group(2)}'
 
 
@@ -924,6 +928,11 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
                       'Preset': values.sip_trunk_preset or '',
                       'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    from .ami import requested_keys
+    keys = requested_keys(fields)
+    if keys:
+        # The keys this call presses after answer, kept per attempt for Sent details (routing/after_answer.py).
+        job.submission.update(Digits=keys, Engine='sslfax')
     if trunk and trunk != sip_trunk.PRIMARY:
         job.submission['Trunk'] = trunk
     learned = getattr(settings, 'learned', None)

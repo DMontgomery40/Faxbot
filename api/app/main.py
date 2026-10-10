@@ -90,6 +90,7 @@ from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
 from .routing.stations_http import router as routing_stations_router
 from .test_lines_http import router as test_lines_router
+from .routing.after_answer_http import router as routing_after_answer_router
 from .routing.route_families_http import router as route_families_router
 from .receive_readiness_http import router as receive_readiness_router
 from .power import router as power_router
@@ -236,6 +237,7 @@ app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
 app.include_router(routing_stations_router)
 app.include_router(test_lines_router)
+app.include_router(routing_after_answer_router)
 app.include_router(route_families_router)
 app.include_router(receive_readiness_router)
 app.include_router(power_router)
