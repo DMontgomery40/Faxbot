@@ -13,11 +13,24 @@ sentence. An unreadable UPS or an unknown duration never holds a fax: Diagnostic
 Nothing here sends, resends or drops a fax: the start rules (jo's ``schedule.py``/``capacity.py``) ask
 ``admission_for`` and keep the fax ready while it says hold, urgent or not; an uncertain outcome keeps its
 usual reconciliation. Not yet run against a real UPS.
+
+A held fax goes out by itself (brief 99, item 4). The hold keeps what the call needed (``power_hold_events``,
+0081). While any fax is held for power, the routing background task reads the UPS every
+``RELEASE_INTERVAL_SECONDS`` (``release_step``) and releases the hold, with no person needed, as soon as there is
+evidence the call can finish: mains power is back, or the runtime covers the call, its reserve and
+``RELEASE_MARGIN_SECONDS`` more (so a runtime estimate that wobbles does not hold and release the fax again and
+again). Turning the UPS check off releases it too, because you told Faxbot to stop weighing power. An unreadable
+UPS keeps it held: a fax held for power waits for evidence that the power is back, and Check again still sends
+it. A release only lets the next claim try the fax again, which weighs the power again first; it never touches an
+attempt, so nothing that may have been sent is ever sent again. Sent says what happened in one sentence
+(``history``). Tested with a fake NUT server; not yet run against a real UPS.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
+import math
 import threading
 import time
 import uuid
@@ -34,6 +47,13 @@ from .config_runtime import run_lifecycle_step
 DEFAULT_RESERVE_SECONDS = 120
 HAND_OVER_SECONDS = 60
 CACHE_SECONDS = 20.0
+# While a fax is held for power, how often the UPS is read to see whether it can go (the cache above still applies).
+RELEASE_INTERVAL_SECONDS = 30.0
+# A fax held for power goes on battery only when the runtime covers its call and reserve with this much to spare.
+RELEASE_MARGIN_SECONDS = 60
+# Why a held fax was released, for Sent.
+RELEASED_BECAUSE = {'mains': 'when the power came back', 'runtime': 'when the battery could cover the call',
+                    'ups_off': 'after the UPS check was turned off'}
 THIS_SERVER, SERVICE = 'this_server', 'service'
 # Accounts whose calls run on this server's own fax engine, so the whole call needs this office's power.
 LOCAL_PROVIDERS = ('sip', 'freeswitch')
@@ -169,6 +189,10 @@ class Admission:
     action: str               # 'go', 'other' (use ``account``) or 'hold'
     sentence: str | None = None
     account: str | None = None
+    # For 'hold': what the call needs from this office's power, the reserve and the runtime it was weighed against.
+    needed_seconds: int | None = None
+    reserve_seconds: int | None = None
+    runtime_seconds: int | None = None
 
 
 def admission(found: PowerState, *, provider, p90_seconds, urgent=False, others=()) -> Admission:
@@ -195,7 +219,9 @@ def admission(found: PowerState, *, provider, p90_seconds, urgent=False, others=
                 'holds it, unsent, until the power is back or the battery can cover the call.')
     if urgent:
         sentence += ' It is urgent: if you have another way to send it, use it now.'
-    return Admission('hold', sentence)
+    needed = need(provider, p90_seconds)
+    return Admission('hold', sentence, needed_seconds=int(math.ceil(needed)) if needed is not None else None,
+                     reserve_seconds=int(reserve or 0), runtime_seconds=runtime)
 
 
 def admission_for(db, values, account_key, p90_seconds, *, urgent=False, others=(), reader=nut.read) -> Admission:
@@ -207,6 +233,162 @@ def admission_for(db, values, account_key, p90_seconds, *, urgent=False, others=
     account = account_named(values, account_key)
     provider = account.provider if account is not None else account_key
     return admission(found, provider=provider, p90_seconds=p90_seconds, urgent=urgent, others=others)
+
+
+# -- held faxes go out by themselves -------------------------------------------------------------------------------
+
+def _events(db):
+    return sa.Table('power_hold_events', sa.MetaData(), autoload_with=db)
+
+
+def record_holds(db, job_ids, admitted: Admission, *, now=None) -> int:
+    """Mark the open hold of each fax in ``job_ids`` (the transport just held them) as a power hold, with what its
+    call needed; the release step only ever releases holds marked so. Returns how many were marked."""
+    now = now or utcnow()
+    events = _events(db)
+    holds = sa.Table('outbound_holds', sa.MetaData(), autoload_with=db)
+    marked = 0
+    with db.begin() as connection:
+        for job_id in dict.fromkeys(job_ids):
+            hold_id = connection.execute(sa.select(holds.c.id).where(
+                holds.c.job_id == job_id, holds.c.state == 'open', holds.c.kind == 'no_route')
+                .order_by(holds.c.requested_at.desc(), holds.c.id.desc()).limit(1)).scalar()
+            if hold_id is None:
+                continue
+            connection.execute(events.insert().values(
+                id=uuid.uuid4().hex, job_id=job_id, hold_id=hold_id, event='held', why='battery',
+                needed_seconds=admitted.needed_seconds, reserve_seconds=admitted.reserve_seconds,
+                runtime_seconds=admitted.runtime_seconds, created_at=now))
+            marked += 1
+    return marked
+
+
+def held_for_power(db) -> list:
+    """The open holds Faxbot made for power and has not released: [{hold_id, job_id, needed, reserve}]."""
+    events = _events(db)
+    holds = sa.Table('outbound_holds', sa.MetaData(), autoload_with=db)
+    released = sa.select(events.c.hold_id).where(events.c.event == 'released', events.c.hold_id.is_not(None))
+    with db.connect() as connection:
+        rows = connection.execute(
+            sa.select(events.c.hold_id, events.c.job_id, events.c.needed_seconds, events.c.reserve_seconds)
+            .select_from(events.join(holds, holds.c.id == events.c.hold_id))
+            .where(events.c.event == 'held', holds.c.state == 'open', events.c.hold_id.not_in(released))
+            .order_by(events.c.created_at, events.c.id)).mappings().all()
+    return [{'hold_id': row['hold_id'], 'job_id': row['job_id'], 'needed': row['needed_seconds'],
+             'reserve': row['reserve_seconds']} for row in rows]
+
+
+def release_reason(found: PowerState, item) -> str | None:
+    """Why a fax held for power may go now ('mains', 'runtime', 'ups_off'), or None while it must wait. Pure.
+
+    Only evidence releases it: mains power, or a runtime that covers the call, its reserve and
+    ``RELEASE_MARGIN_SECONDS`` more. An unreadable UPS is no evidence, so the fax stays held."""
+    if not found.configured:
+        return 'ups_off'
+    if found.reading is None:
+        return None
+    if not found.on_battery:
+        return 'mains'
+    runtime, needed = found.runtime_seconds, item.get('needed')
+    if runtime is None or needed is None:
+        return None
+    reserve = item.get('reserve')
+    reserve = found.reserve_seconds if reserve is None else reserve
+    if power_allows(runtime, needed + RELEASE_MARGIN_SECONDS, reserve):
+        return 'runtime'
+    return None
+
+
+def release_step(db, delivery, *, reader=nut.read, now=None) -> int:
+    """Release every fax held for power that may go now (``release_reason``); the routing background task runs it.
+
+    Reads nothing (not even the UPS) while no fax is held for power. Each release happens under the delivery
+    lock, only for a hold still open and a fax still waiting to go (``ready``), and writes the hold's release, a
+    ``route_released`` event and the power record; then the worker is woken. Returns how many were released."""
+    waiting = held_for_power(db)
+    if not waiting:
+        return 0
+    found = state(db, reader=reader)
+    due = [(item, why) for item in waiting for why in [release_reason(found, item)] if why is not None]
+    if not due:
+        return 0
+    from .outbound_store import _event
+    holds = sa.Table('outbound_holds', sa.MetaData(), autoload_with=db)
+    events = _events(db)
+    released = 0
+    with delivery.configuration._locked() as connection:
+        now = now or utcnow()
+        for item, why in due:
+            hold = connection.execute(sa.select(holds).where(holds.c.id == item['hold_id'])).mappings().one_or_none()
+            if hold is None or hold['state'] != 'open':
+                continue  # someone decided on it, or it was refused, since it was read
+            row = connection.execute(sa.select(delivery.deliveries.c.state).where(
+                delivery.deliveries.c.id == item['job_id'])).scalar()
+            if row != 'ready':
+                continue  # only a fax still waiting to go is ever released
+            changed = connection.execute(holds.update().where(
+                holds.c.id == hold['id'], holds.c.version == hold['version']).values(
+                state='released', decided_at=now,
+                reason=f'Released by itself {RELEASED_BECAUSE[why]}.'[:500],
+                version=hold['version'] + 1, updated_at=now)).rowcount
+            if changed != 1:
+                continue
+            connection.execute(events.insert().values(
+                id=uuid.uuid4().hex, job_id=item['job_id'], hold_id=hold['id'], event='released', why=why,
+                needed_seconds=item['needed'], reserve_seconds=item['reserve'],
+                runtime_seconds=found.runtime_seconds, created_at=now))
+            _event(connection, delivery.events, item['job_id'], 'route_released', now, details={'reason': (
+                f'Held while on battery; released by itself {RELEASED_BECAUSE[why]}.')})
+            released += 1
+    if released:
+        logging.getLogger(__name__).info('Released %d fax(es) held while on battery (%s).', released,
+                                         ', '.join(sorted({why for _, why in due})))
+        from .outbound_wake import wake
+        wake.notify()
+    return released
+
+
+def _local_time(moment, zone_name, other=None):
+    """'9:41 AM MDT', with the day when ``other`` falls on another local day ('4 Oct 9:41 AM MDT')."""
+    from .people_time import _local, clock, short
+    if other is not None and _local(moment, zone_name).date() != _local(other, zone_name).date():
+        return short(moment, zone_name)
+    return clock(moment, zone_name)
+
+
+def history(db, job_id, *, zone_name=None) -> str | None:
+    """One sentence for Sent about a fax held while on battery, or None when it never was:
+
+    "Held at 9:41 AM MDT while on battery; sent at 10:02 AM MDT when the power came back." It says "sent" only
+    when an attempt was submitted after the release."""
+    try:
+        events = _events(db)
+    except sa.exc.NoSuchTableError:
+        return None
+    with db.connect() as connection:
+        rows = connection.execute(sa.select(events).where(events.c.job_id == job_id)
+                                  .order_by(events.c.created_at, events.c.id)).mappings().all()
+        if not rows:
+            return None
+        first = next((row for row in rows if row['event'] == 'held'), None)
+        if first is None:
+            return None
+        last_held = max((row for row in rows if row['event'] == 'held'), key=lambda row: row['created_at'])
+        releases = [row for row in rows if row['event'] == 'released' and row['created_at'] >= last_held['created_at']]
+        release = releases[-1] if releases else None
+        sent_at = None
+        if release is not None:
+            attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=db)
+            sent_at = connection.execute(sa.select(sa.func.min(attempts.c.submitted_at)).where(
+                attempts.c.job_id == job_id, attempts.c.submitted_at >= release['created_at'])).scalar()
+    held = f'Held at {_local_time(first["created_at"], zone_name)} while on battery'
+    if release is None:
+        return f'{held}; it goes by itself when the power is back or the battery can cover the call.'
+    because = RELEASED_BECAUSE.get(release['why'], 'by itself')
+    if sent_at is None:
+        return (f'{held}; released at {_local_time(release["created_at"], zone_name, first["created_at"])} '
+                f'{because}, and waiting to go.')
+    return f'{held}; sent at {_local_time(sent_at, zone_name, first["created_at"])} {because}.'
 
 
 # -- HTTP: Administration → System health → Power ----------------------------------------------------------------------

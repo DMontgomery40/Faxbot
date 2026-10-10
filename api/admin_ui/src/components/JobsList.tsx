@@ -765,6 +765,13 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {detailJob.waiting_reason}
                       </Typography>
                     )}
+                    {/* Held while the office ran on battery, and sent by itself when the power allowed. */}
+                    {detailJob.power_hold && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-power-hold">
+                        {detailJob.power_hold}
+                      </Typography>
+                    )}
                     {/* The send-by time, and whether the fax may miss it. */}
                     {detailJob.send_by && (
                       <Typography component="span" variant="body2" display="block"

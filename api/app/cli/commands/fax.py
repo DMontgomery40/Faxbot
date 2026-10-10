@@ -362,6 +362,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         route.append(('NPPES', cost['recipient_warning']['sentence']))
     if job.get('waiting_reason'):
         route.insert(0, ('Waiting', job['waiting_reason']))
+    # Held while the office ran on battery, and sent by itself when the power allowed (power.py).
+    if job.get('power_hold'):
+        route.append(('On battery', job['power_hold']))
     if job.get('urgent'):
         route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
     # The send-by time, and whether the fax may miss it.

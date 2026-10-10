@@ -1771,9 +1771,11 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     # The coding the newest attempt asked for, measured on its pages, and what the call took (pages/coding.py).
     from .pages import coding as page_coding
     coding_view = await run_lifecycle_step(lambda: page_coding.sent_view(_configuration_manager().store.engine, job_id))
+    # Held while on battery, and sent by itself when the power allowed (power.py): one sentence, else None.
+    power_hold = await run_lifecycle_step(lambda: _power_hold_sentence(job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
-            'coding': coding_view,
+            'coding': coding_view, 'power_hold': power_hold,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
@@ -1781,6 +1783,17 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
             'waiting_reason': await run_lifecycle_step(
                 lambda: _waiting_reason(_configuration_manager().store, job_id, datetime.utcnow()))}
+
+
+def _power_hold_sentence(job_id):
+    """``power.history`` for Sent details; a database that cannot be read leaves it out, logged."""
+    from .power import history
+    try:
+        return history(_configuration_manager().store.engine, job_id, zone_name=settings.time_zone)
+    except sa.exc.SQLAlchemyError:
+        logging.getLogger(__name__).warning('Fax %s: its hold while on battery could not be read.', job_id,
+                                            exc_info=True)
+        return None
 
 
 def _send_by_view(row):

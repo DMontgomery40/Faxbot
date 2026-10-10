@@ -403,7 +403,7 @@ class RoutedTransport:
             admitted = _unexpected_raises(lambda: self._admission(revision, plan, place, measured, job))
             if admitted is not None and admitted.action == 'hold':
                 self._skipped = tuple(skipped)
-                self._hold(claim, replace(plan, skipped=tuple(skipped)), admitted.sentence)
+                self._hold_for_power(claim, replace(plan, skipped=tuple(skipped)), admitted)
             if admitted is not None and admitted.action == 'other' and admitted.account != route.key:
                 skipped.append((route.key, 'power'))
                 continue
@@ -447,8 +447,28 @@ class RoutedTransport:
             # a call on the battery by the fax's own account instead.
             admitted = _unexpected_raises(lambda: self._admission(revision, plan, powered, measured, job,
                                                                   alone=True))
-            self._hold(claim, replace(plan, skipped=tuple(skipped)), admitted.sentence)
+            self._hold_for_power(claim, replace(plan, skipped=tuple(skipped)), admitted)
         return None, claim
+
+    def _hold_for_power(self, claim, plan, admitted):
+        """Hold the fax in Sent because the office is on battery (power.py), marking the hold with what its call
+        needed so it goes by itself once the power allows (``power.release_step``). Raises RouteHeld."""
+        try:
+            self._hold(claim, plan, admitted.sentence if admitted is not None else None)
+        except RouteHeld:
+            if admitted is not None and admitted.action == 'hold':
+                import sqlalchemy as sa
+                from ..power import record_holds
+                try:
+                    record_holds(self.store.configuration.engine, [member.job_id for member in claim.everyone],
+                                 admitted)
+                except sa.exc.SQLAlchemyError:
+                    # The fax is held either way; unmarked, it waits for a person's Check again instead of going by
+                    # itself, and the cause is logged.
+                    logging.getLogger(__name__).warning(
+                        'Fax %s is held while on battery, but Faxbot could not record it to release it by itself.',
+                        claim.job_id, exc_info=True)
+            raise
 
     def _admission(self, revision, plan, place, measured=None, job=None, *, alone=False):
         """``power.Admission`` (power.py, the UPS) for the provider choice at ``place``, the choices after it its

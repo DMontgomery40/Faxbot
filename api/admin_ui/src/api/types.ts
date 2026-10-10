@@ -109,6 +109,8 @@ export interface FaxJob extends DeliveryMetadata {
   urgent?: boolean;
   // Why it has not started yet, or why its number stays reserved; null otherwise.
   waiting_reason?: string | null;
+  // Held while the office ran on battery, and sent by itself when the power allowed; one sentence.
+  power_hold?: string | null;
   // The time the sender needs it sent by, and one sentence (whether it may miss it); null without one.
   send_by?: { at: string; sentence: string; at_risk: boolean } | null;
 }

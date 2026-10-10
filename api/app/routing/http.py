@@ -64,7 +64,22 @@ def _background(app):
                                              warning='Fax route fallback is temporarily unavailable.')),
             # Time windows your rules hold faxes for open by themselves; this marks them released for the history.
             ('faxbot-route-holds', repeat(_holds_step(delivery), interval=30.0, initial_delay=10.0,
-                                          warning='Held faxes could not be checked.'))]
+                                          warning='Held faxes could not be checked.')),
+            # Faxes held while the office ran on battery go by themselves once the power allows (power.py); the UPS
+            # is read only while one is held.
+            ('faxbot-power-release', repeat(_power_step(engine, delivery), interval=_power_interval(),
+                                            initial_delay=15.0, warning='Faxes held while on battery could not be '
+                                                                        'checked.'))]
+
+
+def _power_step(engine, delivery):
+    from ..power import release_step
+    return lambda: bool(release_step(engine, delivery))
+
+
+def _power_interval():
+    from ..power import RELEASE_INTERVAL_SECONDS
+    return RELEASE_INTERVAL_SECONDS
 
 
 def _holds_step(delivery):
