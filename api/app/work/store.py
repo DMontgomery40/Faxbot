@@ -55,19 +55,28 @@ def details_json(details):
     return text
 
 
-def _target(control, principal_id):
-    """A policy subject for another enabled user, with no credential or key ceiling."""
+def _target(control, principal_id, *, grants_only=False):
+    """A policy subject for another enabled user, with no credential or key ceiling.
+
+    By default it is judged as if acting now, so a user who has not replaced their temporary password has
+    no authority (``intake/sources/keys.may_send_on`` relies on that). ``grants_only`` judges what the
+    user holds instead: the owner, backup or fallback of a document is chosen by their grants, and they
+    see it as soon as they sign in and set their password.
+    """
     principals, users = control.tables['access_principals'], control.tables['access_users']
     predicate = sa.exists(sa.select(1).select_from(principals.join(users, users.c.id == principals.c.id)).where(
         principals.c.id == principal_id, principals.c.kind == 'user', principals.c.enabled == 1))
-    return SimpleNamespace(principal_id=principal_id), _Source(predicate, None, False, False)
+    return SimpleNamespace(principal_id=principal_id), _Source(predicate, None, False, False, grants_only)
 
 
 def may_own_on(control, connection, principal_id, resource_id):
-    """Whether this user can see this received document now (work:read and inbound:read)."""
+    """Whether this user holds work:read and inbound:read on this received document now.
+
+    A temporary password that still has to be replaced does not count against them (see ``_target``).
+    """
     if not principal_id or not resource_id:
         return False
-    context, source = _target(control, principal_id)
+    context, source = _target(control, principal_id, grants_only=True)
     return all(connection.execute(control._allowed_query(context, source, permission, resource_id=resource_id))
                .first() is not None for permission in OWNER_PERMISSIONS)
 
@@ -76,7 +85,7 @@ def may_back_up_on(control, connection, principal_id, mailbox_resource_id):
     """Whether this user can see every document in the mailbox (both permissions at it or above)."""
     if not principal_id or not mailbox_resource_id:
         return False
-    context, source = _target(control, principal_id)
+    context, source = _target(control, principal_id, grants_only=True)
     return all(connection.execute(control._coverage_query(context, source, permission, mailbox_resource_id))
                .first() is not None for permission in OWNER_PERMISSIONS)
 

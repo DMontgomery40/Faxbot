@@ -37,6 +37,9 @@ class _Source:
     binding_id: str | None
     bootstrap: bool
     reset_required: bool
+    # True only for another person judged by what they hold (work owner, backup, fallback). A temporary
+    # password they have not replaced yet stops them acting now; it does not take away what they hold.
+    grants_only: bool = False
 
 
 class AccessControl:
@@ -225,6 +228,8 @@ class AccessControl:
             authority = sa.and_(authority, sa.exists(sa.select(1).where(
                 ceiling.c.key_binding_id == source.binding_id, ceiling.c.permission_id == permission,
                 self._scope_match(ceiling.c.resource_id, resource, parent))))
+        if source.grants_only:
+            return sa.and_(source.predicate, authority)
         return sa.and_(source.predicate, unrestricted, authority)
 
     @staticmethod
