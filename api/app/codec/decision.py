@@ -57,11 +57,9 @@ class Choice:
 
 
 def predictor():
-    """(predict, Shape) from the shared predictor, or None while it is not installed."""
-    try:
-        from ..routing.predict import Shape, predict
-    except ImportError:
-        return None
+    """(predict, Shape) from the shared predictor (routing/predict.py), imported when first used as the codec's other
+    routing imports are; it is merged, so a failed import is a defect and raises."""
+    from ..routing.predict import Shape, predict
     return predict, Shape
 
 
@@ -158,10 +156,7 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
     pages' measured sizes in the coding the predictor expects for the call.
     """
     from .. import codec
-    tools = tools or predictor()
-    if tools is None:
-        return Choice(False, 'Faxbot cannot yet predict what this route charges, so the fax goes as normal pages.')
-    predict, Shape = tools
+    predict, Shape = tools or predictor()
     encode = encoder or codec.encode_document
     usable = usable if exact_raster and not provider_renders else None
     if usable is not None:

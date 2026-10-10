@@ -484,6 +484,15 @@ const GROUP_BYTES = 32;
 const HEADER_OFFSETS = [0xfffffff0, 0xfffffff1, 0xfffffff2];
 const LAYOUTS = { 1: 'grid', 2: 'runs', 3: 'picture', 5: 'capacity' };
 export const NEWER = 'These encoded pages were made by a newer version of Faxbot; update this decoder to read them.';
+// The Python reader's refusals (api/app/codec/pages.py RESIZED and PREVIEW), said for this page.
+export const RESIZED = 'This page was resized after it arrived, and these encoded pages can be read only from the fax '
+  + 'image exactly as received, such as the PDF a fax service offers for download. Open that file here instead.';
+export const PREVIEW = 'This is a small preview of the fax rather than the fax itself. Open the full-size fax file here '
+  + 'instead, such as the PDF a fax service offers for download.';
+
+function runsOfRow(row) {
+  return runsOf(row, row.length, 0);
+}
 
 function runsOf(gray, width, y) {
   const runs = [];
@@ -662,10 +671,10 @@ function settledBits(runs, width, cum) {
   return room === RESERVE ? out.join('') : null;
 }
 
-function decodeCapacityLine(page, y, profile, tag) {
-  const runs = runsOf(page.gray, page.width, y).map(([, length]) => length);
-  if (page.gray[y * page.width] < 128 || runs.length < 8) return null;
-  const width = page.width;
+function decodeCapacityLine(row, profile, tag) {
+  const runs = runsOfRow(row).map(([, length]) => length);
+  if (row[0] < 128 || runs.length < 8) return null;
+  const width = row.length;
   let room = width; let index = 0;
   while (room > RESERVE) {
     if (index >= runs.length) return null;
@@ -717,11 +726,11 @@ function paths(colour, limit) {
   return result;
 }
 
-function decodeRunLine(page, y, limit, tag) {
-  const runs = runsOf(page.gray, page.width, y).map(([, length]) => length);
-  if (page.gray[y * page.width] < 128 || runs.length < 3) return null;
+function decodeRunLine(row, limit, tag) {
+  const runs = runsOfRow(row).map(([, length]) => length);
+  if (row[0] < 128 || runs.length < 3) return null;
   const reserve = 16 * 7 + limit + 1;
-  let room = page.width; let colour = 0; let index = 0; let bits = '';
+  let room = row.length; let colour = 0; let index = 0; let bits = '';
   const data = [paths(0, limit), paths(1, limit)];
   while (room > reserve) {
     const path = data[colour].get(runs[index]);
@@ -748,13 +757,68 @@ function decodeRunLine(page, y, limit, tag) {
   return { offset, payload };
 }
 
+// The exact layouts' rows (two-dot cells): {ladder columns: [page width they were drawn for, first cell's dot]},
+// as api/app/codec/pages.py _exact_widths() gives them; api/tests/test_codec_decoder.py checks they still match.
+const EXACT_WIDTHS = { 831: [1728, 32], 1253: [2592, 43], 1673: [3456, 55] };
+const EXACT_LAYOUTS = new Set(['runs', 'capacity']);
+const PREVIEW_WIDTH = 1000;
+const NO_HEADER = Symbol('no header');
+
+// The page with white paper. Every payload page has white margins at both sides, so a page whose left and right
+// edges are mostly dark arrived inverted (pages.py paper_white).
+function paperWhite(page) {
+  const { width, height, gray } = page;
+  const edge = Math.max(1, Math.min(Math.floor(width / 50), 16));
+  let dark = 0;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < edge; x += 1) {
+      if (gray[row + x] < 128) dark += 1;
+      if (gray[row + width - 1 - x] < 128) dark += 1;
+    }
+  }
+  if (dark * 2 <= 2 * edge * height) return page;
+  return { width, height, gray: gray.map((value) => 255 - value) };
+}
+
+function upsideDown(page) {
+  return { width: page.width, height: page.height, gray: page.gray.slice().reverse() };
+}
+
+// One scan line moved back by shift dots and cut or filled to width: white where the receiver cut the left edge,
+// and the last dot's colour on the right, where a run-coded row ends in its padding run (pages.py _aligned).
+function alignedRow(page, y, shift, width) {
+  const line = page.gray.subarray(y * page.width, (y + 1) * page.width);
+  if (shift === 0 && line.length === width) return line;
+  const row = new Uint8Array(width);
+  for (let x = 0; x < width; x += 1) {
+    const source = x + shift;
+    row[x] = source < 0 ? 255 : source < line.length ? line[source] : (x > 0 ? row[x - 1] : 255);
+  }
+  return row;
+}
+
+// A page read; null when it is not a payload page. A page that arrived inverted or upside down is turned back
+// first, and the rows of an exact layout moved sideways or padded to another width are moved back. A page of an
+// exact layout drawn again at another size reads as { resized: true }; a newer format as { newer: true }.
 export function readPage(page) {
+  const white = paperWhite(page);
+  const read = readOriented(white);
+  if (read !== NO_HEADER) return read;
+  // Upside down: the ladder reads either way, the header only the right way up.
+  const turned = readOriented(upsideDown(white));
+  return turned === NO_HEADER ? null : turned;
+}
+
+function readOriented(page) {
   const ladder = findLadder(page);
   if (!ladder) return null;
   const { edges } = ladder;
   const columns = edges.length - 1;
   const centres = Array.from({ length: columns }, (_, i) => (edges[i] + edges[i + 1]) >> 1);
   const sizes = groupSizes(columns);
+  // A ladder too narrow to carry a group (a small picture of a page) is not a payload page.
+  if (sizes.some((size) => size <= 0)) return null;
   let header = null; let newer = false;
   for (let y = 0; y < page.height && !header; y += 1) {
     const bits = gridBits(page, y, centres);
@@ -766,12 +830,24 @@ export function readPage(page) {
     }
   }
   if (!header && newer) return { newer: true };
-  if (!header) return null;
+  if (!header) return NO_HEADER;
+  // Cells of unequal width: the page was drawn again at another size (said if the pages then fail to decode).
+  const resized = edges.some((edge, i) => i > 1 && edge - edges[i - 1] !== edges[1] - edges[0]);
+  let rowWidth = page.width; let shift = 0;
+  if (EXACT_LAYOUTS.has(header.layout)) {
+    // Exact rows: every cell exactly as drawn (two dots), read at the width they were drawn for and moved back to
+    // where the ladder says they started.
+    const exact = EXACT_WIDTHS[columns];
+    if (!exact || edges.some((edge, i) => i > 0 && edge - edges[i - 1] !== 2)) return { resized: true };
+    [rowWidth] = exact;
+    shift = edges[0] - exact[1];
+  }
   const segments = new Map();
   for (let y = ladder.y; y < page.height; y += 1) {
     if (header.layout === 'runs' || header.layout === 'capacity') {
-      const line = header.layout === 'runs' ? decodeRunLine(page, y, header.runLimit, header.tag)
-        : decodeCapacityLine(page, y, header.profile, header.tag);
+      const row = alignedRow(page, y, shift, rowWidth);
+      const line = header.layout === 'runs' ? decodeRunLine(row, header.runLimit, header.tag)
+        : decodeCapacityLine(row, header.profile, header.tag);
       if (line && line.payload.length) segments.set(`${line.offset}:${line.payload.length}`, { offset: line.offset, bits: line.payload });
       continue;
     }
@@ -785,7 +861,7 @@ export function readPage(page) {
       segments.set(`${bitOffset}:${s.length}`, { offset: bitOffset, bits: s });
     }
   }
-  return { header, segments: [...segments.values()] };
+  return { header, segments: [...segments.values()], resized };
 }
 
 export function assemble(reads) {
@@ -887,17 +963,31 @@ export async function unpack(container, secrets = []) {
 // ---------------------------------------------------------------- everything together
 export async function decodeFiles(files, { secrets = [] } = {}) {
   const reads = [];
-  let newer = false;
+  let newer = false; let resized = false; let pages = 0; let small = true;
   for (const { bytes, type } of files) {
     for (const page of await readFile(bytes, type)) {
+      pages += 1;
+      if (page.width >= PREVIEW_WIDTH) small = false;
       const read = readPage(page);
       if (read && read.newer) newer = true;
+      else if (read && read.resized) resized = true;
       else if (read) reads.push(read);
     }
   }
+  // With no page readable, say why when a person can act on it (pages.py decode).
   if (!reads.length && newer) throw new DecodeError(NEWER);
+  if (!reads.length && pages && small) throw new DecodeError(PREVIEW);
+  if (!reads.length && resized) throw new DecodeError(RESIZED);
   if (!reads.length) throw new DecodeError('No payload pages were found in this file.');
-  const { container, pagesRead, pagesExpected } = assemble(reads);
+  let assembled;
+  try {
+    assembled = assemble(reads);
+  } catch (error) {
+    if (pages && small) throw new DecodeError(PREVIEW);
+    if (reads.some((read) => read.resized)) throw new DecodeError(RESIZED);
+    throw error;
+  }
+  const { container, pagesRead, pagesExpected } = assembled;
   const document = await unpack(container, secrets.filter(Boolean));
   return { ...document, pagesRead, pagesExpected, layout: reads[0].header.layout };
 }

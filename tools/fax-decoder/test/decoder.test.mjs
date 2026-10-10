@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError } from '../decoder.js';
+import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError, RESIZED, PREVIEW } from '../decoder.js';
 
 const folder = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const expected = JSON.parse(readFileSync(join(folder, 'expected.json'), 'utf8'));
@@ -75,3 +75,21 @@ test('a header of a newer format, layout or capacity profile is refused as made 
   header[3] = 1; header[4] = 5; header[30] = 7; header[31] = 9;
   assert.equal(decodeHeaderForTest(header), NEWER);
 });
+
+// What receivers do to a page (api/tests/codec_receipts.py): the browser reads what the Python reader reads, and
+// refuses what it refuses, with the browser's own sentence. make_fixtures.py checked each against the Python reader.
+const refusals = { resized: RESIZED, preview: PREVIEW };
+for (const [name, expect] of Object.entries(expected.receipts)) {
+  if (expect === 'decodes') {
+    test(`decodes ${name} as the Python reader does`, async () => {
+      const result = await decodeFiles([file(name)]);
+      assert.equal(result.sha256, expected.sha256);
+      assert.equal(result.pagesRead, result.pagesExpected);
+    });
+  } else {
+    test(`refuses ${name} with the ${expect} sentence`, async () => {
+      await assert.rejects(decodeFiles([file(name)]), (error) => error instanceof DecodeError
+        && error.message === refusals[expect]);
+    });
+  }
+}

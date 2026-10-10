@@ -148,3 +148,13 @@ def test_the_real_predictor_prices_an_unchosen_payload_page_from_its_measured_co
     data = sum(measured['MR']) / 14400
     assert abs(priced.seconds - (predict.SETUP_SECONDS + data + predict.PAGE_SECONDS * len(pages))) < 0.01
     assert estimated.seconds > priced.seconds * 1.3  # the fixed ratio overprices the payload page
+
+
+def test_a_missing_predictor_is_an_error_not_a_quiet_fallback(monkeypatch):
+    """routing.predict is part of Faxbot: if it cannot be imported, that is an integration failure to see, never a
+    reason to send every fax as normal pages without saying so (00-common, guards and broad excepts)."""
+    import sys
+    from app.codec import decision
+    monkeypatch.setitem(sys.modules, 'app.routing.predict', None)
+    with pytest.raises(ImportError):
+        decision.predictor()

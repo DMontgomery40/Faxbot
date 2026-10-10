@@ -817,6 +817,17 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
         return None
 
 
+def _coded_sizes(pages, usable, measured):
+    """{page_bits, piece_bits} for ``pages.packing.layout_for`` on a call with error correction: each original's
+    measured bits in the coding the call would use for the pages as they are, and what one band adds in it."""
+    from .pages import coding as codings
+    from .pages import packing
+    name = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
+                               negotiate=usable.left_out.get("JBIG") == codings.JBIG_NOT_ON_RECORD).priced
+    piece = codings.measure([packing.piece_frame(pages)], codings=(name,), tuning=usable.tuning)[name][0]
+    return {"page_bits": tuple(measured[name]), "piece_bits": piece}
+
+
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
                   boundary_seconds=None, predict=None, describe_dense=None, usable=None, measure_cache=None,
                   renderings=None, faster=None):
@@ -853,10 +864,19 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
             raise ValueError("Unknown rendering")
         sources.append((name, pages, found.rank))
         pieces[(name, "normal")] = (pages, None, None, found.rank)
+    measured_pages = {}
+
+    def measured_for(key, pages):
+        if key not in measured_pages:
+            measured_pages[key] = (codings.measure_cached(pages, measure_cache, tuning=usable.tuning)
+                                   if measure_cache is not None else codings.measure(pages, tuning=usable.tuning))
+        return measured_pages[key]
     if dense_allowed:
         for name, pages, faithful in sources:
             try:
-                layout = packing.layout_for(pages, limit)
+                coded = (_coded_sizes(pages, usable, measured_for((name, "normal"), pages))
+                         if usable is not None and usable.ecm else {})
+                layout = packing.layout_for(pages, limit, **coded)
                 if layout.pages < len(pages):
                     packed = FaxFrames(packing.render_sheets(pages, layout))
                     reason = describe_dense(len(pages), len(packed)) if describe_dense else None
@@ -875,8 +895,7 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
             shapes[key] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), key[1],
                                          boundary_seconds)
             continue
-        measured = (codings.measure_cached(pages, measure_cache, tuning=usable.tuning) if measure_cache is not None
-                    else codings.measure(pages, tuning=usable.tuning))
+        measured = measured_for(key, pages)
         choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
                                      negotiate=usable.left_out.get('JBIG') == codings.JBIG_NOT_ON_RECORD)
         choices[key] = choice
