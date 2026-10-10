@@ -257,6 +257,9 @@ class RouteFacts:
     missing: str | None = None           # why there is no price, as a clause, when ``terms`` is None
     refused: bool = False                # the route does not take this kind of number; ``missing`` says so
     origin: str | None = None            # the origin-rated row that priced the call ('any', a site, 'country:GB')
+    # When nothing published prices the number: the clause saying the rate was learned from this account's own carrier
+    # records, and when ('the rate 4 of your Telnyx call records to numbers in the United Kingdom showed, ...').
+    learned: str | None = None
 
 
 # Sentences --------------------------------------------------------------------------
@@ -659,6 +662,8 @@ def predict_from(facts, shape):
         price = _price_clause(terms, billed_pages, seconds) or f'{facts.label} charges nothing for this fax'
         if terms.published and facts.destination.kind != LOCAL:
             price += f", {facts.label}'s published price for {_what(facts)} to {_where(facts.destination)}"
+        elif facts.learned:
+            price += f', {facts.learned}'
         price += _spread_price(terms, spread, shape.pages, central, micros)
     return _with_spread(Prediction(billed_pages, seconds, cost, _sentence(price, how), False), terms, spread, billed,
                         expected_pages(terms, spread, shape.pages))

@@ -7,9 +7,10 @@ is never called the cheapest, and a flat monthly plan is "included".
 
 Rate cards rank routes until there is evidence. A caller may pass ``prices``
 instead (``routing.pricing``): what one more fax adds on each route, from the
-shared predictor and each plan's budget. A route past its normal-use budget
-then goes after every route within budget; then known cost before unknown,
-cheaper first; between equal costs a route that uses no plan budget first. When at least two reliable
+shared predictor and each plan's budget. A known cost always goes before an
+unknown one; among known costs a route past its normal-use budget goes after
+every route within budget, then cheaper first; between equal costs a route that
+uses no plan budget first. When at least two reliable
 routes each have ``min_delivered`` delivered faxes to the destination in the
 window, every attempt priced and one currency, those routes are ranked by what
 they really cost per delivered fax (``delivered.py``), failed and repeated calls
@@ -146,12 +147,12 @@ class RoutePolicy:
         def cost_rank(candidate):
             estimate = estimates[candidate.key]
             price = prices.get(candidate.key)
-            # A plan past its normal-use budget goes last; unknown cost sorts after known cost; between equal
-            # costs a route that uses no plan budget first; ties keep configured order, which puts the job's own
-            # provider first.
+            # An unknown cost never ranks ahead of a known one; among known costs a plan past its normal-use budget
+            # goes last; between equal costs a route that uses no plan budget first; ties keep configured order,
+            # which puts the job's own provider first.
             over = bool(price is not None and price.over_budget)
             uses = bool(price is not None and price.uses_budget)
-            return (over, estimate is None, estimate if estimate is not None else 0, uses, candidate.doubt,
+            return (estimate is None, over, estimate if estimate is not None else 0, uses, candidate.doubt,
                     not candidate.bound, position[candidate.key])
 
         def first_reason(candidate):

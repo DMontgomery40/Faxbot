@@ -52,7 +52,12 @@ def test_a_budget_cannot_price_a_destination_with_no_applicable_tariff(routes, k
     assert result.micros is None
     assert result.in_plan is False and result.uses_budget is False
     assert result.plan is None and result.text() == 'Price unknown'
-    assert 'unknown' in result.sentence
+    if key == 'humblefax':
+        # HumbleFax's terms limit it to the US and Canada: abroad it is not an unknown price but no route at all.
+        assert result.refused and result.sentence == ('HumbleFax does not send faxes to numbers in the United '
+                                                      'Kingdom, so this fax cannot go this way.')
+    else:
+        assert 'unknown' in result.sentence and not result.refused
 
 
 @pytest.mark.parametrize('monthly,budget', [

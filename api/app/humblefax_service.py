@@ -167,13 +167,16 @@ def humblefax_number(value: object) -> int:
 
 
 def humblefax_destination(value: object) -> int:
-    """HumbleFax's integer for a canonical +1 destination; other countries are refused."""
+    """HumbleFax's integer for a canonical US or Canadian destination; other countries are refused, including the
+    other countries that share the +1 calling code (HumbleFax's terms, section D.5, read 2026-10-09)."""
+    from .routing.destinations import classify
     from .routing.numbers import InvalidNumber, canonical_number
     try:
         number = canonical_number(value)
     except InvalidNumber:
         raise ValueError('HumbleFax fax number is invalid.') from None
-    if not number.startswith('+1'):
+    region = classify(number, 'US').region if number.startswith('+1') else None
+    if not number.startswith('+1') or region not in (None, 'US', 'CA'):
         raise ValueError('HumbleFax fax number is invalid.')
     return humblefax_number(number)
 

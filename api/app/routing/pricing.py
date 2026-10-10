@@ -45,6 +45,10 @@ class Price:
     unheld_micros: int | None = None   # with ``held``: what this fax would add with the whole room
     unheld_over: bool = False          # with ``held``: whether the whole room would be past the normal-use budget
     rate_card: object = None           # the applicable destination tariff, for displaying its rate and plan fee
+    pages: int | None = None           # the physical pages priced (a measured candidate's sent pages)
+    measured: bool = False             # priced from the fax's own measured pages, not from its page count
+    # The account does not take this number at all (its country or number class): ineligible, never ranked.
+    refused: bool = False
 
     @property
     def known(self):
@@ -83,25 +87,44 @@ def _now(now):
     return (now or datetime.now(timezone.utc)).replace(tzinfo=None, microsecond=0)
 
 
+def account_facts(engine, values, key, destination, *, provider=None, now=None, site=None):
+    """The ``predict.RouteFacts`` one account's call to ``destination`` is priced with: its own rate card when it
+    has one, else its provider's, for the number's class and where the call starts. The one tariff contract route
+    ranking and page preparation share (JOINT-OPTIMIZER-AUDIT step 1), so an extra account is never priced by its
+    provider's first account. A missing price stays missing (``terms`` None), never zero."""
+    from .predict_facts import facts_for
+    from .store import RouteStore
+    provider = provider or key
+    facts_key = key
+    if key != provider and RouteStore(engine).card_for(key) is None:
+        facts_key = provider
+    return facts_for(facts_key, destination, now=_now(now), engine=engine, values=values, account=key, site=site)
+
+
 def price(routes, values, key, destination, pages, *, provider=None, now=None, layout='normal', number='original',
-          site=None, hold=None):
+          site=None, hold=None, shape=None, facts=None):
     """The ``Price`` of one fax of ``pages`` pages to ``destination`` by account ``key``.
 
     An origin-rated row for where the account's calls start prices it when one matches (``origin_rates``);
     ``site`` prices it as if the call started from that site. ``hold`` (``plan_allocation.Hold``) is the part of
-    the plan's room this fax may not use.
+    the plan's room this fax may not use. ``shape`` (``predict.Shape``) prices the pages as measured (a candidate
+    from ``pages.sending``) instead of the page count; ``facts`` are the account's facts already read
+    (``account_facts``), so a measured candidate and its price use the same tariff.
     """
     from .plan_budget import budget_left, marginal
     from .predict import Shape, predict_from
-    from .predict_facts import facts_for
     engine = routes.engine
     provider = provider or key
     moment = _now(now)
-    facts_key = key
-    if key != provider and routes.card_for(key) is None:
-        facts_key = provider
-    facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site)
-    shape = Shape(max(int(pages or 1), 1), None, 'standard', layout if layout in ('normal', 'dense') else 'normal')
+    if facts is None:
+        facts_key = key
+        if key != provider and routes.card_for(key) is None:
+            facts_key = provider
+        from .predict_facts import facts_for
+        facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site)
+    measured = shape is not None
+    if shape is None:
+        shape = Shape(max(int(pages or 1), 1), None, 'standard', layout if layout in ('normal', 'dense') else 'normal')
     prediction = predict_from(facts, shape)
     try:
         left = budget_left(key, moment, engine=engine, values=values)
@@ -128,7 +151,8 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
                  origin=getattr(facts, 'origin', None), held=hold if unheld is not None else None,
                  unheld_micros=(unheld.cost.micros if unheld is not None and unheld.cost is not None else None),
                  unheld_over=bool(unheld is not None and unheld.over_budget),
-                 rate_card=facts.terms.card if facts.terms is not None and not facts.refused else None)
+                 rate_card=facts.terms.card if facts.terms is not None and not facts.refused else None,
+                 pages=shape.pages, measured=measured, refused=bool(facts.refused))
 
 
 def _accounts(values):
@@ -140,11 +164,13 @@ def _accounts(values):
 
 
 def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dial=None, keys=None, now=None,
-               job_id=None):
+               job_id=None, measured=None):
     """``{account key: Price}`` for the accounts a fax may use; an account that cannot be priced is left out.
 
     ``job_id``: the queued fax being planned. Its scarce plans are priced after the room held for other faxes
     (``plan_allocation.hold_for``); without it every plan is priced against its whole room, as for a quote.
+    ``measured``: ``{account key: (predict.Shape, predict.RouteFacts)}``, the pages each account would actually
+    send as measured (``routing.joint``); those accounts are priced by them, the others by the page count.
     """
     import sqlalchemy as sa
     from . import dialing
@@ -176,9 +202,11 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
         provider = account.provider if account is not None else key
         number, _ = attempt_number(destination, alternate=alternate, route_reaches=bool(alternate) and
                                    dialing.reaches(provider, alternate, values, sip_preset=preset))
+        shape, facts = (measured or {}).get(key, (None, None))
         try:
             found[key] = price(routes, values, key, number, pages, provider=provider, now=now,
-                               number='alternate' if number != destination else 'original', hold=holds.get(key))
+                               number='alternate' if number != destination else 'original', hold=holds.get(key),
+                               shape=shape, facts=facts)
         except (DeliveryStoreError, sa.exc.SQLAlchemyError, InvalidRateCard) as error:
             # This account's prices or plan could not be read: it is left out, and the cause logged. Anything else
             # (a bug in pricing or in the plan's allocation) raises.

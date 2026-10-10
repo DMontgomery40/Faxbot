@@ -109,16 +109,17 @@ def test_a_plan_dearer_than_a_reliable_route_is_worth_reviewing_with_the_differe
     sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)
     sent(multi, routes, 'humblefax', LAB, ['success'] * 2, days_ago=40)  # the 30 days before
     (plan,) = report(routes)['plans']
-    each = estimate_cost(TELNYX_OUT, 3)  # 3 pages: 2 billed minutes at $0.005, an estimate
-    assert each == 10_000
+    # 3 typical pages take about 48 seconds by the shared predictor: one billed minute at $0.005, an estimate.
+    each = estimate_cost(TELNYX_OUT, 3)
+    assert each == 5_000
     latest, before = plan['windows']
     assert plan['state'] == 'review' and latest['other_way'] == money(5 * each)
     # HumbleFax's plan comes with its own number; keeping it means renting it from Telnyx ($1 a month).
     assert latest['number_rental'] == money(1_000_000) and latest['other_routes'] == ['Telnyx']
     assert (before['sent'], before['other_way'], before['fee_per_fax']) == (2, money(2 * each), money(5_000_000))
     assert plan['sentence'] == ('Worth reviewing: HumbleFax carried 5 faxes in the last 30 days, about $2.00 each for '
-                                'its $10 monthly fee; Telnyx would have cost about $0.05 for the same faxes and $1.00 '
-                                'to keep the number, $8.95 less (estimate).')
+                                'its $10 monthly fee; Telnyx would have cost about $0.025 for the same faxes and $1.00 '
+                                'to keep the number, $8.98 less (estimate).')
     assert plan['action'] == ('If you decide to drop the plan, fax these numbers with Telnyx instead, then cancel the '
                               'plan in your HumbleFax account. Faxbot never cancels anything for you.')
     assert plan['caveats'] == ['Before you cancel, move your HumbleFax number to Telnyx if anyone still faxes it.']
@@ -182,7 +183,7 @@ def test_an_unknown_number_rental_is_never_counted_as_free(plans, monkeypatch):
     assert latest['other_way'] == money(5 * estimate_cost(TELNYX_OUT, 3))
     assert plan['state'] == 'review'
     assert plan['sentence'] == ('Worth reviewing: HumbleFax carried 5 faxes in the last 30 days, about $2.00 each for '
-                                'its $10 monthly fee; Telnyx would have cost about $0.05 for the same faxes, but '
+                                'its $10 monthly fee; Telnyx would have cost about $0.025 for the same faxes, but '
                                 'Telnyx does not publish what it charges to keep your HumbleFax number, so Faxbot '
                                 "can't tell whether dropping the plan would save money (estimate).")
     assert latest['number_rental'] == [] and latest['number_rental_unpublished'] is True

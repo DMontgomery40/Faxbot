@@ -1066,6 +1066,27 @@
       "sources": ["https://sinch.com/voice/fax-api/"],
       "advertised_on": "2026-10-07",
       "notes": "The Fax API page, read October 7, 2026, gives a flat $0.045 a page and describes coverage in the U.S.; it does not say whether that price applies abroad. Enter your contracted rate."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes to the United States and Canada",
+      "regions": ["US", "CA"],
+      "pricing": "same_as_card",
+      "reaches": "yes",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms", "https://humblefax.com/faq"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada; faxes there are priced as your HumbleFax plan prices them."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes outside the United States and Canada",
+      "pricing": "not_published",
+      "reaches": "no",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada, so it takes no fax to any other country, including the other countries that share the +1 calling code."
     }
   ],
   "toll_free": [
