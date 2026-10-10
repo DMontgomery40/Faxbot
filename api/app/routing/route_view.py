@@ -164,8 +164,25 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
         sentence = None
     trace = _trace(engine, pinned, accounts, names, rules)
     return {'job_id': job_id, 'sentence': sentence, 'attempts': attempts, 'hold': hold_view, 'trace': trace,
+            'planned': planned_route(decision, accounts) if decision is not None else None,
             'page_layout': pinned.envelope.page_layout if pinned is not None else None,
             'dial': text.dial_sentence(decision, pinned.facts.destination) if decision is not None else None}
+
+
+def planned_route(decision, accounts=()):
+    """The route the fax's own decision (labels, mailbox and workflow rules included) sends it by first, as
+    `faxbot send` names it; None when no rule chose one and Faxbot picks the cheapest reliable route."""
+    envelope = decision.envelope
+    if envelope.local:
+        return 'This Faxbot'
+    if envelope.require_direct:
+        return 'Direct delivery'
+    if decision.route.kind == 'automatic' or envelope.mode == 'automatic' or not envelope.accounts:
+        return None
+    names = [text.account_label(key, accounts) for key in envelope.accounts]
+    if envelope.mode == 'cheapest' and len(names) > 1:
+        return f'The cheapest reliable of {text._join(names)}'
+    return names[0]
 
 
 def _plan_fax(cards, key, cost):

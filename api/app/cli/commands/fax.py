@@ -90,8 +90,16 @@ def _fax_fields(job, route=None):
 
 
 def _planned_route(api, job):
-    """('Planned route', the route Faxbot would try first for this number), or None when Faxbot cannot say
-    or this key may not read routes."""
+    """('Planned route', the route Faxbot would try first for this fax), or None when Faxbot cannot say or this
+    key may not read routes. A sending rule the fax matched (a label, mailbox or workflow rule) decides it, as the
+    fax's route record says; with none, the number's recommended route."""
+    if job.get('id'):
+        try:
+            decided = (api.get('/routing/faxes/' + segment(job['id']) + '/route') or {}).get('planned')
+        except CliError:
+            decided = None
+        if decided:
+            return ('Planned route', decided)
     number = job.get('to_number') or job.get('to')
     if not number:
         return None
