@@ -668,12 +668,14 @@ def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_
             ecm_on = True
             reasons.append(reason)
     # The error-correction frame size (brief 98): 64-octet frames when this number's error shape (else the
-    # trunk's) makes them shorter on a typical page, from calls in this epoch only (engine_ecm.py).
+    # trunk's) makes them shorter on a typical page, from calls in this epoch only (engine_ecm.py). The built-in
+    # engine's T.38 calls pay a step of Asterisk's T.38 terminal for every frame.
     ecm_frame = None
     if (base_ecm or ecm_on) and recipient.get('ecm') is not False:
         from . import engine_ecm
+        paced = engine == 'builtin' and bool(t38) and getattr(values, 'sip_t38_enabled', True)
         found = engine_ecm.learned(db, number, since=evidence_since(epoch, now, LEARN_DAYS),
-                                   rate=base or engine_frames.STEP_RATES[0], now=now)
+                                   rate=base or engine_frames.STEP_RATES[0], now=now, paced=paced)
         if found.frame_octets == 64:
             ecm_frame = 64
             reasons.append(found.frame_why)

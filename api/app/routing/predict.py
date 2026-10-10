@@ -410,7 +410,7 @@ def ecm_seconds(measured, coding, ecm=None, *, fact=None, rate=None):
     if fact is None:
         return ecm_extra_seconds(measured)
     return (ecm_extra_seconds(measured, frame_octets=fact.frame_octets, block_seconds=fact.turnaround)
-            + frame_seconds(measured, fact.frame_octets, rate))
+            + frame_seconds(measured, fact.frame_octets, rate, fact.frame_step))
 
 
 def shape_with(shape, **changes):

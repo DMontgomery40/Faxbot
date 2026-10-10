@@ -247,12 +247,49 @@ def test_a_number_whose_line_spoils_short_stretches_gets_64_octet_frames_on_both
     from app.routing.error_correction import fact_for
     fact = fact_for(db, settings, NUMBER, settings=call)
     assert fact.frame_octets == 64 and fact.frame_why in decision.reasons
+    # The decision was the built-in engine's, for a T.38 call: the fact prices each extra frame's step too.
+    from app.routing.error_correction import frame_seconds
+    assert fact.frame_step == engine_ecm.T38_TERMINAL_FRAME_SECONDS
+    page = [15_360 * 8]
+    assert (frame_seconds(page, 64, 14_400, fact.frame_step) - frame_seconds(page, 64, 14_400)
+            == pytest.approx(180 * fact.frame_step))
     assert fact_for(db, settings, NUMBER, settings=off).frame_octets == 256
     # Another number with clean calls of its own keeps 256, whatever the trunk shows.
     other = '+13035550199'
     for _ in range(3):
         keep(db, number=other, bad=0, runs=0)
     assert engine_learning.decide(settings, other, db=db).ecm_frame is None
+
+
+def test_the_built_in_engines_t38_calls_pay_a_step_for_every_frame(db):
+    """Asterisk's T.38 terminal adds about 28 ms to every frame (measured in the frame replay and the impairment
+    loopback), so on the built-in engine's T.38 calls 64-octet frames must save more. The research's reversal
+    (independent errors of 1e-4, a 0.25-second turnaround) holds where frames go at the modem's speed and not there.
+    The impairment loopback's own records (four 256-octet calls of three pages, 7 damaged stretches, 13 frames) keep
+    256 either way, and the step brings the model's difference per page (about 9.8 seconds) near the 12.7 seconds the
+    loopback measured. Records whose scattered errors make 64 worth it at the modem's speed give 64 to the SSL Fax
+    engine and to calls without T.38, and 256 to the built-in engine's T.38 calls."""
+    step = engine_ecm.T38_TERMINAL_FRAME_SECONDS
+    errors = shape(8e-4)
+    assert engine_ecm.choose_frame(errors, page_octets=128_000, rate=14_400, turnaround=0.25)[0] == 64
+    assert engine_ecm.choose_frame(errors, page_octets=128_000, rate=14_400, turnaround=0.25, per_frame=step)[0] == 256
+    lab = engine_ecm.ErrorShape(4, 4 * 222 * 263, 7, 13, 256.0, 222 * 256 / 3)
+    frame, small, usual = engine_ecm.choose_frame(lab, page_octets=lab.page_octets, rate=14_400, turnaround=2.63,
+                                                  per_frame=step)
+    assert frame == 256 and small - usual == pytest.approx(9.85, abs=0.5)
+    assert engine_ecm.choose_frame(lab, page_octets=lab.page_octets, rate=14_400, turnaround=2.63)[0] == 256
+    settings = values()
+    for _ in range(3):
+        keep(db, bad=15, runs=15)
+    assert engine_learning.decide(settings, NUMBER, db=db).ecm_frame is None
+    assert engine_learning.decide(settings, NUMBER, engine='hylafax', db=db).ecm_frame == 64
+    assert engine_learning.decide(settings, NUMBER, t38=False, db=db).ecm_frame == 64
+    # The SSL Fax engine's call is priced at 64 octets with no step, with the decision's own sentence.
+    from app.routing.error_correction import fact_for
+    ssl = engine_learning.decide(settings, NUMBER, engine='hylafax', db=db)
+    call = hylafax_engine.CallSettings(t38=True, max_rate=14400, ecm=True, fine=True, compression='mmr', learned=ssl)
+    fact = fact_for(db, settings, NUMBER, settings=call)
+    assert fact.frame_octets == 64 and fact.frame_step == 0.0 and fact.frame_why in ssl.reasons
 
 
 def job_commands(monkeypatch, settings, call):

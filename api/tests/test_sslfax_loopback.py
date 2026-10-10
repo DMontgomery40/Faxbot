@@ -2222,10 +2222,11 @@ def test_brief98_the_ssl_fax_engine_prints_the_jobs_own_header_and_station_and_u
     frames (records written as the engine's reports leave them), so this job asks for 64-octet error-correction frames
     (JPARM ECMTYPE 64BIT): the peer's session log shows it received them, the pages arrive pixel for pixel, and
     Faxbot keeps what error correction did from its own engine's session log."""
-    context = loopback('hd', faxbot_t38=False, carrier_gateway=False, peer_listener=None, peer_sslfax=False,
+    context = loopback('hd', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
                        api_extra={'FAX_HEADER': 'Leeds HQ', 'SIP_FAX_COMPRESSION': 'mh'})
     docker = context['docker']
-    seeded = docker.run('exec', '--interactive', context['api'], 'python', '-c', ECM_SEED, input_text=PEER_NUMBER)
+    seeded = docker.run('exec', '--interactive', context['api'], 'python', '-c', ECM_SEED,
+                        input_text=json.dumps({'number': PEER_NUMBER}))
     assert 'seeded 3' in seeded.stdout, seeded.stdout + seeded.stderr
     outcome = send_and_collect(tmp_path, context)
     proof = evidence(outcome)
@@ -2249,18 +2250,45 @@ def test_brief98_the_ssl_fax_engine_prints_the_jobs_own_header_and_station_and_u
 # Three earlier calls to the peer whose receiving machine asked for many scattered frames again: written as the
 # built-in engine's FaxFrames reports leave them (engine_ecm.frames_row), inside the API container's own database.
 ECM_SEED = r'''
-import sys, uuid
+import json, sys, uuid
 from app import engine_ecm
 from app.schema import create_database_engine
-number = sys.stdin.read().strip()
+asked = json.loads(sys.stdin.read())
 engine = create_database_engine('sqlite:////faxdata/faxbot.db')
 store = engine_ecm.EcmStore(engine)
 kept = 0
 for _ in range(3):
     key = uuid.uuid4().hex
     row = engine_ecm.frames_row({'Direction': 'out', 'AttemptID': key, 'JobID': '', 'Endpoint': 'trunk-endpoint',
-                                 'Ecm': '256.2.1.60.1.40.40.1.40.0.0.0.1.3300.0.1', 'T38Rx': '', 'T38Protect': ''})
-    row['number'] = number
+                                 'Ecm': asked.get('ecm', '256.2.1.60.1.40.40.1.40.0.0.0.1.3300.0.1'),
+                                 'T38Rx': asked.get('rx', ''), 'T38Protect': ''})
+    row['number'] = asked['number']
     kept += store.record(row)
 print('seeded', kept)
 '''
+
+
+def test_brief98_t38_protection_measured_on_the_trunk_reaches_the_ssl_fax_engines_gateway(tmp_path, loopback):
+    """Item 1 on the SSL Fax engine's T.38 path: three earlier calls on the trunk lost 1.2% of the T.38 packets the
+    far end sent (records as the engines' reports leave them). The next SSL Fax engine call's plan carries the
+    protection in its ninth field, the gateway on the engine's channel sends with it (FaxEngineCall echoes the
+    counts and says how T.38 arrived), and the fax arrives whole across both T.38 gateways."""
+    context = loopback('pt', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False)
+    docker = context['docker']
+    seeded = docker.run('exec', '--interactive', context['api'], 'python', '-c', ECM_SEED,
+                        input_text=json.dumps({'number': '+15555550111', 'ecm': '0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0',
+                                               'rx': '1000.10.2'}))
+    assert 'seeded 3' in seeded.stdout, seeded.stdout + seeded.stderr
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    call = outcome['engine_call'] or {}
+    proof['gateway_t38'] = {key: call.get(key) for key in ('Gateway', 'T38Session', 'T38Rx', 'T38Protect')}
+    rows = database(context, rows="SELECT source, direction, t38_received, t38_recovered, t38_missing, t38_protect "
+                                  "FROM fax_call_ecm WHERE source = 'gateway'")['rows']
+    proof['gateway_rows'] = rows
+    print('\nSSLFAX_PROOF_T38_PROTECT ' + json.dumps(proof, indent=2, default=str))
+    assert_delivered(outcome, proof)
+    assert call.get('Gateway') == 'yes' and int(call.get('T38Session') or 0) > 0, proof
+    assert call.get('T38Protect') == '3.2.3.1.3', proof
+    assert call.get('T38Rx') and int(call['T38Rx'].split('.')[0]) > 0, proof
+    assert rows and rows[-1]['t38_protect'] == '3.2.3.1.3', proof

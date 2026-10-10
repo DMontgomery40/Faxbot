@@ -114,7 +114,8 @@ def measured(result, frames):
     ecm = engine_ecm.parse_ecm((frames or {}).get('Ecm')) or {}
     rx = engine_ecm.parse_t38_rx((frames or {}).get('T38Rx')) or {}
     dcs = engine_frames.decode_dcs((frames or {}).get('DcsLast')) if (frames or {}).get('DcsLast') else None
-    return {'status': (result or {}).get('Status'), 'pages': int((result or {}).get('Pages') or 0), 'seconds': seconds,
+    return {'status': (result or {}).get('Status'), 'error': (result or {}).get('Error') or None,
+            'pages': int((result or {}).get('Pages') or 0), 'seconds': seconds,
             'frame': ecm.get('frame_octets'), 'small_asked': ecm.get('small_frames'), 'ppr': ecm.get('ppr'),
             'bad': ecm.get('bad_frames'), 'runs': ecm.get('bad_runs'), 'resent': ecm.get('resent'),
             'ctc': ecm.get('ctc'), 'edge_ms': ecm.get('edge_ms'), 'edges': ecm.get('edges'),
@@ -140,6 +141,9 @@ def test_learned_frame_size_and_t38_protection_against_the_usual_settings_under_
     database = create_database_engine('sqlite:///' + str(tmp_path / 'learning.db'))
     upgrade_schema(database)
     store = engine_ecm.EcmStore(database)
+    # Every call of every setting, as an installation would keep them (for what learning makes of all of them).
+    everything = create_database_engine('sqlite:///' + str(tmp_path / 'everything.db'))
+    upgrade_schema(everything)
     evidence = {'impairment': LOSS, 'calls_per_setting': CALLS, 'image': image}
     try:
         docker.network = docker.prefix
@@ -177,9 +181,11 @@ def test_learned_frame_size_and_t38_protection_against_the_usual_settings_under_
                 row = measured(result, frames)
                 rows.append(row)
                 kept = engine_ecm.frames_row(frames or {})
-                if kept is not None and name == 'usual':
+                if kept is not None:
                     kept['number'] = DID
-                    store.record(kept)
+                    engine_ecm.EcmStore(everything).record(dict(kept))
+                    if name == 'usual':
+                        store.record(kept)
                 time.sleep(3)
             evidence[name] = {'calls': rows, 'summary': summary(rows)}
             return rows
@@ -189,7 +195,8 @@ def test_learned_frame_size_and_t38_protection_against_the_usual_settings_under_
         since = time.time() - 3600
         from datetime import datetime
         moment = datetime.utcfromtimestamp(since)
-        learned = engine_ecm.learned(database, DID, since=moment)
+        # The built-in engine's T.38 calls: each frame pays a step of Asterisk's T.38 terminal.
+        learned = engine_ecm.learned(database, DID, since=moment, paced=True)
         rows = store.rows(direction=None, since=moment)
         loss, residual, measured_calls, packets = engine_ecm.t38_loss(rows)
         protect = engine_ecm.protection(loss, measured_calls)
@@ -211,6 +218,9 @@ def test_learned_frame_size_and_t38_protection_against_the_usual_settings_under_
         learned_name = {(256, None): 'usual', (64, None): 'frame64', (256, True): 'protected',
                         (64, True): 'frame64_protected'}[(learned.frame_octets, True if protect else None)]
         evidence['learned_setting'] = learned_name
+        after = engine_ecm.learned(everything, DID, since=moment, paced=True)
+        evidence['learned_after_all'] = {'frame_octets': after.frame_octets, 'turnaround_seconds': after.block_seconds,
+                                         'turnaround_calls': after.block_calls}
         receiver_log = docker.read(receiver, '/tmp/asterisk.log')
         evidence['receiver_errors'] = [line for line in receiver_log.splitlines()
                                        if 'ERROR' in line and 'udptl' in line.lower()][-5:]

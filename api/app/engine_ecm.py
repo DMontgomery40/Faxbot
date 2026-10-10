@@ -22,7 +22,9 @@ What Faxbot chooses from them:
   one page under that shape, block edges, framing and retransmission rounds included; Faxbot asks for 64-octet frames
   only when that saves at least ``FRAME_MARGIN_SECONDS`` on the number's typical page, from at least ``MIN_CALLS``
   calls with error correction to the number (else on the trunk). Losses are often bursty, so the shape is fitted from
-  the runs, not assumed independent; with no errors on record 256 always wins (less framing).
+  the runs, not assumed independent; with no errors on record 256 always wins (less framing). On the built-in
+  engine's T.38 calls each frame also costs one step of Asterisk's T.38 terminal (``T38_TERMINAL_FRAME_SECONDS``),
+  so there 64-octet frames have to save more before they win.
 - **The turnaround** of one partial page (``turnaround``): the median of the measured block edges once ``MIN_CALLS``
   calls timed any, else the loopback's 3.3 seconds (``pages.coding.ECM_BLOCK_SECONDS``). The predictor prices
   partial pages with it (``routing.error_correction``).
@@ -58,6 +60,13 @@ MIN_CALLS = 3  # as engine_learning.MIN_CALLS: no change before this many calls 
 TYPICAL_PAGE_OCTETS = 30_000
 # A smaller frame must save at least this on a typical page before Faxbot asks for it.
 FRAME_MARGIN_SECONDS = 0.5
+# Asterisk's T.38 terminal (spandsp 0.0.6, paced: the built-in engine on a T.38 call) sends the end of each
+# error-correction frame (HDLC FCS OK) as a step of its own after the frame's data, and each step waits for the
+# next 20 ms timer tick; so a frame takes about 28 ms more than its octets at the modem's speed. Measured 2026-10-10:
+# 27 to 29 ms a frame in the frame replay (asterisk/tests/t38_terminal_replay.c, 64 against 256 octets with no
+# loss) and in the impairment loopback (test_ecm_impairment_loopback). The SSL Fax engine's modem, and the built-in
+# engine on an audio call, send frames back to back at the modem's speed.
+T38_TERMINAL_FRAME_SECONDS = 0.028
 LOSS_LOW, LOSS_HIGH = 0.005, 0.03
 # spandsp's five T.38 categories: indicator, control data, end of control data, image data, end of image data.
 PROTECT_LOW, PROTECT_HIGH = '3.2.3.1.3', '4.3.4.1.4'
@@ -344,18 +353,20 @@ def shape_of(rows) -> ErrorShape | None:
                       statistics.median(page_octets) if page_octets else None)
 
 
-def page_seconds(octets, frame, rate, turnaround, shape=None) -> float:
+def page_seconds(octets, frame, rate, turnaround, shape=None, per_frame=0.0) -> float:
     """Expected seconds one page of ``octets`` coded octets takes on the line with error correction at ``frame``
-    octets a frame and ``rate`` bit/s: its frames with their framing, a ``turnaround`` per block edge past the
-    first, and the rounds of resent frames the error ``shape`` predicts in each block (a round costs a turnaround
-    and the frames sent again; the resent frames may be hit again, and a second round is counted). The page
-    exchange at the end of the page is the same for every frame size and is left out."""
+    octets a frame and ``rate`` bit/s: its frames with their framing (and ``per_frame`` seconds each where the
+    engine adds a step per frame), a ``turnaround`` per block edge past the first, and the rounds of resent frames
+    the error ``shape`` predicts in each block (a round costs a turnaround and the frames sent again; the resent
+    frames may be hit again, and a second round is counted). The page exchange at the end of the page is the same
+    for every frame size and is left out."""
     if frame not in (64, 256) or not rate or octets <= 0:
         raise ValueError('A page, a frame size of 64 or 256 octets and a speed are needed.')
     size = frame + FRAME_OVERHEAD
+    each = size * 8 / rate + per_frame
     frames = math.ceil(octets / frame)
     blocks = math.ceil(frames / FRAMES_PER_BLOCK)
-    seconds = frames * size * 8 / rate + (blocks - 1) * turnaround
+    seconds = frames * each + (blocks - 1) * turnaround
     rate_per_octet = shape.bursts_per_octet if shape is not None else 0.0
     reach = shape.burst_octets if shape is not None else 0.0
     left = frames
@@ -368,16 +379,16 @@ def page_seconds(octets, frame, rate, turnaround, shape=None) -> float:
             if bursts <= 0:
                 break
             bad = min(count, bursts * (1 + reach / size))
-            seconds += (1 - math.exp(-bursts)) * turnaround + bad * size * 8 / rate
+            seconds += (1 - math.exp(-bursts)) * turnaround + bad * each
             count, exposed = bad, bad * size
     return seconds
 
 
-def choose_frame(shape, *, page_octets, rate, turnaround) -> tuple:
+def choose_frame(shape, *, page_octets, rate, turnaround, per_frame=0.0) -> tuple:
     """(frame octets, expected seconds at 64, at 256) for one typical page: 64 only when it saves at least
-    ``FRAME_MARGIN_SECONDS``."""
-    small = page_seconds(page_octets, 64, rate, turnaround, shape)
-    usual = page_seconds(page_octets, 256, rate, turnaround, shape)
+    ``FRAME_MARGIN_SECONDS``. ``per_frame``: ``T38_TERMINAL_FRAME_SECONDS`` on the built-in engine's T.38 calls."""
+    small = page_seconds(page_octets, 64, rate, turnaround, shape, per_frame)
+    usual = page_seconds(page_octets, 256, rate, turnaround, shape, per_frame)
     return (64 if usual - small >= FRAME_MARGIN_SECONDS else 256), small, usual
 
 
@@ -447,9 +458,10 @@ def _shape_sentence(shape, scope):
             f"{'' if shape.runs == 1 else 'es'} the far machine asked for again")
 
 
-def learned(engine, number, *, since, rate=14400, now=None) -> Learned:
-    """``Learned`` for a call to ``number`` from records since ``since`` (inside the learning epoch). Records that
-    cannot be read leave the usual settings; the cause is logged."""
+def learned(engine, number, *, since, rate=14400, now=None, paced=False) -> Learned:
+    """``Learned`` for a call to ``number`` from records since ``since`` (inside the learning epoch). ``paced``: the
+    call goes through Asterisk's T.38 terminal (the built-in engine on a T.38 call), where each frame costs a step
+    more. Records that cannot be read leave the usual settings; the cause is logged."""
     try:
         store = EcmStore(engine)
         own = store.rows(number=number, since=since)
@@ -468,7 +480,8 @@ def learned(engine, number, *, since, rate=14400, now=None) -> Learned:
     if shape is None or shape.calls < MIN_CALLS:
         return Learned(block_seconds=seconds, block_calls=timed if seconds is not None else 0)
     page = (shape_of(own) or shape).page_octets or TYPICAL_PAGE_OCTETS
-    frame, small, usual = choose_frame(shape, page_octets=page, rate=rate, turnaround=turn)
+    frame, small, usual = choose_frame(shape, page_octets=page, rate=rate, turnaround=turn,
+                                       per_frame=T38_TERMINAL_FRAME_SECONDS if paced else 0.0)
     why = None
     if frame == 64:
         saved = usual - small

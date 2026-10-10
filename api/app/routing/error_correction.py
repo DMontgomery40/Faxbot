@@ -54,6 +54,7 @@ class Fact:
     block_calls: int = 0                # recorded partial-page turnarounds behind ``block_seconds``
     why: str | None = None              # 'setting', 'limit', 'dis', 'negotiated' or None: where ``used`` came from
     frame_why: str | None = None        # one sentence when the frame size is not the usual 256 octets
+    frame_step: float = 0.0             # seconds each frame costs beyond its octets (the built-in engine's T.38 step)
 
     def __post_init__(self):
         if self.frame_octets not in FRAME_OCTETS:
@@ -94,14 +95,14 @@ class Fact:
 
 
 def decide(ours, *, views=(), capability=None, limit=None, frame_octets=256, block_seconds=None, block_calls=0,
-           frame_why=None) -> Fact:
+           frame_why=None, frame_step=0.0) -> Fact:
     """The ``Fact`` from what is known (pure). ``ours``: this call's error correction on Faxbot's side
     (``hylafax_engine.call_settings``); ``limit``: the number's own setting (Recipients), when set; ``views``:
     engine learning's joined outbound calls to the number, newest first; ``capability``: the receiving machine's
     newest logged capabilities (``pages.capability.Capability``)."""
     if not ours:
         why = 'limit' if limit is False else 'setting'
-        return Fact(False, None, False, frame_octets, block_seconds, block_calls, why, frame_why)
+        return Fact(False, None, False, frame_octets, block_seconds, block_calls, why, frame_why, frame_step)
     far, why, when = None, None, None
     for view in views:
         if view.get('direction', 'outbound') != 'outbound':
@@ -117,7 +118,7 @@ def decide(ours, *, views=(), capability=None, limit=None, frame_octets=256, blo
     if logged is not None and (far is None or (seen is not None and when is not None and seen > when)):
         far, why = bool(logged), 'dis'
     return Fact(True, far, far, frame_octets, block_seconds, block_calls, why if far is not None else None,
-                frame_why)
+                frame_why, frame_step)
 
 
 def fact_for(engine, values, number, *, recipient=None, settings=None, views=None, capability=None, now=None) -> Fact:
@@ -161,24 +162,30 @@ def fact_for(engine, values, number, *, recipient=None, settings=None, views=Non
 
 def _frame(engine, values, number, settings, now):
     """The frame size this call uses (engine learning's decision on the call's own settings) and, from the same
-    records (``engine_ecm.learned``), its sentence and the measured turnaround of a partial page."""
+    records (``engine_ecm.learned``), its sentence, the measured turnaround of a partial page and, on the built-in
+    engine's T.38 calls, the step each frame costs in Asterisk's T.38 terminal (as the decision weighed it)."""
     from .. import engine_ecm, engine_learning as learning
     moment = now or learning.utcnow()
+    decision = getattr(settings, 'learned', None)
+    paced = (getattr(decision, 'engine', None) == 'builtin' and bool(getattr(settings, 't38', False))
+             and getattr(values, 'sip_t38_enabled', True))
     epoch = learning.current_epoch(engine, values, now=moment, write=False)
     found = engine_ecm.learned(engine, number, since=learning.evidence_since(epoch, moment, learning.LEARN_DAYS),
-                               rate=settings.max_rate, now=moment)
-    frame = 64 if getattr(getattr(settings, 'learned', None), 'ecm_frame', None) == 64 else 256
+                               rate=settings.max_rate, now=moment, paced=paced)
+    frame = 64 if getattr(decision, 'ecm_frame', None) == 64 else 256
     return {'frame_octets': frame, 'frame_why': found.frame_why if frame == found.frame_octets == 64 else None,
-            'block_seconds': found.block_seconds, 'block_calls': found.block_calls}
+            'block_seconds': found.block_seconds, 'block_calls': found.block_calls,
+            'frame_step': engine_ecm.T38_TERMINAL_FRAME_SECONDS if paced else 0.0}
 
 
-def frame_seconds(page_bits, frame_octets, rate):
+def frame_seconds(page_bits, frame_octets, rate, step=0.0):
     """Seconds a smaller frame's extra framing adds to these pages at ``rate`` bit/s: every 64-octet frame carries
-    the same 7 octets of framing as a 256-octet one, so the same data takes four times as many frames. 0 at 256
-    octets, whose framing the measured page and block figures include."""
+    the same 7 octets of framing as a 256-octet one, so the same data takes four times as many frames, each with
+    ``step`` seconds more where the engine adds a step per frame (``Fact.frame_step``). 0 at 256 octets, whose
+    framing the measured page and block figures include."""
     if frame_octets == 256 or not rate:
         return 0.0
     import math
     frames = sum(math.ceil(math.ceil(bits / 8) / frame_octets) for bits in page_bits)
     usual = sum(math.ceil(math.ceil(bits / 8) / 256) for bits in page_bits)
-    return (frames - usual) * FRAME_OVERHEAD_OCTETS * 8 / rate
+    return (frames - usual) * (FRAME_OVERHEAD_OCTETS * 8 / rate + step)
