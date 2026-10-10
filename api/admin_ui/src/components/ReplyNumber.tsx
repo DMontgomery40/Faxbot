@@ -5,6 +5,7 @@ import {
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { AccessMailbox } from '../api/types';
 import type { ReplyNumberView } from '../api/numbersTypes';
+import { HeaderNoticeSettings } from './HeaderNotice';
 
 interface ReplyNumberProps {
   client: AdminAPIClient;
@@ -68,6 +69,7 @@ function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
   if (!view) return notice ? <Alert severity={notice.severity}>{notice.text}</Alert> : null;
   const reaching = view.candidates.filter((item) => item.mailbox_id === mailboxId && item.receives);
   return (
+    <>
     <Card data-testid="reply-number" sx={{ mt: 3 }}>
       <CardContent>
         <Typography variant="h6">Reply number</Typography>
@@ -154,6 +156,9 @@ function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
         </Box>
       </CardContent>
     </Card>
+    {/* The notice line printed under the header line on every page (header_notice.py). */}
+    <HeaderNoticeSettings client={client} canWrite={canWrite} mailboxes={mailboxes} />
+    </>
   );
 }
 

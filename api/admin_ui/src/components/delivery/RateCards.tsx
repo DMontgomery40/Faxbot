@@ -13,6 +13,7 @@ import { providerLabel } from '../../providerLabels';
 import { formatLocalDate } from '../../api/time';
 import { OriginRates } from '../ProviderAccountsTrunks';
 import OriginRateRows from './OriginRateRows';
+import CallerIdPrices from './CallerIdPrices';
 
 const BILLING = [
   { value: 1, label: 'Per second' },
@@ -251,6 +252,8 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
           ))}
         </Stack>
       )}
+      <CallerIdPrices client={client} canWrite={canWrite}
+        routes={cards.filter((card) => card.direction === 'outbound').map((card) => card.provider_id)} />
       {editing && <CardDialog card={editing} busy={busy} error={error} onClose={() => setEditing(null)} onSave={save} />}
       <ConfirmDialog open={removing !== null} title="Remove this rate card?" danger busy={busy} error={error}
         text="Faxbot stops estimating costs for this provider until you add a new card."

@@ -36,6 +36,7 @@ import type { DocumentPrediction, RecommendedRoute, RoutePrediction } from '../a
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
+import { CoverInHeaderChoice } from './HeaderNotice';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -160,6 +161,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [byCall, setByCall] = useState(false);
   // Urgent: before other faxes waiting for the same line, and never held to go with others.
   const [urgent, setUrgent] = useState(false);
+  // The first page is a cover sheet whose notice is printed at the top of every page instead (header_notice.py).
+  const [coverInHeader, setCoverInHeader] = useState(false);
   const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
   // Optional: the time it must be sent by, in this browser's local time (a datetime-local value).
   const [sendBy, setSendBy] = useState('');
@@ -340,7 +343,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall, urgent, ...sendBody(sendOptions),
+          byCall: route?.route === 'local' && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
           sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
@@ -516,6 +519,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   control={<Checkbox checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
                     disabled={!configReady || loading} />}
                   label="Urgent: send before other faxes waiting for the same line" />
+                <CoverInHeaderChoice client={client} mailbox={sendOptions.mailbox} checked={coverInHeader}
+                  onChange={setCoverInHeader} disabled={!configReady || loading} />
 
                 {sendChoices && (
                   <ProviderRulesSendFields value={sendOptions} onChange={setSendOptions} disabled={!configReady || loading}

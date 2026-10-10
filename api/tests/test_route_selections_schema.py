@@ -8,7 +8,7 @@ from api.app import schema
 from api.tests.test_digital_schema import _downgrade, _table, _tables
 from api.tests.test_schema import database, snapshot  # noqa: F401
 
-PRIOR = '0066_analysis'
+PRIOR = '0073_header_notice'  # re-chained at merge (was 0066_analysis)
 
 
 def _row(**changes):

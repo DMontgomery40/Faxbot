@@ -404,6 +404,9 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
     job_id, attempt_id = claim.job_id, claim.attempt_id
     if not (_HEX32.fullmatch(str(job_id)) and _HEX32.fullmatch(str(attempt_id))):
         return None
+    from ..routing.sender_pins import pinned
+    if pinned(engine, job.get('recipient_number') or job.get('to_number')):
+        return None  # a registered-sender recipient's copy is binding: the pages go as they are (sender_pins, N17)
     route, mode = account.provider_id, account.mode
     root = Path(str(pdf)).parent
     cache = cache or RasterCache(root, job_id, attempt_id)

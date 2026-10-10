@@ -4,6 +4,7 @@ import type {
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { CallerIdDeckImport } from './countriesTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type {
@@ -935,7 +936,7 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -952,6 +953,8 @@ class AdminAPIClient {
     for (const label of options.labels ?? []) formData.append('labels', label);
     // The time it must be sent by, as an exact moment (ISO 8601 with its offset).
     if (options.sendBy) formData.append('send_by', options.sendBy);
+    // The first page is a cover sheet whose notice goes in the header notice instead (header_notice.py).
+    if (options.coverInHeader) formData.append('cover_in_header', 'true');
     // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
     for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 
@@ -1107,6 +1110,17 @@ class AdminAPIClient {
     if (options.readOn) form.append('read_on', options.readOn);
     const res = await this.fetch('/routing/jurisdiction-rates', { method: 'POST', body: form });
     return res.json();
+  }
+
+  // A carrier's rate deck priced by the caller ID a call shows (Twilio's voice price file or Faxbot's own layout).
+  async importCallerIdDeck(route: string, file: File, options: { deckFormat?: string; sourceUrl?: string;
+    publishedOn?: string } = {}): Promise<CallerIdDeckImport> {
+    const form = new FormData();
+    form.append('file', file);
+    if (options.deckFormat) form.append('deck_format', options.deckFormat);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    if (options.publishedOn) form.append('published_on', options.publishedOn);
+    return this.json(`/routing/rate-cards/${id(route)}/caller-id-prices`, { method: 'POST', body: form });
   }
 
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.

@@ -23,7 +23,7 @@ Runtime code reflects the table; it never imports this metadata. The downgrade r
 """
 import sqlalchemy as sa
 
-from .schema_analysis import frozen_metadata as previous_metadata
+from .schema_header_notice import frozen_metadata as previous_metadata
 
 REVISION = '0067_route_selections'
 ORDER = ('fax_route_selections',)

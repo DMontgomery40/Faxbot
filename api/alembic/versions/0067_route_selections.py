@@ -2,7 +2,7 @@
 from alembic import op
 
 revision = '0067_route_selections'
-down_revision = '0066_analysis'
+down_revision = '0073_header_notice'
 branch_labels = None
 depends_on = None
 
