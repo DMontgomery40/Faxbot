@@ -1916,3 +1916,90 @@ def test_t_the_mr_schedule_without_error_correction_keeps_every_pixel(tmp_path, 
         rows = {row['coding']: row for row in tuned['tuning_rows']}
         assert rows['MR']['tuned_bytes'] <= rows['MR']['plain_bytes'], tuned
     assert not plain['lossless_lines'], plain
+
+
+def enable_encoded_pages(docker, key, number):
+    """Encoded pages on for ``number``, with the recipient's agreement recorded (codec/http.py)."""
+    from urllib.parse import quote
+    path = '/codec/numbers/' + quote(number, safe='')
+    current = api(docker, 'GET', path, key=key)
+    assert current['status'] == 200, current
+    saved = api(docker, 'PUT', path, key=key, body={'enabled': True, 'recipient_agreed': True,
+                                                    'version': (current['json'] or {}).get('version', 0)})
+    assert saved['status'] == 200 and saved['json']['enabled'], saved
+    return saved['json']
+
+
+def encoded_proof(context, outcome, document):
+    """What one encoded send shows: the attempt's layout, the coding asked for and the call's, and the decode of
+    the pages the peer received."""
+    from app import codec
+    docker, key = context['docker'], context['key']
+    job_id = outcome['job']['id']
+    rows = database(context,
+                    change=f"SELECT layout, original_pages, sent_pages FROM fax_page_changes WHERE job_id = '{job_id}'",
+                    codec=f"SELECT layout, pages_encoded, seconds_original, seconds_encoded FROM codec_sends "
+                          f"WHERE id = '{job_id}'",
+                    coding=f"SELECT requested, measured, compared, bits, reason FROM fax_coding_choices "
+                           f"WHERE job_id = '{job_id}'",
+                    engine=f"SELECT engine, compression, ecm, resolution FROM fax_engine_calls "
+                           f"WHERE job_id = '{job_id}'")
+    detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+    try:
+        found, report = codec.decode_images(outcome['received_pages'])
+        decoded = {'matches': found.data == document, 'bytes': len(found.data), 'layout': report['layout'],
+                   'pages_read': report['pages_read'], 'erased_bytes': report.get('erased_bytes')}
+    except codec.CodecError as error:
+        decoded = {'error': str(error)}
+    return {'job_status': outcome['job'].get('status'), 'elapsed_seconds': outcome['elapsed_seconds'],
+            'received_pages': len(outcome['received_pages']),
+            'received_sizes': [list(page.size) for page in outcome['received_pages']],
+            'transfer': re.findall(r'SEND FAX .*docq/.* sent in ([0-9:]+)\)', outcome['faxbot_log'])[-1:],
+            **rows, 'sent_detail': {'pages': (detail.get('page_layout') or {}).get('sentences'),
+                                    'coding': detail.get('coding')}, 'decoded': decoded}
+
+
+def test_u_encoded_pages_go_in_the_coding_measured_on_them(tmp_path, loopback):
+    """Brief 85 M1 (N2 falsification). A payload page is drawn so that its MH code is the payload: MH (or JBIG, where
+    the machine takes it and it measures smaller) is its cheapest coding and MMR is about a third larger. At the
+    default compression setting Faxbot measures encoded pages like any others (pages/coding.py) and asks each engine
+    for the smallest usable coding: the SSL Fax engine through the job's data format (jobcontrol DesiredDF, kept by
+    patch 0003), the built-in engine through FAXBOT_COMPRESSION (patch 0006). The negotiation record says what each
+    call used, and the peer's received pages decode to the original PDF byte for byte. Dense pages are off for the
+    number, so the encoded pages compete only with the pages as they are."""
+    context = loopback('u', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    document = proof_pdf()
+    # An ordinary fax first: the engine records error correction, fine resolution and the machine's codings.
+    first = send_and_collect(tmp_path, context, document=document)
+    assert str(first['job'].get('status')).upper() == 'SUCCESS', evidence(first)
+    enable_encoded_pages(docker, key, PEER_NUMBER)
+    hylafax = send_and_collect(tmp_path, context, document=document)
+    proof = {'sslfax_engine': encoded_proof(context, hylafax, document)}
+    # The same fax on the built-in engine: stop the SSL Fax engine and wait until Asterisk sees its lines gone.
+    docker.run('stop', context['engine'])
+    wait_for(lambda: ' OK ' not in docker.asterisk(context['asterisk'], 'iax2 show peers'), 180,
+             "Faxbot's Asterisk to see the engine's lines gone")
+    builtin = send_and_collect(tmp_path, context, document=document)
+    proof['builtin_engine'] = encoded_proof(context, builtin, document)
+    print('\nSSLFAX_PROOF_U ' + json.dumps(proof, indent=2, default=str))
+    for name, found in proof.items():
+        assert str(found['job_status']).upper() == 'SUCCESS', proof
+        assert found['change'] and found['change'][0]['layout'] == 'codec', proof
+        assert found['decoded'].get('matches') is True, proof
+        assert found['coding'], proof
+        asked = found['coding'][0]['requested']
+        negotiated = (found['sent_detail']['coding'] or {}).get('negotiated')
+        # The smallest measured coding the placing engine sends (the built-in engine has no JBIG), and the call
+        # used it: never MMR left to the engine (the first run of this case, 10 October 2026, found the built-in
+        # engine taking MMR for a page measured smallest in JBIG, then MR).
+        bits = json.loads(found['coding'][0]['bits'])
+        sendable = {coding: size for coding, size in bits.items() if name == 'sslfax_engine' or coding != 'JBIG'}
+        assert negotiated == min(sendable, key=sendable.get), proof
+        # Asked for exactly that, except that right after the SSL Fax engine stops its last status still says it
+        # runs: the chooser then asks for JBIG and the built-in engine, which takes the call, sends the smallest
+        # other coding (CodingChoice.request).
+        assert asked == negotiated or (name == 'builtin_engine' and asked == 'JBIG'), proof

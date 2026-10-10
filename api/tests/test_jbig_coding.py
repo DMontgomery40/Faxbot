@@ -133,7 +133,10 @@ def test_jbig_measured_smallest_for_a_known_jbig_machine_is_chosen_and_priced_as
     choice = coding.best_coding(pages, usable.codings, ecm=True, measured=measured)
     assert (choice.coding, choice.measured, choice.priced) == ('JBIG', True, 'JBIG')
     assert choice.reason == 'JBIG: 54% shorter than MH for these pages.'
-    assert (choice.request('hylafax'), choice.request('builtin')) == ('JBIG', 'JBIG')
+    # The built-in engine has no JBIG: it is asked for the smallest other measured coding, never left to take MMR
+    # unasked (loopback case u, 10 October 2026).
+    assert (choice.request('hylafax'), choice.request('builtin'), choice.fallback) == ('JBIG', 'MH', 'MH')
+    assert usable.needs_request('MH', 'builtin')
     unknown = coding.usable_codings(ecm=True, configured='jbig')
     first = coding.best_coding(pages, unknown.codings, ecm=True, measured=measured, negotiate=True)
     assert (first.coding, first.priced) == ('MH', 'MH') and unknown.needs_request('MH', 'builtin')
@@ -167,15 +170,40 @@ def test_the_engines_session_log_names_the_codings_the_receiving_machine_takes(e
     assert fax_negotiation.codings_text('MH,JPEG') is None and fax_negotiation.codings_text('MR,MMR') is None
 
 
-def test_a_recorded_jbig_machine_gets_jbig_on_the_next_fax(installation, database, tmp_path):  # noqa: F811
+@pytest.fixture
+def ssl_fax_engine_places_calls(monkeypatch):
+    """The SSL Fax engine is set up and running, so it places the call (``coding.measuring_tuning``)."""
+    from dataclasses import replace
+    real = coding.measuring_tuning
+    monkeypatch.setattr(coding, 'measuring_tuning', lambda *args, **kwargs: replace(real(*args, **kwargs),
+                                                                                    engine='hylafax'))
+
+
+def test_the_built_in_engine_is_never_priced_or_asked_for_jbig(installation, database, tmp_path):  # noqa: F811
+    """With the SSL Fax engine not running, the built-in engine places the call and has no JBIG: a recorded JBIG
+    machine still gets the smallest coding the built-in engine sends (loopback case u, 10 October 2026: a payload
+    page measured smallest in JBIG went as MMR, the engine's own choice, instead of MR)."""
+    installation.record_observation(PEER, source='d' * 32, engine='hylafax', now=NOW,
+                                    values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1,
+                                            'codings': 'MH,MR,MMR,JBIG'})
+    changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
+    assert changed.coding.coding != 'JBIG' and changed.coding.measured
+    assert changed.coding.request('builtin') == changed.coding.coding
+    usable = coding.usable_for(database, KEEP_SHADING, PEER, capability=installation.capability(PEER))
+    assert 'JBIG' not in usable.codings and usable.left_out['JBIG'] == coding.BUILTIN_NO_JBIG
+
+
+def test_a_recorded_jbig_machine_gets_jbig_on_the_next_fax(installation, database, tmp_path,  # noqa: F811
+                                                         ssl_fax_engine_places_calls):
     installation.record_observation(PEER, source='d' * 32, engine='hylafax', now=NOW,
                                     values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1,
                                             'codings': 'MH,MR,MMR,JBIG'})
     assert installation.capability(PEER).codings == frozenset({'MH', 'MR', 'MMR', 'JBIG'})
     changed = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING)
     assert changed.coding.coding == 'JBIG'
-    if REAL is None:  # no tools here: JBIG goes unmeasured on the SSL Fax engine, MH (smallest measured) elsewhere
-        assert (changed.coding.priced, changed.coding.request('builtin')) == ('MH', 'MH')
+    if REAL is None:  # no tools here: JBIG goes unmeasured on the SSL Fax engine, the smallest measured elsewhere
+        smallest = min(('MH', 'MR', 'MMR'), key=lambda name: sum(changed.coding.all_measured[name]))
+        assert (changed.coding.priced, changed.coding.request('builtin')) == (smallest, smallest)
     else:
         assert changed.coding.measured and changed.coding.priced == 'JBIG'
     assert changed.coding.request('hylafax') == 'JBIG'
@@ -186,7 +214,8 @@ def test_a_recorded_jbig_machine_gets_jbig_on_the_next_fax(installation, databas
                                     values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1, 'codings': 'MH,MR,MMR'})
     later = _send(database, tmp_path, pages=frames('shaded_0'), values=KEEP_SHADING, attempt='c' * 32)
     # A known machine without JBIG: the smallest measured coding, asked of both engines.
-    assert later.coding.coding == 'MH' and later.coding.request('hylafax') == later.coding.request('builtin') == 'MH'
+    smallest = min(('MH', 'MR', 'MMR'), key=lambda name: sum(later.coding.all_measured[name]))
+    assert later.coding.coding == smallest == later.coding.request('hylafax') == later.coding.request('builtin')
 
 
 def test_an_unknown_number_on_the_ssl_fax_engine_is_not_narrowed(installation, database, tmp_path):  # noqa: F811

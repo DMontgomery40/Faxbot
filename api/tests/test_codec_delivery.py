@@ -15,7 +15,8 @@ BOOTSTRAP = 'synthetic-codec-bootstrap'
 ADMIN = {'X-API-Key': BOOTSTRAP}
 NUMBER = '+12025550123'
 Prediction = namedtuple('Prediction', 'billed_pages seconds cost basis marginal')
-Shape = namedtuple('Shape', 'pages page_bits resolution layout')
+# The predictor's Shape; ``measured`` holds each coding's measured bits when the chooser measured them.
+Shape = namedtuple('Shape', 'pages page_bits resolution layout measured', defaults=(None,))
 
 
 def per_page(price=45_000, rate=14_400):
