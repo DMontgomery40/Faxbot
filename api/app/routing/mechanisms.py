@@ -578,7 +578,7 @@ def _on_trunk(here):
 
 
 def _sends_on_trunk(here):
-    why = None if here.trunk_sends else f'Needs your own SIP trunk for sending; {here.through()}.'
+    why = None if here.trunk_sends else f'Needs your own trunk for sending; {here.through()}.'
     return State(True, why is None, None, why)
 
 

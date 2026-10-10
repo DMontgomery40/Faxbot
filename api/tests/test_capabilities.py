@@ -707,6 +707,27 @@ def test_the_overview_read_never_counts_what_advice_and_charge_checks_found(inst
     assert items['keys_after_answer']['here'] == {'used': 1, 'sentence': 'Pressed keys on 1 call in 30 days'}
 
 
+def test_a_counter_that_fails_leaves_the_catalogue_line_and_logs_why(installation, monkeypatch, caplog):
+    """One counter failing (a reader elsewhere, or a database busy for a moment) never takes the read down: its line
+    falls back to the catalogue's, and the warning names the entry and carries the cause."""
+    def busy(here, now):
+        raise RuntimeError('Synthetic database is locked')
+    monkeypatch.setitem(capability_here.COUNTERS, 'advice_pots', busy)
+    monkeypatch.setitem(capability_here.COUNTERS, 'answer_cap', busy)
+    with installation.start() as client:
+        answer = client.get('/routing/capabilities', headers=ADMIN)
+        mapped = client.get('/routing/savings/mechanisms', headers=ADMIN)
+    assert answer.status_code == 200, answer.text
+    items = _by_key(answer.json())
+    the_map = {item['key']: item for stage in mapped.json()['stages'] for item in stage['mechanisms']}
+    assert items['advice_pots']['here'] == the_map['advice_pots']['here'] == {'used': 0, 'sentence': None}
+    assert items['answer_cap']['here'] == the_map['answer_cap']['here']
+    assert items['keys_after_answer']['here']['sentence'] == 'Not used in 30 days'
+    failures = [record for record in caplog.records if 'Could not count what' in record.getMessage()]
+    assert {record.getMessage().split()[4] for record in failures} == {'advice_pots', 'answer_cap'}
+    assert all(record.exc_info and 'Synthetic database is locked' in str(record.exc_info[1]) for record in failures)
+
+
 def test_faxbot_overview_never_counts_what_advice_and_charge_checks_found(cli, monkeypatch):
     """`faxbot overview` asks for the capabilities without findings, so no advice or charge-check counter runs."""
     _refuse_findings(monkeypatch)

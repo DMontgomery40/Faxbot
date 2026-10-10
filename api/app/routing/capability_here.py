@@ -21,11 +21,14 @@ this module, until it has one (or the catalogue says Faxbot keeps no count of it
 """
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
+import logging
 from types import SimpleNamespace
 
 import sqlalchemy as sa
 
 from .database import read_connection, utcnow
+
+log = logging.getLogger(__name__)
 
 
 def suggestions(count):
@@ -393,6 +396,15 @@ COUNTERS = {
 
 
 def line(key, here, now=None):
-    """(count, sentence) for what the entry did here, or None when the catalogue's own line stands."""
+    """(count, sentence) for what the entry did here, or None when the catalogue's own line stands.
+
+    One counter that fails (a reader of another module, or a database busy for a moment) must not take the whole
+    Capabilities read and the Overview down: its line falls back to the catalogue's, and the cause is logged."""
     counter = COUNTERS.get(key)
-    return None if counter is None else counter(here, now or utcnow())
+    if counter is None:
+        return None
+    try:
+        return counter(here, now or utcnow())
+    except Exception:
+        log.warning('Could not count what %s did here; showing the catalogue line instead', key, exc_info=True)
+        return None

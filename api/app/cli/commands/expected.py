@@ -236,7 +236,7 @@ def expected_conflict(code: str = typer.Argument(..., help=CODE_HELP),
                       keep: bool = typer.Option(False, '--keep', help='Keep the first version and set the change '
                                                                       'aside.'),
                       apply: bool = typer.Option(False, '--apply', help="Use the import's changed version.")):
-    """Decide about a row the import changed without a new revision."""
+    """Decide about an expected fax the import changed without marking it as a new version."""
     if keep == apply:
         raise CliError('Choose --keep or --apply.')
     api = state.api()
