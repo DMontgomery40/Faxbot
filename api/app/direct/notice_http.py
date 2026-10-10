@@ -25,19 +25,22 @@ def _background(app):
     if engine is None:
         return []
     service = service_for(app)
+    # Built once: each builds a NoticeStore, which reflects its tables. Built on every step, that ran on the
+    # event loop every minute and held it for seconds on a busy installation.
+    receiver, sender = NoticeReceiver(service), NoticeSender(service)
 
     async def match():
         if not getattr(await run_lifecycle_step(service.values), 'direct_delivery_enabled', False):
             return False
-        return await run_lifecycle_step(NoticeReceiver(service).step)
+        return await run_lifecycle_step(receiver.step)
 
     async def queue():
-        return await run_lifecycle_step(NoticeSender(service).step)
+        return await run_lifecycle_step(sender.step)
 
     async def tell():
         if not getattr(await run_lifecycle_step(service.values), 'direct_delivery_enabled', False):
             return False
-        return await NoticeReceiver(service).tell_partners()
+        return await receiver.tell_partners()
     return [('faxbot-direct-notices', repeat_async(match, interval=60.0, initial_delay=25.0,
                                                    warning='Received faxes are checked for notices shortly.')),
             ('faxbot-direct-notice-faxes', repeat_async(queue, interval=60.0, initial_delay=35.0,
