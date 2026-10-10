@@ -5,10 +5,10 @@ keep its Fax button and address book. Only makers whose own documents show SIP w
 the others are listed as "not found" so nobody assumes it (Canon's I-fax is T.37 email and "cannot communicate
 with IP fax machines that comply with the T.38 standard"). Everything here was read on 2026-10-10.
 
-Faxbot does not yet take a copier's call as a fax to send on (a copier extension that hands its pages to Faxbot's
-routing): that part is still to be built, so the steps stop at what each copier documents. A copier that sends by
-email (Sharp's Direct SMTP, T.37 internet fax) reaches Faxbot through an email connector instead, whose copier
-senders rule admits it (intake/sources/mail.py).
+A copier can register to Faxbot as its own extension (copier_extensions.py): Faxbot takes its fax, sends it on
+through your routes and rules, and sends faxes for its numbers on to it. A copier that sends by email (Sharp's
+Direct SMTP, T.37 internet fax) reaches Faxbot through an email connector instead, whose copier senders rule admits
+it (intake/sources/mail.py).
 """
 from __future__ import annotations
 

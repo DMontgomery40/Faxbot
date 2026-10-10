@@ -64,6 +64,7 @@ import MarkJunk from './MarkJunk';
 import type { ReceivedForm } from '../api/formsTypes';
 import ReceivedFormLine from './forms/ReceivedFormLine';
 import { ReceivedCallerCheck } from './CallerCheck';
+import { ReceivedCopier } from './CopiersPanel';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -534,6 +535,8 @@ export default function Received({
           <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
         )}
         {fax && fax.backend === 'sip' && <ReceivedCallerCheck call={client.call.bind(client)} inboundId={fax.id} />}
+        {/* A fax for a number you gave a copier: sent on to it, or why it stays here (copier_extensions.py). */}
+        {fax && <ReceivedCopier call={client.call.bind(client)} inboundId={fax.id} />}
       </Stack>
     );
   };

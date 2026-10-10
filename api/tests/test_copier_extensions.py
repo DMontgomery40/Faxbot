@@ -91,6 +91,157 @@ def test_the_hand_over_script_passes_the_copier_and_the_dialled_number_and_nothi
     assert (bodies[2]['copier'], bodies[2]['dialed']) == (None, None)
 
 
+OUTSIDE = '+13035550199'
+
+
+@pytest.fixture
+def sip_client(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from api.tests.test_access_management_http import ORIGIN, _environment
+    from app.main import app
+    _environment(monkeypatch, tmp_path)
+    for name, value in {'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_BACKEND': 'sip', 'FAX_INBOUND_BACKEND': 'sip',
+                        'INBOUND_ENABLED': 'true', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                        'SIP_TRUNK_PASSWORD': 'Synthetic-Password-1', 'SIP_TRUNK_CALLER_ID': '+13035550160',
+                        'SIP_TRUNK_DIDS': '+13035550160,+13035550161', 'AMI_PASSWORD': 'synthetic-ami-pass',
+                        'ASTERISK_INBOUND_SECRET': 'sekret', 'FAX_HEADER': 'Example Clinic'}.items():
+        monkeypatch.setenv(name, value)
+    with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as test_client:
+        yield test_client
+
+
+def _b():
+    from api.tests.test_access_management_http import B
+    return B
+
+
+def _copier(client, **extra):
+    from api.tests.test_work_http import mailbox
+    box = mailbox(client, 'Front desk', '+13035550161')
+    created = client.post('/admin/sip/copiers/extensions', headers=_b(), json={
+        'name': 'Front desk Ricoh', 'extension': '601', 'mailbox_id': box['id'], 'numbers': ['+13035550161'],
+        **extra})
+    assert created.status_code == 201, created.text
+    return created.json(), box
+
+
+def _copier_tiff(client, name='copier.tiff', pages=2):
+    import os
+    from PIL import Image
+    folder = Path(os.environ['FAX_DATA_DIR']) / 'inbound'
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    frames = [Image.new('1', (1728, 200), 1) for _ in range(pages)]
+    frames[0].save(path, format='TIFF', save_all=True, append_images=frames[1:], compression='group4',
+                   dpi=(204, 196))
+    return path
+
+
+def _engine():
+    from app.main import app
+    return app.state.configuration_runtime.manager.store.engine
+
+
+def test_a_copier_fax_is_queued_from_its_mailbox_to_the_number_it_dialled(sip_client):
+    from api.app.routing import envelope as envelopes
+    created, box = _copier(sip_client)
+    assert created['password'] and created['username'] == 'copier-601' and created['mailbox'] == 'Front desk'
+    assert created['password_text'].startswith('Enter this password on the copier now')
+    listed = sip_client.get('/admin/sip/copiers', headers=_b()).json()['extensions']
+    assert [item['extension'] for item in listed] == ['601'] and 'password' not in listed[0]
+    tiff = _copier_tiff(sip_client)
+    payload = {'tiff_path': str(tiff), 'copier': created['id'], 'dialed': '3035550199', 'faxstatus': 'SUCCESS',
+               'faxpages': 2, 'uniqueid': '1791100000.7'}
+    handed = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'}, json=payload)
+    assert handed.status_code == 200, handed.text
+    job = handed.json()['queued']
+    assert not tiff.exists()  # the queued fax keeps its own copy; nothing is brought in again as received
+    with _engine().connect() as connection:
+        row = connection.execute(sa.text('SELECT to_number, pages FROM fax_jobs WHERE id = :id'), {'id': job}).one()
+        received = connection.execute(sa.text('SELECT count(*) FROM inbound_faxes')).scalar()
+    assert tuple(row) == (OUTSIDE, 2) and received == 0
+    pinned = envelopes.load(_engine(), job)
+    assert pinned.facts.mailbox_id == box['id']  # its mailbox's sending rules and reply number apply
+    # The same call handed over again (the script repeats when Faxbot was slow) is the same fax.
+    again = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'},
+                            json={**payload, 'tiff_path': str(_copier_tiff(sip_client, 'again.tiff'))})
+    assert again.json()['queued'] == job
+    # Removing the copier revokes its key: a later fax from it is filed as received, with why, never lost.
+    assert sip_client.post(f"/admin/sip/copiers/extensions/{created['id']}/remove", headers=_b()).status_code == 200
+    lost = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'}, json={
+        **payload, 'uniqueid': '1791100009.1', 'tiff_path': str(_copier_tiff(sip_client, 'late.tiff'))})
+    assert lost.status_code == 200 and 'queued' not in lost.json()
+    with _engine().connect() as connection:
+        report = connection.execute(sa.text('SELECT report FROM inbound_imports ORDER BY created_at DESC')).scalar()
+    assert 'No copier extension has that ID any more.' in report
+
+
+class FakeAmi:
+    def __init__(self):
+        self.calls, self.listeners = [], {}
+
+    async def originate_copier(self, forward_id, endpoint, tiff_path):
+        self.calls.append((forward_id, endpoint, tiff_path))
+
+
+@pytest.mark.asyncio
+async def test_a_received_fax_goes_on_to_the_copier_or_stays_in_received_with_why(database):  # noqa: F811
+    from datetime import datetime
+    schema.upgrade_schema(database)
+    copier, _ = copier_extensions.add(database, name='Front desk Ricoh', extension='601', numbers=['+13035550161'])
+    now = datetime.utcnow()
+    with database.begin() as connection:
+        for fax in ('in-1', 'in-2'):
+            connection.execute(sa.text(
+                "INSERT INTO inbound_faxes (id, to_number, from_number, status, backend, tiff_path, created_at, updated_at, "
+                "received_at) VALUES (:id, '+13035550161', '+13035550100', 'received', 'sip', :tiff, :now, :now, :now)"),
+                {'id': fax, 'tiff': f'/faxdata/inbound/{fax}.tiff', 'now': now})
+    ami = FakeAmi()
+    values = type('Values', (), {'fax_data_dir': '/faxdata'})()
+    forwarder = copier_extensions.Forwarder(database, ami, lambda: values)
+    import os
+    real = os.path.isfile
+    os.path.isfile = lambda path: path.startswith('/faxdata/inbound/') or real(path)
+    try:
+        await forwarder.step()
+    finally:
+        os.path.isfile = real
+    assert [(endpoint, path) for _, endpoint, path in ami.calls] == [
+        ('copier-601', '/faxdata/inbound/in-1.tiff'), ('copier-601', '/faxdata/inbound/in-2.tiff')]
+    assert copier_extensions.due(database) == []  # both are being called: never called twice at once
+    first, second = (forward_id for forward_id, _, _ in ami.calls)
+    forwarder.on_sent({'Event': 'UserEvent', 'UserEvent': 'FaxCopierSent', 'Job': first, 'Status': 'SUCCESS',
+                       'Pages': '2'})
+    forwarder.on_originate({'Event': 'OriginateResponse', 'ActionID': f'copier-{second}', 'Response': 'Failure'})
+    assert copier_extensions.fax_view(database, 'in-1') == 'Sent on to Front desk Ricoh at extension 601, 2 pages.'
+    assert copier_extensions.fax_view(database, 'in-2') == "Front desk Ricoh didn't answer, so this fax stays in Received."
+    # The unanswered one is tried once more; the sent one never again; after two tries it stays in Received.
+    assert [row['id'] for row, _ in copier_extensions.due(database)] == ['in-2']
+    copier_extensions.record_forward(database, 'in-2', copier.id, 'calling')
+    copier_extensions.record_forward(database, 'in-2', copier.id, 'no_answer', reason='Again.')
+    assert copier_extensions.due(database) == []
+
+
+@pytest.mark.asyncio
+async def test_the_fax_engine_is_asked_to_call_only_the_copiers_own_extension():
+    from api.app import ami as ami_module
+    client = ami_module.AMIClient.__new__(ami_module.AMIClient)
+    sent = []
+
+    async def capture(fields):
+        sent.append(fields)
+    client._send_action = capture
+    await client.originate_copier('f' * 32, 'copier-601', '/faxdata/inbound/1791100000.7.tiff')
+    assert sent == [{'Action': 'Originate', 'ActionID': 'copier-' + 'f' * 32, 'Channel': 'PJSIP/copier-601',
+                     'Context': 'faxbot-copier-send', 'Exten': 's', 'Priority': '1', 'Async': 'true',
+                     'Timeout': '45000', 'CallerID': 'Faxbot',
+                     'Variable': 'FAXFILE=/faxdata/inbound/1791100000.7.tiff,FAXBOT_JOB=' + 'f' * 32}]
+    for endpoint, path in (('trunk-endpoint', '/faxdata/a.tiff'), ('copier-601', '/faxdata/../etc/passwd.tiff'),
+                           ('PJSIP/copier-601', '/faxdata/a.tiff')):
+        with pytest.raises(ValueError):
+            await client.originate_copier('f' * 32, endpoint, path)
+
+
 def test_0085_is_the_head_and_its_downgrade_keeps_copiers(database):  # noqa: F811
     schema.upgrade_schema(database)
     assert schema_copier_extensions.REVISION == '0085_copier_extensions' == schema.HEAD

@@ -726,6 +726,8 @@ class AMIClient:
             self._emit("FaxResult", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxinboundcall":
             self._emit("FaxInboundCall", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxcopiersent":
+            self._emit("FaxCopierSent", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
             self._emit("FaxEngineCall", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginemissed":
@@ -951,6 +953,22 @@ class AMIClient:
 
     def on_originate_response(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("OriginateResponse", cb)
+
+    def on_copier_sent(self, cb: Callable[[Dict[str, str]], None]):
+        """A received fax the fax engine sent on to a copier's extension (copier_extensions.py)."""
+        self._listen("FaxCopierSent", cb)
+
+    async def originate_copier(self, forward_id: str, endpoint: str, tiff_path: str):
+        """Call a copier's extension and send it a received fax (extensions-copier.conf, faxbot-copier-send). The
+        call never leaves Faxbot's own Asterisk: the channel is the copier's own endpoint."""
+        if not re.fullmatch(r"[a-f0-9]{32}", forward_id or "") or not re.fullmatch(r"copier-[1-9][0-9]{2,5}", endpoint or ""):
+            raise ValueError("Invalid copier call.")
+        if not re.fullmatch(r"/[A-Za-z0-9_./-]+\.tiff?", tiff_path or "") or ".." in tiff_path:
+            raise ValueError("Invalid copier fax file.")
+        await self._send_action({
+            "Action": "Originate", "ActionID": f"copier-{forward_id}", "Channel": f"PJSIP/{endpoint}",
+            "Context": "faxbot-copier-send", "Exten": "s", "Priority": "1", "Async": "true", "Timeout": "45000",
+            "CallerID": "Faxbot", "Variable": f"FAXFILE={tiff_path},FAXBOT_JOB={forward_id}"})
 
     def on_fax_result(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("FaxResult", cb)

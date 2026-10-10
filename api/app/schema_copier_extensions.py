@@ -1,13 +1,18 @@
 """Frozen 0085 copier extensions: copiers that register to Faxbot's Asterisk and fax through Faxbot (N22).
 
-Registration and validation belong to ``schema``. This revision adds one append-only table and changes no stored
+Registration and validation belong to ``schema``. This revision adds two append-only tables and changes no stored
 row:
 
 - ``copier_extensions``: each copier's extension as you set it, newest row per ``copier_id`` counts: its name, the
   extension digits, the SIP user name, pjsip's MD5 digest of its password (``md5_cred``; the password itself is
   shown once and never stored), the mailbox its faxes are sent from, the numbers whose received faxes go on to it
   (JSON), whether those faxes go on to it or stay in intake (``receive``), and ``state`` (``removed`` takes the
-  extension away).
+  extension away). The copier's own sending key (an integration with ``fax:send`` only, like an email
+  connector's) is sealed with the installation key in ``secret_envelope``, bound to the copier, with its binding
+  and principal so removing the copier revokes it.
+- ``copier_forwards``: each received fax Faxbot sent on to a copier's extension, one row per try: the received
+  fax, the copier, ``state`` (``calling``, ``sent``, ``no_answer``, ``failed``), the pages and the reason in one
+  sentence. A fax whose copier didn't answer stays in Received.
 
 The downgrade drops the table and refuses while a copier is recorded, because the copier's registration depends on
 it. Runtime code reflects this table; it never imports this metadata.
@@ -18,12 +23,14 @@ from .schema_partner_admission import frozen_metadata as previous_metadata
 
 
 REVISION = '0085_copier_extensions'
-ORDER = ('copier_extensions',)
+ORDER = ('copier_extensions', 'copier_forwards')
 TABLES = frozenset(ORDER)
 STATES = ('active', 'removed')
 RECEIVE = ('copier', 'intake')
+FORWARD_STATES = ('calling', 'sent', 'no_answer', 'failed')
 INDEXES = (
     ('ix_copier_extensions_copier', 'copier_extensions', ('copier_id', 'created_at'), False),
+    ('ix_copier_forwards_fax', 'copier_forwards', ('inbound_fax_id', 'created_at'), False),
 )
 
 
@@ -44,11 +51,25 @@ def _definitions():
             sa.Column('numbers', sa.Text(), nullable=True),
             sa.Column('receive', sa.String(16), nullable=False),
             sa.Column('state', sa.String(16), nullable=False),
+            sa.Column('secret_envelope', sa.Text(), nullable=True),
+            sa.Column('key_binding_id', sa.String(40), nullable=True),
+            sa.Column('key_principal_id', sa.String(40), nullable=True),
             sa.Column('recorded_by_name', sa.String(200), nullable=True),
             sa.Column('created_at', sa.DateTime(), nullable=False),
             sa.PrimaryKeyConstraint('id', name='pk_copier_extensions'),
             sa.CheckConstraint(_choice('state', STATES), name='ck_copier_extensions_state'),
             sa.CheckConstraint(_choice('receive', RECEIVE), name='ck_copier_extensions_receive'),
+        ),
+        'copier_forwards': (
+            sa.Column('id', sa.String(40), nullable=False),
+            sa.Column('inbound_fax_id', sa.String(40), nullable=False),
+            sa.Column('copier_id', sa.String(40), nullable=False),
+            sa.Column('state', sa.String(16), nullable=False),
+            sa.Column('pages', sa.Integer(), nullable=True),
+            sa.Column('reason', sa.String(300), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_copier_forwards'),
+            sa.CheckConstraint(_choice('state', FORWARD_STATES), name='ck_copier_forwards_state'),
         ),
     }
 
@@ -80,8 +101,10 @@ def upgrade_copier_extensions(connection, operations):
 
 
 def downgrade_copier_extensions(connection, operations):
-    if connection.execute(sa.select(sa.func.count()).select_from(sa.table('copier_extensions'))).scalar():
-        _refuse('Copier extensions are recorded; this revision cannot be undone without losing them.')
+    for name in ORDER:
+        if connection.execute(sa.select(sa.func.count()).select_from(sa.table(name))).scalar():
+            _refuse('Copier extensions or faxes sent on to them are recorded; this revision cannot be undone '
+                    'without losing them.')
     for index, table, _, _ in reversed(INDEXES):
         operations.drop_index(index, table_name=table)
     for name in reversed(ORDER):

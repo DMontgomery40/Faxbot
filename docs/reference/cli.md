@@ -4358,6 +4358,7 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
 * `analog-line`: An analog phone line through a gateway:...
+* `copier-extensions`: Copiers that register to Faxbot as their...
 * `caller-check`: The caller-verification stamp on received...
 
 ##### `faxbot delivery providers trunk status`
@@ -4945,6 +4946,100 @@ $ faxbot delivery providers trunk analog-line import [OPTIONS] {FILE}
 * `--monthly-fee AMOUNT`: The line&#x27;s monthly fee, shown with its prices.
 * `--increment <int range>`: The billing step for calls outside the local area, in seconds.  [default: 60; 1&lt;=x&lt;=3600]
 * `--source URL`: The address of the page the list came from.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk copier-extensions`
+
+Copiers that register to Faxbot as their own extension: their faxes go out through your routes and rules, and faxes for their numbers go on to them.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List your copier extensions and where...
+* `add`: Add a copier extension.
+* `remove`: Take a copier extension away and revoke...
+* `received`: Say whether a received fax went on to its...
+
+###### `faxbot delivery providers trunk copier-extensions list`
+
+List your copier extensions and where their faxes go.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions add`
+
+Add a copier extension. Its password is printed once: enter it on the copier, then press Apply on the trunk
+page (faxbot delivery providers trunk apply) so the fax engine loads it.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions add [OPTIONS] {name} {extension}
+```
+
+**Arguments**:
+
+* `name`: The copier, such as &quot;Front desk Ricoh&quot;.  [required]
+* `extension`: Its extension, 3 to 6 digits, such as 601.  [required]
+
+**Options**:
+
+* `--mailbox <str>`: The mailbox its faxes are sent from, by ID.
+* `--number <str>`: A fax number whose faxes go on to it; repeat it.
+* `--receive copier|intake`: copier: faxes to its numbers go on to it; intake: they stay in Received.  [default: copier]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions remove`
+
+Take a copier extension away and revoke its sending key.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions remove [OPTIONS] {copier}
+```
+
+**Arguments**:
+
+* `copier`: The copier, by its extension, name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions received`
+
+Say whether a received fax went on to its copier, or why it stays in Received.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions received [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: A received fax&#x27;s ID.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk caller-check`

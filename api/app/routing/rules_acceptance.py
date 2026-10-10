@@ -193,7 +193,7 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
 
 
 def recorder_for(engine, revision, actor, *, job_id, destination, pages, document_path=None, case_packet=False,
-                 control=None):
+                 control=None, mailbox=None):
     """Facts, preview and the acceptance-transaction recorder in one call, for faxes Faxbot accepts itself.
 
     Email and folder connectors (``intake/sources/send.py``) and generated documents (case packets, challenge
@@ -210,7 +210,7 @@ def recorder_for(engine, revision, actor, *, job_id, destination, pages, documen
         except OSError:
             size = 0
     plan = prepare(engine, revision, actor=actor, destination=destination, pages=pages, size_bytes=size,
-                   case_packet=case_packet, document_sha256=digest)
+                   case_packet=case_packet, document_sha256=digest, mailbox=mailbox)
     return recorder(plan, job_id, actor, control=control)
 
 

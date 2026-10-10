@@ -787,6 +787,19 @@ def receive_handover(request: Request, payload: dict, root: str):
         raise HTTPException(400, detail='TIFF path invalid') from None
     if not os.path.isfile(tiff_path):
         raise HTTPException(400, detail='TIFF path invalid')
+    # A copier extension's fax (copier_extensions.py): queued as an outbound fax from the copier's mailbox to the
+    # number it dialled. Only when that can't be done is it filed as a received fax, with why, so no page is lost.
+    copier_refused = None
+    if isinstance(payload.get('copier'), str) and re.fullmatch(r'[a-f0-9]{32}', payload['copier']):
+        from ..copier_extensions import HandoverRefused, queue
+        try:
+            job_id = queue(request.app, payload, tiff_path)
+        except HandoverRefused as error:
+            copier_refused = str(error)
+            logging.getLogger(__name__).warning('A copier fax was filed as received instead: %s', error)
+        else:
+            os.unlink(tiff_path)  # the queued fax keeps its own copy; nothing here is brought in again
+            return {'status': 'ok', 'queued': job_id}
 
     def text(name, limit=64):
         value = payload.get(name)
@@ -818,6 +831,8 @@ def receive_handover(request: Request, payload: dict, root: str):
     peer = payload.get('peer')
     if isinstance(peer, str) and re.fullmatch(r'[a-f0-9]{32}', peer):
         report['peer_call'] = peer
+    if copier_refused:
+        report['copier'] = {'copier_id': payload['copier'], 'dialed': text('dialed', 32), 'reason': copier_refused}
     # A forwarded call (X4): where the network said it came from, checked when a receiving rule depends on it.
     diverted = received_diversion(payload, call, store.engine, received_at=source_time)
     if diverted is not None:

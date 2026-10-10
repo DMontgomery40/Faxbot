@@ -167,6 +167,9 @@ async def lifespan(application: FastAPI):
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
                     # A T.38 call whose fax data never came back switches new calls to audio fax.
                     sip_fax_mode.attach(ami_client, runtime)
+                    # Received faxes for numbers you gave a copier go on to its extension (copier_extensions.py).
+                    from . import copier_extensions
+                    copier_extensions.attach(ami_client, runtime, tasks)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     # Start without the fax engine rather than lock people out of the
                     # console that fixes it; the client keeps retrying in the background.
