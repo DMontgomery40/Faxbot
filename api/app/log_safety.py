@@ -34,6 +34,25 @@ def hide_sql_parameters(error):
     return error
 
 
+class DatabaseErrorSummary(Exception):
+    """A database error said by its classes and primary message only: PostgreSQL's DETAIL line can echo a row's
+    values ("Key (token)=(...) already exists")."""
+
+
+def loggable(error):
+    """``exc_info`` for logging ``error`` with its traceback: SQL parameters hidden, and a database error that carries
+    a DETAIL line replaced by its classes and primary message, the traceback's frames kept."""
+    hide_sql_parameters(error)
+    for item in _chain(error):
+        original = getattr(item, 'orig', None) if isinstance(item, sa.exc.DBAPIError) else None
+        text = str(original) if original is not None else ''
+        detail = getattr(getattr(original, 'diag', None), 'message_detail', None)
+        if detail or '\nDETAIL:' in text:
+            primary = text.splitlines()[0] if text else ''
+            return DatabaseErrorSummary, DatabaseErrorSummary(f'{cause_text(error)}: {primary}'), error.__traceback__
+    return type(error), error, error.__traceback__
+
+
 def _code(error):
     """The database's error name or code (SQLITE_BUSY, 40P01), which names the cause and holds no value."""
     for name in ('sqlite_errorname', 'sqlstate', 'pgcode'):

@@ -509,6 +509,43 @@ describe('Before sending', () => {
     expect(screen.queryByText(/Forbidden|couldn't/)).toBeNull();
   });
 
+  it('holds the rows of options a lookup decides, and puts the recipient check below Send', async () => {
+    // Structural, as jsdom does no layout: each option's row is reserved above Send while its lookup runs and the
+    // option takes that row; information that arrives late renders below Send.
+    let release: () => void = () => undefined;
+    const late = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.get('/routing/destinations/:number', async ({ params }) => {
+      await late;
+      return HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
+        accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null,
+        available_routes: [], recommended_routes: [{ route: 'local', label: 'This Faxbot', reason: 'own_number',
+          explanation: 'One of your own fax numbers.', estimated_cost_one_page: null, rate: null,
+          included_in_plan: false, monthly_fee: null }] });
+    }), http.get('/batching/check', async () => {
+      await late;
+      return HttpResponse.json({ number: '+12025550123', sends_together: true, wait_minutes: 10,
+        sentence: 'Faxes to this number wait up to 10 minutes to go in one call with others.' });
+    }), http.get('/routing/recipient-check', async () => {
+      await late;
+      return HttpResponse.json({ number: '+12025550123', first_send: true, checked: true, state: 'listed_for_other',
+        warning: true, sentence: 'This number is listed for SYNTHETIC IMAGING LLC in NPPES.', name: null, listed: [],
+        source_url: 'https://npiregistry.cms.hhs.gov/api-page' });
+    }));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const sendButton = screen.getByRole('button', { name: 'Send Fax' });
+    const above = (element: Element) => Boolean(element.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(above(await screen.findByTestId('send-by-call-pending'))).toBe(true);
+    expect(above(screen.getByTestId('send-now-pending'))).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 700));  // every lookup has been asked
+    release();
+    expect(above(await screen.findByTestId('send-by-call', {}, { timeout: 2000 }))).toBe(true);
+    expect(above(await screen.findByTestId('send-now', {}, { timeout: 2000 }))).toBe(true);
+    expect(screen.queryByTestId('send-by-call-pending')).toBeNull();
+    expect(screen.queryByTestId('send-now-pending')).toBeNull();
+    expect(above(await screen.findByTestId('send-recipient-check', {}, { timeout: 2000 }))).toBe(false);
+  });
+
   it('says the plan once when the route was chosen because faxes are included in it', async () => {
     const plan = 'Included in your HumbleFax plan ($10 a month)';
     const basis = `${plan}, so this fax adds nothing to the bill; 5 pages sent on it this month; about 19 seconds on `

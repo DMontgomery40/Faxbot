@@ -129,6 +129,16 @@ def test_a_failed_statement_is_logged_with_its_class_statement_and_frames_but_no
     assert SECRET not in text
 
 
+def test_a_failed_private_operation_answers_503_with_retry_after():
+    import asyncio
+    from types import SimpleNamespace
+    from app.access.http import access_error_response
+    from app.access.types import AccessUnavailableError
+    response = asyncio.run(access_error_response(SimpleNamespace(headers={}), AccessUnavailableError()))
+    assert response.status_code == 503 and response.headers['Retry-After'] == '1'
+    assert response.headers['Cache-Control'] == 'no-store'
+
+
 def test_an_exception_message_that_holds_a_secret_is_never_logged(caplog):
     def check_password():
         try:

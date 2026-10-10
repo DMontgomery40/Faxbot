@@ -169,6 +169,9 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
   // Optional: the time it must be sent by, in this browser's local time (a datetime-local value).
   const [sendBy, setSendBy] = useState('');
+  // The number the batching answer is for: while it is on its way, Send now's row is held open, so the answer
+  // never pushes Send down.
+  const [togetherFor, setTogetherFor] = useState<string | null>(null);
   useEffect(() => {
     setTogether(null);
     setSendNow(false);
@@ -176,11 +179,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     let live = true;
     const timer = window.setTimeout(() => {
       client.checkBatching(toNumber)
-        .then((answer) => { if (live) setTogether(answer.sends_together ? answer : null); })
-        .catch(() => undefined);
+        .then((answer) => { if (live) { setTogether(answer.sends_together ? answer : null); setTogetherFor(toNumber); } })
+        .catch(() => { if (live) setTogetherFor(toNumber); });
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber]);
+  const togetherPending = /\d{3}/.test(toNumber) && togetherFor !== toNumber;
 
   // Before a first fax to a number: a warning when NPPES lists it for another provider. It never stops the fax.
   const [recipientCheck, setRecipientCheck] = useState<RecipientCheck | null>(null);
@@ -211,18 +215,34 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [routes, setRoutes] = useState<RecommendedRoute[]>([]);
   // Someone who may not read routes (a fax operator) cannot see whether the number has a health record system.
   const [routesHidden, setRoutesHidden] = useState(false);
+  // Whether the number is one of your own (its first route is 'local'), per number: "send by call" keeps its row
+  // while the first lookup runs, and asking again for the page count never hides it.
+  const [localFor, setLocalFor] = useState<{ number: string; local: boolean } | null>(null);
   useEffect(() => {
     setRoutes([]);
     if (!/\d{3}/.test(toNumber)) return undefined;
     let live = true;
+    const asked = normalizeFaxDestination(toNumber);
     const timer = window.setTimeout(() => {
-      client.getDestination(normalizeFaxDestination(toNumber), pages ?? undefined)
-        .then((detail) => { if (live) { setRoutes(detail.recommended_routes); setRoutesHidden(false); } })
-        .catch((failure) => { if (live && isForbidden(failure)) setRoutesHidden(true); });
+      client.getDestination(asked, pages ?? undefined)
+        .then((detail) => {
+          if (!live) return;
+          setRoutes(detail.recommended_routes);
+          setRoutesHidden(false);
+          setLocalFor({ number: asked, local: detail.recommended_routes[0]?.route === 'local' });
+        })
+        .catch((failure) => {
+          if (!live) return;
+          if (isForbidden(failure)) setRoutesHidden(true);
+          setLocalFor({ number: asked, local: false });
+        });
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber, pages]);
   const route = routes[0] ?? null;
+  const numberKey = /\d{3}/.test(toNumber) ? normalizeFaxDestination(toNumber) : null;
+  const localPending = numberKey !== null && localFor?.number !== numberKey;
+  const ownNumber = numberKey !== null && localFor?.number === numberKey && localFor.local;
   // A recipient's health record system (a FHIR route) among this number's routes asks for the patient; someone
   // who may not see the routes can add the patient on request.
   const recordsRoute = routes.find((item) => item.route.startsWith('fhir:')) ?? null;
@@ -350,7 +370,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
+          byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
           sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
@@ -449,11 +469,6 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   onBlur={() => setCheckedName(recipientName.trim())}
                   inputProps={{ maxLength: 200, 'data-testid': 'send-recipient-name' }}
                   helperText="Before a first fax, Faxbot checks the number against the NPI registry (NPPES)." />
-                {recipientCheck?.sentence && (
-                  <Alert severity={recipientCheck.warning ? 'warning' : 'info'} data-testid="send-recipient-check">
-                    {recipientCheck.sentence}
-                  </Alert>
-                )}
 
                 {!recordsRoute && routesHidden && !patientAsked && (
                   <Box>
@@ -510,14 +525,18 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   helperText="Faxbot sends it in time, even outside the recipient's usual hours."
                   sx={{ mt: 1, maxWidth: 320 }} />
 
-                {route?.route === 'local' && (
+                {/* Options that depend on a lookup keep their row (one checkbox high) while it runs, so the answer
+                    never moves Send; informational answers go below Send instead. */}
+                {localPending ? <Box aria-hidden data-testid="send-by-call-pending" sx={{ minHeight: 42 }} />
+                  : ownNumber && (
                   <FormControlLabel data-testid="send-by-call"
                     control={<Checkbox checked={byCall} onChange={(e) => setByCall(e.target.checked)}
                       disabled={!configReady || loading} />}
                     label="Send it through your carrier with a real call instead, to test your fax line" />
                 )}
 
-                {together && (
+                {togetherPending ? <Box aria-hidden data-testid="send-now-pending" sx={{ minHeight: 62 }} />
+                  : together && (
                   <Box data-testid="send-now">
                     <Typography variant="body2" color="text.secondary">{together.sentence}</Typography>
                     <FormControlLabel
@@ -582,9 +601,14 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   )}
                 </Box>
 
-                {/* The route and estimate arrive after the number and document (the document is measured on the
-                    server), so they sit below Send and Clear: a late answer never moves a control someone is about
-                    to click. */}
+                {/* The recipient check, route and estimate arrive after the number and document (the document is
+                    measured on the server), so they sit below Send and Clear: a late answer never moves a control
+                    someone is about to click. */}
+                {recipientCheck?.sentence && (
+                  <Alert severity={recipientCheck.warning ? 'warning' : 'info'} data-testid="send-recipient-check">
+                    {recipientCheck.sentence}
+                  </Alert>
+                )}
                 {(route || chosen) && (
                   <Box data-testid="send-route">
                     <Typography variant="body2">Faxbot will send it through {chosen ? chosen.label : route!.label}.</Typography>

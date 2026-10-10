@@ -106,6 +106,8 @@ async def access_error_response(request, error):
         status, message = 400, 'Invalid credential input.'
     else:
         status, message = 503, 'Access service is temporarily unavailable.'
+        # Usually a moment's database contention: the console asks once more after this.
+        headers['Retry-After'] = '1'
     return JSONResponse({'detail':message}, status_code=status, headers=headers)
 
 

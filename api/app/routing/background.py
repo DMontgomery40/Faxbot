@@ -9,13 +9,12 @@ from contextlib import asynccontextmanager
 import logging
 
 from ..config_runtime import run_lifecycle_step
-from ..log_safety import hide_sql_parameters
+from ..log_safety import loggable
 
 
 def _warn(warning, error):
-    """The step's plain warning with its traceback (``exc_info``), SQL parameters hidden."""
-    hide_sql_parameters(error)
-    logging.getLogger(__name__).warning(warning, exc_info=True)
+    """The step's plain warning with its traceback (``exc_info``), SQL parameters and database DETAIL lines left out."""
+    logging.getLogger(__name__).warning(warning, exc_info=loggable(error))
 
 
 async def repeat(step, *, interval, warning, initial_delay=None):

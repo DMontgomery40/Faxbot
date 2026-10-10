@@ -768,6 +768,16 @@ def test_a_failing_route_step_logs_its_warning_with_the_cause(warning, caplog):
     with open(routing_http.__file__, encoding='utf-8') as source:
         assert f"warning='{warning}'" in source.read()
     failure = _sql_failure()
+    record = _log_one_failure(caplog, repeat, warning, failure)
+    assert record.exc_info and record.exc_info[1] is failure
+    text = logging.Formatter().format(record)
+    assert 'IntegrityError' in text and 'INSERT INTO numbers VALUES (?)' in text
+    assert SECRET_NUMBER not in text
+
+
+def _log_one_failure(caplog, repeat, warning, failure):
+    """Run ``repeat`` with a step that fails once, then the warning's record once the next step has started."""
+    import logging
     calls = []
 
     async def run():
@@ -788,11 +798,25 @@ def test_a_failing_route_step_logs_its_warning_with_the_cause(warning, caplog):
             await asyncio.gather(task, return_exceptions=True)
     caplog.set_level(logging.WARNING)
     asyncio.run(run())
-    record = _records(caplog, warning)[0]
-    assert record.exc_info and record.exc_info[1] is failure
+    return _records(caplog, warning)[0]
+
+
+class _DriverError(Exception):
+    """A PostgreSQL driver error worded as psycopg words a unique violation: the primary message, then DETAIL."""
+
+
+def test_a_database_detail_line_that_echoes_a_value_is_never_logged(caplog):
+    import logging
+    from app.routing.background import repeat
+    original = _DriverError('duplicate key value violates unique constraint "uq_numbers"\n'
+                            f'DETAIL:  Key (number)=({SECRET_NUMBER}) already exists.')
+    failure = sa.exc.IntegrityError('INSERT INTO numbers VALUES (%(number)s)', {'number': SECRET_NUMBER}, original)
+    record = _log_one_failure(caplog, repeat, 'Provider charges are temporarily unavailable.', failure)
     text = logging.Formatter().format(record)
-    assert 'IntegrityError' in text and 'INSERT INTO numbers VALUES (?)' in text
-    assert SECRET_NUMBER not in text
+    # The classes, the statement and the primary message, with the traceback; never the DETAIL line's value.
+    assert 'IntegrityError' in text and 'duplicate key value violates unique constraint "uq_numbers"' in text
+    assert 'INSERT INTO numbers VALUES' in text and 'test_polling.py' in text
+    assert SECRET_NUMBER not in text and 'DETAIL' not in text
 
 
 def test_timed_collection_logs_why_it_could_not_read_its_settings(caplog, monkeypatch):

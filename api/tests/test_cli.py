@@ -1279,9 +1279,9 @@ def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
     assert '9 in 10 calls within' in human
 
 
-def test_costs_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_does(monkeypatch):
-    """The trunk's time note and a learned finish sentence print as Send shows them; an assumed spread prints no
-    9 in 10 figure (routing.predict_http.finish_sentence / time_note)."""
+def test_savings_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_does(monkeypatch):
+    """faxbot savings predict: the trunk's time note and a learned finish sentence print as Send shows them; an
+    assumed spread prints no 9 in 10 figure (routing.predict_http.finish_sentence / time_note)."""
     from app.cli import state as cli_state
     note = 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.'
     finish = 'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 50 seconds.'
@@ -1300,7 +1300,7 @@ def test_costs_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_does
                     'routes': [route('sip', 'Telnyx', finish_sentence=None, time_note=note),
                                route('sip-2', 'Page trunk', finish_sentence=finish, time_note=None)]}
     monkeypatch.setattr(cli_state, 'api', lambda: Canned())
-    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'costs', 'predict', '--to',
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
                                           '+12025550123'], env={'COLUMNS': '200'})
     assert result.exit_code == 0, result.stdout
     human = ' '.join(result.stdout.split())
