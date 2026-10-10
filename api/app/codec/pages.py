@@ -96,8 +96,8 @@ class _NoHeader(PageError):
     """The ladder is there but no header copy reads: the page may be upside down."""
 
 
-NO_PATTERN = 'This page has no payload pattern.'
-NO_HEADER = 'The payload page header could not be read.'
+NO_PATTERN = 'This page has no encoded-page pattern.'
+NO_HEADER = 'The encoded page header could not be read.'
 # Run-coded and enumerative pages carry their data in exact run lengths, so a page drawn again at another size
 # cannot be read; the grid and picture layouts survive it.
 RESIZED = ('This page was resized after it arrived, and these encoded pages can be read only from the fax image '
