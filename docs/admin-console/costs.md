@@ -6,7 +6,11 @@
 
 ## Prices & plans
 
-**Costs → Prices & plans** (`#/costs/prices`) holds the published price of each provider in use, editable, with its source and date. Faxbot uses them to estimate costs and choose the cheapest route.
+**Costs → Prices & plans** (`#/costs/prices`) holds the prices Faxbot uses to estimate costs and rank routes. Add or edit a rate card with **Add rate card** or **Edit**; enter the source and date as well as the rates. Prices and plan coverage depend on the destination, so Faxbot does not use a domestic price when no price applies to an international destination.
+
+For prices that depend on where a call starts, choose **Add a price by where calls start** under the sending card. Set **Calls from**, **To numbers starting with**, the rates, and the billing step and minimum. Faxbot checks the account's site, then its country, then **Anywhere**; the longest matching number prefix wins within the first origin with a match.
+
+The page also shows plan budgets. Set included pages or minutes and any extra-page price for a plan there. An allowance applies only when the destination's tariff is covered by that plan; it does not fill in a missing destination price or cover a separate destination tariff.
 
 ## Advice
 
