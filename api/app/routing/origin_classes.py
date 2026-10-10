@@ -513,23 +513,31 @@ def presented_caller_id(values, account_key, *, engine=None, mailbox_id=None):
     sets its own sending number, so None). ``mailbox_id`` is the sending mailbox, passed to the reply-number
     choice exactly as ``ami.reply_choice`` passes it; the call itself passes none today, so neither does pricing.
     """
+    caller, _, how = presented_identity(values, account_key, engine=engine, mailbox_id=mailbox_id)
+    return caller, how
+
+
+def presented_identity(values, account_key, *, engine=None, mailbox_id=None):
+    """(caller ID, station ID, how) a fax sent by ``account_key`` would show, as ``ami.originate_fields_for`` sets
+    them: the station ID is the reply number (``reply_number.choose``), else the caller ID. None where unknown."""
     from ..accounts import AccountsError, account_named, account_values
     account = account_named(values, account_key)
     provider = account.provider if account is not None else account_key
     if provider == 'freeswitch':
-        return (getattr(values, 'fs_caller_id_number', '') or None), 'freeswitch'
+        caller = getattr(values, 'fs_caller_id_number', '') or None
+        return caller, caller, 'freeswitch'
     if provider != 'sip':
-        return None, 'provider'
+        return None, None, 'provider'
     own = values
     if account is not None and not account.primary:
         try:
             own = account_values(values, account_key)
         except AccountsError:
-            return None, 'trunk'
+            return None, None, 'trunk'
     from .. import sip_trunk
     from .reply_number import Choice, caller_id_for, choose
     if not sip_trunk.configured(own):
-        return None, 'trunk'
+        return None, None, 'trunk'
     try:
         store = None
         if engine is not None:
@@ -538,7 +546,8 @@ def presented_caller_id(values, account_key, *, engine=None, mailbox_id=None):
         choice = choose(own, engine=engine, store=store, mailbox_id=mailbox_id)
     except Exception:  # noqa: BLE001 - mirrors ami.reply_choice: an unreadable reply number means the line's own
         choice = Choice(None, 'line', '')
-    return (caller_id_for(own, choice.number) or getattr(own, 'sip_trunk_caller_id', '') or None), 'trunk'
+    caller = caller_id_for(own, choice.number) or getattr(own, 'sip_trunk_caller_id', '') or None
+    return caller, choice.number or caller, 'trunk'
 
 
 # -- pricing one call --------------------------------------------------------------------------------------------------

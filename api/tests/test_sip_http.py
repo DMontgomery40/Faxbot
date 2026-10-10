@@ -75,9 +75,13 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
     assert response.status_code == 200
     presets = {preset['id']: preset for preset in response.json()['presets']}
     assert set(presets) == {'telnyx', 'signalwire', 'sinch', 'anveo', 'flowroute', 'gamma', 'bt-one-voice',
-                            'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'custom'}
+                            'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'swisscom-sbc',
+                            'telekom-companyflex', 'custom'}
+    assert (presets['swisscom-sbc']['encrypted_audio_only'], presets['swisscom-sbc']['media_encryption'],
+            presets['telekom-companyflex']['access_rule']) == (True, 'sdes', 'telekom')
     assert presets['anveo']['auth_modes'] == ['ip'] and presets['signalwire']['needs_host'] is True
-    assert all(source['read_on'] == '2026-10-03' for preset in presets.values() for source in preset['sources'])
+    assert all('2026-10-03' <= source['read_on'] <= '2026-10-31' for preset in presets.values()
+               for source in preset['sources'])
 
 
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):

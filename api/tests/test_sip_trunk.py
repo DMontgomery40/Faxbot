@@ -54,6 +54,15 @@ CASES = {
                           'SIP_TRUNK_DIAL_FORMAT': 'local', 'SIP_TRUNK_DIAL_PREFIX': '9'},
     'avaya-aura-us-tcp': {'SIP_TRUNK_PRESET': 'avaya-aura', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': '10.20.0.15',
                           'SIP_TRUNK_TRANSPORT': 'tcp', 'FAX_DEFAULT_COUNTRY': 'US'},
+    # Encrypted audio fax (sip_access.py, N18): TLS, SRTP (SDES), G.711, no T.38.
+    'swisscom-sbc-tls-srtp': {'SIP_TRUNK_PRESET': 'swisscom-sbc', 'SIP_TRUNK_HOST': 'zhheapp-asbc01.join.swisscom.ch',
+                              'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD,
+                              'FAX_DEFAULT_COUNTRY': 'CH'},
+    # CompanyFlex set to TCP, on an access Faxbot has not seen as your Telekom line: encrypted all the same.
+    'telekom-companyflex-encrypted': {'SIP_TRUNK_PRESET': 'telekom-companyflex', 'SIP_TRUNK_USERNAME': 'faxbot',
+                                      'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp',
+                                      'SIP_TRUNK_OUTBOUND_PROXY': 'k0001.primary.companyflex.de',
+                                      'FAX_DEFAULT_COUNTRY': 'DE'},
 }
 
 
@@ -77,7 +86,8 @@ def test_every_preset_has_a_golden_case_and_every_preset_cites_dated_sources():
             # The console links the first source as the carrier's documentation page.
             assert not preset.sources[0].url.endswith('.json'), preset.id
         for source in preset.sources:
-            assert source.url.startswith('https://') and source.read_on == '2026-10-03'
+            # Read on 3 October 2026, or later for presets added since (the encrypted presets: 8 and 9 October).
+            assert source.url.startswith('https://') and '2026-10-03' <= source.read_on <= '2026-10-31'
         assert set(preset.codecs) <= {'ulaw', 'alaw'}
     assert {fixture.stem for fixture in FIXTURES.glob('*.conf')} == set(CASES)
 
@@ -239,8 +249,9 @@ def test_rate_card_seed_covers_every_carrier_preset_with_dated_sources():
         assert card['provider_id'] == 'sip-' + card['preset'] and card['provider'] == 'sip'
         # US cards are in dollars; a UK or Australian carrier's card is in its own currency and, with no
         # published price, carries none.
-        assert date.fromisoformat(card['advertised_on']) == date(2026, 10, 3)
-        assert card['currency'] == 'USD' or (card['currency'] in ('GBP', 'AUD') and card['per_minute'] is None)
+        assert date(2026, 10, 3) <= date.fromisoformat(card['advertised_on']) <= date(2026, 10, 31)
+        assert card['currency'] == 'USD' or (card['currency'] in ('GBP', 'AUD', 'CHF', 'EUR')
+                                             and card['per_minute'] is None)
         assert card['source_url'].startswith('https://') and card['source_url'] in card['sources'] or \
             card['source_url'] == card['sources'][0]
         for field in ('per_minute', 'per_page', 'per_call', 'number_rental_monthly', 'number_setup'):

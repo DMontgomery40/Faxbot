@@ -127,6 +127,9 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     if not (_HEX32.fullmatch(str(job_id)) and _HEX32.fullmatch(str(attempt_id))):
         return None
     route, number, mode = configuration.provider_id, job.get('to_number'), how_sent(configuration)
+    from ..routing.sender_pins import pinned
+    if pinned(engine, job.get('recipient_number') or number):
+        return None  # a registered-sender recipient's copy is binding: the pages go as they are (sender_pins, N17)
     root = Path(str(pdf)).parent
     # A fax accepted by an earlier build may have encoded pages written over its fax image: made again from the
     # original document, once, so this attempt chooses from the original (codec/send.py).

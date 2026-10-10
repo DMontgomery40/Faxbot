@@ -83,6 +83,15 @@ class TrunkPreset:
     audio_by_default: bool = False
     # What the phone system's administrator sets, in order (shown as a checklist with the sources).
     admin_steps: tuple[str, ...] = ()
+    # Encrypted audio fax (sip_access.py, N18): 'sdes' encrypts the audio (SRTP, keys in the TLS-protected SDP)
+    # whenever the trunk signs in over TLS.
+    media_encryption: str = ''
+    # The carrier carries fax only as encrypted audio: TLS and SRTP always, G.711, T.38 off with the reason.
+    encrypted_audio_only: bool = False
+    # The carrier allows one registration per account: a second trunk on the same account is not loaded.
+    single_registration: bool = False
+    # The trunk's media depends on the internet access it is reached over ('telekom': CompanyFlex).
+    access_rule: str = ''
 
     @property
     def needs_host(self):
@@ -279,6 +288,47 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                  Source('https://support.avaya.com/kb/public/SOLN268281')),
     ),
     TrunkPreset(
+        # Switzerland. TLS only, SRTP, G.711 audio fax; T.38 failed in the newest published test (sip_access.py).
+        id='swisscom-sbc', label='Swisscom Smart Business Connect', host='', port=5061, transport='tls',
+        transports=('tls',), auth_modes=('registration',), codecs=('alaw', 'ulaw'), dial_format='e164',
+        audio_by_default=True, media_encryption='sdes', encrypted_audio_only=True, single_registration=True,
+        t38=('T.38 failed to the phone network and to other Swisscom numbers in the newest published test '
+             '(Innovaphone, December 2024), so Faxbot sends encrypted audio fax.'),
+        notes=('Enter the SIP server and the username and password from your Smart Business Connect order. '
+               "Innovaphone's test reached Swisscom's server zhheapp-asbc01.join.swisscom.ch.",
+               'Swisscom accepts encrypted sign-in only (TLS), and Faxbot encrypts the audio as well (SRTP).',
+               'Swisscom allows one registration per account: do not sign in to the same account from a second '
+               'trunk, phone system or standby server.',
+               'Faxbot keeps the audio path fixed during a call, as Swisscom requires, and caps audio fax at 9,600 '
+               'bit/s with error correction on.',
+               'Faxbot tested the encrypted settings against its own Asterisk; a live Swisscom trunk has not been '
+               'tested yet.'),
+        sources=(Source('https://wiki.innovaphone.com/?i=14782', '2026-10-09'),
+                 Source('https://wiki.innovaphone.com/?i=12001', '2026-10-09'),
+                 Source('https://service-de.enreach.com/hc/en-gb/articles/16339395197980', '2026-10-09'),
+                 Source('https://www.swisscom.ch/en/residential/help/fixed-network/fax.html', '2026-10-08')),
+    ),
+    TrunkPreset(
+        # Germany. Encrypted calls required on another provider's internet access (sip_access.py).
+        id='telekom-companyflex', label='Telekom CompanyFlex', host='tel.t-online.de', port=5061, transport='tls',
+        transports=('tls', 'tcp'), auth_modes=('registration',), codecs=('alaw', 'ulaw'), dial_format='e164',
+        media_encryption='sdes', access_rule='telekom',
+        t38=('On your Telekom line Telekom recommends T.38; encrypted calls carry fax only as audio (T.30), so on any '
+             'other internet access Faxbot sends encrypted audio fax.'),
+        notes=('Sign in with the registration number and password from your CompanyFlex portal, and enter its '
+               'outbound proxy (it ends in .primary.companyflex.de).',
+               "List your Telekom line's internet address under \"Your own line's internet address\": on any other "
+               'access Faxbot encrypts the calls by itself, as CompanyFlex requires.',
+               'Telekom recommends 9,600 bit/s and error correction (ECM) for fax; Faxbot uses both for audio fax.',
+               'Faxbot tested these settings against its own Asterisk; a live CompanyFlex trunk has not been tested '
+               'yet.'),
+        sources=(Source('https://hilfe.companyflex.de/de/einrichtung/anschalteszenarien/'
+                        'nutzung-eines-ip-anschlusses-eines-anderen-anbieters-am-companyflex', '2026-10-09'),
+                 Source('https://hilfe.companyflex.de/de/einrichtung/anschalteszenarien/fax?mode=user', '2026-10-09'),
+                 Source('https://backstage.telekom.de/hilfe/downloads/1tr119.pdf', '2026-10-09'),
+                 Source('https://support.yeastar.com/hc/en-us/articles/10874343612441', '2026-10-09')),
+    ),
+    TrunkPreset(
         id='custom', label='Another carrier', host='', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='entered',
         notes=('Use the host, port and credentials your carrier gave you.',),
@@ -324,6 +374,8 @@ class Trunk:
     dial_format: str = 'e164'
     dial_prefix: str = ''
     country: str = 'US'
+    # 'sdes' when the trunk's audio is encrypted (sip_access.py); T.38 is then off, whatever the switch says.
+    media_encryption: str = ''
 
 
 def configured(values) -> bool:
@@ -369,7 +421,9 @@ def fax_options(values) -> FaxOptions:
         t38_error_correction=ec,
         t38_max_datagram=datagram if isinstance(datagram, int) and 100 <= datagram <= 1400 else defaults.t38_max_datagram,
         max_rate=pick('sip_fax_max_rate', FAX_RATES, defaults.max_rate),
-        ecm=bool(getattr(values, 'sip_fax_ecm', True)),
+        # Encrypted audio fax runs with error correction on (Telekom's fax guidance; sip_access.py).
+        ecm=bool(getattr(values, 'sip_fax_ecm', True)) or bool(
+            getattr(PRESETS.get(getattr(values, 'sip_trunk_preset', '')), 'encrypted_audio_only', False)),
         compression=pick('sip_fax_compression', COMPRESSIONS, defaults.compression),
         fine=bool(getattr(values, 'sip_fax_fine', True)),
         sslfax=bool(getattr(values, 'sip_sslfax_enabled', True)),
@@ -394,6 +448,12 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
     if not host:
         missing.append('sip_trunk_host')
     transport = values.sip_trunk_transport or preset.transport
+    # Required encryption is never dropped: on an access where the carrier requires it, the trunk signs in over
+    # TLS whatever its connection setting says (sip_access.py, N18).
+    from . import sip_access
+    forced = sip_access.encryption_required(values, preset) and transport != 'tls'
+    if forced:
+        transport = 'tls'
     if transport not in preset.transports:
         missing.append('sip_trunk_transport')
     if auth == 'registration':
@@ -407,7 +467,9 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
         missing.append('sip_trunk_caller_id')
     if missing:
         raise TrunkConfigurationError(missing)
-    port = values.sip_trunk_port or (preset.port if transport == preset.transport else _DEFAULT_PORTS[transport])
+    port = (0 if forced else values.sip_trunk_port) or (preset.port if transport == preset.transport
+                                                         else _DEFAULT_PORTS[transport])
+    media_encryption = preset.media_encryption if transport == 'tls' else ''
     if values.sip_trunk_codecs:
         codecs = tuple(values.sip_trunk_codecs.split(','))
     else:
@@ -420,12 +482,12 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
                  username=values.sip_trunk_username, password=values.sip_trunk_password,
                  outbound_proxy='' if preset.phone_system else values.sip_trunk_outbound_proxy,
                  caller_id=values.sip_trunk_caller_id,
-                 dids=values.sip_trunk_did_list, t38=values.sip_t38_enabled,
+                 dids=values.sip_trunk_did_list, t38=values.sip_t38_enabled and not media_encryption,
                  fax_preference=values.sip_fax_preference_header, codecs=codecs,
                  # A phone system is reached on the local network, never at the internet address.
                  external_address='' if preset.phone_system else values.sip_external_address,
                  dial_format=dial_format, dial_prefix=values.sip_trunk_dial_prefix if dial_format == 'local' else '',
-                 country=values.fax_default_country)
+                 country=values.fax_default_country, media_encryption=media_encryption)
 
 
 def dial_number(trunk: Trunk, number: str) -> str:
@@ -616,6 +678,12 @@ def _rendered(values):
                                      f'{trunk.transport.upper()} connection. Choose another connection type for it.')
             continue
         kinds.setdefault(trunk.transport, trunk.preset.phone_system)
+        if trunk.preset.single_registration and any(
+                other.preset.id == trunk.preset.id and other.host == trunk.host and other.username == trunk.username
+                for _, other, _ in rendered):
+            problems[account.key] = (f'{account.label} is not loaded: {trunk.preset.label} allows one registration '
+                                     'per account, and another trunk already signs in with it.')
+            continue
         matches = tuple(address for address in _identify_matches(trunk) if address not in claimed)
         claimed.update(matches)
         rendered.append((account, trunk, matches))
@@ -697,6 +765,12 @@ def _trunk_lines(trunk: Trunk, values, names, transport, matches, key=None):
     if registration:
         lines.append(f'outbound_auth={names["auth"]}')
     lines += [f'context={INBOUND_CONTEXT}', 'disallow=all', 'allow=' + ','.join(trunk.codecs)]
+    if trunk.media_encryption:
+        if trunk.transport != 'tls':
+            # SDES keys travel in the SDP: never written over a connection that is not encrypted.
+            raise TrunkConfigurationError(['sip_trunk_transport'])
+        # Encrypted audio (SRTP, SDES keys in the TLS-protected SDP); a call that cannot be encrypted fails.
+        lines += [f'media_encryption={trunk.media_encryption}', 'media_encryption_optimistic=no']
     if key is not None:
         # Every call over this trunk, in and out, carries the trunk's account key to the dialplan.
         lines.append(f'set_var=FAXBOT_TRUNK={key}')
@@ -1042,6 +1116,9 @@ def preset_catalog():
         'kind': preset.kind, 'transports': list(preset.transports), 'codecs_by_country': preset.codecs_by_country,
         'dial_formats': list(preset.dial_formats), 'audio_by_default': preset.audio_by_default,
         'admin_steps': list(preset.admin_steps),
+        # Encrypted audio fax (sip_access.py, N18).
+        'media_encryption': preset.media_encryption or None, 'encrypted_audio_only': preset.encrypted_audio_only,
+        'single_registration': preset.single_registration, 'access_rule': preset.access_rule or None,
     } for preset in PRESETS.values()]
 
 

@@ -114,6 +114,101 @@ def confirm_caller_id(account: str = typer.Argument(..., metavar='ACCOUNT',
         + (', bought on this account.' if result['eligibility']['bought_here'] else '.')))
 
 
+@trunk.command('registered-senders')
+def registered_senders():
+    """Recipients that recognise your faxes by the number they come from, and the trunk registered with each."""
+    result = state.api().get('/routing/sender-pins')
+
+    def human(out):
+        out.table(['Recipient', 'Trunk', 'Caller ID', 'Station ID', 'Now'],
+                  [[item['recipient'], item['account_label'], item['caller_id'], item['station_id'] or '-',
+                    'Ready' if item['ready'] else 'Faxes wait in Sent']
+                   for item in result.get('pins') or []], empty='No registered senders.')
+        for item in result.get('pins') or []:
+            out.line(item['sentence'])
+    state.out().result(result, human)
+
+
+@trunk.command('register-sender')
+def register_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT',
+                                                    help="The recipient's fax number, such as +902122220000."),
+                    caller_id: str = typer.Option(..., '--caller-id', metavar='NUMBER',
+                                                  help='The caller ID registered with the recipient.'),
+                    station_id: str = typer.Option(None, '--station-id', metavar='TEXT',
+                                                   help='The station ID registered with it, if it differs from the '
+                                                        'caller ID.'),
+                    account: str = typer.Option('sip', '--account', metavar='KEY',
+                                                help="The trunk registered with it, by its key from 'faxbot "
+                                                     "providers accounts list'; the first trunk when left out."),
+                    note: str = typer.Option('', '--note', metavar='TEXT', help='Where it is registered, for the '
+                                                                                'history.')):
+    """Send faxes to RECIPIENT only from the trunk, caller ID and station ID registered with it. When that trunk
+    cannot send them, they wait in Sent; they never go from another number."""
+    body = {'account': account.strip(), 'caller_id': caller_id.strip(), 'station_id': station_id, 'note': note}
+    result = state.api().put(f'/routing/sender-pins/{segment(recipient.strip())}', json=body)
+    state.out().result(result, lambda out: out.line(next(
+        (item['sentence'] for item in result.get('pins') or [] if item['recipient'] == recipient.strip()), 'Saved.')))
+
+
+@trunk.command('unregister-sender')
+def unregister_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT', help="The recipient's fax number."),
+                      note: str = typer.Option('', '--note', metavar='TEXT', help='Why, for the history.')):
+    """Stop pinning RECIPIENT to one trunk; faxes to it go by your sending rules again. The history is kept."""
+    result = state.api().delete(f'/routing/sender-pins/{segment(recipient.strip())}', params={'note': note})
+    state.out().result(result, lambda out: out.line(f'Faxes to {recipient.strip()} go by your sending rules again.'))
+
+
+@trunk.command('sender-evidence')
+def sender_evidence(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The sent fax.'),
+                    original: str = typer.Option(None, '--original', metavar='requested|sent|cancelled',
+                                                 help="Record that the recipient asked for the original, that you "
+                                                      'sent it, or that the request was withdrawn.'),
+                    note: str = typer.Option('', '--note', metavar='TEXT', help='What happened, for the history.')):
+    """The sender's evidence for a fax to a registered-sender recipient: the identity registered then, the kept
+    pages, each call with the station that answered, and any request for the original."""
+    api = state.api()
+    if original:
+        result = api.post(f'/routing/faxes/{segment(fax_id.strip())}/original', json={'state': original,
+                                                                                       'note': note})
+    else:
+        result = api.get(f'/routing/faxes/{segment(fax_id.strip())}/sender-evidence')
+
+    def human(out):
+        pin = result['pin']
+        out.line(f"Sent to {result['recipient']}, registered with {pin['caller_id']} on {pin['account']}.")
+        out.line('Kept: ' + (', '.join(result.get('kept') or []) or 'no files') + '.')
+        out.table(['Caller ID shown', 'Answered by', 'Pages', 'Result'],
+                  [[call['caller_id'] or '-', call['answering_station'] or '-', call['pages'] or 0,
+                    call['fax_status'] or call['disposition']] for call in result.get('calls') or []],
+                  empty='No call records.')
+        if result.get('original'):
+            out.line({'requested': 'The recipient asked for the original.', 'sent': 'The original was sent.',
+                      'cancelled': 'The request for the original was withdrawn.'}[result['original']])
+    state.out().result(result, human)
+
+
+@trunk.command('own-access')
+def own_access(addresses: str = typer.Argument(None, metavar='ADDRESSES',
+                                               help="Your Telekom line's internet addresses or ranges, "
+                                                    "comma-separated; '' clears them.")):
+    """For Telekom CompanyFlex: the internet address of your Telekom line. On any other access Faxbot encrypts the
+    calls and sends audio fax by itself, as CompanyFlex requires."""
+    api = state.api()
+    if addresses is not None:
+        from ..settings_write import write_settings
+        write_settings(api, {'sip_trunk_own_access': addresses.strip()})
+    trunk_view = ((api.get('/admin/settings').get('sip') or {}).get('trunk') or {})
+    result = {'own_access': trunk_view.get('own_access') or '', 'access': trunk_view.get('access'),
+              'media_encryption': trunk_view.get('media_encryption'),
+              'sentence': trunk_view.get('encryption_sentence')}
+
+    def human(out):
+        out.line(f"Your own line: {result['own_access'] or 'not listed'}.")
+        if result['sentence']:
+            out.line(result['sentence'])
+    state.out().result(result, human)
+
+
 @trunk.command('withdraw-caller-id')
 def withdraw_caller_id(account: str = typer.Argument(..., metavar='ACCOUNT', help='The sending account.'),
                        number: str = typer.Argument(..., metavar='CALLER_ID', help='The confirmed caller ID.'),

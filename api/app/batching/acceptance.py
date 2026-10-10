@@ -20,6 +20,9 @@ def hold_plan(engine, revision, profile, *, destination, pages, actor, send_now=
     if (revision.values.fax_disabled or configuration.manifest is not None or configuration.provider_id != 'sip'
             or type(pages) is not int or pages < 1):
         return None
+    from ..routing.sender_pins import pinned
+    if pinned(engine, destination):
+        return None  # a registered-sender recipient gets each fax in its own call (sender_pins, N17)
     setting = BatchingSettings(engine).get(destination)
     if not setting['enabled'] or pages + 1 > setting['max_pages']:
         return None

@@ -120,7 +120,7 @@ class ConfigurationValues(BaseModel):
     # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
     # transport and codecs use the preset's documented values (see sip_trunk.py).
     sip_trunk_preset: str = Field('', validation_alias='SIP_TRUNK_PRESET',
-                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|custom)$')
+                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|swisscom-sbc|telekom-companyflex|custom)$')
     sip_trunk_auth: str = Field('registration', validation_alias='SIP_TRUNK_AUTH', pattern=r'^(?:registration|ip)$')
     sip_trunk_host: str = Field('', validation_alias='SIP_TRUNK_HOST',
                                 pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$')
@@ -166,6 +166,9 @@ class ConfigurationValues(BaseModel):
     # local sends the digits a phone at the installation dials, after the optional outside-line prefix.
     sip_trunk_dial_format: str = Field('', validation_alias='SIP_TRUNK_DIAL_FORMAT', pattern=r'^(?:|e164|local)$')
     sip_trunk_dial_prefix: str = Field('', validation_alias='SIP_TRUNK_DIAL_PREFIX', pattern=r'^[0-9]{0,4}$')
+    # Your own line's internet addresses or ranges (Telekom CompanyFlex: unencrypted calls are allowed only there;
+    # sip_access.py), comma-separated.
+    sip_trunk_own_access: str = Field('', validation_alias='SIP_TRUNK_OWN_ACCESS', pattern=r'^[0-9A-Fa-f:./, ]{0,500}$')
     # Public address the carrier should send signaling and media to when Asterisk is behind NAT.
     sip_external_address: str = Field('', validation_alias='SIP_EXTERNAL_ADDRESS',
                                       pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$')

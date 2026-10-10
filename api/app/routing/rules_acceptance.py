@@ -175,6 +175,9 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
                         principal_id=principal, sender_kind=kind, key_id=key_id, mailbox_id=mailbox,
                         workflow=workflow, labels=labels, urgent=urgent, by_call=by_call, case_packet=case_packet)
     decision = decide(store.compiled_active(), facts, accounts)
+    # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
+    from .sender_pins import narrow_for
+    decision = narrow_for(engine, decision, facts)
     return Prepared(facts, accounts, decision, store, document_sha256, getattr(values, 'time_zone', '') or '',
                     default_sending_key(values))
 
@@ -225,6 +228,9 @@ def recorder(prepared, job_id, actor, *, control=None):
                 connection, control, actor, facts.mailbox_id, now=now):
             raise RulesAcceptanceError('You can’t send from that mailbox. Choose a mailbox you work in.')
         decision = decide(compiled_on(connection, prepared.store), facts, prepared.accounts)
+        # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
+        from .sender_pins import narrow_on
+        decision = narrow_on(connection, decision, facts)
         principal = getattr(actor, 'principal_id', None)
         decision_id = prepared.store.record_decision_on(connection, job_id=job_id, facts=facts, decision=decision,
                                                         actor_principal_id=principal, now=now)

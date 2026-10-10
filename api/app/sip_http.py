@@ -657,8 +657,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     await run_lifecycle_step(lambda: sip_fax_mode.derive(values, records))
     has_calls = await run_lifecycle_step(lambda: _last_call(records) is not None)
     if sip_fax_mode.carrier_prefers_audio(values, has_calls=has_calls):
-        # A new trunk with a carrier that turns T.38 into audio fax inside its own network.
-        values = await run_lifecycle_step(lambda: _set_t38(runtime, False, sip_fax_mode.CARRIER))
+        # A new trunk with a carrier that turns T.38 into audio fax inside its own network, or that carries fax only
+        # as encrypted audio (sip_access.py).
+        from . import sip_access
+        reason = sip_fax_mode.ENCRYPTED if sip_access.encryption_required(values) else sip_fax_mode.CARRIER
+        values = await run_lifecycle_step(lambda: _set_t38(runtime, False, reason))
     elif not phone:
         # The person's own change first, then the network check decides T.38 for new calls.
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
@@ -879,7 +882,10 @@ async def check_network_again(request: Request, identity=Depends(require_permiss
     await _check_telnyx(values)
     body = await run_lifecycle_step(lambda: sip_network.report(values))
     engine = outcome.get('engine')
-    return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None}
+    # A trunk whose encryption depends on its internet access (sip_access.py): what changed, and why, in a sentence.
+    from . import sip_access
+    return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None,
+            'access': outcome.get('access'), 'encryption_sentence': sip_access.sentence(values)}
 
 
 @router.get('/telnyx')

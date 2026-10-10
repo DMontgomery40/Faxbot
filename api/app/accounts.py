@@ -99,6 +99,8 @@ FIELDS = {
          'e164 for +44 numbers, or local to dial numbers the way a phone here dials them.'),
         ('dial_prefix', 'sip_trunk_dial_prefix', 'Outside-line prefix', False,
          'Only with the local number format, such as 9.'),
+        ('own_access', 'sip_trunk_own_access', "Your own line's internet address", False,
+         'Telekom CompanyFlex only: the address or range of your Telekom line, such as 203.0.113.7.'),
         ('api_key', 'telnyx_api_key', 'Telnyx API key', False,
          "Only for a Telnyx trunk: Faxbot reads this trunk's numbers' fax over IP settings with it."),
     ),
