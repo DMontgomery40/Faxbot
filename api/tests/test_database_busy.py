@@ -597,3 +597,100 @@ def test_a_process_with_another_umask_keeps_the_log_files_private(tmp_path):
     with sqlite3.connect(path) as check:
         assert check.execute('SELECT count(*) FROM probe').fetchone() == (1,)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+# -- Preparation before the call: a busy database never fails a fax (defect 29) ----------------------------------
+
+class _Provider:
+    def __init__(self):
+        self.calls = []
+
+    def is_configured(self):
+        return True
+
+    async def send_fax(self, to, url, job_id, *, attempt_id):
+        self.calls.append(job_id)
+        return {'provider_sid': 'remote-busy', 'status': 'queued'}
+
+
+def _real_transport(busy, tmp_path, monkeypatch):
+    """The real captured transport (load_dispatch, page preparation, media grant) to a stand-in provider."""
+    from api.app.outbound_transport import CapturedTransport
+    from api.tests.test_outbound_transport import Runtime, prepared_job
+    _, store, _ = busy.installation
+    job, _ = prepared_job(busy.installation, tmp_path)
+    provider = _Provider()
+    monkeypatch.setattr('api.app.outbound_transport.service_from_profile', lambda profile: provider)
+    return store, job, provider, CapturedTransport(store, Runtime())
+
+
+@pytest.mark.asyncio
+async def test_a_busy_database_while_reading_the_fax_is_waited_out_and_the_fax_sent_once(busy, tmp_path,
+                                                                                          monkeypatch):
+    """Before (acceptance, 2026-10-10 22:42Z): load_dispatch's lock timeout failed the fax before any call."""
+    from api.app.outbound_worker import OutboundWorker
+    store, job, provider, transport = _real_transport(busy, tmp_path, monkeypatch)
+    lock = busy.holder()
+    original = store.load_dispatch
+    tries = []
+
+    def load_dispatch(claim):
+        tries.append(claim.job_id)
+        if len(tries) == 1:
+            lock.hold()  # another writer holds the lock as the worker reads the fax
+        return original(claim)
+    monkeypatch.setattr(store, 'load_dispatch', load_dispatch)
+    waits = _waits(monkeypatch, then=lock.release)
+    assert await OutboundWorker(store, transport).step() is True
+    assert len(tries) == 2 and waits == [1.0]
+    assert provider.calls == [job] and store.get(job)['state'] == 'in_progress'
+
+
+@pytest.mark.asyncio
+async def test_a_fax_the_busy_database_kept_from_being_prepared_waits_then_goes_once(busy, tmp_path, monkeypatch,
+                                                                                     caplog):
+    """The lock is held through every try: the fax goes back to the queue (never failed, nothing sent), and the next
+    claim after the lock clears sends it once."""
+    from api.app.outbound_worker import OutboundWorker
+    from api.tests.test_partly_sent import attempt_of
+    store, job, provider, transport = _real_transport(busy, tmp_path, monkeypatch)
+    lock = busy.holder()
+    original = store.load_dispatch
+
+    def always_busy(claim):
+        lock.hold()
+        try:
+            return original(claim)
+        finally:
+            lock.release()
+    monkeypatch.setattr(store, 'load_dispatch', always_busy)
+    waits = _waits(monkeypatch)
+    caplog.set_level('WARNING')
+    worker = OutboundWorker(store, transport)
+    assert await worker.step() is False
+    assert waits == [1.0, 4.0] and provider.calls == []
+    row = store.get(job)
+    assert row['state'] == 'ready' and row['claim_owner'] is None
+    first_attempt = [event['attempt_id'] for event in store.history(job) if event['kind'] == 'claimed'][0]
+    assert attempt_of(store, first_attempt)['phase'] == 'abandoned'
+    assert 'waits a moment: the database was too busy to prepare it (database is locked)' in caplog.text
+    # The lock clears: after its short pause the fax is claimed again and sent exactly once.
+    monkeypatch.setattr(store, 'load_dispatch', original)
+    worker.paused.clear()
+    assert await worker.step() is True
+    assert provider.calls == [job] and store.get(job)['state'] == 'in_progress'
+    assert await worker.step() is False and provider.calls == [job]
+
+
+@pytest.mark.asyncio
+async def test_a_claim_that_ran_out_while_the_database_was_busy_is_given_back_not_failed(busy, tmp_path,
+                                                                                          monkeypatch):
+    from api.app.outbound_store import DeliveryConflict
+    from api.app.outbound_worker import OutboundWorker
+    store, job, provider, transport = _real_transport(busy, tmp_path, monkeypatch)
+
+    def ran_out(claim):
+        raise DeliveryConflict('Delivery preparation lease is no longer current.')
+    monkeypatch.setattr(store, 'load_dispatch', ran_out)
+    assert await OutboundWorker(store, transport).step() is False
+    assert store.get(job)['state'] == 'ready' and provider.calls == []

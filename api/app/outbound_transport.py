@@ -10,6 +10,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from .config_runtime import run_lifecycle_step
+from .database_busy import retry_when_busy
 from .outbound_worker import PreparationFailure, SubmissionReceipt
 from .provider_execution import service_from_profile, ProviderExecutionError
 
@@ -143,7 +144,9 @@ class CapturedTransport:
 
     @asynccontextmanager
     async def prepare(self, claim):
-        revision, profile, job = await run_lifecycle_step(lambda: self.store.load_dispatch(claim))
+        # A read; a busy database is waited out (database_busy), and a worker gives back a fax still refused.
+        revision, profile, job = await run_lifecycle_step(lambda: retry_when_busy(
+            lambda: self.store.load_dispatch(claim), what=f'the preparation of fax {claim.job_id}', idempotent=True))
         values = revision.values
         configuration = profile.configuration
         pid = configuration.provider_id

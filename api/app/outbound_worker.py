@@ -63,6 +63,12 @@ class CapacityWait(RuntimeError):
         super().__init__('The fax waits for a free line.')
 
 
+def _lease_lost(error):
+    """The store's refusal of a preparation step whose claim ran out (``OutboundStore._preparing``)."""
+    from .outbound_store import DeliveryConflict
+    return isinstance(error, DeliveryConflict) and str(error) == 'Delivery preparation lease is no longer current.'
+
+
 class OutboundWorker:
     def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0, clock=None, lease_seconds=30):
         if interval <= 0 or submission_timeout <= 0 or not 1 <= lease_seconds <= 300:
@@ -109,6 +115,18 @@ class OutboundWorker:
                 logging.getLogger(__name__).warning('Fax %s: its claim was lost while it was being prepared; '
                                                     'nothing is sent by this attempt.', claim.job_id)
                 return
+
+    async def _give_back(self, claim, seconds=5.0):
+        """Return a claim nothing was sent for to the queue, as for a full line (``defer``); still busy, its lease
+        runs out and lease recovery returns it (``recover_expired``)."""
+        try:
+            await run_lifecycle_step(lambda: retry_when_busy(lambda: self.store.defer(claim),
+                                                             what=f'the return of fax {claim.job_id} to the queue'))
+        except ConfigurationStoreError:
+            pass  # logged by retry_when_busy; the lease runs out and lease recovery gives it back
+        until = self.clock() + timedelta(seconds=seconds)
+        for member in claim.everyone:
+            self.paused[member.job_id] = until
 
     async def step(self):
         await run_lifecycle_step(self.store.recover_expired)
@@ -172,9 +190,18 @@ class OutboundWorker:
             for member in claim.everyone:
                 self.paused[member.job_id] = until
             return False
-        except Exception:
+        except Exception as error:
             if not preparing:
                 raise
+            cause = busy_cause(error) or ('its claim ran out while it waited' if _lease_lost(error) else None)
+            if cause is not None:
+                # A step before the call (reading the fax, its pages or its route) found the database too busy, or
+                # waited so long for it that the claim ran out: nothing was sent, so the fax goes back to the queue
+                # and is claimed again in a moment. It never fails for it.
+                logging.getLogger(__name__).warning('Fax %s waits a moment: the database was too busy to prepare it '
+                                                    '(%s); nothing was sent.', claim.job_id, cause)
+                await self._give_back(claim)
+                return False
             # Any other error before the durable marker is a bug or an integration failure (such as a database
             # whose migration did not run), and nothing was sent: the fax fails as a preparation failure with its
             # cause logged, so its pre-data rules apply. Raised, it would be claimed, leased and recovered for ever.
