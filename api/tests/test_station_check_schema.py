@@ -15,7 +15,7 @@ PRIOR = '0070_closures'  # re-chained at merge (was 0073_header_notice)
 
 
 def test_station_check_follows_the_header_notice_and_is_the_only_head():
-    assert schema_station_check.REVISION == '0074_station_check' == schema.HEAD
+    assert schema_station_check.REVISION == '0074_station_check' == schema.STATION_CHECK
     assert schema.CLOSURES == PRIOR
     assert schema_station_check.TABLES <= schema.STRICT_TABLES and len(schema_station_check.TABLES) == 3
     from pathlib import Path
@@ -23,7 +23,7 @@ def test_station_check_follows_the_header_notice_and_is_the_only_head():
     from alembic.script import ScriptDirectory
     config = Config()
     config.set_main_option('script_location', str(Path(schema.__file__).resolve().parents[1] / 'alembic'))
-    assert ScriptDirectory.from_config(config).get_heads() == [schema.HEAD]
+    assert ScriptDirectory.from_config(config).get_heads() == [schema.HEAD] and schema.HEAD == '0075_test_lines'
 
 
 def test_0074_adds_empty_tables_downgrades_and_refuses_while_a_row_is_kept(database):  # noqa: F811

@@ -68,6 +68,31 @@ async def fax_stations(job_id: str, request: Request, identity=Depends(require_i
     return {'sentences': await run_lifecycle_step(lambda: stations.fax_sentences(engine, job_id))}
 
 
+@router.get('/answer-cap', dependencies=[Depends(require_permission('settings:read'))])
+async def get_answer_cap(request: Request):
+    """Each trunk's answer cap: its switch, whether Faxbot uses it there, and the sentence beside the switch."""
+    engine, _ = _runtime(request)
+    values = request.scope['faxbot.configuration'].active.values
+    from ..sip_trunk import trunk_accounts
+
+    def read():
+        return [{'account': trunk.key, 'label': trunk.label, **stations.cap_view(trunk.values, engine)}
+                for trunk in trunk_accounts(values)]
+    return {'trunks': await run_lifecycle_step(read)}
+
+
+@router.get('/mailboxes', dependencies=[Depends(require_permission('settings:read'))])
+async def get_mailbox_modes(request: Request):
+    """Each mailbox's choice for when a number answers as another fax machine, where it is set."""
+    engine, _ = _runtime(request)
+    from .reply_number import mailbox_labels
+
+    def read():
+        labels = mailbox_labels(engine)
+        return stations.mailbox_view(engine, labels)
+    return {'mailboxes': await run_lifecycle_step(read)}
+
+
 @router.get('/{number}', dependencies=[Depends(require_permission('settings:read'))])
 async def get_stations(number: str, request: Request):
     target = _number(number, request)

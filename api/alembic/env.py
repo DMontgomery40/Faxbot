@@ -84,6 +84,7 @@ config.attributes["schema_route_selections"] = importlib.import_module(
     package + ".schema_route_selections")
 config.attributes["schema_closures"] = importlib.import_module(package + ".schema_closures")
 config.attributes["schema_station_check"] = importlib.import_module(package + ".schema_station_check")
+config.attributes["schema_test_lines"] = importlib.import_module(package + ".schema_test_lines")
 
 
 def migrate(connection):

@@ -587,10 +587,12 @@ def _handle_fax_result(event):
         # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble is logged
         # there and never changes the outcome.
         from .routing.stations import after_call
-        after_call(_deliveries().configuration.engine, job_id=job_id, attempt_id=attempt,
+        configuration = _deliveries().configuration
+        after_call(configuration.engine, job_id=job_id, attempt_id=attempt,
                    station=sip_calls._station(event.get('Station64')),
                    succeeded=str(fields.get('status', '')).upper() == 'SUCCESS',
-                   check_result=str(fields.get('csicheck') or '') or None)
+                   check_result=str(fields.get('csicheck') or '') or None,
+                   t0_capped=str(fields.get('t0capped') or '').strip() == '1', configuration=configuration)
 
 
 def _handle_originate_response(event):

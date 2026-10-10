@@ -794,6 +794,11 @@ const consoleHandlers = [
   http.get('/routing/sender-pins', () => json({ pins: [], trunks: [] })),
   http.get('/routing/closures', () => json({ sites: [], lines: [], files: [], sources: { orange: '', gouv: '', arcep: '' } })),
   http.get('/routing/country-rules', () => json({ accounts: [], countries: [] })),
+  // The answer cap per trunk, mailboxes' station check choices, and public test lines: none until a test says so.
+  http.get('/routing/stations/answer-cap', () => json({ trunks: [] })),
+  http.get('/routing/stations/mailboxes', () => json({ mailboxes: [] })),
+  http.get('/diagnostics/test-lines', () => json({ lines: [], sends: [], reply: null })),
+  http.get('/diagnostics/test-lines/replies', () => json({ replies: [] })),
   http.get('/routing/faxes/:id/sender-evidence', () => json({ detail: 'Not a registered-sender fax.' }, 404)),
   // Sent faxes Faxbot could not confirm: none until a test says otherwise.
   http.get('/certainty/items', () => json({ items: [] })),

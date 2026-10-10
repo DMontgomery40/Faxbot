@@ -2000,7 +2000,7 @@ $ faxbot numbers reply [OPTIONS] COMMAND [ARGS]...
 * `numbers`: List your numbers with the mailbox each...
 * `set`: Print this number on every fax (or on...
 * `clear`: Let Faxbot choose the number again (or...
-* `station-check`: Choose what a mailbox&#x27;s faxes do when a...
+* `station-check`: See or choose what a mailbox&#x27;s faxes do...
 * `notice`: A notice line, such as a confidentiality...
 
 #### `faxbot numbers reply show`
@@ -2067,21 +2067,21 @@ $ faxbot numbers reply clear [OPTIONS]
 
 #### `faxbot numbers reply station-check`
 
-Choose what a mailbox&#x27;s faxes do when a number answers as another fax machine.
+See or choose what a mailbox&#x27;s faxes do when a number answers as another fax machine.
 
 **Usage**:
 
 ```console
-$ faxbot numbers reply station-check [OPTIONS] {WARN|REFUSE}
+$ faxbot numbers reply station-check [OPTIONS] [WARN|REFUSE]
 ```
 
 **Arguments**:
 
-* `WARN|REFUSE`: warn: the fax goes on and Sent says so. refuse: Faxbot hangs up before any page.  [required]
+* `[WARN|REFUSE]`: warn: the fax goes on and Sent says so. refuse: Faxbot hangs up before any page. Leave it out to see the current choice.
 
 **Options**:
 
-* `--mailbox <str>`: The mailbox whose faxes this is for.  [required]
+* `--mailbox <str>`: The mailbox whose faxes this is for. Leave it out to see every mailbox&#x27;s choice.
 * `--help`: Show this message and exit.
 
 #### `faxbot numbers reply notice`
@@ -5153,6 +5153,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `sender-evidence`: The sender&#x27;s evidence for a fax to a...
 * `own-access`: For Telekom CompanyFlex: the internet...
 * `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
+* `answer-cap`: See or change whether Faxbot hangs up when...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
@@ -5463,6 +5464,25 @@ $ faxbot providers trunk withdraw-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
 **Options**:
 
 * `--note TEXT`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk answer-cap`
+
+See or change whether Faxbot hangs up when no fax machine answers within 50 seconds.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk answer-cap [OPTIONS] [on|off]
+```
+
+**Arguments**:
+
+* `[on|off]`: on: hang up when no fax machine answers within 50 seconds, where the carrier bills by the minute. off: wait the usual 60 seconds. Leave it out to see the setting.
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk network`
