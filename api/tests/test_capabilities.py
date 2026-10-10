@@ -40,7 +40,7 @@ MODULE = 'api/app/routing/capabilities.py'
 WRITE = os.environ.get('FAXBOT_WRITE_FIXTURES') == '1'
 # The capabilities the fixture also prints one by one (faxbot savings capabilities show KEY).
 SHOWN = ('sending_together', 'fax_friendly', 'encoded_pages', 'direct_delivery', 'separator_pages', 'advice_plans',
-         'measured_coding', 'busy_hours')
+         'measured_coding', 'busy_hours', 'caller_id_prices', 'measured_account')
 
 # Spec #48's navigation table: every page of the six areas, as 'area/page'.
 SPEC_PAGES = {
@@ -62,7 +62,10 @@ FILL_IN = {
     '{number}': AGREED, '{partner}': 'Synthetic partner', '{route}': 'sip', '{address}': '10.20.0.2',
     '{toll_free}': '+18005550100', '{who}': 'Synthetic intake lead', '{date}': '2026-10-03',
     '{evidence}': 'Synthetic letter', '{plan}': 'sip', '{count}': '100', '{fax_id}': 'a' * 32,
-    '{reason}': 'Synthetic junk sender',
+    '{reason}': 'Synthetic junk sender', '{keys}': '2w105', '{class}': 'premium',
+    '{notice}': 'Confidential: for the addressee only.', '{mailbox}': 'Synthetic mailbox',
+    # An option that must name an existing file: any existing file shows it parses.
+    '{file}': str(FIXTURE),
 }
 
 
