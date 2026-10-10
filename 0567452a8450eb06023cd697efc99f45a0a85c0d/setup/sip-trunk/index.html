@@ -1,0 +1,3806 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://docs.faxbot.net/0567452a8450eb06023cd697efc99f45a0a85c0d/setup/sip-trunk/">
+      
+      
+        <link rel="prev" href="../sip-asterisk/">
+      
+      
+        <link rel="next" href="../network/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon-32x32.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
+    
+    
+      
+        <title>SIP trunk (your carrier) - Faxbot Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.2a3383ac.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../overrides/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#sip-trunk-bring-your-own-carrier" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Faxbot Docs" class="md-header__button md-logo" aria-label="Faxbot Docs" data-md-component="logo">
+      
+  <img src="../../assets/images/faxbot_mini_banner_dark.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Faxbot Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              SIP trunk (your carrier)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/DMontgomery40/Faxbot" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DMontgomery40/Faxbot
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release-notes/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Release notes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Setup
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operations/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Operations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../plugins/registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Provider plugins (legacy)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../admin-console/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Admin Console
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../apps/ios/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Apps
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Faxbot Docs" class="md-nav__button md-logo" aria-label="Faxbot Docs" data-md-component="logo">
+      
+  <img src="../../assets/images/faxbot_mini_banner_dark.png" alt="logo">
+
+    </a>
+    Faxbot Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DMontgomery40/Faxbot" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DMontgomery40/Faxbot
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Release notes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Getting started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Getting started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Setup
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Setup
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../phaxio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Phaxio (Cloud)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sinch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sinch (Cloud v3)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sip-asterisk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SIP/Asterisk (Self‑hosted)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    SIP trunk (your carrier)
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    SIP trunk (your carrier)
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#telnyx-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      Telnyx (recommended)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Telnyx (recommended)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#in-the-telnyx-portal" class="md-nav__link">
+    <span class="md-ellipsis">
+      In the Telnyx portal
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#in-faxbot" class="md-nav__link">
+    <span class="md-ellipsis">
+      In Faxbot
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limit-calls-on-the-trunk" class="md-nav__link">
+    <span class="md-ellipsis">
+      Limit calls on the trunk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#see-how-fax-calls-went" class="md-nav__link">
+    <span class="md-ellipsis">
+      See how fax calls went
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose a carrier
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#united-kingdom" class="md-nav__link">
+    <span class="md-ellipsis">
+      United Kingdom
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#australia" class="md-nav__link">
+    <span class="md-ellipsis">
+      Australia
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-need-from-the-carrier" class="md-nav__link">
+    <span class="md-ellipsis">
+      What you need from the carrier
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#set-it-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      Set it up
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Set it up">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-apply-and-connect-does-with-asterisk" class="md-nav__link">
+    <span class="md-ellipsis">
+      What Apply and connect does with Asterisk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#behind-a-router-nothing-to-open-for-calls-and-audio-fax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Behind a router: nothing to open for calls and audio fax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-for-fax-over-ip" class="md-nav__link">
+    <span class="md-ellipsis">
+      Network for fax over IP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-t38-data-does-not-come-back-audio-fax" class="md-nav__link">
+    <span class="md-ellipsis">
+      When T.38 data does not come back: audio fax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-ip-sign-in-needs-a-public-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server IP sign-in needs a public host
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t38" class="md-nav__link">
+    <span class="md-ellipsis">
+      T.38
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="T.38">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fax-preference-on-outgoing-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fax preference on outgoing calls
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caller-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      Caller ID
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keep-your-fax-number" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep your fax number
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-call-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      What a call costs
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What a call costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-actual-charges-arrive-telnyx" class="md-nav__link">
+    <span class="md-ellipsis">
+      How actual charges arrive (Telnyx)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-faxbot-records-each-call" class="md-nav__link">
+    <span class="md-ellipsis">
+      How Faxbot records each call
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Network for fax over IP
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sslfax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SSL Fax engine
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../avaya/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Avaya IP Office and Aura
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../documo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Documo (mFax)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../humblefax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    HumbleFax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../efax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    eFax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../signalwire/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SignalWire
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../freeswitch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FreeSWITCH (existing installations)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sip-numbers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Fax numbers on SIP
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Test Mode
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../public-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Public Access
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../webhooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Webhooks
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Deployment
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../security/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Security
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Security
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Authentication
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/access-control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/oauth-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OAuth/OIDC Setup
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Network & Transports
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../HIPAA_REQUIREMENTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    HIPAA Requirements
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Operations
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Operations
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command line
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/delivery-routes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Delivery routes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/receiving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Receiving faxes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/intake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Intake
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/work/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Work
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Email and folders
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/direct-delivery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Direct delivery
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_9" id="__nav_6_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Tools
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_9">
+            <span class="md-nav__icon md-icon"></span>
+            Tools
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Terminal
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/scripts-and-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Scripts & Tests
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/node-mcp-scripts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node MCP Scripts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/api-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Tests
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/phaxio-e2e-test/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Phaxio E2E Test
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command line
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../generated/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Generated source
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_3" id="__nav_7_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_3">
+            <span class="md-nav__icon md-icon"></span>
+            Generated source
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../generated/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Configuration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../generated/providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Providers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
+            <span class="md-nav__icon md-icon"></span>
+            API
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/access-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access and Sign-in
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sdks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    SDKs
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            SDKs
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sdks/node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sdks/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mcp/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    MCP
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_6" id="__nav_7_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_6">
+            <span class="md-nav__icon md-icon"></span>
+            MCP
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/transports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Transports
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Provider plugins (legacy)
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            Provider plugins (legacy)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugins/registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider plugins
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugins/config-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin config file
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Admin Console
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            Admin Console
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    The console
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/faxes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Faxes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/numbers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Numbers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/recipients/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Recipients
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Providers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/costs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Costs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    System
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/setup-wizard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Setup Wizard
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Saving settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Diagnostics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/diagnostics-matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Diagnostics Matrix
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/api-keys/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Keys
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Apps
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            Apps
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../apps/ios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    iOS
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/DMontgomery40/Faxbot/edit/main/docs/setup/sip-trunk.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="sip-trunk-bring-your-own-carrier">SIP trunk: bring your own carrier<a class="headerlink" href="#sip-trunk-bring-your-own-carrier" title="Permanent link">&para;</a></h1>
+<p>Faxbot can send and receive ordinary faxes with its own fax engine (Asterisk with T.38) over a SIP trunk from a carrier you choose. You pay the carrier for call minutes and numbers instead of paying a fax service for each page. Senders and recipients keep using normal fax numbers; nothing changes for them.</p>
+<p>You can use a trunk for sending only, receiving only, or both.</p>
+<p>If your office has an Avaya phone system, Faxbot can fax through it instead of through its own carrier account: see <a href="../avaya/">Avaya IP Office and Aura</a>. For the UK and Australia, see <a href="#united-kingdom">United Kingdom</a> and <a href="#australia">Australia</a>.</p>
+<h2 id="telnyx-recommended">Telnyx (recommended)<a class="headerlink" href="#telnyx-recommended" title="Permanent link">&para;</a></h2>
+<p>Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start with.</p>
+<h3 id="in-the-telnyx-portal">In the Telnyx portal<a class="headerlink" href="#in-the-telnyx-portal" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Create a SIP connection that uses <strong>credentials</strong> for authentication. Note its username and password: Faxbot needs the <strong>SIP connection's</strong> password (connection → <strong>Authentication and routing</strong>), not your Telnyx account password. A wrong one shows as "Telnyx refused the username or password. Use the SIP connection's password, not your Telnyx account password." in <strong>Check trunk status</strong>.</li>
+<li>Give the connection an <strong>outbound voice profile</strong> so it can place calls.</li>
+<li>Under the connection's codecs, keep only <strong>G.711 U</strong> and <strong>G.711 A</strong>.</li>
+<li>Set <strong>T.38 fax re-invite initiated by</strong> to <strong>Telnyx</strong>. When you send a fax, Telnyx switches the call to T.38 as soon as the receiving machine answers. Faxbot also works with <strong>Customer</strong>, but then it waits about ten seconds before switching the call itself. This option does not affect faxes you receive: Faxbot switches those calls to T.38 itself.</li>
+<li>Buy or port a number, assign it to the connection, and turn on <strong>Enable T.38 Fax Gateway</strong> for that number.</li>
+<li>Leave <strong>Encrypted Media (SRTP)</strong> off: Telnyx does not support it with T.38. A credential connection has no inbound transport to choose: Telnyx sends incoming calls down the encrypted connection Faxbot registers over.</li>
+</ol>
+<p>A Telnyx trial account can only call verified numbers until you upgrade it.</p>
+<p>In Faxbot, an optional <strong>Telnyx API key</strong> lets the trunk page check the T.38 setting on each trunk number and lets Faxbot show call charges. Under <strong>Delivery setup → Carrier trunk</strong>, <strong>Fax over IP (T.38) at Telnyx</strong> reports what Telnyx shows and offers <strong>Turn on T.38</strong> for a number that has it off. Faxbot changes only the number you select. If Telnyx refuses the change, open <strong>Numbers → My Numbers</strong>, select the gear next to that number, open <strong>Expert Configuration</strong>, and tick <strong>Enable T.38 Fax Gateway</strong>.</p>
+<h3 id="in-faxbot">In Faxbot<a class="headerlink" href="#in-faxbot" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Carrier</td>
+<td>Telnyx</td>
+</tr>
+<tr>
+<td>How Faxbot signs in</td>
+<td>Username and password</td>
+</tr>
+<tr>
+<td>Server</td>
+<td>Leave empty to use <code>sip.telnyx.com</code></td>
+</tr>
+<tr>
+<td>Port</td>
+<td>Leave empty to use 5061</td>
+</tr>
+<tr>
+<td>Transport</td>
+<td>Leave as the default, <strong>Default: Encrypted (TLS)</strong>. Choose <strong>TCP</strong> if the encrypted connection fails, and <strong>UDP (older)</strong> only as a last resort</td>
+</tr>
+<tr>
+<td>Username and password</td>
+<td>The SIP connection's credentials (connection → Authentication and routing), not your Telnyx account login</td>
+</tr>
+<tr>
+<td>Caller ID</td>
+<td>Your Telnyx number in international format, such as <code>+17205550100</code></td>
+</tr>
+<tr>
+<td>Fax numbers on this trunk</td>
+<td>The same number, in the same format</td>
+</tr>
+<tr>
+<td>Use T.38 fax over IP</td>
+<td>On</td>
+</tr>
+</tbody>
+</table>
+<p>Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select <strong>Apply and connect</strong>; Faxbot saves the form, restarts Asterisk with the trunk and shows the trunk check.</p>
+<h3 id="limit-calls-on-the-trunk">Limit calls on the trunk<a class="headerlink" href="#limit-calls-on-the-trunk" title="Permanent link">&para;</a></h3>
+<p>Faxbot limits how many calls use the trunk at once and how quickly it starts new calls. In the console, they are <strong>Calls at once</strong> and <strong>New calls per second</strong> under <strong>Fax settings</strong> on the trunk's page. By default, the concurrent-call limit follows the fax engine's number of lines. The new-calls-per-second limit uses the carrier's published limit when Faxbot has one; Telnyx defaults to 5 per second. For other carriers with no published limit in Faxbot, there is no rate limit by default.</p>
+<p>Faxes that reach a trunk limit wait for room; they do not fail because of the limit. Set either limit to 0 to use its default. From the command line, run <code>faxbot providers trunk limits</code> to see the effective limits, or add <code>--calls-at-once N</code> and <code>--calls-per-second N</code> to change them. Each accepts 0; the maximums are 200 concurrent calls and 100 new calls per second.</p>
+<h3 id="see-how-fax-calls-went">See how fax calls went<a class="headerlink" href="#see-how-fax-calls-went" title="Permanent link">&para;</a></h3>
+<p>In <strong>Providers</strong>, the page for your carrier trunk has <strong>How fax calls went</strong>. It groups the answered fax calls of the last 7, 30 or 90 days by the compression, error correction and speed the fax engine reported, and shows for each group how many calls succeeded, the seconds per confirmed page and the calls per delivered fax. Each sent or received fax that went over the trunk also says how its call went.</p>
+<p>The engines report different details. The SSL Fax engine reports the whole call. Faxbot's built-in Asterisk engine reports only the last page's speed and resolution, and neither compression nor error correction, so those show as not reported. Faxbot only measures these values; it does not change how it sends faxes because of them.</p>
+<p>From the command line, run <code>faxbot providers trunk negotiation --days 30</code>; use <code>7</code> or <code>90</code> for another period.</p>
+<h2 id="choose-a-carrier">Choose a carrier<a class="headerlink" href="#choose-a-carrier" title="Permanent link">&para;</a></h2>
+<p>Faxbot has settings ready for these carriers. Each preset uses the carrier's own connection documentation, read on 2026-10-03.</p>
+<table>
+<thead>
+<tr>
+<th>Carrier</th>
+<th>How Faxbot signs in</th>
+<th>What you enter</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Telnyx</td>
+<td>Username and password, or server IP address</td>
+<td>Credentials from a Telnyx SIP connection</td>
+<td>See <a href="#telnyx-recommended">Telnyx (recommended)</a>.</td>
+</tr>
+<tr>
+<td>SignalWire</td>
+<td>Username and password</td>
+<td>Your space SIP domain, such as <code>example.sip.signalwire.com</code></td>
+<td>T.38 is not documented by the carrier; confirm it with SignalWire support and send test faxes first. SignalWire does not publish fixed signaling addresses.</td>
+</tr>
+<tr>
+<td>Sinch</td>
+<td>Username and password</td>
+<td>Your trunk domain, such as <code>example.pstn.sinch.com</code></td>
+<td>T.38 is not documented by the carrier; confirm it with Sinch support and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch.</td>
+</tr>
+<tr>
+<td>AnveoDirect</td>
+<td>Server IP address only</td>
+<td>Your server's public IP address in the AnveoDirect portal</td>
+<td>AnveoDirect does not support registration. T.38 is not documented on its connection page; confirm it with AnveoDirect first.</td>
+</tr>
+<tr>
+<td>Flowroute</td>
+<td>Username and password, or server IP address</td>
+<td>Credentials, or your eight-digit tech prefix for IP sign-in</td>
+<td>Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you.</td>
+</tr>
+<tr>
+<td>Gamma (UK)</td>
+<td>Server IP address only</td>
+<td>The SIP server address your Gamma reseller gives you; give them your static public address</td>
+<td>Gamma lists T.38, and a phone system maker tested T.38 fax over it. See <a href="#united-kingdom">United Kingdom</a>.</td>
+</tr>
+<tr>
+<td>BT One Voice (UK)</td>
+<td>Server IP address only</td>
+<td>The BT SIP server address from your turn-up sheet; give BT your static public address and port</td>
+<td>BT turns T.38 into audio fax inside its network, so a new BT trunk starts with audio fax. See <a href="#united-kingdom">United Kingdom</a>.</td>
+</tr>
+<tr>
+<td>Telstra SIP Connect (Australia)</td>
+<td>Username and password, over TCP</td>
+<td>The SIP domain from your Telstra order as the server, Telstra's SBC address as the outbound proxy</td>
+<td>Telstra does not state T.38 support. See <a href="#australia">Australia</a>.</td>
+</tr>
+<tr>
+<td>Another carrier</td>
+<td>Either</td>
+<td>The server, port and credentials your carrier gave you</td>
+<td>Faxbot dials numbers in E.164 with a plus sign.</td>
+</tr>
+</tbody>
+</table>
+<p>Gamma, BT One Voice and Telstra SIP Connect offer <strong>Number format</strong>: <strong>International, with + and the country code</strong>, or <strong>As a phone here dials it</strong> (<code>01632960123</code> in the UK), for a carrier that wants national numbers. Their settings are tested against Faxbot's own Asterisk standing in for the carrier; none has been tested on a live trunk yet.</p>
+<p>Carrier pages used for the presets:</p>
+<ul>
+<li>Telnyx: <a href="https://sip.telnyx.com/">sip.telnyx.com</a>, <a href="https://sip.telnyx.com/voice.json">voice.json</a>, <a href="https://developers.telnyx.com/docs/voice/sip-trunking/get-started">getting started</a>, <a href="https://developers.telnyx.com/docs/voice/sip-trunking/authentication/credential-types">credential types</a>, <a href="https://developers.telnyx.com/docs/voice/sip-trunking/configuration/caller-id-policy">caller ID policy</a>, <a href="https://support.telnyx.com/en/articles/1130672-fax-service-with-telnyx-via-t-38-or-g711">fax with T.38</a>, <a href="https://developers.telnyx.com/docs/voice/sip-trunking/network-configuration/ip-whitelisting">IP addresses</a></li>
+<li>SignalWire: <a href="https://signalwire.com/docs/platform/voice/sip/trunking">SIP trunking</a>, <a href="https://signalwire.com/docs/platform/voice/sip/bring-your-own-carrier">bring your own carrier</a></li>
+<li>Sinch: <a href="https://developers.sinch.com/docs/est">Elastic SIP Trunking</a>, <a href="https://developers.sinch.com/docs/est/test-plan">test plan</a>, <a href="https://developers.sinch.com/docs/est/integration-guides/livekit">LiveKit guide</a>, <a href="https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc">Ribbon guide</a></li>
+<li>AnveoDirect: <a href="https://www.anveodirect.com/about/faq">FAQ</a></li>
+<li>Flowroute: <a href="https://developer.flowroute.com/docs/inbound-and-outbound-calling-with-flowroute-new-pops/">points of presence</a>, <a href="https://support.bcmone.com/flowroute-support/docs/set-up-ip-based-authentication-for-outbound-calls">IP authentication</a>, <a href="https://flowroute.com/faxing/">faxing</a></li>
+<li>Gamma: <a href="https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK">Swyx interoperability sheet</a>, <a href="https://www.yeastar.com/itsp-partners/united-kingdom/">Yeastar UK provider list</a>, <a href="https://gammagroup.co/products/sip-trunking-call-management/">SIP trunking</a></li>
+<li>BT One Voice: <a href="https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf">technical outline</a>, <a href="https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf">UK datasheet</a></li>
+<li>Telstra SIP Connect: <a href="https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/">3CX setup guide</a>, <a href="https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf">Our Customer Terms, SIP Connect section</a></li>
+</ul>
+<h2 id="united-kingdom">United Kingdom<a class="headerlink" href="#united-kingdom" title="Permanent link">&para;</a></h2>
+<p>Openreach says "By 31 January 2027, all traditional phone lines will be going digital". Its <a href="https://www.openreach.com/upgrading-the-UK-to-digital-phone-lines">switch-off page</a> lists alarms, CCTV, payment terminals, telecare devices and lift phones as things to check (read 3 October 2026). BT is plainer about fax:</p>
+<ul>
+<li>On <strong>BT Digital Voice</strong>, "Generally, fax is supported ... although it's not 100% guaranteed", and BT suggests sending no more than 10 pages at a time (<a href="https://www.bt.com/help/landline/digital-voice--will-my-existing-phone-and-fax-machine-still-work">BT help</a>).</li>
+<li>On <strong>BT Cloud Voice Express</strong>, "some analogue devices which use a traditional phone line may no longer work, including: Tills, EPOS, Oyster, Fax machines", and "BT is not able to guarantee that all analogue devices will work with an ATA". BT advises "Changing to digital alternatives" (<a href="https://business.bt.com/help/guides/getting-started-with-your-bt-business-products/using-your-cloud-voice-express-phone-service/">BT Business help</a>).</li>
+</ul>
+<p>Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP trunk that carries T.38 or over a cloud fax provider, instead of a fax machine on a digital line.</p>
+<table>
+<thead>
+<tr>
+<th>BT product</th>
+<th>Use with Faxbot</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>BT One Voice SIP Trunk</strong></td>
+<td>The <strong>BT One Voice</strong> preset. BT recognises Faxbot by its address and port, with no registration, so Faxbot needs a host with a static public address (see <a href="#server-ip-sign-in-needs-a-public-host">Server IP sign-in</a>). BT's technical outline says "T.38 Fax over IP is internally transcoded to Fax via G.711 pass-through", so a new BT trunk starts with audio fax and the switch says "Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax." <strong>Try T.38 again</strong> is there if you want it. A-law first in the UK.</td>
+</tr>
+<tr>
+<td><strong>BT Cloud Voice SIP-T</strong></td>
+<td><strong>Another carrier</strong>, signing in with the username and password BT gives you. BT's <a href="https://business.bt.com/content/dam/bt-business/pdfs/help-and-support/phone-systems/connecting-phone-systems-direct-to-cloud-voice-sip/cv-sip-native-connectivity-customer-guide.pdf">connectivity guide</a> says nothing about fax or T.38, so send test faxes first.</td>
+</tr>
+<tr>
+<td><strong>BT Cloud Voice, Cloud Voice Express, Digital Voice, Cloud Work</strong></td>
+<td>Not fax products, by BT's own account. Use a T.38 trunk (Gamma, or Telnyx with UK numbers) or a cloud fax provider such as eFax instead.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gamma</strong> is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it (<a href="https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK">Swyx, updated 17 June 2024</a>). Choose the <strong>Gamma</strong> preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use <strong>Another carrier</strong> for those. <strong>Telnyx</strong> has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.</p>
+<p>No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under <strong>Savings &amp; optimization → Prices &amp; plans</strong>. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.</p>
+<h2 id="australia">Australia<a class="headerlink" href="#australia" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Telstra SIP Connect</strong>: the <strong>Telstra SIP Connect</strong> preset registers with a username and password over TCP.</li>
+<li>Enter the SIP domain from your Telstra order as the server, Telstra's SBC address as <strong>Outbound proxy</strong>, and the authentication user ID and password Telstra gives you. These settings follow <a href="https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/">3CX's Telstra guide</a>.</li>
+<li>Telstra does not state T.38 support anywhere Faxbot could read, so T.38 stays on and Faxbot switches new calls to audio fax by itself if T.38 fax data does not come back.</li>
+<li>Telstra's customer terms say the charges "are set out in your application form", so no price is published.</li>
+<li><strong>Telnyx</strong> has Australian numbers and is the quickest start, as in the UK.</li>
+<li>Yeastar's <a href="https://www.yeastar.com/itsp-partners/australia/">Australian provider list</a> marks Aatrox Communications and Binary Elements for T.38, both with registration. Use <strong>Another carrier</strong> for them.</li>
+</ul>
+<p>A-law comes first for UK and Australian installations; an Avaya phone system preset picks the order from the installation country.</p>
+<h2 id="what-you-need-from-the-carrier">What you need from the carrier<a class="headerlink" href="#what-you-need-from-the-carrier" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A SIP trunk or SIP connection with T.38 fax turned on.</li>
+<li>Either a SIP username and password, or your server's public IP address added to the carrier account.</li>
+<li>At least one phone number on the account if you want to receive faxes, or to send with your own caller ID.</li>
+<li>A caller ID number the carrier has assigned to you or verified for you.</li>
+</ul>
+<h2 id="set-it-up">Set it up<a class="headerlink" href="#set-it-up" title="Permanent link">&para;</a></h2>
+<ol>
+<li>In the console, open the <strong>Setup Wizard</strong>, choose your carrier (or phone system) for sending, receiving or both, and select <strong>Next</strong>. The first time, select <strong>Restart now</strong> when Setup asks. The next step shows the trunk form; Afterwards, <strong>Providers</strong> shows the same form on the page named after your carrier (such as <strong>Delivery setup → Telnyx</strong>).</li>
+<li>Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example <code>sip.telnyx.com</code>, <code>5061</code>, <strong>Default: Encrypted (TLS)</strong>) until you type your own. Fill in the server if the carrier asks for one, then the username and password.</li>
+<li>Enter your caller ID and the fax numbers the carrier sends to this trunk.</li>
+<li>Select <strong>Apply and connect</strong>. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, <code>faxbot providers trunk apply</code> does the same.
+   When Asterisk already runs exactly these settings, nothing restarts and the result says "Saved. Asterisk already uses these settings." Until a trunk is set up for each direction that uses it, Faxbot's readiness and the Dashboard say "No SIP trunk is set up. Choose your carrier to start." (or "Some trunk settings are missing.").</li>
+<li><strong>Check trunk status</strong> repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is <code>faxbot providers trunk status</code>.</li>
+</ol>
+<h3 id="what-apply-and-connect-does-with-asterisk">What Apply and connect does with Asterisk<a class="headerlink" href="#what-apply-and-connect-does-with-asterisk" title="Permanent link">&para;</a></h3>
+<p>In the Docker Compose install, Asterisk shares Faxbot's data folder and Docker starts it again whenever it stops, so Faxbot restarts it to load the trunk; nothing has to be typed on the server. Faxbot restarts it only when it is not already running exactly these settings, and only when no call is up: during a call, Apply and connect says "Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends." and changes nothing else. Faxbot restarts rather than reloads because a running Asterisk never reloads its transport settings (protocol, port, internet address), and a password change alone does not make it register again.</p>
+<p>When Asterisk runs elsewhere and does not share Faxbot's data folder, Apply and connect writes the files and says "Saved for Asterisk. Restart the Asterisk service to use these settings." An Asterisk set up before this release may answer "Asterisk does not let Faxbot restart it yet"; restart the Asterisk service once and Faxbot can restart it from then on.</p>
+<p>The behaviour rests on Asterisk 22 itself (read 2026-10-04 UTC): the manager <code>Command</code> action needs the <code>command</code> permission and <code>CoreShowChannels</code> the <code>system</code> or <code>reporting</code> permission (<code>main/manager.c</code>); <code>core stop gracefully</code> "Causes Asterisk to not accept new calls, and exit when all active calls have terminated normally" (<code>main/asterisk.c</code>); a transport is "not fully reloadable, not reloading: protocol, bind, TLS ..." unless <code>allow_reload</code> is set (<code>res/res_pjsip/config_transport.c</code>); and an outbound registration registers again on reload only when the registration itself changed (<code>res/res_pjsip_outbound_registration.c</code>), all at <a href="https://github.com/asterisk/asterisk/tree/22">https://github.com/asterisk/asterisk/tree/22</a> . The actions are described at <a href="https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/Command/">https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/Command/</a> and <a href="https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/PJSIPRegister/">https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/PJSIPRegister/</a> .</p>
+<p><strong>Check trunk status</strong> answers in one sentence per line:</p>
+<ul>
+<li>how the carrier answered, for example "The carrier accepted Faxbot's registration over TLS." and "The carrier answered Faxbot's check in 38 ms.";</li>
+<li>Faxbot's internet address, which it learns itself with STUN (from the carrier's STUN server when there is one, compared with a second public STUN server), and whether your network keeps or changes port numbers on the way out;</li>
+<li>"No ports need to be opened or forwarded." for username and password sign-in, unless the network check below says T.38 fax data cannot come back;</li>
+<li>whether fax over IP (T.38) can work on your network (see <a href="#network-for-fax-over-ip">Network for fax over IP</a>);</li>
+<li>the newest call, in the same sentence Recent calls shows.</li>
+</ul>
+<p>If you manage settings with an environment file instead of the console, set the <code>SIP_TRUNK_*</code> values below and run <code>docker compose run --rm api python -m app.sip_trunk write</code>, then restart Asterisk.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SIP_TRUNK_PRESET</code></td>
+<td><code>telnyx</code>, <code>signalwire</code>, <code>sinch</code>, <code>anveo</code>, <code>flowroute</code>, <code>gamma</code>, <code>bt-one-voice</code>, <code>telstra-sip-connect</code>, <code>avaya-ipoffice</code>, <code>avaya-aura</code> or <code>custom</code></td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_AUTH</code></td>
+<td><code>registration</code> (username and password) or <code>ip</code></td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_HOST</code>, <code>SIP_TRUNK_PORT</code>, <code>SIP_TRUNK_TRANSPORT</code></td>
+<td>Leave empty to use the preset's server, port and transport</td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_USERNAME</code>, <code>SIP_TRUNK_PASSWORD</code></td>
+<td>Carrier credentials; the password is stored as a secret. The password is read from the environment at every start, also as <code>TELNYX_SIP_PASSWORD</code> or <code>TELNYX_PASS</code></td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_OUTBOUND_PROXY</code></td>
+<td>Only if the carrier asks for one</td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_CALLER_ID</code></td>
+<td>Your carrier-authorized number, such as <code>+15551234567</code></td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_DIDS</code></td>
+<td>Your fax numbers on this trunk, separated by commas</td>
+</tr>
+<tr>
+<td><code>SIP_T38_ENABLED</code></td>
+<td><code>true</code> by default</td>
+</tr>
+<tr>
+<td><code>SIP_FAX_PREFERENCE_HEADER</code></td>
+<td><code>true</code> by default; see below</td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_CODECS</code></td>
+<td><code>ulaw</code>, <code>alaw</code> or both; leave empty for the preset (for Avaya and BT One Voice, the order the installation country uses)</td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_DIAL_FORMAT</code></td>
+<td><code>e164</code> (<code>+441632960123</code>) or <code>local</code> (<code>01632960123</code>, as a phone at the installation dials it), where the preset offers the choice</td>
+</tr>
+<tr>
+<td><code>SIP_TRUNK_DIAL_PREFIX</code></td>
+<td>Up to four digits before a number dialled the local way, such as <code>9</code> for a phone system's outside line</td>
+</tr>
+<tr>
+<td><code>SIP_EXTERNAL_ADDRESS</code></td>
+<td>Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state</td>
+</tr>
+<tr>
+<td><code>SIP_ROUTER_PORTS</code></td>
+<td><code>true</code> by default: Faxbot may open its published fax ports on your router (see <a href="../network/">Network for fax over IP</a>); <code>false</code> stops it and closes any it opened</td>
+</tr>
+<tr>
+<td><code>SIP_PUBLIC_ADDRESS_CHECK_MINUTES</code></td>
+<td>How often Faxbot checks its internet address again; <code>5</code> by default, <code>0</code> turns it off. Read at the first start; after that it is a setting (see below)</td>
+</tr>
+</tbody>
+</table>
+<p>Asterisk reads the trunk when it starts. Faxbot writes it to <code>asterisk/pjsip.conf</code> inside the shared fax data folder; while that file exists it replaces the older <code>SIP_USERNAME</code>, <code>SIP_PASSWORD</code> and <code>SIP_SERVER</code> settings.</p>
+<h3 id="behind-a-router-nothing-to-open-for-calls-and-audio-fax">Behind a router: nothing to open for calls and audio fax<a class="headerlink" href="#behind-a-router-nothing-to-open-for-calls-and-audio-fax" title="Permanent link">&para;</a></h3>
+<p>With username and password sign-in you don't open, publish or forward any port for calls and audio fax, and the default Docker Compose file publishes none. Fax over IP (T.38) can need more on some networks; see <a href="../network/">Network for fax over IP</a>.</p>
+<p>Behind a router, the fax engine (Asterisk) registers with the carrier over one encrypted connection (for Telnyx, TLS on port 5061) and keeps it alive with a keepalive and a carrier check every 30 seconds. Over UDP the carrier check runs every 25 seconds and registration renews every two minutes, which stays inside common router timeouts. The carrier sends incoming calls back over that same connection. On every call the fax engine sends the first audio and fax over IP (T.38) packets itself, plus a small audio keepalive every two seconds when nothing else is being sent, so your router lets the carrier's answer back in on the same path.</p>
+<p>Leave <strong>Internet address</strong> empty. It is only an override for a host whose address you want to state yourself, and if you enter one that differs from what Faxbot sees, <strong>Check trunk status</strong> tells you.</p>
+<p>Faxbot finds its internet address with STUN when you select <strong>Apply and connect</strong>, and checks again every five minutes. You can change the interval with <strong>Check the internet address every … minutes</strong> under <strong>Delivery setup → Carrier trunk</strong>, or with <code>faxbot system settings set sip_public_address_check_minutes=10</code>; <code>0</code> stops the repeat. A change takes effect from the next check, without a restart.</p>
+<p>Faxbot only tells the carrier its internet address when your network keeps port numbers, because then the address and port are exactly right and the call doesn't depend on the carrier following Faxbot's packets. When your network changes port numbers, an internet address with the wrong port would mislead the carrier, so Faxbot leaves it out and lets the carrier follow its packets instead. The fax engine reads the address when it starts; if your internet address changes later, <strong>Check trunk status</strong> says "Your internet address changed. Select Apply and connect so the carrier gets the new address." For a fax engine that Faxbot doesn't manage, it tells you to restart the Asterisk service instead.</p>
+<p>Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If <strong>Check trunk status</strong> keeps saying that Faxbot isn't registered over the encrypted connection, set <strong>Transport</strong> to TCP, apply again and restart Asterisk.</p>
+<p>All of this relies on carriers sending their packets back to wherever Faxbot's packets came from. Telnyx does that for audio, but not for fax over IP (T.38), as measured on 3 and 4 October 2026: on a network that changes port numbers, Telnyx's fax data never reaches Faxbot. Fax over IP (T.38) therefore needs a network that keeps port numbers, and the network check below finds out which kind you have and tells you what to do. If a call runs into the problem anyway, it connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier."</p>
+<h3 id="network-for-fax-over-ip">Network for fax over IP<a class="headerlink" href="#network-for-fax-over-ip" title="Permanent link">&para;</a></h3>
+<p>Faxbot checks its network when it starts, when you select <strong>Apply and connect</strong>, every few minutes and when you select <strong>Check again</strong> under <strong>Network for fax over IP</strong> on the carrier's page (or with <code>faxbot providers trunk network status|check</code>). Fax over IP (T.38) then follows the check by itself. When the carrier's fax data can't come back, Faxbot turns fax over IP (T.38) off and gives the reason: "Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed." Once the network is fixed, Faxbot turns it back on, and it never sends a fax a second time because of this.</p>
+<p>When the router directly in front of Faxbot's computer changes port numbers, Faxbot can open its fax ports on that router itself. <a href="../network/">Network for fax over IP</a> has the fix for each platform: Colima, Docker Desktop, Linux behind a router and cloud servers.</p>
+<h3 id="when-t38-data-does-not-come-back-audio-fax">When T.38 data does not come back: audio fax<a class="headerlink" href="#when-t38-data-does-not-come-back-audio-fax" title="Permanent link">&para;</a></h3>
+<p>Sometimes a call switches to fax over IP (T.38) and no fax data comes back, and Faxbot reports "The call connected but no fax data came back from the carrier." The carrier isn't sending fax data back along Faxbot's path, even though it may still send audio that way.</p>
+<p>Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message; a plain hang-up, a busy line or the other side hanging up never triggers it. When it switches, Faxbot turns off <strong>Use T.38 fax over IP</strong> (the settings history records "system"), reconnects the carrier trunk once no call is in progress, and shows a sentence next to the switch such as "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.", together with <strong>Try T.38 again</strong>. It never sends the failed fax again; send it yourself when you're ready.</p>
+<p>The fast fax service handles this on its own. After one of its T.38 calls hears no fax machine, it uses audio fax for its next calls, while the trunk's <strong>Use T.38 fax over IP</strong> setting and the built-in fax engine stay as they are. The trunk page reports the change under <strong>Check trunk status</strong>; select <strong>Apply and connect</strong> there to let the fast fax service try T.38 again. The same rule applies: a plain hang-up, a busy line or the other side hanging up does not trigger it, and Faxbot never sends the failed fax again.</p>
+<p>If fax over IP (T.38) is off and the most recent fax over IP (T.38) call got no fax data back (for example, because someone turned it off by hand right after such a call), Faxbot takes that call as the reason and says so in the same way.</p>
+<p>New calls stay on audio fax: Faxbot declines the carrier's switch to fax over IP (T.38) and sends at up to 9600 bit/s with error correction, which copes better with a voice path.</p>
+<p>If the failed call happened on a network that changed port numbers and a later network check finds the network fixed, Faxbot turns fax over IP (T.38) back on by itself. If it happened on a network that keeps port numbers, the carrier is the cause, and audio fax stays until you choose otherwise.</p>
+<p>A carrier trunk on a network that changes port numbers starts with audio fax (see <a href="#network-for-fax-over-ip">Network for fax over IP</a>). <code>faxbot providers trunk mode audio</code> turns on audio fax by hand, and <code>faxbot providers trunk status</code> tells you why audio fax is in use. With Telnyx you can also set <strong>T.38 fax re-invite initiated by</strong> to <strong>Disabled</strong> for audio fax.</p>
+<h3 id="server-ip-sign-in-needs-a-public-host">Server IP sign-in needs a public host<a class="headerlink" href="#server-ip-sign-in-needs-a-public-host" title="Permanent link">&para;</a></h3>
+<p>A carrier that signs in by IP address (AnveoDirect, Gamma, BT One Voice, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, <strong>Apply and connect</strong> refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:</p>
+<div class="highlight"><pre><span></span><code>docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+</code></pre></div>
+<p>See <a href="../sip-asterisk/#carriers-that-sign-in-by-ip-address">Asterisk and SIP</a> for the ports. Keep the Asterisk manager port, 5038, private.</p>
+<p><strong>Check trunk status</strong> says "Received faxes reach Faxbot: ready." when the trunk receives and the inbound secret Faxbot keeps is written where Asterisk reads it. <strong>Apply and connect</strong> also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in <strong>Inbound Receiving</strong> or as <code>ASTERISK_INBOUND_SECRET</code> in <code>.env</code> is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see <a href="../../operations/receiving/#asterisk">Receiving faxes</a>).</p>
+<h2 id="t38">T.38<a class="headerlink" href="#t38" title="Permanent link">&para;</a></h2>
+<p>T.38 carries fax over the internet as fax data instead of as sound, which is much more reliable. Faxbot turns it on by default and uses redundancy to survive lost packets. When a fax arrives, Faxbot asks to switch the call to T.38; when it sends, it accepts the switch from the other side. If the far end cannot use T.38, the call continues as audio, which works on clean connections.</p>
+<p>A carrier listing T.38 support does not guarantee every call completes as T.38. Faxbot records which one each call used, so you can check.</p>
+<h3 id="fax-preference-on-outgoing-calls">Fax preference on outgoing calls<a class="headerlink" href="#fax-preference-on-outgoing-calls" title="Permanent link">&para;</a></h3>
+<p><strong>Mark outgoing calls as fax when they start</strong> adds a standard fax marker (RFC 6913) to each new outgoing call. Some carriers use it to pick a fax-capable route; others ignore it. It is on by default: it is a preference (<code>Accept-Contact</code>, never <code>Require</code>), so a carrier that does not know it still connects the call. Turn it off only if your carrier refuses calls that carry it. It only describes the call; Faxbot never places a second call because of it, and never resends a fax whose outcome is unknown.</p>
+<h2 id="caller-id">Caller ID<a class="headerlink" href="#caller-id" title="Permanent link">&para;</a></h2>
+<p>Faxbot sends only the caller ID you enter, and you should enter only a number your carrier has assigned to you or verified for you. Carriers reject calls with numbers they have not authorized. Faxbot never presents a number you do not control.</p>
+<p>The fax header and station ID that appear on the received pages are separate settings. Leave the station ID empty to send the trunk's caller ID as the station ID; Faxbot never sends a made-up one.</p>
+<h2 id="keep-your-fax-number">Keep your fax number<a class="headerlink" href="#keep-your-fax-number" title="Permanent link">&para;</a></h2>
+<p>To receive faxes on a number you already have, either:</p>
+<ul>
+<li><strong>Port it</strong> to your new carrier with the carrier's porting process. Everyone keeps dialing the same number, and you stop paying the old provider once the port completes.</li>
+<li><strong>Forward it</strong> from your current provider to a number on the new trunk. Forwarding can add a charge for the forwarded leg, and some providers bill two or three legs for one forwarded call, so check before relying on it.</li>
+</ul>
+<p>For cheap number hosting and mobile numbers, see <a href="../sip-numbers/">Fax numbers on SIP</a>.</p>
+<h2 id="what-a-call-costs">What a call costs<a class="headerlink" href="#what-a-call-costs" title="Permanent link">&para;</a></h2>
+<p>Carriers bill fax calls like voice calls: by connected minutes, rounded up to the carrier's billing increment, plus a monthly fee for each number. There is no per-page charge on the trunk. Faxbot's starting rate cards (<code>config/rate_cards.json</code>) list each preset carrier's advertised prices, advertised on 2026-10-03:</p>
+<table>
+<thead>
+<tr>
+<th>Carrier</th>
+<th>Outbound per minute</th>
+<th>Inbound per minute</th>
+<th>Number per month</th>
+<th>Billing increment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Telnyx</td>
+<td>from $0.005</td>
+<td>from $0.0032</td>
+<td>$1.00</td>
+<td>whole minutes, one-minute minimum</td>
+</tr>
+<tr>
+<td>SignalWire</td>
+<td>$0.008</td>
+<td>$0.0066</td>
+<td>$0.50</td>
+<td>not published</td>
+</tr>
+<tr>
+<td>Sinch</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+</tr>
+<tr>
+<td>AnveoDirect</td>
+<td>about $0.00186, varies by number</td>
+<td>$0.004</td>
+<td>$0.15, plus $0.25 setup</td>
+<td>outbound per second; inbound not published</td>
+</tr>
+<tr>
+<td>Flowroute</td>
+<td>$0.00833</td>
+<td>$0.005</td>
+<td>$1.00</td>
+<td>outbound 6 seconds; inbound whole minutes</td>
+</tr>
+<tr>
+<td>Gamma (GBP)</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+</tr>
+<tr>
+<td>BT One Voice (GBP)</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+</tr>
+<tr>
+<td>Telstra SIP Connect (AUD)</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+<td>not published</td>
+</tr>
+</tbody>
+</table>
+<p>An Avaya phone system has no rate card: the carrier behind it bills the calls, so add your own rate for it.</p>
+<p>Rounding applies to each call separately. With whole-minute billing, a 59-second call and a 61-second call are billed as three minutes, not two. A fax of 20 pages usually takes 10 to 11 minutes on the line.</p>
+<p>Check your carrier account for your actual rates before you rely on these figures.</p>
+<h3 id="how-actual-charges-arrive-telnyx">How actual charges arrive (Telnyx)<a class="headerlink" href="#how-actual-charges-arrive-telnyx" title="Permanent link">&para;</a></h3>
+<p>The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in <strong>Savings &amp; optimization → Spending</strong>, in Sent's fax details and in Received.</p>
+<ol>
+<li>In the Telnyx portal, create an API key (<strong>Account settings → Keys &amp; credentials → API keys</strong>).</li>
+<li>Add it to <code>.env</code> and restart:</li>
+</ol>
+<div class="highlight"><pre><span></span><code>TELNYX_API_KEY=KEY...
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>The key is read at every start and never shown in the console. Faxbot only reads billing records with it; it never places calls or changes your Telnyx account.</p>
+<p>About once a minute, Faxbot asks Telnyx for the billing records (detail records) of finished calls and matches each one to its own call record:</p>
+<ul>
+<li>by the call's SIP Call-ID, which Asterisk records for every call;</li>
+<li>otherwise, only when exactly one call has the same numbers and was answered and ended within 45 seconds of the Telnyx record, and that record fits no other call. If Faxbot did not learn the number a received call dialled, the caller's number must match instead; time alone never decides.</li>
+</ul>
+<p>A record that could fit more than one call is never guessed. It stays unmatched, the call's cost stays unknown, and Spending counts it as "could not be matched".</p>
+<p>Telnyx usually has a call's record within minutes. Until then the fax shows "Cost not reported yet." A record without a price stays unknown, never zero. Faxbot asks again with growing gaps, checks once more a day after the call to settle the charge, and stops asking after 7 days. If Telnyx later reports a different amount, the new amount replaces the old one and both are kept. A charge never changes a fax's delivery status, and a failed call that Telnyx charged for still counts toward that fax's cost.</p>
+<p>Faxbot also reads the trunk's Telnyx records for the last two days once an hour, to find calls it has no record of, such as a received fax whose hand-over failed. Their charges count in Spending on their own line. A charge is shown on a received fax only when exactly one fax matches it by number and time. This needs the trunk's fax numbers and caller ID filled in.</p>
+<p>To ask Telnyx straight away, select <strong>Check Telnyx charges now</strong> under Spending, or run <code>faxbot costs reconcile</code>.</p>
+<h2 id="how-faxbot-records-each-call">How Faxbot records each call<a class="headerlink" href="#how-faxbot-records-each-call" title="Permanent link">&para;</a></h2>
+<p>For every call on the trunk Faxbot keeps a call record:</p>
+<ul>
+<li>direction, your number, the other number and the carrier preset;</li>
+<li>when the call started, was answered and ended, and the connected seconds;</li>
+<li>the result: answered, busy, network busy, no answer, failed, or not known yet;</li>
+<li>whether the call used T.38, how many pages moved, and the other machine's station ID;</li>
+<li>the reason a call or fax failed, and one sentence about what happened.</li>
+</ul>
+<p>A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.</p>
+<p><strong>Recent calls</strong> under the trunk settings lists them, newest first, with that sentence (<code>faxbot providers trunk calls</code> prints the same list). When a fax over the trunk fails, <strong>Faxes → Sent</strong> shows the same sentence for that fax; when the other fax machine was the problem, Sent says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:</p>
+<table>
+<thead>
+<tr>
+<th>Sentence</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sent: 2 pages confirmed by the receiving machine. / Received: 2 pages.</td>
+<td>The fax went through.</td>
+</tr>
+<tr>
+<td>The call connected but no fax data came back from the carrier.</td>
+<td>The carrier never sent fax data back to Faxbot's path; the network, not the other fax machine, failed. This is the pattern of a carrier that does not follow Faxbot's packets.</td>
+</tr>
+<tr>
+<td>The call connected but no sound came back from the carrier.</td>
+<td>The call stayed audio and not one audio packet arrived.</td>
+</tr>
+<tr>
+<td>The call connected but the other end did not answer as a fax machine.</td>
+<td>Sound came back, but no fax signal: often a person or a voice line answered.</td>
+</tr>
+<tr>
+<td>The other fax machine answered but the fax failed: …</td>
+<td>The network worked; the fax machines did not finish. The reason is the fax engine's own.</td>
+</tr>
+<tr>
+<td>A fax call from +1 303 … came in, but no pages arrived.</td>
+<td>Someone called your fax number and no page was received, so Received has nothing; the Overview names the newest such call from the last day.</td>
+</tr>
+<tr>
+<td>The number was busy. / Nobody answered the call.</td>
+<td>The call never connected.</td>
+</tr>
+</tbody>
+</table>
+<p>Faxbot tells "no fax data came back" apart from a fax failure by the result of the call: no page and no station ID from the other machine, and either no audio packet at all or a fax engine ending that means nothing ever arrived (a first-message timeout, or the other side hanging up first). After a switch to T.38, Asterisk no longer counts audio packets, so only the fax engine's ending decides. Delivery routes use the connected seconds to estimate what each fax cost.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../sip-asterisk/" class="md-footer__link md-footer__link--prev" aria-label="Previous: SIP/Asterisk (Self‑hosted)">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                SIP/Asterisk (Self‑hosted)
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../network/" class="md-footer__link md-footer__link--next" aria-label="Next: Network for fax over IP">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Network for fax over IP
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "navigation.top", "navigation.footer", "navigation.instant", "navigation.tracking", "content.tabs.link", "toc.integrate", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+    
+  </body>
+</html>
