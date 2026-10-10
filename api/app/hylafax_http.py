@@ -284,7 +284,7 @@ async def put_coding_tuning(number: str, payload: CodingTuning, request: Request
 
 @router.get('/admin/sip/negotiation', dependencies=[Depends(require_permission('providers:read'))])
 async def negotiation_summary(request: Request, days: int = 30):
-    """Providers → the trunk page: calls per compression, error correction and speed over 7, 30 or 90 days."""
+    """Delivery setup → the trunk page: calls per compression, error correction and speed over 7, 30 or 90 days."""
     from . import fax_negotiation
     if days not in fax_negotiation.DAYS:
         raise HTTPException(400, detail='Choose 7, 30 or 90 days.')

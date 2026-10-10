@@ -643,7 +643,7 @@ async def run(request: Request, identity) -> dict[str, Any]:
     return report
 
 
-# Read-only views of the fax engine for System → Developer → Scripts & checks.
+# Read-only views of the fax engine for Administration → Developer → Scripts & checks.
 ENGINE_VIEWS = {
     'registrations': ('Trunk sign-ins', {'Action': 'PJSIPShowRegistrationsOutbound'}, 'OutboundRegistrationDetail',
                       (('ObjectName', 'Name'), ('Status', 'Status'), ('ServerUri', 'Server'), ('Transport', 'Transport'))),

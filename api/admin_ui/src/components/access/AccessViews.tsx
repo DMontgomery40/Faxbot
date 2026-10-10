@@ -1,5 +1,5 @@
 // Shared building blocks for the access-management screens (Users, Groups,
-// Roles, Access, Sessions, Keys). They follow the existing list pattern:
+// Roles, Administration, Sessions, Keys). They follow the existing list pattern:
 // header row, dismissible Alert in Fade, table on desktop and cards on mobile.
 import React, { useEffect, useState } from 'react';
 import {

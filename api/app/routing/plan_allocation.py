@@ -68,7 +68,7 @@ Contract for callers
   is left out when the fax may use all of it, it is not scarce, or the fax is
   forced onto it; storage errors leave every plan out (priced as before).
 - ``after_hold(left, hold) -> BudgetLeft``: the plan's budget as this fax sees it.
-- ``view(routes, values, now=None)``: the allocation screen and ``faxbot costs plans allocation``.
+- ``view(routes, values, now=None)``: the allocation screen and ``faxbot savings plans allocation``.
 """
 from __future__ import annotations
 
@@ -1221,8 +1221,8 @@ def _reserve_sentence(plan, size, curve):
 
 
 def view(routes, values, now=None):
-    """Each scarce plan's room, who gets it, and what is kept for later: Costs → Prices & plans, and
-    ``faxbot costs plans allocation``. Every amount is an estimate."""
+    """Each scarce plan's room, who gets it, and what is kept for later: Savings & optimization → Prices & plans, and
+    ``faxbot savings plans allocation``. Every amount is an estimate."""
     from .database import utcnow
     from .delivered import short_money_text
     from .plan import route_label

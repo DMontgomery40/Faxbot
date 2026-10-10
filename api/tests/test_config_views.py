@@ -285,7 +285,7 @@ def test_the_trunk_view_says_whether_faxbot_can_read_its_carriers_call_records()
     trunk = {'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'flowroute'}
     unread = project_admin_settings(snapshot(trunk))['sip']['call_records']
     assert (unread['published'], unread['readable']) == (True, False)
-    assert 'add your Flowroute API access key and secret key under Providers → Flowroute' in unread['sentence']
+    assert 'add your Flowroute API access key and secret key under Delivery setup → Flowroute' in unread['sentence']
     keys = {'FLOWROUTE_ACCESS_KEY': 'synthetic-access', 'FLOWROUTE_SECRET_KEY': 'synthetic-secret'}
     read = project_admin_settings(snapshot({**trunk, **keys}))['sip']['call_records']
     assert (read['published'], read['readable']) == (True, True)

@@ -1,4 +1,4 @@
-"""System → Diagnostics → Receiving readiness, and receive owners (``receive_readiness.py``, brief 92, RF).
+"""Administration → System health → Receiving readiness, and receive owners (``receive_readiness.py``, brief 92, RF).
 
 ``GET /receiving/readiness`` judges each number Faxbot receives on, from receiving evidence only.
 ``POST /receiving/owners`` names the one endpoint that receives a number's faxes, or releases it.

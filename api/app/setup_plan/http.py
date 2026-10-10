@@ -1,4 +1,4 @@
-"""Guided setup over HTTP: preview a plan, read it, and apply it (System → Setup, ``faxbot admin setup``).
+"""Guided setup over HTTP: preview a plan, read it, and apply it (Administration → Setup, ``faxbot admin setup``).
 
 Reading plans needs ``settings:read``. Previewing needs ``settings:write``:
 it keeps the plan, and nothing else. Applying needs ``settings:write``, and
@@ -49,7 +49,7 @@ def _engine_and_runtime(request):
 
 
 def _bound(runtime, snapshot):
-    """The active outbound provider, as the route planner names it (as Costs → Recommendations reads it)."""
+    """The active outbound provider, as the route planner names it (as Savings & optimization → Opportunities reads it)."""
     identity = snapshot.active.profile_id('outbound')
     if identity is None:
         return None

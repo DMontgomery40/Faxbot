@@ -1,4 +1,4 @@
-"""Public test lines over HTTP (``test_lines.py``): System → Diagnostics → Public test lines.
+"""Public test lines over HTTP (``test_lines.py``): Administration → System health → Public test lines.
 
 - ``GET /diagnostics/test-lines``: the lines with their sources, what the dialing guard says about each, whether a
   reply would reach this Faxbot, and the recent test faxes with their results.

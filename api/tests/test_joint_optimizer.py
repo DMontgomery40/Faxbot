@@ -237,7 +237,7 @@ async def test_packing_reverses_the_route_winner_and_the_worker_binds_the_measur
     assert len(record['candidates']) >= 4 and sum(item['chosen'] for item in record['candidates']) == 1
     events = [event['kind'] for event in joint.delivery.history(job)]
     assert events.index('route_assigned') < events.index('submission_authorized')
-    # Sent details and `faxbot sent show` say the same plan, in one sentence. On the minute account the long page
+    # Sent details and `faxbot faxes sent show` say the same plan, in one sentence. On the minute account the long page
     # bills the same minute in less time, so that is its own best pages too.
     view = selections.sent_view(joint.engine, job, joint.configuration.read().active.values)
     assert view['sentence'] == ('Going through Page trunk as 1 long page: about $0.004 instead of $0.005 through '

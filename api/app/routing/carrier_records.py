@@ -10,7 +10,7 @@ unrecorded calls and Spending then work exactly as for Telnyx.
 ``PUBLISHED`` says, for every trunk preset, whether the carrier publishes an
 API for its call records with a charge per call, with the source and the date
 it was read. Where none is published the trunk's page says so, and the
-carrier's invoice goes under Costs → Invoices instead. Unknown stays unknown:
+carrier's invoice goes under Savings & optimization → Invoices instead. Unknown stays unknown:
 a carrier is never assumed to publish one.
 
 Nothing here contacts a carrier unless a reader's ``fetch`` is called, and a
@@ -49,7 +49,7 @@ PUBLISHED = {
           'search-detail-records', '2026-10-06'),), reader='telnyx'),
     'signalwire': Published(
         True, 'SignalWire publishes each call\'s charge; Faxbot reads it with your SignalWire project ID and API '
-              'token (Providers → SignalWire).',
+              'token (Delivery setup → SignalWire).',
         (('SignalWire Compatibility API: List all calls', 'https://signalwire.com/docs/compatibility-api/rest/'
           'calls/list-all-calls', READ_ON),), reader='SignalWireCallRecords'),
     'flowroute': Published(
@@ -63,11 +63,11 @@ PUBLISHED = {
           READ_ON)), reader='FlowrouteCallRecords'),
     # Searched on 8 October 2026; none found. Each says so on the trunk's page, never "unknown" as "none".
     'gamma': Published(False, 'Gamma gives call records to its channel partners in its own portal and publishes no '
-                              'call-record API Faxbot could find; enter its invoice under Costs → Invoices.'),
+                              'call-record API Faxbot could find; enter its invoice under Savings & optimization → Invoices.'),
     'bt-one-voice': Published(False, 'BT publishes no call-record API for One Voice that Faxbot could find; enter its '
-                                     'invoice under Costs → Invoices.'),
+                                     'invoice under Savings & optimization → Invoices.'),
     'telstra-sip-connect': Published(False, 'Telstra publishes no call-record API for SIP Connect that Faxbot could '
-                                            'find; enter its invoice under Costs → Invoices.'),
+                                            'find; enter its invoice under Savings & optimization → Invoices.'),
 }
 
 # Carriers without a trunk preset, for the record: what each publishes, from the same search.
@@ -90,9 +90,9 @@ def published(preset):
     item = PRESETS.get(preset)
     if item is not None and item.phone_system:
         return Published(False, f'{item.label} is your phone system; the carrier behind it bills these calls, so '
-                                'enter its invoice under Costs → Invoices.')
+                                'enter its invoice under Savings & optimization → Invoices.')
     label = item.label if item is not None and preset != 'custom' else 'your carrier'
-    return Published(False, f"Faxbot can't read {label}'s call charges; enter its invoice under Costs → Invoices.")
+    return Published(False, f"Faxbot can't read {label}'s call charges; enter its invoice under Savings & optimization → Invoices.")
 
 
 # Readers ------------------------------------------------------------------------------------------------------
@@ -484,10 +484,10 @@ def trunk_records(values):
         from ..sip_trunk import PRESETS
         label = PRESETS[preset].label if preset in PRESETS else 'Your carrier'
         sentence = (f'{label} publishes each call\'s charge, but Faxbot cannot read it yet: '
-                    + ('add the Telnyx API key under Providers → Telnyx.' if preset == 'telnyx' else
-                       'add your SignalWire project ID and API token under Providers → SignalWire.'
+                    + ('add the Telnyx API key under Delivery setup → Telnyx.' if preset == 'telnyx' else
+                       'add your SignalWire project ID and API token under Delivery setup → SignalWire.'
                        if preset == 'signalwire' else
-                       'add your Flowroute API access key and secret key under Providers → Flowroute.'
+                       'add your Flowroute API access key and secret key under Delivery setup → Flowroute.'
                        if preset == 'flowroute' else 'add its API credentials.'))
     return {'preset': preset, 'published': found.api, 'readable': readable,
             'sources': [{'title': title, 'url': url, 'read_on': read_on} for title, url, read_on in found.sources],

@@ -563,7 +563,7 @@ def test_a_shared_call_that_cost_more_than_separate_calls_shows_the_loss_never_a
     assert together['saved'] == {'USD': -35_000}
     assert together['sentence'] == ('3 faxes to the same number went in 1 call instead of 3, saving 2 calls, but '
                                     'that call cost about $0.035 more than 3 separate calls.')
-    # Costs → Savings sums signed amounts, and its headline says the money went the other way.
+    # Savings & optimization → Savings results sums signed amounts, and its headline says the money went the other way.
     found = savings(routes, configuration.engine)
     assert found['total'] == {'USD': -35_000}
     assert found['total_sentence'] == 'About $0.035 more spent than saved in the last 30 days.'

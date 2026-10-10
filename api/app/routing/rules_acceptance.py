@@ -105,13 +105,13 @@ def check_choices(engine, *, mailbox=None, workflow=None, labels=()):
     document = _organization_document(_stores(engine)[0])
     if workflow and workflow not in {item.get('key') for item in document.get('workflows') or ()
                                      if isinstance(item, dict)}:
-        raise RulesAcceptanceError(f'There is no workflow called {workflow}. Add it on Providers → Rules → Workflows, '
+        raise RulesAcceptanceError(f'There is no workflow called {workflow}. Add it on Delivery setup → Routing rules → Workflows, '
                                    'or leave the workflow out.')
     known = set(document.get('labels') or ())
     unknown = sorted(set(labels) - known)
     if unknown:
         raise RulesAcceptanceError(f'{", ".join(unknown)} {"is not a label" if len(unknown) == 1 else "are not labels"}'
-                                   ' your rules define. Add labels on Providers → Rules → Lists.')
+                                   ' your rules define. Add labels on Delivery setup → Routing rules → Lists.')
 
 
 def may_send_from(connection, control, actor, mailbox_id, *, now):

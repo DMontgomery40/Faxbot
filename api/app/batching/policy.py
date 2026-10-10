@@ -40,7 +40,7 @@ INDEX_PAGE_KEEPS = ("Only Faxbot's separator pages are left out; cover sheets an
 # 47 CFR 68.318(d): the date, time, sender and sending number on every page. The fax engine prints that
 # header above Faxbot's own line, so marks at the top of every page need both set.
 HEADER_NEEDS = ('Faxes to this number use separator pages for now, because marks at the top of every page need '
-                'your header text and sending number set in Numbers > Sender identity.')
+                'your header text and sending number set in Delivery setup > Sending identity.')
 # The most documents one index page lists, each on at most three lines (``image.index_pdf``).
 INDEX_PAGE_DOCUMENTS = 15
 

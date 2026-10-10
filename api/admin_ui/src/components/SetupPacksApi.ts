@@ -1,4 +1,4 @@
-// Guided setup's suggested packs: the shapes System → Setup reads, and its four requests.
+// Guided setup's suggested packs: the shapes Administration → Setup reads, and its four requests.
 // The server compiles every suggestion, explanation and sentence; the console shows them and sends back
 // which suggestions to apply, with the plan's revision so a plan built on older settings is refused.
 import type AdminAPIClient from '../api/client';

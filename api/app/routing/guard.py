@@ -76,7 +76,7 @@ SPECIAL_TYPES = frozenset({PhoneNumberType.SHARED_COST, PhoneNumberType.PERSONAL
 NO_CALL_ACCOUNTS = ('local', 'direct')
 
 # Where the administrator changes this, named once so a navigation change is one edit.
-WHERE = 'Providers → In use → Where Faxbot may dial'
+WHERE = 'Delivery setup → Providers & accounts → Where Faxbot may dial'
 
 CLASS_LABELS = {GEOGRAPHIC: 'Numbers in your country', TOLL_FREE: 'Toll-free numbers in your country',
                 MOBILE: 'Mobile numbers in your country', PREMIUM: 'Premium-rate numbers',

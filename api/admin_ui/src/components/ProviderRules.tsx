@@ -1,4 +1,4 @@
-// Providers → Rules: which provider account carries each fax. The organization's rules come first; a
+// Delivery setup → Routing rules: which provider account carries each fax. The organization's rules come first; a
 // workflow's own rules can only narrow them (a mailbox's own rules are on that mailbox's page). Every
 // change goes into a draft; Check and Publish put it into effect for new faxes.
 import { useEffect, useMemo, useState } from 'react';

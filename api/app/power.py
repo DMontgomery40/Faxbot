@@ -209,7 +209,7 @@ def admission_for(db, values, account_key, p90_seconds, *, urgent=False, others=
     return admission(found, provider=provider, p90_seconds=p90_seconds, urgent=urgent, others=others)
 
 
-# -- HTTP: System → Diagnostics → Power ----------------------------------------------------------------------
+# -- HTTP: Administration → System health → Power ----------------------------------------------------------------------
 
 router = APIRouter(prefix='/power', tags=['Diagnostics'])
 UNAVAILABLE = 'Power settings are unavailable right now. Try again in a moment.'

@@ -44,10 +44,10 @@ export function ReceivingOptionsFields({
   onChange: (value: ReceivingOptions) => void;
   // Accounts that receive faxes.
   accounts: Named[];
-  // Email connectors (Numbers → Email delivery).
+  // Email connectors (Delivery setup → Staff email delivery).
   connectors: Named[];
   timeZone: string;
-  // Sites (Providers → Rules), for faxes that arrive on an account of one site.
+  // Sites (Delivery setup → Routing rules), for faxes that arrive on an account of one site.
   sites?: Named[];
   // Whether you trust a certificate authority for forwarded calls, so a forwarding can be verified.
   trustsAnchors?: boolean;

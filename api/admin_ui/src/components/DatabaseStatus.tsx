@@ -1,4 +1,4 @@
-// System → Diagnostics: the database Faxbot uses, whether it can reach it, and what it holds, in plain words.
+// Administration → System health: the database Faxbot uses, whether it can reach it, and what it holds, in plain words.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, Stack, Typography } from '@mui/material';
 import { Storage as StorageIcon } from '@mui/icons-material';

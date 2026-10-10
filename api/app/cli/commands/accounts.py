@@ -1,6 +1,6 @@
 """Provider accounts: every account Faxbot sends and receives with, trunks included.
 
-`faxbot delivery providers accounts` is the account list on Providers -> In use. The first account of each
+`faxbot delivery providers accounts` is the account list on Delivery setup -> Providers & accounts. The first account of each
 provider is the one its own provider page sets up; extra accounts, such as a second Sinch account or a
 second trunk, are added here. Secrets are read from a hidden prompt or from standard input, never from
 the command line, and Faxbot never shows them again.
@@ -263,7 +263,7 @@ def accounts_update(key: str = typer.Argument(..., metavar='KEY', help="The acco
         raise CliError('Nothing to change. Give at least one option.')
     if patch.get('sends') is False and current.get('default_sending') == account['key']:
         raise CliError(f"{account['label']} is the default sending account. Choose another first with 'faxbot "
-                       "providers accounts default-sending KEY'.")
+                       "delivery providers accounts default-sending KEY'.")
     _patch(api, current, account, patch, f"Account {patch.get('label') or account['label']} saved.")
 
 
@@ -290,7 +290,7 @@ def accounts_disable(key: str = typer.Argument(..., metavar='KEY', help="The acc
     account = find(current, key)
     if current.get('default_sending') == account['key']:
         raise CliError(f"{account['label']} is the default sending account. Choose another first with 'faxbot "
-                       "providers accounts default-sending KEY'.", EXIT_FAILURE)
+                       "delivery providers accounts default-sending KEY'.", EXIT_FAILURE)
     _patch(api, current, account, {'enabled': False},
            f"{account['label']} is off. Faxes already sent by it are not affected.")
 

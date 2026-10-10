@@ -118,7 +118,7 @@ const FIELD_RANGES: Record<string, { min: number; max: number; message: string }
   intake_smtp_port: { min: 1, max: 65535, message: 'Enter an email server port from 1 to 65535.' },
 };
 
-// Files Faxbot reads its settings and plugins from, shown read-only in System > Developer.
+// Files Faxbot reads its settings and plugins from, shown read-only in Administration > Developer.
 const READ_ONLY_FILES: Array<{ field: string; label: string; value: (data: SettingsType) => string | undefined }> = [
   { field: 'persisted_env_path', label: 'Recovery .env file', value: (data) => data.persisted?.path },
   { field: 'providers_dir', label: 'Provider plugin folder', value: (data) => data.plugin_files?.providers_dir },
@@ -808,7 +808,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* System > Audit log: the event record Logs reads */}
+          {/* Administration > Audit log: the event record Logs reads */}
           {shows('audit') && (
           <ResponsiveFormSection title="Event recording" icon={<SettingsIcon />}
             subtitle="Faxbot can record what happens, such as sign-ins and sent faxes, for the Logs page. Changes take effect after Faxbot restarts.">
@@ -1018,7 +1018,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   >
                     {providerStatus('sip')}
                     {!sections && amiFields()}
-                    {/* On the console's own pages the station ID is under Numbers, Sender identity. */}
+                    {/* On the console's own pages the station ID is under Delivery setup, Sending identity. */}
                     {!sections && (
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.sip.station_id)}
@@ -1098,7 +1098,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-          {/* Provider plugins (System > Developer) */}
+          {/* Provider plugins (Administration > Developer) */}
           {shows('plugins') && (
           <ResponsiveFormSection
             title="Plugin settings"
@@ -1498,7 +1498,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             </ResponsiveFormSection>
           )}
 
-          {/* System > Diagnostics */}
+          {/* Administration > System health */}
           {shows('diagnostics') && (
           <ResponsiveFormSection title="Diagnostics options" icon={<SettingsIcon />}>
             {[
@@ -1521,7 +1521,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* Access > Keys & phones: the installation key (api_key), shown read-only and never by value */}
+          {/* Administration > Keys & phones: the installation key (api_key), shown read-only and never by value */}
           {sections?.includes('installation-key') && (
           <ResponsiveFormSection title="Installation key" icon={<SecurityIcon />}>
             <ResponsiveSettingItem icon={<SecurityIcon />} label="Installation key"
@@ -1530,7 +1530,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* Access > Keys & phones */}
+          {/* Administration > Keys & phones */}
           {shows('phones') && (
           <ResponsiveFormSection title="Phones on your network" icon={<PublicIcon />}>
             {textField('Address phones use on your network', 'mobile_local_base',
@@ -1538,7 +1538,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* System > Developer */}
+          {/* Administration > Developer */}
           {shows('developer') && (
           <ResponsiveFormSection title="Developer settings" subtitle="Help links and the files Faxbot reads." icon={<SettingsIcon />}>
             {textField('Documentation address', 'docs_base_url', 'Where help links in the console point.')}

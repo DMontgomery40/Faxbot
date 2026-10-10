@@ -6,7 +6,7 @@ The catalogue (app/routing/mechanisms.py) must stay complete, so this fails when
   Savings part (or Recommendations section) the console does not render with its anchor;
 - an entry has no product evidence level, or has neither a Savings part, nor a page with its own figures, nor a
   recorded reason;
-- a section of Costs → Recommendations has no advice card.
+- a section of Savings & optimization → Opportunities has no advice card.
 
 The rest evaluates the catalogue on a real installation (SQLite and PostgreSQL) with real settings and history
 rows written by the stores that write them in production, and checks that the map never carries money and that

@@ -1,4 +1,4 @@
-// Providers → In use → Accounts: every account Faxbot sends and receives with, trunks included, with
+// Delivery setup → Providers & accounts → Accounts: every account Faxbot sends and receives with, trunks included, with
 // what each does, whether it is ready, its numbers and the address to give its provider. The first
 // account of each provider is set up on that provider's own page; extra accounts are added here.
 import { useCallback, useEffect, useState } from 'react';

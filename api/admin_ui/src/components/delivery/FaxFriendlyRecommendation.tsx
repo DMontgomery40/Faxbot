@@ -1,4 +1,4 @@
-// Costs → Recommendations → Shaded areas: whether keeping shaded areas with a fax-friendly pattern on documents
+// Savings & optimization → Opportunities → Shaded areas: whether keeping shaded areas with a fax-friendly pattern on documents
 // you send would have saved time on your recent faxes (pages/friendly.py). It counts as a recommendation only when
 // it would have; otherwise the section shows what Faxbot found, or nothing at all.
 import { useCallback, useEffect, useState } from 'react';

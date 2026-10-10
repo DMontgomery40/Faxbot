@@ -1,4 +1,4 @@
-// Costs → Recommendations → Plans: whether each monthly plan is worth its fee at your traffic. Every figure is an
+// Savings & optimization → Opportunities → Plans: whether each monthly plan is worth its fee at your traffic. Every figure is an
 // estimate over the days Faxbot has records for; Faxbot advises only and never cancels or changes a plan.
 import { useCallback, useEffect, useState } from 'react';
 import {

@@ -77,7 +77,7 @@ def billing_boundaries(engine, store, values, *, now=None, days=WINDOW_DAYS):
     if card is None:
         return {**result, 'state': 'no_price',
                 'sentence': (f'Faxbot has no price for calls on your {carrier} line, so it cannot tell where a call '
-                             'crosses into another billed minute. Add the price in Costs → Prices & plans.')}
+                             'crosses into another billed minute. Add the price in Savings & optimization → Prices & plans.')}
     increment = card.billing_increment_seconds
     price = step_price(card)
     result['step'] = {'seconds': increment, 'minimum_seconds': card.minimum_seconds,

@@ -1,4 +1,4 @@
-// Costs → Recommendations: ways to pay less, once Faxbot has some to offer.
+// Savings & optimization → Opportunities: ways to pay less, once Faxbot has some to offer.
 // Each section loads its own recommendations and reports how many it shows; the
 // empty sentence appears only when no section has anything to suggest yet. Each
 // section has an anchor (#/costs/recommendations?section=plans): the Overview's

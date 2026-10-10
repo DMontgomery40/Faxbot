@@ -19,7 +19,7 @@ function message(error: unknown, fallback: string) {
   return fallback;
 }
 
-// Numbers → Sender identity, Reply number: the number printed in each page's header line and sent as the
+// Delivery setup → Sending identity, Reply number: the number printed in each page's header line and sent as the
 // station ID, for every fax (setting fax_reply_number) and per mailbox (setting fax_reply_numbers); which of
 // your numbers is cheapest to receive on; and what caller ID each provider shows.
 function ReplyNumber({ client, canWrite }: ReplyNumberProps) {

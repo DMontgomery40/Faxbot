@@ -1,4 +1,4 @@
-"""System → Diagnostics → "Sending routes": route problems, the 2-by-2 test and shared upstreams (brief 92, RF).
+"""Administration → System health → "Sending routes": route problems, the 2-by-2 test and shared upstreams (brief 92, RF).
 
 ``GET /routing/families`` lists route problems (open first), recent 2-by-2 tests with what they show, and the
 shared-upstream table. ``POST /routing/families/{id}/close`` closes a problem by hand. ``POST

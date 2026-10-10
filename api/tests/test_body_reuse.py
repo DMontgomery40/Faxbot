@@ -261,7 +261,7 @@ async def test_identical_bodies_with_changing_headers_send_only_the_header_regio
     for row in kept[1:]:
         assert 0 < row['said']['delta_size'] < row['size_bytes'] // 4
 
-    # Received says how each arrived; Sent and Costs -> Savings count bytes, never money.
+    # Received says how each arrived; Sent and Savings & optimization -> Savings results count bytes, never money.
     assert sorted(fax['status_text'] for fax in received(pair)) == sorted([IMAGE_LABEL, BODY_LABEL, BODY_LABEL])
     store = reuse.ReuseStore(pair['a'].store.engine)
     saving = store.saving(second['message_id'])

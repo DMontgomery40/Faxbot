@@ -1,7 +1,7 @@
-// System → Diagnostics → Public test lines (test_lines.py, research N10): send one test fax to a service whose
+// Administration → System health → Public test lines (test_lines.py, research N10): send one test fax to a service whose
 // operator invites test faxes, at your request only, and see what came back. The dialing guard is never bypassed:
 // a line in a country Faxbot may not dial yet offers to allow that country, with your confirmation, through the
-// guard's own change (Providers → In use → Where Faxbot may dial).
+// guard's own change (Delivery setup → Providers & accounts → Where Faxbot may dial).
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Link, Paper, Stack, Typography } from '@mui/material';
 import AdminAPIClient from '../api/client';

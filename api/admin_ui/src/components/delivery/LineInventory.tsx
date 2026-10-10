@@ -1,4 +1,4 @@
-// Numbers → Advice and moves: your line inventory, matched to carriers' lists of discontinued or grandfathered
+// Delivery setup → Number moves: your line inventory, matched to carriers' lists of discontinued or grandfathered
 // areas (AT&T's workbook as published) and to each line's contract end date (N19). Advice only.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Link, MenuItem, Stack, TextField, Typography } from '@mui/material';

@@ -1,7 +1,7 @@
 """Why a sent fax took its route, and applying the current rules to faxes still waiting to go.
 
 ``fax_route`` answers "Why this route" (``GET /routing/faxes/{id}/route``,
-``faxbot sent route``) from what Faxbot stored, never from today's state: the
+``faxbot faxes sent route``) from what Faxbot stored, never from today's state: the
 decision made when the fax was accepted (or since), and for each attempt the
 account it was given, what it skipped and how it ended. Amounts are the
 estimates recorded at the time, labelled as estimates; a fax a monthly plan

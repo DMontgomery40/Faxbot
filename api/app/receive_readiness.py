@@ -287,7 +287,7 @@ def judge(view, *, registration=None, auth_mode='registration', reached=None, in
                 sign_in = (READY, 'The trunk is signed in to your carrier.')
             elif registration == 'rejected':
                 sign_in = (NOT_RECEIVING, 'The trunk is not signed in to your carrier, so calls to this number '
-                                          'cannot reach Faxbot. Check the trunk on Providers.')
+                                          'cannot reach Faxbot. Check the trunk under Delivery setup.')
             else:
                 sign_in = (ATTENTION, 'Faxbot cannot see whether the trunk is signed in right now; the fax engine '
                                       'did not say.')

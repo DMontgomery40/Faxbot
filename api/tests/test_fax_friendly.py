@@ -671,7 +671,7 @@ def test_with_the_setting_at_never_it_says_what_recent_faxes_billed_by_time_woul
                                 'shaded areas kept in a fax-friendly pattern on calls billed by time; 3 of them have '
                                 'shaded areas.')
     assert view['action'] == ('Choose "Where it saves time" for "Fax-friendly shading on documents you send" under '
-                              'Providers, In use, Delivery routes. Text and marks stay exactly as they are; only the '
+                              'Delivery setup, Providers & accounts, Delivery routes. Text and marks stay exactly as they are; only the '
                               'inside of shaded areas is drawn differently.')
     assert len(measured) == 10
     friendly.recommendation(installation, tmp_path, choice='never', now=NOW, measure=measure,

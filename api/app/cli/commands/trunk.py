@@ -519,7 +519,7 @@ def send_only_remove(number: str = typer.Argument(..., metavar='NUMBER', help='T
 # The caller-ID commands (countries.py) hang off this group; importing it registers them.
 from . import countries as _countries  # noqa: E402,F401
 
-# The answer cap per trunk (routing/stations.py): see or change it with faxbot providers trunk answer-cap.
+# The answer cap per trunk (routing/stations.py): see or change it with faxbot delivery providers trunk answer-cap.
 from .stations import answer_cap as _answer_cap  # noqa: E402
 
 trunk.command('answer-cap')(_answer_cap)

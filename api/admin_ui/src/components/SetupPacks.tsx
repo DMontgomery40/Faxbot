@@ -1,4 +1,4 @@
-// System → Setup → Suggested Packs: describe the organization, preview what Faxbot suggests from what it
+// Administration → Setup → Suggested Packs: describe the organization, preview what Faxbot suggests from what it
 // already knows, see what's missing and each mailbox's settings, then apply the chosen suggestions in one step.
 // Previewing changes nothing; the server explains every suggestion and checks the plan again when applying.
 import { useCallback, useEffect, useMemo, useState } from 'react';

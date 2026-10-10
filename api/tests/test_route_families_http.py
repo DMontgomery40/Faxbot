@@ -150,7 +150,7 @@ def test_the_command_line_lists_plans_sends_and_closes_through_the_real_server(c
     listed = run('system', 'diagnostics', 'routes', 'list')
     flat = ' '.join(listed.stdout.split())
     assert f'Open ({incident["id"][:8]}): Since ' in flat and 'faxes by SignalWire has failed' in flat
-    assert 'Start one with: faxbot system diagnostics routes test' in flat
+    assert 'Start one with: faxbot admin diagnostics routes test' in flat
     planned = run('system', 'diagnostics', 'routes', 'test', '--route-a', 'phaxio', '--route-b', 'signalwire',
                   '--number-a', FIRST, '--number-b', SECOND)
     assert planned.exit_code == 0, planned.stdout

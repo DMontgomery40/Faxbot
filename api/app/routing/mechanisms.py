@@ -2,17 +2,17 @@
 
 ``CATALOGUE`` is the one list of Faxbot's money-saving mechanisms. Each entry says what the mechanism does for the
 administrator's money, where it sits on a fax's path (``STAGES``), how far it is proven (``EVIDENCE``), its part
-on Costs → Savings and the console page that holds its setting. ``evaluate`` reads this installation's effective
+on Savings & optimization → Savings results and the console page that holds its setting. ``evaluate`` reads this installation's effective
 settings and stored records, never the network, and says for each entry:
 
 - **On or off**, from the settings and each recipient's or partner's own choice;
 - **Works here**, from what the installation has: its sending routes and their prices, its own SIP trunk and fast
   fax service, its partners and its receiving numbers. When something is missing, one sentence names it;
 - **Tested**, as two separate facts: the product evidence level (fixed per entry, from the README roadmap) and
-  what happened on this installation, from the same Savings part, so the map and Costs → Savings never disagree.
+  what happened on this installation, from the same Savings part, so the map and Savings & optimization → Savings results never disagree.
 
 The Overview's map and ``faxbot savings mechanisms`` show the result of GET /routing/savings/mechanisms. Neither
-shows money: what each mechanism saved stays on Costs → Savings, under the entry's ``part``.
+shows money: what each mechanism saved stays on Savings & optimization → Savings results, under the entry's ``part``.
 
 A new mechanism adds its entry here. ``api/tests/test_savings_mechanisms.py`` fails when a Savings part has no
 entry, an entry names a setting, page or Savings part that does not exist, or has no evidence level.
@@ -53,7 +53,7 @@ LEGEND = (
                                            'lab, or with sample data only.'),
 )
 
-# Mechanisms with no part on Costs → Savings, each with the reason. Whoever gives one a part removes it here.
+# Mechanisms with no part on Savings & optimization → Savings results, each with the reason. Whoever gives one a part removes it here.
 # The reason is the map's "on this installation" sentence for that mechanism.
 # (Each works out its wait afresh from the delivery records whenever it schedules a fax and stores no count.)
 NO_PART = {
@@ -84,7 +84,7 @@ class Mechanism:
     sentence: str
     stage: str
     evidence: str
-    # Its part on Costs → Savings: the key in GET /routing/savings and the anchor on the Savings page.
+    # Its part on Savings & optimization → Savings results: the key in GET /routing/savings and the anchor on the Savings page.
     part: str | None
     # The console page that holds its setting, and its name as the console shows it.
     page: str
@@ -103,7 +103,7 @@ class Mechanism:
 
     @property
     def destination(self):
-        """Where selecting it leads: its part on Costs → Savings, else its own page, else nowhere."""
+        """Where selecting it leads: its part on Savings & optimization → Savings results, else its own page, else nowhere."""
         return f'costs/savings?part={self.part}' if self.part else self.link
 
 
@@ -545,7 +545,7 @@ def keys_after_answer(here):
     return State(on, why is None, sentence, why)
 
 
-# -- advice: each section of Costs → Recommendations, and the advice kept on its own page ---------------------------
+# -- advice: each section of Savings & optimization → Opportunities, and the advice kept on its own page ---------------------------
 
 def _always(here):
     return State(True, True)
@@ -903,7 +903,7 @@ def _view(mechanism, here):
         'here': {'used': count, 'sentence': used},
         'part': mechanism.part, 'page': state.page[0] if state.page else mechanism.page,
         'page_label': state.page[1] if state.page else _label(mechanism.page, mechanism.page_label, here.values),
-        # Where selecting it leads: its part on Costs → Savings, or the page with its own figures or advice.
+        # Where selecting it leads: its part on Savings & optimization → Savings results, or the page with its own figures or advice.
         'link': mechanism.destination,
         'link_label': 'Savings & optimization → Savings results' if mechanism.part else (
             _label(mechanism.link, mechanism.link_label, here.values) if mechanism.link else None),

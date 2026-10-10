@@ -30,9 +30,9 @@ The summary at the top counts what isn't working and what needs attention. **Cop
 ## Command line
 
 ```
-faxbot system diagnostics run      # check now
-faxbot system diagnostics show     # show the last results without checking again
-faxbot system diagnostics engine registrations|contacts|calls|faxes
+faxbot admin diagnostics run      # check now
+faxbot admin diagnostics show     # show the last results without checking again
+faxbot admin diagnostics engine registrations|contacts|calls|faxes
 ```
 
 ## Related endpoints

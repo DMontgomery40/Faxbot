@@ -1,4 +1,4 @@
-// System → Developer: the configuration summary, security status and SDK
+// Administration → Developer: the configuration summary, security status and SDK
 // quickstart that used to sit on the Dashboard. Developer vocabulary belongs here.
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Button, Card, CardContent, Chip, Grid, IconButton, Tooltip, Typography } from '@mui/material';

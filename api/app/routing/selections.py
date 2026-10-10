@@ -7,7 +7,7 @@ expected bill on that account, and the cheapest other account compared with
 its own best pages. The price is the one the route choice ranked by
 (``routing.joint``); nothing later reconstructs it from a provider's card.
 
-``sentence`` says it the way Sent details and ``faxbot sent show`` print it:
+``sentence`` says it the way Sent details and ``faxbot faxes sent show`` print it:
 "Sent through Page trunk as 1 long page: about $0.004 instead of $0.005
 through Telnyx as 2 pages."
 """

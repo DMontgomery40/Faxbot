@@ -61,7 +61,7 @@ NOT_YOURS = ('{number} is not one of your numbers. Use a number one of your fax 
              '(Providers lists them).')
 NOT_RECEIVING = ('Faxes sent to {number} do not reach this Faxbot. Choose a number Faxbot receives on, or turn '
                  'on receiving for the provider that carries it.')
-NO_MAILBOX = ('No rule under Numbers sends faxes for {number} to a mailbox. Add one under Numbers, Your numbers, '
+NO_MAILBOX = ('No rule under Numbers sends faxes for {number} to a mailbox. Add one under Delivery setup, Numbers, '
               'then choose it again.')
 OTHER_MAILBOX = ('Faxes for {number} go to the {other} mailbox, not {mailbox}. Choose a number that reaches '
                  '{mailbox}, or change its rule under Numbers.')
@@ -310,7 +310,7 @@ def check(values, text, *, engine, mailbox_id=None) -> str:
     routes = mailbox_routes(engine, values)
     labels = mailbox_labels(engine) if mailbox_id is not None else None
     if mailbox_id is not None and mailbox_id not in labels:
-        raise ReplyNumberRefused('That mailbox no longer exists. Choose it again under Numbers, Mailboxes.')
+        raise ReplyNumberRefused('That mailbox no longer exists. Choose it again under Delivery setup, Mailboxes.')
     problem = refusal(values, number, routes=routes, mailbox_id=mailbox_id, labels=labels)
     if problem:
         raise ReplyNumberRefused(problem)

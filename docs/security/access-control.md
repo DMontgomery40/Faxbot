@@ -128,7 +128,7 @@ If every owner is locked out, sign in to the console with the installation key (
 
 Keep `API_KEY` somewhere safe, such as a password manager. On an existing installation, only an Owner can change it, through the settings API (`PUT /admin/settings` with `api_key`); the Settings screen does not show it, and editing `.env` does not change it.
 
-If `API_KEY` is empty or lost, the host operator can set a new one with Faxbot stopped: run `faxbot system recover-owner` on the server, which saves a fresh installation key, records it in the security audit and shows it once. Then start Faxbot and create an owner with `faxbot access owner enroll` using that key. See [Recover owner access](../operations/cli.md#recover-owner-access) in the command line guide. There is no way to do this over the network.
+If `API_KEY` is empty or lost, the host operator can set a new one with Faxbot stopped: run `faxbot admin recover-owner` on the server, which saves a fresh installation key, records it in the security audit and shows it once. Then start Faxbot and create an owner with `faxbot admin access owner enroll` using that key. See [Recover owner access](../operations/cli.md#recover-owner-access) in the command line guide. There is no way to do this over the network.
 
 ## Audit
 

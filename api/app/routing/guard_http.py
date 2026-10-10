@@ -1,4 +1,4 @@
-"""Providers → In use → "Where Faxbot may dial": the dialing guard's classes, and changing one (``guard.py``).
+"""Delivery setup → Providers & accounts → "Where Faxbot may dial": the dialing guard's classes, and changing one (``guard.py``).
 
 ``GET /routing/dialing`` lists every class of numbers and every country Faxbot
 knows about here, with whether it may dial it and why. ``PUT

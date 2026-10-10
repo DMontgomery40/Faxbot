@@ -1,4 +1,4 @@
-// Costs → Savings: what each way Faxbot saves money saved, and the only place the amounts appear.
+// Savings & optimization → Savings results: what each way Faxbot saves money saved, and the only place the amounts appear.
 // Every money figure is an estimate: it compares what Faxbot sent with calls and pages that never
 // happened, so it stays an estimate after the carrier reports. Each part has an anchor
 // (#/costs/savings?part=sslfax): the Overview's savings map links to it, and the part opened that way

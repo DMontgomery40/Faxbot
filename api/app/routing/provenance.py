@@ -1,4 +1,4 @@
-"""Which number a sent fax dialed, and why, for Sent details and ``faxbot sent show``.
+"""Which number a sent fax dialed, and why, for Sent details and ``faxbot faxes sent show``.
 
 A fax keeps the recipient the sender entered. When it called the recipient's
 approved alternate instead (``routing.alternates``), Sent says so in one

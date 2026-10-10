@@ -1,6 +1,6 @@
 """faxbot admin setup: suggested packs of rules and settings, from what Faxbot already knows.
 
-The console's System → Setup, Suggested packs. ``plan`` previews a plan (it
+The console's Administration → Setup, Suggested packs. ``plan`` previews a plan (it
 changes nothing), ``show`` shows one, and ``apply`` applies its chosen
 suggestions in one step. Previewing and applying need settings:write.
 """

@@ -1,6 +1,6 @@
-"""Where Faxbot may dial: classes of numbers and countries, as Providers → In use shows them.
+"""Where Faxbot may dial: classes of numbers and countries, as Delivery setup → Providers & accounts shows them.
 
-`faxbot providers rules destinations list` shows each class of numbers (your own country's numbers,
+`faxbot delivery providers destinations list` shows each class of numbers (your own country's numbers,
 toll-free and mobile numbers, premium-rate, special-service and satellite numbers) and each country
 Faxbot knows about, with whether it may dial it and why. `allow` and `block` change one; `--ceiling`
 sets the highest price a minute a call to it may cost before the fax waits for your approval.

@@ -1,4 +1,4 @@
-// Costs → Recommendations → Other carriers: what your last 30 days of faxing would have cost at each carrier's
+// Savings & optimization → Opportunities → Other carriers: what your last 30 days of faxing would have cost at each carrier's
 // published prices, the cheapest and the difference. Advice only: switching carriers means moving your numbers and
 // a new account, and Faxbot never switches anything. A carrier missing a price for some faxes is never the cheapest.
 import { useCallback, useEffect, useState } from 'react';

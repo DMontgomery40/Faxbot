@@ -1,4 +1,4 @@
-// Costs → Recommendations → Calls by state: whether each trunk's carrier prices US calls by whether they stay within
+// Savings & optimization → Opportunities → Calls by state: whether each trunk's carrier prices US calls by whether they stay within
 // one state, which site's trunk would send a state's faxes for less, and the carrier price files Faxbot uses. Faxbot
 // prices each call from where it really starts and never changes caller ID to lower a charge.
 import { useEffect, useState } from 'react';

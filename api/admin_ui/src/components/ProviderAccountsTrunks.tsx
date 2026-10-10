@@ -1,5 +1,5 @@
 // Several trunks: the trunk page edits one trunk account at a time, so with more than one it starts with a
-// picker. Costs → Prices & plans shows a card's origin-rated rows: what a call costs from each site or country
+// picker. Savings & optimization → Prices & plans shows a card's origin-rated rows: what a call costs from each site or country
 // to each number prefix, with where and when the price was read.
 import { useEffect, useState } from 'react';
 import {

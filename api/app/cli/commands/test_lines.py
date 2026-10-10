@@ -1,4 +1,4 @@
-"""Public test lines: ``faxbot system diagnostics test-lines`` (test_lines.py, research N10).
+"""Public test lines: ``faxbot admin diagnostics test-lines`` (test_lines.py, research N10).
 
 Hangs off the diagnostics group (``settings.diagnostics``); ``settings.py`` imports this module so the commands
 exist before ``nouns.py`` copies the group. Only ``send`` places a call, and only to the one line you name.
@@ -39,11 +39,11 @@ def _send_lines(out, item):
         out.line(f"  {reply['sentence']}")
     for found in reply.get('candidates') or []:
         out.line(f"  Received {found['received_at_text']} from {found['from_number'] or 'an unknown number'}: "
-                 f"faxbot system diagnostics test-lines reply {item['id'][:8]} {found['inbound_id']}")
+                 f"faxbot admin diagnostics test-lines reply {item['id'][:8]} {found['inbound_id']}")
     if item.get('public_sentence'):
         out.line(f"  {item['public_sentence']} {item.get('public_page') or ''}".rstrip())
     if item.get('receipt') == 'faxbeep':
-        out.line(f"  To find it on Faxbeep: faxbot system diagnostics test-lines receipt {item['id'][:8]}")
+        out.line(f"  To find it on Faxbeep: faxbot admin diagnostics test-lines receipt {item['id'][:8]}")
 
 
 def _find_send(api, prefix):
@@ -51,7 +51,7 @@ def _find_send(api, prefix):
     prefix = (prefix or '').strip().lower()
     found = [item for item in sends if prefix and item['id'].startswith(prefix)]
     if len(found) != 1:
-        raise CliError(f'No single recent test fax starts with "{prefix}". Run faxbot system diagnostics test-lines '
+        raise CliError(f'No single recent test fax starts with "{prefix}". Run faxbot admin diagnostics test-lines '
                        'list to see them.')
     return found[0]
 
@@ -82,7 +82,7 @@ def test_lines_list():
 
 @test_lines.command('send')
 def test_lines_send(line: str = typer.Argument(..., metavar='LINE',
-                                               help='The line, such as faxbeep-us (see faxbot system diagnostics '
+                                               help='The line, such as faxbeep-us (see faxbot admin diagnostics '
                                                     'test-lines list).'),
                     allow_country: bool = typer.Option(False, '--allow-country',
                                                        help='If Faxbot may not dial this country yet, allow it from '
@@ -93,7 +93,7 @@ def test_lines_send(line: str = typer.Argument(..., metavar='LINE',
     lines = {item['id']: item for item in api.get('/diagnostics/test-lines').get('lines') or []}
     chosen = lines.get(line.strip())
     if chosen is None:
-        raise CliError(f'There is no test line called {line}. Run faxbot system diagnostics test-lines list.')
+        raise CliError(f'There is no test line called {line}. Run faxbot admin diagnostics test-lines list.')
     if chosen['kind'] == 'public' and not yes:
         typer.confirm(f"{chosen['operator']} shows every fax it receives on a public web page, including the line "
                       'at the top of each page with your organization\'s name and reply number. Faxbot sends only '

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
 
 
-# Environment-only settings the console shows read-only (System → Security, Storage & retention,
+# Environment-only settings the console shows read-only (Administration → Security, Storage & retention,
 # Diagnostics, Developer, Terminal and the trunk's advanced box). They are read from the process
 # environment at start and are never changed from the console or the command line.
 DEPLOYMENT_VARIABLES = (

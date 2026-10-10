@@ -1,4 +1,4 @@
-// Numbers → Your NPI record: your NPIs (one per location) and the numbers the NPI registry (NPPES) lists for each,
+// Administration → NPI record: your NPIs (one per location) and the numbers the NPI registry (NPPES) lists for each,
 // with when Faxbot read them, so advice never suggests giving up a number still printed there.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Paper, Stack, Table, TableBody, TableCell, TableRow, TextField, Typography } from '@mui/material';

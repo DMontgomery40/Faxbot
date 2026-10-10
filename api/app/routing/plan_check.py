@@ -322,7 +322,7 @@ class PlanCheck:
             count = blocked['unreliable']
             return f"Keep it: no other way of faxing works reliably for {count} of the faxes {name} sent {period}."
         if blocked.get('unpriced'):
-            return ('Keep it for now: enter the prices of your other fax services in Costs → Prices & plans so Faxbot '
+            return ('Keep it for now: enter the prices of your other fax services in Savings & optimization → Prices & plans so Faxbot '
                     'can compare this plan.')
         count = sum(blocked.values())
         return f"Keep it: no other way of faxing is set up for {count} of the faxes {name} sent {period}."

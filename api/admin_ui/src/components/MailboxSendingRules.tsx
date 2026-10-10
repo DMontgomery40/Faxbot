@@ -67,7 +67,7 @@ export default function MailboxSendingRules({ api, mailbox, canWrite, currency =
   );
 }
 
-// Numbers → Mailboxes: choose a mailbox to see and change its own sending rules.
+// Delivery setup → Mailboxes: choose a mailbox to see and change its own sending rules.
 export function MailboxSendingRulesPicker({ api, loadMailboxes, canWrite, currency }: {
   api: RulesApi;
   loadMailboxes: () => Promise<Array<{ id: string; label: string }>>;

@@ -26,8 +26,8 @@ On 3 and 4 October 2026, Faxbot measured four setups by asking public address-lo
 Faxbot runs the network check when it starts, when you select **Apply and connect**, every few minutes (at the interval set by **Check the internet address every … minutes**) and whenever you select **Check again**. You'll find it under **Delivery setup → your carrier → Network for fax over IP**, and on the command line:
 
 ```sh
-faxbot providers trunk network status   # show the last check
-faxbot providers trunk network check    # check now
+faxbot delivery providers trunk network status   # show the last check
+faxbot delivery providers trunk network check    # check now
 ```
 
 The check runs inside Faxbot. In the standard Docker Compose installation, Faxbot shares its route to the internet with its fax engine (Asterisk), so what Faxbot sees is what the fax engine gets. The check finds out three things:
@@ -56,7 +56,7 @@ When the router directly in front of Faxbot's computer changes port numbers, Fax
 
 Faxbot tries three methods in turn: PCP, then NAT-PMP, then UPnP. Every port has to open with the same number on the outside; if even one doesn't, Faxbot closes them all again. It renews the ports every half hour, closes them when it stops, and while they are open it tells the carrier its internet address together with these exact ports.
 
-You can turn this off by clearing **Let Faxbot open its fax ports on your router**, or with `faxbot providers trunk network router-ports off`; the setting behind both is `sip_router_ports`.
+You can turn this off by clearing **Let Faxbot open its fax ports on your router**, or with `faxbot delivery providers trunk network router-ports off`; the setting behind both is `sip_router_ports`.
 
 PCP and UPnP need to know this computer's own address on your local network, which Faxbot can't see from inside a Docker container. Set `FAXBOT_LAN_ADDRESS` in `.env` for them, as you would for the phone system file. NAT-PMP works without it.
 

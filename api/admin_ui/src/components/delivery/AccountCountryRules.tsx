@@ -1,4 +1,4 @@
-// Providers → In use → Accounts: the country service rules (the UAE, Saudi Arabia; routing/country_rules.py) on
+// Delivery setup → Providers & accounts → Accounts: the country service rules (the UAE, Saudi Arabia; routing/country_rules.py) on
 // the row of each account they concern, so a cloud-only installation sees them too. The trunk page keeps its own
 // Country rules section. Nothing is blocked: an account stays usable until you confirm.
 import { useCallback, useEffect, useState } from 'react';

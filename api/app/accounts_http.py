@@ -1,4 +1,4 @@
-"""Provider accounts over HTTP: the account list on Providers -> In use, adding and changing accounts, and health.
+"""Provider accounts over HTTP: the account list on Delivery setup -> Providers & accounts, adding and changing accounts, and health.
 
 Reading needs ``providers:read``; adding or changing an account needs ``providers:write`` and is an audited
 configuration change through the existing apply path, checked against the configuration generation the

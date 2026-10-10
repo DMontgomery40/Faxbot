@@ -122,7 +122,7 @@ def test_people_without_access_see_nothing_and_settings_need_settings_permission
 
 
 def publish_rules(client, document):
-    """Publish the organization's sending rules, as Providers → Rules does."""
+    """Publish the organization's sending rules, as Delivery setup → Routing rules does."""
     current = client.get('/routing/rules', headers=ADMIN).json()
     saved = client.put('/routing/rules/draft', headers=ADMIN, json={
         'document': document, 'expected_version': current['draft']['version'] if current['draft'] else 0})

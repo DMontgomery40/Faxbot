@@ -1,4 +1,4 @@
-// Costs → Spending → Partner relays: what partners relayed for you and what you relayed for them, with each
+// Savings & optimization → Spending → Partner relays: what partners relayed for you and what you relayed for them, with each
 // side's own money (the relay's charge, and the sender's price from the relay's signed statement).
 import { useCallback, useEffect, useState } from 'react';
 import {

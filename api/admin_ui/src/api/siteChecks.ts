@@ -1,4 +1,4 @@
-// System → Diagnostics → Receiving readiness and Power (receive_readiness_http.py, power.py).
+// Administration → System health → Receiving readiness and Power (receive_readiness_http.py, power.py).
 // The server writes every sentence; the console shows them and sends back what the administrator chose.
 import type AdminAPIClient from './client';
 

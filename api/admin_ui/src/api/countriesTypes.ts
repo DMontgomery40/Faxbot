@@ -1,4 +1,4 @@
-// Prices by the caller ID a call shows (Costs → Prices & plans): carrier decks and the caller IDs you confirmed.
+// Prices by the caller ID a call shows (Savings & optimization → Prices & plans): carrier decks and the caller IDs you confirmed.
 
 export type OriginationType = 'local' | 'eea' | 'non_surcharged' | 'surcharged';
 

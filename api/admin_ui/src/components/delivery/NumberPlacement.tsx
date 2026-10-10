@@ -1,4 +1,4 @@
-// Costs → Recommendations → Where each number should live: what each of your numbers costs at the account that
+// Savings & optimization → Opportunities → Where each number should live: what each of your numbers costs at the account that
 // carries it and at your other accounts, and the steps to move (port) one where it costs less. Advice only: Faxbot
 // never moves a number. Your NPI record has its own page under Numbers (NpiRecord.tsx).
 import { useEffect, useState } from 'react';
