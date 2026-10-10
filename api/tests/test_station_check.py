@@ -179,7 +179,8 @@ def test_sent_details_name_the_station_and_say_when_the_check_came_after_the_cal
                                                     created_at=datetime(2026, 10, 10, 9, 5)))
     assert stations.after_call(engine, job_id=job, attempt_id='a' * 32, station='+1 720 555 0199', succeeded=False,
                                check_result='refused') == 'refused'
-    # The SSL Fax engine's call is checked after it; the station differed, so it is not learned either.
+    # The SSL Fax engine's call is checked after it. It went through, so its station counts as one this number
+    # showed on a successful call (README N5's rule) and is expected from now on.
     assert stations.after_call(engine, job_id=job, attempt_id='b' * 32, station='+1 720 555 0188', succeeded=True,
                                engine_name='sslfax') == 'differs'
     sentences = client.get(f'/routing/stations/faxes/{job}', headers=B).json()['sentences']
@@ -188,7 +189,8 @@ def test_sent_details_name_the_station_and_say_when_the_check_came_after_the_cal
         'any page. Check the number with the recipient.',
         'The number answered as +1 720-555-0188, not the fax machine Faxbot expected there. The SSL Fax engine can '
         'only check this after the call, so the fax was sent.']
-    assert [item['station'] for item in client.get(f'/routing/stations/{TO}', headers=B).json()['stations']] == []
+    assert [item['station'] for item in client.get(f'/routing/stations/{TO}', headers=B).json()['stations']] == [
+        '+1 720-555-0188']
 
 
 def test_the_command_line_sets_the_check_for_a_recipient_and_a_mailbox(client):  # noqa: F811

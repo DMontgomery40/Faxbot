@@ -236,7 +236,8 @@ def _dialed_on(connection, job_id, attempt_id):
 
 
 def after_call(engine, *, job_id, attempt_id, station, succeeded, check_result=None, engine_name='builtin'):
-    """After a sent call: keep the station a successful call answered as, and what the check found.
+    """After a sent call: keep the station every successful call answered as (one that differed included: it has
+    now shown on a successful call, research N5's rule), and what the check found.
 
     ``check_result`` is the built-in engine's own (patch 0007's CsiCheck: matches, differs or refused); the SSL Fax
     engine has none, so its station is checked here, after the call. Storage that cannot be written now is logged
@@ -256,7 +257,7 @@ def after_call(engine, *, job_id, attempt_id, station, succeeded, check_result=N
             if outcome and attempt_id:
                 record_on(connection, attempt_id=attempt_id, job_id=job_id, number=number, station=station,
                           outcome=outcome, engine=engine_name, now=now)
-            if succeeded and outcome is None:
+            if succeeded:
                 learn_on(connection, number, station, job_id, now)
             return outcome
     except sa.exc.SQLAlchemyError as error:
