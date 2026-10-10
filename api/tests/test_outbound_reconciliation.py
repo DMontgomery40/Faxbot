@@ -211,6 +211,15 @@ def test_bindability_uses_captured_status_capability_not_provider_name(installat
             store.bind_provider_identity(job_id, expected_version=view["version"], provider_sid="remote-one", actor="admin")
 
 
+@pytest.mark.parametrize("provider", ["sip", "freeswitch"])
+def test_a_fax_over_your_own_trunk_says_to_check_with_the_recipient_not_a_provider_account(installation, provider):
+    _, store, _ = installation
+    job_id, _, _ = uncertain(installation, profile=ProviderConfiguration(provider))
+    assert store.operator_view(job_id)["bind_refusal_reason"] == (
+        "This fax went over your own trunk, so there is no provider fax ID to attach; check with the recipient "
+        "before sending it again.")
+
+
 def test_stale_version_and_existing_sid_never_change_identity(installation):
     _, store, _ = installation
     job_id, _, _ = uncertain(installation)

@@ -248,9 +248,10 @@ def test_per_minute_billing_crosses_a_whole_minute_and_reports_the_room_left():
     over = predict_from(facts(terms), Shape(1, _seconds_for(61), 'fine', 'normal'))
     assert under.cost == Money(6250, 'USD') and over.cost == Money(8750, 'USD')
     assert under.expected_billed_seconds == pytest.approx(75) and over.expected_billed_seconds == pytest.approx(105)
-    assert under.basis.startswith('Billed as 1 minute at $0.005 a minute, or more about 25% of the time, so about '
+    # An assumed spread says when the bill changes, never how often.
+    assert under.basis.startswith('Billed as 1 minute at $0.005 a minute, or more if the call runs long, so about '
                                   '$0.00625 is expected; about 59 seconds on the line')
-    assert over.basis.startswith('Billed as 2 minutes at $0.005 a minute, or less about 25% of the time, so about '
+    assert over.basis.startswith('Billed as 2 minutes at $0.005 a minute, or less if it is quick, so about '
                                  '$0.00875 is expected;')
     assert under.p90_seconds == pytest.approx(11 + 48 * 1.15, abs=0.01)
     # An assumed spread is never said as "9 in 10": only that the time is an estimate, and until when.
@@ -277,6 +278,9 @@ def test_a_call_of_59_or_61_seconds_with_equal_odds_bills_90_seconds_not_60():
     bill = predictor.bill_of(found)
     assert bill.increment_seconds == 60 and bill.cost == found.cost
     assert found.spread == 'from 4 earlier faxes to this number' and found.spread_learned
+    # From the number's own calls, how often the bill changes may be said.
+    crossing = predict_from(facts(terms, link=link), Shape(1, _seconds_for(60), 'fine', 'normal'))
+    assert '% of the time' in crossing.basis and 'runs long' not in crossing.basis, crossing.basis
     # From the number's own calls, "9 in 10" may be said, with where it comes from; no estimate note.
     from app.routing.predict_http import finish_sentence, time_note
     assert finish_sentence(found) == ('From 4 earlier faxes to this number, 9 in 10 calls like this one finish '

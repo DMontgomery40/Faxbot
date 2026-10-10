@@ -60,7 +60,7 @@ describe('Which fax coding a sent fax went with', () => {
 });
 
 describe('When such a call finishes', () => {
-  const basis = 'Billed as 1 minute at $0.005 a minute, or more about 25% of the time, so about $0.00625 is '
+  const basis = 'Billed as 1 minute at $0.005 a minute, or more if the call runs long, so about $0.00625 is '
     + 'expected; about 59 seconds on the line, for typical pages at a typical fax speed.';
 
   it('says the time is an estimate, never "9 in 10", while the number has too few calls of its own', async () => {

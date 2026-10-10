@@ -297,6 +297,10 @@ class OutboundStore:
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
                      else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax', 'efax'})
         if not supported:
+            if manifest is None and configuration.provider_id in {'sip', 'freeswitch'}:
+                # Faxbot's own trunk or engine placed the call: there is no provider account to look in.
+                return ('This fax went over your own trunk, so there is no provider fax ID to attach; check with the '
+                        'recipient before sending it again.')
             return 'This provider cannot look up fax status; check the fax in your provider account.'
         return None
 

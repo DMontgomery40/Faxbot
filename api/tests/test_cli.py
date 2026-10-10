@@ -1279,6 +1279,35 @@ def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
     assert '9 in 10 calls within' in human
 
 
+def test_costs_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_does(monkeypatch):
+    """The trunk's time note and a learned finish sentence print as Send shows them; an assumed spread prints no
+    9 in 10 figure (routing.predict_http.finish_sentence / time_note)."""
+    from app.cli import state as cli_state
+    note = 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.'
+    finish = 'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 50 seconds.'
+
+    def route(key, label, **time):
+        return {'route': key, 'label': label, 'cost': {'amount': '0.01', 'currency': 'USD'}, 'marginal': False,
+                'seconds': 46.0, 'p90_seconds': 53.0, 'basis': f'{label} basis.', 'coding': None, **time}
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            assert path == '/routing/predict'
+            return {'to': '+12025550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': 'Cheapest.',
+                    'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                    'routes': [route('sip', 'Telnyx', finish_sentence=None, time_note=note),
+                               route('sip-2', 'Page trunk', finish_sentence=finish, time_note=None)]}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'costs', 'predict', '--to',
+                                          '+12025550123'], env={'COLUMNS': '200'})
+    assert result.exit_code == 0, result.stdout
+    human = ' '.join(result.stdout.split())
+    assert f'Telnyx: {note}' in human and f'Page trunk: {finish}' in human
+    assert human.count('9 in 10 calls like this one') == 1
+
+
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
 def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
     letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')

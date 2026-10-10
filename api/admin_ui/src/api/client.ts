@@ -158,6 +158,8 @@ const safeReconciliationDetails = new Map<string, string>([
     'The provider account that sent this fax is no longer set up; check the fax in that account.',
     'This fax already has a provider fax ID; use Refresh to update its status.',
     'This provider cannot look up fax status; check the fax in your provider account.',
+    'This fax went over your own trunk, so there is no provider fax ID to attach; check with the recipient before '
+      + 'sending it again.',
   ].map((detail): [string, string] => [detail, detail]),
 ]);
 

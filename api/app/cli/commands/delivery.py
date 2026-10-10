@@ -1137,7 +1137,9 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                        for route in routes])
             for route in routes:
                 out.line(f"{route['label']}: {route['basis']}")
-                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence')):
+                # As Send says it: 9 in 10 only from the number's own calls, else how long the time is an estimate.
+                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence'),
+                                 route.get('time_note')):
                     if sentence:
                         out.line(f"{route['label']}: {sentence}")
         out.line(result['sentence'])

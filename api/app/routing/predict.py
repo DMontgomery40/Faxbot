@@ -579,15 +579,18 @@ def _minutes(terms, plan, named, seconds, how, spread=None):
 
 
 def _spread_price(terms, spread, pages, central, expected):
-    """', or more about 25% of the time, so about $0.00625 is expected' when the spread crosses a billing step."""
+    """', or more about 25% of the time, so about $0.00625 is expected' when the spread crosses a billing step
+    (', or more if the call runs long, ...' while the spread is assumed)."""
     if spread is None or expected is None or expected == central:
         return ''
     costs = [(terms_cost(terms, seconds=seconds, pages=pages)[1], weight) for seconds, weight in spread.points]
     higher = sum(weight for micros, weight in costs if micros is not None and micros > central)
     lower = sum(weight for micros, weight in costs if micros is not None and micros < central)
+    # How often is said only from the number's own calls; an assumed spread says when, never how often.
+    more = f'more about {round(higher * 100)}% of the time' if spread.learned else 'more if the call runs long'
+    less = f'less about {round(lower * 100)}% of the time' if spread.learned else 'less if it is quick'
     # "or more about 25% of the time and less about 25% of the time": one "or" for both.
-    parts = ([f'or more about {round(higher * 100)}% of the time'] if higher else []) + (
-        [f"{'' if higher else 'or '}less about {round(lower * 100)}% of the time"] if lower else [])
+    parts = ([f'or {more}'] if higher else []) + ([f"{'' if higher else 'or '}{less}"] if lower else [])
     return (', ' + ' and '.join(parts) if parts else '') + (
         f', so about {money_text(expected, terms.card.currency)} is expected')
 
