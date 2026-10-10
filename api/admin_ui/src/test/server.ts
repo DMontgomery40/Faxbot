@@ -800,6 +800,9 @@ const consoleHandlers = [
   http.get('/routing/caller-id-prices', () => json({ decks: [], callers: [], layouts: { faxbot: '', telnyx: '' } })),
   http.get('/routing/sender-pins', () => json({ pins: [], trunks: [] })),
   http.get('/routing/closures', () => json({ sites: [], lines: [], files: [], sources: { orange: '', gouv: '', arcep: '' } })),
+  // The line inventory and carrier lists (N19): none until a test says otherwise.
+  http.get('/routing/line-inventory', () => json({ sentence: 'No line inventory yet.', lines: [], inventory: null,
+    lists: [], counts: {}, keyed: '', note: '', help: { inventory: '', list: '' }, sources: { att_workbook: '' } })),
   http.get('/routing/country-rules', () => json({ accounts: [], countries: [] })),
   http.get('/routing/faxes/:id/sender-evidence', () => json({ detail: 'Not a registered-sender fax.' }, 404)),
   // Sent faxes Faxbot could not confirm: none until a test says otherwise.

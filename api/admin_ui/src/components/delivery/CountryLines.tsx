@@ -21,6 +21,8 @@ export interface ClosureLine {
   site: string | null;
   state: 'passed' | 'soon' | 'later' | 'unscheduled' | null;
   sentences: string[];
+  // A carrier's letter you can withdraw; a contract end comes from the line inventory and is changed there.
+  notice?: { closes_on: string | null } | null;
 }
 
 export interface Closures {
@@ -175,7 +177,7 @@ export function LineClosures({ client, canWrite }: { client: AdminAPIClient; can
       ))}
       {closures.lines.map((line) => (
         <Alert key={line.number} severity={line.state === 'later' ? 'info' : 'warning'} sx={{ mt: 1 }}
-          action={canWrite && !line.site ? (
+          action={canWrite && !line.site && line.notice !== null ? (
             <Button color="inherit" size="small" onClick={() => void remove(line.number)}
               aria-label={`Remove the notice for ${line.number}`}>Remove</Button>) : undefined}>
           <strong>{line.number}</strong>{line.account ? ` (${line.account})` : ''}: {line.sentences.join(' ')}

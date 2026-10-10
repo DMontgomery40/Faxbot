@@ -2563,6 +2563,9 @@ $ faxbot numbers move [OPTIONS] COMMAND [ARGS]...
 * `record`: Record a step as done or not_done.
 * `test`: Start watching for a receipt test from...
 * `forget`: Forget learned call properties from the...
+* `inventory`: Your fax lines with their carrier, wire...
+* `import-inventory`: Import your line inventory (CSV or Excel); it replaces the current one.
+* `import-carrier-list`: Import a carrier&#x27;s list of discontinued or grandfathered service areas.
 * `closures`: When copper, and the phone lines on it,...
 * `import-closures`: Import the commune-level copper-closure...
 * `notice`: Record a carrier&#x27;s notice that a line...
@@ -2660,6 +2663,69 @@ $ faxbot numbers move forget [OPTIONS] {number}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move inventory`
+
+Your fax lines with their carrier, wire center and contract, each matched to the carrier lists you imported,
+lines with a date first.
+
+**Usage**:
+
+```console
+$ faxbot numbers move inventory [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move import-inventory`
+
+Import your line inventory. It replaces the current one, which is kept as history; contract end dates
+become each line&#x27;s contract-end date. Columns: number, service address, city, state, postal code, country,
+carrier, product (or USOC), wire center, distribution area, contract end, use (fax, alarm, elevator, emergency
+or other), monthly price, currency, note. Only the number is required.
+
+**Usage**:
+
+```console
+$ faxbot numbers move import-inventory [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: Your line inventory, as CSV or Excel (.xlsx).  [required]
+
+**Options**:
+
+* `--date-order mdy|dmy`: How the file writes dates: mdy (11/4/2026 is 4 November) or dmy (4/11/2026 is 4 November).  [default: mdy]
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move import-carrier-list`
+
+Import a carrier&#x27;s list of discontinued or grandfathered service areas. The same carrier&#x27;s earlier list of
+that kind is kept as history. AT&amp;T&#x27;s workbook: https://clec.att.com/clec_documents/unrestr/clec/common/
+PrimeAccess_Model-Discontinued_Service_Areas.xlsx. Another carrier&#x27;s list is a CSV with the columns wire center
+and effective date, and optionally carrier, kind, state, city, wire center name, distribution area and place.
+
+**Usage**:
+
+```console
+$ faxbot numbers move import-carrier-list [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: AT&amp;T&#x27;s Discontinued TDM Service Areas workbook as downloaded, or another carrier&#x27;s list as CSV.  [required]
+
+**Options**:
+
+* `--carrier NAME`: The carrier whose list this is, when the file has no carrier column (not needed for AT&amp;T&#x27;s workbook).
+* `--kind discontinued|grandfathered`: What the list says about its areas, when the file has no kind column. Discontinued unless you say otherwise.
+* `--source-url URL`: Where you downloaded it.
+* `--file-date DATE`: The list&#x27;s own date, such as 2026-08-17.
+* `--date-order mdy|dmy`: How the file writes dates.  [default: mdy]
 * `--help`: Show this message and exit.
 
 #### `faxbot numbers move closures`

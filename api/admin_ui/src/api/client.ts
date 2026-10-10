@@ -1135,6 +1135,14 @@ class AdminAPIClient {
     return this.json('/routing/closures/files', { method: 'POST', body: form });
   }
 
+  // Sends one file with its form fields (the line inventory, a carrier's list); empty fields are left out.
+  async postFile<T>(path: string, file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    const form = new FormData();
+    form.append('file', file);
+    Object.entries(fields).forEach(([key, value]) => { if (value) form.append(key, value); });
+    return this.json(path, { method: 'POST', body: form });
+  }
+
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
   async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
     return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);

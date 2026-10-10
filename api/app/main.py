@@ -85,6 +85,7 @@ from .routing.plans_http import router as routing_plans_router
 from .routing.portfolio_http import router as routing_portfolio_router
 from .routing.number_http import router as routing_number_router
 from .routing.countries_http import router as routing_countries_router
+from .routing.inventory_http import router as routing_inventory_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
@@ -230,6 +231,7 @@ app.include_router(routing_plans_router)
 app.include_router(routing_portfolio_router)
 app.include_router(routing_number_router)
 app.include_router(routing_countries_router)
+app.include_router(routing_inventory_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
