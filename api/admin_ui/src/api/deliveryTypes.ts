@@ -142,10 +142,14 @@ export interface RoutePrediction {
   headline: string;
   basis: string;
   // Over the spread of the call's time: the billed seconds expected, the time 9 in 10 such calls finish within,
-  // and that as one sentence (null when the time is unknown or there is no call).
+  // and that as one sentence, said only from the number's own recorded calls (null while the spread is assumed,
+  // the time is unknown or there is no call).
   expected_billed_seconds?: number | null;
   p90_seconds?: number | null;
   finish_sentence?: string | null;
+  // While the number has too few recorded calls on a route that learns them: that the time is an estimate, and
+  // until when; null otherwise.
+  time_note?: string | null;
 }
 
 export interface PredictionAnswer {

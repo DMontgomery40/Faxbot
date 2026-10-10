@@ -230,8 +230,10 @@ def test_the_layout_chooser_prices_each_layout_with_its_measured_coding_on_the_r
         before = conversion.choose_layout(pages, route='sip', destination=NUMBER, limit='a4', dense_allowed=False)
     assert (chosen['coding'].coding, chosen['coding'].priced) == ('MH', 'MH') and before['coding'] is None
     measured, estimated = chosen['predictions']['normal'], before['predictions']['normal']
-    assert 'from the measured size of each page in MH' in measured.basis
-    assert 'with MR estimated from a fixed ratio to MMR' in estimated.basis
+    # The basis says which pages were measured and which only sized, without coding names (it reaches Send).
+    assert 'from the measured size of each page at a typical fax speed' in measured.basis
+    assert 'from the size of each page at a typical fax speed' in estimated.basis
+    assert 'fixed ratio' not in estimated.basis and 'MR' not in estimated.basis
     # Measured MH on the noisy scan: 1,873,616 bits, about 130 s at 14,400 bit/s, against the old estimate.
     assert measured.seconds < estimated.seconds and measured.cost.micros < estimated.cost.micros
     assert isinstance(measured.cost, Money) and measured.p90_seconds > measured.seconds

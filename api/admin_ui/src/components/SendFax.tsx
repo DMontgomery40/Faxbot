@@ -274,6 +274,10 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const shown: RoutePrediction | null = documentRoute ?? (chosen ? null : prediction);
   const costSentence = shown ? `What would this cost? ${shown.headline}`
     : (route && !chosen ? routeCostSentence(route, null) : null);
+  // A route chosen because faxes are included in its plan: the plan's estimate opens with that plan already
+  // ("Included in your HumbleFax plan ($10 a month), so..."), so the plan is said once.
+  const planInBasis = route?.reason === 'included' && Boolean(shown?.marginal);
+  // The coding comparison is for Sent's details ("Fax coding"); the Send page gives the route, cost and time.
   const configReady = !configLoading && !configError && typeof config?.fax_disabled === 'boolean'
     && Number.isSafeInteger(config.max_file_size_mb) && config.max_file_size_mb > 0;
   const faxDisabled = configReady && config?.fax_disabled === true;
@@ -410,7 +414,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         <Fade in timeout={300}>
           <Box>
             <ResponsiveFormSection
-              title={faxDisabled ? 'New Queued Test Fax' : 'New Fax Submission'}
+              title={faxDisabled ? 'New test fax (sending is off)' : 'New fax'}
               subtitle={faxDisabled ? 'Queue a PDF or TXT document as a test' : 'Send a PDF or TXT document'}
               icon={<SendIcon />}
             >
@@ -483,37 +487,6 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   errorMessage={fileError ?? undefined}
                   icon={<DocumentIcon />}
                 />
-
-                {(route || chosen) && (
-                  <Box data-testid="send-route">
-                    <Typography variant="body2">Faxbot will send it through {chosen ? chosen.label : route!.label}.</Typography>
-                    {chosen ? (
-                      <Typography variant="body2" color="text.secondary" data-testid="send-plan">
-                        {documentAnswer!.sentence}
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">{route!.explanation}</Typography>
-                    )}
-                    {costSentence && (
-                      <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
-                    )}
-                    {shown && (
-                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-basis">
-                        {shown.basis}
-                      </Typography>
-                    )}
-                    {documentRoute?.coding && (
-                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-coding">
-                        {documentRoute.coding.sentence}
-                      </Typography>
-                    )}
-                    {shown?.finish_sentence && (
-                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-finish">
-                        {shown.finish_sentence}
-                      </Typography>
-                    )}
-                  </Box>
-                )}
 
                 <FormControlLabel data-testid="send-urgent"
                   control={<Checkbox checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
@@ -604,6 +577,42 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                     </Button>
                   )}
                 </Box>
+
+                {/* The route and estimate arrive after the number and document (the document is measured on the
+                    server), so they sit below Send and Clear: a late answer never moves a control someone is about
+                    to click. */}
+                {(route || chosen) && (
+                  <Box data-testid="send-route">
+                    <Typography variant="body2">Faxbot will send it through {chosen ? chosen.label : route!.label}.</Typography>
+                    {chosen ? (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-plan">
+                        {documentAnswer!.sentence}
+                      </Typography>
+                    ) : !planInBasis && (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-route-reason">
+                        {route!.explanation}
+                      </Typography>
+                    )}
+                    {costSentence && (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
+                    )}
+                    {shown && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-basis">
+                        {shown.basis}
+                      </Typography>
+                    )}
+                    {shown?.finish_sentence && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-finish">
+                        {shown.finish_sentence}
+                      </Typography>
+                    )}
+                    {!shown?.finish_sentence && shown?.time_note && (
+                      <Typography variant="caption" color="text.secondary" display="block" data-testid="send-cost-time-note">
+                        {shown.time_note}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
               </Stack>
             </ResponsiveFormSection>
           </Box>

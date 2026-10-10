@@ -82,7 +82,7 @@ const documentAnswer = (to: string, amount: string) => ({
   sentence: '', note: '', measured: { MH: 500000, MR: 288000, MMR: 432000 }, measured_sentence: null,
   jbig_measured: false,
   routes: [{ ...routeAnswer(amount, `About $${amount} for this measured 2-page fax.`, 'Measured on these pages.'),
-    finish_sentence: "9 in 10 such calls should finish within 50 seconds, from Telnyx's calls.",
+    finish_sentence: 'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 50 seconds.',
     coding: { coding: 'MR', measured: true,
       sentence: 'Faxbot would send these pages with MR: 33% shorter than MMR for these pages.' } }] });
 
@@ -361,7 +361,7 @@ describe('Before sending', () => {
     expect(screen.queryByText(/Forbidden/)).toBeNull();
   });
 
-  it('prices the document itself once the number and file settle, with its measured coding', async () => {
+  it('prices the document itself once the number and file settle, without naming its coding', async () => {
     const posted: string[] = [];
     server.use(destinationAnswer(), pageCountPrediction(), http.post('/routing/predict', async ({ request }) => {
       const form = await request.formData();
@@ -375,10 +375,12 @@ describe('Before sending', () => {
     fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
     await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
       .toBe('What would this cost? About $0.02 for this measured 2-page fax.'), { timeout: 3000 });
-    expect(screen.getByTestId('send-cost-coding').textContent).toBe(
-      'Faxbot would send these pages with MR: 33% shorter than MMR for these pages.');
+    // The coding comparison belongs to Sent's details ("Fax coding"), not to Send.
+    expect(screen.queryByTestId('send-cost-coding')).toBeNull();
+    expect(screen.queryByText(/shorter than|MMR/)).toBeNull();
     expect(screen.getByTestId('send-cost-basis').textContent).toBe('Measured on these pages.');
-    expect(screen.getByTestId('send-cost-finish').textContent).toBe('9 in 10 such calls should finish within 50 seconds, from Telnyx\'s calls.');
+    expect(screen.getByTestId('send-cost-finish').textContent).toBe(
+      'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 50 seconds.');
     await new Promise((resolve) => setTimeout(resolve, 700));
     // Only the number and the file: never a patient's details.
     expect(posted).toEqual(['+12025550123 two.pdf file,to']);
@@ -481,6 +483,76 @@ describe('Before sending', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(screen.queryByTestId('send-route')).toBeNull();
     expect(screen.queryByText(/Forbidden|couldn't/)).toBeNull();
+  });
+
+  it('says the plan once when the route was chosen because faxes are included in it', async () => {
+    const plan = 'Included in your HumbleFax plan ($10 a month)';
+    const basis = `${plan}, so this fax adds nothing to the bill; 5 pages sent on it this month; about 19 seconds on `
+      + 'the line, for typical pages at a typical fax speed.';
+    server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
+      display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
+      estimated_cost_30_days: [], direct_partner: null, available_routes: [],
+      recommended_routes: [{ route: 'humblefax', label: 'HumbleFax', reason: 'included', explanation: `${plan}.`,
+        estimated_cost_one_page: null, pages: 2, estimated_cost: null, rate: null, included_in_plan: true,
+        monthly_fee: { currency: 'USD', amount: '10' } }] })),
+    http.get('/routing/predict', () => HttpResponse.json({ to: '+12025550123', number_class: 'local',
+      number_class_text: 'a local number', pages: 2, layout: 'normal', resolution: 'fine', sentence: '', note: '',
+      routes: [{ route: 'humblefax', label: 'HumbleFax', billed_pages: 0, seconds: 19, billed_seconds: null,
+        seconds_to_next_step: null, cost: { currency: 'USD', amount: '0' }, cost_text: null, marginal: true,
+        headline: 'Nothing extra for this fax.', basis, finish_sentence: null, time_note: null }] })));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    // Before the estimate, the route's reason names the plan.
+    expect((await screen.findByTestId('send-route-reason', {}, { timeout: 2000 })).textContent).toBe(`${plan}.`);
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(screen.getByTestId('send-cost-basis').textContent).toBe(basis), { timeout: 2000 });
+    // The estimate opens with the plan, so the plan is said once, not twice.
+    expect(screen.getByTestId('send-route').textContent!.split(plan)).toHaveLength(2);
+    expect(screen.queryByTestId('send-route-reason')).toBeNull();
+    expect(screen.getByTestId('send-cost').textContent).toBe('What would this cost? Nothing extra for this fax.');
+  });
+
+  it('never moves Send or Urgent when the estimate arrives late', async () => {
+    // jsdom does no layout, so this checks the structure that guarantees it: the route and estimate render below
+    // Send and Clear, and nothing above Send changes when the late estimate lands.
+    let release: () => void = () => undefined;
+    const late = new Promise<void>((resolve) => { release = resolve; });
+    server.use(destinationAnswer(), http.get('/routing/predict', async () => {
+      await late;
+      return HttpResponse.json({ to: '+12025550123', number_class: 'local', number_class_text: 'a local number',
+        pages: 2, layout: 'normal', resolution: 'fine', sentence: '', note: '',
+        routes: [{ ...routeAnswer('0.01', 'About $0.01 for this 2-page fax.', 'Billed as 1 minute at $0.005 a '
+          + 'minute; about 46 seconds on the line, for typical pages at a typical fax speed.'),
+          finish_sentence: null,
+          time_note: 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.' }] });
+    }));
+    faxServer(['accepted']);
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    // The route line is in; its price is still on its way.
+    await screen.findByTestId('send-route', {}, { timeout: 2000 });
+    expect(screen.queryByTestId('send-cost-basis')).toBeNull();
+    const sendButton = screen.getByRole('button', { name: 'Send Fax' });
+    const urgent = screen.getByTestId('send-urgent').querySelector('input') as HTMLInputElement;
+    const textAbove = () => {
+      const range = window.document.createRange();
+      range.setStart(window.document.body, 0);
+      range.setEndBefore(sendButton);
+      return range.toString();
+    };
+    const before = textAbove();
+    const below = (element: Element) => Boolean(sendButton.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(below(screen.getByTestId('send-route'))).toBe(true);
+    release();
+    await waitFor(() => expect(screen.getByTestId('send-cost-time-note')).toBeTruthy(), { timeout: 2000 });
+    // The estimate landed below Send; everything above Send, Urgent included, is exactly as it was.
+    expect(textAbove()).toBe(before);
+    expect(below(screen.getByTestId('send-cost-basis'))).toBe(true);
+    expect(urgent.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(sendButton);
+    expect(await screen.findByText(/^Fax queued/)).toBeTruthy();
+    expect(urgent.checked).toBe(false);
   });
 });
 
