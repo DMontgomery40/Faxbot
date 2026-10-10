@@ -172,6 +172,12 @@ def _known(codings):
 
 
 def _pages(raster_pages):
+    from ..conversion import FaxFrames
+    if isinstance(raster_pages, FaxFrames):
+        # One-bit by construction and kept packed: each page is made only while it is measured.
+        if not raster_pages:
+            raise CodingRefused('There are no pages to measure.')
+        return raster_pages
     pages = list(raster_pages or ())
     if not pages:
         raise CodingRefused('There are no pages to measure.')

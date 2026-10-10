@@ -163,6 +163,12 @@ def _prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None,
     codec_ok = setting_for(engine, number, chosen) is not None
     if not packing_ok and not trim_ok and not match_ok and not codec_ok and not requests:
         return None
+    # A fax longer than the ceiling goes exactly as it is: changing its pages would hold too much in memory.
+    count = conversion.document_page_count(tiff if mode == 'image' and tiff else pdf)
+    if count is not None and count > conversion.MAX_OPTIMIZED_PAGES:
+        records.record_change(job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=count,
+                              sent_pages=count, reason=conversion.too_long_sentence(count), now=now)
+        return None
     out_tiff, out_pdf = paths(root, job_id, attempt_id)
     source = Path(str(tiff)) if mode == 'image' and tiff else None
     raster = None

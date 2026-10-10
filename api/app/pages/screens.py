@@ -284,9 +284,9 @@ def _render(gs, pdf_path, out_path, options):
 
 
 def _frames(path, sizes):
-    """The gray pages of a Ghostscript drawing, each on its fax page's canvas; refuses a different page count."""
+    """The gray pages of a Ghostscript drawing, each on its fax page's canvas, one at a time; refuses a different
+    page count (fewer pages before the missing one, more once every page was read)."""
     from .friendly import fit
-    pages = []
     with warnings.catch_warnings():
         warnings.simplefilter('error', Image.DecompressionBombWarning)
         with Image.open(path) as drawing:
@@ -295,11 +295,11 @@ def _frames(path, sizes):
                     drawing.seek(index)
                 except EOFError:
                     raise MasksUnavailable('The drawing has fewer pages') from None
-                pages.append(fit(drawing.copy(), size))
+                yield fit(drawing.copy(), size)
             try:
                 drawing.seek(len(sizes))
             except EOFError:
-                return pages
+                return
     raise MasksUnavailable('The drawing has more pages')
 
 
@@ -322,7 +322,8 @@ def object_masks(pdf_path, gray_pages, gs, folder):
     pixel that differs is an annotation's. Raises MasksUnavailable when either drawing fails."""
     import os
     import tempfile
-    sizes = [page.size for page in gray_pages]
+    from ..conversion import FaxFrames
+    sizes = list(gray_pages.sizes) if hasattr(gray_pages, 'path') else [page.size for page in gray_pages]
     handle, scratch = tempfile.mkstemp(prefix='.faxbot-screens-', suffix='.tiff', dir=str(folder))
     os.close(handle)
     try:
@@ -330,7 +331,8 @@ def object_masks(pdf_path, gray_pages, gs, folder):
             _render(gs, pdf_path, scratch, ('-dFILTERIMAGE', '-dFILTERVECTOR'))
         except (subprocess.SubprocessError, OSError) as error:
             raise MasksUnavailable('The text could not be drawn on its own') from error
-        masks = [text.point(_lut(lambda value: value < 255), '1') for text in _frames(scratch, sizes)]
+        # Packed (FaxFrames): one mask made at a time, as the pages are screened.
+        masks = FaxFrames(text.point(_lut(lambda value: value < 255), '1') for text in _frames(scratch, sizes))
         if has_annotations(pdf_path):
             try:
                 _render(gs, pdf_path, scratch, ('-dShowAnnots=false', '-dShowAcroForm=false'))

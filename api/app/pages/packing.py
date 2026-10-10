@@ -165,11 +165,15 @@ def layout_for(frames, limit):
 
 def render(frames, layout):
     """The packed pages (mode "1" images, with the frames' resolution), one per sheet of ``layout``."""
+    return list(render_sheets(frames, layout))
+
+
+def render_sheets(frames, layout):
+    """``render``, one sheet at a time, so a caller can keep each sheet packed (``conversion.FaxFrames``)."""
     width, dpi = check_frames(frames)
     if width != layout.width or len(frames) != layout.originals:
         raise NotPackable('The layout does not match these pages')
     total = len(frames)
-    pages = []
     for sheet in layout.sheets:
         image = Image.new('1', (width, sheet.height()), 1)
         y = TOP_ROWS
@@ -181,5 +185,4 @@ def render(frames, layout):
             image.paste(frame.crop((0, piece.top, frame.width, piece.top + piece.rows)), (0, y))
             y += piece.rows
         image.info['dpi'] = dpi
-        pages.append(image)
-    return pages
+        yield image
