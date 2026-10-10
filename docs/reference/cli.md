@@ -999,6 +999,7 @@ $ faxbot faxes received [OPTIONS] COMMAND [ARGS]...
 * `reopen`: Reopen a received fax marked done.
 * `export`: Download a received fax&#x27;s record as a zip...
 * `block`: Mark a received fax&#x27;s sender as junk:...
+* `who-called`: Show what the network asserted about who...
 * `deliveries`: Delivery of received faxes to email and...
 
 #### `faxbot faxes received list`
@@ -1298,6 +1299,24 @@ $ faxbot faxes received block [OPTIONS] {inbound_id}
 
 * `--reason <str>`: Why this sender is junk, in a few words.  [required]
 * `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
+* `--help`: Show this message and exit.
+
+#### `faxbot faxes received who-called`
+
+Show what the network asserted about who called for one received fax.
+
+**Usage**:
+
+```console
+$ faxbot faxes received who-called [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Received fax ID.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot faxes received deliveries`
@@ -4880,7 +4899,7 @@ $ faxbot delivery providers trunk analog-line show [OPTIONS]
 
 **Options**:
 
-* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
 * `--help`: Show this message and exit.
 
 ###### `faxbot delivery providers trunk analog-line routing`
@@ -4899,7 +4918,7 @@ $ faxbot delivery providers trunk analog-line routing [OPTIONS] {on|off}
 
 **Options**:
 
-* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
 * `--help`: Show this message and exit.
 
 ###### `faxbot delivery providers trunk analog-line import`
@@ -4918,7 +4937,7 @@ $ faxbot delivery providers trunk analog-line import [OPTIONS] {FILE}
 
 **Options**:
 
-* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
 * `--plan <str>`: The calling plan your line has, when the list names several.
 * `--line NPA-NXX`: Your line&#x27;s own prefix or number, checked against the list.
 * `--toll-rate AMOUNT`: What the line charges a minute for calls outside the local area, from your phone bill; 0 when your plan includes them. Needed the first time.
@@ -4945,7 +4964,6 @@ $ faxbot delivery providers trunk caller-check [OPTIONS] COMMAND [ARGS]...
 
 * `show`: Show your registered senders for received...
 * `set`: Replace your registered senders for...
-* `fax`: Show what the network asserted about who...
 
 ###### `faxbot delivery providers trunk caller-check show`
 
@@ -4974,24 +4992,6 @@ $ faxbot delivery providers trunk caller-check set [OPTIONS] [NUMBER]...
 **Arguments**:
 
 * `[NUMBER]...`: Every registered sender, such as +13035550150; none clears the list.
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-###### `faxbot delivery providers trunk caller-check fax`
-
-Show what the network asserted about who called for one received fax.
-
-**Usage**:
-
-```console
-$ faxbot delivery providers trunk caller-check fax [OPTIONS] {fax_id}
-```
-
-**Arguments**:
-
-* `fax_id`: Received fax ID.  [required]
 
 **Options**:
 

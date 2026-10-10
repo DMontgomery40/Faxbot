@@ -368,7 +368,7 @@ def line_view(engine, store, values, account):
                 'default': 'This line is your default sending account, so Faxbot chooses it by itself.',
                 'listed': 'Faxbot chooses this line by itself for the numbers it reaches for less.',
                 'off': ('Faxbot does not choose this line by itself: turn that on here, or name the line in a '
-                        'sending rule under Providers → Rules.'),
+                        'sending rule under Delivery setup → Routing rules.'),
             }[state],
             'preset_label': preset.label, 'calls_at_once': trunk_calls_at_once(found_account.values),
             'local_prefixes': len(rows), 'imported_at': imported.isoformat(timespec='seconds') + 'Z' if imported else None,

@@ -242,6 +242,7 @@ def test_hidden_names_are_exactly_the_older_names_in_the_alias_table():
     (('numbers', 'move', 'closures'), ('delivery', 'numbers', 'closures')),
     (('numbers', 'move', 'import-closures'), ('delivery', 'numbers', 'import-closures')),
     (('numbers', 'move', 'notice'), ('delivery', 'numbers', 'line-notice')),
+    (('providers', 'trunk', 'caller-check', 'fax'), ('faxes', 'received', 'who-called')),
 ])
 def test_an_older_command_name_still_runs_the_command_it_names_now(older, now):
     commands = _commands(cli_app)

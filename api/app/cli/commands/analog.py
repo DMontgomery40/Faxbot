@@ -1,4 +1,4 @@
-"""faxbot providers trunk analog-line: the business line you already pay for, through an analog gateway, as a route
+"""faxbot delivery providers trunk analog-line: the business line you already pay for, through an analog gateway, as a route
 whose local calls cost nothing more (routing/analog.py)."""
 from pathlib import Path
 
@@ -11,14 +11,14 @@ from ..client import segment
 analog = typer.Typer(help='An analog phone line through a gateway: its local calling area and its prices, so local '
                           'numbers go out on it at no extra cost.', no_args_is_help=True)
 ACCOUNT = typer.Option('sip', '--account', metavar='KEY',
-                       help="Which trunk, by its key from 'faxbot providers accounts list'; the first trunk when left "
+                       help="Which trunk, by its key from 'faxbot delivery providers accounts list'; the first trunk when left "
                             'out.')
 
 
 def _lines(out, view):
     if not view.get('analog'):
         out.line('This trunk is not an analog line. Choose an analog line gateway as its carrier first '
-                 "(faxbot providers trunk presets).")
+                 "(faxbot delivery providers trunk presets).")
         return
     out.fields([('Trunk', view.get('label')), ('Gateway', view.get('preset_label')),
                 ('Calls at once', view.get('calls_at_once')), ('Local prefixes', view.get('local_prefixes')),
