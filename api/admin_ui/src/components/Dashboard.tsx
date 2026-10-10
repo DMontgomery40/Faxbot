@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { AnalysisCard } from './AIAnalysis';
-import { WaitingForYouCard } from './ProviderRulesHeld';
-import { rulesApiFor } from './ProviderRulesApi';
 import {
   Box,
   Card,
@@ -20,21 +18,23 @@ import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
-  ChevronRight as ChevronRightIcon,
   Send as SendIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
-import type { HealthStatus, WorkCounts } from '../api/types';
-import type { DirectPartner, IntakeCounts, RouteCostsResponse, SavingsMechanisms } from '../api/deliveryTypes';
+import AdminAPIClient from '../api/client';
+import type { HealthStatus } from '../api/types';
+import type { DirectPartner, SavingsMechanisms } from '../api/deliveryTypes';
 import SavingsMap from './SavingsMap';
 import type { SipCallRecord } from '../api/sipTypes';
-import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
 import { spendingLines, spendingTotalText } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
+import NeedsAttention from './overview/NeedsAttention';
+import {
+  attentionView, loadAttentionSources, NOT_READY_TEXT, notReadyFor, settle, type AttentionSources, type Loaded,
+} from './overview/attention';
 
-type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
+type CardData<T> = Loaded<T>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -44,15 +44,6 @@ export function missedInboundCall(calls: SipCallRecord[], now: number = Date.now
   const missed = calls.find((call) => call.direction === 'inbound' && call.job_id === null && call.summary
     && now - new Date(call.started_at).getTime() < DAY_MS);
   return missed?.summary ?? null;
-}
-
-async function settle<T>(request: Promise<T>): Promise<CardData<T>> {
-  try {
-    return { kind: 'ready', data: await request };
-  } catch (error) {
-    if (error instanceof AdminAPIError && (error.status === 401 || error.status === 403)) return { kind: 'denied' };
-    return { kind: isNotAvailable(error) ? 'unavailable' : 'error' };
-  }
 }
 
 const CARD_TEXT = {
@@ -110,87 +101,16 @@ function Line({ label, value, color }: { label: string; value: React.ReactNode; 
   );
 }
 
-// One thing that needs a person, with how many and the page that handles it.
-export interface AttentionItem {
-  key: string;
-  label: string;
-  count: number | null;
-  destination: AdminDestination;
-}
-
 // An install that only receives: no sending provider, one that receives. Its status is about receiving.
 function receivesOnly(health: HealthStatus): boolean {
   return !health.backend && !!health.receiving_backend;
 }
 
 // Ready for what the install is set up for: sending, receiving, or both (the rule `faxbot system health`
-// uses). Which direction that is set up is not ready now, or null.
-export function notReadyFor(health: HealthStatus): 'send' | 'receive' | 'both' | null {
-  const sending = !!health.backend && !health.backend_healthy;
-  const receiving = !!health.receiving_backend && !health.receiving_ready;
-  return sending && receiving ? 'both' : sending ? 'send' : receiving ? 'receive' : null;
-}
-
-const NOT_READY_TEXT = {
-  send: 'Faxbot is not ready to send faxes',
-  receive: 'Faxbot is not ready to receive faxes',
-  both: 'Faxbot is not ready to send or receive faxes',
-} as const;
-
+// uses); notReadyFor names the direction that is not ready now.
 function statusReady(health: HealthStatus): boolean {
   // No provider in either direction is never ready; "No fax provider set up yet" says why.
   return (!!health.backend || !!health.receiving_backend) && notReadyFor(health) === null;
-}
-
-// What needs a person now, from the cards' own data. Items this account
-// cannot read, and items with nothing in them, are left out.
-export function attentionItems({ health, work, intake, costs, network, canSetUp = false }: {
-  health: HealthStatus | null;
-  work: CardData<WorkCounts>;
-  intake: CardData<IntakeCounts>;
-  costs: CardData<RouteCostsResponse>;
-  // The carrier trunk's network check: an item while Faxbot keeps T.38 off because of the network.
-  network?: CardData<SipNetworkReport>;
-  canSetUp?: boolean;
-}): AttentionItem[] {
-  const items: AttentionItem[] = [];
-  if (health && !health.backend && !health.receiving_backend) {
-    items.push({ key: 'no-provider', label: 'No fax provider is set up yet', count: null,
-      destination: canSetUp ? 'setup' : 'diagnostics' });
-  }
-  const notReady = health ? notReadyFor(health) : null;
-  if (notReady) {
-    items.push({ key: 'not-ready', label: NOT_READY_TEXT[notReady], count: null, destination: 'system/diagnostics' });
-  }
-  if (health?.jobs.recent_failures) {
-    items.push({ key: 'failed', label: 'Faxes that failed in the last 24 hours', count: health.jobs.recent_failures, destination: 'faxes/sent' });
-  }
-  if (health?.jobs.reconciliation_required) {
-    items.push({ key: 'uncertain', label: 'Sent faxes with an uncertain result', count: health.jobs.reconciliation_required, destination: 'faxes/sent' });
-  }
-  if (work.kind === 'ready' && work.data.unassigned > 0) {
-    items.push({ key: 'unassigned', label: 'Received faxes waiting for an owner', count: work.data.unassigned, destination: 'faxes/received?show=waiting' });
-  }
-  if (work.kind === 'ready' && work.data.overdue > 0) {
-    items.push({ key: 'overdue', label: 'Received faxes that are overdue', count: work.data.overdue, destination: 'faxes/received?show=overdue' });
-  }
-  if (intake.kind === 'ready' && intake.data.failed > 0) {
-    items.push({ key: 'not-delivered', label: 'Received faxes not delivered by email', count: intake.data.failed, destination: 'faxes/received?show=not-delivered' });
-  }
-  if (costs.kind === 'ready') {
-    const unrecorded = [...costs.data.providers, ...(costs.data.received ?? [])]
-      .reduce((total, row) => total + (row.unrecorded_calls ?? 0), 0);
-    if (unrecorded > 0) {
-      items.push({ key: 'unrecorded', label: 'Carrier charges with no matching fax, last 30 days', count: unrecorded, destination: 'costs/spending' });
-    }
-  }
-  if (network?.kind === 'ready' && network.data.applies && network.data.action === 'turned_off'
-    && !network.data.t38_enabled) {
-    items.push({ key: 't38-network', label: 'One network change would let faxes go over the internet; faxes still go through meanwhile',
-      count: null,
-      destination: 'providers/trunk' });
-  }
-  return items;
 }
 
 interface DashboardProps {
@@ -210,49 +130,39 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
     : theme.palette.warning.main;
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [healthState, setHealthState] = useState<Loaded<HealthStatus>>({ kind: 'loading' });
   const [cfg, setCfg] = useState<any | null>(null);
-  const [spending, setSpending] = useState<CardData<RouteCostsResponse>>({ kind: 'loading' });
-  const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
+  const [sources, setSources] = useState<Omit<AttentionSources, 'health'>>({
+    holds: { kind: 'loading' }, work: { kind: 'loading' }, intake: { kind: 'loading' }, expected: { kind: 'loading' },
+    costs: { kind: 'loading' }, network: { kind: 'loading' },
+  });
   const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
-  const [work, setWork] = useState<CardData<WorkCounts>>({ kind: 'loading' });
-  const [network, setNetwork] = useState<CardData<SipNetworkReport>>({ kind: 'loading' });
   const [missedCall, setMissedCall] = useState<string | null>(null);
   const [mechanisms, setMechanisms] = useState<CardData<SavingsMechanisms>>({ kind: 'loading' });
+  const health = healthState.kind === 'ready' ? healthState.data : null;
+  const loading = healthState.kind === 'loading';
+  const error = healthState.kind === 'denied' ? 'Server health is not available to this account.'
+    : healthState.kind === 'error' || healthState.kind === 'unavailable' ? 'Could not load server health. Try again.' : null;
+  const spending = sources.costs;
+  const intake = sources.intake;
 
-  // Delivery cards and the savings map load on entry and on Refresh, not on every health poll.
+  // Needs attention, the delivery cards and the savings map load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
     if (canReadSettings) void settle(client.getSavingsMechanisms()).then(setMechanisms);
-    const [costs, queue, peers, calls, counts, check] = await Promise.all([
-      settle(client.getRouteCosts()),
-      settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
+    const [attention, peers, calls] = await Promise.all([
+      loadAttentionSources(client),
       settle(client.listDirectPartners().then((result) => result.peers)),
       settle(client.listSipCalls({ limit: 20, direction: 'inbound' }).then((result) => result.items)),
-      settle(client.workCounts()),
-      settle(client.getSipNetwork()),
     ]);
-    setSpending(costs);
-    setIntake(queue);
+    setSources(attention);
     setPartners(peers);
-    setWork(counts);
-    setNetwork(check);
     setMissedCall(calls.kind === 'ready' ? missedInboundCall(calls.data) : null);
   };
 
   const fetchHealth = async () => {
-    try {
-      setError(null);
-      const data = await client.getHealthStatus();
-      setHealth(data);
-    } catch (err) {
-      setError(err instanceof AdminAPIError && (err.status === 401 || err.status === 403)
-        ? 'Server health is not available to this account.'
-        : 'Could not load server health. Try again.');
-    } finally {
-      setLoading(false);
-    }
+    const next = await settle(client.getHealthStatus());
+    // A failed check keeps what the last poll showed.
+    setHealthState((current) => (next.kind === 'ready' || current.kind !== 'ready' ? next : current));
   };
 
   const fetchConfig = async () => {
@@ -269,8 +179,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
     // Start polling
     const cleanup = client.startPolling((data) => {
-      setHealth(data);
-      setError(null);
+      setHealthState({ kind: 'ready', data, at: Date.now() });
       fetchConfig();
     });
 
@@ -293,8 +202,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
     );
   }
 
-  const attention = attentionItems({ health, work, intake, costs: spending, network, canSetUp });
-  const attentionLoading = work.kind === 'loading' || intake.kind === 'loading' || spending.kind === 'loading';
+  const attention = attentionView({ health: healthState, ...sources }, { canSetUp });
 
   return (
     <Box>
@@ -326,12 +234,12 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
         </Alert>
       )}
 
-      <WaitingForYouCard api={rulesApiFor(client)} onOpen={() => onNavigate?.('faxes/sent')} />
+      <NeedsAttention view={attention} onNavigate={onNavigate} />
 
       {health && (
         <Grid container spacing={{ xs: 2, md: 3 }}>
           {/* System Status, and what sends and receives faxes */}
-          <Grid item xs={12} sm={6} lg={3}>
+          <Grid item xs={12} sm={6} lg={4}>
             <Tooltip title="Click to view detailed diagnostics" arrow>
               <Card
                 sx={{
@@ -396,39 +304,8 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
             </Tooltip>
           </Grid>
 
-          {/* Needs attention: what is waiting for a person, each opening the page that handles it */}
-          <Grid item xs={12} sm={6} lg={3}>
-            <Card sx={{ height: '100%' }} data-testid="needs-attention">
-              <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
-                <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
-                  Needs attention
-                </Typography>
-                {attention.length === 0 ? (
-                  attentionLoading ? <CircularProgress size={20} aria-label="Loading Needs attention" />
-                    : <Typography variant="body2" color="text.secondary">Nothing needs attention.</Typography>
-                ) : (
-                  <Box display="flex" flexDirection="column" gap={0.5}>
-                    {attention.map((item) => (
-                      <Button key={item.key} data-testid={`attention-${item.key}`} color="inherit" size="small"
-                        disabled={!onNavigate} onClick={() => onNavigate?.(item.destination)}
-                        endIcon={<ChevronRightIcon fontSize="small" />}
-                        sx={{ justifyContent: 'space-between', textAlign: 'left', textTransform: 'none', px: 1, mx: -1 }}>
-                        <Typography variant="body2" component="span" sx={{ flex: 1 }}>{item.label}</Typography>
-                        {item.count !== null && (
-                          <Typography variant="body2" component="span" fontWeight="bold" color={warningTextColor} sx={{ ml: 2 }}>
-                            {item.count}
-                          </Typography>
-                        )}
-                      </Button>
-                    ))}
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-
           {/* Job Queue */}
-          <Grid item xs={12} sm={6} lg={3}>
+          <Grid item xs={12} sm={6} lg={4}>
             <Tooltip title="Click to view all jobs" arrow>
               <Card
                 sx={{
@@ -495,7 +372,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
           </Grid>
 
           {/* Inbound Status */}
-          <Grid item xs={12} sm={6} lg={3}>
+          <Grid item xs={12} sm={6} lg={4}>
             <Tooltip title="Click to view inbound faxes" arrow>
               <Card
                 sx={{

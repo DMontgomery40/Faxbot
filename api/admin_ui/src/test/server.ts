@@ -799,6 +799,8 @@ const consoleHandlers = [
   http.get('/certainty/settings', () => json({ settle_hours: 24, version: 0, fallback: null, people: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
   http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
+  // Expected faxes for Needs attention: none overdue, none to confirm.
+  http.get('/expected-faxes/counts', () => json({ waiting: 0, overdue: 0, proposed: 0, missing: 0, conflicts: 0, matched: 0 })),
   // Sending together: no number sends faxes together until a test says otherwise.
   http.get('/batching/check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
     sends_together: false, wait_minutes: null, sentence: null })),

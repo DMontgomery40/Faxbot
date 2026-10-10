@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Dashboard from '../components/Dashboard';
@@ -8,6 +8,7 @@ import { SDK_VERSIONS } from '../sdkVersions';
 import nodePackage from '../../../../sdks/node/package.json?raw';
 import pythonSetup from '../../../../sdks/python/setup.py?raw';
 import { server } from '../test/server';
+import attentionFixture from './overviewAttention.json';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
@@ -252,42 +253,66 @@ describe('Overview', () => {
     }
   });
 
-  it('lists what needs a person, each opening the page that handles it', async () => {
-    server.use(
-      http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(), backend: 'phaxio',
-        backend_healthy: true, jobs: { queued: 0, in_progress: 0, recent_failures: 3, reconciliation_required: 1 },
-        inbound_enabled: true, api_keys_configured: true, require_auth: true })),
-      http.get('/work/counts', () => HttpResponse.json({ open: 4, acknowledged: 0, done: 0, unassigned: 2, mine: 0, overdue: 1 })),
-      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 5, failed: 4 } })),
-      http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00',
-        providers: [{ ...provider('sip', 'Carrier trunk', '1.00'), unrecorded_calls: 2 }],
-        received: [{ provider_id: 'sip', label: 'Carrier trunk', carrier: 'Telnyx', calls: 1, faxes: 1, billed_minutes: 1,
-          estimated_cost: [], reported_cost: [], calls_with_reported_cost: 1, calls_without_reported_cost: 0,
-          estimated_cost_not_reported: [], awaiting_carrier_bill: 0, unmatched_charges: 0, unrecorded_calls: 1 }] })),
-    );
-    const navigate = vi.fn();
-    render(<Dashboard client={client()} onNavigate={navigate} />);
-    const expected: Array<[string, string, string]> = [
-      ['failed', '3', 'faxes/sent'],
-      ['uncertain', '1', 'faxes/sent'],
-      ['unassigned', '2', 'faxes/received?show=waiting'],
-      ['overdue', '1', 'faxes/received?show=overdue'],
-      ['not-delivered', '4', 'faxes/received?show=not-delivered'],
-      ['unrecorded', '3', 'costs/spending'],
-    ];
-    for (const [key, count, destination] of expected) {
-      const line = await screen.findByTestId(`attention-${key}`);
-      expect(line.textContent).toContain(count);
-      fireEvent.click(line);
-      expect(navigate).toHaveBeenLastCalledWith(destination);
-    }
-    expect(screen.queryByText('Nothing needs attention.')).toBeNull();
-  });
+});
 
-  it('says so when nothing needs attention, and leaves out what this account cannot read', async () => {
+// The same answers `faxbot overview` is tested with (api/tests/test_cli_overview.py).
+type AttentionScenario = (typeof attentionFixture.scenarios)[number];
+
+function answer(scenario: AttentionScenario) {
+  server.use(...Object.entries(scenario.responses).map(([path, reply]) =>
+    http.get(path, () => HttpResponse.json(reply.body, { status: reply.status }))));
+}
+
+async function attentionBlock() {
+  const block = await screen.findByTestId('needs-attention');
+  await waitFor(() => expect(block.getAttribute('aria-busy')).toBe('false'));
+  return block;
+}
+
+describe('Needs attention', () => {
+  for (const scenario of attentionFixture.scenarios) {
+    it(`lists the ${scenario.name} items by the action they need, each opening its exact list, and says what it could not check`, async () => {
+      answer(scenario);
+      const navigate = vi.fn();
+      render(<Dashboard client={client()} onNavigate={navigate} />);
+      const block = await attentionBlock();
+      expect(block.getAttribute('data-serious')).toBe(String(scenario.serious));
+      expect(within(block).queryAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(scenario.groups);
+      const lines = within(block).queryAllByTestId(/^attention-/);
+      expect(lines.map((line) => line.getAttribute('data-testid'))).toEqual(scenario.items.map((item) => `attention-${item.key}`));
+      for (const item of scenario.items) {
+        const line = within(block).getByTestId(`attention-${item.key}`);
+        expect(line.textContent).toContain(item.label);
+        if (item.count !== null) expect(within(line).getByTestId('needs-attention-count').textContent).toBe(String(item.count));
+        else expect(within(line).queryByTestId('needs-attention-count')).toBeNull();
+        if (item.detail) expect(line.textContent).toContain(item.detail);
+        expect(line.getAttribute('data-serious')).toBe(String(item.serious));
+        fireEvent.click(line);
+        expect(navigate).toHaveBeenLastCalledWith(item.destination);
+      }
+      for (const sentence of scenario.console as string[]) expect(block.textContent).toContain(sentence);
+      if (!(scenario.console as string[]).includes('Nothing needs attention.')) {
+        expect(within(block).queryByText('Nothing needs attention.')).toBeNull();
+      }
+    });
+  }
+
+  it('never says nothing needs attention when a source was refused, and names it without a count', async () => {
     server.use(http.get('/work/counts', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
     render(<Dashboard client={client()} />);
-    expect(await screen.findByText('Nothing needs attention.')).toBeTruthy();
+    const block = await attentionBlock();
+    expect(within(block).queryByText('Nothing needs attention.')).toBeNull();
+    expect(block.textContent).toContain('Nothing needs attention in what Faxbot could check.');
+    expect(block.textContent).toContain('Not available to this account: owners of received faxes.');
+    expect(within(block).queryAllByTestId('needs-attention-count')).toHaveLength(0);
+  });
+
+  it('says how long ago it checked, and shows the held faxes here instead of a card of their own', async () => {
+    answer(attentionFixture.scenarios[0]);
+    render(<Dashboard client={client()} onNavigate={vi.fn()} />);
+    const block = await attentionBlock();
+    expect(within(block).getByTestId('needs-attention-checked').textContent).toMatch(/^Checked /);
+    expect(screen.queryByRole('region', { name: 'Faxes waiting for you' })).toBeNull();
   });
 });
 

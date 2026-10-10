@@ -16,8 +16,9 @@ import AdminAPIClient, { AdminAPIError, type ClientCredential } from './api/clie
 import LoginScreen from './components/LoginScreen';
 import PasswordChange from './components/PasswordChange';
 import OwnerEnrollment from './components/OwnerEnrollment';
-import NavPanel from './components/shell/NavPanel';
+import NavPanel, { SendFaxButton, type SendAction } from './components/shell/NavPanel';
 import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
+import { AddressProblem, MovedNotice } from './components/shell/AddressState';
 import UserMenu from './components/shell/UserMenu';
 import { ThemeProvider } from './theme/ThemeContext';
 import { setProviderNames } from './providerLabels';
@@ -237,17 +238,26 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
 
   const [hash, setAddress] = useAddress();
   const route = resolveAddress(visible, parseAddress(hash));
-  const pageKey = route ? `${route.area.id}/${route.page.id}` : '';
+  // The page shown; none while the address names no page this person may open.
+  const shown = route?.kind === 'page' ? route : null;
+  const pageKey = shown ? `${shown.area.id}/${shown.page.id}` : '';
+  // An old address that moved: the notice above the page it opens now.
+  const [moved, setMoved] = useState<{ address: string; was: string } | null>(null);
 
-  // An unknown address, one this person may not open, or none at all shows a
-  // page they may open; the address is corrected in place, without a history entry.
+  // No address, an area on its own, or an old address shows the page that does the job;
+  // the address is corrected in place, without a history entry. An unknown or forbidden
+  // address stays as it is, with its own short state instead of a page.
+  const correctTo = shown && shown.address !== hash ? shown.address : null;
+  const movedFrom = shown?.movedFrom;
   useEffect(() => {
-    if (!route || route.address === hash) return;
-    window.history.replaceState(window.history.state, '', route.address);
-    setAddress(route.address);
-  }, [route?.address, hash, setAddress]);
+    if (!correctTo) return;
+    if (movedFrom) setMoved({ address: correctTo, was: movedFrom });
+    window.history.replaceState(window.history.state, '', correctTo);
+    setAddress(correctTo);
+  }, [correctTo, movedFrom, setAddress]);
 
   const navigateTo = useCallback((address: string) => {
+    setMoved(null);
     setAddress(address);
     setMobileOpen(false);
     window.scrollTo?.({ top: 0 });
@@ -267,7 +277,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
 
   // Pages that show active settings read the console context again on each entry.
   const [refresh, setRefresh] = useState<{ key: string; state: 'loading' | 'ready' | 'error' }>({ key: '', state: 'ready' });
-  const refreshes = Boolean(route?.page.refreshContext);
+  const refreshes = Boolean(shown?.page.refreshContext);
   useEffect(() => {
     if (!refreshes) return;
     let current = true;
@@ -298,14 +308,17 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
 
   const pageContext: PageContext = {
     client, me, permissions, context, adminConfig, contextLoading, contextError, docsBase, canSetUp,
-    params: route ? parseAddress(route.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
+    params: shown ? parseAddress(shown.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
     navigate, goHome, jobToOpen,
     openJob: (jobId) => { setJobToOpen(jobId); navigate('jobs'); },
     jobOpened: () => setJobToOpen(null),
   };
 
+
+  const first = visible[0];
+  const homeAddress = first ? pageAddress(first.id, first.pages[0].id) : '#';
   const logo = (
-    <Box component="a" href={visible[0] ? pageAddress(visible[0].id, visible[0].pages[0].id) : '#'}
+    <Box component="a" href={homeAddress}
       onClick={(event: React.MouseEvent) => { event.preventDefault(); goHome(); }}
       sx={{ display: 'inline-flex', alignItems: 'center', borderRadius: 1 }}>
       <Box component="img"
@@ -314,14 +327,21 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
     </Box>
   );
 
+  // Send a fax stays in view for people who may send.
+  const sendAddress = pageAddress('faxes', 'send');
+  const send: SendAction | undefined = visible.some((area) => area.id === 'faxes' && area.pages.some((page) => page.id === 'send'))
+    ? { href: sendAddress, selected: pageKey === 'faxes/send', onOpen: () => navigateTo(sendAddress) }
+    : undefined;
+
   const panel = route && (
-    <NavPanel areas={visible} currentArea={route.area.id} currentPage={route.page.id} onNavigate={openPage} logo={logo}
+    <NavPanel areas={visible} currentArea={shown?.area.id ?? ''} currentPage={shown?.page.id ?? ''} onNavigate={openPage}
+      send={send} logo={logo}
       footer={<UserMenu client={client} me={me} onNavigate={navigate} onSignOut={onSignOut} onIdentityChanged={onIdentityChanged} />} />
   );
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      {/* Phones: a slim bar with the menu button; the panel opens as a drawer. */}
+      {/* Phones: a slim bar with the menu button and Send a fax; the panel opens as a drawer. */}
       {isMobile && (
         <AppBar position="fixed" elevation={0} sx={{
           color: 'text.primary', backdropFilter: 'blur(10px)', borderBottom: '1px solid', borderColor: 'divider',
@@ -332,6 +352,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
               <MenuIcon />
             </IconButton>
             {logo}
+            {send && !mobileOpen && <SendFaxButton send={send} size="small" sx={{ ml: 'auto' }} />}
           </Toolbar>
         </AppBar>
       )}
@@ -357,16 +378,20 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
             }} />
           </Box>
         )}
-        {route ? (
+        {shown && (
           <>
-            <PageBreadcrumbs area={route.area} page={route.page} onNavigate={openPage} />
+            <PageBreadcrumbs area={shown.area} page={shown.page} onNavigate={openPage} />
+            {moved && moved.address === shown.address && <MovedNotice was={moved.was} onClose={() => setMoved(null)} />}
             <Box key={pageKey}>
-              {route.page.render(pageContext)}
+              {shown.page.render(pageContext)}
             </Box>
           </>
-        ) : (
-          <Alert severity="info">There is nothing in the console for this account yet.</Alert>
         )}
+        {route && route.kind !== 'page' && first && (
+          <AddressProblem kind={route.kind}
+            home={{ label: first.pages[0].label, href: homeAddress, onOpen: goHome }} />
+        )}
+        {!route && <Alert severity="info">There is nothing in the console for this account yet.</Alert>}
       </Box>
     </Box>
   );

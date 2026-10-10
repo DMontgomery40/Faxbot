@@ -50,6 +50,9 @@ def _navigation_pages():
     for index, (start, area) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else len(body)
         pages |= {f'{area}/{page}' for page in re.findall(r"\{ id: '([a-z-]+)', label:", body[start:end])}
+    # An old address (#49) still opens its page through the moved-address table: count it when its new home is real.
+    moves = text[text.index('const MOVES'):text.index('export const MOVED_ADDRESSES')]
+    pages |= {old for old, new in re.findall(r"\['([a-z]+/[a-z-]+)', '([a-z]+/[a-z-]+)[^']*'", moves) if new in pages}
     return pages
 
 
@@ -60,7 +63,8 @@ def test_every_entry_names_real_settings_pages_parts_and_an_evidence_level():
     assert len(keys) == len(set(keys))
     stages = {key for key, _ in mechanisms.STAGES}
     pages = _navigation_pages()
-    assert {'costs/savings', 'recipients/list', 'providers/trunk'} <= pages, 'navigation.tsx was not read'
+    assert {'savings/results', 'recipients/list', 'delivery/trunk', 'costs/savings', 'providers/trunk'} <= pages, \
+        'navigation.tsx or its moved addresses were not read'
     screen = SAVINGS_SCREEN.read_text(encoding='utf-8')
     advice = RECOMMENDATIONS_SCREEN.read_text(encoding='utf-8')
     reference = (API_ROOT.parent / 'docs' / 'reference' / 'cli.md').read_text(encoding='utf-8')

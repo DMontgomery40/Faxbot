@@ -24,6 +24,7 @@ from .commands import forwarded_trust
 from .commands import expected as expected_commands
 from .commands import cases as case_commands
 from .commands import capabilities as capability_commands
+from .commands import overview as overview_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -267,6 +268,8 @@ HOMES = {'received': received, 'sent': sent, 'numbers': numbers, 'recipients': r
 def register(app):
     app.command('send')(fax.send)
     app.command('status')(fax.status)
+    # The console's Overview (Needs attention for now); the new top-level names place it for good.
+    app.command('overview')(overview_commands.overview)
     for name, home in HOMES.items():
         app.add_typer(home, name=name)
         if name == 'sent':

@@ -1,0 +1,175 @@
+{
+  "about": "Needs attention on Overview and in `faxbot overview`, from the same answers. Each scenario gives the reads both surfaces make (status and body), the items both compute, what the console says about coverage, and the lines the command prints. dashboard.test.tsx renders the console from it; api/tests/test_cli_overview.py runs the command against it.",
+  "scenarios": [
+    {
+      "name": "busy",
+      "groups": ["Serious problems", "Waiting for your decision", "Waiting for an owner, or overdue", "Did not go through", "To check"],
+      "responses": {
+        "/admin/health-status": {"status": 200, "body": {
+          "timestamp": "2026-10-09T20:00:00Z", "backend": "sip", "backend_healthy": false, "receiving_backend": "sip",
+          "receiving_ready": true, "backend_message": null,
+          "jobs": {"queued": 0, "in_progress": 0, "recent_failures": 3, "held": 0, "reconciliation_required": 1, "waiting_for_line": 0},
+          "inbound_enabled": true, "api_keys_configured": true, "require_auth": true}},
+        "/routing/holds": {"status": 200, "body": {"can_approve": true, "holds": [
+          {"id": "h-1", "job_id": "ffffffffffffffffffffffffffffffff", "kind": "approval", "to_number": "+15550100001", "pages": 24,
+           "sender_name": "Nia New", "requested_at": "2026-10-09T16:00:00", "until": null,
+           "reason": "Waiting for approval: the rule 'Faxes over 20 pages need approval' matched.", "can_decide": true, "version": 3},
+          {"id": "h-2", "job_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "kind": "no_route", "to_number": "+442071234567", "pages": 1,
+           "sender_name": "Nia New", "requested_at": "2026-10-09T16:05:00", "until": null,
+           "reason": "No route your rules allow: every account is over its cost cap.", "can_decide": true, "version": 1}]}},
+        "/work/counts": {"status": 200, "body": {"open": 4, "acknowledged": 0, "done": 0, "unassigned": 2, "mine": 0, "overdue": 1}},
+        "/intake/items": {"status": 200, "body": {"items": [], "counts": {"received": 0, "sending": 0, "delivered": 5, "failed": 4}}},
+        "/expected-faxes/counts": {"status": 200, "body": {"waiting": 5, "overdue": 2, "proposed": 1, "missing": 0, "conflicts": 0, "matched": 3}},
+        "/routing/costs": {"status": 200, "body": {"since": "2026-09-09T00:00:00",
+          "providers": [{"provider_id": "sip", "label": "Carrier trunk", "attempts": 4, "successes": 4, "failures": 0, "uncertain": 0,
+            "billed_minutes": 6, "billed_pages": 12, "estimated_cost": [{"currency": "USD", "amount": "1.00"}], "reported_cost": [],
+            "settled_cost": [], "attempts_without_reported_cost": 4, "unrecorded_calls": 2}],
+          "received": [{"provider_id": "sip", "label": "Carrier trunk", "carrier": "Telnyx", "calls": 1, "faxes": 1, "billed_minutes": 1,
+            "estimated_cost": [], "reported_cost": [], "calls_with_reported_cost": 1, "calls_without_reported_cost": 0,
+            "estimated_cost_not_reported": [], "awaiting_carrier_bill": 0, "unmatched_charges": 0, "unrecorded_calls": 1}]}},
+        "/admin/sip/network": {"status": 200, "body": {"applies": true, "checked": true, "t38": "blocked", "text": "synthetic",
+          "t38_enabled": false, "action": "turned_off", "action_at": "2026-10-05T03:50:00Z"}}
+      },
+      "serious": true,
+      "items": [
+        {"key": "not-ready", "group": "serious", "label": "Faxbot is not ready to send faxes", "count": null, "detail": null,
+         "serious": true, "destination": "system/diagnostics", "command": "faxbot system health"},
+        {"key": "uncertain", "group": "serious", "label": "Sent faxes with an uncertain result", "count": 1,
+         "detail": "Check your provider account before you send any of them again.",
+         "serious": true, "destination": "faxes/sent?status=reconciliation_required",
+         "command": "faxbot sent list --status reconciliation_required"},
+        {"key": "held", "group": "decide", "label": "Faxes your rules are holding", "count": 2,
+         "detail": "1 waiting for approval, 1 with no route your rules allow. Nothing has been sent for them.",
+         "serious": false, "destination": "faxes/sent?show=held", "command": "faxbot sent list --held"},
+        {"key": "proposed", "group": "decide", "label": "Expected faxes with a possible match to confirm", "count": 1, "detail": null,
+         "serious": false, "destination": "faxes/expected?show=proposed", "command": "faxbot expected list --show proposed"},
+        {"key": "unassigned", "group": "owner", "label": "Received faxes waiting for an owner", "count": 2, "detail": null,
+         "serious": false, "destination": "faxes/received?show=waiting", "command": "faxbot received owners --unassigned"},
+        {"key": "overdue", "group": "owner", "label": "Received faxes that are overdue", "count": 1, "detail": null,
+         "serious": false, "destination": "faxes/received?show=overdue", "command": "faxbot received owners --overdue"},
+        {"key": "expected-overdue", "group": "owner", "label": "Expected faxes that are overdue", "count": 2, "detail": null,
+         "serious": false, "destination": "faxes/expected?show=overdue", "command": "faxbot expected list --show overdue"},
+        {"key": "failed", "group": "failed", "label": "Sent faxes that failed in the last 24 hours", "count": 3, "detail": null,
+         "serious": false, "destination": "faxes/sent?status=failed", "command": "faxbot sent list --status failed"},
+        {"key": "not-delivered", "group": "failed", "label": "Received faxes not delivered by email", "count": 4, "detail": null,
+         "serious": false, "destination": "faxes/received?show=not-delivered", "command": "faxbot received deliveries list --state failed"},
+        {"key": "unrecorded", "group": "check", "label": "Carrier charges with no matching fax, last 30 days", "count": 3, "detail": null,
+         "serious": false, "destination": "costs/spending", "command": "faxbot costs spending"},
+        {"key": "t38-network", "group": "check",
+         "label": "One network change would let faxes go over the internet; faxes still go through meanwhile", "count": null,
+         "detail": null, "serious": false, "destination": "providers/trunk", "command": "faxbot providers trunk network status"}
+      ],
+      "console": [],
+      "cli": [
+        "Needs attention",
+        "Serious problems",
+        "  Faxbot is not ready to send faxes",
+        "    faxbot system health",
+        "  Sent faxes with an uncertain result: 1",
+        "    Check your provider account before you send any of them again.",
+        "    faxbot sent list --status reconciliation_required",
+        "Waiting for your decision",
+        "  Faxes your rules are holding: 2",
+        "    1 waiting for approval, 1 with no route your rules allow. Nothing has been sent for them.",
+        "    faxbot sent list --held",
+        "  Expected faxes with a possible match to confirm: 1",
+        "    faxbot expected list --show proposed",
+        "Waiting for an owner, or overdue",
+        "  Received faxes waiting for an owner: 2",
+        "    faxbot received owners --unassigned",
+        "  Received faxes that are overdue: 1",
+        "    faxbot received owners --overdue",
+        "  Expected faxes that are overdue: 2",
+        "    faxbot expected list --show overdue",
+        "Did not go through",
+        "  Sent faxes that failed in the last 24 hours: 3",
+        "    faxbot sent list --status failed",
+        "  Received faxes not delivered by email: 4",
+        "    faxbot received deliveries list --state failed",
+        "To check",
+        "  Carrier charges with no matching fax, last 30 days: 3",
+        "    faxbot costs spending",
+        "  One network change would let faxes go over the internet; faxes still go through meanwhile",
+        "    faxbot providers trunk network status"
+      ]
+    },
+    {
+      "name": "all clear",
+      "groups": [],
+      "responses": {
+        "/admin/health-status": {"status": 200, "body": {
+          "timestamp": "2026-10-09T20:00:00Z", "backend": "phaxio", "backend_healthy": true, "receiving_backend": "phaxio",
+          "receiving_ready": true, "backend_message": null,
+          "jobs": {"queued": 0, "in_progress": 0, "recent_failures": 0, "held": 0, "reconciliation_required": 0, "waiting_for_line": 0},
+          "inbound_enabled": true, "api_keys_configured": true, "require_auth": true}},
+        "/routing/holds": {"status": 200, "body": {"can_approve": true, "holds": []}},
+        "/work/counts": {"status": 200, "body": {"open": 0, "acknowledged": 0, "done": 3, "unassigned": 0, "mine": 0, "overdue": 0}},
+        "/intake/items": {"status": 200, "body": {"items": [], "counts": {"received": 0, "sending": 0, "delivered": 5, "failed": 0}}},
+        "/expected-faxes/counts": {"status": 200, "body": {"waiting": 2, "overdue": 0, "proposed": 0, "missing": 0, "conflicts": 0, "matched": 1}},
+        "/routing/costs": {"status": 200, "body": {"since": "2026-09-09T00:00:00", "providers": []}},
+        "/admin/sip/network": {"status": 200, "body": {"applies": false, "checked": false, "t38": null, "text": null}}
+      },
+      "serious": false,
+      "items": [],
+      "console": ["Nothing needs attention."],
+      "cli": [
+        "Needs attention",
+        "Nothing needs attention."
+      ]
+    },
+    {
+      "name": "restricted",
+      "groups": ["Waiting for an owner, or overdue"],
+      "responses": {
+        "/admin/health-status": {"status": 403, "body": {"detail": "This operation is not permitted."}},
+        "/routing/holds": {"status": 200, "body": {"can_approve": false, "holds": []}},
+        "/work/counts": {"status": 200, "body": {"open": 1, "acknowledged": 0, "done": 0, "unassigned": 1, "mine": 0, "overdue": 0}},
+        "/intake/items": {"status": 403, "body": {"detail": "This operation is not permitted."}},
+        "/expected-faxes/counts": {"status": 200, "body": {"waiting": 0, "overdue": 0, "proposed": 0, "missing": 0, "conflicts": 0, "matched": 0}},
+        "/routing/costs": {"status": 403, "body": {"detail": "This operation is not permitted."}},
+        "/admin/sip/network": {"status": 403, "body": {"detail": "This operation is not permitted."}}
+      },
+      "serious": false,
+      "items": [
+        {"key": "unassigned", "group": "owner", "label": "Received faxes waiting for an owner", "count": 1, "detail": null,
+         "serious": false, "destination": "faxes/received?show=waiting", "command": "faxbot received owners --unassigned"}
+      ],
+      "console": ["Not available to this account: Faxbot's status and sent faxes, email delivery, carrier charges and the network check."],
+      "cli": [
+        "Needs attention",
+        "Waiting for an owner, or overdue",
+        "  Received faxes waiting for an owner: 1",
+        "    faxbot received owners --unassigned",
+        "Not available to this account: Faxbot's status and sent faxes, email delivery, carrier charges and the network check."
+      ]
+    },
+    {
+      "name": "failed source",
+      "groups": [],
+      "responses": {
+        "/admin/health-status": {"status": 200, "body": {
+          "timestamp": "2026-10-09T20:00:00Z", "backend": "phaxio", "backend_healthy": true, "receiving_backend": "",
+          "receiving_ready": false, "backend_message": null,
+          "jobs": {"queued": 0, "in_progress": 0, "recent_failures": 0, "held": 0, "reconciliation_required": 0, "waiting_for_line": 0},
+          "inbound_enabled": false, "api_keys_configured": true, "require_auth": true}},
+        "/routing/holds": {"status": 200, "body": {"can_approve": true, "holds": []}},
+        "/work/counts": {"status": 500, "body": {"detail": "Internal Server Error"}},
+        "/intake/items": {"status": 200, "body": {"items": [], "counts": {"received": 0, "sending": 0, "delivered": 0, "failed": 0}}},
+        "/expected-faxes/counts": {"status": 503, "body": {"detail": "Expected faxes are temporarily unavailable."}},
+        "/routing/costs": {"status": 200, "body": {"since": "2026-09-09T00:00:00", "providers": []}},
+        "/admin/sip/network": {"status": 200, "body": {"applies": false, "checked": false, "t38": null, "text": null}}
+      },
+      "serious": false,
+      "items": [],
+      "console": [
+        "Nothing needs attention in what Faxbot could check.",
+        "Could not check owners of received faxes and expected faxes. Select Refresh to try again."
+      ],
+      "cli": [
+        "Needs attention",
+        "Nothing needs attention in what Faxbot could check.",
+        "Could not check owners of received faxes and expected faxes. Run the command again."
+      ]
+    }
+  ]
+}

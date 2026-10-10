@@ -76,12 +76,14 @@ function SendAnywayDialog({ hold, onClose, onSend }: { hold: Hold | null; onClos
   );
 }
 
-export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
+export function HeldFaxes({ api, canApprove, onNavigate, onChanged, whenNone }: {
   api: RulesApi;
   // Holds the "Approve faxes" permission.
   canApprove: boolean;
   onNavigate?: (destination: AdminDestination) => void;
   onChanged?: () => void;
+  // Said when no fax is held, on a view that lists only held faxes; otherwise nothing shows.
+  whenNone?: string;
 }) {
   const [holds, setHolds] = useState<Hold[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -115,7 +117,9 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged }: {
   };
 
   if (holds === null) return error ? <DeliveryError error={error} /> : null;
-  if (holds.length === 0 && !notice && !error) return null;
+  if (holds.length === 0 && !notice && !error) {
+    return whenNone ? <Typography variant="body2" sx={{ mb: 3 }}>{whenNone}</Typography> : null;
+  }
   return (
     <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }} aria-label="Faxes waiting for you">
       <Typography variant="h6" component="h2">Faxes waiting for you</Typography>

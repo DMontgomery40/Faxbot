@@ -32,7 +32,7 @@ function setup(options: { owner?: boolean; settings?: Json; status?: Json; manag
     http.post('/analysis/run', () => { actions.push('run'); status = { ...idle, state: 'queued' }; return HttpResponse.json(status); }),
     http.post('/analysis/test', () => { actions.push('test'); return HttpResponse.json({ ok: true, message: 'Connection works.' }); }),
   );
-  const page = NAVIGATION.find((area) => area.id === 'system')?.pages.find((entry) => entry.id === 'analysis');
+  const page = NAVIGATION.find((area) => area.id === 'admin')?.pages.find((entry) => entry.id === 'analysis');
   const ctx = { client: new AdminAPIClient({ kind: 'key', key: 'synthetic-key' }),
     me: { is_owner: options.owner !== false, principal: { kind: 'user' } },
     permissions: new Set(['settings:read', 'settings:write']), navigate: () => undefined } as unknown as PageContext;
@@ -121,7 +121,7 @@ it('opens AI settings from the recommendations screen', async () => {
   server.use(http.get('/analysis', () => HttpResponse.json({ ...idle, enabled: false, state: 'disabled' })));
   render(<Recommendations client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'AI analysis settings' }));
-  expect(window.location.hash).toBe('#/system/analysis');
+  expect(window.location.hash).toBe('#/admin/analysis');
 });
 
 it('keeps a rejected revision visible and prevents a second blind save', async () => {
