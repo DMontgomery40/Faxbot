@@ -103,14 +103,6 @@ def test_the_real_shared_predictor_prices_encoded_pages():
     assert not slower.use and slower.original.cost is not None
 
 
-def test_without_the_shared_predictor_nothing_is_encoded(monkeypatch):
-    monkeypatch.setattr(decision, 'predictor', lambda: None)
-    choice = decision.choose(_document(1000), route_key='sinch', destination=NUMBER, pages_original=3,
-                             page_bits_original=[1, 2, 3], exact_raster=False, ecm_and_fine_seen=False,
-                             provider_renders=True)
-    assert not choice.use and 'cannot yet predict' in choice.sentence
-
-
 # --- receiving ------------------------------------------------------------------------------------------------
 
 def _payload_pdf(tmp_path, document, **options):

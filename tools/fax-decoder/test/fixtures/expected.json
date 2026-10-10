@@ -1596,5 +1596,91 @@
     160
    ]
   }
+ ],
+ "receipts": [
+  {
+   "file": "receipt-runs-rotated_180.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-inverted.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-rotated_inverted.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-moved_right.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-moved_left.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-padded_to_letter.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-centred_on_letter.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-trailing_row_removed.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-trailing_row_added.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-runs-resized.tiff",
+   "expect": "resized"
+  },
+  {
+   "file": "receipt-runs-preview.tiff",
+   "expect": "preview"
+  },
+  {
+   "file": "receipt-capacity-rotated_180.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-inverted.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-moved_right.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-moved_left.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-padded_to_letter.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-centred_on_letter.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-capacity-trailing_row_removed.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-grid-rotated_180.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-grid-inverted.tiff",
+   "expect": "decodes"
+  },
+  {
+   "file": "receipt-grid-centred_on_letter.tiff",
+   "expect": "decodes"
+  }
  ]
 }
