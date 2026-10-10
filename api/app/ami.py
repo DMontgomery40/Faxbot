@@ -132,6 +132,7 @@ def prepare_originate_fields(
     csi_expect: Optional[str] = None,
     csi_refuse: bool = False,
     dtmf: Optional[str] = None,
+    data_connect: bool = False,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -153,6 +154,9 @@ def prepare_originate_fields(
     (``routing/stations.py``): FAXBOT_T0_MS, FAXBOT_CSI_EXPECT (digits separated by dots) and FAXBOT_CSI_REFUSE.
     ``dtmf`` is the keys pressed once the call is answered, before the fax starts (``routing/after_answer.py``,
     FAXBOT_DTMF): 0-9, * and #, with w and W pauses.
+    ``data_connect`` makes it an NTT Data Connect call (patch 0010, FAXBOT_DATA_CONNECT): the first INVITE offers
+    only T.38, and a 488 refusal is called again as an ordinary fax call (``AMIClient``). It never goes with keys
+    after answer or T.38 at once, which need the voice call first.
     ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
     direct/peer_call.py): the call goes there, inside the tunnel, instead of
     over ``endpoint``. The caller checked the tunnel first.
@@ -244,6 +248,14 @@ def prepare_originate_fields(
         if not isinstance(dtmf, str) or not re.fullmatch(r"[0-9*#wW]{1,32}", dtmf):
             raise ValueError("Unsupported AMI keys after answer")
         variables["FAXBOT_DTMF"] = dtmf
+    # Patch 0010 (routing/data_connect_store.py): an NTT Data Connect call offers only T.38 from the first INVITE.
+    if not isinstance(data_connect, bool):
+        raise ValueError("Unsupported AMI fax mode")
+    if data_connect:
+        if dtmf is not None or audio or peer is not None:
+            raise ValueError("Unsupported AMI fax mode")
+        variables.pop("FAXBOT_T38_NOW", None)
+        variables["FAXBOT_DATA_CONNECT"] = "yes"
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -262,6 +274,16 @@ def prepare_originate_fields(
     }
     _validate_headers(fields)
     return fields
+
+
+DATA_CONNECT_VARIABLE = "FAXBOT_DATA_CONNECT=yes"
+CRLF = chr(13) + chr(10)
+
+
+def without_data_connect(fields):
+    """The same Originate as an ordinary fax call: the same ActionID and attempt, without the Data Connect offer."""
+    variables = [item for item in str(fields.get("Variable", "")).split(",") if item != DATA_CONNECT_VARIABLE]
+    return {**fields, "Variable": ",".join(variables)}
 
 
 def _database():
@@ -482,6 +504,10 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     subaddress = fax_subaddress(job_id)
     if subaddress:
         limits["subaddress"] = subaddress
+    # An NTT Data Connect call (routing/data_connect_store.places, decided before ranking and before the engine was
+    # chosen): never with keys after answer, a partner's tunnel or audio fax, which need or take another kind of call.
+    if getattr(call, "data_connect", False) is True and peer is None and not limits.get("audio"):
+        limits["data_connect"] = True
     if peer is not None:
         # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
         # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
@@ -493,6 +519,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         if keys:
             limits["dtmf"] = keys
             limits.pop("t38_now", None)  # the keys go out on the voice call, before any request for T.38
+            limits.pop("data_connect", None)  # a phone menu needs a voice call
     if peer is None and sip_trunk.configured(values) and tiff_path != "poll":
         # Patch 0007 (routing/stations.py): the station check before any page, and the cap on waiting for a fax
         # answer on a trunk billed by the minute; behind a phone menu, neither the cap nor the dialled number.
@@ -573,6 +600,11 @@ class AMIClient:
         # When the current connection logged in (time.monotonic), so a restart
         # Faxbot asked for can tell the new connection from the old one.
         self.connected_at: Optional[float] = None
+        # NTT Data Connect calls (patch 0010): the Originate fields of each call that offered Data Connect, by
+        # ActionID, until it ends; and for one the recipient refused (488), the ordinary call placed again for the
+        # same attempt and the first call's failure, held until that call is accepted.
+        self._data_connect_offers: Dict[str, Dict[str, str]] = {}
+        self._data_connect_retries: Dict[str, Dict[str, object]] = {}
 
     def engine_message(self) -> Optional[str]:
         """The plain sentence for a missing connection, or None while connected."""
@@ -719,11 +751,19 @@ class AMIClient:
             return
         event = fields.get("event", "").lower()
         if event == "originateresponse":
+            if self._hold_data_connect_failure(fields, msg):
+                return
             self._emit("OriginateResponse", msg)
         elif (
             event == "userevent" and fields.get("userevent", "").lower() == "faxresult"
         ):
+            self._end_data_connect(f"faxbot:{fields.get('jobid', '')}:{fields.get('attemptid', '')}")
             self._emit("FaxResult", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxdataconnect":
+            # Patch 0010: the recipient refused the Data Connect offer (488); the same attempt calls again as an
+            # ordinary fax call, before any page, and the refusal is recorded.
+            self._data_connect_refused(fields)
+            self._emit("FaxDataConnect", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxinboundcall":
             self._emit("FaxInboundCall", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
@@ -943,14 +983,115 @@ class AMIClient:
             submission["Peer"] = peer.peer_id
         if trunk and trunk != "sip":
             submission["Trunk"] = trunk
+        if DATA_CONNECT_VARIABLE in fields["Variable"].split(","):
+            # Patch 0010: kept until the call ends, so a refusal can be called again as an ordinary fax call.
+            submission["DataConnect"] = "offered"
+            self._data_connect_offers[fields["ActionID"]] = dict(fields)
         learned = getattr(call, "learned", None)
         if learned is not None and learned.changed():
             submission["Learned"] = learned.payload()  # what this call used and why (fax_call_choices)
         self._emit("Submission", submission)
-        await self._send_action(fields)
+        try:
+            await self._send_action(fields)
+        except (ConnectionError, TimeoutError):
+            # Not acknowledged: the worker records the attempt as uncertain, and no refusal is called again.
+            self._data_connect_offers.pop(fields["ActionID"], None)
+            raise
 
     def on_originate_response(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("OriginateResponse", cb)
+
+    def on_data_connect(self, cb: Callable[[Dict[str, str]], None]):
+        """A Data Connect offer the recipient refused (patch 0010's FaxDataConnect event)."""
+        self._listen("FaxDataConnect", cb)
+
+    # NTT Data Connect: a refused offer is called again as an ordinary fax call, once, for the same attempt --------
+
+    def _data_connect_refused(self, fields):
+        """Start the ordinary call for a refused offer this client placed. An offer it does not know (another
+        process placed it, or this one restarted) is left alone: its failure then goes through, before any page."""
+        if str(fields.get("outcome", "")).lower() != "refused":
+            return
+        action_id = f"faxbot:{fields.get('jobid', '')}:{fields.get('attemptid', '')}"
+        offer = self._data_connect_offers.pop(action_id, None)
+        if offer is None or action_id in self._data_connect_retries:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        state: Dict[str, object] = {"held": None, "outcome": None, "refused_failure_pending": True}
+        self._data_connect_retries[action_id] = state
+        state["task"] = loop.create_task(self._call_again_as_voice(action_id, without_data_connect(offer)))
+
+    def _hold_data_connect_failure(self, fields, msg) -> bool:
+        """True when this OriginateResponse is the refused Data Connect call's own failure (the first failure after
+        the refusal): dropped once the ordinary call is accepted, or could have been; held until then; released
+        when the ordinary call is certainly not placed. Any later failure is the ordinary call's and goes through."""
+        action_id = fields.get("actionid", "")
+        state = self._data_connect_retries.get(action_id)
+        if state is None or str(fields.get("response", "")).lower() != "failure":
+            return False
+        if not state["refused_failure_pending"]:
+            self._data_connect_retries.pop(action_id, None)
+            return False
+        state["refused_failure_pending"] = False
+        if state["outcome"] is None:
+            state["held"] = msg
+        return True
+
+    async def _call_again_as_voice(self, action_id, fields):
+        state = self._data_connect_retries.get(action_id)
+        outcome = await self._send_once(fields)
+        if state is None:
+            return
+        if outcome == "unknown":
+            # Asterisk may have taken the ordinary call: its outcome decides the attempt. The refused call's failure
+            # is never reported as a failure before any page, so nothing can be sent again in the meantime.
+            logging.getLogger(__name__).warning(
+                "Fax %s: Faxbot could not confirm the ordinary call after the Data Connect refusal; nothing is sent "
+                "again and the fax waits for the call's outcome.", action_id.split(":")[1])
+        if outcome in ("accepted", "unknown"):
+            state["outcome"] = outcome
+            state["held"] = None  # the refused call's failure: the attempt goes on as an ordinary call
+            return
+        # Certainly not placed: the refused call's failure stands, before any page, as without Data Connect.
+        self._data_connect_retries.pop(action_id, None)
+        if state["held"] is not None:
+            self._emit("OriginateResponse", state["held"])
+
+    async def _send_once(self, fields) -> str:
+        """'accepted', 'rejected' or 'not_sent' (certainly not placed), or 'unknown' (written, unacknowledged)."""
+        if not self._connected.is_set() or self.writer is None:
+            return "not_sent"
+        action_id = fields["ActionID"]
+        if action_id in self._pending_actions:
+            return "not_sent"
+        _validate_headers(fields)
+        future = asyncio.get_running_loop().create_future()
+        self._pending_actions[action_id] = future
+        raw = "".join(f"{k}: {v}" + CRLF for k, v in fields.items()) + CRLF
+        try:
+            self.writer.write(raw.encode())
+            async with asyncio.timeout(ORIGINATE_RESPONSE_TIMEOUT_SECONDS):
+                await self.writer.drain()
+                response = await future
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, ConnectionError, OSError):
+            return "unknown"
+        finally:
+            if self._pending_actions.get(action_id) is future:
+                self._pending_actions.pop(action_id)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
+        return "accepted" if str(response.get("response", "")).lower() == "success" else "rejected"
+
+    def _end_data_connect(self, action_id):
+        self._data_connect_offers.pop(action_id, None)
+        self._data_connect_retries.pop(action_id, None)
 
     def on_fax_result(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("FaxResult", cb)

@@ -809,6 +809,7 @@ const consoleHandlers = [
     channels: { systems: [], sentence: 'No call records yet.', formats: [], read_on: '', note: '' } })),
   // POTS-replacement quotes (N23): none until a test says otherwise.
   http.get('/routing/pots-quotes', () => json({ quotes: [], published: [], sentence: 'No POTS-replacement quote yet.', note: '' })),
+  http.get('/routing/destinations/:number/data-connect', ({ params }) => json({ number: params.number, capable: false, known: false, source: null, learned_on: null, sentence: '', trunks: [], advice: [], price: '', not_run: '' })),
   http.get('/routing/exchange-rates', () => json({ reference: { enabled: true, sentence: 'Faxbot reads the ECB reference rates in the background; none are stored yet.', date: null, date_text: null, current: false, source_url: 'https://www.ecb.europa.eu/', read_on: '2026-10-10', rates: [] }, own: [], reference_max_age_days: 7, own_max_age_days: 35 })),
   // The line inventory and carrier lists (N19): none until a test says otherwise.
   http.get('/routing/line-inventory', () => json({ sentence: 'No line inventory yet.', lines: [], inventory: null,

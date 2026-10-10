@@ -134,6 +134,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
         cover = api.get('/header-notice/recipients/' + segment(number))
     except CliError:
         cover = None
+    try:
+        data_connect = api.get('/routing/destinations/' + segment(number) + '/data-connect')
+    except CliError:
+        data_connect = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -147,7 +151,9 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Keys pressed after it answers', (keys or {}).get('spoken')),
                     *([('Cover sheet', 'Always sent, even when the sender puts its notice in the header'
                         if cover.get('needs_cover') else 'May go in the header notice when the sender chooses')]
-                      if cover else [])])
+                      if cover else []),
+                    *([('NTT Data Connect', data_connect['sentence'])]
+                      if data_connect and (data_connect.get('known') or data_connect.get('trunks')) else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):
@@ -212,8 +218,12 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                    help="Keys to press once this number answers, before the fax starts, for a fax "
                                         "machine behind a phone menu: such as 2, or 2w105 (w is a short pause, W a "
                                         "one-second pause). 'none' presses none. Only calls over your trunk can press "
-                                        "keys, and the seconds in the menu are billed.")):
-    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, or how faxes sent together to it mark each document."""
+                                        "keys, and the seconds in the menu are billed."),
+                               data_connect: str = typer.Option(None, '--data-connect', metavar='ON|OFF',
+                                   help="Whether this number's fax machine takes NTT Data Connect calls: on sends "
+                                        "faxes to it as Data Connect calls over your NTT Hikari Denwa trunk, priced "
+                                        "by the bandwidth they use; off sends ordinary fax calls.")):
+    """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, NTT Data Connect, or how faxes sent together to it mark each document."""
     api = state.api()
     chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
                                         (separator_pages, 'separators')) if flag]
@@ -239,8 +249,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
     if not body and not page_body and boundaries is None and needs_cover is None and station_check is None \
-            and expected_station is None and after_answer is None:
+            and expected_station is None and after_answer is None and data_connect is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
+    if data_connect is not None and data_connect.strip().lower() not in ('on', 'off'):
+        raise CliError('Use on or off for --data-connect.')
+    # Whether the machine takes NTT Data Connect calls (routing/data_connect_store.py); its own address.
+    ntt = (api.put('/routing/destinations/' + segment(number) + '/data-connect',
+                   json={'capable': data_connect.strip().lower() == 'on'}) if data_connect is not None else None)
     if station_check is not None and station_check.lower() not in ('warn', 'refuse'):
         raise CliError('Use warn or refuse for --station-check.')
     # The station check (routing/stations.py): its own address, set before the rest.
@@ -272,8 +287,12 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         result = {**(result or {}), 'station_check': station}
     if keys is not None:
         result = {**(result or {}), 'after_answer': keys}
+    if ntt is not None:
+        result = {**(result or {}), 'data_connect': ntt}
 
     def human(out):
+        if ntt is not None:
+            out.line(ntt['sentence'])
         if keys is not None:
             out.line(keys['saved'])
         if cover is not None:

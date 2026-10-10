@@ -365,6 +365,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # Held while the office ran on battery, and sent by itself when the power allowed (power.py).
     if job.get('power_hold'):
         route.append(('On battery', job['power_hold']))
+    # An NTT Data Connect call, or the ordinary call after the recipient refused one.
+    if job.get('data_connect'):
+        route.append(('Data Connect', job['data_connect']))
     if job.get('urgent'):
         route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
     # The send-by time, and whether the fax may miss it.

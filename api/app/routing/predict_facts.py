@@ -630,7 +630,7 @@ def _extra_trunk(values, account):
 
 
 def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None,
-              mailbox_id=None):
+              mailbox_id=None, data_connect=None):
     """The ``RouteFacts`` for one route and number, from the installation when it has a database.
 
     ``account`` is the account the call would use (its key; ``route_key`` when not given): an extra trunk is
@@ -639,8 +639,12 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     ``mailbox_id``: the mailbox the fax is sent from, so a deck priced by caller ID reads the number the call
     presents for that mailbox (its reply number, as ``ami.originate_fields_for`` sets it); None for a quote with no
     fax, priced at the organization's number.
+    ``data_connect``: whether the call goes as an NTT Data Connect call, priced by its bandwidth instead of the
+    voice card; None decides it as the call will be placed (``data_connect_store.places``), True or False is what an
+    attempt's call really did (its recorded estimate).
     """
     values = _values() if values is None else values
+    installation_values = values
     engine = _engine() if engine is None else engine
     data = shipped() if data is None else data
     account = account or route_key
@@ -702,6 +706,16 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     terms = plan_terms(account, terms, card, values)
     # A carrier that publishes prices by time of day (peak, off-peak): read at the time the call starts.
     terms = banded(terms, identity, where, data)
+    # An NTT Data Connect call (brief 99): priced by the bandwidth its session holds, never the voice card.
+    if route_key == 'sip' and terms is not None and refusal is None:
+        if data_connect is None:
+            from .data_connect_store import places
+            data_connect = places(engine, installation_values, account, destination)
+        if data_connect:
+            from . import data_connect as ntt
+            terms = RateTerms(ntt.card(identity), terms.destination_class, terms.prefixes,
+                              max_pages_per_fax=terms.max_pages_per_fax, published=True)
+    data_connect = bool(data_connect) and route_key == 'sip' and terms is not None
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
@@ -735,4 +749,4 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         link = replace(link, typical_note=UNKNOWN_SPEED)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
-                      origin=origin, learned=learned, at=moment)
+                      origin=origin, learned=learned, at=moment, data_connect=data_connect)

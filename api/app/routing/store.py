@@ -415,8 +415,12 @@ class RouteStore:
             values = ConfigurationValues.from_environment({'SIP_TRUNK_PRESET': self.sip_preset()})
         account = target.route or target.provider_id
         key = account if self.card_for(account) is not None else target.provider_id
+        # An attempt is priced by what its call really did: the Data Connect price only for a call that went as
+        # one (routing/data_connect_store.py), the voice card for every other call, a refused offer included.
+        from .data_connect_store import outcome
         facts = facts_for(key, target.dialed or target.destination, now=now, engine=self.engine,
-                          values=values, account=account)
+                          values=values, account=account,
+                          data_connect=outcome(self.engine, target.attempt_id) == 'data_connect')
         return facts.terms.card if facts.terms is not None and not facts.refused else None
 
     def capture(self, target, *, observed_seconds=None, now=None):

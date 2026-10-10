@@ -66,6 +66,7 @@ LAST_TIME = '000010'
 # One sentence for each reason a fax uses Faxbot's built-in engine (an ordinary
 # fax); "fax engine" is the engine in operator words (Jev 0.64-0.74).
 SENDING_TOGETHER = 'Faxes sent together in one call are sent as ordinary faxes.'
+DATA_CONNECT = "This number's fax machine takes NTT Data Connect calls, which Faxbot's built-in engine places."
 NOT_RUNNING = "Faxbot's fax engine is not running, so this fax was sent as an ordinary fax."
 NOT_SET_UP = "Faxbot's fax engine starts when you select Apply and connect."
 LINES_NOT_READY = "Faxbot's fax engine is still starting, so this fax was sent as an ordinary fax."
@@ -494,6 +495,9 @@ class CallSettings:
     # Lossless tuning for the SSL Fax engine's job (pages/tuning.py ``CallTuning.comment``), carried in the job's
     # comments for hylafax/bin/jobcontrol; None leaves the engine's defaults.
     tuning: str | None = None
+    # An NTT Data Connect call (routing/data_connect_store.places): the built-in engine offers only T.38 from the
+    # first INVITE (asterisk patch 0010).
+    data_connect: bool = False
 
 
 # The coding Faxbot measured, as the setting's value (``sip_trunk.COMPRESSIONS``) and as HylaFAX's job data format.

@@ -1,0 +1,443 @@
+Faxbot: NTT Data Connect calls, T.38 from the first INVITE (brief 99, item 2).
+
+NTT's Hikari Denwa interface (音声利用IP通信網サービス 第2種タイプ2, version 13.1, pp. 20-21, read
+10 October 2026) defines a Data Connect call (帯域確保型データ通信) as a call whose media is
+not voice or video: an INVITE that offers m=image or m=application. A terminal that cannot
+take it answers 488 Not Acceptable Here, with a Warning, and the caller may call again as
+voice. NTT's own Hikari FAX tool (NTT East release, 12 November 2013) faxes that way: a Data
+Connect fax first, an ordinary G3 call when the far end does not take one. NTT bills a Data
+Connect call by its bandwidth (from ¥1.1 per 30 seconds) instead of the voice price (¥8.8 per
+3 minutes). Asterisk opens every outgoing call as voice and moves to T.38 by re-INVITE, so it
+could not place one.
+
+With FAXBOT_DATA_CONNECT=yes on the channel (set by Faxbot's Originate, only for a number
+whose machine takes Data Connect, over an NTT trunk with T.38 on):
+
+1. chan_pjsip: the first INVITE carries one image stream instead of audio, as an outgoing
+   T.38 re-INVITE would (the session starts in T38_LOCAL_REINVITE).
+2. res_pjsip_t38: that offer carries res_fax's own parameters (T.38 version 0, 14,400 bit/s,
+   transferredTCF, 400-octet IFPs, the endpoint's error correction), exactly ITU-T T.38
+   Annex D's attributes, and a b=AS:64 line (RFC 4566), the bandwidth Faxbot prices it at.
+   The channel is marked FAXBOT_DATA_CONNECT_RESULT=offered.
+3. A 2xx whose image stream has a port and a UDPTL peer puts the session where an incoming
+   T.38 offer puts it (T38_PEER_REINVITE), so SendFAX agrees the parameters exactly as
+   ReceiveFAX does for one; the agreement now finds the image stream in the active media
+   state when the pending one has none. Faxbot's UDPTL datagrams on the call are capped at
+   160 octets (the 59-octet data packet at 14,400 bit/s and the redundancy that fits), so
+   with UDP and IPv4 headers at spandsp's one datagram per 30 ms the session stays under
+   50.2 kbit/s, inside what it declared. FAXBOT_DATA_CONNECT_RESULT=connected, which
+   the dialplan's FaxResult event carries as DataConnect.
+4. A 488 sets FAXBOT_DATA_CONNECT_RESULT=refused and sends a FaxDataConnect user event (the
+   fax, the attempt, the code and the Warning, base64), so Faxbot calls again as an ordinary
+   fax call for the same attempt, before any page (api/app/ami.py). Any other answer leaves
+   the call as it is.
+
+5. Receiving: Asterisk declines T.38 in a first INVITE. On an endpoint that takes Data
+   Connect faxes (set_var=FAXBOT_DATA_CONNECT_ACCEPT=yes, which Faxbot renders for an NTT
+   Hikari Denwa trunk with T.38 on), a T.38-only first INVITE puts the session where a
+   peer's T.38 re-INVITE would (T38_PEER_REINVITE, without the rejection timer, since
+   nothing is deferred), the answer carries res_fax's own parameters, and ReceiveFAX agrees
+   them as it does for a re-INVITE. FAXBOT_DATA_CONNECT_IN=yes tells the dialplan to let the
+   built-in engine take it.
+
+Nothing changes a call that does not ask for Data Connect, or an endpoint that does not take it. Not yet run against NTT; proven
+against a second Faxbot Asterisk that takes a T.38-only first INVITE and one that refuses it.
+
+--- a/channels/chan_pjsip.c
++++ b/channels/chan_pjsip.c
+@@ -2495,6 +2495,63 @@
+ 	connected.source = AST_CONNECTED_LINE_UPDATE_SOURCE_ANSWER;
+ 
+ 	ast_channel_queue_connected_line_update(session->channel, &connected, NULL);
++}
++
++/*!
++ * \brief Faxbot (0010): an NTT Data Connect call offers only T.38 in its first INVITE.
++ *
++ * When the channel asks for it (FAXBOT_DATA_CONNECT=yes, set by Faxbot's Originate) and the endpoint does T.38,
++ * the first offer carries one image stream instead of audio, as an outgoing T.38 re-INVITE would; res_pjsip_t38
++ * writes it (ITU-T T.38 Annex D parameters and a b=AS line) and reads the answer. Any other call is unchanged.
++ */
++static void faxbot_data_connect_media(struct ast_sip_session *session)
++{
++	struct ast_sip_session_media_state *media_state;
++	struct ast_stream *stream;
++	struct ast_format_cap *caps;
++	const char *value;
++	int wanted;
++
++	if (!session->channel || !session->endpoint->media.t38.enabled) {
++		return;
++	}
++	ast_channel_lock(session->channel);
++	value = pbx_builtin_getvar_helper(session->channel, "FAXBOT_DATA_CONNECT");
++	wanted = !ast_strlen_zero(value) && !strcmp(value, "yes");
++	ast_channel_unlock(session->channel);
++	if (!wanted) {
++		return;
++	}
++	media_state = ast_sip_session_media_state_alloc();
++	if (!media_state) {
++		return;
++	}
++	media_state->topology = ast_stream_topology_alloc();
++	stream = media_state->topology ? ast_stream_alloc("t38", AST_MEDIA_TYPE_IMAGE) : NULL;
++	caps = stream ? ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT) : NULL;
++	if (!caps || ast_format_cap_append(caps, ast_format_t38, 0)) {
++		ao2_cleanup(caps);
++		ast_stream_free(stream);
++		ast_sip_session_media_state_free(media_state);
++		return;
++	}
++	ast_stream_set_formats(stream, caps);
++	ao2_ref(caps, -1);
++	ast_stream_set_state(stream, AST_STREAM_STATE_SENDRECV);
++	if (ast_stream_topology_set_stream(media_state->topology, 0, stream)) {
++		ast_stream_free(stream);
++		ast_sip_session_media_state_free(media_state);
++		return;
++	}
++	if (!ast_sip_session_media_state_add(session, media_state, AST_MEDIA_TYPE_IMAGE, 0)) {
++		ast_sip_session_media_state_free(media_state);
++		return;
++	}
++	ast_sip_session_media_state_free(session->pending_media_state);
++	session->pending_media_state = media_state;
++	session->t38state = T38_LOCAL_REINVITE;
++	ast_log(LOG_NOTICE, "%s: NTT Data Connect call: the first INVITE offers only T.38\n",
++		ast_channel_name(session->channel));
+ }
+ 
+ static int call(void *data)
+@@ -2508,6 +2565,7 @@
+ 		);
+ 
+ 
++	faxbot_data_connect_media(session);
+ 	res = ast_sip_session_create_invite(session, &tdata);
+ 
+ 	if (res) {
+--- a/res/res_pjsip_t38.c
++++ b/res/res_pjsip_t38.c
+@@ -46,6 +46,7 @@
+ #include "asterisk/stream.h"
+ #include "asterisk/format_cache.h"
+ #include "asterisk/pbx.h"
++#include "asterisk/manager.h"
+ 
+ #include "asterisk/res_pjsip.h"
+ #include "asterisk/res_pjsip_session.h"
+@@ -510,6 +511,20 @@
+ 	return media_state;
+ }
+ 
++/*!
++ * \brief Faxbot (0010): the image stream of a T.38 offer still being agreed: the pending one for a peer's re-INVITE,
++ * else the active one, for an NTT Data Connect call whose first INVITE already carried T.38 and was answered.
++ */
++static struct ast_sip_session_media *faxbot_image_media(struct ast_sip_session *session)
++{
++	struct ast_sip_session_media *session_media = session->pending_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
++
++	if (!session_media && session->active_media_state) {
++		session_media = session->active_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
++	}
++	return session_media;
++}
++
+ /*! \brief Task for reacting to T.38 control frame */
+ static int t38_interpret_parameters(void *obj)
+ {
+@@ -553,7 +568,7 @@
+ 			}
+ 			state->our_parms.version = MIN(state->our_parms.version, state->their_parms.version);
+ 			state->our_parms.rate_management = state->their_parms.rate_management;
+-			session_media = data->session->pending_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
++			session_media = faxbot_image_media(data->session);
+ 			if (!session_media) {
+ 				ast_log(LOG_ERROR, "Failed to negotiate parameters for reinvite on channel '%s' (No pending session media).\n",
+ 					data->session->channel ? ast_channel_name(data->session->channel) : "unknown channel");
+@@ -600,7 +615,7 @@
+ 		struct ast_control_t38_parameters parameters = state->their_parms;
+ 
+ 		if (data->session->t38state == T38_PEER_REINVITE) {
+-			session_media = data->session->pending_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
++			session_media = faxbot_image_media(data->session);
+ 			if (!session_media) {
+ 				ast_log(LOG_ERROR, "Failed to request parameters for reinvite on channel '%s' (No pending session media).\n",
+ 					data->session->channel ? ast_channel_name(data->session->channel) : "unknown channel");
+@@ -746,6 +761,12 @@
+ static int t38_incoming_invite_request(struct ast_sip_session *session, struct pjsip_rx_data *rdata)
+ {
+ 	t38_attach_framehook(session);
++	/* Faxbot (0010): an NTT Data Connect fax coming in (T.38 alone in its first INVITE): the built-in engine takes
++	 * it (the dialplan reads FAXBOT_DATA_CONNECT_IN). */
++	if (session->channel && session->t38state == T38_PEER_REINVITE && session->inv_session
++		&& session->inv_session->state != PJSIP_INV_STATE_CONFIRMED) {
++		pbx_builtin_setvar_helper(session->channel, "FAXBOT_DATA_CONNECT_IN", "yes");
++	}
+ 	return 0;
+ }
+ 
+@@ -992,6 +1013,45 @@
+ 	}
+ 
+ 	return AST_SIP_SESSION_SDP_DEFER_NOT_NEEDED;
++}
++
++/*! \brief Faxbot (0010): whether this endpoint takes NTT Data Connect faxes (set_var=FAXBOT_DATA_CONNECT_ACCEPT=yes) */
++static int faxbot_data_connect_accepted(struct ast_sip_session *session)
++{
++	struct ast_variable *variable;
++
++	for (variable = session->endpoint->channel_vars; variable; variable = variable->next) {
++		if (!strcmp(variable->name, "FAXBOT_DATA_CONNECT_ACCEPT") && !strcmp(variable->value, "yes")) {
++			return 1;
++		}
++	}
++	return 0;
++}
++
++/*!
++ * \brief Faxbot (0010): an NTT Data Connect fax coming in: T.38 alone in the first INVITE, on an endpoint that
++ * takes them (Faxbot's NTT Hikari Denwa trunk).
++ *
++ * Asterisk declines T.38 in a first INVITE. Here the session goes where a peer's T.38 re-INVITE puts it
++ * (T38_PEER_REINVITE, with no rejection timer: nothing is deferred), and the answer carries res_fax's own
++ * parameters (version 0, 14,400 bit/s, the caller's rate management), so ReceiveFAX agrees them as it does for a
++ * re-INVITE. Anything else is declined as before.
++ */
++static void faxbot_data_connect_incoming(struct ast_sip_session *session, struct ast_sip_session_media *session_media,
++	struct t38_state *state, pjmedia_sdp_media *stream)
++{
++	if (session->channel || !session->inv_session || session->inv_session->role != PJSIP_ROLE_UAS
++		|| session->t38state != T38_DISABLED || !faxbot_data_connect_accepted(session)
++		|| t38_initialize_session(session, session_media)) {
++		return;
++	}
++	t38_interpret_sdp(state, session, session_media, stream);
++	state->our_parms.version = 0;
++	state->our_parms.max_ifp = 400;
++	state->our_parms.rate = AST_T38_RATE_14400;
++	state->our_parms.rate_management = state->their_parms.rate_management;
++	ast_udptl_set_local_max_ifp(session_media->udptl, state->our_parms.max_ifp);
++	session->t38state = T38_PEER_REINVITE;
+ }
+ 
+ /*! \brief Function which negotiates an incoming media stream */
+@@ -1013,6 +1073,7 @@
+ 		return 0;
+ 	}
+ 
++	faxbot_data_connect_incoming(session, session_media, state, stream);
+ 	if ((session->t38state == T38_REJECTED) || (session->t38state == T38_DISABLED)) {
+ 		ast_debug(3, "Declining; T.38 state is rejected or declined\n");
+ 		t38_change_state(session, NULL, state, T38_DISABLED);
+@@ -1037,8 +1098,174 @@
+ 	}
+ 
+ 	return 1;
++}
++
++/*! \brief Faxbot (0010): the bandwidth an NTT Data Connect call declares (b=AS, kbit/s; routing/data_connect.py) */
++#define FAXBOT_DATA_CONNECT_KBPS 64
++/*! \brief Faxbot (0010): the largest UDPTL datagram sent on one, so the session never exceeds what it declared */
++#define FAXBOT_DATA_CONNECT_DATAGRAM 160
++
++/*! \brief Faxbot (0010): whether this call asks to be an NTT Data Connect call (FAXBOT_DATA_CONNECT=yes) */
++static int faxbot_data_connect_wanted(struct ast_sip_session *session)
++{
++	const char *value;
++	int wanted;
++
++	if (!session->channel) {
++		return 0;
++	}
++	ast_channel_lock(session->channel);
++	value = pbx_builtin_getvar_helper(session->channel, "FAXBOT_DATA_CONNECT");
++	wanted = !ast_strlen_zero(value) && !strcmp(value, "yes");
++	ast_channel_unlock(session->channel);
++	return wanted;
++}
++
++/*! \brief Faxbot (0010): whether this is the first INVITE of a call chan_pjsip turned into a Data Connect offer */
++static int faxbot_data_connect_first_offer(struct ast_sip_session *session)
++{
++	return session->inv_session && session->inv_session->state == PJSIP_INV_STATE_NULL
++		&& session->t38state == T38_LOCAL_REINVITE && faxbot_data_connect_wanted(session);
++}
++
++/*!
++ * \brief Faxbot (0010): the T.38 parameters of a Data Connect call's first offer.
++ *
++ * SendFAX has not run yet, so the offer carries res_fax's own parameters (version 0, 14,400 bit/s,
++ * transferredTCF, 400-octet IFPs), the values ITU-T T.38 Annex D describes and data_connect.T38_SDP lists.
++ * The channel is marked offered, so the answer is read as the answer to this offer.
++ */
++static void faxbot_data_connect_offer(struct ast_sip_session *session, struct ast_sip_session_media *session_media,
++	struct t38_state *state)
++{
++	if (!faxbot_data_connect_first_offer(session)) {
++		return;
++	}
++	if (!state->our_parms.max_ifp) {
++		state->our_parms.version = 0;
++		state->our_parms.max_ifp = 400;
++		state->our_parms.rate = AST_T38_RATE_14400;
++		state->our_parms.rate_management = AST_T38_RATE_MANAGEMENT_TRANSFERRED_TCF;
++		ast_udptl_set_local_max_ifp(session_media->udptl, state->our_parms.max_ifp);
++	}
++	ast_channel_lock(session->channel);
++	pbx_builtin_setvar_helper(session->channel, "FAXBOT_DATA_CONNECT_RESULT", "offered");
++	ast_channel_unlock(session->channel);
++}
++
++/*! \brief Faxbot (0010): the bandwidth a Data Connect call's first offer declares, as RFC 4566's b=AS line */
++static void faxbot_data_connect_bandwidth(struct ast_sip_session *session, pj_pool_t *pool, pjmedia_sdp_media *media)
++{
++	static const pj_str_t STR_AS = { "AS", 2 };
++	pjmedia_sdp_bandw *bandwidth;
++
++	if (!faxbot_data_connect_first_offer(session) || media->bandw_count >= PJMEDIA_MAX_SDP_BANDW) {
++		return;
++	}
++	bandwidth = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_bandw);
++	if (!bandwidth) {
++		return;
++	}
++	bandwidth->modifier = STR_AS;
++	bandwidth->value = FAXBOT_DATA_CONNECT_KBPS;
++	media->bandw[media->bandw_count++] = bandwidth;
+ }
+ 
++/*! \brief Faxbot (0010): keep only the characters of a fax or attempt identity (hexadecimal) for the event */
++static void faxbot_identity(char *out, size_t size, const char *value)
++{
++	size_t used = 0;
++
++	for (; value && *value && used + 1 < size; value++) {
++		if (isxdigit((unsigned char) *value)) {
++			out[used++] = *value;
++		}
++	}
++	out[used] = '\0';
++}
++
++/*!
++ * \brief Faxbot (0010): the answer to an NTT Data Connect call's first INVITE.
++ *
++ * A 2xx whose image stream has a port and a UDPTL peer leaves the session as an incoming T.38 offer leaves it
++ * (T38_PEER_REINVITE), so SendFAX agrees the parameters exactly as ReceiveFAX does for one, and Faxbot's
++ * datagrams are capped at FAXBOT_DATA_CONNECT_DATAGRAM octets so the session stays inside the bandwidth it
++ * declared. A 488 is the recipient's machine, or the network, refusing the offer: FAXBOT_DATA_CONNECT_RESULT is
++ * refused and a FaxDataConnect user event names the fax and attempt (and NTT's Warning, base64), so Faxbot calls
++ * again as an ordinary fax call before any page. Any other answer leaves the call as it is.
++ */
++static void faxbot_data_connect_response(struct ast_sip_session *session, struct pjsip_rx_data *rdata)
++{
++	static const pj_str_t STR_WARNING = { "Warning", 7 };
++	int code = rdata->msg_info.msg->line.status.code;
++	struct ast_sip_session_media *session_media;
++	struct t38_state *state;
++	struct ast_sockaddr peer;
++	const char *value;
++	int offered;
++
++	if (!session->channel || rdata->msg_info.msg->type != PJSIP_RESPONSE_MSG) {
++		return;
++	}
++	ast_channel_lock(session->channel);
++	value = pbx_builtin_getvar_helper(session->channel, "FAXBOT_DATA_CONNECT_RESULT");
++	offered = !ast_strlen_zero(value) && !strcmp(value, "offered");
++	ast_channel_unlock(session->channel);
++	if (!offered) {
++		return;
++	}
++
++	if (code == 488) {
++		pjsip_generic_string_hdr *header = pjsip_msg_find_hdr_by_name(rdata->msg_info.msg, &STR_WARNING, NULL);
++		char warning[256] = "", encoded[400] = "", job[64] = "", attempt[64] = "";
++
++		if (header) {
++			ast_copy_pj_str(warning, &header->hvalue, sizeof(warning));
++		}
++		ast_base64encode(encoded, (unsigned char *) warning, strlen(warning), sizeof(encoded));
++		ast_channel_lock(session->channel);
++		faxbot_identity(job, sizeof(job), pbx_builtin_getvar_helper(session->channel, "JOBID"));
++		faxbot_identity(attempt, sizeof(attempt), pbx_builtin_getvar_helper(session->channel, "FAXATTEMPT"));
++		pbx_builtin_setvar_helper(session->channel, "FAXBOT_DATA_CONNECT_RESULT", "refused");
++		ast_channel_unlock(session->channel);
++		ast_log(LOG_NOTICE, "%s: the NTT Data Connect offer was refused (488 %s)\n",
++			ast_channel_name(session->channel), warning);
++		manager_event(EVENT_FLAG_USER, "UserEvent",
++			"UserEvent: FaxDataConnect\r\nJobID: %s\r\nAttemptID: %s\r\nOutcome: refused\r\nCode: %d\r\n"
++			"Warning64: %s\r\n", job, attempt, code, encoded);
++		return;
++	}
++
++	if (code < 200 || code >= 300 || session->t38state != T38_LOCAL_REINVITE || !session->active_media_state) {
++		return;
++	}
++	session_media = session->active_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
++	if (!session_media || !session_media->udptl || !(state = t38_state_get_or_alloc(session))) {
++		return; /* the answer's media is not applied yet: read again after it is */
++	}
++	ast_udptl_get_peer(session_media->udptl, &peer);
++	if (!ast_sockaddr_port(&peer)) {
++		return;
++	}
++	if (ast_udptl_get_far_max_datagram(session_media->udptl) > FAXBOT_DATA_CONNECT_DATAGRAM) {
++		ast_udptl_set_far_max_datagram(session_media->udptl, FAXBOT_DATA_CONNECT_DATAGRAM);
++	}
++	ast_channel_lock(session->channel);
++	pbx_builtin_setvar_helper(session->channel, "FAXBOT_DATA_CONNECT_RESULT", "connected");
++	ast_channel_unlock(session->channel);
++	ast_log(LOG_NOTICE, "%s: NTT Data Connect call answered with T.38\n", ast_channel_name(session->channel));
++	t38_change_state(session, session_media, state, T38_PEER_REINVITE);
++	return;
++}
++
++/*! \brief Faxbot (0010): reads every answer to a Data Connect call's first INVITE, before the channel does */
++static struct ast_sip_session_supplement faxbot_data_connect_supplement = {
++	.method = "INVITE",
++	.priority = AST_SIP_SUPPLEMENT_PRIORITY_CHANNEL - 1,
++	.incoming_response = faxbot_data_connect_response,
++	.response_priority = AST_SIP_SESSION_BEFORE_MEDIA | AST_SIP_SESSION_AFTER_MEDIA,
++};
++
+ /*! \brief Function which creates an outgoing stream */
+ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct ast_sip_session_media *session_media,
+ 				      struct pjmedia_sdp_session *sdp, const struct pjmedia_sdp_session *remote, struct ast_stream *stream)
+@@ -1073,6 +1300,8 @@
+ 		ast_debug(3, "Not creating outgoing SDP stream: Failed to initialize T.38 session\n");
+ 		return -1;
+ 	}
++
++	faxbot_data_connect_offer(session, session_media, state);
+ 
+ 	if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media))) ||
+ 		!(media->conn = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_conn)))) {
+@@ -1142,6 +1371,7 @@
+ 		break;
+ 	}
+ 
++	faxbot_data_connect_bandwidth(session, pool, media);
+ 	sdp->media[sdp->media_count++] = media;
+ 
+ 	return 1;
+@@ -1326,6 +1556,7 @@
+ 	ast_sip_session_unregister_sdp_handler(&image_sdp_handler, "image");
+ 	ast_sip_session_unregister_supplement(&t38_supplement);
+ 	ast_sip_session_unregister_supplement(&faxbot_t38_bye_supplement);
++	ast_sip_session_unregister_supplement(&faxbot_data_connect_supplement);
+ 
+ 	return 0;
+ }
+@@ -1350,6 +1581,7 @@
+ 
+ 	ast_sip_session_register_supplement(&t38_supplement);
+ 	ast_sip_session_register_supplement(&faxbot_t38_bye_supplement);
++	ast_sip_session_register_supplement(&faxbot_data_connect_supplement);
+ 
+ 	if (ast_sip_session_register_sdp_handler(&image_sdp_handler, "image")) {
+ 		ast_log(LOG_ERROR, "Unable to register SDP handler for image stream type\n");

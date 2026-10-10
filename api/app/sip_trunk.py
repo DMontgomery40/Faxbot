@@ -1127,6 +1127,10 @@ def _trunk_lines(trunk: Trunk, values, names, transport, matches, key=None):
         options = fax_options(values)
         lines += ['t38_udptl=yes', f't38_udptl_ec={options.t38_error_correction}',
                   f't38_udptl_maxdatagram={options.t38_max_datagram}', 't38_udptl_nat=yes']
+        if trunk.preset.id == 'ntt-hikari':
+            # NTT Data Connect faxes (asterisk patch 0010): T.38 alone in the first INVITE is answered, not declined.
+            # The caller pays for the call; routing/data_connect_store.py decides what Faxbot sends that way.
+            lines.append('set_var=FAXBOT_DATA_CONNECT_ACCEPT=yes')
     else:
         lines.append('t38_udptl=no')
     # Answer media where the carrier's packets come from, reuse the signaling

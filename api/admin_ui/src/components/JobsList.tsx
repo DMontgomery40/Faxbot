@@ -772,6 +772,13 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         {detailJob.power_hold}
                       </Typography>
                     )}
+                    {/* An NTT Data Connect call, or the ordinary call after the recipient refused one. */}
+                    {detailJob.data_connect && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-data-connect">
+                        {detailJob.data_connect}
+                      </Typography>
+                    )}
                     {/* The send-by time, and whether the fax may miss it. */}
                     {detailJob.send_by && (
                       <Typography component="span" variant="body2" display="block"

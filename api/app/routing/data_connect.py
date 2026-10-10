@@ -84,6 +84,49 @@ def voice_charge(seconds) -> Decimal:
     return units(seconds, VOICE.seconds) * VOICE.yen
 
 
+# -- the session a Data Connect fax call holds (brief 99, item 2) ---------------------------------------------------
+#
+# Faxbot's built-in engine places a Data Connect fax call as one T.38 session (asterisk patch 0010): the first INVITE
+# offers only m=image, as ITU-T T.38 Annex D describes it, and declares SESSION_KBPS with RFC 4566's b=AS line, the
+# standard way to say what bandwidth a session needs. NTT reserves and bills the bandwidth in use; its detailed
+# interface is not published, so the declaration is Faxbot's choice, not an NTT value. The session stays inside it:
+# Faxbot's fax engine (spandsp's T.38 terminal) sends one UDPTL datagram per PACKET_MS of fax data, and patch 0010
+# caps the datagrams it sends on the call at DATAGRAM_LIMIT octets (the 59-octet data packet at 14,400 bit/s plus
+# as much of the previous packets' redundancy as fits). With UDP and IPv4 headers that is at most
+# (160 + 28) x 8 x 1000 / 30 = 50,133 bit/s, inside NTT's lowest tier (up to 64 kbit/s); the loopback proof measures
+# every second of a call against SESSION_KBPS. So a Data Connect fax call is priced at that tier: ¥1.1 per started
+# 30 seconds, never more per minute than an ordinary call (¥6.6 against ¥8.8 per 3 minutes). Not yet run against NTT.
+SESSION_KBPS = 64
+DATAGRAM_LIMIT = 160
+IP_UDP_OCTETS = 28
+PACKET_MS = 30
+
+
+def session_bound_kbps() -> float:
+    """The most the session carries: DATAGRAM_LIMIT-octet datagrams, one every PACKET_MS, with their headers."""
+    return (DATAGRAM_LIMIT + IP_UDP_OCTETS) * 8 / PACKET_MS
+
+
+def card(provider_id='sip-ntt-hikari'):
+    """The Data Connect price for a fax call's session as a rate card (``costs.RateCard``): the tier's price per 30
+    seconds spread over the minute, billed in started 30-second steps, so ``costs`` bills exactly ``charge``."""
+    from datetime import datetime
+    from .costs import RateCard, parse_amount
+    found = tier(SESSION_KBPS)
+    per_minute = found.yen * 60 / found.seconds
+    return RateCard(None, provider_id, 'outbound', 'NTT Hikari Denwa Data Connect', CURRENCY,
+                    parse_amount(format(per_minute, 'f')), 0, 0, found.seconds, 0, EAST_PRICES,
+                    datetime.fromisoformat(READ_ON))
+
+
+def price_sentence() -> str:
+    """How a Data Connect fax call is priced, in one sentence."""
+    found = tier(SESSION_KBPS)
+    return (f'A Data Connect call, because this number\'s fax machine takes them: NTT charges ¥{found.yen} per '
+            f'started {found.seconds} seconds for a session up to {SESSION_KBPS} kbit/s, against ¥{VOICE.yen} per '
+            f'started {VOICE.seconds // 60} minutes for an ordinary call.')
+
+
 # Each a sentence for the trunk page and the setup advice.
 ADVICE = (
     'Data Connect works only between Data Connect-capable devices at both ends, on Hikari Denwa over FLET\'S '

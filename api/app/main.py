@@ -88,6 +88,7 @@ from .routing.countries_http import router as routing_countries_router
 from .routing.inventory_http import router as routing_inventory_router
 from .routing.renewal_http import router as routing_renewal_router
 from .routing.exchange_http import router as routing_exchange_router
+from .routing.data_connect_http import router as routing_data_connect_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
@@ -165,6 +166,9 @@ async def lifespan(application: FastAPI):
                     ami_client.on_fax_result(_handle_fax_result)
                     ami_client.on_originate_response(_handle_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
+                    # NTT Data Connect calls: how each went, and what it taught about the number (patch 0010).
+                    from .routing import data_connect_store
+                    data_connect_store.attach(ami_client, runtime.manager.store.engine)
                     # A T.38 call whose fax data never came back switches new calls to audio fax.
                     sip_fax_mode.attach(ami_client, runtime)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
@@ -242,6 +246,7 @@ app.include_router(routing_countries_router)
 app.include_router(routing_inventory_router)
 app.include_router(routing_renewal_router)
 app.include_router(routing_exchange_router)
+app.include_router(routing_data_connect_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
@@ -1775,9 +1780,11 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     coding_view = await run_lifecycle_step(lambda: page_coding.sent_view(_configuration_manager().store.engine, job_id))
     # Held while on battery, and sent by itself when the power allowed (power.py): one sentence, else None.
     power_hold = await run_lifecycle_step(lambda: _power_hold_sentence(job_id))
+    # An NTT Data Connect call, or the ordinary call after the recipient refused one (routing/data_connect_store.py).
+    data_connect = await run_lifecycle_step(lambda: _data_connect_sentence(job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
-            'coding': coding_view, 'power_hold': power_hold,
+            'coding': coding_view, 'power_hold': power_hold, 'data_connect': data_connect,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
@@ -1795,6 +1802,16 @@ def _power_hold_sentence(job_id):
     except sa.exc.SQLAlchemyError:
         logging.getLogger(__name__).warning('Fax %s: its hold while on battery could not be read.', job_id,
                                             exc_info=True)
+        return None
+
+
+def _data_connect_sentence(job_id):
+    """``data_connect_store.sent_sentence`` for Sent details; a database that cannot be read leaves it out, logged."""
+    from .routing.data_connect_store import sent_sentence
+    try:
+        return sent_sentence(_configuration_manager().store.engine, job_id)
+    except sa.exc.SQLAlchemyError:
+        logging.getLogger(__name__).warning('Fax %s: its Data Connect call could not be read.', job_id, exc_info=True)
         return None
 
 

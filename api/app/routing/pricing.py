@@ -147,9 +147,13 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     cost = found.cost
     micros = cost.micros if cost is not None else None
     in_plan = bool(prediction.marginal and micros == 0) or bool(left is not None and micros == 0 and found.uses_budget)
+    sentence = found.sentence or prediction.basis
+    if getattr(facts, 'data_connect', False):
+        from .data_connect import price_sentence
+        sentence = price_sentence()
     return Price(key, micros, cost.currency if cost is not None else None, in_plan=in_plan,
                  over_budget=bool(found.over_budget), uses_budget=bool(found.uses_budget),
-                 sentence=found.sentence or prediction.basis, number=number,
+                 sentence=sentence, number=number,
                  origin=getattr(facts, 'origin', None), held=hold if unheld is not None else None,
                  unheld_micros=(unheld.cost.micros if unheld is not None and unheld.cost is not None else None),
                  unheld_over=bool(unheld is not None and unheld.over_budget),

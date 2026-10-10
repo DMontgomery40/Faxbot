@@ -4456,6 +4456,7 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
+* `data-connect`: Turn NTT Data Connect calls on or off for...
 * `caller-ids`: The caller ID each sending account&#x27;s calls...
 * `confirm-caller-id`: Confirm that you hold a caller ID and may...
 * `own-access`: For Telekom CompanyFlex: the internet...
@@ -4620,6 +4621,25 @@ $ faxbot delivery providers trunk use [OPTIONS] {PRESET}
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
 * `--number-format e164|local|local_area`: How numbers are dialed: e164 (international format, +44...), local (as a phone at your site dials them), or on an analog line local_area (ten digits for numbers in its local calling area, 1 and ten digits for others).
 * `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9; on an analog line, *70 turns call waiting off for the call.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk data-connect`
+
+Turn NTT Data Connect calls on or off for an NTT Hikari Denwa trunk (on by default; it has no monthly fee).
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk data-connect [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on places NTT Data Connect calls to numbers whose machine takes them; off places ordinary fax calls.  [required]
+
+**Options**:
+
+* `--trunk KEY`: The NTT Hikari Denwa trunk, by its account key.  [default: sip]
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk caller-ids`
@@ -6395,7 +6415,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, or how faxes sent together to it mark each document.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, NTT Data Connect, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -6424,6 +6444,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--station-check WARN|REFUSE`: When this number answers as another fax machine: warn (the fax goes on and Sent says so) or refuse (Faxbot hangs up before any page).
 * `--expected-station NUMBER`: A fax number this recipient&#x27;s machine shows, such as the one on its letterhead, so Faxbot expects it.
 * `--after-answer KEYS|none`: Keys to press once this number answers, before the fax starts, for a fax machine behind a phone menu: such as 2, or 2w105 (w is a short pause, W a one-second pause). &#x27;none&#x27; presses none. Only calls over your trunk can press keys, and the seconds in the menu are billed.
+* `--data-connect ON|OFF`: Whether this number&#x27;s fax machine takes NTT Data Connect calls: on sends faxes to it as Data Connect calls over your NTT Hikari Denwa trunk, priced by the bandwidth they use; off sends ordinary fax calls.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`

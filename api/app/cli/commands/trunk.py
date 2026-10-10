@@ -471,6 +471,23 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
 
 # -- send-only numbers (B9) ----------------------------------------------------------------------------------
 
+@trunk.command('data-connect')
+def trunk_data_connect(switch: str = typer.Argument(..., metavar='on|off',
+                                                    help='on places NTT Data Connect calls to numbers whose machine '
+                                                         'takes them; off places ordinary fax calls.'),
+                       account: str = typer.Option('sip', '--trunk', metavar='KEY',
+                                                   help='The NTT Hikari Denwa trunk, by its account key.')):
+    """Turn NTT Data Connect calls on or off for an NTT Hikari Denwa trunk (on by default; it has no monthly fee)."""
+    value = switch.strip().lower()
+    if value not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.')
+    from ..client import segment
+    result = state.api().put('/routing/data-connect/trunks/' + segment(account), json={'enabled': value == 'on'})
+    state.out().result(result, lambda out: out.line(
+        'Faxbot places NTT Data Connect calls over this trunk to numbers whose machine takes them.'
+        if result['enabled'] else 'Faxbot places only ordinary fax calls over this trunk.'))
+
+
 send_only = typer.Typer(help='Numbers you show on faxes you send but never receive on here, such as your main office '
                              'number.', no_args_is_help=True)
 trunk.add_typer(send_only, name='send-only')

@@ -269,6 +269,8 @@ class RouteFacts:
     learned: str | None = None
     # When the call would start (naive UTC): prices by time of day (``RateTerms.time_bands``) are read at it.
     at: object = None
+    # An NTT Data Connect call (routing/data_connect_store.places): ``terms`` are its bandwidth price.
+    data_connect: bool = False
 
 
 # Sentences --------------------------------------------------------------------------
