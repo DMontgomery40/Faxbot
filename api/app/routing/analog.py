@@ -302,17 +302,32 @@ def import_local_calls(engine, store, values, account, data, *, filename='', pla
     return line_view(engine, store, values, account)
 
 
-def _routed(values, account):
-    """(whether the automatic choice may use the line, the delivery routes setting that would let it)."""
+ROUTED_ON = 'Faxbot now sends local calls on this line by itself; turn that off here.'
+ROUTED_OFF = 'Faxbot no longer chooses this line by itself; your other routes and sending rules are unchanged.'
+
+
+def routing_state(values, account):
+    """('default', 'listed' or 'off'): the line is the default sending account, one of your delivery routes
+    (``outbound_routes``, which Faxbot can turn off again), or not chosen by Faxbot at all."""
     from ..accounts import account_named
     try:
         found = account_named(values, account)
     except Exception:
         found = None
-    routes = list(getattr(values, 'outbound_route_providers', ()) or ())
-    if (found is not None and found.automatic) or account in routes:
-        return True, None
-    return False, ','.join([*routes, account])
+    if found is not None and found.default_sending:
+        return 'default'
+    if account in (getattr(values, 'outbound_route_providers', ()) or ()):
+        return 'listed'
+    return 'off'
+
+
+def routes_with(values, account, on):
+    """The ``outbound_routes`` setting with ``account`` appended (``on``) or taken out; every other route keeps its
+    place. The automatic choice ranks the default sending account and these routes by price (routing/plan.py)."""
+    routes = [part.strip() for part in str(getattr(values, 'outbound_routes', '') or '').split(',') if part.strip()]
+    if on:
+        return ','.join(routes if account in routes else [*routes, account])
+    return ','.join(route for route in routes if route != account)
 
 
 def line_view(engine, store, values, account):
@@ -345,13 +360,16 @@ def line_view(engine, store, values, account):
     else:
         sentence = (f'{len(rows):,} local prefixes go out on this line at no extra cost; other numbers cost {toll} '
                     'on it, and Faxbot sends them the cheapest way.')
-    routed, suggested = _routed(values, account or 'sip')
+    state = routing_state(values, account or 'sip')
     return {'analog': True, 'account': account or 'sip', 'label': found_account.label, 'preset': preset.id,
-            # Whether the automatic choice may use the line now; when not, how to let it (one sentence).
-            'routed': routed,
-            'route_sentence': None if routed else (
-                "Faxbot does not choose this line by itself yet: add it to your delivery routes with faxbot system "
-                f"settings set outbound_routes={suggested}, or name it in a sending rule under Providers → Rules."),
+            # Whether the automatic choice may use the line ('default', 'listed' or 'off'), in one sentence.
+            'routed': state != 'off', 'routing': state,
+            'route_sentence': {
+                'default': 'This line is your default sending account, so Faxbot chooses it by itself.',
+                'listed': 'Faxbot chooses this line by itself for the numbers it reaches for less.',
+                'off': ('Faxbot does not choose this line by itself: turn that on here, or name the line in a '
+                        'sending rule under Providers → Rules.'),
+            }[state],
             'preset_label': preset.label, 'calls_at_once': trunk_calls_at_once(found_account.values),
             'local_prefixes': len(rows), 'imported_at': imported.isoformat(timespec='seconds') + 'Z' if imported else None,
             'sources': sources, 'toll_rate': toll, 'monthly_fee': fee, 'sentence': sentence,

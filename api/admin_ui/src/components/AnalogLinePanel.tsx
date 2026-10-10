@@ -20,6 +20,7 @@ interface AnalogLineView {
   monthly_fee?: string | null;
   sentence?: string;
   routed?: boolean;
+  routing?: 'default' | 'listed' | 'off';
   route_sentence?: string | null;
   saved?: string;
   save_page_help?: string;
@@ -84,6 +85,15 @@ export default function AnalogLinePanel({ call, accountKey, canWrite = true, exp
       setMessage({ severity: 'error', text: 'This file could not be read. Choose it again.' });
     }
   };
+  const route = async (on: boolean) => {
+    try {
+      const result = await call<AnalogLineView>({ method: 'PUT', path: `/routing/analog-lines/${encodeURIComponent(accountKey)}/routing`, body: { on } });
+      setView(result);
+      setMessage({ severity: 'success', text: result.saved ?? '' });
+    } catch (failure) {
+      setMessage({ severity: 'error', text: problem(failure, 'This could not be changed. Try again.') });
+    }
+  };
   const save = async () => {
     if (!file) return;
     setSaving(true);
@@ -108,7 +118,15 @@ export default function AnalogLinePanel({ call, accountKey, canWrite = true, exp
       <CardContent>
         <Typography variant="h6" component="h2">Local calls on this line</Typography>
         <Typography variant="body2" sx={{ mb: 1 }}>{view.sentence}</Typography>
-        {view.route_sentence && <Alert severity="warning" sx={{ mb: 1 }}>{view.route_sentence}</Alert>}
+        {view.route_sentence && (
+          <Alert severity={view.routing === 'off' ? 'warning' : 'info'} sx={{ mb: 1 }}
+            action={canWrite && view.routing !== 'default' ? (
+              <Button color="inherit" size="small" onClick={() => void route(view.routing === 'off')}>
+                {view.routing === 'off' ? 'Turn on' : 'Turn off'}
+              </Button>) : undefined}>
+            {view.route_sentence}
+          </Alert>
+        )}
         <Typography variant="body2" color="text.secondary">
           {`${view.calls_at_once === 1 ? 'One call at a time' : `${view.calls_at_once} calls at once`}`}
           {view.monthly_fee ? `; ${view.monthly_fee} a month` : ''}

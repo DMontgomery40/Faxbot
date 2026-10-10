@@ -199,11 +199,71 @@ def test_a_line_that_is_not_a_delivery_route_says_how_to_make_it_one(database): 
     # The automatic choice uses the default sending account and the listed routes only: the line is not a candidate.
     assert 'sip-line' not in order and order[0] == 'sip'
     view = analog.line_view(database, store, unrouted, 'sip-line')
-    assert view['routed'] is False
-    assert view['route_sentence'] == ('Faxbot does not choose this line by itself yet: add it to your delivery routes '
-                                      'with faxbot system settings set outbound_routes=sip-line, or name it in a '
-                                      'sending rule under Providers → Rules.')
-    assert analog.line_view(database, store, values(), 'sip-line')['routed'] is True
+    assert (view['routed'], view['routing']) == (False, 'off')
+    assert view['route_sentence'] == ('Faxbot does not choose this line by itself: turn that on here, or name the '
+                                      'line in a sending rule under Providers → Rules.')
+    listed = analog.line_view(database, store, values(), 'sip-line')
+    assert (listed['routed'], listed['routing']) == (True, 'listed')
+    # Turning it on appends the line after your routes; turning it off takes out only the line.
+    assert analog.routes_with(unrouted, 'sip-line', True) == 'sip-line'
+    assert analog.routes_with(values(FAX_OUTBOUND_ROUTES='signalwire, phaxio'), 'sip-line', True) == \
+        'signalwire,phaxio,sip-line'
+    assert analog.routes_with(values(FAX_OUTBOUND_ROUTES='signalwire,sip-line,phaxio'), 'sip-line', False) == \
+        'signalwire,phaxio'
+    order, _ = _choices(store, values(FAX_OUTBOUND_ROUTES=analog.routes_with(unrouted, 'sip-line', True)), LOCAL)
+    assert order[0] == 'sip-line'
+
+
+@pytest.fixture
+def extra_line_client(monkeypatch, tmp_path):
+    """Telnyx is the first trunk and the default; the HT813 line is added as an extra trunk, not yet a route."""
+    from fastapi.testclient import TestClient
+    from api.tests.test_access_management_http import ORIGIN, _environment
+    from app.main import app
+    _environment(monkeypatch, tmp_path)
+    for name, value in {'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                        'SIP_TRUNK_PASSWORD': 'Synthetic-Password-1', 'SIP_TRUNK_CALLER_ID': '+15555550100',
+                        'SIP_TRUNK_DIDS': '+15555550100', 'FAX_OUTBOUND_ROUTES': 'signalwire',
+                        'AMI_PASSWORD': 'synthetic-ami-pass'}.items():
+        monkeypatch.setenv(name, value)
+    with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as test_client:
+        yield test_client
+
+
+def test_importing_the_local_area_makes_the_line_a_route_with_an_undo(extra_line_client):
+    from typer.testing import CliRunner
+    from app.cli.main import app as cli_app
+    from api.tests.test_access_management_http import B, BOOTSTRAP
+    from app.main import app
+    client = extra_line_client
+    state = client.get('/admin/providers/accounts', headers=B).json()
+    added = client.post('/admin/providers/accounts', headers=B, json={
+        'key': 'sip-line', 'provider': 'sip', 'label': 'Denver office line', 'receives': True,
+        'numbers': ['+13034260100'], 'settings': LINE['settings'], 'expected_generation': state['generation']})
+    assert added.status_code in (200, 201), added.text
+    assert client.get('/routing/analog-lines/sip-line', headers=B).json()['routing'] == 'off'
+    saved = client.put('/routing/analog-lines/sip-line/local-calls', headers=B,
+                       json={'text': '303-426\n', 'toll_per_minute': '0.10'})
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body['routing_added'] is True and body['routing'] == 'listed'
+    assert body['saved'].endswith('Faxbot now sends local calls on this line by itself; turn that off here.')
+    manager = app.state.configuration_runtime.manager
+    assert manager.store.read().desired.values.outbound_routes == 'signalwire,sip-line'  # appended, order kept
+
+    def run(*args):
+        return CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', BOOTSTRAP, *args],
+                                  obj={'client_factory': lambda address, timeout: (client, False)},
+                                  env={'COLUMNS': '220', 'TZ': 'UTC'})
+    off = run('providers', 'trunk', 'analog-line', 'routing', 'off', '--account', 'sip-line')
+    assert off.exit_code == 0, (off.stdout, off.stderr)
+    assert 'Faxbot no longer chooses this line by itself' in ' '.join(off.stdout.split())
+    assert manager.store.read().desired.values.outbound_routes == 'signalwire'
+    # And on again in one step; the first trunk (not an analog line) is refused.
+    again = client.put('/routing/analog-lines/sip-line/routing', headers=B, json={'on': True})
+    assert again.status_code == 200 and again.json()['routing'] == 'listed'
+    assert manager.store.read().desired.values.outbound_routes == 'signalwire,sip-line'
+    assert client.put('/routing/analog-lines/sip/routing', headers=B, json={'on': False}).status_code == 400
 
 
 def test_calls_the_gateway_forwards_under_the_lines_number_are_filed_under_it():

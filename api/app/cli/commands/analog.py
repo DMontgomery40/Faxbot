@@ -36,6 +36,19 @@ def analog_show(account: str = ACCOUNT):
     state.out().result(view, lambda out: _lines(out, view))
 
 
+@analog.command('routing')
+def analog_routing(state_word: str = typer.Argument(..., metavar='on|off',
+                                                    help='on: Faxbot may choose the line by itself; off: only a '
+                                                         'sending rule that names it uses it.'),
+                   account: str = ACCOUNT):
+    """Let Faxbot choose an analog line by itself, or stop it. Importing a local calling area turns this on."""
+    word = state_word.strip().lower()
+    if word not in ('on', 'off'):
+        raise CliError('Use on or off.')
+    view = state.api().put('/routing/analog-lines/' + segment(account) + '/routing', json={'on': word == 'on'})
+    state.out().result(view, lambda out: _lines(out, view))
+
+
 @analog.command('import')
 def analog_import(path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, metavar='FILE',
                                              help="The list of local prefixes for your line: the Local Calling "

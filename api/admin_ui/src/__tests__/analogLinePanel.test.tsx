@@ -21,9 +21,18 @@ function fakeCall({ analog = true, refuse = false, fail = false } = {}) {
   const call = async <T,>(request: { method: string; path: string; body?: unknown }): Promise<T> => {
     requests.push(request as any);
     if (fail) throw new AdminAPIError(503, 'Unavailable', 'Unavailable');
+    if (request.method === 'PUT' && request.path.endsWith('/routing')) {
+      const on = (request.body as { on: boolean }).on;
+      return { ...AFTER, routing: on ? 'listed' : 'off',
+        route_sentence: on ? 'Faxbot chooses this line by itself for the numbers it reaches for less.'
+          : 'Faxbot does not choose this line by itself: turn that on here, or name the line in a sending rule under Providers → Rules.',
+        saved: on ? 'Faxbot now sends local calls on this line by itself; turn that off here.'
+          : 'Faxbot no longer chooses this line by itself; your other routes and sending rules are unchanged.' } as T;
+    }
     if (request.method === 'PUT') {
       if (refuse) throw new AdminAPIError(400, 'Bad Request', 'Enter what your line charges a minute for calls outside the local area, from your phone bill or your carrier; enter 0 if your plan includes them.');
-      return { ...AFTER, saved: `Saved. ${AFTER.sentence}` } as T;
+      return { ...AFTER, routing: 'listed', route_sentence: 'Faxbot chooses this line by itself for the numbers it reaches for less.',
+        saved: `Saved. ${AFTER.sentence} Faxbot now sends local calls on this line by itself; turn that off here.` } as T;
     }
     return (analog ? BEFORE : { analog: false, account: 'sip-two' }) as T;
   };
@@ -47,6 +56,11 @@ describe('an analog line through a gateway', () => {
     await waitFor(() => expect(fake.requests.filter((item) => item.method === 'PUT').map((item) => item.body))
       .toEqual([{ text: '303-426\n303-298\n', filename: 'local.txt', line: '303-426', toll_per_minute: '0.10', monthly_fee: '45' }]));
     expect(fake.requests[0].path).toBe('/routing/analog-lines/sip-line');
+    expect(screen.getByText(/turn that off here\.$/)).toBeTruthy();
+    fireEvent.click(within(region).getByRole('button', { name: 'Turn off' }));
+    expect(await screen.findByText(/^Faxbot no longer chooses this line by itself/)).toBeTruthy();
+    expect(fake.requests[fake.requests.length - 1]).toEqual({ method: 'PUT', path: '/routing/analog-lines/sip-line/routing', body: { on: false } });
+    expect(within(region).getByRole('button', { name: 'Turn on' })).toBeTruthy();
   });
 
   it('shows a refusal, nothing for another trunk, and a load failure only when the line is known', async () => {

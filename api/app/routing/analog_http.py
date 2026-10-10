@@ -49,8 +49,55 @@ async def get_line(account: str, request: Request):
     return await run_lifecycle_step(lambda: analog.line_view(engine, store, values, account.strip()[:32]))
 
 
-@router.put('/{account}/local-calls', dependencies=[Depends(require_permission('settings:write'))])
-async def put_local_calls(account: str, payload: LocalCalls, request: Request):
+class Routing(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # On: Faxbot may choose the line by itself (it is one of your delivery routes); off: only a rule names it.
+    on: bool
+
+
+def _set_routing(request, identity, account, on):
+    """Append the line to ``outbound_routes`` or take it out, as an audited configuration change; True when the
+    setting changed. Every other route keeps its place."""
+    from ..access.http import runtime as access_runtime
+    from .background import installation_engine
+    _, runtime = installation_engine(request.app)
+    if runtime is None or not getattr(runtime, 'serving', False):
+        raise HTTPException(503, detail='Installation configuration is not ready.')
+    expected = request.scope['faxbot.configuration']
+    values = expected.desired.values
+    wanted = analog.routes_with(values, account, on)
+    if wanted == ','.join(part.strip() for part in (values.outbound_routes or '').split(',') if part.strip()):
+        return False
+    access = access_runtime(request)
+    access.configuration_access.prepare_settings_write(identity.actor, expected, expected.desired.id)
+    runtime.manager.patch_authorized(expected, {'outbound_routes': wanted}, principal=identity.actor,
+                                     control=access.control)
+    return True
+
+
+@router.put('/{account}/routing')
+async def put_routing(account: str, payload: Routing, request: Request,
+                      identity=Depends(require_permission('settings:write'))):
+    """Let Faxbot choose the line by itself, or stop it; a line that is the default sending account stays so."""
+    engine, store, values = _parts(request)
+    key = account.strip()[:32]
+    try:
+        analog.line_account(values, key)
+    except analog.AnalogLineError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    if analog.routing_state(values, key) == 'default':
+        raise HTTPException(400, detail='This line is your default sending account; choose another default first.')
+    changed = await run_lifecycle_step(lambda: _set_routing(request, identity, key, payload.on))
+    from ..audit import audit_event
+    audit_event('analog_line_routing_changed', account=key, on=payload.on, changed=changed)
+    current = request.app.state.configuration_runtime.manager.store.read().desired.values
+    view = await run_lifecycle_step(lambda: analog.line_view(engine, store, current, key))
+    return {**view, 'saved': analog.ROUTED_ON if payload.on else analog.ROUTED_OFF}
+
+
+@router.put('/{account}/local-calls')
+async def put_local_calls(account: str, payload: LocalCalls, request: Request,
+                          identity=Depends(require_permission('settings:write'))):
     engine, store, values = _parts(request)
 
     def save():
@@ -69,4 +116,14 @@ async def put_local_calls(account: str, payload: LocalCalls, request: Request):
         raise HTTPException(503, detail='Rate cards cannot be saved right now. Try again in a moment.') from None
     from ..audit import audit_event
     audit_event('analog_local_calls_imported', account=view['account'], prefixes=view['local_prefixes'])
-    return {**view, 'saved': f"Saved. {view['sentence']}"}
+    # Importing the local calling area is the clear intent to send local calls on the line (useful options default
+    # on): the line becomes one of your delivery routes, appended after the others, with a way to turn it off.
+    added = False
+    if view.get('routing') == 'off':
+        added = await run_lifecycle_step(lambda: _set_routing(request, identity, view['account'], True))
+        if added:
+            audit_event('analog_line_routing_changed', account=view['account'], on=True, changed=True)
+            current = request.app.state.configuration_runtime.manager.store.read().desired.values
+            view = await run_lifecycle_step(lambda: analog.line_view(engine, store, current, view['account']))
+    saved = f"Saved. {view['sentence']}" + (f' {analog.ROUTED_ON}' if added else '')
+    return {**view, 'saved': saved, 'routing_added': added}

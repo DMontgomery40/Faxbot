@@ -5708,6 +5708,7 @@ $ faxbot providers trunk analog-line [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `show`: Show an analog line&#x27;s local calling area...
+* `routing`: Let Faxbot choose an analog line by...
 * `import`: Import an analog line&#x27;s local calling area...
 
 ##### `faxbot providers trunk analog-line show`
@@ -5719,6 +5720,25 @@ Show an analog line&#x27;s local calling area and prices.
 ```console
 $ faxbot providers trunk analog-line show [OPTIONS]
 ```
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk analog-line routing`
+
+Let Faxbot choose an analog line by itself, or stop it. Importing a local calling area turns this on.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk analog-line routing [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on: Faxbot may choose the line by itself; off: only a sending rule that names it uses it.  [required]
 
 **Options**:
 
