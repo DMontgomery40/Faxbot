@@ -84,6 +84,7 @@ from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
 from .routing.portfolio_http import router as routing_portfolio_router
 from .routing.number_http import router as routing_number_router
+from .routing.countries_http import router as routing_countries_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.polling_http import router as routing_polling_router
 from .routing.charges_http import router as routing_charges_router
@@ -222,6 +223,7 @@ app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
 app.include_router(routing_portfolio_router)
 app.include_router(routing_number_router)
+app.include_router(routing_countries_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_polling_router)
 app.include_router(routing_charges_router)

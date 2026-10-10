@@ -790,6 +790,7 @@ const consoleHandlers = [
   http.get('/admin/sip/telnyx', () => json({ applies: false, numbers: [], connection_texts: [], text: null })),
   // Published plans for providers in use with no rate card yet: none.
   http.get('/routing/published-plans/in-use', () => json({ items: [] })),
+  http.get('/routing/caller-id-prices', () => json({ decks: [], callers: [], layouts: { faxbot: '', telnyx: '' } })),
   // Sent faxes Faxbot could not confirm: none until a test says otherwise.
   http.get('/certainty/items', () => json({ items: [] })),
   http.get('/certainty/counts', () => json({ open: 0, mine: 0, unassigned: 0, overdue: 0, settled: 0 })),

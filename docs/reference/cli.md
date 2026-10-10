@@ -4988,6 +4988,9 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
+* `caller-ids`: The caller ID each sending account&#x27;s calls...
+* `confirm-caller-id`: Confirm that you hold a caller ID and may...
+* `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
@@ -5143,6 +5146,65 @@ $ faxbot providers trunk use [OPTIONS] {PRESET}
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
 * `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
 * `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk caller-ids`
+
+The caller ID each sending account&#x27;s calls show, what you confirmed about it, and the rate decks priced by
+caller ID.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk caller-ids [OPTIONS]
+```
+
+**Options**:
+
+* `--quote NUMBER`: Show how a fax to this number is priced by caller ID on each sending account.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk confirm-caller-id`
+
+Confirm that you hold a caller ID and may send faxes from it on one account, so calls from it get the rate
+its carrier gives that caller ID.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk confirm-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
+```
+
+**Arguments**:
+
+* `ACCOUNT`: The sending account, by its key from &#x27;faxbot providers accounts list&#x27;.  [required]
+* `CALLER_ID`: The caller ID with its country code, such as +442079460000.  [required]
+
+**Options**:
+
+* `--evidence TEXT`: How you know you may send from it on this account, such as the number order or invoice.  [required]
+* `--evidence-url URL`: A link to that evidence.
+* `--bought-here`: The number was bought on this account, so the carrier prices calls from it to its own country as local.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk withdraw-caller-id`
+
+Withdraw a caller-ID confirmation; calls from it are priced as unconfirmed again. The history is kept.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk withdraw-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
+```
+
+**Arguments**:
+
+* `ACCOUNT`: The sending account.  [required]
+* `CALLER_ID`: The confirmed caller ID.  [required]
+
+**Options**:
+
+* `--note TEXT`: Why, for the history.
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk network`
@@ -6662,7 +6724,8 @@ $ faxbot costs rate-cards [OPTIONS]
 
 ### `faxbot costs rate-rows`
 
-Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history.
+Replace the prices by where calls start that you entered for one sending card, or import a rate deck priced
+by caller ID for it. Earlier rows and decks are kept as history.
 
 **Usage**:
 
@@ -6676,7 +6739,11 @@ $ faxbot costs rate-rows [OPTIONS] {ROUTE}
 
 **Options**:
 
-* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).  [required]
+* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).
+* `--caller-id-deck FILE`: A carrier&#x27;s rate deck priced by the caller ID a call shows (CSV): Twilio&#x27;s voice price file, or Faxbot&#x27;s own layout.
+* `--deck-format twilio|faxbot`: The deck layout; Faxbot recognises Twilio&#x27;s file by its first line.
+* `--source URL`: Where the deck came from.
+* `--published DATE`: The date the deck was published or read, such as 2026-10-09.
 * `--help`: Show this message and exit.
 
 ### `faxbot costs state-prices`
