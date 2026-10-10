@@ -503,9 +503,11 @@ def test_the_call_is_costed_once_on_the_fax_that_placed_it_and_shares_split_by_p
     assert found['amount_micros'] == 10_000 * 3 // 7 + 1 and found['basis'] == 'estimated'
     assert found['sentence'] == "Its share of the call's charge, split by pages: $0.004286 of $0.01 (estimate)."
     saved = money.savings(routes, configuration.engine, NUMBER)
-    # Separately: three calls of one minute or more (1 + 2 + 1 pages) = $0.005 + $0.01 + $0.005.
-    assert saved['calls_saved'] == 2 and saved['saved'] == {'USD': 10_000}
-    assert money.savings_sentence(saved) == 'Last 30 days: 3 faxes in 1 call, 2 calls saved, about $0.01 saved (estimate).'
+    # Separately: three calls (1 + 2 + 1 typical pages), each within its one-minute minimum by the shared predictor
+    # (about 23 and 36 seconds) = $0.005 three times, against the shared call's $0.01.
+    assert saved['calls_saved'] == 2 and saved['saved'] == {'USD': 5_000}
+    assert money.savings_sentence(saved) == ('Last 30 days: 3 faxes in 1 call, 2 calls saved, about $0.005 saved '
+                                             '(estimate).')
 
 
 def test_shares_of_a_call_sum_exactly_to_its_charge_by_largest_remainder_in_call_order(sip):
@@ -550,21 +552,21 @@ def test_a_shared_call_that_cost_more_than_separate_calls_shows_the_loss_never_a
     results.apply_fax_result(delivery, {'JobID': claim.job_id, 'AttemptID': claim.attempt_id, 'Status': 'SUCCESS',
                                         'Pages': '7'})
     CostRecorder(routes, observed_seconds=lambda target: 100).step()
-    # The carrier billed the shared call at $0.05 (a slow call); three separate calls would have cost about $0.02.
+    # The carrier billed the shared call at $0.05 (a slow call); three separate calls would have cost about $0.015.
     assert routes.ingest_charge(claim.attempt_id, provider_id='sip', charge_id='rec-slow', amount_micros=50_000,
                                 currency='USD', billed_seconds=600) == 'new'
     saved = money.savings(routes, configuration.engine, NUMBER)
-    assert saved['saved'] == {'USD': -30_000}
+    assert saved['saved'] == {'USD': -35_000}
     assert money.savings_sentence(saved) == ('Last 30 days: 3 faxes in 1 call, 2 calls saved, but sending together '
-                                             'cost about $0.03 more (estimate).')
+                                             'cost about $0.035 more (estimate).')
     together = sending_together(routes, configuration.engine, now=datetime.utcnow(), days=30)
-    assert together['saved'] == {'USD': -30_000}
+    assert together['saved'] == {'USD': -35_000}
     assert together['sentence'] == ('3 faxes to the same number went in 1 call instead of 3, saving 2 calls, but '
-                                    'that call cost about $0.03 more than 3 separate calls.')
-    # Costs → Savings sums signed amounts, and its headline says the money went the other way.
+                                    'that call cost about $0.035 more than 3 separate calls.')
+    # Savings & optimization → Savings results sums signed amounts, and its headline says the money went the other way.
     found = savings(routes, configuration.engine)
-    assert found['total'] == {'USD': -30_000}
-    assert found['total_sentence'] == 'About $0.03 more spent than saved in the last 30 days.'
+    assert found['total'] == {'USD': -35_000}
+    assert found['total_sentence'] == 'About $0.035 more spent than saved in the last 30 days.'
 
 
 # The image ------------------------------------------------------------------------------------

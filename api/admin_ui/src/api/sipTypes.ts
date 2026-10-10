@@ -21,17 +21,26 @@ export interface SipPreset {
   notes: string[];
   sources: SipPresetSource[];
   // 'phone_system' for an office phone system on the local network (Avaya IP Office or Aura).
-  kind?: 'carrier' | 'phone_system';
+  kind?: 'carrier' | 'phone_system' | 'analog_line';
   // Transports a person may choose; the first preset default is `transport`.
   transports?: Array<'udp' | 'tcp' | 'tls'>;
   // G.711 order follows the installation country unless a person chooses one.
   codecs_by_country?: boolean;
   // Number formats a person may choose; empty means the preset's own.
-  dial_formats?: Array<'e164' | 'local'>;
+  dial_formats?: Array<'e164' | 'local' | 'local_area'>;
   // New trunks start with audio fax because the carrier turns T.38 into audio itself.
   audio_by_default?: boolean;
   // What the phone system's administrator sets, in order.
   admin_steps?: string[];
+  // A Teams Direct Routing SBC: what to do before the Teams port order, in order.
+  port_checklist?: string[];
+  // Encrypted audio fax: 'sdes' encrypts the audio (SRTP) when the trunk signs in over TLS.
+  media_encryption?: 'sdes' | null;
+  encrypted_audio_only?: boolean;
+  // The carrier allows one registration per account.
+  single_registration?: boolean;
+  // The trunk's media depends on the internet access it is reached over ('telekom': CompanyFlex).
+  access_rule?: 'telekom' | null;
 }
 
 // Recipients, Details: how long a page this fax machine takes (learned from calls) and this number's page
@@ -120,6 +129,8 @@ export interface SipTrunkSettings {
   fax_compression?: 'mh' | 'mr' | 'mmr' | 'jbig';
   fax_fine?: boolean;
   fax_tune_coding?: boolean;
+  // Hang up 50 seconds after answer when no fax machine answers, on a trunk billed by the minute.
+  fax_answer_cap?: boolean;
   sslfax_enabled?: boolean;
   fax_lines?: number;
   // Calls at once on the trunk (0: as many as the fax lines) and new calls a second (0: the carrier's limit).
@@ -132,8 +143,14 @@ export interface SipTrunkSettings {
     sources: string[]; read_on: string } | null;
   sslfax_listener_port?: number;
   // Why Faxbot chose audio fax for new calls, and when (read only).
-  t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | null;
+  t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | 'encrypted' | null;
   t38_off_at?: string | null;
+  // Your own line's internet addresses or ranges (Telekom CompanyFlex), comma-separated.
+  own_access?: string;
+  // Read only: whether the audio is encrypted now, the access Faxbot is on, and one sentence why.
+  media_encryption?: 'sdes' | null;
+  access?: 'own' | 'other' | 'unknown' | null;
+  encryption_sentence?: string | null;
 }
 
 export type SipRegistration = 'registered' | 'not_registered' | 'rejected' | 'not_used' | 'unknown';
@@ -147,7 +164,7 @@ export interface SipTrunkStatus {
   trunk_problems?: Record<string, string>;
   preset?: string;
   preset_label?: string;
-  kind?: 'carrier' | 'phone_system';
+  kind?: 'carrier' | 'phone_system' | 'analog_line';
   auth?: SipAuthMode;
   host?: string;
   missing?: string[];

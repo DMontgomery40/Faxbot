@@ -261,8 +261,9 @@ def wait_for(condition, seconds=20):
 
 
 def b_sent(trio, job_id):
-    """B's own provider took the relayed fax (its worker sends it as B's own fax)."""
-    wait_for(lambda: trio.b_delivery.get(job_id)['state'] == 'in_progress')
+    """B's own provider took the relayed fax (its worker sends it as B's own fax). B's idle worker may back off
+    up to 10 s between checks, so a loaded machine gets a longer wait."""
+    wait_for(lambda: trio.b_delivery.get(job_id)['state'] == 'in_progress', seconds=60)
     return trio.b_delivery.get(job_id)
 
 
@@ -729,7 +730,7 @@ async def test_a_premium_rate_number_is_never_relayed(relay_trio):
 # The relay's own sending rules -------------------------------------------------------------------------------------
 
 def b_rules(trio, document):
-    """Publish B's organization rules (Providers → Rules)."""
+    """Publish B's organization rules (Delivery setup → Routing rules)."""
     from api.app.rules.store import RuleStore
     store = RuleStore(trio.b_engine)
     current = store.draft('organization', '')

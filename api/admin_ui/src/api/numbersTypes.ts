@@ -1,4 +1,4 @@
-// Numbers → Sender identity (reply number) and Numbers → Blocked senders.
+// Delivery setup → Sending identity (reply number) and Delivery setup → Blocked senders.
 
 export interface ReplyCandidate {
   number: string;

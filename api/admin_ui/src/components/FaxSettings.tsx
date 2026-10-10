@@ -14,17 +14,21 @@ import {
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import type AdminAPIClient from '../api/client';
 import type { SipTrunkSettings as TrunkValues } from '../api/sipTypes';
+import AnswerCap from './AnswerCap';
 
 // The trunk page's collapsed "Fax settings": the options other fax servers offer, for both of
 // Faxbot's fax engines. Each has one plain line and starts at the recommended value; the trunk
 // form saves them with its other fields (sip_t38_error_correction, sip_t38_max_datagram,
-// sip_fax_max_rate, sip_fax_ecm, sip_fax_compression, sip_fax_fine, sip_fax_tune_coding, sip_sslfax_enabled,
+// sip_fax_max_rate, sip_fax_ecm, sip_fax_compression, sip_fax_fine, sip_fax_tune_coding, sip_fax_answer_cap, sip_sslfax_enabled,
 // sip_fax_lines, sip_sslfax_listener_port, sip_trunk_max_calls, sip_trunk_calls_per_second).
 
 interface FaxSettingsProps {
   form: TrunkValues;
   update: <K extends keyof TrunkValues>(key: K, value: TrunkValues[K]) => void;
+  // Reads the answer cap's sentence for this trunk; without it the switch shows a general sentence.
+  client?: AdminAPIClient;
 }
 
 const Hint = ({ children }: { children: string }) => (
@@ -51,7 +55,7 @@ export function callsPerSecondHint(form: TrunkValues): string {
     : `${most} Leave 0 for no limit.`;
 }
 
-export default function FaxSettings({ form, update }: FaxSettingsProps) {
+export default function FaxSettings({ form, update, client }: FaxSettingsProps) {
   const number = (key: 't38_max_datagram' | 'fax_lines' | 'sslfax_listener_port' | 'max_calls' | 'calls_per_second',
     fallback: number) =>
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -114,6 +118,9 @@ export default function FaxSettings({ form, update }: FaxSettingsProps) {
               same page.
             </Hint>
           </div>
+
+          <AnswerCap client={client} checked={form.fax_answer_cap ?? true}
+            onChange={(on) => update('fax_answer_cap', on)} />
 
           <div>
             <FormControlLabel label="Send pages faster when the other fax machine can (recommended)"

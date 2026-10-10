@@ -585,29 +585,32 @@ def test_each_fax_pays_for_its_own_pages_and_the_index_page_is_shared_by_them(si
     assert shares == [2500, 5000, 2500] and sum(shares) == 10_000
 
 
-@pytest.mark.parametrize('boundaries, left_out', [('index_page', 2), ('page_headers', 3)])
+@pytest.mark.parametrize('boundaries, left_out, separator_saving', [('index_page', 2, 0), ('page_headers', 3, 1_250)])
 def test_separator_pages_left_out_are_counted_apart_from_calls_saved_and_the_total_does_not_change(
-        sip, boundaries, left_out):
+        sip, boundaries, left_out, separator_saving):
     from api.app.routing.savings import savings
     configuration, _, _, routes, _ = sip
     sip = headers_on(sip) if boundaries == 'page_headers' else sip
     index_on(sip, boundaries=boundaries)
     _priced_call(sip, 1, 2, 1)
     found = money.savings(routes, configuration.engine, NUMBER)
-    # Separate calls: 1 + 2 + 1 minutes at $0.005 = $0.02; the shared call was billed $0.01. Separators
-    # would have made it 7 pages (4 minutes by estimate) instead of 5 with an index page or 4 with page
-    # marks (3 minutes either way): $0.005.
+    # By the shared predictor (typical pages of about 12 s each): separate calls of 1, 2 and 1 pages each fit
+    # their one-minute minimum, $0.015 in all; the shared call was billed $0.01. Separators would have made it
+    # 7 pages (2 minutes); 5 pages with an index page also take 2 minutes, and 4 with page marks take 1 minute a
+    # quarter of the time: about $0.00875.
     assert found['separator_pages'] == {'calls': 1, 'pages_saved': left_out, 'priced_calls': 1,
-                                        'saved': {'USD': 5_000}}
-    assert found['calls_saved'] == 2 and found['saved'] == {'USD': 5_000}
-    assert found['saved']['USD'] + found['separator_pages']['saved']['USD'] == 20_000 - 10_000
-    assert money.separator_pages_sentence(found['separator_pages']) == (
-        f'An index page or marks at the top of every page left out {left_out} separator pages in 1 shared call, '
-        'about $0.005 saved (estimate).')
+                                        'saved': {'USD': separator_saving}}
+    assert found['calls_saved'] == 2 and found['saved'] == {'USD': 5_000 - separator_saving}
+    assert found['saved']['USD'] + found['separator_pages']['saved']['USD'] == 15_000 - 10_000
+    if separator_saving:
+        assert money.separator_pages_sentence(found['separator_pages']) == (
+            f'An index page or marks at the top of every page left out {left_out} separator pages in 1 shared '
+            'call, about $0.00125 saved (estimate).')
     report = savings(routes, configuration.engine)
     assert report['separator_pages']['pages_saved'] == left_out
-    assert report['separator_pages']['saved'] == report['sending_together']['saved'] == {'USD': 5_000}
-    assert report['total'] == {'USD': 10_000}
+    assert report['separator_pages']['saved'] == {'USD': separator_saving}
+    assert report['sending_together']['saved'] == {'USD': 5_000 - separator_saving}
+    assert report['total'] == {'USD': 5_000}
     assert report['separator_pages']['sentence'] == money.separator_pages_sentence(found['separator_pages'])
 
 
@@ -625,4 +628,4 @@ def test_pages_saved_count_only_calls_that_delivered_every_fax_and_unknown_price
     assert found['separator_pages'] == {'calls': 1, 'pages_saved': 1, 'priced_calls': 0, 'saved': {}}
     assert money.separator_pages_sentence(found['separator_pages']) == (
         'An index page or marks at the top of every page left out 1 separator page in 1 shared call. '
-        "Some of those pages have no price, because your carrier's prices are not entered in Costs.")
+        "Some of those pages have no price, because your carrier's prices are not entered in Savings & optimization → Prices & plans.")

@@ -31,7 +31,7 @@ RELAY = 'relay'
 # Why an allowed account was not used for one attempt (``delivery_rule_choices.skipped``).
 # ``needs_patient``: a FHIR server that needs the patient's details, for a fax without them (digital/routes.py).
 SKIPS = ('turned_off', 'not_ready', 'busy', 'over_cap', 'unknown_cost', 'spending_limit', 'unavailable', 'tried',
-         'needs_patient')
+         'needs_patient', 'not_served', 'digits', 'power')
 
 
 _REFLECTED = WeakKeyDictionary()

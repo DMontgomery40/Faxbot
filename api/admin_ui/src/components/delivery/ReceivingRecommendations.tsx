@@ -1,4 +1,4 @@
-// Costs → Recommendations → Receiving: which numbers could share incoming lines, which numbers get few calls, and what
+// Savings & optimization → Opportunities → Receiving: which numbers could share incoming lines, which numbers get few calls, and what
 // each fax service costs a month. Every figure is an estimate from past calls, shown next to its time window; Faxbot
 // recommends only and never changes a carrier account.
 import { useCallback, useEffect, useState } from 'react';

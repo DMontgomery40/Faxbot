@@ -139,7 +139,7 @@ async def put_route_pages(route: str, payload: RoutePages, request: Request,
 
 @router.get('/routing/recommendations/fax-friendly', dependencies=[Depends(require_permission('settings:read'))])
 async def fax_friendly_recommendation(request: Request):
-    """Costs, Recommendations: whether lightening shaded areas and removing specks would have saved time on your
+    """Savings & optimization, Opportunities: whether lightening shaded areas and removing specks would have saved time on your
     recent faxes (pages/friendly.py), or what it saved when it is on."""
     from . import friendly
     configuration = request.scope['faxbot.configuration'].active

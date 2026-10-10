@@ -67,7 +67,7 @@ function helper(name: string, entry: DeploymentValue | undefined, showName: bool
 export function DeploymentRows({ settings, names, showNames = false }: {
   settings: Settings;
   names: string[];
-  // Variable names are developer vocabulary: shown only on System → Developer pages.
+  // Variable names are developer vocabulary: shown only on Administration → Developer pages.
   showNames?: boolean;
 }) {
   const deployment = settings.deployment;

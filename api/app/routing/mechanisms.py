@@ -2,17 +2,17 @@
 
 ``CATALOGUE`` is the one list of Faxbot's money-saving mechanisms. Each entry says what the mechanism does for the
 administrator's money, where it sits on a fax's path (``STAGES``), how far it is proven (``EVIDENCE``), its part
-on Costs → Savings and the console page that holds its setting. ``evaluate`` reads this installation's effective
+on Savings & optimization → Savings results and the console page that holds its setting. ``evaluate`` reads this installation's effective
 settings and stored records, never the network, and says for each entry:
 
 - **On or off**, from the settings and each recipient's or partner's own choice;
 - **Works here**, from what the installation has: its sending routes and their prices, its own SIP trunk and fast
   fax service, its partners and its receiving numbers. When something is missing, one sentence names it;
 - **Tested**, as two separate facts: the product evidence level (fixed per entry, from the README roadmap) and
-  what happened on this installation, from the same Savings part, so the map and Costs → Savings never disagree.
+  what happened on this installation, from the same Savings part, so the map and Savings & optimization → Savings results never disagree.
 
 The Overview's map and ``faxbot savings mechanisms`` show the result of GET /routing/savings/mechanisms. Neither
-shows money: what each mechanism saved stays on Costs → Savings, under the entry's ``part``.
+shows money: what each mechanism saved stays on Savings & optimization → Savings results, under the entry's ``part``.
 
 A new mechanism adds its entry here. ``api/tests/test_savings_mechanisms.py`` fails when a Savings part has no
 entry, an entry names a setting, page or Savings part that does not exist, or has no evidence level.
@@ -53,12 +53,15 @@ LEGEND = (
                                            'lab, or with sample data only.'),
 )
 
-# Mechanisms with no part on Costs → Savings, each with the reason. Whoever gives one a part removes it here.
+# Mechanisms with no part on Savings & optimization → Savings results, each with the reason. Whoever gives one a part removes it here.
 # The reason is the map's "on this installation" sentence for that mechanism.
 # (Each works out its wait afresh from the delivery records whenever it schedules a fax and stores no count.)
 NO_PART = {
     'busy_hours': 'Faxbot keeps no count of the faxes that waited',
     'free_line': 'Faxbot keeps no count of the faxes that waited',
+    'answer_cap': 'Its capped calls are not counted on Savings yet',
+    'station_check': "What it caught is in each fax's Sent details, not on Savings",
+    'keys_after_answer': "The keys each call pressed are in its Sent details, not on Savings",
 }
 
 
@@ -81,7 +84,7 @@ class Mechanism:
     sentence: str
     stage: str
     evidence: str
-    # Its part on Costs → Savings: the key in GET /routing/savings and the anchor on the Savings page.
+    # Its part on Savings & optimization → Savings results: the key in GET /routing/savings and the anchor on the Savings page.
     part: str | None
     # The console page that holds its setting, and its name as the console shows it.
     page: str
@@ -100,7 +103,7 @@ class Mechanism:
 
     @property
     def destination(self):
-        """Where selecting it leads: its part on Costs → Savings, else its own page, else nowhere."""
+        """Where selecting it leads: its part on Savings & optimization → Savings results, else its own page, else nowhere."""
         return f'costs/savings?part={self.part}' if self.part else self.link
 
 
@@ -467,7 +470,82 @@ def charge_checks(here):
     return State(True, why is None, None, why)
 
 
-# -- advice: each section of Costs → Recommendations, and the advice kept on its own page ---------------------------
+def measured_account(here):
+    why = None if len(here.sending) >= 2 else f'Needs two or more sending accounts to compare; {here.through()}.'
+    return State(True, why is None, None, why)
+
+
+def caller_id_prices(here):
+    rates = here.count('origin_class_rates', lambda c: c.superseded_at.is_(None))
+    sentence = None if rates else 'No prices that depend on the caller ID are imported yet.'
+    return State(bool(rates), bool(here.sending), sentence, _needs_sending(here))
+
+
+def dialing_guard(here):
+    from .guard import policy_on
+    with read_connection(here.engine) as connection:
+        policy = policy_on(connection)
+    chosen = sum(1 for setting in policy.settings.values()
+                 if setting.reason == 'administrator' and setting.state != 'default')
+    sentence = f"On, with your own choice for {chosen} {'kind' if chosen == 1 else 'kinds'} of number." if chosen \
+        else None
+    return State(True, bool(here.sending), sentence, _needs_sending(here))
+
+
+def header_notice(here):
+    from ..header_notice import notices_on
+    with read_connection(here.engine) as connection:
+        found = notices_on(connection)
+    mailboxes = len(found.get('mailboxes') or {})
+    if found.get('organization'):
+        on, sentence = True, 'On for your organization.'
+    elif mailboxes:
+        on, sentence = True, f"On for {mailboxes} {'mailbox' if mailboxes == 1 else 'mailboxes'}."
+    else:
+        on, sentence = False, 'No header notice is set yet.'
+    return State(on, bool(here.sending), sentence, _needs_sending(here))
+
+
+def answer_cap(here):
+    from .stations import bills_by_minute, cap_on
+    trunks = [account for account in here.sending if account.provider == 'sip']
+    why = None
+    if not trunks:
+        why = f'Needs your own SIP trunk for sending; {here.through()}.'
+    elif not any(bills_by_minute(here.card(account)) for account in trunks):
+        why = ("Used only where calls are billed by the minute in steps of 60 seconds or more; your trunk's prices "
+               'are not.')
+    return State(cap_on(here.values), why is None, None, why)
+
+
+def route_problems(here):
+    from .route_families import available, open_incidents
+    found = len(open_incidents(here.engine)) if available(here.engine) else 0
+    sentence = f"On; {found} route {'problem is' if found == 1 else 'problems are'} open now." if found else None
+    return State(True, bool(here.sending), sentence, _needs_sending(here))
+
+
+def power_aware(here):
+    from ..power import settings
+    why = None if settings(here.engine) else 'Needs a UPS that Faxbot reads through NUT; none is set.'
+    return State(why is None, why is None, None, why)
+
+
+def keys_after_answer(here):
+    keys = reflect(here.engine, ('recipient_after_answer',))['recipient_after_answer']
+    newest = {}
+    with read_connection(here.engine) as connection:
+        for row in connection.execute(sa.select(keys.c.phone_number, keys.c.digits)
+                                      .order_by(keys.c.created_at, keys.c.id)):
+            newest[row.phone_number] = row.digits
+    on, sentence = _agreed(sum(1 for digits in newest.values() if digits),
+                           'No recipient has keys to press after it answers yet.',
+                           what='behind a phone menu')
+    why = None if here.trunk_sends else f'Needs your own SIP trunk for sending; {here.through()}.'
+    return State(on, why is None, sentence, why)
+
+
+# -- advice: each section of Savings & optimization → Opportunities, and the advice kept on its own page ---------------------------
 
 def _always(here):
     return State(True, True)
@@ -531,6 +609,41 @@ def _telnyx_numbers(here):
         why = 'Needs a Telnyx trunk; this lookup is a Telnyx charge.'
     elif not getattr(here.values, 'telnyx_api_key', ''):
         why = 'Needs your Telnyx key saved on the Telnyx page.'
+    return State(True, why is None, None, why)
+
+
+def _line_inventory(here):
+    from .inventory import inventory_rows
+    why = None if inventory_rows(here.engine) else 'Needs your line inventory; none is imported yet.'
+    return State(True, why is None, None, why)
+
+
+def _country_rules(here):
+    from .country_rules import view
+    why = None if view(here.engine, here.values)['accounts'] else \
+        'None of your accounts is in a country whose service rules Faxbot knows.'
+    return State(True, why is None, None, why)
+
+
+def _copper_closures(here):
+    from .closures import view
+    found = view(here.engine, here.values)
+    why = None if found['sites'] or found['lines'] else \
+        'For phone lines in France; none of your sites has its commune set, and no line has a closing notice.'
+    return State(True, why is None, None, why)
+
+
+def _renewal(here):
+    from .channel_peak import imports
+    from .renewal import renewals_by_system
+    why = None if renewals_by_system(here.engine) or imports(here.engine) else \
+        "Needs your fax server's renewal or its call records; neither is entered yet."
+    return State(True, why is None, None, why)
+
+
+def _pots_quote(here):
+    from .pots_quote import quotes
+    why = None if quotes(here.engine) else 'Needs a POTS-replacement quote; none is entered yet.'
     return State(True, why is None, None, why)
 
 
@@ -703,6 +816,86 @@ CATALOGUE = (
               'Gathers the settings and rules that would save money here into packs you review and apply.',
               'advice', 'built', None, 'system/setup', 'Administration → Setup', _always,
               link='system/setup', link_label='Administration → Setup', command='faxbot admin setup plan'),
+    Mechanism('measured_account', 'Account chosen after measuring its pages',
+              "Measures the pages each of your sending accounts would really send, then sends by the account whose "
+              'fax costs least.',
+              'route', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', measured_account,
+              link='faxes/sent', link_label='Faxes → Sent', command='faxbot faxes sent'),
+    Mechanism('caller_id_prices', 'Prices by the caller ID a call shows',
+              'Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so '
+              'the cheapest route is chosen on the real price.',
+              'route', 'built', None, 'savings/prices', 'Savings & optimization → Prices & plans', caller_id_prices,
+              link='savings/prices', link_label='Savings & optimization → Prices & plans',
+              command='faxbot delivery providers trunk caller-ids'),
+    Mechanism('dialing_guard', 'Where Faxbot may dial',
+              'Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, '
+              'so no call is billed there by mistake.',
+              'route', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', dialing_guard,
+              link='delivery/connections', link_label='Delivery setup → Providers & accounts',
+              command='faxbot delivery providers destinations list'),
+    Mechanism('power_aware', 'Power-aware sending',
+              'Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a '
+              'call and its pages.',
+              'route', 'built', None, 'admin/health', 'Administration → System health', power_aware,
+              link='admin/health', link_label='Administration → System health',
+              command='faxbot admin diagnostics power show'),
+    Mechanism('header_notice', 'Header notice instead of a cover page',
+              'Prints your notice in a band at the top of every page, so you can leave out the cover page and send '
+              'one page fewer.',
+              'document', 'built', None, 'delivery/identity', 'Delivery setup → Sending identity', header_notice,
+              link='delivery/identity', link_label='Delivery setup → Sending identity',
+              command='faxbot delivery identity notice show'),
+    Mechanism('answer_cap', '50-second answer cap',
+              'Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, '
+              'so an unanswered call is not billed a second minute.',
+              'call', 'lab', None, 'providers/trunk', 'Delivery setup → Carrier trunk', answer_cap,
+              settings=('sip_fax_answer_cap',)),
+    Mechanism('station_check', 'Station check',
+              'Compares the fax number the far machine shows with the number you dialled before any page, and says '
+              'so in Sent details, or hangs up before any page where you choose, so a wrong number is caught.',
+              'call', 'lab', None, 'delivery/identity', 'Delivery setup → Sending identity', _sends_on_trunk),
+    Mechanism('keys_after_answer', 'Keys after answer',
+              'Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a '
+              'menu goes through instead of failing and being retried.',
+              'call', 'lab', None, 'recipients/list', 'Recipients → Details', keys_after_answer),
+    Mechanism('route_problems', 'Route problems told apart from number problems',
+              'Notices when calls through one route fail together, holds that route back and keeps the lesson off '
+              'each number, so working numbers are not retried or abandoned for a route problem.',
+              'after', 'built', None, 'admin/health', 'Administration → System health', route_problems,
+              link='admin/health', link_label='Administration → System health',
+              command='faxbot admin diagnostics routes list'),
+    Mechanism('advice_line_inventory', 'Lines and carrier closing dates',
+              'Matches your fax lines to carriers\' discontinuance lists and contract end dates, so you move a line '
+              'before its price changes or it closes.',
+              'advice', 'built', None, 'delivery/moves', 'Delivery setup → Number moves', _line_inventory,
+              link='delivery/moves', link_label='Delivery setup → Number moves',
+              command='faxbot delivery numbers move inventory'),
+    Mechanism('advice_copper_closures', 'Copper closures',
+              'Shows when the copper network under your French lines closes, commune by commune, so you move each '
+              'line in time.',
+              'advice', 'built', None, 'delivery/moves', 'Delivery setup → Number moves', _copper_closures,
+              link='delivery/moves', link_label='Delivery setup → Number moves',
+              command='faxbot delivery numbers closures'),
+    Mechanism('advice_registered_senders', 'Registered senders',
+              'Sends a recipient that accepts faxes only from a registered number by the account and caller ID '
+              'registered with it, so its faxes are not refused and sent again.',
+              'advice', 'built', None, 'recipients/list', 'Recipients → Details', _sends,
+              link='recipients/list', link_label='Recipients → Details',
+              command='faxbot recipients registered-senders'),
+    Mechanism('advice_country_rules', 'Country service rules',
+              "Shows the rules a country sets for fax services, with their sources, and which of your accounts "
+              'you confirmed meet them.',
+              'advice', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', _country_rules,
+              link='delivery/connections', link_label='Delivery setup → Providers & accounts',
+              command='faxbot delivery providers accounts country-rules'),
+    _advice('advice_renewal', 'Fax server renewal',
+             "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already "
+             'handles, so you renew only the channels you need.',
+             'renewal', 'faxbot savings opportunities renewal', _renewal),
+    _advice('advice_pots', 'Fax lines in a POTS-replacement order',
+             'Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one '
+             'shared trunk costs for them instead.',
+             'pots', 'faxbot savings opportunities pots', _pots_quote),
 )
 BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
@@ -732,7 +925,7 @@ def _view(mechanism, here):
         'here': {'used': count, 'sentence': used},
         'part': mechanism.part, 'page': state.page[0] if state.page else mechanism.page,
         'page_label': state.page[1] if state.page else _label(mechanism.page, mechanism.page_label, here.values),
-        # Where selecting it leads: its part on Costs → Savings, or the page with its own figures or advice.
+        # Where selecting it leads: its part on Savings & optimization → Savings results, or the page with its own figures or advice.
         'link': mechanism.destination,
         'link_label': 'Savings & optimization → Savings results' if mechanism.part else (
             _label(mechanism.link, mechanism.link_label, here.values) if mechanism.link else None),

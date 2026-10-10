@@ -100,6 +100,8 @@ export interface RecipientList { name: string; numbers?: string[]; prefixes?: st
 export interface Region { name: string; countries?: string[]; prefixes?: string[] }
 export interface Site {
   key: string; name: string; country?: string; state?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
+  // A French site's commune (its INSEE code): copper-closure dates come from Orange's trajectory file for it.
+  commune?: string;
   // Accounts the site lists; accounts whose own site names it belong to it too.
   accounts?: string[];
 }
@@ -440,7 +442,7 @@ export interface ReceivingOptions {
   any_number: boolean;
   // Only faxes that arrive on this account.
   account_key: string | null;
-  // Only faxes that arrive on an account of this site (Providers → Rules → Sites).
+  // Only faxes that arrive on an account of this site (Delivery setup → Routing rules → Sites).
   site_key: string | null;
   // Only faxes whose sender stated this subaddress (T.33 SUB), such as a department's extension. It is what the
   // sender's machine says, never proof of who sent the fax, so it chooses the mailbox but never grants access.
@@ -490,6 +492,37 @@ export interface ReceivedExplainResult {
   // The number rule that placed it, or null when the usual placement applies.
   rule_to_number: string | null;
 }
+
+// -- where Faxbot may dial (routing/guard.py) --------------------------------------------------------
+
+// One class of numbers ("premium", "national_mobile") or one country ("country:GB").
+export interface DialingClass {
+  key: string;
+  label: string;
+  allowed: boolean;
+  // Why, in one sentence ("Allowed: the routing rule ‘UK faxes’ names it.").
+  sentence: string;
+  source: 'national' | 'delivered' | 'rule' | 'recipient' | 'administrator' | 'default' | null;
+  // Whether an administrator chose allowed or blocked (rather than Faxbot's default).
+  chosen: boolean;
+  // The highest price a minute a call may cost before the fax waits for approval, or null for none.
+  ceiling: { amount: string; currency: string; text: string } | null;
+  first_delivered_at: string | null;
+  changeable: boolean;
+}
+
+export interface DialingState {
+  classes: DialingClass[];
+  countries: DialingClass[];
+  prefixes: { prefix: string; rule: string }[];
+  other_countries: string;
+  where: string;
+  // After a change: what changed, in one sentence.
+  sentence?: string;
+  changed?: string;
+}
+
+export type DialingChoice = 'allowed' | 'blocked' | 'default';
 
 // -- requests ---------------------------------------------------------------------------------------
 
@@ -552,6 +585,20 @@ export const requests = {
   accountHealth: (key: string): ApiRequest => ({
     method: 'GET', path: `/admin/providers/accounts/${segment(key)}/health`,
   }),
+  dialing: (): ApiRequest => ({ method: 'GET', path: '/routing/dialing' }),
+  // `ceiling` left out keeps the class's ceiling; '' removes it.
+  changeDialing: (key: string, state: DialingChoice, ceiling?: string): ApiRequest => ({
+    method: 'PUT', path: `/routing/dialing/${segment(key)}`,
+    body: ceiling === undefined ? { state } : { state, ceiling },
+  }),
+  // Country service rules (the UAE, Saudi Arabia) for the accounts there (routing/country_rules.py).
+  countryRules: (): ApiRequest => ({ method: 'GET', path: '/routing/country-rules' }),
+  confirmCountry: (account: string, country: string, evidence: string): ApiRequest => ({
+    method: 'POST', path: '/routing/country-rules/confirm', body: { account, country, evidence, evidence_url: null },
+  }),
+  withdrawCountry: (account: string, country: string): ApiRequest => ({
+    method: 'POST', path: '/routing/country-rules/withdraw', body: { account, country },
+  }),
 };
 
 export interface RulesApi {
@@ -576,6 +623,19 @@ export interface RulesApi {
   updateAccount(key: string, patch: AccountPatch, generation: number): Promise<AccountsState>;
   accountHealth(key: string): Promise<AccountHealth>;
   explainReceived(body: ReceivedExplainRequest): Promise<ReceivedExplainResult>;
+  dialing(): Promise<DialingState>;
+  changeDialing(key: string, state: DialingChoice, ceiling?: string): Promise<DialingState>;
+  countryRules(): Promise<CountryRulesView>;
+  confirmCountry(account: string, country: string, evidence: string): Promise<CountryRulesView>;
+  withdrawCountry(account: string, country: string): Promise<CountryRulesView>;
+}
+
+// Country service rules: each account in a country with rules, and the rules with their sources.
+export interface CountryRulesView {
+  accounts: Array<{ account: string; label: string; country: string; confirmed: boolean; sentence: string }>;
+  countries: Array<{ country: string; name: string; regulator: string; sentence: string;
+    sources: Array<{ label: string; url: string }> }>;
+  read_on?: string;
 }
 
 // The rules API of a console API client, one per client, so screens see the same object on every render.
@@ -613,5 +673,10 @@ export function rulesApi(send: Send): RulesApi {
     updateAccount: (key, patch, generation) => send(requests.updateAccount(key, patch, generation)),
     accountHealth: (key) => send(requests.accountHealth(key)),
     explainReceived: (body) => send(requests.explainReceived(body)),
+    dialing: () => send(requests.dialing()),
+    changeDialing: (key, state, ceiling) => send(requests.changeDialing(key, state, ceiling)),
+    countryRules: () => send(requests.countryRules()),
+    confirmCountry: (account, country, evidence) => send(requests.confirmCountry(account, country, evidence)),
+    withdrawCountry: (account, country) => send(requests.withdrawCountry(account, country)),
   };
 }

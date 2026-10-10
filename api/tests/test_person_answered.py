@@ -51,6 +51,104 @@ def test_the_verdict_splits_a_person_from_a_silent_line():
     assert sip_calls.category_for('no_fax_answer') is None
 
 
+ANSWERED = datetime(2026, 10, 10, 11, 5, 33)
+
+
+def epoch(moment):
+    return str(int((moment - datetime(1970, 1, 1)).total_seconds()))
+
+
+def timed(event, seconds):
+    """The same FaxResult with the answer and end times the dialplan sends (whole seconds since the epoch)."""
+    return {**event, 'Answered': epoch(ANSWERED), 'Ended': epoch(ANSWERED + timedelta(seconds=seconds))}
+
+
+def test_a_call_cleared_within_two_seconds_of_the_answer_is_not_a_person():
+    """Live pilot LC-P004 (2026-10-10): HP's test line answered and cleared 1 s later. Sound back and a far-end hang-up
+    within 2 whole seconds (under 3 s of real time) is a service turning the call away; from 3 s it may be a person.
+    Without both times the duration is unknown and the earlier rule stands."""
+    job, attempt = 'a' * 32, 'b' * 32
+    for seconds, expected in ((0, sip_calls.CLEARED_AT_ONCE), (1, sip_calls.CLEARED_AT_ONCE),
+                              (2, sip_calls.CLEARED_AT_ONCE), (3, sip_calls.PERSON_ANSWERED),
+                              (9, sip_calls.PERSON_ANSWERED)):
+        assert sip_calls.verdict(timed(fax_result(job, attempt, HUNG_UP), seconds)) == expected, seconds
+    assert sip_calls.verdict(fax_result(job, attempt, HUNG_UP)) == sip_calls.PERSON_ANSWERED  # duration unknown
+    # No sound in one second says nothing about the network either; the other machine answering still decides.
+    assert sip_calls.verdict(timed(fax_result(job, attempt, HUNG_UP, '0'), 1)) == sip_calls.CLEARED_AT_ONCE
+    assert sip_calls.verdict(timed({**fax_result(job, attempt, HUNG_UP), 'Pages': '1'}, 1)) == 'remote_fax_failed'
+    # A line Faxbot kept open until its timer ran out was not cleared by the far end.
+    assert sip_calls.verdict(timed(fax_result(job, attempt, OPEN_LINE), 1)) == 'no_fax_answer'
+    assert sip_calls.category_for(sip_calls.CLEARED_AT_ONCE) is None
+    assert sip_calls.result_summary(timed(fax_result(job, attempt, HUNG_UP), 1)) == sip_calls.CLEARED
+    assert len(sip_calls.CLEARED) <= 80
+
+
+def test_a_call_cleared_at_once_on_the_built_in_engine_takes_the_next_route_with_no_work_item(  # noqa: F811
+        installation, another_route, monkeypatch):
+    from api.app import main
+    # A person who stayed on the line long enough to be a voice is still a person.
+    installation, person, person_claim = on_the_line(installation, SIP)
+    configuration, store, _ = installation
+    monkeypatch.setattr(main, '_deliveries', lambda: store)
+    main._handle_fax_result(timed(fax_result(person, person_claim.attempt_id, HUNG_UP), 6))
+    assert store.get(person)['state'] == 'failed' and not fell_back(store, person)
+    assert attempt_of(store, person_claim.attempt_id)['error_category'] == 'person_answered'
+    installation, job, claim = on_the_line(installation, SIP)
+    main._handle_fax_result(timed(fax_result(job, claim.attempt_id, HUNG_UP), 1))
+    assert store.get(job)['state'] == 'ready' and fell_back(store, job)
+    assert attempt_of(store, claim.attempt_id) == {'phase': 'failed', 'error_category': None}
+    assert item_category(store, job) is None
+
+
+def _engine_call(calls, job, attempt, *, seconds, rtp_rx='412'):
+    """The SSL Fax engine's call as Asterisk reports it: the engine side with its answer and end times, and the
+    trunk side with the sound that came back (LC-P004: answered 11:05:33, ended 11:05:34)."""
+    calls.record_submission({'JobID': job, 'AttemptID': attempt, 'Called': '+18005550199'})
+    calls.record_engine_call({'Direction': 'out', 'Side': 'engine', 'JobID': job, 'AttemptID': attempt,
+                              'T38Session': '0', 'Cause': '16', 'Started': epoch(ANSWERED - timedelta(seconds=4)),
+                              'Answered': epoch(ANSWERED), 'Ended': epoch(ANSWERED + timedelta(seconds=seconds))})
+    calls.record_engine_call({'Direction': 'out', 'Side': 'trunk', 'JobID': job, 'AttemptID': attempt,
+                              'T38': 'DISABLED', 'Cause': '16', 'RtpRx': rtp_rx})
+
+
+def real_engine_result(monkeypatch, configuration, store, payload):
+    """The SSL Fax engine's real result handler with the real store and the real call records: the verdict comes
+    from ``SipCallRecords`` itself, never a stand-in."""
+    from api.app import audit, hylafax_http
+    from api.app.routing import background
+    monkeypatch.setattr(hylafax_http, '_require_engine', lambda secret: None)
+    monkeypatch.setattr(hylafax_http, '_store', lambda request: store)
+    monkeypatch.setattr(background, 'installation_engine', lambda app: (configuration.engine, None))
+    monkeypatch.setattr(audit, 'audit_event', lambda *args, **kwargs: None)
+    return asyncio.run(hylafax_http.engine_result(SimpleNamespace(app=None), payload, x_internal_secret='x'))
+
+
+def test_lc_p004_on_the_ssl_fax_engine_is_a_definite_failure_before_any_data(  # noqa: F811
+        installation, another_route, monkeypatch):
+    """HP's toll-free test line answered 4 s after dialling and cleared 1 s later, with sound back and HylaFAX's
+    E002 "No carrier detected" 5 s after dialling. It was written as a person answering (no fallback, a Work item);
+    it is a definite failure before any fax data that another route, or a later try, may take."""
+    # The same call kept open 8 s before the far end hung up is still a person answering.
+    installation, person, person_claim = on_the_line(installation, SIP)
+    configuration, store, _ = installation
+    calls = sip_calls.SipCallRecords(configuration.engine)
+    _engine_call(calls, person, person_claim.attempt_id, seconds=8)
+    real_engine_result(monkeypatch, configuration, store, engine_payload(person, person_claim.attempt_id, 'E002'))
+    assert calls.for_attempt(person_claim.attempt_id)[-1]['verdict'] == sip_calls.PERSON_ANSWERED
+    assert store.get(person)['state'] == 'failed' and not fell_back(store, person)
+    assert attempt_of(store, person_claim.attempt_id)['error_category'] == 'person_answered'
+    assert error_of(configuration, person) == sip_calls.PERSON
+    assert item_category(store, person) == 'person_answered'
+    installation, job, claim = on_the_line(installation, SIP)
+    _engine_call(calls, job, claim.attempt_id, seconds=1)
+    real_engine_result(monkeypatch, configuration, store, engine_payload(job, claim.attempt_id, 'E002'))
+    [row] = calls.for_attempt(claim.attempt_id)
+    assert (row['connected_seconds'], row['verdict']) == (1, sip_calls.CLEARED_AT_ONCE)
+    assert store.get(job)['state'] == 'ready' and fell_back(store, job)
+    assert attempt_of(store, claim.attempt_id) == {'phase': 'failed', 'error_category': None}
+    assert item_category(store, job) is None
+
+
 def test_a_person_on_the_built_in_engine_is_never_called_again_and_gets_a_work_item(  # noqa: F811
         installation, another_route, monkeypatch):
     from api.app import main
@@ -156,6 +254,13 @@ def test_a_shared_call_a_person_answered_fails_every_fax_in_it_with_the_category
         ('failed', 'person_answered', sip_calls.PERSON)] * 2
     plain = map_call(members, succeeded=False, confirmed_pages=0, failure_sentence='Busy.')
     assert [item.category for item in plain] == [None, None]
+    # A shared call the far end cleared at once (LC-P004): every fax in it fails with no category, so each may take
+    # another route; the category comes from the call's verdict as the built-in engine's handler reads it.
+    event = timed(fax_result('a' * 32, 'b' * 32, HUNG_UP), 1)
+    cleared = map_call(members, succeeded=False, confirmed_pages=0, failure_sentence=sip_calls.result_summary(event),
+                       failure_category=sip_calls.category_for(sip_calls.verdict(event)))
+    assert [(item.status, item.category, item.sentence) for item in cleared] == [
+        ('failed', None, sip_calls.CLEARED)] * 2
 
 
 def test_the_work_item_checks_the_number_and_offers_the_npi_registry_for_a_provider(installation):  # noqa: F811

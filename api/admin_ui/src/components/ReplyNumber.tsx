@@ -5,6 +5,8 @@ import {
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { AccessMailbox } from '../api/types';
 import type { ReplyNumberView } from '../api/numbersTypes';
+import { HeaderNoticeSettings } from './HeaderNotice';
+import { MailboxStationCheck } from './StationCheck';
 
 interface ReplyNumberProps {
   client: AdminAPIClient;
@@ -17,7 +19,7 @@ function message(error: unknown, fallback: string) {
   return fallback;
 }
 
-// Numbers → Sender identity, Reply number: the number printed in each page's header line and sent as the
+// Delivery setup → Sending identity, Reply number: the number printed in each page's header line and sent as the
 // station ID, for every fax (setting fax_reply_number) and per mailbox (setting fax_reply_numbers); which of
 // your numbers is cheapest to receive on; and what caller ID each provider shows.
 function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
@@ -68,6 +70,7 @@ function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
   if (!view) return notice ? <Alert severity={notice.severity}>{notice.text}</Alert> : null;
   const reaching = view.candidates.filter((item) => item.mailbox_id === mailboxId && item.receives);
   return (
+    <>
     <Card data-testid="reply-number" sx={{ mt: 3 }}>
       <CardContent>
         <Typography variant="h6">Reply number</Typography>
@@ -154,6 +157,11 @@ function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
         </Box>
       </CardContent>
     </Card>
+    {/* The notice line printed under the header line on every page (header_notice.py). */}
+    <HeaderNoticeSettings client={client} canWrite={canWrite} mailboxes={mailboxes} />
+    {/* What a mailbox's faxes do when a number answers as another fax machine (routing/stations.py). */}
+    <MailboxStationCheck client={client} canWrite={canWrite} mailboxes={mailboxes} />
+    </>
   );
 }
 

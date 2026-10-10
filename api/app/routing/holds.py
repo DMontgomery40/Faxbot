@@ -138,7 +138,11 @@ def no_route_sentence(label_by_key, skipped):
            'over_cap': "is over the rule's cost cap", 'unknown_cost': "has no known price under the rule's cost cap",
            'spending_limit': 'reached its daily spending limit', 'unavailable': 'is not set up to send',
            'tried': 'was already tried',
-           'needs_patient': "needs the patient's details, which this fax does not have"}
+           'needs_patient': "needs the patient's details, which this fax does not have",
+           'not_served': "does not send faxes to this number's country",
+           'pin': 'does not show the caller ID and station ID this recipient has registered',
+           'digits': "cannot press the keys this number's phone menu needs after it answers; only a trunk can",
+           'power': "would need longer than this office's battery has left"}
     parts = [f'{label_by_key(key)} {why.get(reason, "is not available")}' for key, reason in skipped]
     if not parts:
         return 'No account your rules allow can send this fax now. It waits for you in Sent; nothing was sent.'
@@ -314,6 +318,10 @@ class HoldStore:
             if row['kind'] == 'approval':
                 if account:
                     raise HoldInputError('Choose an account only for a fax with no route your rules allow.')
+                # Where Faxbot may dial (guard.py): a premium-rate, special-service or satellite number is never
+                # dialed by approving one fax while its class is not allowed.
+                from .guard import refuse_release_on
+                refuse_release_on(connection, row)
                 jobs = self.configuration.jobs
                 destination = connection.scalar(sa.select(jobs.c.to_number).where(jobs.c.id == row['job_id']))
                 if row['bound_digest'] and (pinned is None or document is None or digest_for(
@@ -468,7 +476,9 @@ class HoldStore:
                       'over_cap': "Its price today is over the rule's cost cap.",
                       'unknown_cost': "Its price is unknown, and a rule caps the cost."}[why]
             found.append({'account': key, 'label': label(key), 'reason': reason})
-        return found
+        # A registered-sender recipient: "send anyway" offers only its registered trunk (sender_pins, N17).
+        from .sender_pins import pinned_options
+        return pinned_options(self.engine, row['job_id'], found)
 
     def not_offered(self, pinned, row, accounts=None):
         """Why the other accounts are not offered, one sentence each."""

@@ -40,7 +40,8 @@ export default function CapabilityPage({ item, outcome, onNavigate }: {
   item: Capability; outcome: CapabilityOutcome; onNavigate?: Navigate;
 }) {
   // Advice and charge checks keep their home on the page with what they found: that is their figures link.
-  const ownSetting = !item.results || item.setting.address !== item.results.address;
+  const ownSetting = !item.results || item.setting.address !== item.results.address || Boolean(item.setting.command)
+    || item.ready;
   return (
     <Box data-testid="capability-page">
       <Typography variant="body2" sx={{ mb: 1 }}>

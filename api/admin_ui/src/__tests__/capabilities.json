@@ -653,6 +653,190 @@
               "command": "faxbot savings opportunities sites"
             },
             "affected": null
+          },
+          {
+            "key": "measured_account",
+            "name": "Account chosen after measuring its pages",
+            "sentence": "Measures the pages each of your sending accounts would really send, then sends by the account whose fax costs least.",
+            "example": "One of your accounts bills by the page and another by the minute. For a 12-page scan, Faxbot measures how long its pages would take on each and sends by the account whose bill for that fax is lower.",
+            "outcome": "spend_less",
+            "address": "savings/capabilities?key=measured_account",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs two or more sending accounts to compare; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "delivery/connections",
+              "label": "Delivery setup → Providers & accounts",
+              "command": null
+            },
+            "results": {
+              "address": "faxes/sent",
+              "label": "Faxes → Sent",
+              "command": "faxbot faxes sent"
+            },
+            "affected": null
+          },
+          {
+            "key": "caller_id_prices",
+            "name": "Prices by the caller ID a call shows",
+            "sentence": "Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
+            "example": "Your carrier charges much less for a call to Austria when the caller ID is a European number. Faxbot prices each account with the caller ID its calls would show, so the route it picks is the one that really costs least.",
+            "outcome": "spend_less",
+            "address": "savings/capabilities?key=caller_id_prices",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No prices that depend on the caller ID are imported yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": true,
+            "missing": 1,
+            "filters": [
+              "off",
+              "ready",
+              "needs"
+            ],
+            "improvement": {
+              "kind": "fact",
+              "label": "Needs a fact"
+            },
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              },
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your carrier's prices by caller ID, imported for its sending card.",
+                "address": "savings/prices",
+                "address_label": "Savings & optimization → Prices & plans"
+              }
+            ],
+            "setting": {
+              "address": "savings/prices",
+              "label": "Savings & optimization → Prices & plans",
+              "command": "faxbot savings rate-rows {route} --caller-id-deck {file}"
+            },
+            "results": {
+              "address": "savings/prices",
+              "label": "Savings & optimization → Prices & plans",
+              "command": "faxbot delivery providers trunk caller-ids"
+            },
+            "affected": null
+          },
+          {
+            "key": "dialing_guard",
+            "name": "Where Faxbot may dial",
+            "sentence": "Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
+            "example": "A typing slip turns a fax to a local clinic into a call to a premium-rate number. Faxbot holds that fax for your approval instead of dialling it.",
+            "outcome": "spend_less",
+            "address": "savings/capabilities?key=dialing_guard",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "delivery/connections",
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot delivery providers destinations allow {class}"
+            },
+            "results": {
+              "address": "delivery/connections",
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot delivery providers destinations list"
+            },
+            "affected": null
           }
         ]
       },
@@ -1101,6 +1285,77 @@
               "address": "savings/opportunities?section=pages",
               "label": "Savings & optimization → Opportunities",
               "command": "faxbot savings opportunities shading"
+            },
+            "affected": null
+          },
+          {
+            "key": "header_notice",
+            "name": "Header notice instead of a cover page",
+            "sentence": "Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
+            "example": "A clinic's faxes always start with a cover page that only carries a confidentiality notice. With the notice printed in a band at the top of each page, the cover page is left out and every fax is one page shorter.",
+            "outcome": "shorter_calls",
+            "address": "savings/capabilities?key=header_notice",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No header notice is set yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": true,
+            "missing": 1,
+            "filters": [
+              "off",
+              "ready",
+              "needs"
+            ],
+            "improvement": {
+              "kind": "now",
+              "label": "You can do this now"
+            },
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              },
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your notice, for the whole organization or for a mailbox.",
+                "address": "delivery/identity",
+                "address_label": "Delivery setup → Sending identity"
+              }
+            ],
+            "setting": {
+              "address": "delivery/identity",
+              "label": "Delivery setup → Sending identity",
+              "command": "faxbot delivery identity notice set {notice}"
+            },
+            "results": {
+              "address": "delivery/identity",
+              "label": "Delivery setup → Sending identity",
+              "command": "faxbot delivery identity notice show"
             },
             "affected": null
           }
@@ -1928,6 +2183,62 @@
               "command": "faxbot recipients partners relay"
             },
             "affected": null
+          },
+          {
+            "key": "advice_registered_senders",
+            "name": "Registered senders",
+            "sentence": "Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
+            "example": "A bank accepts faxed instructions only from the number registered with it. Faxbot sends to it from the account and caller ID you registered, so your faxes are not refused and sent again.",
+            "outcome": "relationships",
+            "address": "savings/capabilities?key=advice_registered_senders",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "recipients/list",
+              "label": "Recipients",
+              "command": null
+            },
+            "results": {
+              "address": "recipients/list",
+              "label": "Recipients",
+              "command": "faxbot recipients registered-senders"
+            },
+            "affected": null
           }
         ]
       },
@@ -2161,6 +2472,300 @@
               "address": "savings/results?part=partner_repair",
               "label": "Savings & optimization → Savings results",
               "command": "faxbot savings results"
+            },
+            "affected": null
+          },
+          {
+            "key": "power_aware",
+            "name": "Power-aware sending",
+            "sentence": "Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
+            "example": "During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of starting a call that would be cut off part way and still billed.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=power_aware",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a UPS that Faxbot reads through NUT; none is set."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "off",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A UPS that Faxbot reads over the network through NUT (Network UPS Tools).",
+                "address": "admin/health",
+                "address_label": "Administration → System health"
+              }
+            ],
+            "setting": {
+              "address": "admin/health",
+              "label": "Administration → System health",
+              "command": "faxbot admin diagnostics power set --address {address}"
+            },
+            "results": {
+              "address": "admin/health",
+              "label": "Administration → System health",
+              "command": "faxbot admin diagnostics power show"
+            },
+            "affected": null
+          },
+          {
+            "key": "answer_cap",
+            "name": "50-second answer cap",
+            "sentence": "Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, so an unanswered call is not billed a second minute.",
+            "example": "A number rings with no fax machine answering. On a trunk billed by the whole minute, Faxbot hangs up at 50 seconds, so the failed call is billed one minute instead of two.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=answer_cap",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Its capped calls are not counted on Savings yet"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              },
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Trunk prices billed by the minute in steps of 60 seconds or more.",
+                "address": "savings/prices",
+                "address_label": "Savings & optimization → Prices & plans"
+              }
+            ],
+            "setting": {
+              "address": "delivery/trunk",
+              "label": "Delivery setup → Telnyx",
+              "command": "faxbot delivery providers trunk answer-cap on"
+            },
+            "results": null,
+            "affected": null
+          },
+          {
+            "key": "station_check",
+            "name": "Station check",
+            "sentence": "Compares the fax number the far machine shows with the number you dialled before any page, and says so in Sent details, or hangs up before any page where you choose, so a wrong number is caught.",
+            "example": "A referral number was reassigned, and the fax machine that answers shows someone else's number. Faxbot says so in Sent details, or hangs up before any page where you chose that.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=station_check",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "What it caught is in each fax's Sent details, not on Savings"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              }
+            ],
+            "setting": {
+              "address": "delivery/identity",
+              "label": "Delivery setup → Sending identity",
+              "command": "faxbot delivery identity station-check refuse --mailbox {mailbox}"
+            },
+            "results": null,
+            "affected": null
+          },
+          {
+            "key": "keys_after_answer",
+            "name": "Keys after answer",
+            "sentence": "Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
+            "example": "A hospital's fax number answers with a menu: press 2 for the fax machine. Faxbot presses 2 once it answers, so the fax goes through instead of failing and being retried.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=keys_after_answer",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient has keys to press after it answers yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "The keys each call pressed are in its Sent details, not on Savings"
+            },
+            "experimental": false,
+            "ready": true,
+            "missing": 1,
+            "filters": [
+              "off",
+              "ready",
+              "needs"
+            ],
+            "improvement": {
+              "kind": "now",
+              "label": "You can do this now"
+            },
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              },
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "The keys a recipient's phone menu asks for, on their page.",
+                "address": "recipients/list",
+                "address_label": "Recipients"
+              }
+            ],
+            "setting": {
+              "address": "recipients/list",
+              "label": "Recipients",
+              "command": "faxbot recipients set {number} --after-answer {keys}"
+            },
+            "results": null,
+            "affected": null
+          },
+          {
+            "key": "route_problems",
+            "name": "Route problems told apart from number problems",
+            "sentence": "Notices when calls through one route fail together, holds that route back and keeps the lesson off each number, so working numbers are not retried or abandoned for a route problem.",
+            "example": "Calls through one carrier start failing to many numbers at once. Faxbot holds that route back and keeps those failures off each number's record, so working numbers are not retried or given up on.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=route_problems",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "admin/health",
+              "label": "Administration → System health",
+              "command": null
+            },
+            "results": {
+              "address": "admin/health",
+              "label": "Administration → System health",
+              "command": "faxbot admin diagnostics routes list"
             },
             "affected": null
           }
@@ -2529,6 +3134,234 @@
               "command": "faxbot delivery providers trunk telnyx names"
             },
             "affected": null
+          },
+          {
+            "key": "advice_line_inventory",
+            "name": "Lines and carrier closing dates",
+            "sentence": "Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
+            "example": "Your carrier lists two of your fax lines for discontinuance next spring. The advice names them and their dates, so you can move them before the price changes or the lines close.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_line_inventory",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs your line inventory; none is imported yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your line inventory, imported from your carrier or your own records.",
+                "address": "delivery/moves",
+                "address_label": "Delivery setup → Number moves"
+              }
+            ],
+            "setting": {
+              "address": "delivery/moves",
+              "label": "Delivery setup → Number moves",
+              "command": null
+            },
+            "results": {
+              "address": "delivery/moves",
+              "label": "Delivery setup → Number moves",
+              "command": "faxbot delivery numbers move inventory"
+            },
+            "affected": null
+          },
+          {
+            "key": "advice_copper_closures",
+            "name": "Copper closures",
+            "sentence": "Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
+            "example": "The copper network under your Lyon office's commune closes in 2027. The advice shows the date for each line there, so you can move them in time.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_copper_closures",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "For phone lines in France; none of your sites has its commune set, and no line has a closing notice."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "For lines in France: each site's commune, or a line's closing notice.",
+                "address": "delivery/moves",
+                "address_label": "Delivery setup → Number moves"
+              }
+            ],
+            "setting": {
+              "address": "delivery/moves",
+              "label": "Delivery setup → Number moves",
+              "command": null
+            },
+            "results": {
+              "address": "delivery/moves",
+              "label": "Delivery setup → Number moves",
+              "command": "faxbot delivery numbers closures"
+            },
+            "affected": null
+          },
+          {
+            "key": "advice_renewal",
+            "name": "Fax server renewal",
+            "sentence": "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+            "example": "Your fax server's renewal quotes 24 channels, but its call records show at most 9 in use at once last year. The advice sets the two side by side, with the faxes Faxbot already handles, so you renew only the channels you need.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_renewal",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs your fax server's renewal or its call records; neither is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your fax server's renewal, or its call records to measure the channels it used at peak.",
+                "address": "savings/opportunities?section=renewal",
+                "address_label": "Savings & optimization → Opportunities"
+              }
+            ],
+            "setting": {
+              "address": "savings/opportunities?section=renewal",
+              "label": "Savings & optimization → Opportunities",
+              "command": null
+            },
+            "results": {
+              "address": "savings/opportunities?section=renewal",
+              "label": "Savings & optimization → Opportunities",
+              "command": "faxbot savings opportunities renewal"
+            },
+            "affected": null
+          },
+          {
+            "key": "advice_pots",
+            "name": "Fax lines in a POTS-replacement order",
+            "sentence": "Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+            "example": "Your carrier quotes a POTS-replacement order that includes eight fax lines. The advice shows what taking those lines out removes from the quote, and what one shared trunk would cost for them instead.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_pots",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a POTS-replacement quote; none is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your carrier's POTS-replacement quote.",
+                "address": "savings/opportunities?section=pots",
+                "address_label": "Savings & optimization → Opportunities"
+              }
+            ],
+            "setting": {
+              "address": "savings/opportunities?section=pots",
+              "label": "Savings & optimization → Opportunities",
+              "command": null
+            },
+            "results": {
+              "address": "savings/opportunities?section=pots",
+              "label": "Savings & optimization → Opportunities",
+              "command": "faxbot savings opportunities pots"
+            },
+            "affected": null
           }
         ]
       },
@@ -2637,6 +3470,63 @@
               "command": "faxbot admin setup plan"
             },
             "affected": null
+          },
+          {
+            "key": "advice_country_rules",
+            "name": "Country service rules",
+            "sentence": "Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",
+            "example": "Your account with a provider in the United Arab Emirates is listed with that country's rules for fax services and their sources, and you record that the provider meets them.",
+            "outcome": "explain",
+            "address": "savings/capabilities?key=advice_country_rules",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "None of your accounts is in a country whose service rules Faxbot knows."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A fax service account in a country whose service rules Faxbot knows.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "delivery/connections",
+              "label": "Delivery setup → Providers & accounts",
+              "command": null
+            },
+            "results": {
+              "address": "delivery/connections",
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot delivery providers accounts country-rules"
+            },
+            "affected": null
           }
         ]
       }
@@ -2681,6 +3571,17 @@
       "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
       "  Calls by state (advice_sites): On · Works here · Sample data",
       "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+      "  Account chosen after measuring its pages (measured_account): On · Not here · Sample data",
+      "    Measures the pages each of your sending accounts would really send, then sends by the account whose fax costs least.",
+      "    Needs two or more sending accounts to compare; you send through Telnyx only.",
+      "    Missing: Connection",
+      "  Prices by the caller ID a call shows (caller_id_prices): Off · Works here · Sample data · Ready to turn on",
+      "    Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
+      "    No prices that depend on the caller ID are imported yet.",
+      "    Missing: Prices",
+      "    Turn it on in Savings & optimization → Prices & plans.",
+      "  Where Faxbot may dial (dialing_guard): On · Works here · Sample data",
+      "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
       "",
       "Smaller documents and shorter calls",
       "Send fewer pages, and keep each page on the line for less time.",
@@ -2710,6 +3611,11 @@
       "    Not used in 30 days",
       "  Time lighter shading would save (advice_shading): On · Works here · Sample data",
       "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
+      "  Header notice instead of a cover page (header_notice): Off · Works here · Sample data · Ready to turn on",
+      "    Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
+      "    No header notice is set yet.",
+      "    Missing: Setting",
+      "    Turn it on in Delivery setup → Sending identity.",
       "",
       "Avoid repeated calls and documents",
       "Send what a recipient already has only once, and share calls where recipients agree.",
@@ -2775,6 +3681,8 @@
       "    Names partners whose signed local price would have cost less than your own calls.",
       "    Needs a verified partner; you have none yet.",
       "    Missing: Partner",
+      "  Registered senders (advice_registered_senders): On · Works here · Sample data",
+      "    Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
       "",
       "Recover delivery with less waste",
       "Wait for the right moment, and resend only what is missing.",
@@ -2796,6 +3704,24 @@
       "    Needs a verified partner; you have none yet.",
       "    Missing: Partner, Setting",
       "    Not used in 30 days",
+      "  Power-aware sending (power_aware): Off · Not here · Sample data",
+      "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
+      "    Needs a UPS that Faxbot reads through NUT; none is set.",
+      "    Missing: Connection",
+      "  50-second answer cap (answer_cap): On · Works here · Test lab",
+      "    Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, so an unanswered call is not billed a second minute.",
+      "    Its capped calls are not counted on Savings yet",
+      "  Station check (station_check): On · Works here · Test lab",
+      "    Compares the fax number the far machine shows with the number you dialled before any page, and says so in Sent details, or hangs up before any page where you choose, so a wrong number is caught.",
+      "    What it caught is in each fax's Sent details, not on Savings",
+      "  Keys after answer (keys_after_answer): Off · Works here · Test lab · Ready to turn on",
+      "    Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
+      "    No recipient has keys to press after it answers yet.",
+      "    Missing: Setting",
+      "    The keys each call pressed are in its Sent details, not on Savings",
+      "    Turn it on in Recipients.",
+      "  Route problems told apart from number problems (route_problems): On · Works here · Sample data",
+      "    Notices when calls through one route fail together, holds that route back and keeps the lesson off each number, so working numbers are not retried or abandoned for a route problem.",
       "",
       "Lower receiving and service costs",
       "Keep only the numbers, lines and plans you need, and turn away junk calls.",
@@ -2819,6 +3745,22 @@
       "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
       "    Needs your Telnyx key saved on the Telnyx page.",
       "    Missing: Setting",
+      "  Lines and carrier closing dates (advice_line_inventory): On · Not here · Sample data",
+      "    Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
+      "    Needs your line inventory; none is imported yet.",
+      "    Missing: Setting",
+      "  Copper closures (advice_copper_closures): On · Not here · Sample data",
+      "    Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
+      "    For phone lines in France; none of your sites has its commune set, and no line has a closing notice.",
+      "    Missing: Setting",
+      "  Fax server renewal (advice_renewal): On · Not here · Sample data",
+      "    Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+      "    Needs your fax server's renewal or its call records; neither is entered yet.",
+      "    Missing: Prices",
+      "  Fax lines in a POTS-replacement order (advice_pots): On · Not here · Sample data",
+      "    Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+      "    Needs a POTS-replacement quote; none is entered yet.",
+      "    Missing: Prices",
       "",
       "Explain results and choose improvements",
       "Check what you were billed, and find the next change worth making.",
@@ -2826,6 +3768,10 @@
       "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
       "  Suggested packs (advice_setup_packs): On · Works here · Sample data",
       "    Gathers the settings and rules that would save money here into packs you review and apply.",
+      "  Country service rules (advice_country_rules): On · Not here · Sample data",
+      "    Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",
+      "    None of your accounts is in a country whose service rules Faxbot knows.",
+      "    Missing: Connection",
       "",
       "On or Off: Whether it is switched on for your faxes.",
       "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
@@ -2841,6 +3787,14 @@
         "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
         "Showing: Ready to turn on",
         "",
+        "Spend less on sending",
+        "Choose the route, plan or number that costs least for each fax.",
+        "  Prices by the caller ID a call shows (caller_id_prices): Off · Works here · Sample data · Ready to turn on",
+        "    Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
+        "    No prices that depend on the caller ID are imported yet.",
+        "    Missing: Prices",
+        "    Turn it on in Savings & optimization → Prices & plans.",
+        "",
         "Smaller documents and shorter calls",
         "Send fewer pages, and keep each page on the line for less time.",
         "  Encoded pages (experimental) (encoded_pages): Off · Works here · Sample data · Ready to turn on · Experimental",
@@ -2853,6 +3807,11 @@
         "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
         "    Not used in 30 days",
         "    Turn it on in Delivery setup → Providers & accounts.",
+        "  Header notice instead of a cover page (header_notice): Off · Works here · Sample data · Ready to turn on",
+        "    Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
+        "    No header notice is set yet.",
+        "    Missing: Setting",
+        "    Turn it on in Delivery setup → Sending identity.",
         "",
         "Avoid repeated calls and documents",
         "Send what a recipient already has only once, and share calls where recipients agree.",
@@ -2867,6 +3826,15 @@
         "    No recipient has agreed to an index page or page marks yet.",
         "    Missing: Recipient's agreement",
         "    Not used in 30 days",
+        "    Turn it on in Recipients.",
+        "",
+        "Recover delivery with less waste",
+        "Wait for the right moment, and resend only what is missing.",
+        "  Keys after answer (keys_after_answer): Off · Works here · Test lab · Ready to turn on",
+        "    Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
+        "    No recipient has keys to press after it answers yet.",
+        "    Missing: Setting",
+        "    The keys each call pressed are in its Sent details, not on Savings",
         "    Turn it on in Recipients.",
         "",
         "On or Off: Whether it is switched on for your faxes.",
@@ -3009,14 +3977,47 @@
         "Its setting: Recipients",
         "Command line: faxbot recipients schedule {number} --learn",
         "On this installation: Faxbot keeps no count of the faxes that waited"
+      ],
+      "caller_id_prices": [
+        "Prices by the caller ID a call shows",
+        "Off · Works here · Sample data · Ready to turn on",
+        "Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
+        "For example: Your carrier charges much less for a call to Austria when the caller ID is a European number. Faxbot prices each account with the caller ID its calls would show, so the route it picks is the one that really costs least.",
+        "No prices that depend on the caller ID are imported yet.",
+        "Helps with: Spend less on sending",
+        "",
+        "What it needs",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Providers & accounts.",
+        "  Missing · Prices: Your carrier's prices by caller ID, imported for its sending card. See Savings & optimization → Prices & plans.",
+        "",
+        "Its setting: Savings & optimization → Prices & plans",
+        "Command line: faxbot savings rate-rows {route} --caller-id-deck {file}",
+        "Turn it on in Savings & optimization → Prices & plans.",
+        "Its figures: Savings & optimization → Prices & plans (faxbot delivery providers trunk caller-ids)"
+      ],
+      "measured_account": [
+        "Account chosen after measuring its pages",
+        "On · Not here · Sample data",
+        "Measures the pages each of your sending accounts would really send, then sends by the account whose fax costs least.",
+        "For example: One of your accounts bills by the page and another by the minute. For a 12-page scan, Faxbot measures how long its pages would take on each and sends by the account whose bill for that fax is lower.",
+        "Needs two or more sending accounts to compare; you send through Telnyx only.",
+        "Helps with: Spend less on sending",
+        "",
+        "What it needs",
+        "  Missing · Connection: A second sending route, such as another fax service account or your own SIP trunk. See Delivery setup → Providers & accounts.",
+        "",
+        "Its setting: Delivery setup → Providers & accounts",
+        "Its figures: Faxes → Sent (faxbot faxes sent)"
       ]
     }
   },
   "addresses": [
+    "admin/health",
     "admin/setup",
     "delivery/blocked",
     "delivery/connections",
     "delivery/identity",
+    "delivery/moves",
     "delivery/numbers",
     "delivery/trunk",
     "faxes/sent",
@@ -3031,8 +4032,10 @@
     "savings/opportunities?section=pages",
     "savings/opportunities?section=partners",
     "savings/opportunities?section=plans",
+    "savings/opportunities?section=pots",
     "savings/opportunities?section=receiving",
     "savings/opportunities?section=relays",
+    "savings/opportunities?section=renewal",
     "savings/opportunities?section=sending",
     "savings/opportunities?section=sites",
     "savings/opportunities?section=steps",

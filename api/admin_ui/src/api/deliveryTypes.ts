@@ -164,6 +164,24 @@ export interface PredictionAnswer {
 // `coding` is set only for Faxbot's own engines (route 'sip'): the coding they would be asked for, in one sentence.
 export interface DocumentRoutePrediction extends RoutePrediction {
   coding: { coding: string; measured: boolean; sentence: string } | null;
+  // The pages this account would send: its own best layout, measured on the document ('normal', 'dense', 'codec').
+  layout?: string;
+  sent_pages?: number;
+  original_pages?: number;
+}
+
+// The account and pages Faxbot would send the document with (the delivery worker's own choice), or the runner-up.
+export interface PlanChoice {
+  route: string;
+  label: string;
+  layout: string;
+  rendering: string;
+  coding: string | null;
+  original_pages: number;
+  sent_pages: number;
+  cost: Money | null;
+  in_plan: boolean;
+  measured: boolean;
 }
 
 export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
@@ -171,6 +189,13 @@ export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
   measured: Record<string, number>;
   measured_sentence: string | null;
   jbig_measured: boolean;
+  // Each account's best pages measured on its own price, ranked as the delivery worker ranks them; `sentence` then
+  // says the choice ("Would go through … instead of …"). Absent from older servers.
+  selected?: PlanChoice | null;
+  runner_up?: PlanChoice | null;
+  compared?: number;
+  held?: boolean;
+  approximate?: boolean;
 }
 
 export interface DestinationDetail extends Destination {
@@ -819,7 +844,7 @@ export interface SavingsMechanism {
   evidence: { level: 'live' | 'lab' | 'built'; label: string };
   // One short line about this installation ("Used on 14 faxes in 30 days"), or null for advice.
   here: { used: number; sentence: string | null };
-  // Its part on Costs → Savings, or null when it has none.
+  // Its part on Savings & optimization → Savings results, or null when it has none.
   part: string | null;
   // The console page that holds its setting ('recipients/list'), and that page's name.
   page: string;
@@ -918,7 +943,7 @@ export interface PlanAdvice {
   windows: PlanWindow[];
 }
 
-// Costs → Recommendations: lightening shaded areas and removing specks on documents you send
+// Savings & optimization → Opportunities: lightening shaded areas and removing specks on documents you send
 // (/routing/recommendations/fax-friendly). Seconds are estimates at full fax speed.
 export interface FaxFriendlyRecommendation {
   choice: 'where_it_saves' | 'always' | 'never';
@@ -1179,7 +1204,7 @@ export interface TollFreeRecommendations {
   items: Array<TollFreeRow & { display_name: string | null; approved: boolean; spend: Money | null; sentence: string }>;
 }
 
-// GET /routing/plans: each plan this billing period (Costs → Prices & plans). Every figure is an estimate. The budgets
+// GET /routing/plans: each plan this billing period (Savings & optimization → Prices & plans). Every figure is an estimate. The budgets
 // themselves are the setting plan_budgets ("humblefax:pages=200,faxes=50,day=1; efax:included_pages=200").
 export interface PlanBudgetTerms {
   pages: number | null;            // normal-use pages a month; null: no limit

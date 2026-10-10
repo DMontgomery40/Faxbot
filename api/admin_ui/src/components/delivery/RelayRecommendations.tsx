@@ -1,4 +1,4 @@
-// Costs → Recommendations → Partner relays: partners whose signed local price would have cost less than your own
+// Savings & optimization → Opportunities → Partner relays: partners whose signed local price would have cost less than your own
 // calls lately. Relaying stays off until both sides agree; this only says where it would have saved.
 import { useCallback, useEffect, useState } from 'react';
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material';

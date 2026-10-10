@@ -154,7 +154,47 @@ def validate(kind, direction, data):
             raise SourceInputError('Enter the name your mail server writes when it checks senders, such as '
                                    'mx.google.com for Google Workspace.')
         settings['checked_by'] = checked_by.casefold() if checked_by != MICROSOFT_365 else checked_by
+        # Copiers that send by direct SMTP (Sharp's Direct SMTP, research N22): no DKIM or SPF, so each is admitted
+        # only from its own address on your network (intake/sources/mail.py, copier_sender).
+        copiers = copier_senders(data.get('copier_senders'))
+        if copiers and settings['checked_by'] == MICROSOFT_365:
+            raise SourceInputError('Copier senders need your own mail server, named as the server that checks '
+                                   'senders; Microsoft 365 does not take mail straight from a copier this way.')
+        if copiers:
+            settings['copier_senders'] = copiers
     return settings
+
+
+MAX_COPIERS = 50
+
+
+def copier_senders(value):
+    """'scanner@example.com 192.168.1.40, copier@example.com 192.168.1.0/24' as Faxbot keeps it (each address
+    and the network it sends from, comma-separated), or '' for none. Raises SourceInputError."""
+    import ipaddress
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return ''
+    parts = value if isinstance(value, list) else str(value).split(',')
+    found = []
+    for part in parts:
+        pieces = str(part).split()
+        if not pieces:
+            continue
+        if len(pieces) != 2 or '@' not in pieces[0] or len(pieces[0]) > 320:
+            raise SourceInputError('Write each copier as its email address and its network address, such as '
+                                   'scanner@example.com 192.168.1.40, separated by commas.')
+        try:
+            network = ipaddress.ip_network(pieces[1], strict=False)
+        except ValueError:
+            raise SourceInputError(f'{pieces[1]} is not a network address, such as 192.168.1.40 or '
+                                   '192.168.1.0/24.') from None
+        if not network.is_private:
+            raise SourceInputError(f'{pieces[1]} is not on a private network; copier senders are admitted only from '
+                                   'your own network.')
+        found.append(f'{pieces[0].casefold()} {network}')
+    if len(found) > MAX_COPIERS:
+        raise SourceInputError(f'List at most {MAX_COPIERS} copiers.')
+    return ', '.join(dict.fromkeys(found))
 
 
 def _host(data, name, preset):

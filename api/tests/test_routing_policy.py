@@ -84,6 +84,40 @@ def test_unknown_cost_sorts_after_known_cost_and_keeps_outbound_provider_first_o
         ('signalwire', 'known_cheapest'), ('documo', 'alternative'), ('sinch', 'alternative')]
 
 
+def yen_card(provider, page):
+    return RateCard(None, provider, 'outbound', provider.title(), 'JPY', parse_amount('0'), parse_amount(page),
+                    parse_amount('0'), 60, 0, None, CAPTURED)
+
+
+def test_yen_and_dollars_are_never_compared_as_they_stand():
+    # 5 yen a page is 5,000,000 micros of yen; 7 cents is 70,000 micros of dollars. As numbers the dollars look
+    # cheaper; they are different money.
+    ntt = provider('ntt', yen_card('ntt', '5'), bound=True)
+    sinch = provider('sinch', card('sinch', page='0.07'))
+    phaxio = provider('phaxio', card('phaxio', page='0.05'))
+    # No exchange rate: your order decides between currencies, and money ranks only within one.
+    assert keys(RoutePolicy().order([ntt, sinch, phaxio])) == [
+        ('ntt', 'mixed_currency'), ('phaxio', 'alternative'), ('sinch', 'alternative')]
+    assert keys(RoutePolicy().order([sinch, ntt, phaxio]))[:2] == [('phaxio', 'mixed_currency'),
+                                                                   ('sinch', 'alternative')]
+    # At a rate you set (either direction), the amounts are compared in one currency; estimates stay as charged.
+    cheap_yen = RoutePolicy().order([sinch, ntt, phaxio], exchange={('JPY', 'USD'): 0.0067})
+    assert keys(cheap_yen) == [('ntt', 'cheapest_converted'), ('phaxio', 'alternative'), ('sinch', 'alternative')]
+    assert cheap_yen[0].estimated_cost_micros == 5_000_000
+    dear_yen = RoutePolicy().order([ntt, sinch, phaxio], exchange={('USD', 'JPY'): 50})
+    assert keys(dear_yen) == [('phaxio', 'cheapest_converted'), ('sinch', 'alternative'), ('ntt', 'alternative')]
+    # One currency: ranked as always.
+    assert keys(RoutePolicy().order([sinch, phaxio]))[0] == ('phaxio', 'cheapest')
+
+
+def test_a_route_named_doubtful_is_kept_last_like_an_unreliable_one():
+    # routing.plan names an account with an open route family incident on every transport it would use.
+    trunk = provider('sip', card('sip', minute='0.001'))
+    api = provider('phaxio', card('phaxio', page='0.007'), bound=True)
+    assert keys(RoutePolicy().order([api, trunk], doubtful={'sip'})) == [
+        ('phaxio', 'cheapest'), ('sip', 'unreliable')]
+
+
 def test_duplicate_routes_are_rejected():
     with pytest.raises(ValueError):
         RoutePolicy().order([provider('sip'), provider('sip')])
@@ -94,11 +128,15 @@ def test_whole_minute_rounding_matches_the_research_example():
     trunk = card('sip', minute='0.005')
     assert billed_seconds(trunk, 630) == 660
     assert attempt_cost(trunk, seconds=630, pages=20, delivered=True) == parse_amount('0.055')
-    assert estimate_cost(trunk, 20) == parse_amount('0.055')
+    # Ranking no longer uses that 30 s + 30 s a page guess: estimate_cost is the shared predictor's figure. Twenty
+    # typical standard pages take about 256 s (11 s setup, 9.7 s of data and 2.6 s of handshake a page); over the
+    # default spread (15% shorter or longer a quarter of the time each) that bills 4 minutes a quarter of the time
+    # and 5 minutes otherwise: 285 s expected, $0.02375.
+    assert estimate_cost(trunk, 20) == parse_amount('0.02375')
     api = card('telnyx-fax', page='0.007', minute='0.005')
-    # 500 such documents: $97.50 through a per-page API, $27.50 over a SIP trunk.
-    assert 500 * estimate_cost(api, 20) == parse_amount('97.5')
-    assert 500 * estimate_cost(trunk, 20) == parse_amount('27.5')
+    # 500 such documents: $81.875 through a per-page API, $11.875 over a SIP trunk.
+    assert 500 * estimate_cost(api, 20) == parse_amount('81.875')
+    assert 500 * estimate_cost(trunk, 20) == parse_amount('11.875')
 
 
 def test_rounding_increments_minimums_and_failed_pages():

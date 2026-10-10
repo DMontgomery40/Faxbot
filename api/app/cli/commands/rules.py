@@ -1,7 +1,7 @@
 """Sending rules: which provider account carries each fax, and the limits every fax must meet.
 
 `faxbot delivery rules` edits a draft of the rules for one scope (the organization, a mailbox or a
-workflow), checks it and publishes it, as Providers -> Rules does in the console. Each rule reads as
+workflow), checks it and publishes it, as Delivery setup -> Routing rules does in the console. Each rule reads as
 one sentence; the console builds the same sentences (ProviderRulesText.ts), and a shared fixture
 (admin_ui/src/__tests__/providerRulesSentences.json) keeps the two identical.
 
@@ -1748,3 +1748,10 @@ def numbers_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='
         body['subaddress'] = subaddress
     result = state.api().post('/access/inbound-rules/explain', json=body)
     state.out().result(result, lambda out: out.line(result.get('sentence') or ''))
+
+
+# Where Faxbot may dial (destinations.py), beside the rules that also name countries.
+from .destinations import destinations as _destinations  # noqa: E402
+
+# Its home is faxbot delivery providers destinations (cli/nouns.py); this older path still works.
+rules.add_typer(_destinations, name='destinations', hidden=True)

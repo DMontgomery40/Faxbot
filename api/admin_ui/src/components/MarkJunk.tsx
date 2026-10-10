@@ -11,7 +11,7 @@ interface MarkJunkProps {
 }
 
 // "Mark sender as junk" on a received fax: their calls are turned away before answering for 90 days
-// (Numbers → Blocked senders lists them and unblocks with one click).
+// (Delivery setup → Blocked senders lists them and unblocks with one click).
 function MarkJunk({ client, inboundId, from, onDone }: MarkJunkProps) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');

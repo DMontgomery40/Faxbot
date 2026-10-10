@@ -371,6 +371,141 @@
       ],
       "advertised_on": "2026-10-03",
       "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
+    },
+    {
+      "provider_id": "sip-swisscom-sbc",
+      "provider": "sip",
+      "preset": "swisscom-sbc",
+      "label": "Swisscom Smart Business Connect, Switzerland, outbound",
+      "direction": "outbound",
+      "currency": "CHF",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://wiki.innovaphone.com/?i=14782",
+      "sources": [
+        "https://wiki.innovaphone.com/?i=14782",
+        "https://www.swisscom.ch/en/residential/help/fixed-network/fax.html"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No per-minute price for Smart Business Connect calls was found on Swisscom's pages or in the provider profiles (searched October 9, 2026); Swisscom prices the trunk in your contract. Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-swisscom-sbc",
+      "provider": "sip",
+      "preset": "swisscom-sbc",
+      "label": "Swisscom Smart Business Connect, Switzerland, inbound",
+      "direction": "inbound",
+      "currency": "CHF",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://wiki.innovaphone.com/?i=14782",
+      "sources": [
+        "https://wiki.innovaphone.com/?i=14782"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No receiving price for Smart Business Connect was found (searched October 9, 2026). Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-telekom-companyflex",
+      "provider": "sip",
+      "preset": "telekom-companyflex",
+      "label": "Telekom CompanyFlex, Germany, outbound",
+      "direction": "outbound",
+      "currency": "EUR",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+      "sources": [
+        "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+        "https://hilfe.companyflex.de/de/einrichtung/anschalteszenarien/fax?mode=user"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "Telekom's CompanyFlex product flyer (December 2023) includes fax in its fixed-network flat offer, with exclusions for some businesses; no per-minute price was found (searched October 9, 2026). Enter your contract's rates, or a monthly fee for the flat offer."
+    },
+    {
+      "provider_id": "sip-telekom-companyflex",
+      "provider": "sip",
+      "preset": "telekom-companyflex",
+      "label": "Telekom CompanyFlex, Germany, inbound",
+      "direction": "inbound",
+      "currency": "EUR",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+      "sources": [
+        "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No receiving price for CompanyFlex was found (searched October 9, 2026). Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-ntt-hikari",
+      "provider": "sip",
+      "preset": "ntt-hikari",
+      "label": "NTT Hikari Denwa, Japan, outbound",
+      "direction": "outbound",
+      "currency": "JPY",
+      "per_minute": "2.933334",
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": 180,
+      "minimum_seconds": 180,
+      "rounding": "180_second",
+      "source_url": "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+      "sources": [
+        "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+        "https://business.ntt-west.co.jp/service/ipphone/office/pdf/share_06_detaconect.pdf"
+      ],
+      "advertised_on": "2026-10-10",
+      "notes": "NTT East lists calls from Hikari Denwa to fixed lines (加入電話, ひかり電話 and the others listed) at ¥8.8 per 3 minutes, tax included, as of October 2026; this card spreads that over the minute (¥2.933334, never under ¥8.8 per 3 minutes) and counts each started 3 minutes, which NTT's page does not spell out. A Data Connect call between two Data Connect-capable devices is priced instead by the bandwidth it holds: ¥1.1 per 30 seconds up to 64 kbit/s, ¥1.65 above 64 and up to 512 kbit/s, ¥2.2 above 512 kbit/s and up to 1 Mbit/s, and ¥16.5 or ¥110 per 3 minutes for several sessions at once above 1 or 2.6 Mbit/s, charged for as long as the bandwidth is held (NTT East's page; NTT West's Data Connect manual, pages 53 and 54)."
+    },
+    {
+      "provider_id": "sip-ntt-hikari",
+      "provider": "sip",
+      "preset": "ntt-hikari",
+      "label": "NTT Hikari Denwa, Japan, inbound",
+      "direction": "inbound",
+      "currency": "JPY",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": 180,
+      "minimum_seconds": 0,
+      "rounding": "180_second",
+      "source_url": "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+      "sources": [
+        "https://business.ntt-east.co.jp/service/hikari_of/charge.html"
+      ],
+      "advertised_on": "2026-10-10",
+      "notes": "NTT East's price page says the caller's carrier sets the call charge (通話料は、発信者側の事業者により異なります), so receiving a call costs nothing per call; the line's monthly charges are in your contract."
     }
   ],
   "plans": [
@@ -1066,6 +1201,27 @@
       "sources": ["https://sinch.com/voice/fax-api/"],
       "advertised_on": "2026-10-07",
       "notes": "The Fax API page, read October 7, 2026, gives a flat $0.045 a page and describes coverage in the U.S.; it does not say whether that price applies abroad. Enter your contracted rate."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes to the United States and Canada",
+      "regions": ["US", "CA"],
+      "pricing": "same_as_card",
+      "reaches": "yes",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms", "https://humblefax.com/faq"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada; faxes there are priced as your HumbleFax plan prices them."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes outside the United States and Canada",
+      "pricing": "not_published",
+      "reaches": "no",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada, so it takes no fax to any other country, including the other countries that share the +1 calling code."
     }
   ],
   "toll_free": [
@@ -1255,7 +1411,27 @@
       "notes": "eFax Corporate's FAQ says \"Outbound send rates are 10 cents per page to U.S. numbers.\" with no exception for toll-free numbers, and \"Inbound faxes to a toll free number are an additional 2 cents per page.\" for the receiver. eFax has no rate card in Faxbot, so the cost stays unknown until you add one."
     }
   ],
-  "origin_rates_description": "Prices by where calls start and the number called (provider-rules design §3.7): route (a card identity), origin (any, a site key, or country:XX), destination_prefix (E.164 digits without the plus; the longest match wins within the most specific origin), prices and billing as on cards (billing \"60-60\" is minimum seconds, then increment), source and date. pricing not_published records a carrier we looked up that publishes none: its price stays unknown, never zero.",
+  "time_bands_description": "Prices by time of day a carrier publishes, read on its own clock (zone): route (a card identity), number_class and country they apply to, currency, and bands (days 0 Monday to 6 Sunday, from and to as local HH:MM, per_minute). They replace the card's per-minute price for a call starting in that band, only for a card in the same currency. Empty for most carriers: most now price calls the same at every hour.",
+  "time_bands": [
+    {
+      "route": "sip-aaisp",
+      "label": "Andrews & Arnold VoIP, calls to UK geographic numbers (01, 02, 03)",
+      "number_class": "local",
+      "country": "GB",
+      "currency": "GBP",
+      "zone": "Europe/London",
+      "bands": [
+        {"days": [0, 1, 2, 3, 4], "from": "08:00", "to": "18:00", "per_minute": "0.0125", "label": "peak"},
+        {"days": [0, 1, 2, 3, 4], "from": "00:00", "to": "08:00", "per_minute": "0.010417", "label": "off-peak"},
+        {"days": [0, 1, 2, 3, 4], "from": "18:00", "to": "24:00", "per_minute": "0.010417", "label": "off-peak"},
+        {"days": [5, 6], "from": "00:00", "to": "24:00", "per_minute": "0.008333", "label": "weekend"}
+      ],
+      "source_url": "https://aa.net.uk/voice-and-mobile/prices/call-prices",
+      "read_on": "2026-10-10",
+      "notes": "Andrews & Arnold's call price page, read October 10, 2026: peak is 8am to 6pm Monday to Friday, off-peak the other weekday times, weekend all of Saturday and Sunday; 1.25p, 1.0417p and 0.8333p a minute excluding VAT (1.5p, 1.25p and 1p including 20% VAT), with a minimum cost of 2p a call excluding VAT. The page states no billing step and no time zone; UK time is assumed. Faxbot has no Andrews & Arnold trunk preset yet: these bands apply once a card named sip-aaisp, in GBP, is saved."
+    }
+  ],
+  "origin_rates_description":"Prices by where calls start and the number called (provider-rules design §3.7): route (a card identity), origin (any, a site key, or country:XX), destination_prefix (E.164 digits without the plus; the longest match wins within the most specific origin), prices and billing as on cards (billing \"60-60\" is minimum seconds, then increment), source and date. pricing not_published records a carrier we looked up that publishes none: its price stays unknown, never zero.",
   "origin_rates": [
     {
       "route": "sip-anveo",

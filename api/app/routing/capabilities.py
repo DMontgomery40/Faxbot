@@ -98,6 +98,8 @@ PAGES = {
     'recipients/list': 'Recipients',
     'recipients/partners': 'Recipients → Partners',
     'admin/setup': 'Administration → Setup',
+    'admin/health': 'Administration → System health',
+    'delivery/moves': 'Delivery setup → Number moves',
 }
 
 # The catalogue's older console pages and their six-area homes (spec #48's navigation table). Whoever gives the
@@ -318,6 +320,66 @@ def _telnyx_key(here):
 
 def _sending_or_receiving(here):
     return bool(here.sending or here.receiving_names)
+
+
+# Wave 3: each reads what the catalogue entry's own check reads (routing/mechanisms.py).
+
+def _caller_id_prices(here):
+    return bool(here.count('origin_class_rates', lambda c: c.superseded_at.is_(None)))
+
+
+def _ups(here):
+    from ..power import settings
+    return bool(settings(here.engine))
+
+
+def _header_notice_set(here):
+    from ..header_notice import notices_on
+    with read_connection(here.engine) as connection:
+        found = notices_on(connection)
+    return bool(found.get('organization') or found.get('mailboxes'))
+
+
+def _trunk_billed_by_minute(here):
+    from .stations import bills_by_minute
+    return any(bills_by_minute(here.card(account)) for account in here.sending if account.provider == 'sip')
+
+
+def _keys_recorded(here):
+    keys = reflect(here.engine, ('recipient_after_answer',))['recipient_after_answer']
+    newest = {}
+    with read_connection(here.engine) as connection:
+        for row in connection.execute(sa.select(keys.c.phone_number, keys.c.digits)
+                                      .order_by(keys.c.created_at, keys.c.id)):
+            newest[row.phone_number] = row.digits
+    return any(newest.values())
+
+
+def _line_inventory(here):
+    from .inventory import inventory_rows
+    return bool(inventory_rows(here.engine))
+
+
+def _french_lines(here):
+    from .closures import view
+    found = view(here.engine, here.values)
+    return bool(found['sites'] or found['lines'])
+
+
+def _country_with_rules(here):
+    from .country_rules import view
+    return bool(view(here.engine, here.values)['accounts'])
+
+
+def _renewal_facts(here):
+    from .channel_peak import imports
+    from .renewal import renewals_by_system
+    return bool(renewals_by_system(here.engine) or imports(here.engine))
+
+
+def _pots_quote(here):
+    from .pots_quote import quotes
+    return bool(quotes(here.engine))
 
 
 SENDS = Prerequisite('connection', 'A fax service account or your own SIP trunk that sends faxes.',
@@ -596,6 +658,100 @@ CAPABILITIES = {
         'explain',
         'For a clinic with its own trunk, a pack gathers fax over IP, sending together and the page settings that '
         'suit it, for you to review and apply at once.'),
+
+    # Wave 3 (README roadmap: all implemented, none under "Later and experimental").
+    'measured_account': Capability(
+        'spend_less',
+        'One of your accounts bills by the page and another by the minute. For a 12-page scan, Faxbot measures how '
+        'long its pages would take on each and sends by the account whose bill for that fax is lower.',
+        None, (SECOND_ROUTE,)),
+    'caller_id_prices': Capability(
+        'spend_less',
+        'Your carrier charges much less for a call to Austria when the caller ID is a European number. Faxbot prices '
+        'each account with the caller ID its calls would show, so the route it picks is the one that really costs '
+        'least.',
+        'faxbot savings rate-rows {route} --caller-id-deck {file}',
+        (SENDS, Prerequisite('prices', "Your carrier's prices by caller ID, imported for its sending card.",
+                             'savings/prices', _caller_id_prices))),
+    'dialing_guard': Capability(
+        'spend_less',
+        'A typing slip turns a fax to a local clinic into a call to a premium-rate number. Faxbot holds that fax '
+        'for your approval instead of dialling it.',
+        'faxbot delivery providers destinations allow {class}', (SENDS,)),
+    'power_aware': Capability(
+        'recover',
+        'During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of '
+        'starting a call that would be cut off part way and still billed.',
+        'faxbot admin diagnostics power set --address {address}',
+        (Prerequisite('connection', 'A UPS that Faxbot reads over the network through NUT (Network UPS Tools).',
+                      'admin/health', _ups),)),
+    'header_notice': Capability(
+        'shorter_calls',
+        "A clinic's faxes always start with a cover page that only carries a confidentiality notice. With the notice "
+        'printed in a band at the top of each page, the cover page is left out and every fax is one page shorter.',
+        'faxbot delivery identity notice set {notice}',
+        (SENDS, Prerequisite('setting', 'Your notice, for the whole organization or for a mailbox.',
+                             'delivery/identity', _header_notice_set))),
+    'answer_cap': Capability(
+        'recover',
+        'A number rings with no fax machine answering. On a trunk billed by the whole minute, Faxbot hangs up at '
+        '50 seconds, so the failed call is billed one minute instead of two.',
+        'faxbot delivery providers trunk answer-cap on',
+        (TRUNK_SENDS, Prerequisite('prices', 'Trunk prices billed by the minute in steps of 60 seconds or more.',
+                                   'savings/prices', _trunk_billed_by_minute))),
+    'station_check': Capability(
+        'recover',
+        "A referral number was reassigned, and the fax machine that answers shows someone else's number. Faxbot "
+        'says so in Sent details, or hangs up before any page where you chose that.',
+        'faxbot delivery identity station-check refuse --mailbox {mailbox}', (TRUNK_SENDS,)),
+    'keys_after_answer': Capability(
+        'recover',
+        "A hospital's fax number answers with a menu: press 2 for the fax machine. Faxbot presses 2 once it answers, "
+        'so the fax goes through instead of failing and being retried.',
+        'faxbot recipients set {number} --after-answer {keys}',
+        (TRUNK_SENDS, Prerequisite('setting', "The keys a recipient's phone menu asks for, on their page.",
+                                   'recipients/list', _keys_recorded))),
+    'route_problems': Capability(
+        'recover',
+        'Calls through one carrier start failing to many numbers at once. Faxbot holds that route back and keeps '
+        "those failures off each number's record, so working numbers are not retried or given up on.",
+        None, (SENDS,)),
+    'advice_line_inventory': advice(
+        'receiving',
+        'Your carrier lists two of your fax lines for discontinuance next spring. The advice names them and their '
+        'dates, so you can move them before the price changes or the lines close.',
+        Prerequisite('setting', 'Your line inventory, imported from your carrier or your own records.',
+                     'delivery/moves', _line_inventory)),
+    'advice_copper_closures': advice(
+        'receiving',
+        "The copper network under your Lyon office's commune closes in 2027. The advice shows the date for each "
+        'line there, so you can move them in time.',
+        Prerequisite('setting', "For lines in France: each site's commune, or a line's closing notice.",
+                     'delivery/moves', _french_lines)),
+    'advice_registered_senders': advice(
+        'relationships',
+        'A bank accepts faxed instructions only from the number registered with it. Faxbot sends to it from the '
+        'account and caller ID you registered, so your faxes are not refused and sent again.',
+        SENDS),
+    'advice_country_rules': advice(
+        'explain',
+        "Your account with a provider in the United Arab Emirates is listed with that country's rules for fax "
+        'services and their sources, and you record that the provider meets them.',
+        Prerequisite('connection', 'A fax service account in a country whose service rules Faxbot knows.',
+                     'delivery/connections', _country_with_rules)),
+    'advice_renewal': advice(
+        'receiving',
+        "Your fax server's renewal quotes 24 channels, but its call records show at most 9 in use at once last "
+        'year. The advice sets the two side by side, with the faxes Faxbot already handles, so you renew only the '
+        'channels you need.',
+        Prerequisite('prices', "Your fax server's renewal, or its call records to measure the channels it used at "
+                               'peak.', 'savings/opportunities?section=renewal', _renewal_facts)),
+    'advice_pots': advice(
+        'receiving',
+        'Your carrier quotes a POTS-replacement order that includes eight fax lines. The advice shows what taking '
+        'those lines out removes from the quote, and what one shared trunk would cost for them instead.',
+        Prerequisite('prices', "Your carrier's POTS-replacement quote.", 'savings/opportunities?section=pots',
+                     _pots_quote)),
 }
 
 

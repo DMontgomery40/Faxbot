@@ -54,6 +54,40 @@ CASES = {
                           'SIP_TRUNK_DIAL_FORMAT': 'local', 'SIP_TRUNK_DIAL_PREFIX': '9'},
     'avaya-aura-us-tcp': {'SIP_TRUNK_PRESET': 'avaya-aura', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': '10.20.0.15',
                           'SIP_TRUNK_TRANSPORT': 'tcp', 'FAX_DEFAULT_COUNTRY': 'US'},
+    # Encrypted audio fax (sip_access.py, N18): TLS, SRTP (SDES), G.711, no T.38.
+    'swisscom-sbc-tls-srtp': {'SIP_TRUNK_PRESET': 'swisscom-sbc', 'SIP_TRUNK_HOST': 'zhheapp-asbc01.join.swisscom.ch',
+                              'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD,
+                              'FAX_DEFAULT_COUNTRY': 'CH'},
+    # CompanyFlex set to TCP, on an access Faxbot has not seen as your Telekom line: encrypted all the same.
+    # Japan: NTT Hikari Denwa, signing in to the SIP server NTT's DHCP hands out; national 0AB-J dialing (RF).
+    'ntt-hikari-registration': {'SIP_TRUNK_PRESET': 'ntt-hikari', 'SIP_TRUNK_HOST': '192.0.2.60',
+                                'SIP_TRUNK_USERNAME': '0312345678', 'SIP_TRUNK_PASSWORD': PASSWORD,
+                                'FAX_DEFAULT_COUNTRY': 'JP'},
+    'telekom-companyflex-encrypted': {'SIP_TRUNK_PRESET': 'telekom-companyflex', 'SIP_TRUNK_USERNAME': 'faxbot',
+                                      'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp',
+                                      'SIP_TRUNK_OUTBOUND_PROXY': 'k0001.primary.companyflex.de',
+                                      'FAX_DEFAULT_COUNTRY': 'DE'},
+    # Analog lines through an FXO gateway on the local network (N8, routing/analog.py): by address, T.38, *70.
+    'grandstream-ht813-line': {'SIP_TRUNK_PRESET': 'grandstream-ht813', 'SIP_TRUNK_AUTH': 'ip',
+                               'SIP_TRUNK_HOST': '192.168.1.50', 'FAX_DEFAULT_COUNTRY': 'US',
+                               'SIP_TRUNK_DIAL_PREFIX': '*70'},
+    'grandstream-gxw410x-tcp': {'SIP_TRUNK_PRESET': 'grandstream-gxw410x', 'SIP_TRUNK_AUTH': 'ip',
+                                'SIP_TRUNK_HOST': '192.168.1.51', 'SIP_TRUNK_TRANSPORT': 'tcp',
+                                'FAX_DEFAULT_COUNTRY': 'US', 'SIP_TRUNK_DIAL_FORMAT': 'local_area'},
+    'patton-smartnode-fxo-line': {'SIP_TRUNK_PRESET': 'patton-smartnode-fxo', 'SIP_TRUNK_AUTH': 'ip',
+                                  'SIP_TRUNK_HOST': '192.168.1.52', 'FAX_DEFAULT_COUNTRY': 'US'},
+    'audiocodes-mp11x-fxo-uk': {'SIP_TRUNK_PRESET': 'audiocodes-mp11x-fxo', 'SIP_TRUNK_AUTH': 'ip',
+                                'SIP_TRUNK_HOST': '192.168.1.53', 'FAX_DEFAULT_COUNTRY': 'GB'},
+    # Teams Direct Routing SBCs with Faxbot as their fax annex (N21): by address, like a phone system.
+    'teams-sbc-audiocodes-us': {'SIP_TRUNK_PRESET': 'teams-sbc-audiocodes', 'SIP_TRUNK_AUTH': 'ip',
+                                'SIP_TRUNK_HOST': '10.30.0.5', 'FAX_DEFAULT_COUNTRY': 'US'},
+    'teams-sbc-ribbon-tcp': {'SIP_TRUNK_PRESET': 'teams-sbc-ribbon', 'SIP_TRUNK_AUTH': 'ip',
+                             'SIP_TRUNK_HOST': '10.30.0.6', 'SIP_TRUNK_TRANSPORT': 'tcp', 'FAX_DEFAULT_COUNTRY': 'US'},
+    'teams-sbc-oracle-uk': {'SIP_TRUNK_PRESET': 'teams-sbc-oracle', 'SIP_TRUNK_AUTH': 'ip',
+                            'SIP_TRUNK_HOST': '10.30.0.7', 'FAX_DEFAULT_COUNTRY': 'GB',
+                            'SIP_TRUNK_DIAL_FORMAT': 'local'},
+    'teams-sbc-anynode-de': {'SIP_TRUNK_PRESET': 'teams-sbc-anynode', 'SIP_TRUNK_AUTH': 'ip',
+                             'SIP_TRUNK_HOST': '10.30.0.8', 'FAX_DEFAULT_COUNTRY': 'DE'},
 }
 
 
@@ -77,7 +111,8 @@ def test_every_preset_has_a_golden_case_and_every_preset_cites_dated_sources():
             # The console links the first source as the carrier's documentation page.
             assert not preset.sources[0].url.endswith('.json'), preset.id
         for source in preset.sources:
-            assert source.url.startswith('https://') and source.read_on == '2026-10-03'
+            # Read on 3 October 2026, or later for presets added since (the encrypted presets: 8 and 9 October).
+            assert source.url.startswith('https://') and '2026-10-03' <= source.read_on <= '2026-10-31'
         assert set(preset.codecs) <= {'ulaw', 'alaw'}
     assert {fixture.stem for fixture in FIXTURES.glob('*.conf')} == set(CASES)
 
@@ -239,14 +274,16 @@ def test_rate_card_seed_covers_every_carrier_preset_with_dated_sources():
         assert card['provider_id'] == 'sip-' + card['preset'] and card['provider'] == 'sip'
         # US cards are in dollars; a UK or Australian carrier's card is in its own currency and, with no
         # published price, carries none.
-        assert date.fromisoformat(card['advertised_on']) == date(2026, 10, 3)
-        assert card['currency'] == 'USD' or (card['currency'] in ('GBP', 'AUD') and card['per_minute'] is None)
+        assert date(2026, 10, 3) <= date.fromisoformat(card['advertised_on']) <= date(2026, 10, 31)
+        # NTT Hikari Denwa publishes its price in yen, tax included (RF): ¥8.8 per 3 minutes to fixed lines.
+        assert card['currency'] == 'USD' or (card['currency'] in ('GBP', 'AUD', 'CHF', 'EUR')
+                                             and card['per_minute'] is None) or card['currency'] == 'JPY'
         assert card['source_url'].startswith('https://') and card['source_url'] in card['sources'] or \
             card['source_url'] == card['sources'][0]
         for field in ('per_minute', 'per_page', 'per_call', 'number_rental_monthly', 'number_setup'):
             assert card[field] is None or money.fullmatch(card[field]), (card['label'], field)
-        assert card['billing_increment_seconds'] in (None, 1, 6, 60)
-        assert card['rounding'] in {'whole_minute', 'per_second', '6_second', 'not_published'}
+        assert card['billing_increment_seconds'] in (None, 1, 6, 60, 180)
+        assert card['rounding'] in {'whole_minute', 'per_second', '6_second', '180_second', 'not_published'}
         assert (card['billing_increment_seconds'] is None) == (card['rounding'] == 'not_published')
         assert card['notes'].endswith('.')
 
@@ -364,7 +401,13 @@ def test_lan_address_record_gives_the_address_ports_and_faxes_at_once(tmp_path):
 
 def test_catalog_says_which_presets_are_phone_systems_and_lists_the_administrator_steps():
     catalog = {item['id']: item for item in sip_trunk.preset_catalog()}
-    assert {item for item in catalog if catalog[item]['kind'] == 'phone_system'} == {'avaya-ipoffice', 'avaya-aura'}
+    assert {item for item in catalog if catalog[item]['kind'] == 'phone_system'} == {
+        'avaya-ipoffice', 'avaya-aura', 'teams-sbc-audiocodes', 'teams-sbc-ribbon', 'teams-sbc-oracle',
+        'teams-sbc-anynode'}
+    # A Teams Direct Routing SBC (N21) also carries the checklist before the Teams port order.
+    assert all(catalog[item]['port_checklist'] and catalog[item]['admin_steps'] and catalog[item]['auth_modes'] == ['ip']
+               for item in catalog if item.startswith('teams-sbc-'))
+    assert not catalog['avaya-ipoffice']['port_checklist']
     for preset in ('avaya-ipoffice', 'avaya-aura'):
         item = catalog[preset]
         assert item['auth_modes'] == ['ip'] and item['transports'] == ['udp', 'tcp']

@@ -1389,7 +1389,7 @@ REPLY_NUMBER = '+15555550177'
 
 
 def test_o_the_ssl_fax_engine_sends_the_reply_number_as_its_station_id(tmp_path, loopback):
-    """Numbers -> Sender identity: a reply number (a second number on the trunk, routed to a mailbox) is the
+    """Delivery setup -> Sending identity: a reply number (a second number on the trunk, routed to a mailbox) is the
     station ID the SSL Fax engine sends (JPARM TSI with UseJobTSI), not the line's own number."""
     context = loopback('o', faxbot_t38=False, carrier_gateway=False,
                        peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',
@@ -1916,3 +1916,216 @@ def test_t_the_mr_schedule_without_error_correction_keeps_every_pixel(tmp_path, 
         rows = {row['coding']: row for row in tuned['tuning_rows']}
         assert rows['MR']['tuned_bytes'] <= rows['MR']['plain_bytes'], tuned
     assert not plain['lossless_lines'], plain
+
+
+def enable_encoded_pages(docker, key, number):
+    """Encoded pages on for ``number``, with the recipient's agreement recorded (codec/http.py)."""
+    from urllib.parse import quote
+    path = '/codec/numbers/' + quote(number, safe='')
+    current = api(docker, 'GET', path, key=key)
+    assert current['status'] == 200, current
+    saved = api(docker, 'PUT', path, key=key, body={'enabled': True, 'recipient_agreed': True,
+                                                    'version': (current['json'] or {}).get('version', 0)})
+    assert saved['status'] == 200 and saved['json']['enabled'], saved
+    return saved['json']
+
+
+def encoded_proof(context, outcome, document):
+    """What one encoded send shows: the attempt's layout, the coding asked for and the call's, and the decode of
+    the pages the peer received."""
+    from app import codec
+    docker, key = context['docker'], context['key']
+    job_id = outcome['job']['id']
+    rows = database(context,
+                    change=f"SELECT layout, original_pages, sent_pages FROM fax_page_changes WHERE job_id = '{job_id}'",
+                    codec=f"SELECT layout, pages_encoded, seconds_original, seconds_encoded FROM codec_sends "
+                          f"WHERE id = '{job_id}'",
+                    coding=f"SELECT requested, measured, compared, bits, reason FROM fax_coding_choices "
+                           f"WHERE job_id = '{job_id}'",
+                    engine=f"SELECT engine, compression, ecm, resolution FROM fax_engine_calls "
+                           f"WHERE job_id = '{job_id}'")
+    detail = api(docker, 'GET', f'/admin/fax-jobs/{job_id}', key=key)['json'] or {}
+    try:
+        found, report = codec.decode_images(outcome['received_pages'])
+        decoded = {'matches': found.data == document, 'bytes': len(found.data), 'layout': report['layout'],
+                   'pages_read': report['pages_read'], 'erased_bytes': report.get('erased_bytes')}
+    except codec.CodecError as error:
+        decoded = {'error': str(error)}
+    return {'job_status': outcome['job'].get('status'), 'elapsed_seconds': outcome['elapsed_seconds'],
+            'received_pages': len(outcome['received_pages']),
+            'received_sizes': [list(page.size) for page in outcome['received_pages']],
+            'transfer': re.findall(r'SEND FAX .*docq/.* sent in ([0-9:]+)\)', outcome['faxbot_log'])[-1:],
+            **rows, 'sent_detail': {'pages': (detail.get('page_layout') or {}).get('sentences'),
+                                    'coding': detail.get('coding')}, 'decoded': decoded}
+
+
+def test_u_encoded_pages_go_in_the_coding_measured_on_them(tmp_path, loopback):
+    """Brief 85 M1 (N2 falsification). A payload page is drawn so that its MH code is the payload: MH (or JBIG, where
+    the machine takes it and it measures smaller) is its cheapest coding and MMR is about a third larger. At the
+    default compression setting Faxbot measures encoded pages like any others (pages/coding.py) and asks each engine
+    for the smallest usable coding: the SSL Fax engine through the job's data format (jobcontrol DesiredDF, kept by
+    patch 0003), the built-in engine through FAXBOT_COMPRESSION (patch 0006). The negotiation record says what each
+    call used, and the peer's received pages decode to the original PDF byte for byte. Dense pages are off for the
+    number, so the encoded pages compete only with the pages as they are."""
+    context = loopback('u', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    document = proof_pdf()
+    # An ordinary fax first: the engine records error correction, fine resolution and the machine's codings.
+    first = send_and_collect(tmp_path, context, document=document)
+    assert str(first['job'].get('status')).upper() == 'SUCCESS', evidence(first)
+    enable_encoded_pages(docker, key, PEER_NUMBER)
+    hylafax = send_and_collect(tmp_path, context, document=document)
+    proof = {'sslfax_engine': encoded_proof(context, hylafax, document)}
+    # The same fax on the built-in engine: stop the SSL Fax engine and wait until Asterisk sees its lines gone.
+    docker.run('stop', context['engine'])
+    wait_for(lambda: ' OK ' not in docker.asterisk(context['asterisk'], 'iax2 show peers'), 180,
+             "Faxbot's Asterisk to see the engine's lines gone")
+    builtin = send_and_collect(tmp_path, context, document=document)
+    proof['builtin_engine'] = encoded_proof(context, builtin, document)
+    print('\nSSLFAX_PROOF_U ' + json.dumps(proof, indent=2, default=str))
+    for name, found in proof.items():
+        assert str(found['job_status']).upper() == 'SUCCESS', proof
+        assert found['change'] and found['change'][0]['layout'] == 'codec', proof
+        assert found['decoded'].get('matches') is True, proof
+        assert found['coding'], proof
+        asked = found['coding'][0]['requested']
+        negotiated = (found['sent_detail']['coding'] or {}).get('negotiated')
+        # The smallest measured coding the placing engine sends (the built-in engine has no JBIG), and the call
+        # used it: never MMR left to the engine (the first run of this case, 10 October 2026, found the built-in
+        # engine taking MMR for a page measured smallest in JBIG, then MR).
+        bits = json.loads(found['coding'][0]['bits'])
+        sendable = {coding: size for coding, size in bits.items() if name == 'sslfax_engine' or coding != 'JBIG'}
+        assert negotiated == min(sendable, key=sendable.get), proof
+        # Asked for exactly that, except that right after the SSL Fax engine stops its last status still says it
+        # runs: the chooser then asks for JBIG and the built-in engine, which takes the call, sends the smallest
+        # other coding (CodingChoice.request).
+        assert asked == negotiated or (name == 'builtin_engine' and asked == 'JBIG'), proof
+
+
+def noise_pdf(size=48_000, seed=20261010):
+    """A synthetic PDF of about ``size`` bytes that does not compress (a random gray image): the encoded pages carry
+    about that many bytes, so a page or two of payload goes on the line."""
+    import random
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    from PIL import Image
+    rng = random.Random(seed)
+    side = int((size * 0.9 / PAGES) ** 0.5)
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=letter, invariant=1, pageCompression=0)
+    for number in range(PAGES):  # three ordinary pages, so one or two encoded pages are fewer
+        picture = Image.frombytes('L', (side, side), rng.randbytes(side * side))
+        page.drawString(72, 740, f'SYNTHETIC NOISE PAGE {number + 1} FOR THE PAYLOAD CAPACITY PROOF')
+        page.drawImage(ImageReader(picture), 72, 200, width=468, height=468)
+        page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def test_v_capacity_pages_and_run_coded_pages_follow_their_coded_bits_on_the_line(tmp_path, loopback):
+    """Brief 85 M2 (N1): one loopback send per layout. The same document goes to the same peer as run-coded pages
+    (its decoder recorded as any Faxbot decoder) and as capacity pages (recorded as reading them), each in MH (the
+    compression setting stops at MH, so call time follows MH bits). Both decode to the original byte for byte, the
+    capacity pages carry the document in fewer MH bits, and the engine's transfer time follows the bits."""
+    from urllib.parse import quote
+    from app import codec
+    from app.pages import coding
+    context = loopback('v', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mh'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    document = noise_pdf()
+    first = send_and_collect(tmp_path, context, document=proof_pdf())
+    assert str(first['job'].get('status')).upper() == 'SUCCESS', evidence(first)
+    enable_encoded_pages(docker, key, PEER_NUMBER)
+    path = '/codec/numbers/' + quote(PEER_NUMBER, safe='')
+    proof = {}
+    for decoder in ('any', 'capacity'):
+        current = api(docker, 'GET', path, key=key)['json']
+        saved = api(docker, 'PUT', path, key=key, body={'enabled': True, 'decoder': decoder,
+                                                        'version': current['version']})
+        assert saved['status'] == 200 and saved['json']['decoder'] == decoder, saved
+        outcome = send_and_collect(tmp_path, context, document=document)
+        found = encoded_proof(context, outcome, document)
+        pages = outcome['received_pages']
+        found['mh_bits'] = sum(coding.measure(pages, codings=('MH',))['MH'])
+        found['transfer_seconds'] = [sum(int(part) * 60 ** index for index, part in enumerate(reversed(text.split(':'))))
+                                     for text in found['transfer']]
+        found['layout'] = codec.decode_images(pages)[1]['layout']
+        proof[decoder] = found
+    print('\nSSLFAX_PROOF_V ' + json.dumps(proof, indent=2, default=str))
+    runs, capacity = proof['any'], proof['capacity']
+    for found in (runs, capacity):
+        assert str(found['job_status']).upper() == 'SUCCESS' and found['decoded'].get('matches') is True, proof
+        assert found['engine'] and found['engine'][0]['compression'] == 'MH', proof
+    assert runs['layout'] == 'runs' and capacity['layout'] == 'capacity', proof
+    assert capacity['mh_bits'] < runs['mh_bits'], proof
+    # Seconds follow the coded bits: the call with fewer MH bits is not the longer one (one second of slack for the
+    # engine's whole-second log).
+    assert capacity['transfer_seconds'] and runs['transfer_seconds'], proof
+    assert capacity['transfer_seconds'][0] <= runs['transfer_seconds'][0] + 1, proof
+
+
+def block_edge_pdf(rows):
+    """One fine page whose first ``rows`` rows are 2-dot runs and the rest white, as a lossless PDF: in MH it is
+    64,965 octets at 177 rows and 66,256 at 181, either side of one ECM partial page (256 frames of 256 octets)."""
+    from PIL import Image
+    from app.conversion import tiff_to_pdf
+    image = Image.new('1', (1728, 2156), 1)
+    data = bytearray(image.tobytes())
+    for row in range(rows):
+        data[row * 216:(row + 1) * 216] = bytes([0b00110011]) * 216
+    image = Image.frombytes('1', (1728, 2156), bytes(data))
+    with tempfile.TemporaryDirectory() as folder:
+        tiff, pdf = Path(folder) / 'page.tiff', Path(folder) / 'page.pdf'
+        image.save(tiff, 'TIFF', compression='group4', dpi=(204, 196))
+        tiff_to_pdf(str(tiff), str(pdf))
+        return pdf.read_bytes()
+
+
+def ecm_timeline(log):
+    """The session log's ECM exchange lines with their times in seconds: (seconds, text)."""
+    found = []
+    for line in log.splitlines():
+        match = re.match(r'^\w{3} \d+ (\d+):(\d+):(\d+\.\d+): \[\s*\d+\]: (.*)$', line)
+        if match and re.search(r'PPS|PPR|MCF|RNR|RR\b|CTC|frame|block|EOP|MPS|ECM|SEND FAX|DCS|TCF|CFR',
+                               match.group(4)):
+            seconds = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+            found.append((round(seconds, 2), match.group(4)))
+    return found
+
+
+def test_w_an_ecm_partial_page_boundary_measured_on_the_line(tmp_path, loopback):
+    """Brief 85 M4 (N3): is crossing an ECM partial page a step cost? The same page in MH, once 571 octets under
+    65,536 (one partial page) and once 720 over (two), on the SSL Fax engine with error correction and 256-octet
+    frames. Measured, not assumed: the transfer times and the partial-page exchange in the session log are printed;
+    the check is only that the second page needed one more partial page and both arrived."""
+    context = loopback('w', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_FRIENDLY_DOCUMENTS': 'never', 'SIP_FAX_COMPRESSION': 'mh'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    proof = {}
+    for label, rows in (('under', 177), ('over', 181)):
+        before = docker.sh(context['engine'], 'ls /var/spool/hylafax/log 2>/dev/null').stdout.split()
+        outcome = send_and_collect(tmp_path, context, document=block_edge_pdf(rows))
+        after = docker.sh(context['engine'], 'ls /var/spool/hylafax/log 2>/dev/null').stdout.split()
+        new = [name for name in after if name not in before] or after[-1:]
+        log = docker.sh(context['engine'], 'cat ' + ' '.join(f'/var/spool/hylafax/log/{name}' for name in new)).stdout
+        job_id = outcome['job']['id']
+        engine = database(context, engine=f"SELECT engine, compression, ecm, transfer_seconds, session_seconds "
+                                          f"FROM fax_engine_calls WHERE job_id = '{job_id}'")['engine']
+        timeline = ecm_timeline(log)
+        proof[label] = {'status': outcome['job'].get('status'), 'engine': engine,
+                        'transfer': re.findall(r'SEND FAX .* sent in ([0-9:]+)\)', log),
+                        'partial_pages': sum(1 for _, text in timeline if 'PPS' in text and 'send' in text.lower()),
+                        'timeline': timeline[-60:]}
+    print('\nSSLFAX_PROOF_W ' + json.dumps(proof, indent=2, default=str))
+    for found in proof.values():
+        assert str(found['status']).upper() == 'SUCCESS' and found['engine'][0]['compression'] == 'MH', proof
+        assert found['engine'][0]['ecm'] == 'on', proof

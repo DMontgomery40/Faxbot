@@ -739,11 +739,13 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
 
     The sixth field says whether this call may use T.38 (1) or stays audio (0). A call over a trunk other than
     the first adds a seventh: the trunk's endpoint, which must be one of ``endpoints``, the trunks Faxbot
-    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``).
+    rendered into Asterisk's file (``sip_trunk.rendered_endpoints``). A call that presses keys after answer
+    (``routing/after_answer.py``) always has the seventh and adds an eighth: the keys, for ``Dial``'s ``D()``.
     """
-    from .ami import FAX_PREFERENCE_VARIABLE
+    from .ami import FAX_PREFERENCE_VARIABLE, requested_keys
     channel = fields['Channel']
-    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
+    match = re.fullmatch(r'PJSIP/((?:\*[0-9]{2})?(?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@'
+                         r'(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
                          channel)
     caller = fields.get('CallerID', '')
     if match is None or not re.fullmatch(r'\+?[0-9]{0,20}', caller or ''):
@@ -754,6 +756,9 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
         raise ValueError('Unsupported engine call plan')
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
     plan = f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
+    keys = requested_keys(fields)
+    if keys:
+        return f'{plan}/{match.group(2)}/{keys}'
     return plan if match.group(2) == 'trunk-endpoint' else f'{plan}/{match.group(2)}'
 
 
@@ -898,13 +903,14 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     """
     from . import sip_trunk
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for, trunk_values
-    from .ami import reply_choice, sender_identity
+    from .ami import job_mailbox, reply_choice, sender_identity
     endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
     full_values = values
     values, _ = trunk_values(values, trunk)
     settings = settings or call_settings(values, dest, engine=True)
     # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
-    choice = await asyncio.to_thread(reply_choice, values)
+    # The fax's own mailbox, so a mailbox's reply number shows on its faxes, as on the built-in engine.
+    choice = await asyncio.to_thread(lambda: reply_choice(values, mailbox_id=job_mailbox(job_id)))
     # A fax relayed for a partner carries that partner's header text and station ID (direct.relay).
     identity = await asyncio.to_thread(sender_identity, job_id)
     header, station = identity if identity is not None else (values.fax_header or '', choice.number)
@@ -923,6 +929,11 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
                       'Preset': values.sip_trunk_preset or '',
                       'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    from .ami import requested_keys
+    keys = requested_keys(fields)
+    if keys:
+        # The keys this call presses after answer, kept per attempt for Sent details (routing/after_answer.py).
+        job.submission.update(Digits=keys, Engine='sslfax')
     if trunk and trunk != sip_trunk.PRIMARY:
         job.submission['Trunk'] = trunk
     learned = getattr(settings, 'learned', None)

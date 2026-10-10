@@ -274,7 +274,7 @@ export default function FindPartners({ client, canWrite, onChanged }: {
   );
 }
 
-// Costs → Recommendations: recipients that run Faxbot, each a partner away from no call at all.
+// Savings & optimization → Opportunities: recipients that run Faxbot, each a partner away from no call at all.
 export function DiscoveryRecommendations({ client, onCount, onNavigate }: {
   client: AdminAPIClient; onCount?: (count: number | null) => void; onNavigate?: (destination: AdminDestination) => void;
 }) {

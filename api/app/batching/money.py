@@ -160,5 +160,5 @@ def separator_pages_sentence(part, *, days=WINDOW_DAYS):
     else:
         sentence += '.'
     if part['priced_calls'] < part['calls']:
-        sentence += " Some of those pages have no price, because your carrier's prices are not entered in Costs."
+        sentence += " Some of those pages have no price, because your carrier's prices are not entered in Savings & optimization → Prices & plans."
     return sentence

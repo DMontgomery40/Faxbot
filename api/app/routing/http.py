@@ -470,8 +470,8 @@ def _carrier_status(values):
             'sentence': found['sentence']}
 
 
-NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
-                 'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
+NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Delivery setup → '
+                 'Telnyx, or run faxbot admin settings set --secret telnyx_api_key.')
 
 
 def _reconcile_summary(result, label='Telnyx'):
@@ -538,10 +538,22 @@ def _cost_view(cost):
         from .plan import decided_text
         view['route_explanation'] = (decided_text(cost.get('route'), cost['route_reason'])
                                      if cost['route_reason'] else None)
+    if cost.get('measured_choice') is None:
+        view.pop('measured_choice', None)
+    elif cost['measured_choice'].get('sentence'):
+        # Its accounts were compared on their own measured pages: which account, which pages and what they cost
+        # against the runner-up, as recorded before it was sent (routing/selections.py).
+        view['route_explanation'] = cost['measured_choice']['sentence']
     if cost.get('plan_allocation'):
         # It went another way than its plan: the amounts kept when it was sent (plan_allocation.explanation).
         view['route_explanation'] = cost['plan_allocation']
     view.pop('plan_allocation', None)
+    from .plan import ONE_LINE, decided_text
+    if cost.get('route_reason') == ONE_LINE:
+        # Its own trunk could not call its own number with one line: said first, whatever else is said.
+        first = decided_text(cost.get('route'), ONE_LINE)
+        rest = view.get('route_explanation')
+        view['route_explanation'] = first if not rest or rest == first else f'{first} {rest}'
     return view
 
 
@@ -558,7 +570,16 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     return _cost_view(await _call(lambda: {**spending.job(job_id),
                                            'dialed': dialed_view(spending.routes.engine, job_id),
                                            'recipient_warning': fax_warning(spending.routes.engine, job_id),
-                                           'plan_allocation': explanation(spending.routes.engine, job_id)}))
+                                           'plan_allocation': explanation(spending.routes.engine, job_id),
+                                           'measured_choice': _measured_choice(request, spending.routes.engine,
+                                                                               job_id)}))
+
+
+def _measured_choice(request, engine, job_id):
+    """The newest attempt's measured account and pages (``routing.selections.sent_view``), or None."""
+    from .selections import sent_view
+    snapshot = request.scope.get('faxbot.configuration')
+    return sent_view(engine, job_id, snapshot.active.values if snapshot is not None else None)
 
 
 @router.get('/inbound-costs')
@@ -1182,7 +1203,7 @@ async def quote(request: Request, to: str = Query(max_length=64), pages: int = Q
             item = next((q for q in facts.quotes if q.account == key and q.number == quoted), None)
             account = by_key.get(key)
             if site and account is not None:
-                # Priced as a call from that site ("faxbot costs fax --from-site"), with its rows.
+                # Priced as a call from that site ("faxbot savings fax --from-site"), with its rows.
                 try:
                     priced = price(store, values, key, dialed, pages, provider=account.provider, site=site,
                                    number=quoted)

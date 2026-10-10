@@ -44,6 +44,14 @@ NOT_OPERATOR = {
     ('POST', '/phaxio-inbound/{key}'): 'webhook: Phaxio received fax, for one more Phaxio account',
     ('POST', '/sinch-inbound/{key}'): 'webhook: Sinch received fax, for one more Sinch account',
     ('POST', '/efax-inbound/{key}'): 'webhook: eFax notification that starts a check, for one more eFax account',
+    # Receiving readiness (receive_readiness.py) reads its own public receiving address with a one-time code to
+    # prove the provider can reach it; the console and command show the result through /receiving/readiness.
+    ('GET', '/phaxio-inbound'): "public reachability probe: Faxbot's own check that Phaxio can reach this address",
+    ('GET', '/sinch-inbound'): "public reachability probe: Faxbot's own check that Sinch can reach this address",
+    ('GET', '/efax-inbound'): "public reachability probe: Faxbot's own check that eFax can reach this address",
+    ('GET', '/phaxio-inbound/{key}'): 'public reachability probe, for one more Phaxio account',
+    ('GET', '/sinch-inbound/{key}'): 'public reachability probe, for one more Sinch account',
+    ('GET', '/efax-inbound/{key}'): 'public reachability probe, for one more eFax account',
     ('POST', '/_internal/asterisk/inbound'): 'internal: the fax engine hands over a received fax',
     ('POST', '/_internal/freeswitch/outbound_result'): 'internal: FreeSWITCH reports a send result',
     ('POST', '/_internal/hylafax/polled'): 'internal: the fax engine reports collection of a held fax',

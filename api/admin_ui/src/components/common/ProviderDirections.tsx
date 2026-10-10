@@ -73,7 +73,7 @@ export function directionProblem(choice: Directions): string | null {
 export interface TrunkChoice {
   id: string;
   label: string;
-  kind?: 'carrier' | 'phone_system';
+  kind?: 'carrier' | 'phone_system' | 'analog_line';
 }
 
 // Carriers sold in one country, marked so in the list and listed first there.
@@ -81,6 +81,9 @@ const CARRIER_REGIONS: Record<string, { country: string; region: string }> = {
   gamma: { country: 'GB', region: 'UK' },
   'bt-one-voice': { country: 'GB', region: 'UK' },
   'telstra-sip-connect': { country: 'AU', region: 'Australia' },
+  'swisscom-sbc': { country: 'CH', region: 'Switzerland' },
+  'telekom-companyflex': { country: 'DE', region: 'Germany' },
+  'ntt-hikari': { country: 'JP', region: 'Japan' },
 };
 
 // Fax services by the names people know them; Sinch and SignalWire also sell carrier lines.
@@ -112,7 +115,8 @@ export function providerChoices(trunk: TrunkChoice[] | null, country: string | u
   const services = SERVICES.filter((provider) => !receiving || RECEIVING_PROVIDERS.has(provider));
   groups.push({ title: 'Fax services', options: services.map((provider) => ({ value: provider, label: SERVICE_NAMES[provider] ?? providerLabel(provider) })) });
   if (trunk && trunk.length) {
-    const carriers = trunk.filter((choice) => choice.kind !== 'phone_system' && choice.id !== 'custom');
+    const carriers = trunk.filter((choice) => choice.kind !== 'phone_system' && choice.kind !== 'analog_line'
+      && choice.id !== 'custom');
     const local = carriers.filter((choice) => CARRIER_REGIONS[choice.id]?.country === country);
     const others = carriers.filter((choice) => !local.includes(choice));
     const custom = trunk.find((choice) => choice.id === 'custom');
@@ -120,6 +124,8 @@ export function providerChoices(trunk: TrunkChoice[] | null, country: string | u
       .map((choice) => ({ value: `sip:${choice.id}`, label: carrierLabel(choice) })) });
     const phones = trunk.filter((choice) => choice.kind === 'phone_system');
     if (phones.length) groups.push({ title: 'Your phone system', options: phones.map((choice) => ({ value: `sip:${choice.id}`, label: choice.label })) });
+    const lines = trunk.filter((choice) => choice.kind === 'analog_line');
+    if (lines.length) groups.push({ title: 'Your analog line through a gateway', options: lines.map((choice) => ({ value: `sip:${choice.id}`, label: choice.label })) });
   } else {
     groups.push({ title: 'Your own fax line through a carrier', options: [{ value: 'sip', label: providerLabel('sip') }] });
   }

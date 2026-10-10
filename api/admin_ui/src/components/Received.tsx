@@ -63,6 +63,7 @@ import { providerLabel } from '../providerLabels';
 import MarkJunk from './MarkJunk';
 import type { ReceivedForm } from '../api/formsTypes';
 import ReceivedFormLine from './forms/ReceivedFormLine';
+import { ReceivedCallerCheck } from './CallerCheck';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -271,6 +272,13 @@ export default function Received({
   useEffect(() => { void fetchList(); }, [fetchList]);
   useEffect(() => { void fetchDeliveries(); }, [fetchDeliveries]);
   useEffect(() => { void fetchReceiving(); }, [fetchReceiving]);
+  // Replies to public test lines (Administration → System health → Public test lines), labelled as test replies.
+  const [testReplies, setTestReplies] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    client.call<{ replies: Array<{ inbound_id: string }> }>({ method: 'GET', path: '/diagnostics/test-lines/replies' })
+      .then((found) => setTestReplies(new Set((found?.replies ?? []).map((item) => item.inbound_id))))
+      .catch(() => setTestReplies(new Set()));
+  }, [client, faxes]);
 
   useEffect(() => {
     // Received faxes, their owners and their email delivery refresh every 15 seconds.
@@ -450,6 +458,7 @@ export default function Received({
           <Chip size="small" color={workColor(row.work)} label={workStateSentence(row.work)}
             sx={{ maxWidth: '100%', height: 'auto', '& .MuiChip-label': { whiteSpace: 'normal', py: 0.25 } }} />
           {(row.work.is_test || row.fax?.is_test) && <Chip size="small" variant="outlined" label="Test fax" sx={{ ml: 1 }} />}
+          {testReplies.has(faxId(row)) && <Chip size="small" variant="outlined" label="Test reply" sx={{ ml: 1 }} />}
           {duplicateSentence(row.work) && (
             <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{duplicateSentence(row.work)}</Typography>
           )}
@@ -462,6 +471,7 @@ export default function Received({
       <Box>
         <Chip icon={toneIcon(faxStatus.tone)} label={faxStatus.label} color={faxStatus.tone} size="small" variant="outlined"
           sx={{ borderRadius: 1 }} />
+        {testReplies.has(faxId(row)) && <Chip size="small" variant="outlined" label="Test reply" sx={{ ml: 1 }} />}
         {faxStatus.detail && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 280 }}>{faxStatus.detail}</Typography>
         )}
@@ -523,6 +533,7 @@ export default function Received({
         {fax && canBlockSender && fax.fr && (
           <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
         )}
+        {fax && fax.backend === 'sip' && <ReceivedCallerCheck call={client.call.bind(client)} inboundId={fax.id} />}
       </Stack>
     );
   };

@@ -77,6 +77,20 @@ config.attributes["schema_polled_transmit"] = importlib.import_module(package + 
 
 
 config.attributes["schema_analysis"] = importlib.import_module(package + ".schema_analysis")
+config.attributes["schema_countries"] = importlib.import_module(package + ".schema_countries")
+config.attributes["schema_dialing"] = importlib.import_module(package + ".schema_dialing")
+config.attributes["schema_header_notice"] = importlib.import_module(package + ".schema_header_notice")
+config.attributes["schema_route_selections"] = importlib.import_module(
+    package + ".schema_route_selections")
+config.attributes["schema_closures"] = importlib.import_module(package + ".schema_closures")
+config.attributes["schema_station_check"] = importlib.import_module(package + ".schema_station_check")
+config.attributes["schema_route_families"] = importlib.import_module(package + ".schema_route_families")
+config.attributes["schema_codec_decoder"] = importlib.import_module(package + ".schema_codec_decoder")
+config.attributes["schema_test_lines"] = importlib.import_module(package + ".schema_test_lines")
+config.attributes["schema_after_answer"] = importlib.import_module(package + ".schema_after_answer")
+config.attributes["schema_line_inventory"] = importlib.import_module(package + ".schema_line_inventory")
+config.attributes["schema_fax_server_renewal"] = importlib.import_module(package + ".schema_fax_server_renewal")
+config.attributes["schema_pots_quote"] = importlib.import_module(package + ".schema_pots_quote")
 
 
 def migrate(connection):

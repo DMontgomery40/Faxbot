@@ -54,6 +54,8 @@ class Prepared:
     document_sha256: str | None
     zone_name: str
     bound_key: str | None
+    # Where Faxbot may dial (``guard.preview``): the dialed number's class, read before the lock.
+    dialing: object = None
 
 
 def sender_of(actor):
@@ -103,13 +105,13 @@ def check_choices(engine, *, mailbox=None, workflow=None, labels=()):
     document = _organization_document(_stores(engine)[0])
     if workflow and workflow not in {item.get('key') for item in document.get('workflows') or ()
                                      if isinstance(item, dict)}:
-        raise RulesAcceptanceError(f'There is no workflow called {workflow}. Add it on Providers → Rules → Workflows, '
+        raise RulesAcceptanceError(f'There is no workflow called {workflow}. Add it on Delivery setup → Routing rules → Workflows, '
                                    'or leave the workflow out.')
     known = set(document.get('labels') or ())
     unknown = sorted(set(labels) - known)
     if unknown:
         raise RulesAcceptanceError(f'{", ".join(unknown)} {"is not a label" if len(unknown) == 1 else "are not labels"}'
-                                   ' your rules define. Add labels on Providers → Rules → Lists.')
+                                   ' your rules define. Add labels on Delivery setup → Routing rules → Lists.')
 
 
 def may_send_from(connection, control, actor, mailbox_id, *, now):
@@ -175,8 +177,13 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
                         principal_id=principal, sender_kind=kind, key_id=key_id, mailbox_id=mailbox,
                         workflow=workflow, labels=labels, urgent=urgent, by_call=by_call, case_packet=case_packet)
     decision = decide(store.compiled_active(), facts, accounts)
+    # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
+    from .sender_pins import narrow_for
+    decision = narrow_for(engine, decision, facts)
+    from . import guard
+    dialing = guard.preview(engine, values, destination=facts.destination, decision=decision, accounts=accounts)
     return Prepared(facts, accounts, decision, store, document_sha256, getattr(values, 'time_zone', '') or '',
-                    default_sending_key(values))
+                    default_sending_key(values), dialing)
 
 
 def recorder_for(engine, revision, actor, *, job_id, destination, pages, document_path=None, case_packet=False,
@@ -225,15 +232,18 @@ def recorder(prepared, job_id, actor, *, control=None):
                 connection, control, actor, facts.mailbox_id, now=now):
             raise RulesAcceptanceError('You can’t send from that mailbox. Choose a mailbox you work in.')
         decision = decide(compiled_on(connection, prepared.store), facts, prepared.accounts)
+        # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
+        from .sender_pins import narrow_on
+        decision = narrow_on(connection, decision, facts)
         principal = getattr(actor, 'principal_id', None)
         decision_id = prepared.store.record_decision_on(connection, job_id=job_id, facts=facts, decision=decision,
                                                         actor_principal_id=principal, now=now)
         pinned = envelopes.Pinned(decision_id, 1, decision, facts)
         t = envelopes.tables(connection)
         _reconcile_dial(connection, job_id, decision)
+        digest = hold_store.digest_for(pinned, job_id, facts.destination, prepared.document_sha256) \
+            if prepared.document_sha256 else None
         if decision.outcome != 'route':
-            digest = hold_store.digest_for(pinned, job_id, facts.destination, prepared.document_sha256) \
-                if prepared.document_sha256 else None
             hold_store.holds_for_decision_on(connection, t, job_id=job_id, pinned=pinned, now=now,
                                              requested_by=principal, digest=digest, accounts=prepared.accounts,
                                              zone_name=prepared.zone_name or None)
@@ -242,7 +252,23 @@ def recorder(prepared, job_id, actor, *, control=None):
                                         sa.column('attempt_id'), sa.column('kind'), sa.column('dedupe_key'),
                                         sa.column('details'), sa.column('created_at')),
                    job_id, 'route_held', now)
+        # Where Faxbot may dial (``guard.py``): a number in a class it may not dial waits in Sent for approval.
+        if prepared.dialing is not None:
+            from . import guard
+            dialed = _dialed(prepared.dialing, decision, facts.destination)
+            guard.record_on(connection, dialed, job_id=job_id, decision_id=decision_id, now=now,
+                            requested_by=principal, digest=digest, also_held=decision.outcome != 'route')
     return record
+
+
+def _dialed(dialing, decision, destination):
+    """The preview again when the decision in the transaction dials the same number, else that number's class."""
+    from dataclasses import replace
+    from . import guard
+    number = decision.envelope.dial.number if decision.envelope.dial is not None else destination
+    if number == dialing.number:
+        return dialing
+    return replace(dialing, number=number, found=guard.dial_class(number, dialing.home_country), rates=None)
 
 
 def _reconcile_dial(connection, job_id, decision):

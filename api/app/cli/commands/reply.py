@@ -1,6 +1,6 @@
 """faxbot delivery identity: the number your faxes show, so replies reach you on your cheapest number.
 
-The console's Numbers → Sender identity, Reply number. Reads need settings:read; changes need
+The console's Delivery setup → Sending identity, Reply number. Reads need settings:read; changes need
 settings:write and are checked like the console's: the number must be yours, receive into
 Faxbot and reach the mailbox (for a mailbox's own number, that mailbox).
 """
@@ -77,3 +77,14 @@ def reply_clear(mailbox: str = MAILBOX):
     result = api.put('/numbers/reply', json={'number': ''})
     state.out().result(result, lambda out: out.line(
         'Faxbot now chooses the number: your cheapest number to receive on that reaches a mailbox.'))
+
+
+# The notice line printed beside the reply number at the top of every page (header_notice.py).
+from .header_notice import notice as _notice  # noqa: E402
+
+reply.add_typer(_notice, name='notice')
+
+# What a mailbox's faxes do when a number answers as another fax machine (routing/stations.py).
+from .stations import station_check as _station_check  # noqa: E402
+
+reply.command('station-check')(_station_check)

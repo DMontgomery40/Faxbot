@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
 
 
-# Environment-only settings the console shows read-only (System → Security, Storage & retention,
+# Environment-only settings the console shows read-only (Administration → Security, Storage & retention,
 # Diagnostics, Developer, Terminal and the trunk's advanced box). They are read from the process
 # environment at start and are never changed from the console or the command line.
 DEPLOYMENT_VARIABLES = (
@@ -80,6 +80,14 @@ def _humblefax_numbers(values) -> tuple:
     # The only view value read from outside the snapshot: HumbleFax's cached answer, never the keys.
     from .humblefax_service import account_numbers
     return account_numbers(values.humblefax_access_key, values.humblefax_secret_key) or ()
+
+
+def _encryption_view(values):
+    from .sip_access import view
+    try:
+        return view(values)
+    except (OSError, ValueError):
+        return {'media_encryption': None, 'access': None, 'encryption_sentence': None}
 
 
 def _freeswitch_caller_id_missing() -> str:
@@ -243,6 +251,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_compression': values.sip_fax_compression,
                 'fax_fine': values.sip_fax_fine,
                 'fax_tune_coding': values.sip_fax_tune_coding,
+                # The answer cap's switch (routing/stations.py); its sentence comes from /routing/stations/answer-cap.
+                'fax_answer_cap': values.sip_fax_answer_cap,
                 'sslfax_enabled': values.sip_sslfax_enabled,
                 'fax_lines': values.sip_fax_lines,
                 # Calls at once on the trunk and new calls a second, as set (0: the default) and as in effect.
@@ -252,6 +262,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'sslfax_listener_port': values.sip_sslfax_listener_port,
                 'dial_format': values.sip_trunk_dial_format,
                 'dial_prefix': values.sip_trunk_dial_prefix,
+                # Encrypted audio fax and the access the trunk is reached over (sip_access.py, N18).
+                'own_access': values.sip_trunk_own_access,
+                **_encryption_view(values),
                 'external_address': values.sip_external_address,
                 'public_address_check_minutes': values.sip_public_address_check_minutes,
                 'router_ports': values.sip_router_ports,

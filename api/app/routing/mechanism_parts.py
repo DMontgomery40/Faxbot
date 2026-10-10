@@ -1,7 +1,7 @@
-"""Costs → Savings parts for the money-saving mechanisms that had none before the savings map.
+"""Savings & optimization → Savings results parts for the money-saving mechanisms that had none before the savings map.
 
 Each part counts what one mechanism did in the window from the records that mechanism already writes, so the
-savings map (``routing/mechanisms.py``) and Costs → Savings read the same numbers. Most are counts: lightened
+savings map (``routing/mechanisms.py``) and Savings & optimization → Savings results read the same numbers. Most are counts: lightened
 pages, faxes sent by their cheapest route or through a plan, pages a broken fax did not send again, calls turned
 away. Those carry no money (``saved`` stays empty) and never change the total. A partner relay is the exception:
 its own records keep what each relayed fax cost and what calling from here would have cost, so it is priced from

@@ -22,6 +22,10 @@ import AdminAPIClient from '../api/client';
 import type { DiagnosticsFinding, DiagnosticsReport, DiagnosticsStatus } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import DatabaseStatus from './DatabaseStatus';
+import ReceivingReadiness from './ReceivingReadiness';
+import RouteFamilies from './RouteFamilies';
+import PowerCheck from './PowerCheck';
+import TestLines from './TestLines';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -217,6 +221,11 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
           </Stack>
         </>
       )}
+
+      <ReceivingReadiness client={client} />
+      <RouteFamilies client={client} />
+      <PowerCheck client={client} />
+      <TestLines client={client} />
 
       <DatabaseStatus client={client} />
 

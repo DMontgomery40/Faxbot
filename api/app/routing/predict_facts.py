@@ -34,10 +34,15 @@ import weakref
 
 import sqlalchemy as sa
 
-from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
-from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
+from .costs import InvalidRateCard, RateCard, RateTerms, TimeBand, parse_amount
+from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify, country_name
 from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, RouteFacts
 from .seed import _date, _increment, default_path, load_cards
+
+
+def where_text(destination):
+    """'numbers in the United Kingdom' for an international number."""
+    return f'numbers in {country_name(destination.region)}'
 
 
 WINDOW_DAYS = 90
@@ -96,7 +101,47 @@ def shipped(path=None):
             if found is not None:
                 classes[kind].append(found)
     plans = [plan for plan in document.get('reference_plans') or () if isinstance(plan, dict)]
-    return {'cards': tuple(load_cards(path)), 'classes': classes, 'plans': plans}
+    bands = [found for found in (_bands_entry(entry) for entry in document.get('time_bands') or ()
+                                 if isinstance(entry, dict)) if found is not None]
+    return {'cards': tuple(load_cards(path)), 'classes': classes, 'plans': plans, 'bands': bands}
+
+
+def _minute(text):
+    hours, _, minutes = str(text).partition(':')
+    return int(hours) * 60 + int(minutes or 0)
+
+
+def _bands_entry(entry):
+    """(route, number class, country or None, zone, (TimeBand, ...), version, currency) for one ``time_bands``
+    entry of the shipped file, or None when it cannot be read (it is then left out, never half used)."""
+    try:
+        bands = tuple(TimeBand(tuple(int(day) for day in band['days']), _minute(band['from']), _minute(band['to']),
+                               parse_amount(str(band['per_minute'])), str(band.get('label') or '')[:40])
+                      for band in entry.get('bands') or ())
+        route = str(entry['route']).strip().lower()
+        zone = str(entry['zone'])
+        RateTerms(RateCard(None, route, 'outbound', route, 'USD', 0, 0, 0, 60, 0, None, datetime(2026, 1, 1)),
+                  time_bands=bands, time_zone=zone)
+    except (KeyError, TypeError, ValueError, InvalidRateCard):
+        return None
+    if not bands:
+        return None
+    version = f"{route} read {entry.get('read_on') or entry.get('advertised_on') or 'undated'}"
+    currency = str(entry.get('currency') or 'USD').upper()
+    return route, str(entry.get('number_class') or LOCAL), entry.get('country'), zone, bands, version, currency
+
+
+def banded(terms, identity, destination, data):
+    """``terms`` with the carrier's prices by time of day when the shipped file publishes them for this route,
+    number class and country (``time_bands``); unchanged otherwise. The bands replace the per-minute price only
+    for terms in the bands' own currency."""
+    if terms is None:
+        return None
+    for route, kind, country, zone, bands, version, currency in data.get('bands') or ():
+        if (route == identity and kind == destination.kind and currency == terms.card.currency
+                and (country is None or country == destination.region)):
+            return replace(terms, time_bands=bands, time_zone=zone, bands_version=version)
+    return terms
 
 
 def _card_for(cards, identity):
@@ -157,14 +202,20 @@ def terms_for(identity, destination, card, data, *, label=None):
         score = _score(destination, prefixes, entry) if destination.kind == INTERNATIONAL else 0
         if score is None:
             continue
-        if entry.get('reaches') == 'no':
-            return None, (f'{label or identity} does not call {CLASS_TEXT[destination.kind]}, so this fax cannot go '
-                          'this way')
         if best is None or score > best[0]:
-            best = (score, pricing, terms)
+            best = (score, pricing, terms, entry)
     if best is None:
         return None, None
-    _, pricing, terms = best
+    _, pricing, terms, entry = best
+    # The entry that fits the number best says whether the route takes it at all: a route that serves only some
+    # countries (HumbleFax: the US and Canada) refuses every other one, whatever its calling code ("+1" alone is
+    # not the US or Canada).
+    if entry.get('reaches') == 'no':
+        if destination.kind == INTERNATIONAL:
+            return None, (f'{label or identity} does not send faxes to {where_text(destination)}, so this fax cannot '
+                          'go this way')
+        return None, (f'{label or identity} does not call {CLASS_TEXT[destination.kind]}, so this fax cannot go '
+                      'this way')
     if pricing == 'own':
         return terms, None
     if pricing == 'same_as_card' and card is not None:
@@ -335,6 +386,118 @@ def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
         return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
+# The receiving end of a call to one of your own numbers (live pilot LC-P003, 2026-10-10) -----------------------
+#
+# HumbleFax sent 7 encoded pages to the installation's own Telnyx number: the predictor said 586 s at a typical
+# 14,400 bit/s, and the call took 1,352 s at 9,600 bit/s without error correction (HumbleFax's side set the
+# speed), all of it billed again on the receiving trunk. For one of your own numbers Faxbot knows both: the speed
+# calls into that number reached (its own received-call records) and what the trunk charges to receive.
+
+# Said when a fax service sends and Faxbot has no record of the receiving end's speed.
+UNKNOWN_SPEED = "as the receiving fax machine's speed is unknown"
+
+
+def _own_receiving_trunk(values, number):
+    """The key of the trunk account that receives ``number`` into this installation, or None."""
+    from .own_numbers import receiving_numbers
+    from .plan import _own_trunks
+    trunks = _own_trunks(values, number) if number in receiving_numbers(values) else set()
+    return 'sip' if 'sip' in trunks else (sorted(trunks)[0] if trunks else None)
+
+
+def received_calls(engine, number, *, since, limit=CALLS_READ):
+    """Successful, engine-reported calls this installation received on ``number`` since ``since``, newest first:
+    the caller, the speed, the coding and error correction the call reached. [] when the tables are missing."""
+    try:
+        tables = _tables(engine)
+    except Exception:
+        return []
+    calls, records = tables['fax_engine_calls'], tables['sip_call_records']
+    if 'negotiation_by' not in calls.c:
+        return []
+    query = sa.select(
+        records.c.caller, calls.c.sslfax, calls.c.negotiation_by, calls.c.rate_lowest, calls.c.rate_last_page,
+        calls.c.compression, calls.c.ecm, calls.c.created_at,
+    ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key)).where(
+        calls.c.direction == 'inbound', calls.c.created_at >= since, calls.c.negotiation_by.is_not(None),
+        records.c.fax_status == 'SUCCESS', records.c.pages > 0,
+        sa.or_(records.c.did == number, records.c.called == number)).order_by(
+        calls.c.created_at.desc(), calls.c.id.desc()).limit(limit)
+    with engine.connect() as connection:
+        return [dict(row) for row in connection.execute(query).mappings()]
+
+
+def receiver_link(rows, *, caller=None, typical_rate=TYPICAL_RATE):
+    """A ``Link`` (scope 'receiver') from calls received on the number: those from ``caller`` (the sending account's
+    own number) when there are any, else all of them; None without a reported speed."""
+    from_caller = [row for row in rows if caller and row.get('caller') == caller]
+    chosen = from_caller or rows
+    rates = [rate for rate in (_rate(row) for row in chosen) if rate]
+    if not rates:
+        return None
+    coding = next((row['compression'] for row in chosen if row.get('compression') in CODINGS), None)
+    return Link(rate=statistics.median_low(rates), rate_calls=len(rates), rate_scope='receiver', coding=coding,
+                typical_rate=typical_rate)
+
+
+def _sending_number(values, route_key):
+    """The number the sending account's calls show, when you set one (``own_numbers.PROVIDER_NUMBERS``)."""
+    from .numbers import InvalidNumber, normalize_number
+    from .own_numbers import PROVIDER_NUMBERS
+    country = getattr(values, 'fax_default_country', 'US') or 'US'
+    for field in PROVIDER_NUMBERS.get(route_key, ()):
+        found = getattr(values, field, '') or ''
+        if found:
+            try:
+                return normalize_number(found, country=country)
+            except InvalidNumber:
+                continue
+    return None
+
+
+def _receiving_card(engine, preset, kind):
+    """The trunk's receiving price: its saved receiving card, else the carrier's published one; None if neither."""
+    if engine is not None:
+        from .database import DeliveryStoreError
+        from .store import RouteStore
+        try:
+            cards = _tables(engine)['provider_rate_cards']
+            identities = (f'sip-{preset}', 'sip') if preset else ('sip',)
+            with engine.connect() as connection:
+                rows = {row['provider_id']: row for row in connection.execute(sa.select(cards).where(
+                    cards.c.superseded_at.is_(None), cards.c.direction == 'inbound',
+                    cards.c.provider_id.in_(identities))).mappings()}
+            saved = next((RouteStore._card(rows[identity]) for identity in identities if identity in rows), None)
+            if saved is not None:
+                return saved
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            import logging
+            logging.getLogger(__name__).warning('Saved receiving prices could not be read: %s', error)
+    if not preset:
+        return None
+    from .receiving import carrier_prices
+    published = carrier_prices(preset).per_minute
+    return published.get('toll_free' if kind == TOLL_FREE else 'local')
+
+
+def receiving_for(destination, *, engine=None, values=None):
+    """The ``predict.ReceivingLeg`` of a fax to ``destination``: its trunk's receiving price when it is one of this
+    installation's own trunk numbers; unknown otherwise (a partner publishes no receiving price to Faxbot)."""
+    from .predict import ReceivingLeg
+    values = _values() if values is None else values
+    engine = _engine() if engine is None else engine
+    if values is None:
+        return ReceivingLeg()
+    where = classify(destination, getattr(values, 'fax_default_country', 'US') or 'US')
+    number = where.number or destination
+    key = _own_receiving_trunk(values, number)
+    if key is None:
+        return ReceivingLeg()
+    trunk = values if key == 'sip' else (_extra_trunk(values, key) or values)
+    preset = getattr(trunk, 'sip_trunk_preset', '') or ''
+    return ReceivingLeg(_receiving_card(engine, preset, where.kind), route_label('sip', preset))
+
+
 def _hour_facts(engine, number, link, moment, values):
     """``link`` with this hour's time a page against the number's typical hour (routing/schedule.py, M26), when the
     learned call hours have enough calls; unchanged otherwise. Unreadable records leave it unchanged (logged)."""
@@ -352,6 +515,72 @@ def _hour_facts(engine, number, link, moment, values):
         return link
     factor = timing.factor_at(moment)
     return replace(link, hour_factor=factor, hour_scope=timing.scope) if factor else link
+
+
+# The newest of this account's carrier records to a country that price its calls there, when nothing is published.
+LEARNED_RECORDS = 10
+
+
+def learned_terms(engine, account, identity, where, label, *, home='US'):
+    """``(RateTerms, clause)`` for a call over this trunk account to an international number whose route publishes
+    no price, from the rate its own carrier records showed for calls to that country (``carrier_charges``, the
+    amount the carrier billed over the seconds it billed); ``(None, None)`` without such records.
+
+    The rate is the middle of the newest ``LEARNED_RECORDS`` priced records in one currency, rounded up to a whole
+    micro a minute; the billing step is the coarsest one those records fit (a minute, six seconds, or a second),
+    and the minimum one step. A published price or a row you saved is always used before this (``facts_for``).
+    The clause says it was learned and when: 'the rate 4 of your Telnyx call records to numbers in the United
+    Kingdom showed, the newest on 8 October 2026'."""
+    from .database import DeliveryStoreError, reflect
+    if engine is None or where.kind != INTERNATIONAL or not where.region or not where.prefix:
+        return None, None
+    try:
+        tables = reflect(engine, ('carrier_charges', 'sip_call_records'))
+    except DeliveryStoreError:
+        return None, None
+    charges, calls = tables['carrier_charges'], tables['sip_call_records']
+    trunk = calls.c.trunk_key if 'trunk_key' in calls.c else None
+    digits = where.prefix.lstrip('+')
+    # The called number as the engine reported it: E.164, or with an international dialing prefix (011, 00). Bare
+    # digits are never read as international: a US number stored as 4435550100 is not the UK's +44.
+    dialed = [f'+{digits}%', f'011{digits}%', f'00{digits}%']
+    query = (sa.select(charges.c.amount_micros, charges.c.billed_seconds, charges.c.currency, charges.c.effective_at,
+                       calls.c.called)
+             .select_from(charges.join(calls, calls.c.id == charges.c.call_record_id))
+             .where(charges.c.applied == 1, calls.c.direction == 'outbound', charges.c.billed_seconds > 0,
+                    charges.c.amount_micros > 0, sa.or_(*(calls.c.called.like(pattern) for pattern in dialed)))
+             .order_by(charges.c.effective_at.desc(), charges.c.id.desc()).limit(200))
+    if trunk is not None:
+        # The first trunk's calls carry no trunk key (or its own); a later trunk's carry its account key.
+        query = query.where(sa.or_(trunk.is_(None), trunk == 'sip') if account == 'sip' else trunk == account)
+
+    def e164(called):
+        text = str(called or '')
+        for lead in ('011', '00'):
+            if text.startswith(lead + digits):
+                return '+' + text[len(lead):]
+        return text
+    with engine.connect() as connection:
+        rows = [row for row in connection.execute(query).mappings()
+                if classify(e164(row['called']), home).region == where.region]
+    if not rows:
+        return None, None
+    currency = rows[0]['currency']
+    rows = [row for row in rows if row['currency'] == currency][:LEARNED_RECORDS]
+    rates = sorted(-(-row['amount_micros'] * 60 // row['billed_seconds']) for row in rows)
+    rate = rates[len(rates) // 2]
+    billed = [row['billed_seconds'] for row in rows]
+    step = 60 if all(value % 60 == 0 for value in billed) else 6 if all(value % 6 == 0 for value in billed) else 1
+    newest = rows[0]['effective_at']
+    try:
+        card = RateCard(None, identity, 'outbound', f'{label}, rate learned from your call records'[:100], currency,
+                        min(rate, 100_000_000), 0, 0, step, step, None, newest)
+    except InvalidRateCard:
+        return None, None
+    count = len(rows)
+    clause = (f"the rate {count} of your {label} call record{'' if count == 1 else 's'} to {where_text(where)} "
+              f'showed, the newest on {newest.day} {newest:%B %Y}')
+    return RateTerms(card, INTERNATIONAL, (where.prefix,), published=False), clause
 
 
 def plan_terms(route_key, terms, card, values):
@@ -400,12 +629,16 @@ def _extra_trunk(values, account):
     return found.values if found is not None else None
 
 
-def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None):
+def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None,
+              mailbox_id=None):
     """The ``RouteFacts`` for one route and number, from the installation when it has a database.
 
     ``account`` is the account the call would use (its key; ``route_key`` when not given): an extra trunk is
     priced by its own carrier's card, and an origin-rated row for where its calls start (``origin_rates``)
     prices the call when one matches. ``site`` prices it as if it started from that site instead.
+    ``mailbox_id``: the mailbox the fax is sent from, so a deck priced by caller ID reads the number the call
+    presents for that mailbox (its reply number, as ``ami.originate_fields_for`` sets it); None for a quote with no
+    fax, priced at the organization's number.
     """
     values = _values() if values is None else values
     engine = _engine() if engine is None else engine
@@ -451,7 +684,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         from .origin_rates import rated_terms
         try:
             rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
-                                     account_key=account, engine=engine, site=site)
+                                     account_key=account, engine=engine, site=site, mailbox_id=mailbox_id)
         except DeliveryStoreError as error:
             # Saved rows or prices by state could not be read: the card's own price, and the cause logged.
             # Anything else is a bug and raises.
@@ -461,7 +694,14 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         if rated is not None:
             terms, origin = rated, row.origin
             card = card or rated.card
+    learned = None
+    if terms is None and refusal is None and route_key == 'sip':
+        # Nothing published or saved prices this country on the trunk: the rate its own carrier records showed.
+        terms, learned = learned_terms(engine, account, identity, where, label,
+                                       home=getattr(values, 'fax_default_country', 'US') or 'US')
     terms = plan_terms(account, terms, card, values)
+    # A carrier that publishes prices by time of day (peak, off-peak): read at the time the call starts.
+    terms = banded(terms, identity, where, data)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
@@ -483,8 +723,16 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
                 # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
                 link = replace(link, rate=cap)
             link = _hour_facts(engine, number, link, moment, values)
+        elif _own_receiving_trunk(values, number) is not None:
+            # A fax service (or another account) calling one of your own trunk numbers: the speed is what calls
+            # into that number reached, from the sending account's own number when it has one (LC-P003).
+            rows = received_calls(engine, number, since=moment - timedelta(days=WINDOW_DAYS))
+            link = receiver_link(rows, caller=_sending_number(values, route_key),
+                                 typical_rate=link.typical_rate) or link
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, account, now=moment, values=values)
+    if route_key != 'sip' and link.rate is None:
+        link = replace(link, typical_note=UNKNOWN_SPEED)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
-                      origin=origin)
+                      origin=origin, learned=learned, at=moment)

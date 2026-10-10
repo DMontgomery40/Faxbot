@@ -11,7 +11,7 @@ import logging
 import re
 
 from ..outbound_store import DeliveryConflict
-from .outcomes import map_call
+from .outcomes import confirmed_originals, map_call
 from .store import call_members
 
 
@@ -36,6 +36,22 @@ def _members(delivery, job_id, attempt_id):
             or profile.configuration.manifest is not None):
         raise DeliveryConflict('Native result does not match the shared call.')
     return members, revision
+
+
+def _sheets(revision, job_id, attempt_id):
+    """The long pages a shared call was sent on (``packed-<fax>-<attempt>.sheets.json``, written by
+    ``pages.sending`` when it packed the call), or None when it went page by page."""
+    import json
+    try:
+        path = Path(revision.values.fax_data_dir) / f'packed-{job_id}-{attempt_id}.sheets.json'
+        if path.is_symlink() or not path.is_file():
+            return None
+        found = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning('The long pages of shared call %s could not be read; its pages are '
+                                            'counted as sent.', attempt_id)
+        return None
+    return found if isinstance(found, list) else None
 
 
 def _remove_image(revision, attempt_id):
@@ -74,11 +90,17 @@ def apply_fax_result(delivery, event, *, failure_sentence=None, failure_category
         return False
     members, revision = found
     status = re.sub(r'[^A-Z_]', '', str(fields.get('status') or '').upper())[:16]
+    confirmed, uncertain = _pages(fields.get('pages')), None
+    sheets = _sheets(revision, members[0]['id'], members[0]['batch_id'])
+    if sheets is not None and confirmed is not None:
+        # Sent on long pages: the engine counts long pages; each fax's own pages are the call pages on them.
+        confirmed, uncertain = confirmed_originals(sheets, confirmed)
     if status == 'SUCCESS':
-        outcomes = map_call(members, succeeded=True, confirmed_pages=_pages(fields.get('pages')))
+        outcomes = map_call(members, succeeded=True, confirmed_pages=confirmed, uncertain_through=uncertain)
     elif status == 'FAILED':
-        outcomes = map_call(members, succeeded=False, confirmed_pages=_pages(fields.get('pages')),
-                            failure_sentence=failure_sentence, failure_category=failure_category)
+        outcomes = map_call(members, succeeded=False, confirmed_pages=confirmed,
+                            failure_sentence=failure_sentence, failure_category=failure_category,
+                            uncertain_through=uncertain)
     else:
         # Without a recognised ending, no page is known to be confirmed or unconfirmed.
         outcomes = map_call(members, succeeded=False, confirmed_pages=None)

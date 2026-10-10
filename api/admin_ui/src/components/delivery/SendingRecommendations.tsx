@@ -1,4 +1,4 @@
-// Costs → Recommendations → Sending: numbers where another route would have cost less than the
+// Savings & optimization → Opportunities → Sending: numbers where another route would have cost less than the
 // one Faxbot uses first now, counting every attempt (failed ones too) over the last 30 days.
 // "Use this route" makes it the number's preferred route; nothing is sent again.
 import { useCallback, useEffect, useState } from 'react';

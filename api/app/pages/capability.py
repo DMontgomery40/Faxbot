@@ -310,7 +310,9 @@ class PageRecords:
             raise ValueError('Unsupported page record')
         packed = layout == 'dense'
         trimmed = trimmed_pages if isinstance(trimmed_pages, int) and trimmed_pages > 0 else None
-        if resolution not in (None, 'standard') or (layout is None and trimmed is None and resolution is None):
+        # With no change at all, only a reason why the pages went as they are (a fax too long to change).
+        if resolution not in (None, 'standard') or (layout is None and trimmed is None and resolution is None
+                                                   and not reason):
             raise ValueError('Unsupported page record')
         now = now or utcnow()
         table = self.table('fax_page_changes')

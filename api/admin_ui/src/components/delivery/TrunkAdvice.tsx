@@ -1,4 +1,4 @@
-// Costs → Recommendations → Your trunks: each trunk's monthly fee, busiest time, faxes and cost per fax, and when
+// Savings & optimization → Opportunities → Your trunks: each trunk's monthly fee, busiest time, faxes and cost per fax, and when
 // one trunk's faxes fit on another with what that would save. Advice only: Faxbot never cancels a trunk.
 import { useEffect, useState } from 'react';
 import { Alert, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';

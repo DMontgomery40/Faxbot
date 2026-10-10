@@ -26,7 +26,7 @@ STATUS_EVENT_FIELDS = {
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
     # PJSIPShowEndpoint: only the contact's status. Its EndpointDetail and AuthDetail events are dropped.
     "contactstatusdetail": ("URI", "Status", "RoundtripUsec"),
-    # Counted before Faxbot restarts Asterisk, and listed under System → Developer → Scripts & checks.
+    # Counted before Faxbot restarts Asterisk, and listed under Administration → Developer → Scripts & checks.
     "coreshowchannel": ("Uniqueid", "Channel", "ChannelStateDesc", "CallerIDNum", "Exten", "Duration"),
     "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
     # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.
@@ -93,6 +93,15 @@ def peer_route_fields(token: str, address: str) -> Dict[str, str]:
             "Variable": f"FAXBOT_CHECK={token},FAXBOT_PEER_ADDRESS={address}"}
 
 
+DTMF_VARIABLE = re.compile(r"(?:^|,)FAXBOT_DTMF=([0-9*#wW]{1,32})(?=,|$)")
+
+
+def requested_keys(fields: Dict[str, str]) -> Optional[str]:
+    """The keys an Originate's fields press after answer (routing/after_answer.py), or None."""
+    found = DTMF_VARIABLE.search(fields.get("Variable", ""))
+    return found.group(1) if found else None
+
+
 def requested_subaddress(fields: Dict[str, str]) -> Optional[str]:
     """The subaddress an Originate's fields ask for, or None."""
     found = SUBADDRESS_VARIABLE.search(fields.get("Variable", ""))
@@ -119,6 +128,10 @@ def prepare_originate_fields(
     subaddress: Optional[str] = None,
     peer: Optional[str] = None,
     compression: Optional[str] = None,
+    t0_ms: Optional[int] = None,
+    csi_expect: Optional[str] = None,
+    csi_refuse: bool = False,
+    dtmf: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -136,6 +149,10 @@ def prepare_originate_fields(
     machine for (patch 0005, ``FAXBOT_TX_SUB``): digits and +, # and *, at most
     20. It is requested, never promised: the engine sends it only when the far
     end's machine says it takes one.
+    ``t0_ms``, ``csi_expect`` and ``csi_refuse`` are patch 0007's T0 cap and station check
+    (``routing/stations.py``): FAXBOT_T0_MS, FAXBOT_CSI_EXPECT (digits separated by dots) and FAXBOT_CSI_REFUSE.
+    ``dtmf`` is the keys pressed once the call is answered, before the fax starts (``routing/after_answer.py``,
+    FAXBOT_DTMF): 0-9, * and #, with w and W pauses.
     ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
     direct/peer_call.py): the call goes there, inside the tunnel, instead of
     over ``endpoint``. The caller checked the tunnel first.
@@ -152,7 +169,8 @@ def prepare_originate_fields(
         raise ValueError("Unsupported AMI destination")
     if dial is None:
         dial = dest
-    elif not isinstance(dial, str) or not re.fullmatch(r"(?:[0-9]{4,16}\*)?\+?[0-9]{3,20}", dial):
+    # *70 (cancel call waiting) only in front of a number dialled on an analog line (sip_trunk.effective_trunk).
+    elif not isinstance(dial, str) or not re.fullmatch(r"(?:\*[0-9]{2})?(?:[0-9]{4,16}\*)?\+?[0-9]{3,20}", dial):
         raise ValueError("Unsupported AMI destination")
     if station_id is None:
         station_id = caller_id
@@ -210,6 +228,22 @@ def prepare_originate_fields(
         if clean is None:
             raise ValueError("Unsupported AMI subaddress")
         variables["FAXBOT_TX_SUB"] = clean
+    # Patch 0007: end the call when no fax answers within the cap, and check the station that answers.
+    if t0_ms is not None:
+        if type(t0_ms) is not int or not 40000 <= t0_ms <= 60000:
+            raise ValueError("Unsupported AMI fax timer")
+        variables["FAXBOT_T0_MS"] = str(t0_ms)
+    if csi_expect is not None:
+        if not isinstance(csi_expect, str) or not re.fullmatch(r"[0-9]{7,20}(?:\.[0-9]{7,20}){0,9}", csi_expect):
+            raise ValueError("Unsupported AMI station list")
+        variables["FAXBOT_CSI_EXPECT"] = csi_expect
+        if csi_refuse:
+            variables["FAXBOT_CSI_REFUSE"] = "yes"
+    # Digits after answer (routing/after_answer.py): [faxbot-send] presses them before SendFAX.
+    if dtmf is not None:
+        if not isinstance(dtmf, str) or not re.fullmatch(r"[0-9*#wW]{1,32}", dtmf):
+            raise ValueError("Unsupported AMI keys after answer")
+        variables["FAXBOT_DTMF"] = dtmf
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -257,6 +291,42 @@ def reply_choice(values, *, mailbox_id=None):
         return reply_number.choose(values, engine=engine, store=store, mailbox_id=mailbox_id)
     except Exception:
         return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
+
+
+def job_mailbox(job_id) -> Optional[str]:
+    """The mailbox a fax was sent from (its sending rules' facts, kept with the fax at acceptance), so it shows that
+    mailbox's own reply number; None for a fax sent from no mailbox, or accepted before sending rules existed.
+
+    A shared call (faxes sent together, batching/) shows one number for every fax in it: the mailbox's only when
+    all its faxes come from that same mailbox, else None, so the organization's number shows and no mailbox's
+    replies go to another. Never raises: a database that cannot be read now is logged with the fax and gives None,
+    so the call shows the organization's number, as reply_choice does."""
+    engine = _database()
+    if engine is None or not job_id:
+        return None
+    import sqlalchemy as sa
+    from .routing import envelope as envelopes
+    members = sa.table("outbound_batch_members", sa.column("id"), sa.column("batch_id"), sa.column("state"))
+    try:
+        with engine.connect() as connection:
+            batch = connection.execute(sa.select(members.c.batch_id).where(
+                members.c.id == job_id, members.c.state == "together",
+                members.c.batch_id.is_not(None))).scalar_one_or_none()
+            faxes = [job_id] if batch is None else connection.execute(sa.select(members.c.id).where(
+                members.c.batch_id == batch).order_by(members.c.id)).scalars().all()
+            found = set()
+            for fax in faxes:
+                try:
+                    pinned = envelopes.load_on(connection, fax)
+                except envelopes.UnreadableDecision:
+                    pinned = None
+                found.add(getattr(pinned.facts, "mailbox_id", None) if pinned is not None else None)
+    except sa.exc.SQLAlchemyError as error:
+        logging.getLogger(__name__).warning(
+            "The mailbox of fax %s could not be read (%s); it shows the organization's reply number.",
+            job_id, type(error).__name__)
+        return None
+    return found.pop() if len(found) == 1 else None
 
 
 def sender_identity(job_id):
@@ -341,6 +411,12 @@ def frame_options(values, dest, max_rate=None):
     return found
 
 
+def analog_local(account, preset_id, dest) -> bool:
+    """Whether ``dest`` is in the local calling area of analog line ``account`` (routing/analog.py)."""
+    from .routing import analog
+    return analog.is_local(_database(), account, preset_id, dest)
+
+
 class UnknownTrunk(ValueError):
     """The fax was given a trunk account that is not in Asterisk's file (not set up, turned off or removed)."""
 
@@ -382,6 +458,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     """
     from . import sip_trunk
     from .routing.reply_number import caller_id_for
+    account = trunk or sip_trunk.PRIMARY
     values, endpoint = trunk_values(values, trunk)
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     # The coding Faxbot measured for this attempt's pages; the built-in engine has no JBIG (T.85), so JBIG offers
@@ -389,6 +466,9 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     coding = getattr(call, "coding", None)
     if coding is not None:
         limits["compression"] = {"MH": "mh", "MR": "mr", "MMR": "mmr", "JBIG": "mmr"}[coding]
+    if choice is None and mailbox_id is None:
+        # The fax's own mailbox, so a mailbox's reply number shows on its faxes (header line, TSI, caller ID).
+        mailbox_id = job_mailbox(job_id)
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
     learned = getattr(call, "learned", None)
     if learned is not None:
@@ -406,6 +486,23 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
         # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
         limits.update(peer=peer.endpoint, iaf="peer")
+    else:
+        # Keys to press after this number answers (routing/after_answer.py); raises rather than dial without them.
+        from .routing import after_answer
+        keys = after_answer.for_number(_database(), dest)
+        if keys:
+            limits["dtmf"] = keys
+            limits.pop("t38_now", None)  # the keys go out on the voice call, before any request for T.38
+    if peer is None and sip_trunk.configured(values) and tiff_path != "poll":
+        # Patch 0007 (routing/stations.py): the station check before any page, and the cap on waiting for a fax
+        # answer on a trunk billed by the minute; behind a phone menu, neither the cap nor the dialled number.
+        from .routing import after_answer, stations
+        call_guard = after_answer.call_guard if limits.get("dtmf") else stations.call_guard
+        guard = call_guard(values, job_id, dest, engine=_database(), mailbox_id=mailbox_id)
+        if guard.t0_ms:
+            limits["t0_ms"] = guard.t0_ms
+        if guard.expect:
+            limits.update(csi_expect=guard.expect, csi_refuse=guard.refuse)
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=header, attempt_id=attempt_id,
@@ -415,7 +512,8 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
         header=header, attempt_id=attempt_id,
         station_id=identity[1] if identity is not None else (choice.number or None),
-        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest),
+        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest, local=(
+            trunk.dial_format == "local_area" and analog_local(account, trunk.preset.id, dest))),
         fax_preference=trunk.fax_preference and peer is None, endpoint=endpoint, **limits)
 
 
@@ -837,6 +935,10 @@ class AMIClient:
         subaddress = requested_subaddress(fields)
         if subaddress:
             submission["Subaddress"] = subaddress
+        # The keys pressed after answer, kept per attempt for Sent details (routing/after_answer.py).
+        keys = requested_keys(fields)
+        if keys:
+            submission["Digits"] = keys
         if peer is not None:
             submission["Peer"] = peer.peer_id
         if trunk and trunk != "sip":

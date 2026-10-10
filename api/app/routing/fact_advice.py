@@ -39,7 +39,7 @@ Rules that keep it honest:
   carrier publishes has no saving in money: the advice gives the number of
   faxes and the price below which that route would have cost less.
 - **Never realized savings.** These are what the past faxes would have cost.
-  Once a fact is established and used, Costs → Savings counts what it saved.
+  Once a fact is established and used, Savings & optimization → Savings results counts what it saved.
 
 Advice only: nothing here enrolls, approves, enters a price or changes a route.
 """

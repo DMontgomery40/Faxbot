@@ -479,7 +479,7 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None, *, man
         return TRUNK_INCOMPLETE
     if ports_text in (BEHIND_ROUTER, LAN_HIDDEN, LAN_NOT_STARTED):
         return ports_text
-    phone = summary.get('kind') == sip_trunk.PHONE_SYSTEM
+    phone = summary.get('kind') in sip_trunk.LAN_KINDS
     if restarting:
         return RESTARTING
     if not applied:
@@ -525,7 +525,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
     asterisk = (await _asterisk_status(values, key) if configured
                 else {'connected': False, 'registration': 'unknown', 'reachability': 'unknown', 'permission': True,
                       'transport': None})
-    phone = configured and summary.get('kind') == sip_trunk.PHONE_SYSTEM
+    phone = configured and summary.get('kind') in sip_trunk.LAN_KINDS
     # A phone system is reached on the local network: no internet address to look up.
     network = await probe_network(values.sip_trunk_preset) if configured and not phone else None
     carrier = summary.get('preset_label') if configured and summary.get('preset') != 'custom' else 'the carrier'
@@ -566,7 +566,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
     if last and last['verdict'] == NOT_HANDED_OVER:
         # A received fax waits outside Faxbot; that matters more than any trunk detail.
         message = last['summary']
-    return {
+    view = {
         **summary, 'account': key or sip_trunk.PRIMARY,
         # Several trunks: every trunk account, and why one that is on is not in Asterisk's file yet.
         'trunks': [{'key': trunk.key, 'label': trunk.label, 'endpoint_loaded': trunk.endpoint in loaded}
@@ -629,6 +629,19 @@ async def status(request: Request, account: str | None = Query(default=None, max
         'engine_audio': bool(engine_state == 'running' and hylafax_engine.engine_audio(values)),
         'message': message,
     }
+    return _gateway_words(view) if summary.get('kind') == sip_trunk.ANALOG_LINE else view
+
+
+# An analog line's gateway (sip_trunk.ANALOG_GATEWAYS) is reached on the local network like a phone system; its
+# sentences name the gateway.
+GATEWAY_TEXT_FIELDS = ('message', 'registration_text', 'reachability_text', 'ports_text')
+
+
+def _gateway_words(view):
+    for name in GATEWAY_TEXT_FIELDS:
+        if isinstance(view.get(name), str):
+            view[name] = view[name].replace("phone system's", "gateway's").replace('phone system', 'gateway')
+    return view
 
 
 def _records(request):
@@ -657,8 +670,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     await run_lifecycle_step(lambda: sip_fax_mode.derive(values, records))
     has_calls = await run_lifecycle_step(lambda: _last_call(records) is not None)
     if sip_fax_mode.carrier_prefers_audio(values, has_calls=has_calls):
-        # A new trunk with a carrier that turns T.38 into audio fax inside its own network.
-        values = await run_lifecycle_step(lambda: _set_t38(runtime, False, sip_fax_mode.CARRIER))
+        # A new trunk with a carrier that turns T.38 into audio fax inside its own network, or that carries fax only
+        # as encrypted audio (sip_access.py).
+        from . import sip_access
+        reason = sip_fax_mode.ENCRYPTED if sip_access.encryption_required(values) else sip_fax_mode.CARRIER
+        values = await run_lifecycle_step(lambda: _set_t38(runtime, False, reason))
     elif not phone:
         # The person's own change first, then the network check decides T.38 for new calls.
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
@@ -879,7 +895,10 @@ async def check_network_again(request: Request, identity=Depends(require_permiss
     await _check_telnyx(values)
     body = await run_lifecycle_step(lambda: sip_network.report(values))
     engine = outcome.get('engine')
-    return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None}
+    # A trunk whose encryption depends on its internet access (sip_access.py): what changed, and why, in a sentence.
+    from . import sip_access
+    return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None,
+            'access': outcome.get('access'), 'encryption_sentence': sip_access.sentence(values)}
 
 
 @router.get('/telnyx')

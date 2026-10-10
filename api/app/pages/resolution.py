@@ -36,7 +36,8 @@ def standard_frames(frames):
     from PIL import Image
     if not frames or any(frame.mode != '1' or _y_dpi(frame) < FINE_MIN_DPI or frame.height % 2 for frame in frames):
         return None
-    halved = []
+    from ..conversion import FaxFrames
+    halved = FaxFrames() if isinstance(frames, FaxFrames) else []  # packed pages stay packed
     for frame in frames:
         data, stride = frame.tobytes(), (frame.width + 7) // 8
         rows = []

@@ -1,4 +1,4 @@
-// Costs → Charges and Costs → Invoices (routing/charges_http.py).
+// Savings & optimization → Charges and Savings & optimization → Invoices (routing/charges_http.py).
 import type { Money } from './deliveryTypes';
 
 // How Faxbot reads one account's charges, and when it last listed the account's faxes at its provider.

@@ -21,6 +21,9 @@ import TollFreeApprovalPanel from './TollFreeApproval';
 import RecipientDigitalPanel from './RecipientDigital';
 import { RecipientPagesPanel } from './PagesSettings';
 import FaxMachinePanel from './FaxMachinePanel';
+import { RecipientCoverSwitch } from '../HeaderNotice';
+import { RecipientStationCheck } from '../StationCheck';
+import { RecipientAfterAnswer } from './AfterAnswer';
 
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
@@ -191,6 +194,9 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
             multiline minRows={2} disabled={!canWrite} />
           <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={references} onChange={(e) => setReferences(e.target.checked)} disabled={!canWrite} />}
             label="Accepts a one-page index instead of documents it already received for a case" />
+          <RecipientCoverSwitch client={client} number={detail.number} canWrite={canWrite} />
+          <RecipientStationCheck client={client} number={detail.number} canWrite={canWrite} />
+          <RecipientAfterAnswer client={client} number={detail.number} canWrite={canWrite} />
           <SendingTogetherPanel client={client} number={detail.number} canWrite={canWrite} />
           <EncodedPagesPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />

@@ -3,11 +3,12 @@
  "name": "referral-note.txt",
  "secret": "synthetic shared key",
  "files": [
+  "capacity-pages.pdf",
+  "capacity.tiff",
   "encrypted.tiff",
   "grid.tiff",
   "picture.tiff",
-  "runs.pdf",
-  "zstd.tiff"
+  "runs.pdf"
  ],
  "rs": [
   {
@@ -1595,5 +1596,30 @@
     160
    ]
   }
- ]
+ ],
+ "receipts": {
+  "receipt-runs-rotated_180.tiff": "decodes",
+  "receipt-runs-inverted.tiff": "decodes",
+  "receipt-runs-rotated_inverted.tiff": "decodes",
+  "receipt-runs-moved_right.tiff": "decodes",
+  "receipt-runs-moved_left.tiff": "decodes",
+  "receipt-runs-padded_to_letter.tiff": "decodes",
+  "receipt-runs-centred_on_letter.tiff": "decodes",
+  "receipt-runs-trailing_row_removed.tiff": "decodes",
+  "receipt-runs-trailing_row_added.tiff": "decodes",
+  "receipt-runs-resized.tiff": "resized",
+  "receipt-runs-preview.tiff": "preview",
+  "receipt-faxbeep.pdf": "decodes",
+  "receipt-cut.tiff": "decodes",
+  "receipt-capacity-rotated_180.tiff": "decodes",
+  "receipt-capacity-inverted.tiff": "decodes",
+  "receipt-capacity-moved_right.tiff": "decodes",
+  "receipt-capacity-moved_left.tiff": "decodes",
+  "receipt-capacity-padded_to_letter.tiff": "decodes",
+  "receipt-capacity-centred_on_letter.tiff": "decodes",
+  "receipt-capacity-trailing_row_removed.tiff": "decodes",
+  "receipt-grid-rotated_180.tiff": "decodes",
+  "receipt-grid-inverted.tiff": "decodes",
+  "receipt-grid-centred_on_letter.tiff": "decodes"
+ }
 }

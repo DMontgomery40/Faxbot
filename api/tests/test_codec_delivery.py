@@ -15,7 +15,8 @@ BOOTSTRAP = 'synthetic-codec-bootstrap'
 ADMIN = {'X-API-Key': BOOTSTRAP}
 NUMBER = '+12025550123'
 Prediction = namedtuple('Prediction', 'billed_pages seconds cost basis marginal')
-Shape = namedtuple('Shape', 'pages page_bits resolution layout')
+# The predictor's Shape; ``measured`` holds each coding's measured bits when the chooser measured them.
+Shape = namedtuple('Shape', 'pages page_bits resolution layout measured', defaults=(None,))
 
 
 def per_page(price=45_000, rate=14_400):
@@ -102,12 +103,19 @@ def test_the_real_shared_predictor_prices_encoded_pages():
     assert not slower.use and slower.original.cost is not None
 
 
-def test_without_the_shared_predictor_nothing_is_encoded(monkeypatch):
-    monkeypatch.setattr(decision, 'predictor', lambda: None)
-    choice = decision.choose(_document(1000), route_key='sinch', destination=NUMBER, pages_original=3,
-                             page_bits_original=[1, 2, 3], exact_raster=False, ecm_and_fine_seen=False,
-                             provider_renders=True)
-    assert not choice.use and 'cannot yet predict' in choice.sentence
+def test_the_codec_uses_the_real_shared_predictor_not_a_guarded_stand_in():
+    """The guarded import is gone (00-common): ``predictor()`` is routing.predict's own predict and Shape, and an
+    encoded candidate priced through it carries the measured codings in that Shape."""
+    from app.routing import predict as shared
+    predict, shape_type = decision.predictor()
+    assert predict is shared.predict and shape_type is shared.Shape
+    from api.tests.test_dense_pages import card, priced
+    with priced(sinch=card('sinch', per_page='0.045')):
+        choice = decision.choose(_document(12_000), route_key='sinch', destination=NUMBER, pages_original=23,
+                                 page_bits_original=[40_000] * 23, exact_raster=False, ecm_and_fine_seen=False,
+                                 provider_renders=True, frames_original=None)
+    assert choice.use and isinstance(choice.encoded, shared.Prediction)
+    assert choice.encoded.cost.micros == 45_000 and choice.original.cost.micros == 23 * 45_000
 
 
 # --- receiving ------------------------------------------------------------------------------------------------

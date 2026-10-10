@@ -1,4 +1,4 @@
-// Providers → In use → Accounts: every account Faxbot sends and receives with, trunks included, with
+// Delivery setup → Providers & accounts → Accounts: every account Faxbot sends and receives with, trunks included, with
 // what each does, whether it is ready, its numbers and the address to give its provider. The first
 // account of each provider is set up on that provider's own page; extra accounts are added here.
 import { useCallback, useEffect, useState } from 'react';
@@ -15,6 +15,9 @@ import type {
   AccountHealth, AccountInput, AccountPatch, AccountsState, HealthState, ProviderAccount, RulesApi,
 } from './ProviderRulesApi';
 import ProviderAccountsDialog from './ProviderAccountsDialog';
+import DialDestinations from './DialDestinations';
+import AccountCountryRules, { useCountryRules } from './delivery/AccountCountryRules';
+import LoadFailed from './common/LoadFailed';
 
 export const HEALTH: Record<HealthState, { label: string; color: 'success' | 'default' | 'warning' | 'error' | 'info' }> = {
   ready: { label: 'Ready', color: 'success' },
@@ -52,6 +55,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
   const [editing, setEditing] = useState<{ account: ProviderAccount | null } | null>(null);
   const [saving, setSaving] = useState(false);
   const [health, setHealth] = useState<{ account: ProviderAccount; result: AccountHealth } | null>(null);
+  // Country service rules on the rows of the accounts they concern (the UAE, Saudi Arabia).
+  const countries = useCountryRules(api);
 
   // Someone who may not see provider accounts sees no list.
   const [hidden, setHidden] = useState(false);
@@ -97,6 +102,7 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
       </Typography>
       <Notice message={notice} onClose={() => setNotice(null)} />
       <DeliveryError error={error} onClose={() => setError(null)} />
+      {countries.failed && <LoadFailed testId="account-country-rules-unread" text="Country rules could not be loaded. Try again." />}
       <Paper variant="outlined" sx={{ borderRadius: 2, overflowX: 'auto' }}>
         <Table size="small" aria-label="Provider accounts">
           <TableHead>
@@ -116,6 +122,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
                     <Typography variant="caption" color="text.secondary">
                       {state.providers.find((kind) => kind.id === account.provider)?.label ?? account.provider}
                     </Typography>
+                    <AccountCountryRules api={api} account={account.key} rules={countries.rules} canWrite={canWrite}
+                      onChange={countries.setRules} />
                   </TableCell>
                   <TableCell>{siteName(account.site)}</TableCell>
                   <TableCell>{rolesText(account, state)}</TableCell>
@@ -182,6 +190,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
           onChange={(key, change) => void write((generation) => api.updateAccount(key, change, generation),
             `Account ${change.label ?? key} saved.`).then((done) => { if (done) setEditing(null); })} />
       )}
+      {/* Where Faxbot may dial, for every account above (routing/guard.py). */}
+      <Box sx={{ mt: 3 }}><DialDestinations api={api} canWrite={canWrite} /></Box>
     </Box>
   );
 }

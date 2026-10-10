@@ -66,6 +66,11 @@ So the request is the measured smallest coding among the usable ones:
   time is never priced at a JBIG size the machine may not take; a request for
   MMR then leaves the engine its own negotiation, and the call may still use
   JBIG where the machine offers it;
+- JBIG never when the built-in engine is expected to place the call (the SSL
+  Fax engine is not running), and a JBIG request that the built-in engine
+  takes over goes in the smallest other measured coding, never in what
+  spandsp would take unasked (``CodingChoice.request``; found on the
+  loopback, 10 October 2026: a measured-JBIG payload page went as MMR);
 - MMR and JBIG only with error correction on this call, and error correction
   is never turned off to make one possible;
 - never a coding that failed to this number (``failing``: engine learning's
@@ -167,6 +172,12 @@ def _known(codings):
 
 
 def _pages(raster_pages):
+    from ..conversion import FaxFrames
+    if isinstance(raster_pages, FaxFrames):
+        # One-bit by construction and kept packed: each page is made only while it is measured.
+        if not raster_pages:
+            raise CodingRefused('There are no pages to measure.')
+        return raster_pages
     pages = list(raster_pages or ())
     if not pages:
         raise CodingRefused('There are no pages to measure.')
@@ -439,7 +450,9 @@ class CodingChoice:
     reason: str                          # one sentence: "MH: 20% shorter than MMR for these pages."
     measured: bool = True                # False only for a JBIG request that could not be measured
     compared: str | None = None          # the coding the sentence compares with, when there is one
-    fallback: str | None = None          # for a JBIG not measured: the smallest measured coding, otherwise sent
+    # For a JBIG request: the smallest other measured coding, which the built-in engine (no JBIG) sends, and the
+    # SSL Fax engine too when JBIG could not be measured and the machine lacks it.
+    fallback: str | None = None
     fallback_reason: str | None = None   # that coding's own sentence
     # True when JBIG was left out only because the receiving machine's capabilities are not on record: the SSL Fax
     # engine is then asked for nothing and negotiates the most compact coding itself (JBIG where the machine offers
@@ -461,6 +474,10 @@ class CodingChoice:
         SSL Fax engine and a machine not on record: nothing is asked, so no job control narrows the engine."""
         if engine == 'hylafax' and self.negotiate:
             return None
+        if engine == 'builtin' and self.coding == 'JBIG':
+            # Measured or not, the built-in engine has no JBIG: the smallest other measured coding, or MH (which
+            # every machine takes) when none was measured. Never JBIG, which that engine would turn into MMR.
+            return self.fallback or 'MH'
         return self.coding if self.measured or engine == 'hylafax' else self.fallback
 
 
@@ -512,6 +529,17 @@ def best_coding(frames, allowed, *, ecm, measured=None, negotiate=False) -> Codi
                             f'JBIG where the receiving machine takes it (not measured here), otherwise {reason}',
                             measured=False, compared=other, fallback=best, fallback_reason=reason,
                             negotiate=negotiate)
+    if best == 'JBIG':
+        # Measured smallest in JBIG. The built-in engine has no JBIG: a call it places goes in the smallest of the
+        # other measured codings (``request``), never in whatever spandsp would take unasked (MMR under error
+        # correction, which can be the largest: payload pages measure 35% larger in MMR than in MH).
+        fallback = min((name for name in candidates if name != 'JBIG'), key=lambda name: (sum(measured[name]),
+                                                                                          _rank(name)))
+        fallback_others = [name for name in candidates if name not in ('JBIG', fallback)]
+        fallback_reason = (_shorter(fallback, max(fallback_others, key=_rank), measured) if fallback_others
+                           else f'{fallback}: the only coding this call can use.')
+        return CodingChoice('JBIG', tuple(measured['JBIG']), measured, reason, compared=other, fallback=fallback,
+                            fallback_reason=fallback_reason, negotiate=negotiate)
     return CodingChoice(best, tuple(measured[best]), measured, reason, compared=other, negotiate=negotiate)
 
 
@@ -588,6 +616,7 @@ def failing(views, *, fails=None, minimum=None) -> dict:
 
 # Why JBIG is left out for a receiving machine Faxbot has not seen yet (lead's decision, 2026-10-08).
 JBIG_NOT_ON_RECORD = 'JBIG is used only after an earlier call shows that the receiving machine takes it.'
+BUILTIN_NO_JBIG = 'The built-in fax engine places this call, and it does not send JBIG.'
 
 
 def receiver_dis(views, capability=None):
@@ -675,8 +704,14 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
     found = usable_codings(ecm=settings.ecm, far_ecm=far_ecm, dis=dis, views=views, configured=configured,
                            learned=learned)
     from dataclasses import replace
-    return replace(found, tuning=measuring_tuning(values, engine, number, ecm=settings.ecm, far_ecm=far_ecm,
-                                                  max_rate=settings.max_rate, capability=capability))
+    tuning = measuring_tuning(values, engine, number, ecm=settings.ecm, far_ecm=far_ecm, max_rate=settings.max_rate,
+                              capability=capability)
+    if tuning.engine == 'builtin' and 'JBIG' in found.codings:
+        # The built-in engine places the call and has no JBIG: the pages are priced and requested in the codings
+        # it sends (a measured JBIG would price the call below what it costs, and send it in MMR).
+        found = replace(found, codings=found.codings - {'JBIG'},
+                        left_out={**found.left_out, 'JBIG': BUILTIN_NO_JBIG})
+    return replace(found, tuning=tuning)
 
 
 def measuring_tuning(values, engine, number, *, ecm, far_ecm, max_rate, capability=None) -> Tuning:
@@ -879,6 +914,36 @@ def sent_sentence(record, phase=None) -> str | None:
     if phase == 'uncertain':
         return f"Sent with {reason.rstrip('.')}; whether it arrived is not confirmed yet."
     return f'{verb} {reason}'
+
+
+# ECM partial pages (brief 85 M4, N3) ----------------------------------------------------------------------------
+# T.30 Annex A: with error correction a page goes in partial pages of at most 256 frames of 256 octets (64 when the
+# call negotiated 64-octet frames). Every page ends with one partial-page exchange (PPS-EOP or PPS-MPS and its
+# answer), which the predictor's page exchange already counts; each further partial page adds PPS-NULL, its answer
+# and the next block's modem start. Measured on 10 October 2026 on the SSL Fax engine's loopback (HylaFAX+ 7.0.11
+# over an IAX modem, error correction, 256-octet frames, MH; test_sslfax_loopback case w): a page of 66,256 coded
+# octets went in two partial pages, and the second added 1.26 s from PPS-NULL to its first frame plus about 2.0 s
+# of modem start and flags before its data: about 3.3 s. A repeat gave the same exchange (1.29 s and 2.0 s), and
+# the two pages' transfers took 72 s and 77 s for 1,291 more octets (about 1.1 s of data): about 3.9 s, give or take
+# the log's whole seconds. Not yet measured on a T.38 path or with 64-octet frames, where the research estimate from
+# a two-gateway capture was 4.24 s.
+ECM_FRAMES_PER_BLOCK = 256
+ECM_BLOCK_SECONDS = 3.3
+
+
+def ecm_blocks(octets, frame_octets=256):
+    """Partial pages one page of ``octets`` coded octets needs (at least one)."""
+    if frame_octets not in (64, 256):
+        raise ValueError('ECM frames are 64 or 256 octets')
+    return max(1, math.ceil(max(0, int(octets)) / (ECM_FRAMES_PER_BLOCK * frame_octets)))
+
+
+def ecm_extra_seconds(page_bits, *, frame_octets=256, block_seconds=ECM_BLOCK_SECONDS):
+    """Seconds the partial pages beyond each page's first add to a call with error correction: ``block_seconds``
+    for every block edge a page crosses. ``page_bits`` are the pages' coded bits in the coding the call uses. The
+    step is the same whether a page is one octet or 65,535 octets past an edge, so a page just over an edge costs a
+    whole turnaround more than one just under it."""
+    return block_seconds * sum(ecm_blocks(math.ceil(bits / 8), frame_octets) - 1 for bits in page_bits)
 
 
 def seconds_text(bits, rate=14400):

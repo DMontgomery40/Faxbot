@@ -118,6 +118,10 @@ def connectors_add(
                                                                   'senders, such as mx.google.com.'),
         senders: list[str] = typer.Option(None, '--sender', help='Who may send faxes by email: address=login. '
                                                                 'Repeat for more.'),
+        copiers: list[str] = typer.Option(None, '--copier', metavar='ADDRESS@NETWORK',
+                                          help='A copier that sends by direct SMTP, without DKIM or SPF: its email '
+                                               'address and its network address, such as '
+                                               "'scanner@example.com 192.168.1.40'. Repeat for more."),
         check_seconds: int = typer.Option(None, '--check-seconds', help='How often to check, in seconds.'),
         ask_secret: bool = typer.Option(True, '--ask-secret/--no-ask-secret',
                                         help='Ask for the password or client secret without showing it.')):
@@ -128,7 +132,8 @@ def connectors_add(
         'address': address, 'username': username, 'imap_host': imap_host, 'imap_port': imap_port, 'folder': folder,
         'processed_folder': processed_folder, 'sign_in': sign_in, 'tenant_id': tenant_id, 'client_id': client_id,
         'token_url': token_url, 'smtp_host': smtp_host, 'smtp_port': smtp_port, 'smtp_security': smtp_security,
-        'checked_by': checked_by, 'check_seconds': check_seconds}.items() if value is not None}
+        'checked_by': checked_by, 'check_seconds': check_seconds,
+        'copier_senders': ', '.join(copiers) if copiers else None}.items() if value is not None}
     if kind == 'folder':
         settings = {key: settings[key] for key in ('path', 'settle_seconds', 'sidecar_minutes', 'check_seconds')
                     if key in settings}

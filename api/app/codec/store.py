@@ -12,6 +12,8 @@ import uuid
 import sqlalchemy as sa
 
 STYLES = ('dense', 'picture')
+# The recipient's decoder (0071): 'any' reads the format 1 layouts; 'capacity' also reads capacity pages (format 2).
+DECODERS = ('any', 'capacity')
 LEVELS = ('low', 'medium', 'high')
 NAMES = ('codec_numbers', 'codec_number_changes', 'codec_sends', 'codec_receipts')
 
@@ -51,7 +53,13 @@ def tables(engine):
 
 
 DEFAULT = {'enabled': False, 'style': 'dense', 'fec': 'medium', 'key_fingerprint': None, 'version': 0,
-           'has_key': False}
+           'has_key': False, 'decoder': 'any'}
+
+
+def _decoder(row):
+    """The stored decoder, 'any' for a row from before 0071 or one that never set it."""
+    value = row.get('decoder') if hasattr(row, 'get') else None
+    return value if value in DECODERS else 'any'
 
 
 class KeySeal:
@@ -91,7 +99,7 @@ class CodecSettings:
             return dict(DEFAULT, phone_number=number)
         return {'phone_number': number, 'enabled': bool(row['enabled']), 'style': row['style'], 'fec': row['fec'],
                 'key_fingerprint': row['key_fingerprint'], 'has_key': row['secret_envelope'] is not None,
-                'version': row['version']}
+                'version': row['version'], 'decoder': _decoder(row)}
 
     def numbers(self):
         t = tables(self.engine)['codec_numbers']
@@ -143,7 +151,7 @@ class CodecSettings:
         return [dict(row) for row in rows]
 
     def save(self, number, *, enabled, recipient_agreed, actor, actor_name=None, style=None, fec=None,
-             secret=None, clear_key=False, expected_version=None, now=None):
+             secret=None, clear_key=False, expected_version=None, now=None, decoder=None):
         """Turn the codec on or off for a number, or change it; returns (setting, action or None).
 
         Turning it on needs the person to record that the recipient agreed.
@@ -153,6 +161,8 @@ class CodecSettings:
             raise CodecInputError('Choose dense pages or a picture.')
         if fec is not None and fec not in LEVELS:
             raise CodecInputError('Choose low, medium or high error correction.')
+        if decoder is not None and decoder not in DECODERS:
+            raise CodecInputError("Choose any Faxbot decoder, or one that reads capacity pages.")
         if secret is not None and (not isinstance(secret, str) or len(secret.strip()) < 8 or len(secret) > 200):
             raise CodecInputError('A shared key has 8 to 200 characters.')
         now = now or utcnow()
@@ -172,6 +182,10 @@ class CodecSettings:
                 'style': style or (current['style'] if current else 'dense'),
                 'fec': fec or (current['fec'] if current else 'medium'),
             }
+            if 'decoder' in numbers.c:
+                values['decoder'] = decoder or (_decoder(current) if current else 'any')
+            elif decoder not in (None, 'any'):
+                raise CodecStoreError('The database needs its 0071 upgrade to record the decoder.')
             envelope = current['secret_envelope'] if current else None
             fingerprint = current['key_fingerprint'] if current else None
             if clear_key:
@@ -182,7 +196,8 @@ class CodecSettings:
                 envelope, fingerprint = self.seal.seal(secret.strip(), number), key_fingerprint(secret)
             changed = (current is None and enabled) or (current is not None and (
                 values['enabled'] != current['enabled'] or values['style'] != current['style']
-                or values['fec'] != current['fec'] or fingerprint != current['key_fingerprint']))
+                or values['fec'] != current['fec'] or fingerprint != current['key_fingerprint']
+                or values.get('decoder', 'any') != _decoder(current)))
             if not changed:
                 return self.get(number), None
             if current is None:
@@ -197,7 +212,8 @@ class CodecSettings:
             connection.execute(changes.insert().values(
                 id=uuid.uuid4().hex, phone_number=number, action=action, actor=actor[:100],
                 actor_name=(actor_name or None) and actor_name[:200], recipient_agreed=1 if recipient_agreed else 0,
-                style=values['style'], fec=values['fec'], key_fingerprint=fingerprint, created_at=now))
+                style=values['style'], fec=values['fec'], key_fingerprint=fingerprint, created_at=now,
+                **({'decoder': values['decoder']} if 'decoder' in changes.c else {})))
         return self.get(number), action
 
 

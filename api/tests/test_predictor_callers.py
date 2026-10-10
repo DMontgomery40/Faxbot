@@ -53,6 +53,22 @@ def test_the_layout_choosers_prices_come_from_the_shared_predictor_for_every_sha
     assert ranked[0][1].layout == 'codec'
 
 
+def test_the_layout_chooser_uses_the_real_predictor_and_a_missing_one_raises(monkeypatch):
+    """The shared predictor is merged, so pages.decision imports it as codec/decision.py does: a failed import is
+    a defect and raises, never a quiet fall back to the rate card stand-in."""
+    import sys
+    import app.routing as routing_package
+    shape = pages_decision.Shape(1, (180_000,), 'fine', 'normal')
+    with source(sinch=card('sinch', page='0.045')):
+        assert pages_decision.price_all('sinch', NUMBER, [shape])[0].basis not in STAND_IN_BASES
+    monkeypatch.delattr(routing_package, 'predict')
+    monkeypatch.setitem(sys.modules, 'app.routing.predict', None)
+    with pytest.raises(ImportError):
+        pages_decision.price_all('sinch', NUMBER, [shape])
+    with pytest.raises(ImportError):
+        pages_decision.decide('sinch', NUMBER, shape, shape)
+
+
 def test_a_try_is_priced_as_money_text_for_the_scheduler():
     """routing.schedule.attempt_price (failed-try billing sentences)."""
     with source(sinch=card('sinch', page='0.05')):

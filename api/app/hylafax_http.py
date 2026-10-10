@@ -284,7 +284,7 @@ async def put_coding_tuning(number: str, payload: CodingTuning, request: Request
 
 @router.get('/admin/sip/negotiation', dependencies=[Depends(require_permission('providers:read'))])
 async def negotiation_summary(request: Request, days: int = 30):
-    """Providers → the trunk page: calls per compression, error correction and speed over 7, 30 or 90 days."""
+    """Delivery setup → the trunk page: calls per compression, error correction and speed over 7, 30 or 90 days."""
     from . import fax_negotiation
     if days not in fax_negotiation.DAYS:
         raise HTTPException(400, detail='Choose 7, 30 or 90 days.')
@@ -593,13 +593,24 @@ async def engine_result(request: Request, payload: dict = Body(...),
         raise HTTPException(409, detail='The fax engine job does not match the fax.')
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     row = await run_lifecycle_step(lambda: _record(request, job_id, attempt_id, payload, status, sentence))
+    # The station check, after the call: the SSL Fax engine cannot stop a call on the far end's station, so a
+    # station that differs is recorded one call late (routing/stations.py), and a successful one is kept.
+    from .routing.stations import after_call
+    try:
+        stations_engine = _engine_for(request)
+    except AttributeError:
+        stations_engine = None  # an application without its installation state (tests that call the handler alone)
+    await run_lifecycle_step(lambda: after_call(
+        stations_engine, job_id=job_id, attempt_id=attempt_id,
+        station=hylafax_engine._text64(payload, 'remote_station_b64', 40), succeeded=status == 'success',
+        engine_name='sslfax'))
     if status == hylafax_engine.UNCERTAIN and category == 'pages_unconfirmed' and not hylafax_engine.exchanged(payload):
         # The engine's words leave it open, but the trunk may know no fax machine was ever heard (no fax
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
         if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
-                                          sip_calls.PERSON_ANSWERED):
+                                          sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
@@ -607,11 +618,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
         # The engine's own sentence, unless the call says more: the engine heard no fax machine, no
-        # sound came back, sound came back but no fax machine answered, or the other machine answered
-        # (sent its ID) and the fax did not finish.
+        # sound came back, sound came back but no fax machine answered, the other machine answered
+        # (sent its ID) and the fax did not finish, or the far end hung up at once.
         found = (row or {}).get('verdict')
         if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed',
-                     sip_calls.PERSON_ANSWERED):
+                     sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
             sentence = sip_calls.verdict_sentence(found)
         # A person or a voice line answered: the fax fails and takes no other route by itself.
         category = sip_calls.category_for(found)

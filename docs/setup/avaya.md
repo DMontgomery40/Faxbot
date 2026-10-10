@@ -99,15 +99,15 @@ If you keep settings in `.env` rather than the console, set `SIP_TRUNK_PRESET=av
 From the command line:
 
 ```bash
-faxbot providers trunk presets avaya-ipoffice          # the preset, the administrator's steps and the sources
-faxbot providers trunk use avaya-ipoffice --host 192.168.1.5 --number-format local --prefix 9
-faxbot providers trunk apply
-faxbot providers trunk status
+faxbot delivery providers trunk presets avaya-ipoffice          # the preset, the administrator's steps and the sources
+faxbot delivery providers trunk use avaya-ipoffice --host 192.168.1.5 --number-format local --prefix 9
+faxbot delivery providers trunk apply
+faxbot delivery providers trunk status
 ```
 
 ## What you set in Avaya
 
-Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. The phone system's page under **Providers** shows the same list under **What you set in Avaya**, and `faxbot providers trunk presets avaya-ipoffice` prints it.
+Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. The phone system's page under **Providers** shows the same list under **What you set in Avaya**, and `faxbot delivery providers trunk presets avaya-ipoffice` prints it.
 
 ### IP Office (IP Office Manager)
 

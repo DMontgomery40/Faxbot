@@ -1,4 +1,4 @@
-// Costs → Recommendations: advice from history that never changes a setting or sends anything.
+// Savings & optimization → Opportunities: advice from history that never changes a setting or sends anything.
 // Fax marker (calls marked as fax against calls not marked), billing steps (calls that end just past a billed
 // minute), partner candidates (numbers whose faxes cost the most again and again) and toll-free numbers (used only
 // after the recipient's approval is recorded). Each section always says where it stands, including "too few calls".

@@ -324,7 +324,10 @@ def test_a_trunk_attempt_asks_for_the_measured_coding_records_it_and_the_sent_de
     # The pages go as they are; MH goes with the call, because the engine would otherwise take a larger coding.
     assert sending.unchanged(changed) and changed.coding.coding == 'MH'
     assert changed.coding.request('hylafax') == changed.coding.request('builtin') == 'MH'
-    assert coding.cache_path(tmp_path / f'packed-{JOB}-{ATTEMPT}.tiff').is_file()
+    # The measurement cache is the fax's, kept for every attempt and account (pages.sending._coding_cache); it is
+    # only a cache: the engine request comes from the published pages and Sent reads the database record below.
+    assert (tmp_path / f'packed-{JOB}-measured.coding.json').is_file()
+    assert not coding.cache_path(tmp_path / f'packed-{JOB}-{ATTEMPT}.tiff').exists()
     record = coding.newest_coding(database, JOB)
     assert (record['requested'], record['measured'], record['compared'], record['pages']) == ('MH', 1, 'MMR', 1)
     assert record['receiver_known'] == 0 and record['negotiated'] is None

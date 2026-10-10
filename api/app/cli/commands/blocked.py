@@ -1,6 +1,6 @@
 """faxbot delivery blocked and faxbot received block: junk senders turned away before Faxbot answers.
 
-The console's Numbers → Blocked senders and "Mark as junk" on a received fax. Reading needs
+The console's Delivery setup → Blocked senders and "Mark as junk" on a received fax. Reading needs
 settings:read; blocking and unblocking need settings:write.
 """
 import typer

@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import hashlib
 import json
+import logging
 import re
 from uuid import uuid4
 
@@ -25,17 +26,23 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
-    'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing', 'person_answered'})
+    'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing', 'person_answered',
+    'wrong_station'})
 # A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
 # failed or waiting for a person, never resent automatically (no other route takes it). ``notice_missing``: a
 # Direct message the recipient's HISP never confirmed within the wait (digital/direct_message.py).
 # ``person_answered``: a person or a voice line answered (sip_calls.PERSON_ANSWERED): calling again on another
 # route would ring that person again, so the fax fails and a person checks the number (research N9).
-NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered'})
+# ``wrong_station``: the number answered as a fax machine Faxbot did not expect there and the station check refused
+# it before any page (routing/stations.py): another route would reach the same machine.
+# How long a shared call's priced partition costs are kept between claims (``OutboundStore._call_costs``).
+COST_SECONDS = 60
+NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered',
+                                    'wrong_station'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
@@ -611,6 +618,7 @@ class OutboundStore:
             ready = ready.where(self.deliveries.c.id.not_in(gate))
         if not self._any(ready):
             return None
+        costs = self._call_costs()
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             values = self._active_values(connection)
@@ -618,7 +626,7 @@ class OutboundStore:
                 return None
             capacity = self.capacity(connection)
             together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
-                                               values=values)
+                                               values=values, costs=costs)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
@@ -684,7 +692,35 @@ class OutboundStore:
         _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
         return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None):
+    def _call_costs(self):
+        """{number: cost(pages)} for faxes waiting to go together (``batching.store.call_costs``), read before the
+        claim's write lock with plain reads: the predictor reads through connections of its own, which must never
+        happen while the claim holds the lock. Empty when nothing waits to go together."""
+        from .batching import store as batching
+        try:
+            with self.configuration.engine.connect() as connection:
+                numbers = batching.waiting_numbers(connection, self._batching(connection))
+                values = self._active_values(connection) if numbers else None
+        except sa.exc.SQLAlchemyError:
+            from .config_store import ConfigurationStoreError
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
+        if not numbers or values is None or values.fax_disabled:
+            return {}
+        # Prices change rarely and the worker claims often: each number's cost is kept for a minute per revision,
+        # so a fax waiting for its group adds no predictor reads to every poll.
+        import time
+        revision = (getattr(self, '_values_for', None) or (None,))[0]
+        clock, kept = time.monotonic(), getattr(self, '_kept_costs', {})
+        kept = {key: item for key, item in kept.items() if item[0] > clock and key[0] == revision}
+        missing = [number for number in numbers if (revision, number) not in kept]
+        priced = batching.call_costs(self.configuration.engine, values, missing)
+        for number in missing:
+            kept[(revision, number)] = (clock + COST_SECONDS, priced.get(number))  # an unknown price is kept too
+        self._kept_costs = kept
+        return {number: kept[(revision, number)][1] for number in numbers
+                if kept.get((revision, number), (0, None))[1] is not None}
+
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
@@ -696,7 +732,7 @@ class OutboundStore:
             for job_id in connection.execute(sa.select(members.c.id).where(
                     members.c.state == 'waiting', members.c.id.in_(gate))).scalars().all():
                 batching.separate_on(connection, t, job_id, now)
-        group = batching.due_group_on(connection, t, now, values=values)
+        group = batching.due_group_on(connection, t, now, values=values, costs=costs)
         if group is None:
             return None
         if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
@@ -868,6 +904,27 @@ class OutboundStore:
             _event(connection, self.events, claim.job_id, 'preparation_failed', now,
                 attempt_id=claim.attempt_id, details={'category': category})
 
+    def renew_lease(self, claim, *, lease_seconds=30, now=None):
+        """Extend a preparing claim's lease while its worker is still preparing it (the worker's heartbeat).
+
+        Only the worker that holds the claim may extend it (``_owns``), only while every fax in it is still
+        ``preparing`` and its lease has not run out yet: a lease that already ran out stays lost, so a fax another
+        worker recovered is never taken back. True when every fax's lease was extended."""
+        if not isinstance(lease_seconds, (int, float)) or not 1 <= lease_seconds <= 300:
+            raise ValueError('Invalid lease length.')
+        with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
+            rows = [(member, self._row(connection, member.job_id)) for member in claim.everyone]
+            if any(not self._owns(row, member) or row['state'] != 'preparing' or row['claim_expires_at'] is None
+                   or row['claim_expires_at'] <= now for member, row in rows):
+                return False
+            expiry = now + timedelta(seconds=lease_seconds)
+            for member, row in rows:
+                connection.execute(self.deliveries.update().where(
+                    self.deliveries.c.id == member.job_id, self.deliveries.c.claim_token == member.token).values(
+                        claim_expires_at=max(expiry, row['claim_expires_at'])))
+            return True
+
     def recover_expired(self, *, now=None):
         # Idle: no fax holds a lease, so no lock. Whether a lease has run out is decided only with the time read
         # after the lock, so a lease that ends while this waits for the lock is recovered in this round.
@@ -880,6 +937,16 @@ class OutboundStore:
                 self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)).mappings().all()
             for row in rows:
                 preparing = row['state'] == 'preparing'
+                if preparing:
+                    # Said once in the log: preparation outlived its lease, so this attempt is given up (nothing was
+                    # sent) and the fax is claimed again.
+                    started = connection.scalar(sa.select(self.attempts.c.created_at).where(
+                        self.attempts.c.id == row['attempt_id']))
+                    spent = int((now - started).total_seconds()) if started is not None else None
+                    logging.getLogger(__name__).warning(
+                        'Fax %s: attempt %s was given up because its preparation outlived its lease (%s seconds); '
+                        'nothing was sent, and the fax is claimed again.', row['id'], row['attempt_id'],
+                        spent if spent is not None else 'unknown')
                 changes = {'state': 'ready' if preparing else 'reconciliation_required', 'claim_expires_at': None}
                 if preparing:
                     changes.update(claim_owner=None, claim_token=None)

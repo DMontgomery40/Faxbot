@@ -69,8 +69,9 @@ def test_attempts_without_a_charge_or_estimate_are_priced_from_the_rate_card_wit
         15_000, 'USD', 'estimated')
     # A per-minute card cannot price a call of unknown length.
     assert attempt_figure(Attempt('sip', 'sip', 'success', pages=1), trunk) is None
-    # An uncertain attempt is estimated as a successful send of its pages.
-    assert attempt_figure(Attempt('sip', 'sip', 'uncertain', pages=4), trunk) == (15_000, 'USD', 'estimated')
+    # An uncertain attempt is estimated as a successful send of its pages, by the shared predictor: four typical
+    # pages take about 60 seconds, so one billed minute a quarter of the time and two otherwise.
+    assert attempt_figure(Attempt('sip', 'sip', 'uncertain', pages=4), trunk) == (8_750, 'USD', 'estimated')
     per_page = card('phaxio', page='0.07', call='0.01')
     assert attempt_figure(Attempt('phaxio', 'phaxio', 'failed', pages=3), per_page) == (10_000, 'USD', 'estimated')
     # A reported charge always wins over an estimate, and a stored estimate over the current card.
@@ -454,6 +455,20 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     assert cost['route_explanation'] == 'You chose this route for this number.'
     details = ' '.join(cli('sent', 'show', sent[0]).stdout.split())
     assert 'Route SignalWire' in details and 'Why this route You chose this route for this number.' in details
+
+    # A real call to the trunk's own number that its one line could not place (live pilot LC-P003): the route that
+    # took the fax says why, in Sent details and in `faxbot sent show`.
+    import app.main as main_module
+    from app.routing.store import RouteStore
+    engine = main_module.app.state.configuration_runtime.manager.store.engine
+    routes = RouteStore(engine)
+    with engine.begin() as connection:
+        connection.execute(routes.costs.update().where(routes.costs.c.job_id == sent[1]).values(
+            route_reason='own_trunk_one_line'))
+    sentence = "Your own trunk can't call its own number with one line, so this fax went through SignalWire."
+    response = cli.client.get(f'/routing/faxes/{sent[1]}/cost', headers={'X-API-Key': cli_bootstrap()})
+    assert response.json()['route_explanation'] == sentence
+    assert f'Why this route {sentence}' in ' '.join(cli('sent', 'show', sent[1]).stdout.split())
 
     view = cli.json('recipients', 'show', number)
     figures = {item['route']: item for item in view['delivered_costs']}

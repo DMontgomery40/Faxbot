@@ -30,6 +30,9 @@ from .commands import expected as expected_commands
 from .commands import cases as case_commands
 from .commands import capabilities as capability_commands
 from .commands import overview as overview_commands
+from .commands import countries as country_commands
+from .commands import destinations as destination_commands
+from .commands import teams_annex as teams_annex_commands
 
 # The console's six areas. Overview is one command; the others are groups.
 NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
@@ -69,6 +72,8 @@ received.command('done')(work.work_done)
 received.command('reopen')(work.work_reopen)
 received.command('export')(work.work_export)
 received.command('block')(blocked.received_block)
+# What the network asserted about who called, as Received details' Who called (formerly under providers trunk).
+received.command('who-called')(teams_annex_commands.caller_check_fax)
 deliveries = _group('Delivery of received faxes to email and other places, and any that failed.')
 deliveries.command('list')(delivery.intake_items)
 deliveries.command('retry')(delivery.intake_retry)
@@ -96,6 +101,8 @@ sent.command('assign')(certainty.uncertain_assign)
 sent.command('uncertain-settings')(certainty.uncertain_settings)
 # A fax whose call broke part way: send only the pages the receiving machine did not confirm.
 sent.command('continue')(continuation.continue_fax)
+# The registered sender a fax was pinned to and what the call showed (formerly under providers trunk).
+sent.command('sender-evidence')(country_commands.sender_evidence)
 
 # -- numbers -------------------------------------------------------------------------
 
@@ -122,6 +129,10 @@ numbers.add_typer(number_advice.npi, name='npi', hidden=True)
 numbers.command('advice')(fact_advice.numbers_advice)
 numbers.command('dependencies')(fact_advice.numbers_dependencies)
 numbers.add_typer(fact_advice.move, name='move')
+# Copper closures and line notices (formerly under numbers move).
+numbers.command('closures')(country_commands.closures)
+numbers.command('import-closures')(country_commands.import_closures)
+numbers.command('line-notice')(country_commands.line_notice)
 numbers.add_typer(forwarded_trust.forwarded_trust, name='forwarded-trust')
 
 # -- recipients ----------------------------------------------------------------------
@@ -175,6 +186,10 @@ recipients.add_typer(partners, name='partners')
 recipients.add_typer(case_commands.cases, name='cases', hidden=True)
 recipients.add_typer(delivery.toll_free, name='toll-free')
 recipients.command('check')(number_advice.recipient_check)
+# Recipients that require a registered sender number (formerly under providers trunk).
+recipients.command('register-sender')(country_commands.register_sender)
+recipients.command('registered-senders')(country_commands.registered_senders)
+recipients.command('unregister-sender')(country_commands.unregister_sender)
 recipients.add_typer(digital.recipients, name='digital')
 
 # -- providers -----------------------------------------------------------------------
@@ -201,6 +216,8 @@ providers.add_typer(accounts.accounts, name='accounts')
 providers.add_typer(digital.accounts, name='digital')
 # Its home is delivery rules; providers rules still works.
 providers.add_typer(rules.rules, name='rules', hidden=True)
+# Where Faxbot may dial, beside the accounts it dials with (the console's Providers & accounts).
+providers.add_typer(destination_commands.destinations, name='destinations')
 
 # -- savings (the costs group, mounted as savings) --------------------------------------
 
@@ -331,6 +348,16 @@ ALIASES = {
     ('delivery', 'numbers', 'connectors'): ('delivery', 'connectors'),
     ('delivery', 'numbers', 'npi'): ('admin', 'npi'),
     ('delivery', 'providers', 'rules'): ('delivery', 'rules'),
+    # Research wave 3 commands, first registered where their builders could reach.
+    ('delivery', 'rules', 'destinations'): ('delivery', 'providers', 'destinations'),
+    ('delivery', 'providers', 'trunk', 'register-sender'): ('recipients', 'register-sender'),
+    ('delivery', 'providers', 'trunk', 'registered-senders'): ('recipients', 'registered-senders'),
+    ('delivery', 'providers', 'trunk', 'unregister-sender'): ('recipients', 'unregister-sender'),
+    ('delivery', 'providers', 'trunk', 'sender-evidence'): ('faxes', 'sent', 'sender-evidence'),
+    ('delivery', 'numbers', 'move', 'closures'): ('delivery', 'numbers', 'closures'),
+    ('delivery', 'numbers', 'move', 'import-closures'): ('delivery', 'numbers', 'import-closures'),
+    ('delivery', 'numbers', 'move', 'notice'): ('delivery', 'numbers', 'line-notice'),
+    ('delivery', 'providers', 'trunk', 'caller-check', 'fax'): ('faxes', 'received', 'who-called'),
 }
 
 

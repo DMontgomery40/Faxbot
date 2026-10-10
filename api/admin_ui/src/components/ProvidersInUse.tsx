@@ -1,4 +1,4 @@
-// Providers → In use: what sends this installation's faxes, what receives them and
+// Delivery setup → Providers & accounts: what sends this installation's faxes, what receives them and
 // any further sending routes, each opening its own page. Choosing or changing a
 // provider happens in the Setup wizard, not from a list of every provider.
 import { Box, Button, Paper, Stack, Typography } from '@mui/material';

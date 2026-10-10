@@ -1,0 +1,178 @@
+Faxbot: check the station that answers before any page, and stop waiting for a fax answer at 50 s (spandsp 0.0.6).
+
+Two changes to a fax the built-in engine (res_fax_spandsp) sends, both off unless the dialplan marks the call.
+The pure steps (faxbot_csi_check, faxbot_t0_ms, faxbot_t0_reached) are in faxbot_t38_gateway.h, with the reasons.
+
+1. Station check (research N5). A phase B handler runs when the far end's DIS arrives. spandsp has already kept
+   the far end's CSI by then, and it sends DCN before any DCS, training or page when the handler answers anything
+   but T30_ERR_OK. With FAXBOT_CSI_EXPECT (the dialled number and the stations this number showed on earlier
+   successful calls, digits separated by dots), a CSI that carries a full number that is none of them is a
+   contradiction. A blank or short CSI is no signal. With FAXBOT_CSI_REFUSE=yes the call ends there as
+   T30_ERR_IDENT_UNACCEPTABLE ("Far end's ident is not acceptable"); otherwise the fax goes on and Faxbot
+   records that the station differed. FAXBOT_CSI_CHECK (matches, differs, refused or empty) goes on the channel
+   at the end of the session for the dialplan's FaxResult event.
+
+2. T0 cap. spandsp waits T0 = 60 s for the first fax message, and SendFAX starts only after answer, so a person
+   who stays on the line costs a second billed minute on 60/60 billing. T.30 expects the machines to identify
+   each other within T1 = 35 +-5 s once answered. With FAXBOT_T0_MS (40000 to 60000; Faxbot sets 50000 on trunk
+   calls billed by the minute in steps of 60 s or more), a send session that has not reached phase B that long
+   after the answer (FAXBOT_ANSWERED) is ended with t30_terminate, and FAXBOT_T0_CAPPED=1 goes on the channel. It
+   counts from the answer, so a session res_fax starts again (T.38, or audio after a refused T.38 attempt) does not
+   restart it.
+
+Nothing here changes a call Faxbot did not mark, or a fax this engine receives.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -173,6 +173,20 @@
+ 	faxbot_frames_t faxbot_frames;
+ 	/*! Faxbot (0004): Internet Aware Fax on this call (FAXBOT_IAF_PEER or FAXBOT_IAF_ENDPOINT), or 0 */
+ 	int faxbot_iaf;
++	/*! Faxbot (0007): when the call was answered, for the cap on waiting for the far end's first message */
++	struct timeval faxbot_started;
++	/*! Faxbot (0007): that cap in milliseconds (FAXBOT_T0_MS), or 0 for spandsp's own T0 */
++	int faxbot_t0_ms;
++	/*! Faxbot (0007): the far end's DIS arrived (phase B), so the cap no longer applies */
++	int faxbot_phase_b;
++	/*! Faxbot (0007): the cap ended the session */
++	int faxbot_t0_capped;
++	/*! Faxbot (0007): the stations this call may answer as, digits separated by dots (FAXBOT_CSI_EXPECT) */
++	char faxbot_csi_expect[FAXBOT_CSI_EXPECT_MAX + 1];
++	/*! Faxbot (0007): refuse a station that contradicts them (FAXBOT_CSI_REFUSE=yes), else only record it */
++	int faxbot_csi_refuse;
++	/*! Faxbot (0007): "matches", "differs" or "refused" once the far end's station was checked, else NULL */
++	const char *faxbot_csi_result;
+ };
+ 
+ static int spandsp_v21_new(struct spandsp_pvt *p);
+@@ -479,8 +493,93 @@
+  * This function pulls stats from the spandsp stack and stores them for res_fax
+  * to use later.
+  */
++/*!
++ * \brief Faxbot (0007): the far end's DIS arrived; check the station it answered as (research N5).
++ *
++ * spandsp keeps the CSI before it calls this handler on the DIS (t30.c 0.0.6), and sends DCN before any DCS,
++ * training or page when the handler answers anything but T30_ERR_OK. Only a send session with FAXBOT_CSI_EXPECT
++ * is checked; a blank or short CSI is no signal (faxbot_csi_check). With FAXBOT_CSI_REFUSE=yes a contradicting
++ * station ends the call as T30_ERR_IDENT_UNACCEPTABLE ("Far end's ident is not acceptable"); otherwise the call
++ * goes on and Faxbot records that the station differed. Reaching phase B also ends the T0 cap.
++ */
+ #if SPANDSP_RELEASE_DATE >= 20120902
+ /* for spandsp shaphots 3.0.0 and higher */
++static int faxbot_phase_b_handler(void *data, int result)
++#else
++/* for spandsp release 0.0.6 */
++static int faxbot_phase_b_handler(t30_state_t *t30_state, void *data, int result)
++#endif
++{
++	struct ast_fax_session *s = data;
++	struct spandsp_pvt *p = s->tech_pvt;
++	const char *csi;
++	int found;
++
++	p->faxbot_phase_b = 1;
++	if (!(s->details->caps & AST_FAX_TECH_SEND) || !p->faxbot_csi_expect[0] || p->faxbot_csi_result) {
++		return T30_ERR_OK;
++	}
++	csi = t30_get_rx_ident(p->t30_state);
++	found = faxbot_csi_check(csi, p->faxbot_csi_expect);
++	if (found == FAXBOT_CSI_NO_SIGNAL) {
++		return T30_ERR_OK;
++	}
++	if (found == FAXBOT_CSI_MATCHES) {
++		p->faxbot_csi_result = "matches";
++		return T30_ERR_OK;
++	}
++	p->faxbot_csi_result = p->faxbot_csi_refuse ? "refused" : "differs";
++	ast_log(LOG_NOTICE, "Faxbot: %s answered as a station Faxbot did not expect; %s\n",
++		s->chan ? ast_channel_name(s->chan) : "<gone>",
++		p->faxbot_csi_refuse ? "ending the call before any page" : "the fax goes on");
++	return p->faxbot_csi_refuse ? T30_ERR_IDENT_UNACCEPTABLE : T30_ERR_OK;
++}
++
++/*! \brief Faxbot (0007): FAXBOT_CSI_CHECK (matches, differs, refused or empty) and FAXBOT_T0_CAPPED (1 or empty). */
++static void faxbot_station_export(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	if (!s->chan) {
++		return;
++	}
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_CSI_CHECK", p->faxbot_csi_result ? p->faxbot_csi_result : "");
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_T0_CAPPED", p->faxbot_t0_capped ? "1" : "");
++}
++
++/*!
++ * \brief Faxbot (0007): read this send session's station check and T0 cap from the channel. The cap counts from the
++ * call's answer, so a session res_fax starts again (T.38, or audio after a refused T.38 attempt) keeps counting.
++ */
++static void faxbot_station_start(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	const char *expect;
++	long long answered;
++
++	if (!s->chan || !(s->details->caps & AST_FAX_TECH_SEND) || !ast_tvzero(p->faxbot_started)) {
++		return;
++	}
++	p->faxbot_started = ast_tvnow();
++	ast_channel_lock(s->chan);
++	/* From the answer (FAXBOT_ANSWERED), not this session's start: res_fax starts a new session on audio after a
++	 * T.38 attempt the far end refused. */
++	answered = faxbot_answered_at(pbx_builtin_getvar_helper(s->chan, "FAXBOT_ANSWERED"),
++		(long long) p->faxbot_started.tv_sec);
++	if (answered) {
++		p->faxbot_started = ast_tv(answered, 0);
++	}
++	p->faxbot_t0_ms = faxbot_t0_ms(pbx_builtin_getvar_helper(s->chan, "FAXBOT_T0_MS"));
++	expect = pbx_builtin_getvar_helper(s->chan, "FAXBOT_CSI_EXPECT");
++	ast_copy_string(p->faxbot_csi_expect, expect ? expect : "", sizeof(p->faxbot_csi_expect));
++	expect = pbx_builtin_getvar_helper(s->chan, "FAXBOT_CSI_REFUSE");
++	p->faxbot_csi_refuse = expect && !strcmp(expect, "yes");
++	ast_channel_unlock(s->chan);
++	if (p->faxbot_t0_ms) {
++		ast_log(LOG_NOTICE, "Faxbot: %s ends the call when no fax answers within %d ms\n",
++			ast_channel_name(s->chan), p->faxbot_t0_ms);
++	}
++}
++
++#if SPANDSP_RELEASE_DATE >= 20120902
++/* for spandsp shaphots 3.0.0 and higher */
+ static void t30_phase_e_handler(void *data, int completion_code)
+ #else
+ /* for spandsp release 0.0.6 */
+@@ -539,6 +638,8 @@
+ 
+ 	/* Faxbot (0004): what the far end said, for the dialplan's FaxFrames event. */
+ 	faxbot_frames_export(s, p);
++	/* Faxbot (0007): the station check and the T0 cap, for the dialplan's FaxResult event. */
++	faxbot_station_export(s, p);
+ }
+ 
+ /*! \brief Send spandsp log messages to asterisk.
+@@ -810,6 +911,16 @@
+ 		s->state = AST_FAX_STATE_COMPLETE;
+ 		ast_debug(5, "FAX session '%u' is complete.\n", s->id);
+ 		return NULL;
++	}
++
++	/* Faxbot (0007): no fax message within the cap after answer ends the call (phase E reports it). */
++	if (!p->faxbot_t0_capped && faxbot_t0_reached(p->faxbot_t0_ms, p->faxbot_phase_b,
++		ast_tvdiff_ms(ast_tvnow(), p->faxbot_started))) {
++		p->faxbot_t0_capped = 1;
++		ast_log(LOG_NOTICE, "Faxbot: no fax answered on %s within %d ms; ending the call\n",
++			s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_t0_ms);
++		t30_terminate(p->t30_state);
++		return &ast_null_frame;
+ 	}
+ 
+ 	if (p->ist38) {
+@@ -1237,6 +1348,10 @@
+ 	t30_set_phase_e_handler(p->t30_state, t30_phase_e_handler, s);
+ 	/* Faxbot (0004): keep the frames both sides send, for the channel variables at the end of the session. */
+ 	t30_set_real_time_frame_handler(p->t30_state, faxbot_frame_handler, p);
++	/* Faxbot (0007): the station check on the far end's DIS, and the cap on waiting for it (FAXBOT_CSI_EXPECT,
++	 * FAXBOT_CSI_REFUSE, FAXBOT_T0_MS). Nothing changes on a call Faxbot did not mark. */
++	faxbot_station_start(s, p);
++	t30_set_phase_b_handler(p->t30_state, faxbot_phase_b_handler, s);
+ 	/* Faxbot (0005): the T.33 subaddress (SUB) this fax asks for (FAXBOT_TX_SUB), on audio and T.38 alike. spandsp
+ 	 * sends it only when the far end's DIS says it takes one, so Faxbot records it as requested, not as carried. */
+ 	if (s->chan && (s->details->caps & AST_FAX_TECH_SEND)) {

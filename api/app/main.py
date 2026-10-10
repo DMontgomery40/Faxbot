@@ -84,7 +84,21 @@ from .routing.predict_http import router as routing_predict_router
 from .routing.plans_http import router as routing_plans_router
 from .routing.portfolio_http import router as routing_portfolio_router
 from .routing.number_http import router as routing_number_router
+from .routing.countries_http import router as routing_countries_router
+from .routing.inventory_http import router as routing_inventory_router
+from .routing.renewal_http import router as routing_renewal_router
 from .routing.schedule_http import router as routing_schedule_router
+from .routing.guard_http import router as routing_dialing_router
+from .header_notice_http import router as header_notice_router
+from .routing.stations_http import router as routing_stations_router
+from .public_test_lines_http import router as test_lines_router
+from .routing.after_answer_http import router as routing_after_answer_router
+from .routing.analog_http import router as routing_analog_router
+from .copiers_http import router as copiers_router
+from .inbound.caller_check_http import router as caller_check_router
+from .routing.route_families_http import router as route_families_router
+from .receive_readiness_http import router as receive_readiness_router
+from .power import router as power_router
 from .routing.polling_http import router as routing_polling_router
 from .routing.charges_http import router as routing_charges_router
 from .routing.capabilities_http import router as routing_capabilities_router
@@ -223,7 +237,21 @@ app.include_router(routing_predict_router)
 app.include_router(routing_plans_router)
 app.include_router(routing_portfolio_router)
 app.include_router(routing_number_router)
+app.include_router(routing_countries_router)
+app.include_router(routing_inventory_router)
+app.include_router(routing_renewal_router)
 app.include_router(routing_schedule_router)
+app.include_router(routing_dialing_router)
+app.include_router(header_notice_router)
+app.include_router(routing_stations_router)
+app.include_router(test_lines_router)
+app.include_router(routing_after_answer_router)
+app.include_router(routing_analog_router)
+app.include_router(copiers_router)
+app.include_router(caller_check_router)
+app.include_router(route_families_router)
+app.include_router(receive_readiness_router)
+app.include_router(power_router)
 app.include_router(routing_polling_router)
 app.include_router(routing_charges_router)
 app.include_router(routing_capabilities_router)
@@ -576,6 +604,22 @@ def _handle_fax_result(event):
                         **({'error_category': answered_by} if answered_by else {}))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
+    finally:
+        # After the outcome is kept: the station the far end answered as, kept when the fax went through, and
+        # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble, in reaching
+        # the store or in writing to it, is logged and never changes the outcome.
+        try:
+            from .routing.stations import after_call
+            configuration = _deliveries().configuration
+            after_call(configuration.engine, job_id=job_id, attempt_id=attempt,
+                       station=sip_calls._station(event.get('Station64')),
+                       succeeded=str(fields.get('status', '')).upper() == 'SUCCESS',
+                       check_result=str(fields.get('csicheck') or '') or None,
+                       t0_capped=str(fields.get('t0capped') or '').strip() == '1', configuration=configuration)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                'The station check for fax %s, attempt %s, was not recorded; its outcome stands.', job_id, attempt,
+                exc_info=True)
 
 
 def _handle_originate_response(event):
@@ -1900,6 +1944,10 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                             "recipient that confirms the patient."),
                    patient_birth_date: Optional[str] = Form(None, description="The patient's birth date, such as "
                                                             "1980-04-30, for a recipient that confirms the patient."),
+                   cover_in_header: bool = Form(False, description="The first page is a cover sheet whose notice "
+                                                "goes in the header notice printed on every page instead, so that "
+                                                "page is not sent. Needs a header notice for your organization or "
+                                                "the mailbox; a recipient that needs a cover sheet still gets it."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1935,6 +1983,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise HTTPException(400, detail=str(error)) from None
     if patient is not None:
         routing_intent['patient'] = patient.canonical()
+    if cover_in_header:
+        # Only when chosen, so every earlier request keeps its fingerprint (header_notice.py).
+        routing_intent['cover_in_header'] = True
     # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
     # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
@@ -2031,6 +2082,26 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         prepared.cleanup()
         if patient is not None:
             fax_patient.remove(settings.fax_data_dir, job_id)
+    # The header notice, and a cover sent as that notice (header_notice.py): applied before the sending rules,
+    # prices and approvals read the pages, so they all count the pages that are sent.
+    from . import header_notice
+    try:
+        notice_plan = await run_lifecycle_step(lambda: header_notice.plan(
+            manager.store.engine, mailbox=mailbox, destination=destination, cover_requested=cover_in_header,
+            pages=prepared.pages))
+        if notice_plan is not None:
+            from starlette.concurrency import run_in_threadpool as _in_thread
+            prepared = await _in_thread(header_notice.apply, prepared, notice_plan)
+    except header_notice.NoticeRefused as error:
+        discard()
+        raise HTTPException(400, detail=str(error)) from None
+    except header_notice.NoticeFailed:
+        discard()
+        logging.getLogger(__name__).warning('The header notice could not be printed; the fax was not accepted.')
+        raise HTTPException(503, detail='Faxbot could not print your header notice on this fax, so it was not '
+                                        'accepted. Try again in a moment.') from None
+    pdf_path = prepared.pdf_path
+    tiff_path = prepared.tiff_path or ""
     # The sending rules' envelope for this fax, decided from its facts (the acceptance transaction decides again
     # on its own connection and keeps that decision). Without it nothing is accepted: no fax goes outside its rules.
     try:
@@ -2090,7 +2161,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             **({'send_by': send_by_at} if send_by_at is not None else {}),
         }, request_identity=request_identity, also=codec_combine(
             rules_acceptance.recorder(rules_plan, job_id, identity.actor, control=access.control),
-            None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor))))
+            None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor),
+            None if notice_plan is None else header_notice.recorder(job_id, notice_plan))))
     except IdempotentReplay as replay:
         discard()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
@@ -2316,8 +2388,14 @@ def _cleanup_outbound_documents(cutoff):
             delivery.deliveries.c.updated_at < cutoff)).scalars().all()
     # The patient given with a fax (digital/patient.py) is document content: it goes with the document.
     from .digital.patient import SUFFIX as PATIENT_SUFFIX
+    # Faxes to a registered-sender recipient keep their files: they are the sender's evidence (sender_pins, N17).
+    from .routing.sender_pins import kept_jobs
+    kept = kept_jobs(delivery.configuration.engine, list(identities))
+    identities = [identity for identity in identities if identity not in kept]
     for identity in identities:
-        for suffix in ('.pdf', '.tiff', PATIENT_SUFFIX):
+        # The sender's whole document, kept beside a fax whose cover went as its header notice (header_notice.py).
+        from .header_notice import UPLOAD_SUFFIX
+        for suffix in ('.pdf', '.tiff', PATIENT_SUFFIX, UPLOAD_SUFFIX):
             try:
                 path = _outbound_document_path(identity, suffix)
                 if not path.is_symlink():

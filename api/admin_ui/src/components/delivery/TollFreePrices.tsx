@@ -1,4 +1,4 @@
-// Costs → Prices & plans: what each sending route publishes about calling toll-free numbers, used when a
+// Savings & optimization → Prices & plans: what each sending route publishes about calling toll-free numbers, used when a
 // recipient approved a toll-free number for its faxes. Read-only: these are the providers' published terms.
 import { Box, Link, Stack, Typography } from '@mui/material';
 import type { TollFreeTerms } from '../../api/deliveryTypes';

@@ -12,6 +12,7 @@ import FindPartners from './delivery/FindPartners';
 import PlanBudgets from './delivery/PlanBudgets';
 import PlanAllocation from './delivery/PlanAllocation';
 import RateCards from './delivery/RateCards';
+import RegisteredSenders from './delivery/RegisteredSenders';
 import TollFreePrices from './delivery/TollFreePrices';
 import Spending from './delivery/Spending';
 import RelayCosts from './delivery/RelayCosts';
@@ -128,6 +129,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
                 text="Numbers whose recipient runs Faxbot could not be loaded. Try again." />}
               <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
                 partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />
+              {section === 'numbers' && <RegisteredSenders client={client} canWrite={canWrite} />}
             </>)}
           {shows('rates') && part('rates',
             <>

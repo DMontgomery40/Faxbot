@@ -4,6 +4,8 @@ import type {
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { CallerIdDeckImport } from './countriesTypes';
+import type { Closures } from '../components/delivery/CountryLines';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type { Capabilities } from './capabilityTypes';
@@ -788,7 +790,7 @@ class AdminAPIClient {
     return this.json('/admin/diagnostics/report');
   }
 
-  // One read-only list from the fax engine (System → Developer → Scripts & checks).
+  // One read-only list from the fax engine (Administration → Developer → Scripts & checks).
   async getEngineView(view: EngineView): Promise<{ view: EngineView; title: string; columns: string[]; rows: string[][];
     available: boolean; message: string | null }> {
     return this.json(`/admin/diagnostics/engine/${view}`);
@@ -936,7 +938,7 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -953,6 +955,8 @@ class AdminAPIClient {
     for (const label of options.labels ?? []) formData.append('labels', label);
     // The time it must be sent by, as an exact moment (ISO 8601 with its offset).
     if (options.sendBy) formData.append('send_by', options.sendBy);
+    // The first page is a cover sheet whose notice goes in the header notice instead (header_notice.py).
+    if (options.coverInHeader) formData.append('cover_in_header', 'true');
     // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
     for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 
@@ -1110,6 +1114,52 @@ class AdminAPIClient {
     return res.json();
   }
 
+  // A carrier's rate deck priced by the caller ID a call shows (Twilio's voice price file or Faxbot's own layout).
+  async importCallerIdDeck(route: string, file: File, options: { deckFormat?: string; sourceUrl?: string;
+    publishedOn?: string } = {}): Promise<CallerIdDeckImport> {
+    const form = new FormData();
+    form.append('file', file);
+    if (options.deckFormat) form.append('deck_format', options.deckFormat);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    if (options.publishedOn) form.append('published_on', options.publishedOn);
+    return this.json(`/routing/rate-cards/${id(route)}/caller-id-prices`, { method: 'POST', body: form });
+  }
+
+  // Orange's commune-level copper-closure dates, or the government copy (CSV).
+  async importClosureFile(file: File, options: { source?: string; fileDate?: string; sourceUrl?: string } = {}):
+    Promise<Closures & { imported: number; skipped: number }> {
+    const form = new FormData();
+    form.append('file', file);
+    if (options.source) form.append('source', options.source);
+    if (options.fileDate) form.append('file_date', options.fileDate);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    return this.json('/routing/closures/files', { method: 'POST', body: form });
+  }
+
+  // Uploads for the line inventory, carrier lists, call records and number routing; empty fields are left out.
+  private fileForm(file: File, fields: Record<string, string | undefined>): FormData {
+    const form = new FormData();
+    form.append('file', file);
+    Object.entries(fields).forEach(([key, value]) => { if (value) form.append(key, value); });
+    return form;
+  }
+
+  async importLineInventory<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/line-inventory/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importCarrierList<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/carrier-lists/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importChannelCalls<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/channels/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importRenewalRoutes<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/renewals/routes', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
   async predictCost(to: string, pages: number): Promise<PredictionAnswer> {
     return this.json(`/routing/predict${query({ to: normalizeFaxDestination(to), pages })}`);
@@ -1128,7 +1178,7 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
-  // Numbers where another route cost less per delivered fax over the last 30 days (Costs → Recommendations).
+  // Numbers where another route cost less per delivered fax over the last 30 days (Savings & optimization → Opportunities).
   async getSendingRecommendations(): Promise<SendingRecommendations> {
     return this.json('/routing/recommendations/sending');
   }
@@ -1142,7 +1192,7 @@ class AdminAPIClient {
     return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
   }
 
-  // Costs → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
+  // Savings & optimization → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
   async getCharges(days = 30): Promise<ChargesView> {
     return this.json(`/routing/charges${query({ days })}`);
   }
@@ -1152,7 +1202,7 @@ class AdminAPIClient {
     return this.json('/routing/charges/sweep', { method: 'POST', body: JSON.stringify({ account: account || null, days }) });
   }
 
-  // Costs → Invoices: each invoice entered, with the part your faxes don't explain.
+  // Savings & optimization → Invoices: each invoice entered, with the part your faxes don't explain.
   async listInvoices(): Promise<InvoicesView> {
     return this.json('/routing/invoices');
   }
@@ -1372,7 +1422,7 @@ class AdminAPIClient {
     return this.json(`/intake/connectors/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
   }
 
-  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Numbers, Email and folders).
+  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Delivery setup, Email and folders).
   async listConnectors(): Promise<{ connectors: Connector[] }> {
     return this.json('/intake/sources');
   }
@@ -1740,7 +1790,7 @@ class AdminAPIClient {
     return this.json(`/routing/recommendations/receiving${query({ days })}`);
   }
 
-  // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
+  // Whether each monthly plan is worth its fee at your traffic (estimates; Savings & optimization → Opportunities → Plans).
   async getPlanRecommendations(): Promise<PlanRecommendations> {
     return this.json('/routing/recommendations/plans');
   }
@@ -1752,32 +1802,32 @@ class AdminAPIClient {
   }
 
   // Who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what is kept for
-  // faxes not sent yet (estimates; Costs → Prices & plans).
+  // faxes not sent yet (estimates; Savings & optimization → Prices & plans).
   async getPlanAllocation(): Promise<PlanAllocation> {
     return this.json('/routing/plans/allocation');
   }
 
-  // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).
+  // Your last 30 days at each carrier's published prices; advice only (Savings & optimization → Opportunities → Other carriers).
   async getCarrierRecommendations(): Promise<CarrierComparison> {
     return this.json('/routing/recommendations/carriers');
   }
 
-  // Calls marked as fax against calls not marked, from history (Costs → Recommendations → Fax marker).
+  // Calls marked as fax against calls not marked, from history (Savings & optimization → Opportunities → Fax marker).
   async getFaxMarkerAdvice(): Promise<FaxMarkerAdvice> {
     return this.json('/routing/recommendations/fax-marker');
   }
 
-  // Numbers whose calls end just past a billed minute (Costs → Recommendations → Billing steps).
+  // Numbers whose calls end just past a billed minute (Savings & optimization → Opportunities → Billing steps).
   async getBillingSteps(): Promise<BillingSteps> {
     return this.json('/routing/recommendations/billing-steps');
   }
 
-  // Numbers whose faxes cost the most again and again (Costs → Recommendations → Partner candidates).
+  // Numbers whose faxes cost the most again and again (Savings & optimization → Opportunities → Partner candidates).
   async getPartnerCandidates(): Promise<PartnerCandidates> {
     return this.json('/routing/recommendations/partners');
   }
 
-  // Recipients with a toll-free fax number on file (Costs → Recommendations → Toll-free numbers).
+  // Recipients with a toll-free fax number on file (Savings & optimization → Opportunities → Toll-free numbers).
   async getTollFreeRecommendations(): Promise<TollFreeRecommendations> {
     return this.json('/routing/recommendations/toll-free');
   }
@@ -1797,7 +1847,7 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
   }
 
-  // Direct messages and FHIR (Providers → In use): the HISP account and FHIR clients; secrets are write-only.
+  // Direct messages and FHIR (Delivery setup → Providers & accounts): the HISP account and FHIR clients; secrets are write-only.
   async getDigitalAccounts(): Promise<DigitalAccountsState> {
     return this.json('/digital/accounts');
   }
@@ -1881,7 +1931,7 @@ class AdminAPIClient {
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
   }
 
-  // Numbers → Sender identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
+  // Delivery setup → Sending identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
   async getReplyNumber(): Promise<ReplyNumberView> {
     return this.json('/numbers/reply');
   }
@@ -1898,7 +1948,7 @@ class AdminAPIClient {
     return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
   }
 
-  // Numbers → Blocked senders: callers turned away before the call is answered.
+  // Delivery setup → Blocked senders: callers turned away before the call is answered.
   async getBlockedSenders(): Promise<BlockedSendersView> {
     return this.json('/screening');
   }

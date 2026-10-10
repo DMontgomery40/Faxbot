@@ -67,6 +67,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-family-name NAME`: The patient&#x27;s family name, for a recipient that confirms the patient.
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
+* `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -294,7 +295,8 @@ $ faxbot savings rate-cards [OPTIONS]
 
 ### `faxbot savings rate-rows`
 
-Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history.
+Replace the prices by where calls start that you entered for one sending card, or import a rate deck priced
+by caller ID for it. Earlier rows and decks are kept as history.
 
 **Usage**:
 
@@ -308,7 +310,11 @@ $ faxbot savings rate-rows [OPTIONS] {ROUTE}
 
 **Options**:
 
-* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).  [required]
+* `--replace FILE`: Your prices by where calls start for that card, from this JSON file ({&quot;rows&quot;: [...]}, or &#x27;-&#x27; for standard input).
+* `--caller-id-deck FILE`: A carrier&#x27;s rate deck priced by the caller ID a call shows (CSV): Twilio&#x27;s voice price file, or Faxbot&#x27;s own layout.
+* `--deck-format twilio|faxbot`: The deck layout; Faxbot recognises Twilio&#x27;s file by its first line.
+* `--source URL`: Where the deck came from.
+* `--published DATE`: The date the deck was published or read, such as 2026-10-09.
 * `--help`: Show this message and exit.
 
 ### `faxbot savings state-prices`
@@ -395,6 +401,11 @@ $ faxbot savings opportunities [OPTIONS] COMMAND [ARGS]...
 * `trunks`: Compare your trunks&#x27; monthly fees, busiest...
 * `numbers`: Show where each of your fax numbers costs...
 * `sites`: Show whether your carriers price US calls...
+* `channels`: Show how many calls your fax systems...
+* `import-calls`: Import another fax server&#x27;s or phone system&#x27;s call records for one system.
+* `renewal`: One page for a fax server&#x27;s renewal; record it with --system.
+* `import-routing`: Import a fax server&#x27;s number-to-user routing (number, user, email, cover sheet).
+* `pots`: Take the fax lines out of a POTS-replacement order: the counter-quote.
 
 #### `faxbot savings opportunities sending`
 
@@ -576,6 +587,119 @@ $ faxbot savings opportunities sites [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities channels`
+
+Show how many calls your fax systems carried at once: at their peak, in 99 hours out of 100, and by hour of
+the day, with the licensed channels never needed.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities channels [OPTIONS]
+```
+
+**Options**:
+
+* `--remove IMPORT`: Leave one imported file out of the report, by the import code shown beside it; its calls stay as history.
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities import-calls`
+
+Import call records for one system. Formats: Asterisk&#x27;s Master.csv, Cisco Unified CM CDR files, RightFax&#x27;s
+DocTransport audit log (level 3 or 4), GFI FaxMaker&#x27;s activity export, or a CSV with the columns start, end or
+duration, direction, channel and number.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities import-calls [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: The call records file.  [required]
+
+**Options**:
+
+* `--system NAME`: The system they come from, such as &quot;RightFax at HQ&quot;.  [required]
+* `--format asterisk|cucm|rightfax|faxmaker|csv`: The file&#x27;s format; Faxbot recognises it when left out.
+* `--licensed CHANNELS`: The channels the system is licensed for.  [1&lt;=x&lt;=10000]
+* `--time-zone ZONE`: The time zone of the times in the file, such as America/Denver; the installation&#x27;s when left out.
+* `--numbers NUMBERS`: Only calls to or from these numbers (comma-separated), for a phone system&#x27;s records that include voice calls.
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities renewal`
+
+Show one page per fax server renewal: the amount and date, the channels it really needed, what Faxbot handled
+beside it, and the numbers still to move. With --system, --renews and --amount, record the renewal.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities renewal [OPTIONS]
+```
+
+**Options**:
+
+* `--system NAME`: The fax server, such as &quot;RightFax at HQ&quot;.
+* `--renews DATE`: The renewal date, such as 2027-05-31.
+* `--amount AMOUNT`: The renewal amount, such as 26756.71.
+* `--currency CODE`: The amount&#x27;s currency.  [default: USD]
+* `--product NAME`: The product, such as RightFax 22.2.
+* `--channels CHANNELS`: The channels the renewal licenses.  [1&lt;=x&lt;=10000]
+* `--source-url URL`: Where the amount comes from, such as the quote.
+* `--parallel NUMBERS`: The numbers Faxbot runs beside it (comma-separated).
+* `--parallel-since DATE`: When the parallel run began.
+* `--remove`: Withdraw the system&#x27;s renewal.
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities import-routing`
+
+Import a fax server&#x27;s number-to-user routing, so the renewal page lists the numbers and users still to
+move. It replaces the system&#x27;s earlier routing, which is kept as history.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities import-routing [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: A CSV with the columns number, user, email and cover sheet.  [required]
+
+**Options**:
+
+* `--system NAME`: The fax server it comes from.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities pots`
+
+Show, for each POTS-replacement quote you entered, what taking the fax lines out of the order removes from it,
+what one shared trunk costs for them instead, and which lines must stay. With --name and --per-line (or
+--published), record a quote.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities pots [OPTIONS]
+```
+
+**Options**:
+
+* `--name PRODUCT`: The product quoted, such as Ooma AirDial.
+* `--per-line AMOUNT`: Its price per line a month, such as 39.95.
+* `--currency CODE`: The price&#x27;s currency.  [default: USD]
+* `--term MONTHS`: The term in months.  [1&lt;=x&lt;=120]
+* `--lines LINES`: The lines the quote covers; your whole inventory when left out.  [1&lt;=x&lt;=100000]
+* `--ports PORTS`: The analog ports on one device.  [1&lt;=x&lt;=64]
+* `--device-price AMOUNT`: The one-time price of one device, if the quote has one.
+* `--source-url URL`: Where the price comes from.
+* `--source-date DATE`: The quote&#x27;s date.
+* `--published ID`: Start from a published price Faxbot ships, such as ooma-airdial.
+* `--remove`: Withdraw the product&#x27;s quote.
 * `--help`: Show this message and exit.
 
 ### `faxbot savings capabilities`
@@ -875,6 +999,7 @@ $ faxbot faxes received [OPTIONS] COMMAND [ARGS]...
 * `reopen`: Reopen a received fax marked done.
 * `export`: Download a received fax&#x27;s record as a zip...
 * `block`: Mark a received fax&#x27;s sender as junk:...
+* `who-called`: Show what the network asserted about who...
 * `deliveries`: Delivery of received faxes to email and...
 
 #### `faxbot faxes received list`
@@ -1176,6 +1301,24 @@ $ faxbot faxes received block [OPTIONS] {inbound_id}
 * `--days <int range>`: How many days to block the sender (90 unless you say).  [default: 90; 1&lt;=x&lt;=365]
 * `--help`: Show this message and exit.
 
+#### `faxbot faxes received who-called`
+
+Show what the network asserted about who called for one received fax.
+
+**Usage**:
+
+```console
+$ faxbot faxes received who-called [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Received fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 #### `faxbot faxes received deliveries`
 
 Delivery of received faxes to email and other places, and any that failed.
@@ -1263,6 +1406,7 @@ $ faxbot faxes sent [OPTIONS] COMMAND [ARGS]...
 * `assign`: Give a sent fax Faxbot is unsure of to the...
 * `uncertain-settings`: Show or change how soon uncertain sent...
 * `continue`: Show which pages of a broken fax are left...
+* `sender-evidence`: The sender&#x27;s evidence for a fax to a...
 
 #### `faxbot faxes sent list`
 
@@ -1590,6 +1734,27 @@ $ faxbot faxes sent continue [OPTIONS] {fax_id}
 
 * `--send`: Send the remaining pages now, as a new fax linked to this one.
 * `--reason <str>`: How you know the rest did not arrive (up to 400 characters). Needed when the fax is waiting to be settled.
+* `--help`: Show this message and exit.
+
+#### `faxbot faxes sent sender-evidence`
+
+The sender&#x27;s evidence for a fax to a registered-sender recipient: the identity registered then, the kept
+pages, each call with the station that answered, and any request for the original.
+
+**Usage**:
+
+```console
+$ faxbot faxes sent sender-evidence [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The sent fax.  [required]
+
+**Options**:
+
+* `--original requested|sent|cancelled`: Record that the recipient asked for the original, that you sent it, or that the request was withdrawn.
+* `--note TEXT`: What happened, for the history.
 * `--help`: Show this message and exit.
 
 ### `faxbot faxes expected`
@@ -2704,6 +2869,9 @@ $ faxbot delivery numbers [OPTIONS] COMMAND [ARGS]...
 * `explain`: Which mailbox, email and urgency a...
 * `advice`: Read line advice with its history and...
 * `dependencies`: Record a dependency: broadband,...
+* `closures`: When copper, and the phone lines on it,...
+* `import-closures`: Import the commune-level copper-closure...
+* `line-notice`: Record a carrier&#x27;s notice that a line...
 * `move`: A checked plan for moving a number between...
 * `forwarded-trust`: Certificate authorities you trust to...
 
@@ -2844,6 +3012,67 @@ $ faxbot delivery numbers dependencies [OPTIONS] {number} {question} {answer}
 * `--note <str>`
 * `--help`: Show this message and exit.
 
+#### `faxbot delivery numbers closures`
+
+When copper, and the phone lines on it, close: your French sites by commune, and lines with a carrier&#x27;s
+notice.
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers closures [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery numbers import-closures`
+
+Import the commune-level copper-closure dates. The source&#x27;s earlier file is kept as history. The government
+copy with only the columns Faxbot reads: https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/
+fermeture-reseau-cuivre/exports/csv?select=code_insee,nom_commune,fermeture_technique,fermeture_commerciale,lot
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers import-closures [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: Orange&#x27;s commune trajectory file, or the government copy, as CSV.  [required]
+
+**Options**:
+
+* `--source orange|gouv`: Where the file comes from: Orange&#x27;s own file or the copy on data.gouv.fr.  [default: gouv]
+* `--file-date DATE`: The file&#x27;s own date, such as 2025-12-19.
+* `--source-url URL`: Where you downloaded it.
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery numbers line-notice`
+
+Record a carrier&#x27;s notice that a line closes (from its letter), so Faxbot warns before the date.
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers line-notice [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The line&#x27;s number.  [required]
+
+**Options**:
+
+* `--closes DATE`: The date the carrier says the line closes, such as 2026-11-04.
+* `--carrier NAME`: The carrier that sent the notice.
+* `--received DATE`: When the notice arrived.
+* `--note TEXT`: What the letter says, for the history.
+* `--remove`: Withdraw this line&#x27;s notice.
+* `--help`: Show this message and exit.
+
 #### `faxbot delivery numbers move`
 
 A checked plan for moving a number between your accounts. Faxbot places no port order.
@@ -2865,6 +3094,9 @@ $ faxbot delivery numbers move [OPTIONS] COMMAND [ARGS]...
 * `record`: Record a step as done or not_done.
 * `test`: Start watching for a receipt test from...
 * `forget`: Forget learned call properties from the...
+* `inventory`: Your fax lines with their carrier, wire...
+* `import-inventory`: Import your line inventory (CSV or Excel); it replaces the current one.
+* `import-carrier-list`: Import a carrier&#x27;s list of discontinued or grandfathered service areas.
 
 ##### `faxbot delivery numbers move show`
 
@@ -2959,6 +3191,69 @@ $ faxbot delivery numbers move forget [OPTIONS] {number}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery numbers move inventory`
+
+Your fax lines with their carrier, wire center and contract, each matched to the carrier lists you imported,
+lines with a date first.
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers move inventory [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery numbers move import-inventory`
+
+Import your line inventory. It replaces the current one, which is kept as history; contract end dates
+become each line&#x27;s contract-end date. Columns: number, service address, city, state, postal code, country,
+carrier, product (or USOC), wire center, distribution area, contract end, use (fax, alarm, elevator, emergency
+or other), monthly price, currency, note. Only the number is required.
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers move import-inventory [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: Your line inventory, as CSV or Excel (.xlsx).  [required]
+
+**Options**:
+
+* `--date-order mdy|dmy`: How the file writes dates: mdy (11/4/2026 is 4 November) or dmy (4/11/2026 is 4 November).  [default: mdy]
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery numbers move import-carrier-list`
+
+Import a carrier&#x27;s list of discontinued or grandfathered service areas. The same carrier&#x27;s earlier list of
+that kind is kept as history. AT&amp;T&#x27;s workbook: https://clec.att.com/clec_documents/unrestr/clec/common/
+PrimeAccess_Model-Discontinued_Service_Areas.xlsx. Another carrier&#x27;s list is a CSV with the columns wire center
+and effective date, and optionally carrier, kind, state, city, wire center name, distribution area and place.
+
+**Usage**:
+
+```console
+$ faxbot delivery numbers move import-carrier-list [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: AT&amp;T&#x27;s Discontinued TDM Service Areas workbook as downloaded, or another carrier&#x27;s list as CSV.  [required]
+
+**Options**:
+
+* `--carrier NAME`: The carrier whose list this is, when the file has no carrier column (not needed for AT&amp;T&#x27;s workbook).
+* `--kind discontinued|grandfathered`: What the list says about its areas, when the file has no kind column. Discontinued unless you say otherwise.
+* `--source-url URL`: Where you downloaded it.
+* `--file-date DATE`: The list&#x27;s own date, such as 2026-08-17.
+* `--date-order mdy|dmy`: How the file writes dates.  [default: mdy]
 * `--help`: Show this message and exit.
 
 #### `faxbot delivery numbers forwarded-trust`
@@ -3222,6 +3517,8 @@ $ faxbot delivery identity [OPTIONS] COMMAND [ARGS]...
 * `numbers`: List your numbers with the mailbox each...
 * `set`: Print this number on every fax (or on...
 * `clear`: Let Faxbot choose the number again (or...
+* `station-check`: See or choose what a mailbox&#x27;s faxes do...
+* `notice`: A notice line, such as a confidentiality...
 
 #### `faxbot delivery identity show`
 
@@ -3278,6 +3575,93 @@ Let Faxbot choose the number again (or give a mailbox&#x27;s faxes the organizat
 
 ```console
 $ faxbot delivery identity clear [OPTIONS]
+```
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery identity station-check`
+
+See or choose what a mailbox&#x27;s faxes do when a number answers as another fax machine.
+
+**Usage**:
+
+```console
+$ faxbot delivery identity station-check [OPTIONS] [WARN|REFUSE]
+```
+
+**Arguments**:
+
+* `[WARN|REFUSE]`: warn: the fax goes on and Sent says so. refuse: Faxbot hangs up before any page. Leave it out to see the current choice.
+
+**Options**:
+
+* `--mailbox <str>`: The mailbox whose faxes this is for. Leave it out to see every mailbox&#x27;s choice.
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery identity notice`
+
+A notice line, such as a confidentiality notice, printed at the top of every page you send, so a cover sheet carrying it can stay unsent.
+
+**Usage**:
+
+```console
+$ faxbot delivery identity notice [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show the notice your faxes carry, and each...
+* `set`: Print this notice at the top of every page...
+* `clear`: Stop printing the notice (a mailbox&#x27;s...
+
+##### `faxbot delivery identity notice show`
+
+Show the notice your faxes carry, and each mailbox&#x27;s own.
+
+**Usage**:
+
+```console
+$ faxbot delivery identity notice show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery identity notice set`
+
+Print this notice at the top of every page (or of every page sent from one mailbox).
+
+**Usage**:
+
+```console
+$ faxbot delivery identity notice set [OPTIONS] {NOTICE}
+```
+
+**Arguments**:
+
+* `NOTICE`: One line of up to 120 characters, such as &quot;Confidential: for the addressee only. If you received this in error, call us.&quot;  [required]
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery identity notice clear`
+
+Stop printing the notice (a mailbox&#x27;s faxes then carry the organization&#x27;s notice, if any).
+
+**Usage**:
+
+```console
+$ faxbot delivery identity notice clear [OPTIONS]
 ```
 
 **Options**:
@@ -3513,6 +3897,7 @@ $ faxbot delivery connectors add [OPTIONS] {name}
 * `--outgoing-security <str>`: tls or starttls.
 * `--checked-by <str>`: Name your mail server writes when it checks senders, such as mx.google.com.
 * `--sender <str>`: Who may send faxes by email: address=login. Repeat for more.
+* `--copier ADDRESS@NETWORK`: A copier that sends by direct SMTP, without DKIM or SPF: its email address and its network address, such as &#x27;scanner@example.com 192.168.1.40&#x27;. Repeat for more.
 * `--check-seconds <int>`: How often to check, in seconds.
 * `--ask-secret / --no-ask-secret`: Ask for the password or client secret without showing it.  [default: ask-secret]
 * `--help`: Show this message and exit.
@@ -3694,6 +4079,7 @@ $ faxbot delivery providers [OPTIONS] COMMAND [ARGS]...
 * `trunk`: Your own phone line for faxing, to a phone...
 * `accounts`: The provider accounts Faxbot sends and...
 * `digital`: Direct messages and FHIR: the HISP account...
+* `destinations`: Where Faxbot may dial: numbers in your...
 
 #### `faxbot delivery providers list`
 
@@ -3960,9 +4346,18 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
+* `caller-ids`: The caller ID each sending account&#x27;s calls...
+* `confirm-caller-id`: Confirm that you hold a caller ID and may...
+* `own-access`: For Telekom CompanyFlex: the internet...
+* `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
+* `answer-cap`: See or change whether Faxbot hangs up when...
+* `teams-annex`: Print what to set on your Teams Direct...
+* `copiers`: List the copier makers whose documents...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
+* `analog-line`: An analog phone line through a gateway:...
+* `caller-check`: The caller-verification stamp on received...
 
 ##### `faxbot delivery providers trunk status`
 
@@ -4113,8 +4508,140 @@ $ faxbot delivery providers trunk use [OPTIONS] {PRESET}
 * `--host <str>`: The carrier&#x27;s server address, or your phone system&#x27;s address (IP Office, or Aura Session Manager).
 * `--port <int range>`: The carrier&#x27;s port, when not the usual one.  [1&lt;=x&lt;=65535]
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
-* `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
-* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
+* `--number-format e164|local|local_area`: How numbers are dialed: e164 (international format, +44...), local (as a phone at your site dials them), or on an analog line local_area (ten digits for numbers in its local calling area, 1 and ten digits for others).
+* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9; on an analog line, *70 turns call waiting off for the call.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk caller-ids`
+
+The caller ID each sending account&#x27;s calls show, what you confirmed about it, and the rate decks priced by
+caller ID.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-ids [OPTIONS]
+```
+
+**Options**:
+
+* `--quote NUMBER`: Show how a fax to this number is priced by caller ID on each sending account.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk confirm-caller-id`
+
+Confirm that you hold a caller ID and may send faxes from it on one account, so calls from it get the rate
+its carrier gives that caller ID.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk confirm-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
+```
+
+**Arguments**:
+
+* `ACCOUNT`: The sending account, by its key from &#x27;faxbot delivery providers accounts list&#x27;.  [required]
+* `CALLER_ID`: The caller ID with its country code, such as +442079460000.  [required]
+
+**Options**:
+
+* `--evidence TEXT`: How you know you may send from it on this account, such as the number order or invoice.  [required]
+* `--evidence-url URL`: A link to that evidence.
+* `--bought-here`: The number was bought on this account, so the carrier prices calls from it to its own country as local.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk own-access`
+
+For Telekom CompanyFlex: the internet address of your Telekom line. On any other access Faxbot encrypts the
+calls and sends audio fax by itself, as CompanyFlex requires.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk own-access [OPTIONS] [ADDRESSES]
+```
+
+**Arguments**:
+
+* `ADDRESSES`: Your Telekom line&#x27;s internet addresses or ranges, comma-separated; &#x27;&#x27; clears them.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk withdraw-caller-id`
+
+Withdraw a caller-ID confirmation; calls from it are priced as unconfirmed again. The history is kept.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk withdraw-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
+```
+
+**Arguments**:
+
+* `ACCOUNT`: The sending account.  [required]
+* `CALLER_ID`: The confirmed caller ID.  [required]
+
+**Options**:
+
+* `--note TEXT`: Why, for the history.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk answer-cap`
+
+See or change whether Faxbot hangs up when no fax machine answers within 50 seconds.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk answer-cap [OPTIONS] [on|off]
+```
+
+**Arguments**:
+
+* `[on|off]`: on: hang up when no fax machine answers within 50 seconds, where the carrier bills by the minute. off: wait the usual 60 seconds. Leave it out to see the setting.
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk teams-annex`
+
+Print what to set on your Teams Direct Routing SBC so the fax numbers reach Faxbot before Teams, and the checklist before the Teams port order.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk teams-annex [OPTIONS]
+```
+
+**Options**:
+
+* `--vendor audiocodes|ribbon|oracle|anynode`: The company that makes your Teams Direct Routing SBC.  [required]
+* `--address ADDRESS`: Faxbot&#x27;s address on your network, written into the steps; Faxbot fills it in when it is published there.
+* `--numbers NUMBERS`: Your fax numbers or their pattern, written into the steps.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk copiers`
+
+List the copier makers whose documents show fax over the network with SIP and T.38, or show what to set on one.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copiers [OPTIONS] [COPIER]
+```
+
+**Arguments**:
+
+* `[COPIER]`: Show one copier in full, such as ricoh-im.
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk network`
@@ -4340,6 +4867,136 @@ $ faxbot delivery providers trunk send-only remove [OPTIONS] {NUMBER}
 
 * `--help`: Show this message and exit.
 
+##### `faxbot delivery providers trunk analog-line`
+
+An analog phone line through a gateway: its local calling area and its prices, so local numbers go out on it at no extra cost.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show an analog line&#x27;s local calling area...
+* `routing`: Let Faxbot choose an analog line by...
+* `import`: Import an analog line&#x27;s local calling area...
+
+###### `faxbot delivery providers trunk analog-line show`
+
+Show an analog line&#x27;s local calling area and prices.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line show [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk analog-line routing`
+
+Let Faxbot choose an analog line by itself, or stop it. Importing a local calling area turns this on.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line routing [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on: Faxbot may choose the line by itself; off: only a sending rule that names it uses it.  [required]
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk analog-line import`
+
+Import an analog line&#x27;s local calling area from a file you saved, so local numbers go out on it at no extra cost. Faxbot never looks the area up itself.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line import [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: The list of local prefixes for your line: the Local Calling Guide&#x27;s Local prefixes page saved as HTML, its XML, a CSV with NPA and NXX columns, or one prefix a line such as 303-426.  [required]
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--plan <str>`: The calling plan your line has, when the list names several.
+* `--line NPA-NXX`: Your line&#x27;s own prefix or number, checked against the list.
+* `--toll-rate AMOUNT`: What the line charges a minute for calls outside the local area, from your phone bill; 0 when your plan includes them. Needed the first time.
+* `--monthly-fee AMOUNT`: The line&#x27;s monthly fee, shown with its prices.
+* `--increment <int range>`: The billing step for calls outside the local area, in seconds.  [default: 60; 1&lt;=x&lt;=3600]
+* `--source URL`: The address of the page the list came from.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk caller-check`
+
+The caller-verification stamp on received faxes: what the network asserted about who called, and your registered senders.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show your registered senders for received...
+* `set`: Replace your registered senders for...
+
+###### `faxbot delivery providers trunk caller-check show`
+
+Show your registered senders for received faxes.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk caller-check set`
+
+Replace your registered senders for received faxes: caller numbers a received fax&#x27;s stamp checks.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check set [OPTIONS] [NUMBER]...
+```
+
+**Arguments**:
+
+* `[NUMBER]...`: Every registered sender, such as +13035550150; none clears the list.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 #### `faxbot delivery providers accounts`
 
 The provider accounts Faxbot sends and receives with, trunks included: add one, switch one off, or choose the defaults.
@@ -4365,6 +5022,7 @@ $ faxbot delivery providers accounts [OPTIONS] COMMAND [ARGS]...
 * `default-sending`: Choose the account Faxbot sends by when no...
 * `default-receiving`: Choose the account whose notifications...
 * `health`: Whether each account is ready, and what to...
+* `country-rules`: Countries whose regulator licenses calls...
 
 ##### `faxbot delivery providers accounts list`
 
@@ -4544,6 +5202,25 @@ $ faxbot delivery providers accounts health [OPTIONS] [KEY]
 
 * `--help`: Show this message and exit.
 
+##### `faxbot delivery providers accounts country-rules`
+
+Countries whose regulator licenses calls over the internet (the UAE and Saudi Arabia), and whether each of
+your accounts there is confirmed. Faxes are never blocked for it.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers accounts country-rules [OPTIONS]
+```
+
+**Options**:
+
+* `--confirm ACCOUNT`: Confirm that this account&#x27;s provider meets the country&#x27;s rules.
+* `--withdraw ACCOUNT`: Withdraw that confirmation.
+* `--country AE|SA`: The country.
+* `--evidence TEXT`: How you know, such as the provider&#x27;s licence or your contract.
+* `--help`: Show this message and exit.
+
 #### `faxbot delivery providers digital`
 
 Direct messages and FHIR: the HISP account and FHIR clients Faxbot delivers faxes with instead of calling, when a recipient can take them.
@@ -4700,6 +5377,97 @@ $ faxbot delivery providers digital trust-bundle [OPTIONS] {KEY}
 
 * `--url <str>`: The trust bundle&#x27;s web address (https).
 * `--file <path>`: A trust bundle file (.p7b or PEM).
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery providers destinations`
+
+Where Faxbot may dial: numbers in your country, other countries, and premium-rate, special-service and satellite numbers. Faxes to anything not allowed wait in Sent for your approval.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers destinations [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show what Faxbot may dial and why.
+* `allow`: Let Faxbot dial a class of numbers or a...
+* `block`: Hold every fax to a class of numbers or a...
+* `reset`: Put a class of numbers or a country back...
+
+##### `faxbot delivery providers destinations list`
+
+Show what Faxbot may dial and why.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers destinations list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers destinations allow`
+
+Let Faxbot dial a class of numbers or a country without asking.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers destinations allow [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to allow: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--ceiling PRICE`: The highest price a minute a call may cost before the fax waits for your approval, such as 0.25; none removes it.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers destinations block`
+
+Hold every fax to a class of numbers or a country in Sent for your approval.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers destinations block [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to block: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers destinations reset`
+
+Put a class of numbers or a country back to Faxbot&#x27;s own default.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers destinations reset [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to put back: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--ceiling PRICE`: A price ceiling a minute to keep, such as 0.25; none removes it.
 * `--help`: Show this message and exit.
 
 ### `faxbot delivery rules`
@@ -5472,6 +6240,9 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `held`: List the faxes held for another site to...
 * `withdraw`: Take a held fax back so the other site can...
 * `check`: Before a first fax: check whether the NPI...
+* `register-sender`: Send faxes to RECIPIENT only from the...
+* `registered-senders`: Recipients that recognise your faxes by...
+* `unregister-sender`: Stop pinning RECIPIENT to one trunk; faxes...
 * `iaf`: Internet Aware Fax to fax servers that...
 * `together`: Send short faxes to the same number...
 * `encoded`: Encoded pages (experimental): allow...
@@ -5514,7 +6285,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document.
+Change a number&#x27;s name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, keys to press after it answers, or how faxes sent together to it mark each document.
 
 **Usage**:
 
@@ -5539,6 +6310,10 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
 * `--shading ON|OFF|DEFAULT`: Fax-friendly shading on documents sent to this recipient: on (always when it shortens the call), off (never), or default for the setting all faxes use.
+* `--needs-cover / --no-cover-needed`: Whether this recipient needs a cover sheet: its faxes then keep their cover even when the sender sends the cover&#x27;s notice in the header.
+* `--station-check WARN|REFUSE`: When this number answers as another fax machine: warn (the fax goes on and Sent says so) or refuse (Faxbot hangs up before any page).
+* `--expected-station NUMBER`: A fax number this recipient&#x27;s machine shows, such as the one on its letterhead, so Faxbot expects it.
+* `--after-answer KEYS|none`: Keys to press once this number answers, before the fax starts, for a fax machine behind a phone menu: such as 2, or 2w105 (w is a short pause, W a one-second pause). &#x27;none&#x27; presses none. Only calls over your trunk can press keys, and the seconds in the menu are billed.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`
@@ -5769,6 +6544,62 @@ $ faxbot recipients check [OPTIONS] {number}
 * `--name <str>`: The provider or person the fax is for.
 * `--help`: Show this message and exit.
 
+### `faxbot recipients register-sender`
+
+Send faxes to RECIPIENT only from the trunk, caller ID and station ID registered with it. When that trunk
+cannot send them, they wait in Sent; they never go from another number.
+
+**Usage**:
+
+```console
+$ faxbot recipients register-sender [OPTIONS] {RECIPIENT}
+```
+
+**Arguments**:
+
+* `RECIPIENT`: The recipient&#x27;s fax number, such as +902122220000.  [required]
+
+**Options**:
+
+* `--caller-id NUMBER`: The caller ID registered with the recipient.  [required]
+* `--station-id TEXT`: The station ID registered with it, if it differs from the caller ID.
+* `--account KEY`: The trunk registered with it, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--note TEXT`: Where it is registered, for the history.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients registered-senders`
+
+Recipients that recognise your faxes by the number they come from, and the trunk registered with each.
+
+**Usage**:
+
+```console
+$ faxbot recipients registered-senders [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot recipients unregister-sender`
+
+Stop pinning RECIPIENT to one trunk; faxes to it go by your sending rules again. The history is kept.
+
+**Usage**:
+
+```console
+$ faxbot recipients unregister-sender [OPTIONS] {RECIPIENT}
+```
+
+**Arguments**:
+
+* `RECIPIENT`: The recipient&#x27;s fax number.  [required]
+
+**Options**:
+
+* `--note TEXT`: Why, for the history.
+* `--help`: Show this message and exit.
+
 ### `faxbot recipients iaf`
 
 Internet Aware Fax to fax servers that receive over the internet, such as another Faxbot or a Brooktrout SR140.
@@ -5996,6 +6827,7 @@ $ faxbot recipients encoded set [OPTIONS] {number}
 * `--style dense|picture`: Dense pages (the default), or a picture of the first page with the document hidden in its dots. With a shared key the picture is a plain pattern instead.
 * `--error-correction low|medium|high`: How much damage on the line the pages survive (default medium). Higher carries less.
 * `--shared-key KEY`: Encrypt documents with a key you and the recipient agreed outside fax (8 to 200 characters). Only its fingerprint is shown afterwards.
+* `--decoder any|capacity`: The recipient&#x27;s decoder: any Faxbot decoder (the default), or capacity for a Faxbot decoder from October 2026 or later, so Faxbot may also send capacity pages.
 * `--clear-key`: Stop encrypting with the shared key.
 * `--help`: Show this message and exit.
 
@@ -8622,6 +9454,10 @@ $ faxbot admin diagnostics [OPTIONS] COMMAND [ARGS]...
 * `show`: Show the last diagnostics results without...
 * `engine`: List what the fax engine reports now:...
 * `test-fax`: Add a test fax with a real one-page...
+* `routes`: Route problems: failures that belong to...
+* `receiving`: Whether each of your numbers can receive...
+* `power`: The UPS Faxbot reads, so it holds long...
+* `test-lines`: Send a test fax to a public test line...
 
 #### `faxbot admin diagnostics database`
 
@@ -8697,6 +9533,385 @@ $ faxbot admin diagnostics test-fax [OPTIONS]
 
 * `--from <str>`: Sender fax number to show.  [default: +15550000000]
 * `--to <str>`: Your fax number the test fax arrives on, for example +15551234567.
+* `--help`: Show this message and exit.
+
+#### `faxbot admin diagnostics routes`
+
+Route problems: failures that belong to one of your sending routes rather than to the numbers it called, and the 2-by-2 test that tells them apart.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Route problems Faxbot found (open ones...
+* `close`: Close a route problem by hand, for example...
+* `test`: Plan a 2-by-2 test: two of your sending...
+* `send`: Send one test fax of a 2-by-2 test.
+* `show-test`: What a 2-by-2 test shows so far.
+* `upstream`: Record which carrier a provider uses...
+
+##### `faxbot admin diagnostics routes list`
+
+Route problems Faxbot found (open ones first), recent 2-by-2 tests, and known shared upstreams.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics routes close`
+
+Close a route problem by hand, for example after you fixed the trunk; Faxbot sets aside what it taught.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes close [OPTIONS] {PROBLEM}
+```
+
+**Arguments**:
+
+* `PROBLEM`: The first characters of the problem, from routes list.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics routes test`
+
+Plan a 2-by-2 test: two of your sending accounts against two of your own numbers. Nothing is sent yet.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes test [OPTIONS]
+```
+
+**Options**:
+
+* `--route-a ACCOUNT`: The first sending account, such as sip or sinch.  [required]
+* `--route-b ACCOUNT`: The second sending account.  [required]
+* `--number-a NUMBER`: Your first own receiving number.  [required]
+* `--number-b NUMBER`: Your second own receiving number.  [required]
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics routes send`
+
+Send one test fax of a 2-by-2 test. This places one real call; each test fax is sent once.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes send [OPTIONS] {TEST} {CELL}
+```
+
+**Arguments**:
+
+* `TEST`: The first characters of the test.  [required]
+* `CELL`: a1, a2, b1 or b2: the first or second account (a, b) to your first or second number (1, 2).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics routes show-test`
+
+What a 2-by-2 test shows so far.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes show-test [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The first characters of the test.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics routes upstream`
+
+Record which carrier a provider uses upstream, so Faxbot can say when two routes share a path.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics routes upstream [OPTIONS] {PROVIDER}
+```
+
+**Arguments**:
+
+* `PROVIDER`: The provider, such as sinch.  [required]
+
+**Options**:
+
+* `--upstream CARRIER`: The carrier the provider is known to use upstream.
+* `--source WEB_ADDRESS`: Where that is published (required with --upstream).
+* `--read-on DATE`: The day you read the source, such as 2026-10-10.
+* `--unknown`: Faxbot no longer knows what this provider uses upstream.
+* `--help`: Show this message and exit.
+
+#### `faxbot admin diagnostics receiving`
+
+Whether each of your numbers can receive faxes now, and which receiver owns each number.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics receiving [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `check`: Check each number you receive on, from...
+* `owner`: Name the one receiver of a number&#x27;s faxes,...
+
+##### `faxbot admin diagnostics receiving check`
+
+Check each number you receive on, from receiving evidence only. Sends nothing.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics receiving check [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics receiving owner`
+
+Name the one receiver of a number&#x27;s faxes, so two places never take them without you knowing.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics receiving owner [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: One of your fax numbers.  [required]
+
+**Options**:
+
+* `--account KEY`: The receiving account that takes its faxes, such as sip.
+* `--elsewhere NAME`: A receiver outside this Faxbot, such as &quot;the fax machine at reception&quot;.
+* `--release`: Name no receiver for the number.
+* `--move`: Move the number from the receiver that has it now.
+* `--help`: Show this message and exit.
+
+#### `faxbot admin diagnostics power`
+
+The UPS Faxbot reads, so it holds long calls while the office runs on battery.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics power [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: What the UPS says now and how Faxbot uses it.
+* `set`: Read this UPS through NUT; Faxbot then...
+* `off`: Stop reading the UPS; calls start without...
+
+##### `faxbot admin diagnostics power show`
+
+What the UPS says now and how Faxbot uses it.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics power show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics power set`
+
+Read this UPS through NUT; Faxbot then holds a call that the battery could not see through.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics power set [OPTIONS]
+```
+
+**Options**:
+
+* `--address HOST`: The NUT server&#x27;s address, such as 192.168.1.5.  [required]
+* `--port <int>`: The NUT server&#x27;s port; NUT uses 3493.  [default: 3493]
+* `--ups NAME`: The UPS name on that server; the first it lists when left out.
+* `--reserve-minutes <int>`: Minutes of battery a call must leave to spare.  [default: 2]
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics power off`
+
+Stop reading the UPS; calls start without checking the battery.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics power off [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot admin diagnostics test-lines`
+
+Send a test fax to a public test line whose operator invites test faxes, and see what came back.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: The public test lines, whether Faxbot may...
+* `send`: Send one test fax to a public test line, now.
+* `replies`: Received faxes that are replies to test...
+* `show`: One test fax&#x27;s result and what came back.
+* `receipt`: Look up a Faxbeep test fax on Faxbeep&#x27;s...
+* `reply`: Mark a received fax as a test fax&#x27;s reply.
+
+##### `faxbot admin diagnostics test-lines list`
+
+The public test lines, whether Faxbot may dial each, whether a reply reaches Faxbot, and recent tests.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines send`
+
+Send one test fax to a public test line, now. Faxbot never sends one by itself.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines send [OPTIONS] {LINE}
+```
+
+**Arguments**:
+
+* `LINE`: The line, such as faxbeep-us (see faxbot admin diagnostics test-lines list).  [required]
+
+**Options**:
+
+* `--allow-country`: If Faxbot may not dial this country yet, allow it from now on without asking.
+* `--yes`: Do not ask before sending to a public page.
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines replies`
+
+Received faxes that are replies to test faxes, as Received labels them.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines replies [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines show`
+
+One test fax&#x27;s result and what came back.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines show [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent test fax ID (see test-lines list).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines receipt`
+
+Look up a Faxbeep test fax on Faxbeep&#x27;s public page now.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines receipt [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent Faxbeep test fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines reply`
+
+Mark a received fax as a test fax&#x27;s reply.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines reply [OPTIONS] {TEST} {RECEIVED}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent test fax ID.  [required]
+* `RECEIVED`: The received fax that is the reply, as test-lines show offers it.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot admin logs`
@@ -8811,7 +10026,8 @@ $ faxbot admin codec encode [OPTIONS] {source}
 
 * `-o, --output <path>`: The fax TIFF to write.  [required]
 * `--resolution standard|fine|superfine|300|400`: The fax resolution the pages are made for.  [default: fine]
-* `--layout grid|runs|picture|enumerative`: grid survives resolution changes; runs carries the most but needs the exact image; picture hides the document in a picture; enumerative needs an unchanged image and a recipient whose Faxbot supports enumerative profile 1.  [default: grid]
+* `--layout grid|runs|picture|enumerative|capacity`: grid survives resolution changes; runs needs the exact image; picture hides the document in a picture; enumerative needs an unchanged image and a recipient whose Faxbot supports enumerative profile 1; capacity carries the most for its line time or pages and needs the exact image and a decoder from October 2026 or later.  [default: grid]
+* `--capacity-profile time|balanced|pages`: With --layout capacity: time for the shortest call (routes billed by the minute), pages for the fewest pages (routes billed by the page), or balanced.  [default: time]
 * `--error-correction low|medium|high`: How much damage the pages survive.  [default: medium]
 * `--shared-key KEY`: Encrypt with this shared key.
 * `--force`: Replace the file if it exists.

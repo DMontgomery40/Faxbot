@@ -10,6 +10,15 @@ before each original, a band with a faint dotted rule and a "page 2 of 5" tag
 split only when it is longer than the receiver's limit (the owner's "chop it
 up"); its pieces are cut at a white row near the limit when there is one, and
 each piece after the first starts with a "continued" band.
+
+With error correction a page goes as partial pages of 64 KiB of coded data,
+and each one past the first costs a turnaround on the line
+(``coding.ecm_extra_seconds``). When the coded size of each original is known,
+the originals are shared out among the same number of pages so that the pages
+cross the fewest of those edges: a page that would end just over an edge
+gives its last original to the next page when that page stays under one.
+Fewer pages always come first, and with nothing to gain the layout is exactly
+the one that fills each page in turn.
 """
 from __future__ import annotations
 
@@ -74,11 +83,16 @@ def limit_rows(limit, y_dpi):
     return math.floor(LIMITS_MM[limit] * y_dpi / MM_PER_INCH) - HEADER_ROWS
 
 
-def plan(heights, width, rows, *, white_rows=None):
+def plan(heights, width, rows, *, white_rows=None, page_bits=None, piece_bits=0, frame_octets=256):
     """The layout of originals ``heights`` (rows each) on pages of at most ``rows`` rows.
 
     ``white_rows(original)`` returns the set of all-white rows of that original, used only to choose
     where a too-long original is cut; without it the cut falls exactly at the limit.
+
+    ``page_bits`` (each original's coded bits in the coding the call uses, with error correction on) and
+    ``piece_bits`` (what one band, and the white margin above the first, adds in that coding) let the
+    originals be shared out among the same number of pages so that the fewest partial-page edges are crossed
+    (``_fewest_block_edges``). The cut inside an original longer than the limit stays where it is.
     """
     if not heights or any(height <= 0 for height in heights):
         raise NotPackable('No pages to pack')
@@ -115,7 +129,56 @@ def plan(heights, width, rows, *, white_rows=None):
         current.pieces.append(Piece(original, top, height - top, kind))
     if current.pieces:
         sheets.append(current)
+    if page_bits is not None:
+        if len(page_bits) != len(heights):
+            raise ValueError('One coded size is needed for each original')
+        sheets = _fewest_block_edges(sheets, heights, rows, page_bits, piece_bits, frame_octets)
     return Layout(tuple(sheets), width, rows, len(heights))
+
+
+def _fewest_block_edges(sheets, heights, rows, page_bits, piece_bits, frame_octets):
+    """``sheets`` (each page filled in turn: the fewest pages) shared out again, in order and on the same number of
+    pages, so that the pages cross the fewest partial-page edges; ``sheets`` itself when no sharing crosses fewer.
+
+    A page's coded size is estimated as its originals' coded bits (a split original's piece in proportion to its
+    rows) plus ``piece_bits`` for each band. A piece of an original longer than the limit keeps its page to itself
+    unless it is that original's last, and a continued piece always starts a page, as when each page is filled."""
+    from .coding import ecm_blocks
+    units = [piece for sheet in sheets for piece in sheet.pieces]
+    alone = [piece.top + piece.rows < heights[piece.original] for piece in units]
+    starts = [alone[i] or piece.kind == marks.CONTINUES for i, piece in enumerate(units)]
+    bits = [page_bits[piece.original] * piece.rows / heights[piece.original] + piece_bits for piece in units]
+
+    def edges(first, end):
+        return ecm_blocks(math.ceil(sum(bits[first:end]) / 8), frame_octets) - 1
+    greedy = (len(sheets), 0)
+    first = 0
+    for sheet in sheets:
+        greedy = (greedy[0], greedy[1] + edges(first, first + len(sheet.pieces)))
+        first += len(sheet.pieces)
+    # best[i]: the fewest (pages, edges) for units[:i], and where its last page starts.
+    best = [((0, 0), None)] + [((math.inf, math.inf), None)] * len(units)
+    for end in range(1, len(units) + 1):
+        height = TOP_ROWS
+        for first in range(end - 1, -1, -1):
+            height += marks.BAND_ROWS + units[first].rows
+            if height > rows or (alone[first] and end - first > 1):
+                break
+            if best[first][0][0] < math.inf:
+                pages, crossed = best[first][0]
+                cost = (pages + 1, crossed + edges(first, end))
+                if cost < best[end][0]:
+                    best[end] = (cost, first)
+            if starts[first]:
+                break
+    if best[-1][0][0] != greedy[0] or best[-1][0] >= greedy:
+        return sheets
+    shared, end = [], len(units)
+    while end:
+        first = best[end][1]
+        shared.append(Sheet(list(units[first:end])))
+        end = first
+    return shared[::-1]
 
 
 def _white_rows(frame):
@@ -150,8 +213,9 @@ def _dpi(frame):
     return tuple(round(float(value)) for value in dpi)
 
 
-def layout_for(frames, limit):
-    """The layout of these fax frames (mode "1") under the receiver's ``limit``."""
+def layout_for(frames, limit, *, page_bits=None, piece_bits=0):
+    """The layout of these fax frames (mode "1") under the receiver's ``limit``; ``page_bits`` and ``piece_bits``
+    (error correction on, the call's coding known) share the originals out as ``plan`` says."""
     width, (_, y_dpi) = check_frames(frames)
     rows = limit_rows(limit, y_dpi)
     blanks = {}
@@ -160,16 +224,32 @@ def layout_for(frames, limit):
         if original not in blanks:
             blanks[original] = _white_rows(frames[original])
         return blanks[original]
-    return plan([frame.height for frame in frames], width, rows, white_rows=white_rows)
+    return plan([frame.height for frame in frames], width, rows, white_rows=white_rows, page_bits=page_bits,
+                piece_bits=piece_bits)
+
+
+def piece_frame(frames):
+    """The white margin at the top of a packed page and one band with the widest tag, at the frames' width and
+    resolution: measured in a call's coding, at least what each piece adds to a page beyond its original."""
+    width, dpi = check_frames(frames)
+    total = len(frames)
+    image = Image.new('1', (width, TOP_ROWS + marks.BAND_ROWS), 1)
+    image.paste(marks.band(marks.Record(marks.START, total, total, width), width), (0, TOP_ROWS))
+    image.info['dpi'] = dpi
+    return image
 
 
 def render(frames, layout):
     """The packed pages (mode "1" images, with the frames' resolution), one per sheet of ``layout``."""
+    return list(render_sheets(frames, layout))
+
+
+def render_sheets(frames, layout):
+    """``render``, one sheet at a time, so a caller can keep each sheet packed (``conversion.FaxFrames``)."""
     width, dpi = check_frames(frames)
     if width != layout.width or len(frames) != layout.originals:
         raise NotPackable('The layout does not match these pages')
     total = len(frames)
-    pages = []
     for sheet in layout.sheets:
         image = Image.new('1', (width, sheet.height()), 1)
         y = TOP_ROWS
@@ -181,5 +261,4 @@ def render(frames, layout):
             image.paste(frame.crop((0, piece.top, frame.width, piece.top + piece.rows)), (0, y))
             y += piece.rows
         image.info['dpi'] = dpi
-        pages.append(image)
-    return pages
+        yield image

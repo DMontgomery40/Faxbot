@@ -1,4 +1,4 @@
-// Costs → Charges: how Faxbot reads what each account charged, what Sinch and Phaxio charged for received faxes,
+// Savings & optimization → Charges: how Faxbot reads what each account charged, what Sinch and Phaxio charged for received faxes,
 // and faxes a provider billed that Faxbot has no record of. Faxbot only lists those faxes: it never sends, fetches
 // or changes one. "Check now" lists the accounts' faxes at their providers again.
 import { useCallback, useEffect, useState } from 'react';

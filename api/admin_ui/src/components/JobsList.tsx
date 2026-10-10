@@ -37,8 +37,12 @@ import { CostsUnread, FaxCostItem, costAmount, useFaxCosts } from './delivery/Fa
 import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
+import { SenderEvidenceItem } from './delivery/RegisteredSenders';
 import { FaxCertaintyItem } from './work/SentCertainty';
 import { SentContinuation } from './work/SentContinuation';
+import { SentHeaderNotice } from './HeaderNotice';
+import { SentStationCheck } from './StationCheck';
+import { SentAfterAnswer } from './delivery/AfterAnswer';
 import { DigitalFaxOutcome } from './delivery/DigitalMessages';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
@@ -134,6 +138,7 @@ const eventLabels: Record<string, string> = {
   provider_observed: 'Provider status update',
   operator_identity_bound: 'Receipt confirmed with the provider fax ID',
   route_assigned: 'Route chosen',
+  route_measured: 'Accounts compared on the pages they would send',
   route_fallback: 'Trying the next route',
   repair_started: 'Sending only the missing pages directly to the partner',
   repair_completed: 'Completed directly by the partner after the call broke',
@@ -852,6 +857,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
               <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
+              <SenderEvidenceItem client={client} jobId={detailJob.id} />
               <Divider />
               <ListItem>
                 <ListItemText
@@ -896,6 +902,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           {detailJob && <FaxCertaintyItem client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
           {/* A fax whose call broke part way: send only its remaining pages, and the link both ways. */}
           {detailJob && <SentContinuation client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
+          {/* The header notice the fax carried, and whether its cover sheet went (header_notice.py). */}
+          {detailJob && <SentHeaderNotice client={client} jobId={detailJob.id} />}
+          {/* The station a call answered as, when it was not the one Faxbot expected (routing/stations.py). */}
+          {detailJob && <SentStationCheck client={client} jobId={detailJob.id} />}
+          {detailJob && <SentAfterAnswer client={client} jobId={detailJob.id} />}
           <Divider sx={{ my: 2 }} />
           <Typography variant="h6" component="h2" gutterBottom>Delivery attempts</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

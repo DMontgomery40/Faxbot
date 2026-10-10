@@ -1,5 +1,5 @@
 // The addresses a receiving provider sends received faxes to, each with Copy.
-// Shown under Providers → In use to people who may read provider setup.
+// Shown under Delivery setup → Providers & accounts to people who may read provider setup.
 import { useEffect, useState } from 'react';
 import { Box, Button, Paper, Snackbar, Stack, Typography } from '@mui/material';
 import { ContentCopy as ContentCopyIcon } from '@mui/icons-material';

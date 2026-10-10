@@ -89,7 +89,7 @@ def porting_steps(losing, gaining, *, number=None, path=None):
     steps.append(f'At {new}: {how}' + (f' {new} asks for {documents}.' if documents else ''))
     steps.append(f'Keep {what} and your {old} account active until {new} confirms the date the move completes; '
                  'never cancel first, or the number can be lost.')
-    steps.append(f'When it completes, add {what} to your {new} account in Faxbot under Providers and remove it from '
+    steps.append(f'When it completes, add {what} to your {new} account in Faxbot under Delivery setup and remove it from '
                  f'{old}; the rule under Numbers that sends its faxes to a mailbox stays as it is.')
     fee = in_side.get('fee_text') or (f"{money_text(parse_amount(in_side['fee']), 'USD')} a number."
                                       if in_side.get('fee') not in (None, '') else None)
@@ -272,7 +272,7 @@ def _received(engine, values, now, days):
 def _notes(values, number, reply):
     notes = []
     if number == (getattr(values, 'sip_trunk_caller_id', '') or ''):
-        notes.append('It is also your trunk\'s caller ID: change the caller ID under Providers once it moves.')
+        notes.append('It is also your trunk\'s caller ID: change the caller ID under Delivery setup once it moves.')
     if reply and number == reply:
         notes.append('It is your reply number, printed on every fax you send; porting keeps it, so that stays right.')
     return notes
@@ -361,13 +361,13 @@ def placement(engine, values, *, routes=None, now=None, days=WINDOW_DAYS, path=N
     elif accounts:
         sentence, state = accounts[0]['sentence'], 'account'
     elif any(row['state'] == 'unknown' for row in rows):
-        sentence = 'Faxbot can\'t price every number yet; add the missing prices in Costs → Prices & plans.'
+        sentence = 'Faxbot can\'t price every number yet; add the missing prices in Savings & optimization → Prices & plans.'
         state = 'unknown'
     else:
         sentence, state = NO_MOVES, 'nothing_to_move'
     if len(receiving_hosts) < 2 and state not in ('unknown', 'account'):
         sentence = ('You receive through one account, so there is nowhere cheaper of your own to move a number; '
-                    'Costs → Recommendations → Other carriers compares carriers you don\'t use.')
+                    'Savings & optimization → Opportunities → Other carriers compares carriers you don\'t use.')
         state = 'one_account'
     return {'days': days, 'estimate': True, 'state': state, 'sentence': sentence, 'numbers': rows,
             'accounts': accounts, 'note': ADVICE_ONLY,
@@ -457,7 +457,9 @@ YEAR_DAYS = 365
 # One-sided 95% upper bound on a steady arrival rate after zero arrivals in T days: -ln(0.05) / T, about 3 / T.
 POISSON_95 = -math.log(0.05)
 VERDICTS = {'keep': 'Keep', 'move_termination': 'Move the termination', 'investigate': 'Investigate',
-            'can_likely_go': 'Can likely go'}
+            'can_likely_go': 'Can likely go', 'not_in_faxbot': 'Not in Faxbot yet'}
+# Lines with a date someone else set (a carrier's letter or list, a contract end) come first: passed, then soon.
+DATE_ORDER = {'passed': 0, 'soon': 1, 'later': 2}
 QUIET_LIMIT = ('This says nothing about yearly, seasonal or emergency use: a number used once a year, in one season or '
                'only in an emergency can be quiet this long and still be needed, so "can likely go" also needs your '
                'answers about it.')
@@ -548,6 +550,14 @@ def line_advice(engine, values, *, routes=None, now=None, days=QUIET_DAYS, path=
     places = placed_numbers(values)
     questions = [{'question': key, 'label': label, 'help': text} for key, (label, text) in QUESTIONS.items()]
     if not places:
+        rows = []
+        _dated_first(engine, rows, set(), DependencyStore(engine), now, path)
+        if rows:
+            return {'state': 'advice', 'sentence': (f"No Faxbot account receives faxes yet; {len(rows)} "
+                                                    f"{'line' if len(rows) == 1 else 'lines'} in your inventory "
+                                                    f"{'has a date' if len(rows) == 1 else 'have dates'} set by a "
+                                                    'carrier or a contract.'),
+                    'numbers': rows, 'questions': questions, 'note': LINE_ADVICE_ONLY}
         return {'state': 'no_numbers', 'sentence': 'Faxbot knows none of your fax numbers yet, so there is nothing to '
                 'advise on.', 'numbers': [], 'questions': questions, 'note': LINE_ADVICE_ONLY}
     npi = published_numbers(engine) if published is None else published
@@ -626,10 +636,47 @@ def line_advice(engine, values, *, routes=None, now=None, days=QUIET_DAYS, path=
             'dependencies': dependency_rows(answers),
             'carrier_facts': carrier_facts(number, path=path),
             'move': move_state})
+    _dated_first(engine, rows, {number for number, _ in places}, answers_store, now, path)
     counts = {verdict: sum(1 for row in rows if row['verdict'] == verdict) for verdict in VERDICTS}
     parts = [f'{counts[key]} {VERDICTS[key].lower()}' for key in VERDICTS if counts[key]]
+    dated = sum(1 for row in rows if row['dates'])
     return {'state': 'advice', 'sentence': f"Your {len(rows)} {'number' if len(rows) == 1 else 'numbers'}: "
-            + ', '.join(parts) + '.', 'numbers': rows, 'questions': questions, 'note': LINE_ADVICE_ONLY}
+            + ', '.join(parts) + '.' + (f" {dated} {'has a date' if dated == 1 else 'have dates'} set by a carrier "
+                                        'or a contract, listed first.' if dated else ''),
+            'numbers': rows, 'questions': questions, 'note': LINE_ADVICE_ONLY}
+
+
+def _dated_first(engine, rows, placed, answers_store, now, path):
+    """Give every row its dates (``inventory.line_dates``), add the inventory's dated fax lines that no account
+    receives on yet, and put dated rows first: passed, then soon, then later, earliest first."""
+    from .inventory import plan_rows
+    from .number_moves import dependency_rows
+    from .receiving import shown_number
+    dates, outside = plan_rows(engine, placed, today=now.date())
+    for row in rows:
+        row['dates'] = dates.get(row['number'], [])
+    for line in outside:
+        display = shown_number(line['number'])
+        where = ', '.join(part for part in (line.get('street'), line.get('city'), line.get('region')) if part)
+        rows.append({
+            'number': line['number'], 'display': display, 'account': None, 'verdict': 'not_in_faxbot',
+            'verdict_label': VERDICTS['not_in_faxbot'],
+            'sentence': (f"{display} is a line in your inventory{' at ' + where if where else ''}"
+                         f"{' with ' + line['carrier'] if line.get('carrier') else ''} that no Faxbot account "
+                         'receives on yet.'),
+            'reasons': [],
+            'evidence': {'last_arrival': None, 'last_arrival_text': 'Faxbot does not receive faxes on this line yet.',
+                         'senders': 0, 'window_days': None, 'covered_days': None, 'months': [], 'npi_record': None,
+                         'quiet_bound': None, 'removed': None,
+                         'removed_sentence': (f"Your inventory says it costs {line['monthly']} a month."
+                                              if line.get('monthly') else
+                                              'Your inventory gives no monthly price for this line.')},
+            'dependencies': dependency_rows(answers_store.answers(line['number'])),
+            'carrier_facts': carrier_facts(line['number'], path=path), 'move': None,
+            'dates': dates.get(line['number'], [])})
+    order = {id(row): index for index, row in enumerate(rows)}
+    rows.sort(key=lambda row: (0, DATE_ORDER[row['dates'][0]['state']], row['dates'][0]['date'])
+              if row['dates'] else (1, order[id(row)], ''))
 
 
 def _last_text(last, now):

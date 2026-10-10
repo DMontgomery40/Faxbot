@@ -54,7 +54,21 @@ def own_start(member):
     return member['first_page'] + 1 if member.get('layout') in (None, SEPARATORS) else member['first_page']
 
 
-def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None, failure_category=None):
+def confirmed_originals(sheets, confirmed_sheets):
+    """``(confirmed pages, uncertain through)`` of a shared call sent on long pages (``pages.sending`` writes the
+    sheets: for each long page, its call pages as ``[page, whole]``): the call pages wholly on the confirmed long
+    pages, and the last call page with any part on the first unconfirmed long page (it may have arrived), or None."""
+    done = {page for sheet in sheets[:confirmed_sheets] for page, _ in sheet}
+    split = {page for sheet in sheets[confirmed_sheets:] for page, _ in sheet}
+    confirmed = 0
+    while confirmed + 1 in done and confirmed + 1 not in split:
+        confirmed += 1
+    following = sheets[confirmed_sheets] if confirmed_sheets < len(sheets) else []
+    return confirmed, max((page for page, _ in following), default=None)
+
+
+def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None, failure_category=None,
+             uncertain_through=None):
     """``members``: rows with ``id``, ``attempt_id``, ``first_page``, ``last_page`` and ``layout``, in call order.
 
     ``layout`` is 'separators', 'index_page' or 'page_headers'; missing or None means separators (calls
@@ -74,6 +88,9 @@ def map_call(members, *, succeeded, confirmed_pages, failure_sentence=None, fail
             outcomes.append(Outcome(member['id'], member['attempt_id'], 'unconfirmed', 'pages_unconfirmed', None))
         elif last <= confirmed_pages:
             outcomes.append(Outcome(member['id'], member['attempt_id'], 'success', None, None))
+        elif uncertain_through is not None and start <= uncertain_through:
+            # A long page carried part of this fax and was not confirmed: the receiver may have printed it.
+            outcomes.append(Outcome(member['id'], member['attempt_id'], 'unconfirmed', 'pages_unconfirmed', None))
         elif confirmed_pages == 0 or confirmed_pages + 1 < start:
             # The page before its first page was not confirmed, so none of its own pages had been sent.
             sentence = (failure_sentence if confirmed_pages == 0 and failure_sentence

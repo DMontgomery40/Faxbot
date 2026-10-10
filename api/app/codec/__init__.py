@@ -16,12 +16,11 @@ A receiving Faxbot finds the pattern, decodes, checks the SHA-256 and delivers
 the original; the received fax image is kept unchanged as evidence. Everything
 here is experimental and used only for recipients who agreed to it.
 """
-import io
-from pathlib import Path
 
 from .container import ContainerError, Document, key_fingerprint, pack, unpack, zstd_available  # noqa: F401
 from .pages import PageError, RESOLUTIONS, find_ladder  # noqa: F401
 from . import pages as _pages
+from . import reading as _reading
 
 LAYOUTS = tuple(_pages.LAYOUTS)
 
@@ -31,12 +30,14 @@ class CodecError(ValueError):
 
 
 def encode_document(document, *, resolution='fine', layout='grid', fec='medium', secret=None, picture=None,
-                    sturdy=False, salt=None, nonce=None, max_pages=200, run_limit=_pages.DEFAULT_RUN_LIMIT):
-    """Payload pages (``pages.EncodedPages``) carrying ``document``."""
+                    sturdy=False, salt=None, nonce=None, max_pages=200, run_limit=_pages.DEFAULT_RUN_LIMIT,
+                    profile=None):
+    """Payload pages (``pages.EncodedPages``) carrying ``document``. ``profile``: the capacity layout's profile
+    (``capacity.PROFILES``)."""
     try:
         packed = pack(document, secret=secret, salt=salt, nonce=nonce)
         return _pages.encode(packed, resolution=resolution, layout=layout, fec=fec, sturdy=sturdy,
-                             picture=picture, max_pages=max_pages, run_limit=run_limit)
+                             picture=picture, max_pages=max_pages, run_limit=run_limit, profile=profile)
     except (ContainerError, PageError) as error:
         raise CodecError(str(error)) from None
 
@@ -49,13 +50,14 @@ def decode_images(images, *, secrets=()):
     except (ContainerError, PageError) as error:
         raise CodecError(str(error)) from None
     report = dict(decoded.report, pages_read=decoded.pages_read, pages_expected=decoded.pages_expected,
-                  layout=decoded.header['layout'])
+                  layout=decoded.header['layout'], corrections=decoded.corrections)
     return document, report
 
 
 def looks_like_payload(image, *, lines=None):
-    """True when a page shows the payload pattern; cheap enough to run on every received fax."""
-    return find_ladder(image, limit=lines) is not None
+    """True when a page shows the payload pattern, either way up and either way round in black and white; cheap
+    enough to run on every received fax."""
+    return find_ladder(_pages.paper_white(image)[0], limit=lines) is not None
 
 
 def write_tiff(images, path):
@@ -67,100 +69,18 @@ def write_tiff(images, path):
     return path
 
 
-MAX_INPUT_PAGES = 200
+MAX_INPUT_PAGES = _reading.MAX_INPUT_PAGES
 
 
 def read_images(path_or_bytes):
-    """Page images from a received fax file: TIFF (any fax coding), PDF, PNG, JPEG, GIF or BMP."""
-    from PIL import Image
-    data = Path(path_or_bytes).read_bytes() if isinstance(path_or_bytes, (str, Path)) else bytes(path_or_bytes)
-    if data[:5] == b'%PDF-':
-        return _pdf_images(data)
-    images = []
+    """Page images from a received fax file, exactly as received: TIFF (any fax coding), PDF (CCITT, Flate or other
+    images, one per page or in strips), PNG, JPEG, GIF or BMP (``reading``)."""
     try:
-        with Image.open(io.BytesIO(data)) as source:
-            for index in range(MAX_INPUT_PAGES):
-                try:
-                    source.seek(index)
-                except EOFError:
-                    break
-                frame = source.copy()
-                frame.info['dpi'] = source.info.get('dpi', (204, 196))
-                images.append(frame)
-    except (OSError, ValueError):
-        raise CodecError('This file is not an image Faxbot can read.') from None
-    return images
+        return _reading.read_images(path_or_bytes)
+    except _reading.ReadingError as error:
+        raise CodecError(str(error)) from None
 
 
 def first_page(data):
     """Page one of a received fax file only, or None: the cheap probe before reading every page."""
-    from PIL import Image
-    data = bytes(data)
-    try:
-        if data[:5] == b'%PDF-':
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(data))
-            images = sorted((item.image for item in reader.pages[0].images),
-                            key=lambda image: image.size[0] * image.size[1])
-            if images:
-                return images[-1]
-            rendered = _rendered(data, last_page=1)
-            return rendered[0] if rendered else None
-        with Image.open(io.BytesIO(data)) as source:
-            return source.copy()
-    except Exception:
-        try:
-            rendered = _rendered(data, last_page=1) if data[:5] == b'%PDF-' else []
-        except CodecError:
-            return None
-        return rendered[0] if rendered else None
-
-
-def _pdf_images(data):
-    """The largest image on each PDF page; Ghostscript renders pages whose images pypdf cannot decode."""
-    from pypdf import PdfReader
-    images = []
-    try:
-        reader = PdfReader(io.BytesIO(data))
-        for page in list(reader.pages)[:MAX_INPUT_PAGES]:
-            best = None
-            for item in page.images:
-                image = item.image
-                if best is None or image.size[0] * image.size[1] > best.size[0] * best.size[1]:
-                    best = image
-            if best is None:
-                return _rendered(data)
-            width_points = float(page.mediabox.width)
-            if width_points > 0:
-                dpi_x = round(best.size[0] * 72 / width_points)
-                dpi_y = round(best.size[1] * 72 / float(page.mediabox.height))
-                best.info['dpi'] = (dpi_x, dpi_y)
-            images.append(best)
-    except Exception:
-        return _rendered(data)
-    return images
-
-
-def _rendered(data, last_page=MAX_INPUT_PAGES):
-    import shutil
-    import subprocess
-    import tempfile
-    from PIL import Image
-    executable = shutil.which('gs')
-    if executable is None:
-        raise CodecError('This PDF needs Ghostscript to read, and it is not installed.')
-    with tempfile.TemporaryDirectory() as folder:
-        source = Path(folder) / 'in.pdf'
-        source.write_bytes(data)
-        target = Path(folder) / 'page-%03d.png'
-        try:
-            subprocess.run([executable, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pngmono', '-r204x196',
-                            f'-dLastPage={last_page}', f'-sOutputFile={target}', str(source)],
-                           check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except (subprocess.SubprocessError, OSError):
-            raise CodecError('This PDF could not be read.') from None
-        images = []
-        for path in sorted(Path(folder).glob('page-*.png')):
-            with Image.open(path) as image:
-                images.append(image.copy())
-        return images
+    return _reading.first_page(data)

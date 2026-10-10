@@ -1,4 +1,4 @@
-// Costs → Prices & plans → Who gets your plans' last pages: for each plan with a limited allowance or normal-use
+// Savings & optimization → Prices & plans → Who gets your plans' last pages: for each plan with a limited allowance or normal-use
 // budget, what is left until it starts again, which waiting faxes get it (the ones it saves the most on), which go
 // another way and for how much, and what Faxbot keeps for faxes not sent yet. Every amount is an estimate; nothing
 // here changes a setting.

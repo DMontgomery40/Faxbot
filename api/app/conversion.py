@@ -6,7 +6,9 @@ import math
 import zlib
 import unicodedata
 import warnings
+from collections.abc import Sequence
 from contextlib import contextmanager
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple, Optional
@@ -26,12 +28,81 @@ import os
 MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_DOCUMENT_PAGES = 500
-MAX_RASTER_PAGE_PIXELS = 25_000_000
-MAX_RASTER_TOTAL_PIXELS = 100_000_000
+# About four times the largest fax page at fine resolution (US Legal, 4.8 million pixels), with room for a Legal page
+# scanned at 400 dpi (3,400 x 5,600 = 19 million pixels) and sent as a TIFF.
+MAX_RASTER_PAGE_PIXELS = 20_000_000
+# A fax page at fine resolution (204 x 196 dpi) is about 3.7 million pixels on US Letter, 3.9 million on A4 and
+# 4.8 million on US Legal. The total allows the page limit's worth of Legal pages, so a document the page limit
+# accepts is never refused for its total size (100 million refused a 27-page Letter document). Pages are drawn,
+# checked and written one at a time, so memory follows the largest page; the total bounds one document's work.
+FAX_PAGE_PIXELS = 5_000_000
+MAX_RASTER_TOTAL_PIXELS = MAX_DOCUMENT_PAGES * FAX_PAGE_PIXELS
 MAX_PDF_STREAM_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_PDF_STREAM_BYTES = 32 * 1024 * 1024
 GHOSTSCRIPT_TIMEOUT_SECONDS = 120
+# Ghostscript runs at once in this process (``ghostscript_slot``); others wait for a slot. One run draws one
+# document, which can keep a core busy for minutes on a long scanned document.
+GHOSTSCRIPT_SLOTS = 2
+# The fax image a document becomes may take at least 64 MB, about 1 MB a page beyond that (a dense scanned page in
+# Group 4), and never more than 512 MB. A longer or denser document is refused as too large to fax.
+MAX_FAX_IMAGE_BYTES = 512 * 1024 * 1024
+FAX_IMAGE_BYTES_PER_PAGE = 1024 * 1024
+TOO_LARGE_TO_FAX = "This document is too large to fax: its fax pages would take more than {size} MB."
+# The longest fax whose pages each attempt may still change (packed, shaded, trimmed, encoded or measured for
+# their coding). Measured on 10 October 2026 with the pages kept packed (FaxFrames) and the shading drawn a page at
+# a time: 100 synthetic Letter pages peaked at 354 MB (1,521 MB before), about 2.7 MB a page. A longer fax goes
+# exactly as it is, and its Sent details say why (``too_long_sentence``); it is never refused.
+MAX_OPTIMIZED_PAGES = 150
+# Added for each page of the document being drawn (``ghostscript_timeout``). Measured on 10 October 2026: 100
+# synthetic text pages took 1.2 seconds to draw as a fax image; scanned pages take longer, so one second a page.
+GHOSTSCRIPT_SECONDS_PER_PAGE = 1
 SUPPORTED_TIFF_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "CMYK"})
+
+
+def too_long_sentence(pages: int) -> str:
+    """Why a fax's pages went as they are: it is longer than ``MAX_OPTIMIZED_PAGES``."""
+    return (f"The pages went as they are, because Faxbot changes pages only on faxes of up to "
+            f"{MAX_OPTIMIZED_PAGES} pages (this one has {pages}).")
+
+
+def document_page_count(path) -> Optional[int]:
+    """Pages of a fax PDF (validated) or fax image (its page headers only), or None when it cannot be read."""
+    try:
+        with open(path, "rb") as handle:
+            pdf = handle.read(5) == b"%PDF-"
+    except OSError:
+        return None
+    if pdf:
+        return count_pdf_pages(str(path))
+    try:
+        with Image.open(path) as image:
+            return int(getattr(image, "n_frames", 1))
+    except (OSError, ValueError):
+        return None
+
+
+_GHOSTSCRIPT = threading.BoundedSemaphore(GHOSTSCRIPT_SLOTS)
+
+
+class TooLargeToFax(Exception):
+    """The fax image a document became is larger than its limit (``fax_image_limit``)."""
+
+
+@contextmanager
+def ghostscript_slot():
+    """Hold one of the ``GHOSTSCRIPT_SLOTS`` while one Ghostscript run draws; never held across two runs."""
+    with _GHOSTSCRIPT:
+        yield
+
+
+def fax_image_limit(pages: int) -> int:
+    """Bytes the fax image of a ``pages``-page document may take (at most ``MAX_FAX_IMAGE_BYTES``)."""
+    return min(MAX_FAX_IMAGE_BYTES, max(MAX_OUTPUT_BYTES, FAX_IMAGE_BYTES_PER_PAGE * max(0, int(pages))))
+
+
+def ghostscript_timeout(pages: int) -> int:
+    """Seconds Ghostscript may take to draw a document of ``pages`` pages: the base, plus a second a page."""
+    return GHOSTSCRIPT_TIMEOUT_SECONDS + GHOSTSCRIPT_SECONDS_PER_PAGE * max(0, int(pages))
 
 
 class DocumentConversionError(Exception):
@@ -52,7 +123,7 @@ def _check_file_size(path: str, *, limit: int = MAX_DOCUMENT_BYTES) -> None:
 
 
 @contextmanager
-def _atomic_output(output_path: str):
+def _atomic_output(output_path: str, *, limit: Optional[int] = None):
     """Only publish a complete artifact, leaving prior output intact on failure."""
     temporary = None
     try:
@@ -62,7 +133,7 @@ def _atomic_output(output_path: str):
         )
         os.close(fd)
         yield temporary
-        _check_file_size(temporary, limit=MAX_OUTPUT_BYTES)
+        _check_file_size(temporary, limit=MAX_OUTPUT_BYTES if limit is None else limit)
         os.replace(temporary, output_path)
     except DocumentConversionError:
         raise
@@ -435,18 +506,22 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
     executable = shutil.which("gs")
     if executable is None:
         raise DocumentConversionError("PDF rasterization is unavailable.", operational=True)
-    with _atomic_output(tiff_path) as temporary:
+    limit = fax_image_limit(pages)
+    with _atomic_output(tiff_path, limit=MAX_FAX_IMAGE_BYTES) as temporary:
         arguments = [
             executable, "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-dPDFSTOPONERROR",
             "-sDEVICE=tiffg4", "-r204x196", f"-sOutputFile={temporary}",
             "-f", str(Path(pdf_path).resolve()),
         ]
         try:
-            subprocess.run(
-                arguments, check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            _check_file_size(temporary, limit=MAX_OUTPUT_BYTES)
+            with ghostscript_slot():
+                subprocess.run(
+                    arguments, check=True, timeout=ghostscript_timeout(pages),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            if Path(temporary).stat().st_size > limit:
+                raise TooLargeToFax()
+            _check_file_size(temporary, limit=limit)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
                 warnings.filterwarnings("error", category=UserWarning, module=r"PIL\.TiffImagePlugin")
@@ -462,6 +537,9 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
                 if standard is not None:
                     _write_frames(standard, temporary)
             os.chmod(temporary, FAX_IMAGE_MODE)
+        except TooLargeToFax:
+            # The document itself is too large, not a failure of the server: said plainly, never retried.
+            raise DocumentConversionError(TOO_LARGE_TO_FAX.format(size=limit // (1024 * 1024))) from None
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None
     return pages, tiff_path
@@ -510,22 +588,90 @@ def fax_page_bits(tiff_path: str) -> Optional[Tuple[int, ...]]:
 
 # Dense pages (pages/): several original pages on one long fax page, and back ---------------------------------
 
+class FaxFrames(Sequence):
+    """The pages of a fax image, kept packed at one bit a pixel; each page is a mode "1" image only while it is used.
+
+    Pillow holds a mode "1" image at one byte a pixel, about 3.9 MB for a Letter page at fine resolution, so a list
+    of a long fax's pages took gigabytes. Packed, the same page takes about 470 KB. Indexing makes a fresh image
+    with the page's resolution (changing it does not change the stored page); iteration makes one page at a time.
+    """
+
+    __slots__ = ("_pages",)
+
+    def __init__(self, images=()):
+        self._pages = []
+        for image in images:
+            self.append(image)
+
+    def append(self, image):
+        if image.mode != "1":
+            raise ValueError("Fax frames are one-bit")
+        dpi = tuple(float(value) for value in image.info.get("dpi", (0, 0)))
+        self._pages.append((image.size, dpi, image.tobytes()))
+
+    def __len__(self):
+        return len(self._pages)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            found = FaxFrames()
+            found._pages = self._pages[index]
+            return found
+        size, dpi, packed = self._pages[index]
+        image = Image.frombytes("1", size, packed)
+        image.info["dpi"] = dpi
+        return image
+
+    def __add__(self, other):
+        found = FaxFrames()
+        found._pages = list(self._pages)
+        if isinstance(other, FaxFrames):
+            found._pages += other._pages
+        else:
+            for image in other:
+                found.append(image)
+        return found
+
+    def __mul__(self, count):
+        found = FaxFrames()
+        found._pages = self._pages * int(count)
+        return found
+
+    def __radd__(self, other):
+        found = FaxFrames(other)
+        found._pages += self._pages
+        return found
+
+    def __setitem__(self, index, image):
+        if image.mode != "1":
+            raise ValueError("Fax frames are one-bit")
+        dpi = tuple(float(value) for value in image.info.get("dpi", (0, 0)))
+        self._pages[index] = (image.size, dpi, image.tobytes())
+
+    def sizes(self):
+        """(width, height) of every page, without making any image."""
+        return [size for size, _, _ in self._pages]
+
+    def packed(self, index):
+        """The page's packed rows (Pillow's mode "1" raw bytes), without making an image."""
+        return self._pages[index][2]
+
+
 def read_fax_frames(tiff_path: str):
-    """Every frame of a fax TIFF as a separate mode "1" image with its resolution, or None when a frame is
-    not one-bit (then it is not a fax image Faxbot can pack or split)."""
-    _check_file_size(tiff_path, limit=MAX_OUTPUT_BYTES)
+    """Every frame of a fax TIFF as a mode "1" image with its resolution (``FaxFrames``: packed, one page made at a
+    time), or None when a frame is not one-bit (then it is not a fax image Faxbot can pack or split)."""
+    _check_file_size(tiff_path, limit=MAX_FAX_IMAGE_BYTES)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             warnings.filterwarnings("error", category=UserWarning, module=r"PIL\.TiffImagePlugin")
             with Image.open(tiff_path) as image:
-                frames = []
+                frames = FaxFrames()
                 for frame in _tiff_frames(image):
                     if frame.mode != "1":
                         return None
-                    copy = frame.copy()
-                    copy.info["dpi"] = tuple(float(value) for value in frame.info.get("dpi", (0, 0)))
-                    frames.append(copy)
+                    frame.info["dpi"] = tuple(float(value) for value in frame.info.get("dpi", (0, 0)))
+                    frames.append(frame)
         return frames or None
     except DocumentConversionError:
         raise
@@ -592,7 +738,7 @@ def _write_frames(frames, path: str) -> None:
 
 def write_fax_tiff(frames, tiff_path: str) -> int:
     """Publish mode "1" frames as a fax TIFF once they read back unchanged; returns the page count."""
-    with _atomic_output(tiff_path) as temporary:
+    with _atomic_output(tiff_path, limit=MAX_FAX_IMAGE_BYTES) as temporary:
         _write_frames(frames, temporary)
     return len(frames)
 
@@ -645,7 +791,7 @@ def frames_resolution(frames) -> str:
 
 
 def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, seal=None, recipient=None,
-                exact_raster=False, resolution=None, tools=None, usable=None):
+                exact_raster=False, resolution=None, tools=None, usable=None, memo=None, receiving=None):
     """The experimental codec's encoded pages for this attempt, as (pages, sentence[, details]), or None.
 
     ``frames`` are the pages this attempt would otherwise send (the same pages ``choose_layout`` prices as
@@ -664,16 +810,43 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
     try:
         return codec_send.attempt_pages(engine, setting, frames=frames, page_bits=frame_bits(frames), number=number,
                                         route=route, pdf_path=pdf_path, seal=seal, exact_raster=exact_raster,
-                                        resolution=resolution, tools=tools, usable=usable)
+                                        resolution=resolution, tools=tools, usable=usable, memo=memo,
+                                        receiving=receiving)
     except (CodecError, DocumentConversionError, OSError):
         import logging
         logging.getLogger(__name__).warning('Encoded pages could not be made for this attempt; it sends other pages.')
         return None
 
 
+def _with_receiving(priced, receiving):
+    """``priced`` with the receiving end's expected bill added to each known cost, for choosing only, when the owner
+    pays that end too (``routing.predict.ReceivingLeg``) and every candidate's receiving bill is known in its
+    cost's currency; otherwise ``priced`` unchanged, so no candidate is compared on a different footing."""
+    from dataclasses import replace
+    if receiving is None or not receiving.known:
+        return priced
+    legs = {key: receiving.cost(prediction.seconds) for key, prediction in priced.items()}
+    if any(leg is None or (prediction.cost is not None and prediction.cost.currency != leg.currency)
+           for leg, prediction in zip(legs.values(), priced.values())):
+        return priced
+    return {key: (prediction if prediction.cost is None else replace(prediction, cost=prediction.cost + legs[key]))
+            for key, prediction in priced.items()}
+
+
+def _coded_sizes(pages, usable, measured):
+    """{page_bits, piece_bits} for ``pages.packing.layout_for`` on a call with error correction: each original's
+    measured bits in the coding the call would use for the pages as they are, and what one band adds in it."""
+    from .pages import coding as codings
+    from .pages import packing
+    name = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
+                               negotiate=usable.left_out.get("JBIG") == codings.JBIG_NOT_ON_RECORD).priced
+    piece = codings.measure([packing.piece_frame(pages)], codings=(name,), tuning=usable.tuning)[name][0]
+    return {"page_bits": tuple(measured[name]), "piece_bits": piece}
+
+
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
                   boundary_seconds=None, predict=None, describe_dense=None, usable=None, measure_cache=None,
-                  renderings=None, faster=None):
+                  renderings=None, faster=None, receiving=None, memo=None):
     """Price every way these pages may go and keep exactly one (``pages.decision.choose``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
@@ -688,7 +861,15 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
 
     ``usable`` (``pages.coding.Usable``, Faxbot's own engines only): each candidate's codings are measured on its
     own pages (kept in ``measure_cache`` with the attempt's files) and it is priced with the smallest coding the
-    call may use, so the layout, the rendering and the coding are chosen together.
+    call may use, so the layout, the rendering and the coding are chosen together. Without ``usable`` (a provider
+    draws the pages, so Faxbot does not choose the coding) and with encoded pages among the candidates, each
+    candidate's MH, MR and MMR sizes are measured on its own pages (kept in ``memo``, the codec's own measurements),
+    so the predictor prices the coding it expects for the call from its real size: encoded pages do not follow the
+    fixed ratio to MMR that ordinary pages roughly do (live pilot LC-P003, 2026-10-10).
+
+    ``receiving`` (``routing.predict.ReceivingLeg``): when the receiving end is one of your own trunk numbers, its
+    expected bill over each candidate's time on the line is added to that candidate's price for the choice (the
+    owner pays both ends); the returned predictions stay the sending route's own.
 
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
     {layout: Prediction} of the pages as they are, ``codec``: what ``codec()`` returned when the codec was kept,
@@ -699,19 +880,29 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     """
     from .pages import coding as codings
     from .pages import decision, fidelity, packing
-    pieces = {("as_is", "normal"): (list(frames), None, None, fidelity.UNCHANGED.rank)}
-    sources = [("as_is", list(frames), fidelity.UNCHANGED.rank)]
+    # The pages stay as given (FaxFrames keeps a long fax's pages packed); nothing is copied.
+    pieces = {("as_is", "normal"): (frames, None, None, fidelity.UNCHANGED.rank)}
+    sources = [("as_is", frames, fidelity.UNCHANGED.rank)]
     for name, (pages, found) in (renderings or {}).items():
         if name not in ("screened", "whitened") or not pages or len(pages) != len(frames):
             raise ValueError("Unknown rendering")
-        sources.append((name, list(pages), found.rank))
-        pieces[(name, "normal")] = (list(pages), None, None, found.rank)
+        sources.append((name, pages, found.rank))
+        pieces[(name, "normal")] = (pages, None, None, found.rank)
+    measured_pages = {}
+
+    def measured_for(key, pages):
+        if key not in measured_pages:
+            measured_pages[key] = (codings.measure_cached(pages, measure_cache, tuning=usable.tuning)
+                                   if measure_cache is not None else codings.measure(pages, tuning=usable.tuning))
+        return measured_pages[key]
     if dense_allowed:
         for name, pages, faithful in sources:
             try:
-                layout = packing.layout_for(pages, limit)
+                coded = (_coded_sizes(pages, usable, measured_for((name, "normal"), pages))
+                         if usable is not None and usable.ecm else {})
+                layout = packing.layout_for(pages, limit, **coded)
                 if layout.pages < len(pages):
-                    packed = packing.render(pages, layout)
+                    packed = FaxFrames(packing.render_sheets(pages, layout))
                     reason = describe_dense(len(pages), len(packed)) if describe_dense else None
                     pieces[(name, "dense")] = (packed, reason, None, faithful)
             except packing.NotPackable:
@@ -719,17 +910,21 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     if codec is not None:
         encoded = codec(frames)
         if encoded and encoded[0]:
-            pieces[("as_is", "codec")] = (list(encoded[0]), encoded[1], encoded, fidelity.UNCHANGED.rank)
+            pieces[("as_is", "codec")] = (encoded[0], encoded[1], encoded, fidelity.UNCHANGED.rank)
     keys = list(pieces)
     choices, shapes = {}, {}
+    unchosen = usable is None and any(key[1] == "codec" for key in keys)
     for key in keys:
         pages = pieces[key][0]
         if usable is None:
+            measured = None
+            if unchosen:
+                from .codec.decision import unchosen_measured
+                measured = unchosen_measured(pages, memo)
             shapes[key] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), key[1],
-                                         boundary_seconds)
+                                         boundary_seconds, measured=measured)
             continue
-        measured = (codings.measure_cached(pages, measure_cache, tuning=usable.tuning) if measure_cache is not None
-                    else codings.measure(pages, tuning=usable.tuning))
+        measured = measured_for(key, pages)
         choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
                                      negotiate=usable.left_out.get('JBIG') == codings.JBIG_NOT_ON_RECORD)
         choices[key] = choice
@@ -739,8 +934,9 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
                                      boundary_seconds, measured=measured, coding=choice.priced)
     priced = dict(zip(keys, decision.price_all(route, destination, [shapes[key] for key in keys], card=card,
                                                predict=predict)))
-    candidates = [decision.Candidate(key[0], key[1], priced[key], shapes[key], pieces[key][3],
-                                     decision.bill(priced[key], card=card, route=route)) for key in keys]
+    ranked = _with_receiving(priced, receiving)
+    candidates = [decision.Candidate(key[0], key[1], ranked[key], shapes[key], pieces[key][3],
+                                     decision.bill(ranked[key], card=card, route=route)) for key in keys]
     chosen, quicker = decision.choose(candidates, faster=faster)
     key = (chosen.rendering, chosen.layout)
     # The layout's saving is against the same rendering's normal pages, and the rendering's against the pages as they
@@ -755,7 +951,13 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
         if before is not None and after is not None:
             rendered = (sum(before), sum(after))
     pages, reason, details, _ = pieces[key]
-    return {"layout": chosen.layout, "pages": pages, "reason": reason,
+    # Every candidate as it was priced (``pages.sending``'s frontier for comparing accounts): its pages, shape,
+    # prediction, coding and fidelity rank. Read-only; the kept one is the one above.
+    priced_candidates = [{"rendering": name, "layout": layout, "pages": pieces[(name, layout)][0],
+                          "shape": shapes[(name, layout)], "prediction": priced[(name, layout)],
+                          "coding": choices.get((name, layout)), "faithful": pieces[(name, layout)][3]}
+                         for name, layout in keys]
+    return {"layout": chosen.layout, "pages": pages, "reason": reason, "candidates": priced_candidates,
             "seconds_saved": max(0, seconds) if seconds is not None else None,
             "predictions": {layout: prediction for (name, layout), prediction in priced.items() if name == "as_is"},
             "codec": details, "coding": choices.get(key),

@@ -84,7 +84,7 @@ def _secret(engine, seal, number):
 
 
 def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path, seal=None, exact_raster=False,
-                  resolution='fine', tools=None, usable=None):
+                  resolution='fine', tools=None, usable=None, memo=None, receiving=None):
     """``AttemptPages`` when the codec's own check (``decision.choose``) says encoded pages save on ``route``,
     else None. Writes nothing.
 
@@ -107,24 +107,29 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
         document, route_key=route, destination=number, pages_original=len(frames), page_bits_original=page_bits,
         exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
         provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
-        picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames)
+        picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames,
+        capacity=setting.get('decoder') == 'capacity', memo=memo, receiving=receiving)
     if not choice.use:
         log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
         return None
     row = {
         'phone_number': number, 'provider_id': route, 'layout': choice.layout,
         'resolution': choice.resolution, 'fec': choice.fec, 'pages_original': max(1, len(frames)),
+        # Format 2 for the capacity layout (codec/capacity.py), format 1 for the others.
+        'format_version': 2 if choice.layout == 'capacity' else FORMAT_VERSION,
         'pages_encoded': choice.pages_encoded,
         'seconds_original': _whole(getattr(choice.original, 'seconds', None)),
         'seconds_encoded': _whole(getattr(choice.encoded, 'seconds', None)),
         'cost_original_micros': _micros(getattr(choice.original, 'cost', None)),
         'cost_encoded_micros': _micros(getattr(choice.encoded, 'cost', None)),
-        'currency': _currency(choice.original), 'basis': (getattr(choice.encoded, 'basis', None) or None),
-        'document_sha256': document.sha256, 'encrypted': 1 if secret else 0, 'format_version': FORMAT_VERSION,
+        # What the receiving end pays (or that it is unknown) first, so the 300-character cut never drops it.
+        'currency': _currency(choice.original), 'basis': ' '.join(part for part in (
+            choice.receiving, getattr(choice.encoded, 'basis', None)) if part) or None,
+        'document_sha256': document.sha256, 'encrypted': 1 if secret else 0,
     }
     if row['basis'] is not None:
         row['basis'] = str(row['basis'])[:300]
-    return AttemptPages(list(choice.pages.pages), choice.sentence, row)
+    return AttemptPages(choice.pages.pages, choice.sentence, row)  # packed (conversion.FaxFrames)
 
 
 def record_attempt(engine, job_id, row, now):

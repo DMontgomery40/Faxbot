@@ -12,9 +12,10 @@ trunk = typer.Typer(help='Your own phone line for faxing, to a phone carrier or 
                          'recent calls.', no_args_is_help=True)
 
 TRANSPORTS = {'tls': 'Encrypted (TLS)', 'tcp': 'TCP', 'udp': 'UDP'}
-KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system'}
+KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system', 'analog_line': 'Analog line gateway'}
 SIGN_IN = {'registration': 'Username and password', 'ip': 'IP address'}
-NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it'}
+NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it',
+                  'local_area': 'Ten digits for local numbers, 1 and ten digits for others'}
 # Several trunks: which trunk account a command is about (its key from 'faxbot delivery providers accounts list').
 ACCOUNT = typer.Option(None, '--account', metavar='KEY',
                        help="Which trunk, by its key from 'faxbot delivery providers accounts list'; the first trunk when left "
@@ -422,11 +423,14 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
                                                              "address (IP Office, or Aura Session Manager)."),
               port: int = typer.Option(None, '--port', min=1, max=65535, help="The carrier's port, when not the usual one."),
               transport: str = typer.Option(None, '--transport', help='How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.'),
-              number_format: str = typer.Option(None, '--number-format', metavar='e164|local',
-                                                help='How numbers are dialed: e164 (international format, +44...) or '
-                                                     'local (as a phone at your site dials them).'),
+              number_format: str = typer.Option(None, '--number-format', metavar='e164|local|local_area',
+                                                help='How numbers are dialed: e164 (international format, +44...), '
+                                                     'local (as a phone at your site dials them), or on an analog '
+                                                     'line local_area (ten digits for numbers in its local calling '
+                                                     'area, 1 and ten digits for others).'),
               prefix: str = typer.Option(None, '--prefix', help='Outside-line digits before a number dialled '
-                                                                 'as a phone here dials it, such as 9.')):
+                                                                 'as a phone here dials it, such as 9; on an analog '
+                                                                 'line, *70 turns call waiting off for the call.')):
     """Choose a carrier or phone system preset for the SIP trunk and save its settings; then connect it with faxbot delivery providers trunk apply.
 
     A phone system recognizes Faxbot by its IP address, so it needs no username or password.
@@ -452,7 +456,7 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
     if number_format is not None:
         if number_format not in chosen['dial_formats']:
             raise typer.BadParameter(f"{chosen['label']} takes no number format choice."
-                                     if not chosen['dial_formats'] else 'Use e164 or local.',
+                                     if not chosen['dial_formats'] else f"Use {' or '.join(chosen['dial_formats'])}.",
                                      param_hint='--number-format')
         changes['sip_trunk_dial_format'] = number_format
     if prefix is not None:
@@ -460,7 +464,7 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
     result = write_settings(api, changes, current=current)
 
     def human(out):
-        kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'
+        kind = {'phone_system': 'phone system', 'analog_line': 'analog line gateway'}.get(chosen['kind'], 'carrier')
         out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot delivery providers trunk apply to connect it.")
     state.out().result({'preset': preset, 'changed': bool(result.get('changed'))}, human)
 
@@ -514,3 +518,24 @@ def send_only_remove(number: str = typer.Argument(..., metavar='NUMBER', help='T
     if number.strip() not in current:
         raise CliError(f'{number.strip()} is not one of your send-only numbers.')
     _save_send_only([item for item in current if item != number.strip()])
+
+
+# The caller-ID commands (countries.py) hang off this group; importing it registers them.
+from . import countries as _countries  # noqa: E402,F401
+
+# The answer cap per trunk (routing/stations.py): see or change it with faxbot delivery providers trunk answer-cap.
+from .stations import answer_cap as _answer_cap  # noqa: E402
+
+trunk.command('answer-cap')(_answer_cap)
+
+# An analog line through a gateway (routing/analog.py): its local calling area and prices.
+from .analog import analog as _analog  # noqa: E402
+trunk.add_typer(_analog, name='analog-line')
+
+# Faxbot as the fax annex behind a Teams Direct Routing SBC (N21).
+from .teams_annex import teams_annex as _teams_annex  # noqa: E402
+trunk.command('teams-annex')(_teams_annex)
+from .teams_annex import copiers as _copiers  # noqa: E402
+trunk.command('copiers')(_copiers)
+from .teams_annex import caller_check as _caller_check  # noqa: E402
+trunk.add_typer(_caller_check, name='caller-check')

@@ -75,9 +75,15 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
     assert response.status_code == 200
     presets = {preset['id']: preset for preset in response.json()['presets']}
     assert set(presets) == {'telnyx', 'signalwire', 'sinch', 'anveo', 'flowroute', 'gamma', 'bt-one-voice',
-                            'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'custom'}
+                            'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'swisscom-sbc',
+                            'telekom-companyflex', 'ntt-hikari', 'grandstream-ht813', 'grandstream-gxw410x',
+                            'patton-smartnode-fxo', 'audiocodes-mp11x-fxo', 'teams-sbc-audiocodes', 'teams-sbc-ribbon',
+                            'teams-sbc-oracle', 'teams-sbc-anynode', 'custom'}
+    assert (presets['swisscom-sbc']['encrypted_audio_only'], presets['swisscom-sbc']['media_encryption'],
+            presets['telekom-companyflex']['access_rule']) == (True, 'sdes', 'telekom')
     assert presets['anveo']['auth_modes'] == ['ip'] and presets['signalwire']['needs_host'] is True
-    assert all(source['read_on'] == '2026-10-03' for preset in presets.values() for source in preset['sources'])
+    assert all('2026-10-03' <= source['read_on'] <= '2026-10-31' for preset in presets.values()
+               for source in preset['sources'])
 
 
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
@@ -306,7 +312,9 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('POST', '/admin/sip/telnyx/numbers/{number}/name-lookup-off'): [('providers:write', True)],
                         # Send-only numbers (WP-T): read with the trunk, saved like the reply number.
                         ('GET', '/admin/sip/send-only'): [('providers:read', False)],
-                        ('PUT', '/admin/sip/send-only'): [('settings:write', False)]}
+                        ('PUT', '/admin/sip/send-only'): [('settings:write', False)],
+                        # Copiers that fax over the network (N22): read with the trunk.
+                        ('GET', '/admin/sip/copiers'): [('providers:read', False)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):

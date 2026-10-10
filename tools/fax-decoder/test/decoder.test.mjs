@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError } from '../decoder.js';
+import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError, RESIZED, PREVIEW } from '../decoder.js';
 
 const folder = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const expected = JSON.parse(readFileSync(join(folder, 'expected.json'), 'utf8'));
@@ -64,3 +64,32 @@ test('a forged header that claims a huge stream is refused before anything is al
   view.setUint32(18, 2000); view.setUint32(14, 9); // the real size of a 2,000-byte container at parity 32
   assert.notEqual(decodeHeaderForTest(header), null);
 });
+
+test('a header of a newer format, layout or capacity profile is refused as made by a newer Faxbot', async () => {
+  const { decodeHeaderForTest, NEWER } = await import('../decoder.js');
+  const header = new Uint8Array(32);
+  header.set([0x46, 0x58, 0x50, 1, 6, 32]);
+  assert.equal(decodeHeaderForTest(header), NEWER);
+  header[3] = 2; header[4] = 1;
+  assert.equal(decodeHeaderForTest(header), NEWER);
+  header[3] = 1; header[4] = 5; header[30] = 7; header[31] = 9;
+  assert.equal(decodeHeaderForTest(header), NEWER);
+});
+
+// What receivers do to a page (api/tests/codec_receipts.py): the browser reads what the Python reader reads, and
+// refuses what it refuses, with the browser's own sentence. make_fixtures.py checked each against the Python reader.
+const refusals = { resized: RESIZED, preview: PREVIEW };
+for (const [name, expect] of Object.entries(expected.receipts)) {
+  if (expect === 'decodes') {
+    test(`decodes ${name} as the Python reader does`, async () => {
+      const result = await decodeFiles([file(name)]);
+      assert.equal(result.sha256, expected.sha256);
+      assert.equal(result.pagesRead, result.pagesExpected);
+    });
+  } else {
+    test(`refuses ${name} with the ${expect} sentence`, async () => {
+      await assert.rejects(decodeFiles([file(name)]), (error) => error instanceof DecodeError
+        && error.message === refusals[expect]);
+    });
+  }
+}

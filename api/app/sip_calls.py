@@ -49,12 +49,30 @@ NOT_A_FAX = 'The call connected but the other end did not answer as a fax machin
 # fax takes no other route by itself (``outbound_store.NO_FALLBACK_CATEGORIES``) and a person checks the number.
 PERSON_ANSWERED = 'person_answered'
 PERSON = 'A person answered, not a fax machine; Faxbot did not call again.'
+# The number answered as a fax machine Faxbot did not expect there, and the station check refused it before any
+# page (asterisk patch 0007, routing/stations.py, research N5). No other route takes it; a person checks the number.
+WRONG_STATION = 'wrong_station'
+STATION = 'The number answered as another fax machine, so Faxbot hung up before any page.'
+# The far end answered and hung up within ``QUICK_CLEAR_SECONDS`` whole seconds of the answer, with no page and no
+# fax machine heard (live pilot LC-P004, 2026-10-10: HP's toll-free test line answered, Telnyx saw NORMAL_CLEARING
+# 1 s later, HylaFAX reported E002). That is a service turning the call away (overloaded or refusing it), not a
+# person: a person picks up, hears the calling tone and only then hangs up, and the calling tone's first burst alone
+# is 0.5 s (spandsp modem_connect_tones.c: CNG is 0.5 s of 1100 Hz then 3.0 s of silence, repeating). Nor could a
+# fax machine have answered yet: its answer tone begins after 0.2 s of silence and lasts 2.6 to 4 s, then 75 ms of
+# silence, before its first fax message and that message's 1 s preamble (the same file, MODEM_CONNECT_TONES_ANS;
+# T.30's V.21 preamble), so no fax message can arrive within about 3.9 s of the answer. It is a definite failure before any
+# fax data: no category, so another route or a later try may take it, and no Work item. Asterisk's answer and end
+# times are whole seconds, so 2 means under 3 s of real time.
+CLEARED_AT_ONCE = 'cleared_at_once'
+CLEARED = 'The number answered and hung up at once; its fax service may be busy.'
+QUICK_CLEAR_SECONDS = 2
 # Verdicts for an answered call that delivered no fax. The no-data ones mean the
 # network path failed; the other two mean the network carried the call.
 NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
 # A received fax whose image Asterisk stored but could not hand to Faxbot.
 NOT_HANDED_OVER = 'not_handed_over'
-VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED}
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED,
+                                WRONG_STATION, CLEARED_AT_ONCE}
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
@@ -143,11 +161,20 @@ def verdict(event):
         return None
     if str(event.get('Status') or '').strip().upper() == 'SUCCESS':
         return None
+    if str(event.get('CsiCheck') or '').strip() == 'refused':
+        return WRONG_STATION
+    if str(event.get('T0Capped') or '').strip() == '1':
+        # Faxbot ended the call when no fax answered within the cap (patch 0007): the same as spandsp's own T0
+        # running out with the line still open, never a person who hung up.
+        event = {**event, 'Error': 'Timed out waiting for initial communication', 'Error64': '', 'Status64': ''}
     if (_pages(event.get('Pages')) or 0) > 0 or _station(event.get('Station64')):
         return 'remote_fax_failed'
     mode = str(event.get('Mode') or '').strip().lower()
     received = _count(event.get('RtpRx')) if mode != 't38' else None
     reasons = {_decoded(event.get('Error64'), event.get('Error')).lower(), _decoded(event.get('Status64')).lower()}
+    if reasons & _HUNG_UP and _cleared_at_once(_seconds(_epoch(event.get('Answered')), _epoch(event.get('Ended')))):
+        # The far end hung up within seconds of answering: turned away, not a person (CLEARED_AT_ONCE).
+        return CLEARED_AT_ONCE
     if received == 0:
         return 'no_media_back'
     if received is not None:
@@ -183,6 +210,9 @@ def engine_verdict(record, heard=None):
         return None
     if (record['pages'] or 0) > 0 or record['remote_station_id']:
         return 'remote_fax_failed'
+    if _ENGINE_HUNG_UP.search(record['error_cause'] or '') and _cleared_at_once(record.get('connected_seconds')):
+        # E002 within seconds of the answer: the far end turned the call away, not a person (CLEARED_AT_ONCE).
+        return CLEARED_AT_ONCE
     audio = record['t38'] != 'yes'
     if audio and heard is False:
         return 'no_media_back'
@@ -208,9 +238,16 @@ def freeswitch_verdict(status, pages, station, text, audio_in):
     return PERSON_ANSWERED if type(audio_in) is int and audio_in > 0 else None
 
 
+def _cleared_at_once(seconds):
+    """Whether a call's connected time (whole seconds, None when unknown) is short enough that the far end turned
+    it away rather than a person answering (``CLEARED_AT_ONCE``)."""
+    return type(seconds) is int and 0 <= seconds <= QUICK_CLEAR_SECONDS
+
+
 def category_for(found):
-    """The attempt's error category for a call verdict: ``person_answered`` (never another route), else None."""
-    return PERSON_ANSWERED if found == PERSON_ANSWERED else None
+    """The attempt's error category for a call verdict: ``person_answered`` or ``wrong_station`` (never another
+    route), else None."""
+    return found if found in (PERSON_ANSWERED, WRONG_STATION) else None
 
 
 def verdict_sentence(found):
@@ -260,6 +297,10 @@ def _sentence(found, reason=''):
         return NOT_A_FAX
     if found == PERSON_ANSWERED:
         return PERSON
+    if found == CLEARED_AT_ONCE:
+        return CLEARED
+    if found == WRONG_STATION:
+        return STATION
     if found == 'remote_fax_failed':
         reason = reason.strip().rstrip('.')
         return (f'The other fax machine answered but the fax failed: {reason}.' if reason
@@ -646,8 +687,9 @@ class SipCallRecords:
                 row = self._outbound_row(connection, table, job_id, attempt_id, now)
                 changes = {'disposition': disposition, 'answered_at': row['answered_at'] or answered,
                            'ended_at': row['ended_at'] or ended}
-                changes['connected_seconds'] = _seconds(changes['answered_at'], changes['ended_at']) or (
-                    0 if not answered else None)
+                # A call answered and ended within the same second connected for 0 seconds, not an unknown time.
+                connected = _seconds(changes['answered_at'], changes['ended_at'])
+                changes['connected_seconds'] = connected if connected is not None else (0 if not answered else None)
                 if row['t38'] == 'unknown':
                     changes['t38'] = t38
                 kept = row['error_cause'] if row['fax_status'] is None else None

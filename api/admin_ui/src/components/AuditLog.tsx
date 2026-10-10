@@ -1,4 +1,4 @@
-// System → Audit log: who did what in Faxbot, newest first, from GET /access/audit.
+// Administration → Audit log: who did what in Faxbot, newest first, from GET /access/audit.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Chip, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Table, TableBody,

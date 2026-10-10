@@ -593,10 +593,10 @@ def recurring(account_label, explained, *, look_back=RECUR_LOOK_BACK, times=RECU
     if sign > 0:
         text = (f'Your {account_label} invoices were more than your faxes explain in {periods} ({amounts}). Look on '
                 'the invoice for a charge Faxbot does not know about, such as a number fee, taxes or a plan change, '
-                f"and add it to {account_label}'s prices under Costs → Prices & plans.")
+                f"and add it to {account_label}'s prices under Savings & optimization → Prices & plans.")
     else:
         text = (f'Your {account_label} invoices were less than Faxbot attributes to your faxes in {periods} '
-                f"({amounts}). Check {account_label}'s prices under Costs → Prices & plans; they may be higher "
+                f"({amounts}). Check {account_label}'s prices under Savings & optimization → Prices & plans; they may be higher "
                 f'than what {account_label} charges you.')
     return {'account_key': same[-1]['invoice']['account_key'], 'direction': 'more' if sign > 0 else 'less',
             'invoices': [item['invoice']['id'] for item in same], 'text': text}

@@ -76,7 +76,7 @@ def record_first_send_warning(engine, job_id, answer):
 
 
 def accept_generated_fax(runtime, access, actor, revision, *, to_number, document, file_name, pages, job_id=None,
-                         case_packet=False):
+                         case_packet=False, after=None):
     """Write the document beside other fax artifacts and accept it; returns the fax id.
 
     ``job_id`` (32 hex characters) lets a caller name the fax in advance, so it
@@ -84,7 +84,8 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
     already queued returns its ID and changes nothing: no file is written or
     removed and no second fax is made. The organization's sending rules decide
     its route envelope exactly as for POST /fax (``routing.rules_acceptance``);
-    ``case_packet`` marks a case packet for them.
+    ``case_packet`` marks a case packet for them. ``after(connection, now, job_id)`` runs last in the same
+    acceptance transaction (a route test pins its account there, ``route_families_http``); raising refuses the fax.
     """
     profile_id = revision.profile_id('outbound')
     if profile_id is None:
@@ -121,9 +122,10 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
         rules = recorder_for(runtime.manager.store.engine, revision, actor, job_id=job_id, destination=to_number,
                              pages=pages, document_path=pdf, case_packet=case_packet,
                              control=getattr(access, 'control', None))
+        also = rules if after is None else (lambda connection, at: (rules(connection, at), after(connection, at, job_id)))
         access.outbound.accept(actor, revision, {
             'id': job_id, 'to_number': to_number, 'file_name': file_name, 'tiff_path': tiff, 'status': 'queued',
-            'pages': pages, 'created_at': now, 'updated_at': now}, also=rules)
+            'pages': pages, 'created_at': now, 'updated_at': now}, also=also)
         record_first_send_warning(runtime.manager.store.engine, job_id, warning)
     except BaseException:
         for path in written:

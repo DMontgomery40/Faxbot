@@ -1,4 +1,4 @@
-// Recipients → Case packets: the documents one recipient was sent for a case, where each stands
+// Faxes → Case packets: the documents one recipient was sent for a case, where each stands
 // (delivered, acknowledged, too old, not found by them), and what a person records about them.
 import { useState } from 'react';
 import {

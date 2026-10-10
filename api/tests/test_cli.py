@@ -182,7 +182,8 @@ def test_each_area_lists_the_commands_of_its_console_pages():
     assert _listed('delivery') == [
         'numbers', 'mailboxes', 'blocked', 'identity', 'email', 'connectors', 'providers', 'rules']
     assert _listed('delivery', 'numbers') == [
-        'list', 'add', 'update', 'explain', 'advice', 'dependencies', 'move', 'forwarded-trust']
+        'list', 'add', 'update', 'explain', 'advice', 'dependencies', 'closures', 'import-closures', 'line-notice', 'move',
+        'forwarded-trust']
     assert 'rules' not in _listed('delivery', 'providers') and 'trunk' in _listed('delivery', 'providers')
     assert 'cases' not in _listed('recipients') and 'partners' in _listed('recipients')
     assert _listed('admin')[:9] == [
@@ -232,6 +233,16 @@ def test_hidden_names_are_exactly_the_older_names_in_the_alias_table():
     (('access', 'users', 'list'), ('admin', 'access', 'users', 'list')),
     (('system', 'settings', 'set'), ('admin', 'settings', 'set')),
     (('system', 'migrate'), ('admin', 'migrate')),
+    # Research wave 3 commands, moved from where their builders first registered them.
+    (('providers', 'rules', 'destinations', 'list'), ('delivery', 'providers', 'destinations', 'list')),
+    (('providers', 'trunk', 'register-sender'), ('recipients', 'register-sender')),
+    (('providers', 'trunk', 'registered-senders'), ('recipients', 'registered-senders')),
+    (('providers', 'trunk', 'unregister-sender'), ('recipients', 'unregister-sender')),
+    (('providers', 'trunk', 'sender-evidence'), ('faxes', 'sent', 'sender-evidence')),
+    (('numbers', 'move', 'closures'), ('delivery', 'numbers', 'closures')),
+    (('numbers', 'move', 'import-closures'), ('delivery', 'numbers', 'import-closures')),
+    (('numbers', 'move', 'notice'), ('delivery', 'numbers', 'line-notice')),
+    (('providers', 'trunk', 'caller-check', 'fax'), ('faxes', 'received', 'who-called')),
 ])
 def test_an_older_command_name_still_runs_the_command_it_names_now(older, now):
     commands = _commands(cli_app)
@@ -264,12 +275,13 @@ def test_no_help_or_hint_suggests_an_older_command_name():
     for source in sorted(cli_dir.rglob('*.py')):
         if source.name in skip:
             continue
-        for number, line in enumerate(source.read_text(encoding='utf-8').splitlines(), 1):
-            for match in re.finditer(r'faxbot((?: [a-z][a-z0-9-]*)+)', line):
-                path = command_path(match.group(1).split())
-                if path and canonical(path) != path:
-                    older.append(f'{source.relative_to(cli_dir)}:{number}: faxbot {" ".join(path)} '
-                                 f'(now faxbot {" ".join(canonical(path))})')
+        # A hint can run across two string literals ('... faxbot "\n "providers accounts list'): read them joined.
+        text = re.sub(r"""['"]\s*\n\s*f?['"]""", '', source.read_text(encoding='utf-8'))
+        for match in re.finditer(r'faxbot((?: [a-z][a-z0-9-]*)+)', text):
+            path = command_path(match.group(1).split())
+            if path and canonical(path) != path:
+                older.append(f'{source.relative_to(cli_dir)}: faxbot {" ".join(path)} '
+                             f'(now faxbot {" ".join(canonical(path))})')
     assert older == [], 'Hints that name an older command:\n' + '\n'.join(older)
 
 
@@ -956,8 +968,7 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert refused.exit_code != 0
     assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
     # The key has a console field and a setting: never sent to .env.
-    # The sentence is routing/http.py's (another lane): it still names the older command, which still works.
-    assert 'faxbot system settings set --secret telnyx_api_key' in ' '.join((refused.stdout + refused.stderr).split())
+    assert 'faxbot admin settings set --secret telnyx_api_key' in ' '.join((refused.stdout + refused.stderr).split())
     assert '.env' not in refused.stdout + refused.stderr
     assert cli('costs', 'fax', '0' * 32).exit_code != 0
 

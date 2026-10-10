@@ -1,4 +1,4 @@
-// Recipients → Case packets → Build from a checklist: the case's kept documents, the recipient's checklist,
+// Faxes → Case packets → Build from a checklist: the case's kept documents, the recipient's checklist,
 // Faxbot's picks with a reason each, the missing items, and sending only what a person checked.
 import { useCallback, useEffect, useState } from 'react';
 import {
