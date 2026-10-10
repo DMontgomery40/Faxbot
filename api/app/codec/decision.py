@@ -30,6 +30,13 @@ Where Faxbot does not choose the coding (a provider draws the pages), every
 lossless coding is still measured on the pages, so the predictor prices the
 coding it expects from that coding's measured size rather than from a fixed
 ratio to MMR, which a payload page does not follow.
+
+When the receiving end is one of this installation's own trunk numbers, the
+owner pays for that end of the call too (``routing.predict.ReceivingLeg``,
+live pilot LC-P003): its expected bill over each candidate's time on the line
+is added to the comparison, so encoded pages never save the sender less than
+they cost the receiving trunk. For any other number the explanation says what
+the receiving end pays is unknown.
 """
 from dataclasses import dataclass
 import hashlib
@@ -54,6 +61,7 @@ class Choice:
     original: object = None
     encoded: object = None
     pages: object = None
+    receiving: str | None = None  # one sentence for the explanation: what the receiving end pays, or that it is unknown
 
 
 def predictor():
@@ -81,10 +89,29 @@ def _cheaper(encoded, original):
     return a[0] < b[0]
 
 
-def saves(original, encoded, pages_original, pages_encoded):
-    """True when ``encoded`` is cheaper by the rules above."""
+def _with_leg(cost, leg):
+    """(micros, currency) of a known cost plus the receiving end's bill ``leg`` (Money), or None when either is
+    unknown or they are in different currencies."""
+    amount = _amount(cost)
+    if amount is None or leg is None or (amount[1] is not None and amount[1] != leg.currency):
+        return None
+    return amount[0] + leg.micros, leg.currency
+
+
+def saves(original, encoded, pages_original, pages_encoded, legs=(None, None)):
+    """True when ``encoded`` is cheaper by the rules above. ``legs``: what the receiving end is expected to bill
+    for the original and the encoded pages (Money), when the owner pays it too; else None."""
     if original is None or encoded is None:
         return False
+    before, after = legs
+    if before is not None and after is not None and before.currency == after.currency:
+        if original.marginal:
+            if after.micros > before.micros:
+                return False  # the plan's room saved is never worth more money on the receiving trunk
+        else:
+            total = _cheaper_total(_with_leg(encoded.cost, after), _with_leg(original.cost, before))
+            if total is not None:
+                return total
     cheaper = None if original.marginal else _cheaper(encoded.cost, original.cost)
     if cheaper is not None:
         return cheaper
@@ -95,9 +122,19 @@ def saves(original, encoded, pages_original, pages_encoded):
     return (original.seconds is not None and encoded.seconds is not None and pages_encoded < pages_original)
 
 
-def _rank(prediction):
+def _cheaper_total(encoded, original):
+    if encoded is None or original is None or encoded[1] != original[1]:
+        return None
+    return encoded[0] < original[0]
+
+
+def _rank(prediction, leg=None):
     unknown = float('inf')
     amount = None if prediction.marginal else _amount(prediction.cost)
+    if leg is not None:
+        # The owner pays the receiving end too: the money at the margin is both bills (a plan's own being its
+        # marginal cost).
+        amount = _with_leg(prediction.cost, leg)
     return (amount[0] if amount is not None else unknown,
             prediction.billed_pages if prediction.billed_pages is not None else unknown,
             prediction.seconds if prediction.seconds is not None else unknown)
@@ -138,18 +175,27 @@ def _unchosen_shape(Shape, frames, resolution, layout, memo=None):
     could not be read): each lossless coding measured on the pages themselves, so the predictor prices whichever
     coding it expects the call to use from that coding's real size. A fixed ratio to MMR would price a payload page
     (drawn so that its MH code is the payload, and larger in MMR than in MH or MR) far above what it costs."""
-    from ..pages import coding
-    measured = dict(_remember(memo, 'measured', (coding.digest(frames), 'unchosen'),
-                              lambda: coding.measure(frames, codings=UNCHOSEN_CODINGS)))
+    measured = unchosen_measured(frames, memo)
     return Shape(pages=len(frames), page_bits=tuple(measured['MMR']), resolution=resolution, layout=layout,
                  measured=measured)
+
+
+def unchosen_measured(frames, memo=None):
+    """{coding: bits of each page} in ``UNCHOSEN_CODINGS``, measured on ``frames`` once per attempt's ``memo`` (the
+    outer layout chooser reads the same measurements, ``conversion.choose_layout``)."""
+    from ..pages import coding
+    return dict(_remember(memo, 'measured', (coding.digest(frames), 'unchosen'),
+                          lambda: coding.measure(frames, codings=UNCHOSEN_CODINGS)))
 
 
 def choose(document, *, route_key, destination, pages_original, page_bits_original, exact_raster,
            ecm_and_fine_seen, provider_renders, fec='medium', style='dense', secret=None, picture=None,
            resolution='fine', encoder=None, tools=None, usable=None, frames_original=None, capacity=False,
-           memo=None):
+           memo=None, receiving=None):
     """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake.
+
+    ``receiving`` (``routing.predict.ReceivingLeg``): what the receiving end bills, added to each candidate's price
+    when the owner pays it too (one of your own trunk numbers); its sentence goes in the explanation either way.
 
     ``usable`` and ``frames_original`` let Faxbot's own engines price every layout in the coding the call can
     use. Where Faxbot does not choose the coding (a provider draws the pages), each layout is priced from its
@@ -169,6 +215,11 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         shape = Shape(pages=pages_original, page_bits=tuple(page_bits_original),
                       resolution=resolution, layout='normal')
     original = predict(route_key, destination, shape)
+
+    def leg(prediction):
+        known = receiving is not None and receiving.known and prediction is not None
+        return receiving.cost(prediction.seconds) if known else None
+    before = leg(original)
     if style == 'picture':
         candidates = [dict(layout='picture')]
     elif exact_raster and ecm_and_fine_seen:
@@ -194,14 +245,19 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         else:
             shape = _unchosen_shape(Shape, pages.pages, resolution, 'codec', memo)
         prediction = predict(route_key, destination, shape)
-        if not saves(original, prediction, pages_original, pages.page_count):
+        after = leg(prediction)
+        if not saves(original, prediction, pages_original, pages.page_count, (before, after)):
             continue
-        if best is None or _rank(prediction) < _rank(best[1]):
-            best = (options, prediction, pages)
+        if best is None or _rank(prediction, after) < _rank(best[1], best[3]):
+            best = (options, prediction, pages, after)
     if best is None:
         return Choice(False, 'Encoded pages would not save on this route, so the fax goes as normal pages.',
                       pages_original=pages_original, original=original)
-    options, prediction, pages = best
+    options, prediction, pages, _ = best
+    clause = None
+    if receiving is not None:
+        clause = receiving.clause(prediction.seconds, against=original.seconds if original is not None else None)
+        clause = clause[:1].upper() + clause[1:] + '.'
     count = pages.page_count
     sentence = (f'Sent as {count} encoded page{"s" if count != 1 else ""} instead of {pages_original} '
                 '(experimental).')
@@ -209,4 +265,4 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
                   run_limit=options.get('run_limit', 15), sturdy=options.get('sturdy', False),
                   profile=options.get('profile'),
                   pages_original=pages_original, pages_encoded=count, original=original, encoded=prediction,
-                  pages=pages)
+                  pages=pages, receiving=clause)

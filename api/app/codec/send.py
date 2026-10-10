@@ -84,7 +84,7 @@ def _secret(engine, seal, number):
 
 
 def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path, seal=None, exact_raster=False,
-                  resolution='fine', tools=None, usable=None, memo=None):
+                  resolution='fine', tools=None, usable=None, memo=None, receiving=None):
     """``AttemptPages`` when the codec's own check (``decision.choose``) says encoded pages save on ``route``,
     else None. Writes nothing.
 
@@ -108,7 +108,7 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
         exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
         provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
         picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames,
-        capacity=setting.get('decoder') == 'capacity', memo=memo)
+        capacity=setting.get('decoder') == 'capacity', memo=memo, receiving=receiving)
     if not choice.use:
         log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
         return None
@@ -122,7 +122,9 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
         'seconds_encoded': _whole(getattr(choice.encoded, 'seconds', None)),
         'cost_original_micros': _micros(getattr(choice.original, 'cost', None)),
         'cost_encoded_micros': _micros(getattr(choice.encoded, 'cost', None)),
-        'currency': _currency(choice.original), 'basis': (getattr(choice.encoded, 'basis', None) or None),
+        # What the receiving end pays (or that it is unknown) first, so the 300-character cut never drops it.
+        'currency': _currency(choice.original), 'basis': ' '.join(part for part in (
+            choice.receiving, getattr(choice.encoded, 'basis', None)) if part) or None,
         'document_sha256': document.sha256, 'encrypted': 1 if secret else 0,
     }
     if row['basis'] is not None:

@@ -791,7 +791,7 @@ def frames_resolution(frames) -> str:
 
 
 def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, seal=None, recipient=None,
-                exact_raster=False, resolution=None, tools=None, usable=None, memo=None):
+                exact_raster=False, resolution=None, tools=None, usable=None, memo=None, receiving=None):
     """The experimental codec's encoded pages for this attempt, as (pages, sentence[, details]), or None.
 
     ``frames`` are the pages this attempt would otherwise send (the same pages ``choose_layout`` prices as
@@ -810,11 +810,27 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
     try:
         return codec_send.attempt_pages(engine, setting, frames=frames, page_bits=frame_bits(frames), number=number,
                                         route=route, pdf_path=pdf_path, seal=seal, exact_raster=exact_raster,
-                                        resolution=resolution, tools=tools, usable=usable, memo=memo)
+                                        resolution=resolution, tools=tools, usable=usable, memo=memo,
+                                        receiving=receiving)
     except (CodecError, DocumentConversionError, OSError):
         import logging
         logging.getLogger(__name__).warning('Encoded pages could not be made for this attempt; it sends other pages.')
         return None
+
+
+def _with_receiving(priced, receiving):
+    """``priced`` with the receiving end's expected bill added to each known cost, for choosing only, when the owner
+    pays that end too (``routing.predict.ReceivingLeg``) and every candidate's receiving bill is known in its
+    cost's currency; otherwise ``priced`` unchanged, so no candidate is compared on a different footing."""
+    from dataclasses import replace
+    if receiving is None or not receiving.known:
+        return priced
+    legs = {key: receiving.cost(prediction.seconds) for key, prediction in priced.items()}
+    if any(leg is None or (prediction.cost is not None and prediction.cost.currency != leg.currency)
+           for leg, prediction in zip(legs.values(), priced.values())):
+        return priced
+    return {key: (prediction if prediction.cost is None else replace(prediction, cost=prediction.cost + legs[key]))
+            for key, prediction in priced.items()}
 
 
 def _coded_sizes(pages, usable, measured):
@@ -830,7 +846,7 @@ def _coded_sizes(pages, usable, measured):
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
                   boundary_seconds=None, predict=None, describe_dense=None, usable=None, measure_cache=None,
-                  renderings=None, faster=None):
+                  renderings=None, faster=None, receiving=None, memo=None):
     """Price every way these pages may go and keep exactly one (``pages.decision.choose``).
 
     Candidates: ``normal`` (the pages as they are); ``dense`` (packed onto long pages, when
@@ -845,7 +861,15 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
 
     ``usable`` (``pages.coding.Usable``, Faxbot's own engines only): each candidate's codings are measured on its
     own pages (kept in ``measure_cache`` with the attempt's files) and it is priced with the smallest coding the
-    call may use, so the layout, the rendering and the coding are chosen together.
+    call may use, so the layout, the rendering and the coding are chosen together. Without ``usable`` (a provider
+    draws the pages, so Faxbot does not choose the coding) and with encoded pages among the candidates, each
+    candidate's MH, MR and MMR sizes are measured on its own pages (kept in ``memo``, the codec's own measurements),
+    so the predictor prices the coding it expects for the call from its real size: encoded pages do not follow the
+    fixed ratio to MMR that ordinary pages roughly do (live pilot LC-P003, 2026-10-10).
+
+    ``receiving`` (``routing.predict.ReceivingLeg``): when the receiving end is one of your own trunk numbers, its
+    expected bill over each candidate's time on the line is added to that candidate's price for the choice (the
+    owner pays both ends); the returned predictions stay the sending route's own.
 
     Returns a dict: layout, pages, reason (one sentence, None for normal), seconds_saved, predictions
     {layout: Prediction} of the pages as they are, ``codec``: what ``codec()`` returned when the codec was kept,
@@ -889,11 +913,16 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
             pieces[("as_is", "codec")] = (encoded[0], encoded[1], encoded, fidelity.UNCHANGED.rank)
     keys = list(pieces)
     choices, shapes = {}, {}
+    unchosen = usable is None and any(key[1] == "codec" for key in keys)
     for key in keys:
         pages = pieces[key][0]
         if usable is None:
+            measured = None
+            if unchosen:
+                from .codec.decision import unchosen_measured
+                measured = unchosen_measured(pages, memo)
             shapes[key] = decision.Shape(len(pages), frame_bits(pages), frames_resolution(pages), key[1],
-                                         boundary_seconds)
+                                         boundary_seconds, measured=measured)
             continue
         measured = measured_for(key, pages)
         choice = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
@@ -905,8 +934,9 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
                                      boundary_seconds, measured=measured, coding=choice.priced)
     priced = dict(zip(keys, decision.price_all(route, destination, [shapes[key] for key in keys], card=card,
                                                predict=predict)))
-    candidates = [decision.Candidate(key[0], key[1], priced[key], shapes[key], pieces[key][3],
-                                     decision.bill(priced[key], card=card, route=route)) for key in keys]
+    ranked = _with_receiving(priced, receiving)
+    candidates = [decision.Candidate(key[0], key[1], ranked[key], shapes[key], pieces[key][3],
+                                     decision.bill(ranked[key], card=card, route=route)) for key in keys]
     chosen, quicker = decision.choose(candidates, faster=faster)
     key = (chosen.rendering, chosen.layout)
     # The layout's saving is against the same rendering's normal pages, and the rendering's against the pages as they

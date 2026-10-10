@@ -214,13 +214,18 @@ class Link:
     """
     rate: int | None = None              # the speed calls reached, bit/s
     rate_calls: int = 0
-    rate_scope: str | None = None        # 'number': calls to this number; 'route': calls to any number
+    # 'number': calls to this number; 'route': calls to any number; 'receiver': calls this installation received
+    # on this number (one of its own numbers, when another route sends to it: the receiving end's speed).
+    rate_scope: str | None = None
     coding: str | None = None            # the coding calls to this number used ('MH', 'MR', 'MMR', 'JBIG')
     seconds_per_page: float | None = None  # seconds a page took after setup, on calls to this number
     page_calls: int = 0
     setup_seconds: float | None = None   # seconds outside the pages, on calls to this number
     setup_calls: int = 0
     typical_rate: int = TYPICAL_RATE     # the route's own speed setting, when nothing was learned
+    # Said after "at a typical fax speed" when Faxbot has no record of the receiving end's speed for this route
+    # (a fax service's calls report none), as a clause; None says nothing more.
+    typical_note: str | None = None
     jbig: bool = False                   # a call to this number used JBIG on the SSL Fax engine
     # Each recorded call's (seconds outside the pages or None, seconds a page), for the spread of a call's time,
     # from the calls the engine that placed the newest one made (all engines when it made too few).
@@ -234,7 +239,7 @@ class Link:
     def __post_init__(self):
         if self.coding is not None and self.coding not in CODINGS:
             raise ValueError('Unknown fax coding.')
-        if self.rate_scope not in (None, 'number', 'route'):
+        if self.rate_scope not in (None, 'number', 'route', 'receiver'):
             raise ValueError('Unknown speed scope.')
 
 
@@ -328,6 +333,10 @@ def _speed(link):
         return link.rate, f'at the speed {_count(link.rate_calls, "earlier fax")} to this number reached'
     if link.rate and link.rate_scope == 'route':
         return link.rate, f'at the usual speed of {_count(link.rate_calls, "earlier fax")} on this route'
+    if link.rate and link.rate_scope == 'receiver':
+        return link.rate, f'at the speed {_count(link.rate_calls, "earlier fax")} into this number reached'
+    if link.typical_note:
+        return link.typical_rate, f'at a typical fax speed, {link.typical_note}'
     return link.typical_rate, 'at a typical fax speed'
 
 
@@ -721,6 +730,50 @@ def predict(route_key: str, destination: str, shape: Shape, *, now=None) -> Pred
         from .predict_facts import facts_for
         facts = facts_for(route_key, destination, now=now)
     return predict_from(facts, shape)
+
+
+@dataclass(frozen=True)
+class ReceivingLeg:
+    """The receiving end of a fax call, when this installation pays for it too (live pilot LC-P003, 2026-10-10).
+
+    A fax to one of this installation's own trunk numbers is billed twice on the owner's accounts: the sending
+    route's bill, and the trunk carrier's bill for the call coming in, over the same time on the line. ``card`` is
+    the trunk's receiving price (its saved receiving card, else the carrier's published one); None when Faxbot does
+    not know what the receiving end pays: a number that is not one of yours, or a partner, who publishes no receiving
+    price to Faxbot."""
+    card: object = None
+    label: str | None = None             # the receiving trunk's name in a sentence ('Telnyx')
+
+    @property
+    def known(self):
+        return self.card is not None
+
+    def cost(self, seconds):
+        """Money the receiving end is billed for a call of ``seconds`` (its card's step and minimum), or None."""
+        if self.card is None or seconds is None:
+            return None
+        from .costs import attempt_cost
+        return Money.of(attempt_cost(self.card, seconds=seconds, pages=0, delivered=True), self.card.currency)
+
+    def clause(self, seconds, *, against=None):
+        """The explanation's clause: what the receiving call adds (and, with ``against``, what it would add for the
+        normal pages), or that it is unknown."""
+        if self.card is None:
+            return "what the receiving end pays for the call is unknown"
+        cost = self.cost(seconds)
+        if cost is None:
+            return f'what the receiving call on your {self.label} trunk costs is unknown'
+        text = f'the receiving call on your {self.label} trunk adds about {money_text(cost.micros, cost.currency)}'
+        other = self.cost(against) if against is not None else None
+        if other is not None:
+            text += f' (about {money_text(other.micros, other.currency)} for the normal pages)'
+        return text
+
+
+def receiving_leg(destination, *, engine=None, values=None):
+    """The ``ReceivingLeg`` of a fax to ``destination`` (``predict_facts.receiving_for``)."""
+    from .predict_facts import receiving_for
+    return receiving_for(destination, engine=engine, values=values)
 
 
 def bill_of(prediction):

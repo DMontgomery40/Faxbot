@@ -39,6 +39,8 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
 # route would ring that person again, so the fax fails and a person checks the number (research N9).
 # ``wrong_station``: the number answered as a fax machine Faxbot did not expect there and the station check refused
 # it before any page (routing/stations.py): another route would reach the same machine.
+# How long a shared call's priced partition costs are kept between claims (``OutboundStore._call_costs``).
+COST_SECONDS = 60
 NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered',
                                     'wrong_station'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
@@ -616,6 +618,7 @@ class OutboundStore:
             ready = ready.where(self.deliveries.c.id.not_in(gate))
         if not self._any(ready):
             return None
+        costs = self._call_costs()
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             values = self._active_values(connection)
@@ -623,7 +626,7 @@ class OutboundStore:
                 return None
             capacity = self.capacity(connection)
             together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
-                                               values=values)
+                                               values=values, costs=costs)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
@@ -689,7 +692,35 @@ class OutboundStore:
         _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
         return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None):
+    def _call_costs(self):
+        """{number: cost(pages)} for faxes waiting to go together (``batching.store.call_costs``), read before the
+        claim's write lock with plain reads: the predictor reads through connections of its own, which must never
+        happen while the claim holds the lock. Empty when nothing waits to go together."""
+        from .batching import store as batching
+        try:
+            with self.configuration.engine.connect() as connection:
+                numbers = batching.waiting_numbers(connection, self._batching(connection))
+                values = self._active_values(connection) if numbers else None
+        except sa.exc.SQLAlchemyError:
+            from .config_store import ConfigurationStoreError
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
+        if not numbers or values is None or values.fax_disabled:
+            return {}
+        # Prices change rarely and the worker claims often: each number's cost is kept for a minute per revision,
+        # so a fax waiting for its group adds no predictor reads to every poll.
+        import time
+        revision = (getattr(self, '_values_for', None) or (None,))[0]
+        clock, kept = time.monotonic(), getattr(self, '_kept_costs', {})
+        kept = {key: item for key, item in kept.items() if item[0] > clock and key[0] == revision}
+        missing = [number for number in numbers if (revision, number) not in kept]
+        priced = batching.call_costs(self.configuration.engine, values, missing)
+        for number in missing:
+            kept[(revision, number)] = (clock + COST_SECONDS, priced.get(number))  # an unknown price is kept too
+        self._kept_costs = kept
+        return {number: kept[(revision, number)][1] for number in numbers
+                if kept.get((revision, number), (0, None))[1] is not None}
+
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
@@ -701,7 +732,7 @@ class OutboundStore:
             for job_id in connection.execute(sa.select(members.c.id).where(
                     members.c.state == 'waiting', members.c.id.in_(gate))).scalars().all():
                 batching.separate_on(connection, t, job_id, now)
-        group = batching.due_group_on(connection, t, now, values=values)
+        group = batching.due_group_on(connection, t, now, values=values, costs=costs)
         if group is None:
             return None
         if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
