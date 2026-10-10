@@ -46,6 +46,8 @@ CATEGORY_TEXT = {
     'pages_unconfirmed': 'The call ended without confirming which pages arrived.',
     'partly_sent': 'The call failed part way through, so some pages may have arrived.',
     'person_answered': 'A person answered at this number; check the fax number with the recipient.',
+    'wrong_station': 'This number answered as another fax machine, so nothing was sent; confirm the fax number with '
+                     'the recipient.',
 }
 OWNER_SOURCE_TEXT = {
     'sender': 'the person who sent it',
@@ -301,6 +303,12 @@ class CertaintyService:
                     checks.number_check(row, organization=self._organization(),
                                         number=number or mask(row['to_number']), when_text=when),
                     *checks.npi_checks(self.store.engine, row)]
+        if row['category'] == 'wrong_station':
+            # Another fax machine answered and Faxbot hung up before any page: confirm the number, never the fax.
+            return [checks.wrong_station_check(),
+                    checks.number_check(row, organization=self._organization(),
+                                        number=number or mask(row['to_number']), when_text=when, station=True),
+                    *checks.npi_checks(self.store.engine, row)]
         return [
             checks.partner_check(sources, connection, row, job, answer),
             checks.call_record_check(sources, connection, row, job, now=now),
@@ -378,7 +386,7 @@ class CertaintyService:
             if row['state'] == 'open' and may_act:
                 actions.append('settle')
                 # A receipt query would ring the person who answered again.
-                if not row['query_job_id'] and row['category'] != 'person_answered':
+                if not row['query_job_id'] and row['category'] not in ('person_answered', 'wrong_station'):
                     actions.append('send_query')
             person = lambda identity: {'id': identity, 'name': names.get(identity)} if identity else None  # noqa: E731
             link = links.get(row['resend_job_id'])
@@ -592,6 +600,9 @@ class CertaintyService:
                 # The number reached a person, not a fax machine: a query page would ring them again.
                 raise CertaintyConflict('A person answered at this number, so Faxbot does not fax it a receipt '
                                         'query. Check the fax number with the recipient.')
+            if row['category'] == 'wrong_station':
+                raise CertaintyConflict('This number answered as another fax machine, so Faxbot does not fax it a '
+                                        'receipt query. Confirm the fax number with the recipient.')
         document, name, row = self.draft(actor, item_id)
         job_id = query_id(item_id)
         send(to_number=row['to_number'], document=document, file_name=name, pages=1, job_id=job_id)

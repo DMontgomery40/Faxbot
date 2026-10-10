@@ -83,3 +83,8 @@ def reply_clear(mailbox: str = MAILBOX):
 from .header_notice import notice as _notice  # noqa: E402
 
 reply.add_typer(_notice, name='notice')
+
+# What a mailbox's faxes do when a number answers as another fax machine (routing/stations.py).
+from .stations import station_check as _station_check  # noqa: E402
+
+reply.command('station-check')(_station_check)

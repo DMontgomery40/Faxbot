@@ -2000,6 +2000,7 @@ $ faxbot numbers reply [OPTIONS] COMMAND [ARGS]...
 * `numbers`: List your numbers with the mailbox each...
 * `set`: Print this number on every fax (or on...
 * `clear`: Let Faxbot choose the number again (or...
+* `station-check`: Choose what a mailbox&#x27;s faxes do when a...
 * `notice`: A notice line, such as a confidentiality...
 
 #### `faxbot numbers reply show`
@@ -2062,6 +2063,25 @@ $ faxbot numbers reply clear [OPTIONS]
 **Options**:
 
 * `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply station-check`
+
+Choose what a mailbox&#x27;s faxes do when a number answers as another fax machine.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply station-check [OPTIONS] {WARN|REFUSE}
+```
+
+**Arguments**:
+
+* `WARN|REFUSE`: warn: the fax goes on and Sent says so. refuse: Faxbot hangs up before any page.  [required]
+
+**Options**:
+
+* `--mailbox <str>`: The mailbox whose faxes this is for.  [required]
 * `--help`: Show this message and exit.
 
 #### `faxbot numbers reply notice`
@@ -2874,6 +2894,8 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
 * `--shading ON|OFF|DEFAULT`: Fax-friendly shading on documents sent to this recipient: on (always when it shortens the call), off (never), or default for the setting all faxes use.
 * `--needs-cover / --no-cover-needed`: Whether this recipient needs a cover sheet: its faxes then keep their cover even when the sender sends the cover&#x27;s notice in the header.
+* `--station-check WARN|REFUSE`: When this number answers as another fax machine: warn (the fax goes on and Sent says so) or refuse (Faxbot hangs up before any page).
+* `--expected-station NUMBER`: A fax number this recipient&#x27;s machine shows, such as the one on its letterhead, so Faxbot expects it.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`

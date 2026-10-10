@@ -188,7 +188,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                         'faxes use.'),
                                needs_cover: bool = typer.Option(None, '--needs-cover/--no-cover-needed',
                                    help='Whether this recipient needs a cover sheet: its faxes then keep their cover '
-                                        "even when the sender sends the cover's notice in the header.")):
+                                        "even when the sender sends the cover's notice in the header."),
+                               station_check: str = typer.Option(None, '--station-check', metavar='WARN|REFUSE',
+                                   help='When this number answers as another fax machine: warn (the fax goes on '
+                                        'and Sent says so) or refuse (Faxbot hangs up before any page).'),
+                               expected_station: str = typer.Option(None, '--expected-station', metavar='NUMBER',
+                                   help='A fax number this recipient\'s machine shows, such as the one on its '
+                                        'letterhead, so Faxbot expects it.')):
     """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
     api = state.api()
     chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
@@ -214,8 +220,17 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body and not page_body and boundaries is None and needs_cover is None:
+    if not body and not page_body and boundaries is None and needs_cover is None and station_check is None \
+            and expected_station is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
+    if station_check is not None and station_check.lower() not in ('warn', 'refuse'):
+        raise CliError('Use warn or refuse for --station-check.')
+    # The station check (routing/stations.py): its own address, set before the rest.
+    station = None
+    if station_check is not None or expected_station is not None:
+        station_body = {key: value for key, value in (('mode', station_check and station_check.lower()),
+                                                      ('station', expected_station)) if value}
+        station = api.put('/routing/stations/' + segment(number), json=station_body)
     # Whether the recipient needs a cover sheet (header_notice.py); its own address, set before the rest.
     cover = (api.put('/header-notice/recipients/' + segment(number), json={'needs_cover': needs_cover})
              if needs_cover is not None else None)
@@ -231,10 +246,14 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
     result = together if view is None else view if together is None else {**view, 'sending_together': together}
     if cover is not None:
         result = {**(result or {}), 'cover': cover}
+    if station is not None:
+        result = {**(result or {}), 'station_check': station}
 
     def human(out):
         if cover is not None:
             out.line(cover['sentence'])
+        if station is not None:
+            out.line(station['sentence'])
         if view is not None:
             out.line(f"Destination {view['number']} updated.")
         if together is not None:

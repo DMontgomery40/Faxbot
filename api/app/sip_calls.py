@@ -49,12 +49,17 @@ NOT_A_FAX = 'The call connected but the other end did not answer as a fax machin
 # fax takes no other route by itself (``outbound_store.NO_FALLBACK_CATEGORIES``) and a person checks the number.
 PERSON_ANSWERED = 'person_answered'
 PERSON = 'A person answered, not a fax machine; Faxbot did not call again.'
+# The number answered as a fax machine Faxbot did not expect there, and the station check refused it before any
+# page (asterisk patch 0007, routing/stations.py, research N5). No other route takes it; a person checks the number.
+WRONG_STATION = 'wrong_station'
+STATION = 'The number answered as another fax machine, so Faxbot hung up before any page.'
 # Verdicts for an answered call that delivered no fax. The no-data ones mean the
 # network path failed; the other two mean the network carried the call.
 NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
 # A received fax whose image Asterisk stored but could not hand to Faxbot.
 NOT_HANDED_OVER = 'not_handed_over'
-VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED}
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED,
+                                WRONG_STATION}
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
@@ -143,6 +148,12 @@ def verdict(event):
         return None
     if str(event.get('Status') or '').strip().upper() == 'SUCCESS':
         return None
+    if str(event.get('CsiCheck') or '').strip() == 'refused':
+        return WRONG_STATION
+    if str(event.get('T0Capped') or '').strip() == '1':
+        # Faxbot ended the call when no fax answered within the cap (patch 0007): the same as spandsp's own T0
+        # running out with the line still open, never a person who hung up.
+        event = {**event, 'Error': 'Timed out waiting for initial communication', 'Error64': '', 'Status64': ''}
     if (_pages(event.get('Pages')) or 0) > 0 or _station(event.get('Station64')):
         return 'remote_fax_failed'
     mode = str(event.get('Mode') or '').strip().lower()
@@ -209,8 +220,9 @@ def freeswitch_verdict(status, pages, station, text, audio_in):
 
 
 def category_for(found):
-    """The attempt's error category for a call verdict: ``person_answered`` (never another route), else None."""
-    return PERSON_ANSWERED if found == PERSON_ANSWERED else None
+    """The attempt's error category for a call verdict: ``person_answered`` or ``wrong_station`` (never another
+    route), else None."""
+    return found if found in (PERSON_ANSWERED, WRONG_STATION) else None
 
 
 def verdict_sentence(found):
@@ -260,6 +272,8 @@ def _sentence(found, reason=''):
         return NOT_A_FAX
     if found == PERSON_ANSWERED:
         return PERSON
+    if found == WRONG_STATION:
+        return STATION
     if found == 'remote_fax_failed':
         reason = reason.strip().rstrip('.')
         return (f'The other fax machine answered but the fax failed: {reason}.' if reason

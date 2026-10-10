@@ -245,6 +245,9 @@ def policy_on(connection):
     """The newest setting of each class, and the countries recorded as already delivered to."""
     changes = _changes()
     rows = connection.execute(sa.select(changes).order_by(changes.c.created_at, changes.c.id)).mappings().all()
+    # The countries recorded as already delivered to are written in the same moment as the first change that
+    # needed them; they always come before it, whatever their random IDs.
+    rows = sorted(rows, key=lambda row: (row['created_at'], row['reason'] != 'delivered'))
     settings, delivered = {}, {}
     for row in rows:
         settings[row['class_key']] = Setting(row['class_key'], row['state'], row['reason'], row['ceiling_micros'],

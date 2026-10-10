@@ -119,6 +119,9 @@ def prepare_originate_fields(
     subaddress: Optional[str] = None,
     peer: Optional[str] = None,
     compression: Optional[str] = None,
+    t0_ms: Optional[int] = None,
+    csi_expect: Optional[str] = None,
+    csi_refuse: bool = False,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -136,6 +139,8 @@ def prepare_originate_fields(
     machine for (patch 0005, ``FAXBOT_TX_SUB``): digits and +, # and *, at most
     20. It is requested, never promised: the engine sends it only when the far
     end's machine says it takes one.
+    ``t0_ms``, ``csi_expect`` and ``csi_refuse`` are patch 0007's T0 cap and station check
+    (``routing/stations.py``): FAXBOT_T0_MS, FAXBOT_CSI_EXPECT (digits separated by dots) and FAXBOT_CSI_REFUSE.
     ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
     direct/peer_call.py): the call goes there, inside the tunnel, instead of
     over ``endpoint``. The caller checked the tunnel first.
@@ -210,6 +215,17 @@ def prepare_originate_fields(
         if clean is None:
             raise ValueError("Unsupported AMI subaddress")
         variables["FAXBOT_TX_SUB"] = clean
+    # Patch 0007: end the call when no fax answers within the cap, and check the station that answers.
+    if t0_ms is not None:
+        if type(t0_ms) is not int or not 40000 <= t0_ms <= 60000:
+            raise ValueError("Unsupported AMI fax timer")
+        variables["FAXBOT_T0_MS"] = str(t0_ms)
+    if csi_expect is not None:
+        if not isinstance(csi_expect, str) or not re.fullmatch(r"[0-9]{7,20}(?:\.[0-9]{7,20}){0,9}", csi_expect):
+            raise ValueError("Unsupported AMI station list")
+        variables["FAXBOT_CSI_EXPECT"] = csi_expect
+        if csi_refuse:
+            variables["FAXBOT_CSI_REFUSE"] = "yes"
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -445,6 +461,15 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
         # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.
         limits.update(peer=peer.endpoint, iaf="peer")
+    elif sip_trunk.configured(values) and tiff_path != "poll":
+        # Patch 0007 (routing/stations.py): the station check before any page, and the cap on waiting for a fax
+        # answer on a trunk billed by the minute.
+        from .routing.stations import call_guard
+        guard = call_guard(values, job_id, dest, engine=_database(), mailbox_id=mailbox_id)
+        if guard.t0_ms:
+            limits["t0_ms"] = guard.t0_ms
+        if guard.expect:
+            limits.update(csi_expect=guard.expect, csi_refuse=guard.refuse)
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=choice.number or values.fax_station_id,
                                         header=header, attempt_id=attempt_id,

@@ -14,6 +14,7 @@
 #define FAXBOT_T38_GATEWAY_H
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <spandsp/version.h>
 
@@ -362,6 +363,157 @@ static inline int faxbot_compressions(const char *coding)
 		return T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION | T30_SUPPORT_T6_COMPRESSION;
 	}
 	return 0;
+}
+
+/*
+ * Patch 0007 (builder CG): the station check and the cap on waiting for a fax answer, on a fax Faxbot sends.
+ *
+ * Station check (research N5). In phase B the called machine sends its CSI (its station identifier, usually its
+ * own number) before the DIS, and spandsp keeps it before it calls the application's phase B handler on that DIS
+ * (t30.c 0.0.6: the CSI is stored on arrival, then process_rx_dis_dtc calls the handler; any answer but
+ * T30_ERR_OK sends DCN before any DCS, training or page). FAXBOT_CSI_EXPECT lists, as digits separated by dots,
+ * the numbers this call may answer as: the number dialled and the stations it showed on earlier successful calls.
+ * A CSI is a hint, never proof, so it is used only in the negative: it contradicts them when it carries a full
+ * number (at least FAXBOT_CSI_MIN_DIGITS digits) that is none of them. A blank or short CSI is no signal. Two
+ * numbers are the same when, after leading zeros, the shorter is the end of the longer (a national CSI such as
+ * 020 7946 0000 against the number dialled in international form, 442079460000). api/app/routing/stations.py's
+ * check() follows the same rules, with the same examples.
+ *
+ * T0 cap (research N9's option). spandsp 0.0.6 waits T0 = 60 s for the first fax message (t30.c DEFAULT_TIMER_T0;
+ * ITU-T T.30 5.4.3.1: T0 is 60 +-5 s, counted from the end of dialling, so it includes ringing). Asterisk starts
+ * SendFAX only once the call is answered, and from then on T.30 expects the two machines to identify each other
+ * within T1 = 35 +-5 s (T.30 5.4.3.1, timer T1). A person who stays on the line therefore holds the call past
+ * 60 s, which bills two units on 60/60 billing. FAXBOT_T0_MS (Faxbot sets 50000 on trunk calls billed by the
+ * minute in steps of 60 s or more) ends a send session that has not reached phase B that long after the answer:
+ * 10 s more than T1's longest value, and before the first 60 s billing step ends.
+ */
+#define FAXBOT_CSI_MIN_DIGITS 7
+#define FAXBOT_CSI_DIGITS_MAX 20
+#define FAXBOT_CSI_EXPECT_MAX 200
+#define FAXBOT_CSI_NO_SIGNAL 0
+#define FAXBOT_CSI_MATCHES 1
+#define FAXBOT_CSI_DIFFERS 2
+/*! The shortest and longest cap Faxbot accepts, in milliseconds: never under T.30's longest T1, never over T0. */
+#define FAXBOT_T0_MIN_MS 40000
+#define FAXBOT_T0_MAX_MS 60000
+
+/*! \brief The digits of \p text into \p out (at least FAXBOT_CSI_DIGITS_MAX + 1 bytes); returns how many. */
+static inline int faxbot_digits(const char *text, char *out, size_t size)
+{
+	int used = 0;
+
+	if (!out || size < FAXBOT_CSI_DIGITS_MAX + 1) {
+		return 0;
+	}
+	out[0] = '\0';
+	if (!text) {
+		return 0;
+	}
+	for (; *text && used < FAXBOT_CSI_DIGITS_MAX; text++) {
+		if (*text >= '0' && *text <= '9') {
+			out[used++] = *text;
+		}
+	}
+	out[used] = '\0';
+	return used;
+}
+
+/*!
+ * \brief Whether digit strings \p a and \p b (\p alen and \p blen long) name the same number: after leading zeros
+ * (a national trunk prefix such as the UK's 0, or an international 00) the shorter is the end of the longer.
+ */
+static inline int faxbot_same_number(const char *a, int alen, const char *b, int blen)
+{
+	int shorter;
+
+	for (; alen > 0 && *a == '0'; a++, alen--) {
+	}
+	for (; blen > 0 && *b == '0'; b++, blen--) {
+	}
+	shorter = alen < blen ? alen : blen;
+	if (shorter < FAXBOT_CSI_MIN_DIGITS) {
+		return 0;
+	}
+	return !memcmp(a + alen - shorter, b + blen - shorter, shorter);
+}
+
+/*!
+ * \brief FAXBOT_CSI_NO_SIGNAL, FAXBOT_CSI_MATCHES or FAXBOT_CSI_DIFFERS for the far end's \p csi against
+ * \p expected (digits; any other character separates two numbers; Faxbot sends dots, since a comma would end
+ * the Originate variable).
+ */
+static inline int faxbot_csi_check(const char *csi, const char *expected)
+{
+	char far[FAXBOT_CSI_DIGITS_MAX + 1];
+	char one[FAXBOT_CSI_DIGITS_MAX + 1];
+	int farlen = faxbot_digits(csi, far, sizeof(far));
+	int len = 0;
+	int known = 0;
+
+	if (farlen < FAXBOT_CSI_MIN_DIGITS || !expected) {
+		return FAXBOT_CSI_NO_SIGNAL;
+	}
+	for (;; expected++) {
+		if (*expected >= '0' && *expected <= '9') {
+			if (len < FAXBOT_CSI_DIGITS_MAX) {
+				one[len++] = *expected;
+			}
+			continue;
+		}
+		if (len >= FAXBOT_CSI_MIN_DIGITS) {
+			known = 1;
+			if (faxbot_same_number(far, farlen, one, len)) {
+				return FAXBOT_CSI_MATCHES;
+			}
+		}
+		len = 0;
+		if (*expected == '\0') {
+			break;
+		}
+	}
+	return known ? FAXBOT_CSI_DIFFERS : FAXBOT_CSI_NO_SIGNAL;
+}
+
+/*! \brief The cap in milliseconds from FAXBOT_T0_MS's \p value, or 0 (spandsp's own T0) when it is not one. */
+static inline int faxbot_t0_ms(const char *value)
+{
+	long ms;
+	char *end = NULL;
+
+	if (!value || !*value) {
+		return 0;
+	}
+	ms = strtol(value, &end, 10);
+	if (!end || *end || ms < FAXBOT_T0_MIN_MS || ms > FAXBOT_T0_MAX_MS) {
+		return 0;
+	}
+	return (int) ms;
+}
+
+/*!
+ * \brief When the call was answered, from FAXBOT_ANSWERED's \p value (epoch seconds, set by the send dialplan before
+ * SendFAX), or 0 when it is not a time at or before \p now_s. The cap counts from the answer: res_fax starts a new
+ * session after a T.38 attempt the far end refused, so a session's own start would let the call run longer.
+ */
+static inline long long faxbot_answered_at(const char *value, long long now_s)
+{
+	long long at;
+	char *end = NULL;
+
+	if (!value || !*value) {
+		return 0;
+	}
+	at = strtoll(value, &end, 10);
+	if (!end || *end || at <= 0 || at > now_s) {
+		return 0;
+	}
+	return at;
+}
+
+/*! \brief Whether a send session \p elapsed_ms old that has not reached phase B has reached the cap \p cap_ms. */
+static inline int faxbot_t0_reached(int cap_ms, int phase_b, long long elapsed_ms)
+{
+	return cap_ms > 0 && !phase_b && elapsed_ms >= cap_ms;
 }
 
 #endif /* FAXBOT_T38_GATEWAY_H */

@@ -27,7 +27,7 @@ def test_0069_and_0070_add_empty_tables_keep_every_row_and_downgrade(database): 
             backend='sip', created_at=NOW, updated_at=NOW))
     schema.upgrade_schema(database)
     after = snapshot(database)
-    assert after['alembic_version'] == [{'version_num': schema.HEAD}] and schema.HEAD == schema_closures.REVISION
+    assert after['alembic_version'] == [{'version_num': schema.HEAD}] and schema.CLOSURES == schema_closures.REVISION
     assert [row['id'] for row in after['fax_jobs']] == ['job-1']
     for name in schema_countries.ORDER + schema_closures.ORDER:
         assert after[name] == [], name

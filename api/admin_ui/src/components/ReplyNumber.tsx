@@ -6,6 +6,7 @@ import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { AccessMailbox } from '../api/types';
 import type { ReplyNumberView } from '../api/numbersTypes';
 import { HeaderNoticeSettings } from './HeaderNotice';
+import { MailboxStationCheck } from './StationCheck';
 
 interface ReplyNumberProps {
   client: AdminAPIClient;
@@ -158,6 +159,8 @@ function ReplyNumber({ client, canWrite }: ReplyNumberProps) {
     </Card>
     {/* The notice line printed under the header line on every page (header_notice.py). */}
     <HeaderNoticeSettings client={client} canWrite={canWrite} mailboxes={mailboxes} />
+    {/* What a mailbox's faxes do when a number answers as another fax machine (routing/stations.py). */}
+    <MailboxStationCheck client={client} canWrite={canWrite} mailboxes={mailboxes} />
     </>
   );
 }

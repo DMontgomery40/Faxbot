@@ -374,14 +374,25 @@ def person_answered_check():
                    'again only to the right fax number.', strength=PROOF, automatic=True)
 
 
-def number_check(item, *, organization, number, when_text):
-    """The phone call for a fax a person answered: confirm the fax number, never whether it arrived."""
+def wrong_station_check():
+    """The call record of a fax whose number answered as another fax machine: refused before any page."""
+    return finding('call_record', 'not_delivered', 'The number answered as a fax machine Faxbot did not expect '
+                   'there, so Faxbot hung up before any page. Nothing arrived.', 'Settle it as not delivered, and send '
+                   'it again only to the right fax number.', strength=PROOF, automatic=True)
+
+
+def number_check(item, *, organization, number, when_text, station=False):
+    """The phone call for a fax a person, or another fax machine, answered: confirm the fax number, never whether
+    it arrived."""
     who = organization or 'our office'
+    answered = 'another fax machine answered' if station else 'a person answered'
+    first = (f'Call the recipient. The number Faxbot faxed, {number}, answered as another fax machine.' if station
+             else f'Call the recipient. The number Faxbot faxed, {number}, may be a voice line.')
     return finding('phone_call', 'not_done', 'Call the recipient and ask for the right fax number.',
                    action='call', script=[
-                       f'Call the recipient. The number Faxbot faxed, {number}, may be a voice line.',
+                       first,
                        f'Say: "This is {who}. We tried to fax you on {when_text}, reference {item["reference"]}, '
-                       'and a person answered. What is your fax number?"',
+                       f'and {answered}. What is your fax number?"',
                        'Settle this fax as not delivered, then send it again to the number they give you.'])
 
 
