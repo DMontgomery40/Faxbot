@@ -1,5 +1,5 @@
 // GET /routing/capabilities: every mechanism in the catalogue, grouped by the outcome it serves, for Savings &
-// optimization → Capabilities, the Overview and `faxbot costs capabilities` (api/app/routing/capabilities.py).
+// optimization → Capabilities, the Overview and `faxbot savings capabilities` (api/app/routing/capabilities.py).
 // Every sentence comes from the server, and it never carries money. __tests__/capabilities.json is one answer.
 import type { SavingsMechanism } from './deliveryTypes';
 

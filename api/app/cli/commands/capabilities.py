@@ -1,4 +1,4 @@
-"""faxbot costs capabilities: everything Faxbot can do, grouped by what it helps with (GET /routing/capabilities).
+"""faxbot savings capabilities: everything Faxbot can do, grouped by what it helps with (GET /routing/capabilities).
 
 The console's Capabilities page shows the same facts in the same sentences; admin_ui/src/__tests__/capabilities.json
 holds one answer and the lines printed from it, and both surfaces' tests read it. Never any money.
@@ -9,7 +9,7 @@ from .. import state
 from ..errors import CliError
 
 # The command as people type it; its hint and the shared fixture's lines use this one name.
-COMMAND = 'faxbot costs capabilities'
+COMMAND = 'faxbot savings capabilities'
 FILTERS = ('on', 'off', 'ready', 'needs', 'experimental')
 
 capabilities = typer.Typer(

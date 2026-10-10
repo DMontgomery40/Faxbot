@@ -9,7 +9,7 @@ import { server } from '../test/server';
 import fixture from './capabilities.json';
 
 // One answer of GET /routing/capabilities, evaluated on a real synthetic installation, and the lines
-// `faxbot costs capabilities` prints from it (api/tests/test_capabilities.py keeps both current). The console must
+// `faxbot savings capabilities` prints from it (api/tests/test_capabilities.py keeps both current). The console must
 // show every one of those sentences, so the two surfaces never say different things.
 const answer: CapabilitiesView = fixture.response as unknown as CapabilitiesView;
 const items: Capability[] = answer.outcomes.flatMap((outcome) => outcome.capabilities);
@@ -123,7 +123,7 @@ describe('Savings & optimization, Capabilities', () => {
 
 describe('One capability (?key=)', () => {
   for (const [key, lines] of Object.entries(fixture.cli.show)) {
-    it(`shows ${key} in the same sentences as faxbot costs capabilities show`, async () => {
+    it(`shows ${key} in the same sentences as faxbot savings capabilities show`, async () => {
       const item = byKey.get(key)!;
       const onNavigate = vi.fn();
       serve();

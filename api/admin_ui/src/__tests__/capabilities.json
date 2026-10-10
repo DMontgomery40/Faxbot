@@ -1,5 +1,5 @@
 {
-  "about": "Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot costs capabilities, cli/commands/capabilities.py) show exactly what the server says. The response is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py scenario), and cli holds the lines the command prints from it: all of them, those ready to turn on, and some capabilities one by one. Its catalogue and capability fields must match app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite it after either changes, run tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.",
+  "about": "Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot savings capabilities, cli/commands/capabilities.py) show exactly what the server says. The response is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py scenario), and cli holds the lines the command prints from it: all of them, those ready to turn on, and some capabilities one by one. Its catalogue and capability fields must match app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite it after either changes, run tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.",
   "response": {
     "days": 30,
     "title": "Capabilities",
@@ -97,13 +97,13 @@
             ],
             "setting": {
               "address": "delivery/connections",
-              "label": "Delivery setup → Connections",
-              "command": "faxbot system settings set local_delivery_enabled=true"
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot admin settings set local_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=own_numbers",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -148,7 +148,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "agreement",
@@ -168,8 +168,8 @@
             },
             "results": {
               "address": "savings/results?part=toll_free",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -215,7 +215,7 @@
                 "label": "Missing",
                 "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "prices",
@@ -235,8 +235,8 @@
             },
             "results": {
               "address": "savings/results?part=cheapest_route",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -288,12 +288,12 @@
             "setting": {
               "address": "savings/prices",
               "label": "Savings & optimization → Prices & plans",
-              "command": "faxbot costs plans budget {plan} --pages {count}"
+              "command": "faxbot savings plans budget {plan} --pages {count}"
             },
             "results": {
               "address": "savings/results?part=plan_first",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -339,7 +339,7 @@
                 "label": "Missing",
                 "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "prices",
@@ -360,7 +360,7 @@
             "results": {
               "address": "savings/opportunities?section=sending",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations sending"
+              "command": "faxbot savings opportunities sending"
             },
             "affected": null
           },
@@ -405,7 +405,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -416,7 +416,7 @@
             "results": {
               "address": "savings/opportunities?section=carriers",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations carriers"
+              "command": "faxbot savings opportunities carriers"
             },
             "affected": null
           },
@@ -472,7 +472,7 @@
             "results": {
               "address": "savings/opportunities?section=steps",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations billing-steps"
+              "command": "faxbot savings opportunities billing-steps"
             },
             "affected": null
           },
@@ -517,7 +517,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -528,7 +528,7 @@
             "results": {
               "address": "savings/opportunities?section=tollFree",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations toll-free"
+              "command": "faxbot savings opportunities toll-free"
             },
             "affected": null
           },
@@ -584,7 +584,7 @@
             "results": {
               "address": "savings/opportunities?section=marker",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations fax-marker"
+              "command": "faxbot savings opportunities fax-marker"
             },
             "affected": null
           },
@@ -629,7 +629,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "setting",
@@ -639,7 +639,7 @@
                 "label": "In place",
                 "sentence": "Your installation country set to the United States.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -650,7 +650,7 @@
             "results": {
               "address": "savings/opportunities?section=sites",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations sites"
+              "command": "faxbot savings opportunities sites"
             },
             "affected": null
           }
@@ -702,18 +702,18 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
               "address": "delivery/connections",
-              "label": "Delivery setup → Connections",
-              "command": "faxbot providers long-pages {route} --long-pages on"
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot delivery providers long-pages {route} --long-pages on"
             },
             "results": {
               "address": "savings/results?part=packing",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -764,7 +764,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "agreement",
@@ -784,8 +784,8 @@
             },
             "results": {
               "address": "savings/results?part=encoding",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -834,7 +834,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "prices",
@@ -849,13 +849,13 @@
             ],
             "setting": {
               "address": "delivery/connections",
-              "label": "Delivery setup → Connections",
-              "command": "faxbot system settings set fax_friendly_documents=where_it_saves"
+              "label": "Delivery setup → Providers & accounts",
+              "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
             },
             "results": {
               "address": "savings/results?part=fax_friendly",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -916,12 +916,12 @@
             "setting": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot providers trunk mode t38"
+              "command": "faxbot delivery providers trunk mode t38"
             },
             "results": {
               "address": "savings/results?part=t38",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -976,8 +976,8 @@
             },
             "results": {
               "address": "savings/results?part=coding",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1039,12 +1039,12 @@
             "setting": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot system settings set sip_sslfax_enabled=true"
+              "command": "faxbot admin settings set sip_sslfax_enabled=true"
             },
             "results": {
               "address": "savings/results?part=sslfax",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1089,7 +1089,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -1100,7 +1100,7 @@
             "results": {
               "address": "savings/opportunities?section=pages",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations shading"
+              "command": "faxbot savings opportunities shading"
             },
             "affected": null
           }
@@ -1157,7 +1157,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "agreement",
@@ -1177,8 +1177,8 @@
             },
             "results": {
               "address": "savings/results?part=case_packets",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1230,12 +1230,12 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot system settings set direct_delivery_enabled=true"
+              "command": "faxbot admin settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=direct_delivery",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1297,12 +1297,12 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot system settings set direct_delivery_enabled=true"
+              "command": "faxbot admin settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=direct_fax_images",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1365,12 +1365,12 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot system settings set direct_delivery_enabled=true"
+              "command": "faxbot admin settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=direct_bytes",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1445,8 +1445,8 @@
             },
             "results": {
               "address": "savings/results?part=sending_together",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1526,7 +1526,7 @@
                 "label": "Not needed yet",
                 "sentence": "For marks at the top of every page: your header text and sending number.",
                 "address": "delivery/identity",
-                "address_label": "Delivery setup → Sender identity"
+                "address_label": "Delivery setup → Sending identity"
               }
             ],
             "setting": {
@@ -1536,8 +1536,8 @@
             },
             "results": {
               "address": "savings/results?part=separator_pages",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           }
@@ -1621,8 +1621,8 @@
             },
             "results": {
               "address": "savings/results?part=tunnel_calls",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1688,8 +1688,8 @@
             },
             "results": {
               "address": "savings/results?part=relay",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1735,7 +1735,7 @@
                 "label": "Missing",
                 "sentence": "A Direct messaging provider account or a FHIR account.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               },
               {
                 "kind": "agreement",
@@ -1755,8 +1755,8 @@
             },
             "results": {
               "address": "savings/results?part=digital",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -1801,7 +1801,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -1812,7 +1812,7 @@
             "results": {
               "address": "savings/opportunities?section=partners",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations partners"
+              "command": "faxbot savings opportunities partners"
             },
             "affected": null
           },
@@ -1977,7 +1977,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2029,7 +2029,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2081,18 +2081,18 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk that sends faxes.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
               "address": "faxes/sent",
               "label": "Faxes → Sent",
-              "command": "faxbot sent continue {fax_id} --send"
+              "command": "faxbot faxes sent continue {fax_id} --send"
             },
             "results": {
               "address": "savings/results?part=continuation",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -2155,12 +2155,12 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot system settings set direct_delivery_enabled=true"
+              "command": "faxbot admin settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=partner_repair",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           }
@@ -2228,12 +2228,12 @@
             "setting": {
               "address": "delivery/blocked",
               "label": "Delivery setup → Blocked senders",
-              "command": "faxbot numbers blocked add {number} --reason {reason}"
+              "command": "faxbot delivery blocked add {number} --reason {reason}"
             },
             "results": {
               "address": "savings/results?part=blocked_calls",
-              "label": "Savings & optimization → Savings",
-              "command": "faxbot costs savings"
+              "label": "Savings & optimization → Savings results",
+              "command": "faxbot savings results"
             },
             "affected": null
           },
@@ -2290,7 +2290,7 @@
             "results": {
               "address": "savings/opportunities?section=plans",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations plans"
+              "command": "faxbot savings opportunities plans"
             },
             "affected": null
           },
@@ -2335,7 +2335,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or SIP trunk that receives faxes for this Faxbot.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2346,7 +2346,7 @@
             "results": {
               "address": "savings/opportunities?section=receiving",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations receiving"
+              "command": "faxbot savings opportunities receiving"
             },
             "affected": null
           },
@@ -2392,7 +2392,7 @@
                 "label": "Missing",
                 "sentence": "Two or more SIP trunks to compare.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2403,7 +2403,7 @@
             "results": {
               "address": "savings/opportunities?section=trunks",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations trunks"
+              "command": "faxbot savings opportunities trunks"
             },
             "affected": null
           },
@@ -2448,7 +2448,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or SIP trunk that receives faxes for this Faxbot.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2459,7 +2459,7 @@
             "results": {
               "address": "savings/opportunities?section=numbers",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations numbers"
+              "command": "faxbot savings opportunities numbers"
             },
             "affected": null
           },
@@ -2526,7 +2526,7 @@
             "results": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot providers trunk telnyx names"
+              "command": "faxbot delivery providers trunk telnyx names"
             },
             "affected": null
           }
@@ -2578,7 +2578,7 @@
                 "label": "In place",
                 "sentence": "A fax service account or your own SIP trunk.",
                 "address": "delivery/connections",
-                "address_label": "Delivery setup → Connections"
+                "address_label": "Delivery setup → Providers & accounts"
               }
             ],
             "setting": {
@@ -2589,7 +2589,7 @@
             "results": {
               "address": "savings/charges",
               "label": "Savings & optimization → Charges",
-              "command": "faxbot costs charges"
+              "command": "faxbot savings charges"
             },
             "affected": null
           },
@@ -2634,7 +2634,7 @@
             "results": {
               "address": "admin/setup",
               "label": "Administration → Setup",
-              "command": "faxbot system setup plan"
+              "command": "faxbot admin setup plan"
             },
             "affected": null
           }
@@ -2696,7 +2696,7 @@
       "  Lighter shading (fax_friendly): Off · Works here · Sample data · Ready to turn on",
       "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
       "    Not used in 30 days",
-      "    Turn it on in Delivery setup → Connections.",
+      "    Turn it on in Delivery setup → Providers & accounts.",
       "  Fax over IP (T.38) (fax_over_ip): On · Works here · Live call",
       "    Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
       "    Used on 3 calls in 30 days",
@@ -2833,7 +2833,7 @@
       "Ready to turn on: Off, and works on this installation.",
       "Needs something: Missing something it needs, such as a connection, prices or a recipient's agreement.",
       "Experimental: Still being proven; its evidence and limits are shown with it.",
-      "One capability in full: faxbot costs capabilities show KEY"
+      "One capability in full: faxbot savings capabilities show KEY"
     ],
     "filtered": {
       "ready": [
@@ -2852,7 +2852,7 @@
         "  Lighter shading (fax_friendly): Off · Works here · Sample data · Ready to turn on",
         "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
         "    Not used in 30 days",
-        "    Turn it on in Delivery setup → Connections.",
+        "    Turn it on in Delivery setup → Providers & accounts.",
         "",
         "Avoid repeated calls and documents",
         "Send what a recipient already has only once, and share calls where recipients agree.",
@@ -2875,7 +2875,7 @@
         "Ready to turn on: Off, and works on this installation.",
         "Needs something: Missing something it needs, such as a connection, prices or a recipient's agreement.",
         "Experimental: Still being proven; its evidence and limits are shown with it.",
-        "One capability in full: faxbot costs capabilities show KEY"
+        "One capability in full: faxbot savings capabilities show KEY"
       ]
     },
     "show": {
@@ -2895,7 +2895,7 @@
         "Its setting: Recipients",
         "Command line: faxbot recipients together set {number} --recipient-agreed",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "fax_friendly": [
         "Lighter shading",
@@ -2905,14 +2905,14 @@
         "Helps with: Smaller documents and shorter calls",
         "",
         "What it needs",
-        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Providers & accounts.",
         "  In place · Prices: A sending route billed by the minute or second, such as your own SIP trunk. See Savings & optimization → Prices & plans.",
         "",
-        "Its setting: Delivery setup → Connections",
-        "Command line: faxbot system settings set fax_friendly_documents=where_it_saves",
-        "Turn it on in Delivery setup → Connections.",
+        "Its setting: Delivery setup → Providers & accounts",
+        "Command line: faxbot admin settings set fax_friendly_documents=where_it_saves",
+        "Turn it on in Delivery setup → Providers & accounts.",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "encoded_pages": [
         "Encoded pages (experimental)",
@@ -2923,14 +2923,14 @@
         "Helps with: Smaller documents and shorter calls",
         "",
         "What it needs",
-        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Providers & accounts.",
         "  Missing · Recipient's agreement: A recipient that runs Faxbot and agrees to encoded pages; you record that on their page. See Recipients.",
         "",
         "Its setting: Recipients",
         "Command line: faxbot recipients encoded set {number} --recipient-agreed",
         "Turn it on in Recipients.",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "direct_delivery": [
         "Direct delivery",
@@ -2944,9 +2944,9 @@
         "  Missing · Partner: A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax. See Recipients → Partners.",
         "",
         "Its setting: Recipients → Partners",
-        "Command line: faxbot system settings set direct_delivery_enabled=true",
+        "Command line: faxbot admin settings set direct_delivery_enabled=true",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "separator_pages": [
         "Fewer separator pages",
@@ -2960,13 +2960,13 @@
         "  In place · Connection: Your own SIP trunk for sending, from a phone carrier or your phone system. See Delivery setup → Telnyx.",
         "  In place · Prices: Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less. See Savings & optimization → Prices & plans.",
         "  Missing · Recipient's agreement: A recipient that shares calls and agrees to an index page or page marks; you record that on their page. See Recipients.",
-        "  Not needed yet · Setting: For marks at the top of every page: your header text and sending number. See Delivery setup → Sender identity.",
+        "  Not needed yet · Setting: For marks at the top of every page: your header text and sending number. See Delivery setup → Sending identity.",
         "",
         "Its setting: Recipients",
         "Command line: faxbot recipients set {number} --index-page",
         "Turn it on in Recipients.",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "advice_plans": [
         "Plans worth their fee",
@@ -2979,7 +2979,7 @@
         "What it needs",
         "  Missing · Prices: A monthly plan on one of your fax services, with its fee entered. See Savings & optimization → Prices & plans.",
         "",
-        "Its figures: Savings & optimization → Opportunities (faxbot costs recommendations plans)"
+        "Its figures: Savings & optimization → Opportunities (faxbot savings opportunities plans)"
       ],
       "measured_coding": [
         "Smallest page coding",
@@ -2993,7 +2993,7 @@
         "",
         "Its setting: Delivery setup → Telnyx",
         "On this installation: Not used in 30 days",
-        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+        "Its figures: Savings & optimization → Savings results (faxbot savings results)"
       ],
       "busy_hours": [
         "Calls at the right hour",
@@ -3004,7 +3004,7 @@
         "Helps with: Recover delivery with less waste",
         "",
         "What it needs",
-        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Providers & accounts.",
         "",
         "Its setting: Recipients",
         "Command line: faxbot recipients schedule {number} --learn",

@@ -609,7 +609,7 @@ $ faxbot savings capabilities show [OPTIONS] {KEY}
 
 **Arguments**:
 
-* `KEY`: The capability, as listed in brackets by faxbot costs capabilities.  [required]
+* `KEY`: The capability, as listed in brackets by faxbot savings capabilities.  [required]
 
 **Options**:
 

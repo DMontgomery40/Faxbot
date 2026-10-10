@@ -1,5 +1,5 @@
 // Words and links the Capabilities pages share. Every sentence comes from GET /routing/capabilities;
-// `faxbot costs capabilities` prints the same ones (cli/commands/capabilities.py, __tests__/capabilities.json).
+// `faxbot savings capabilities` prints the same ones (cli/commands/capabilities.py, __tests__/capabilities.json).
 import type { MouseEvent, ReactNode } from 'react';
 import { Link } from '@mui/material';
 import type { Capability, CapabilityFilterKey } from '../../api/capabilityTypes';
