@@ -175,6 +175,13 @@ class OutboundWorker:
         except PreparationFailure as error:
             if not preparing:
                 raise
+            cause = busy_cause(error)
+            if cause is not None:
+                # Raised while a busy database refused a step: that is the cause, not the document.
+                logging.getLogger(__name__).warning('Fax %s waits a moment: the database was too busy to prepare it '
+                                                    '(%s); nothing was sent.', claim.job_id, cause)
+                await self._give_back(claim)
+                return False
             category = error.category
             await run_lifecycle_step(lambda: self.store.fail_preparation(claim, category=category))
         except BatchSplit as split:

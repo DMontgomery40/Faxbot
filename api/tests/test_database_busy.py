@@ -694,3 +694,32 @@ async def test_a_claim_that_ran_out_while_the_database_was_busy_is_given_back_no
     monkeypatch.setattr(store, 'load_dispatch', ran_out)
     assert await OutboundWorker(store, transport).step() is False
     assert store.get(job)['state'] == 'ready' and provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_preparation_failure_raised_by_a_busy_database_gives_the_fax_back(busy, monkeypatch):
+    """A step that turns the database's refusal into a preparation failure still names the busy database as the
+    cause: the fax goes back to the queue instead of failing."""
+    from contextlib import asynccontextmanager
+    from api.app.outbound_worker import OutboundWorker, PreparationFailure
+    from api.tests.test_outbound_store import accept
+    installation = busy.installation
+    _, store, _ = installation
+    job = accept(installation)
+    lock = busy.holder()
+
+    class Refusing:
+        @asynccontextmanager
+        async def prepare(self, claim):
+            lock.hold()
+            try:
+                with store.configuration.engine.begin() as connection:
+                    connection.exec_driver_sql("UPDATE fax_jobs SET error = NULL WHERE id = 'none'")
+            except Exception:
+                raise PreparationFailure('preparation_failed') from None
+            finally:
+                lock.release()
+            yield self
+    monkeypatch.setattr('api.app.database_busy._sleep', lambda seconds: None)
+    assert await OutboundWorker(store, Refusing()).step() is False
+    assert store.get(job)['state'] == 'ready'
