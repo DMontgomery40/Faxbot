@@ -160,6 +160,8 @@ def test_a_public_address_is_never_even_checked(monkeypatch):
 def test_the_partner_is_found_by_its_number_and_anyone_else_goes_by_the_carrier(monkeypatch):
     monkeypatch.setattr(peer_call, 'installation_peers', lambda engine: [partner()])
     monkeypatch.setattr(peer_call, 'loaded', lambda values, peer_id: True)
+    from app.routing import sender_pins
+    monkeypatch.setattr(sender_pins, 'pinned', lambda engine, number: False)  # no registered senders here
     found = asyncio.run(peer_call.call_for(FakeEngine(), trunk_values(), object(), NUMBER))
     assert found.peer_id == PEER and found.endpoint == f'peer-{PEER}-endpoint' and found.decision.applies
     assert asyncio.run(peer_call.call_for(FakeEngine(), trunk_values(), object(), '+13035550199')) is None
