@@ -531,8 +531,11 @@ def test_other_carriers_price_your_faxes_at_their_published_prices(plans):
     result = compare(routes.engine, settings, now=datetime(2026, 10, 21))
     assert (result['sent'], result['received'], result['advice_only'], result['estimate']) == (2, 1, True, True)
     assert result['switching_sentence'] == SWITCHING
-    assert result['unpublished_sentence'] == ('Sinch trunk, Gamma trunk, BT One Voice trunk, Telstra SIP Connect trunk '
-                                              'and eFax publish no price Faxbot can use, so they are left out.')
+    # Swisscom Smart Business Connect and Telekom CompanyFlex publish no call price (their shipped cards say
+    # not_published, read 2026-10-09), so they are left out with the others.
+    assert result['unpublished_sentence'] == ('Sinch trunk, Gamma trunk, BT One Voice trunk, Telstra SIP Connect trunk, '
+                                              'Swisscom Smart Business Connect trunk, Telekom CompanyFlex trunk and '
+                                              'eFax publish no price Faxbot can use, so they are left out.')
     views = {view['id']: view for view in result['carriers']}
     # Telnyx, worked out here: each 50-second call is one billed minute; the received fax has no measured time, so it
     # takes the usual 30 seconds plus 30 a page (90 seconds, two minutes); one number at $1.00 a month.
