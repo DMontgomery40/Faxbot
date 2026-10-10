@@ -142,7 +142,10 @@ describe('One capability (?key=)', () => {
           expect(within(row).getByRole('link', { name: needed[4] })).toBeTruthy();
         } else if (figures) {
           expect(page.textContent).toContain(`Its figures: ${figures[1]}`);
-          expect(page.textContent).toContain(`Command line: ${figures[2]}`);
+          expect(page.textContent).not.toContain(figures[2]);
+        } else if (line.startsWith('Command line: ')) {
+          // The command line is the CLI's; the console names the page instead.
+          expect(page.textContent).not.toContain(line.slice('Command line: '.length));
         } else if (line.startsWith('Turn it on in ')) {
           expect(within(page).getByRole('link', { name: `Turn on ${item.name} in ${line.slice(14, -1)}` })).toBeTruthy();
         } else if (line === 'What it needs') {
@@ -153,9 +156,8 @@ describe('One capability (?key=)', () => {
       }
       for (const state of lines[1].split(' · ')) expect(screen.getByTestId(`capability-states-${key}`).textContent).toContain(state);
       expect(prerequisite).toBe(item.prerequisites.length);
-      // A command line only where one changes it, in a fixed-width font, never as a state.
-      const commands = within(page).queryAllByTestId('capability-command').map((line) => line.querySelector('code')?.textContent);
-      expect(commands).toEqual([item.setting.command, item.results?.command].filter(Boolean));
+      // No command lines on the console page: no developer text on operator screens.
+      expect(page.textContent).not.toMatch(/faxbot /);
       expect(page.textContent).not.toMatch(/\$|USD/);
     });
   }

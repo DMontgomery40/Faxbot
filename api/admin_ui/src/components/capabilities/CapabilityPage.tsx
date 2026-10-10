@@ -1,6 +1,7 @@
 // One capability (savings/capabilities?key=<key>): what it does with an example, how it stands here, what it
-// needs (each with whether it is in place, who or what satisfies it and where), where its setting lives with the
-// matching command, and what it did here with a link to its figures. Never money: amounts stay on Savings.
+// needs (each with whether it is in place, who or what satisfies it and where), where its setting lives, and what it
+// did here with a link to its figures. Never money: amounts stay on Savings. Command lines stay in `faxbot savings
+// capabilities show`; the console names the page instead (no developer text on operator screens).
 import type { ReactNode } from 'react';
 import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
 import type { Capability, CapabilityOutcome, CapabilityPrerequisite } from '../../api/capabilityTypes';
@@ -9,15 +10,6 @@ import { StateChips } from './CapabilityList';
 import { AddressLink, CAPABILITIES_ADDRESS, type Navigate } from './text';
 
 const STATE_COLOR = { in_place: 'success', missing: 'warning', not_needed: 'default', not_checked: 'default' } as const;
-
-// A command line people can type: secondary, in a fixed-width font, never a state.
-function CommandLine({ command }: { command: string }) {
-  return (
-    <Typography variant="body2" color="text.secondary" data-testid="capability-command">
-      Command line: <Box component="code" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', overflowWrap: 'anywhere' }}>{command}</Box>
-    </Typography>
-  );
-}
 
 function Prerequisite({ prerequisite, index, onNavigate }: {
   prerequisite: CapabilityPrerequisite; index: number; onNavigate?: Navigate;
@@ -90,7 +82,6 @@ export default function CapabilityPage({ item, outcome, onNavigate }: {
             <Typography variant="body2">
               Its setting: <AddressLink address={item.setting.address} onNavigate={onNavigate}>{item.setting.label}</AddressLink>
             </Typography>
-            {item.setting.command && <CommandLine command={item.setting.command} />}
             {item.ready && (
               <Button variant="contained" size="small" href={`#/${item.setting.address}`} sx={{ alignSelf: 'flex-start' }}
                 onClick={(event) => { if (onNavigate) { event.preventDefault(); onNavigate(item.setting.address as AdminDestination); } }}
@@ -104,12 +95,9 @@ export default function CapabilityPage({ item, outcome, onNavigate }: {
         <Section title="What it did here" testId="capability-results">
           {item.here.sentence && <Typography variant="body2">On this installation: {item.here.sentence}</Typography>}
           {item.results && (
-            <>
-              <Typography variant="body2">
-                Its figures: <AddressLink address={item.results.address} onNavigate={onNavigate}>{item.results.label}</AddressLink>
-              </Typography>
-              <CommandLine command={item.results.command} />
-            </>
+            <Typography variant="body2">
+              Its figures: <AddressLink address={item.results.address} onNavigate={onNavigate}>{item.results.label}</AddressLink>
+            </Typography>
           )}
           {item.affected && (
             <Typography variant="body2">
