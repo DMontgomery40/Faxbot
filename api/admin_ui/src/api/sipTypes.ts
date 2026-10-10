@@ -21,17 +21,19 @@ export interface SipPreset {
   notes: string[];
   sources: SipPresetSource[];
   // 'phone_system' for an office phone system on the local network (Avaya IP Office or Aura).
-  kind?: 'carrier' | 'phone_system';
+  kind?: 'carrier' | 'phone_system' | 'analog_line';
   // Transports a person may choose; the first preset default is `transport`.
   transports?: Array<'udp' | 'tcp' | 'tls'>;
   // G.711 order follows the installation country unless a person chooses one.
   codecs_by_country?: boolean;
   // Number formats a person may choose; empty means the preset's own.
-  dial_formats?: Array<'e164' | 'local'>;
+  dial_formats?: Array<'e164' | 'local' | 'local_area'>;
   // New trunks start with audio fax because the carrier turns T.38 into audio itself.
   audio_by_default?: boolean;
   // What the phone system's administrator sets, in order.
   admin_steps?: string[];
+  // A Teams Direct Routing SBC: what to do before the Teams port order, in order.
+  port_checklist?: string[];
   // Encrypted audio fax: 'sdes' encrypts the audio (SRTP) when the trunk signs in over TLS.
   media_encryption?: 'sdes' | null;
   encrypted_audio_only?: boolean;
@@ -162,7 +164,7 @@ export interface SipTrunkStatus {
   trunk_problems?: Record<string, string>;
   preset?: string;
   preset_label?: string;
-  kind?: 'carrier' | 'phone_system';
+  kind?: 'carrier' | 'phone_system' | 'analog_line';
   auth?: SipAuthMode;
   host?: string;
   missing?: string[];

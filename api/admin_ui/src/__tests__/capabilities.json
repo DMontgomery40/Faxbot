@@ -829,12 +829,12 @@
             "setting": {
               "address": "delivery/connections",
               "label": "Delivery setup → Providers & accounts",
-              "command": "faxbot delivery rules destinations allow {class}"
+              "command": "faxbot delivery providers destinations allow {class}"
             },
             "results": {
               "address": "delivery/connections",
               "label": "Delivery setup → Providers & accounts",
-              "command": "faxbot delivery rules destinations list"
+              "command": "faxbot delivery providers destinations list"
             },
             "affected": null
           }
@@ -2236,7 +2236,7 @@
             "results": {
               "address": "recipients/list",
               "label": "Recipients",
-              "command": "faxbot delivery providers trunk registered-senders"
+              "command": "faxbot recipients registered-senders"
             },
             "affected": null
           }
@@ -3245,7 +3245,121 @@
             "results": {
               "address": "delivery/moves",
               "label": "Delivery setup → Number moves",
-              "command": "faxbot delivery numbers move closures"
+              "command": "faxbot delivery numbers closures"
+            },
+            "affected": null
+          },
+          {
+            "key": "advice_renewal",
+            "name": "Fax server renewal",
+            "sentence": "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+            "example": "Your fax server's renewal quotes 24 channels, but its call records show at most 9 in use at once last year. The advice sets the two side by side, with the faxes Faxbot already handles, so you renew only the channels you need.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_renewal",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs your fax server's renewal or its call records; neither is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your fax server's renewal, or its call records to measure the channels it used at peak.",
+                "address": "savings/opportunities?section=renewal",
+                "address_label": "Savings & optimization → Opportunities"
+              }
+            ],
+            "setting": {
+              "address": "savings/opportunities?section=renewal",
+              "label": "Savings & optimization → Opportunities",
+              "command": null
+            },
+            "results": {
+              "address": "savings/opportunities?section=renewal",
+              "label": "Savings & optimization → Opportunities",
+              "command": "faxbot savings opportunities renewal"
+            },
+            "affected": null
+          },
+          {
+            "key": "advice_pots",
+            "name": "Fax lines in a POTS-replacement order",
+            "sentence": "Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+            "example": "Your carrier quotes a POTS-replacement order that includes eight fax lines. The advice shows what taking those lines out removes from the quote, and what one shared trunk would cost for them instead.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=advice_pots",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a POTS-replacement quote; none is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Your carrier's POTS-replacement quote.",
+                "address": "savings/opportunities?section=pots",
+                "address_label": "Savings & optimization → Opportunities"
+              }
+            ],
+            "setting": {
+              "address": "savings/opportunities?section=pots",
+              "label": "Savings & optimization → Opportunities",
+              "command": null
+            },
+            "results": {
+              "address": "savings/opportunities?section=pots",
+              "label": "Savings & optimization → Opportunities",
+              "command": "faxbot savings opportunities pots"
             },
             "affected": null
           }
@@ -3639,6 +3753,14 @@
       "    Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
       "    For phone lines in France; none of your sites has its commune set, and no line has a closing notice.",
       "    Missing: Setting",
+      "  Fax server renewal (advice_renewal): On · Not here · Sample data",
+      "    Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+      "    Needs your fax server's renewal or its call records; neither is entered yet.",
+      "    Missing: Prices",
+      "  Fax lines in a POTS-replacement order (advice_pots): On · Not here · Sample data",
+      "    Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+      "    Needs a POTS-replacement quote; none is entered yet.",
+      "    Missing: Prices",
       "",
       "Explain results and choose improvements",
       "Check what you were billed, and find the next change worth making.",
@@ -3910,8 +4032,10 @@
     "savings/opportunities?section=pages",
     "savings/opportunities?section=partners",
     "savings/opportunities?section=plans",
+    "savings/opportunities?section=pots",
     "savings/opportunities?section=receiving",
     "savings/opportunities?section=relays",
+    "savings/opportunities?section=renewal",
     "savings/opportunities?section=sending",
     "savings/opportunities?section=sites",
     "savings/opportunities?section=steps",

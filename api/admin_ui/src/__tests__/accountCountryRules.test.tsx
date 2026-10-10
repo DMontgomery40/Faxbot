@@ -47,6 +47,30 @@ describe('Providers → In use: country rules on each account they concern', () 
     expect(within(row).queryByRole('button', { name: 'Confirm the rules for Telnyx' })).toBeNull();
   });
 
+  it('withdraws a confirmation after asking, and offers it only to people who may change settings', async () => {
+    let confirmed = true;
+    const view = () => ({ countries: [UAE], accounts: [{ account: 'sip', label: 'Telnyx', country: 'AE', confirmed,
+      sentence: confirmed ? 'Telnyx: confirmed by Ada Admin.' : 'Telnyx: not confirmed. Faxes still go.' }] });
+    const { api, requests } = withRules((request) => {
+      if (request.path === '/routing/country-rules/withdraw') confirmed = false;
+      return view();
+    });
+    const { unmount } = render(<ProviderAccounts api={api} canWrite={false} />);
+    const readOnly = await screen.findByTestId('account-country-rules-sip');
+    expect(within(readOnly).queryByRole('button', { name: 'Withdraw the confirmation for Telnyx' })).toBeNull();
+    unmount();
+    render(<ProviderAccounts api={api} canWrite />);
+    const row = await screen.findByTestId('account-country-rules-sip');
+    fireEvent.click(within(row).getByRole('button', { name: 'Withdraw the confirmation for Telnyx' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/shows the country's rules as not confirmed again/)).toBeTruthy();
+    expect(requests.filter((item) => item.method === 'POST')).toEqual([]);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Withdraw confirmation' }));
+    expect(await within(row).findByText('Telnyx: not confirmed. Faxes still go.')).toBeTruthy();
+    expect(requests.filter((item) => item.method === 'POST').map((item) => [item.path, item.body])).toEqual([
+      ['/routing/country-rules/withdraw', { account: 'sip', country: 'AE' }]]);
+  });
+
   it('shows nothing where no account is in such a country, and says so when the rules cannot be read', async () => {
     const quiet = withRules(() => ({ countries: [UAE], accounts: [] }));
     const { unmount } = render(<ProviderAccounts api={quiet.api} canWrite />);

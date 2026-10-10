@@ -256,6 +256,42 @@ def confirmed(message, address, server):
     return False
 
 
+def copier_sender(message, address, settings):
+    """Sent straight from a copier you listed (``copier_senders``: its address and its network): the topmost
+    Received header your own mail server wrote (``checked_by``, not Microsoft 365) names a connecting address in that
+    copier's network, and the From address is the copier's. Copiers that send by direct SMTP sign nothing, so this
+    is the narrow rule that admits them (research N22)."""
+    import ipaddress
+    server = settings.get('checked_by')
+    listed = str(settings.get('copier_senders') or '')
+    if not server or server == MICROSOFT_365 or not listed or not address:
+        return False
+    networks = []
+    for entry in listed.split(','):
+        pieces = entry.split()
+        if len(pieces) == 2 and pieces[0] == address.casefold():
+            try:
+                networks.append(ipaddress.ip_network(pieces[1], strict=False))
+            except ValueError:
+                continue
+    if not networks:
+        return False
+    for value in message.parsed.get_all('Received') or []:
+        text = ' '.join(str(value).split())
+        match = re.search(r'\bby\s+([A-Za-z0-9.-]+)', text)
+        if match is None or match.group(1).casefold().rstrip('.') != server:
+            continue
+        found = re.search(r'\[(?:IPv6:)?([0-9A-Fa-f:.]+)\]', text[:match.start()])
+        if found is None:
+            return False
+        try:
+            client = ipaddress.ip_address(found.group(1))
+        except ValueError:
+            return False
+        return any(client in network for network in networks)
+    return False
+
+
 def microsoft_internal(message, address, settings):
     """Sent from inside the connector's own Microsoft 365 organization (see the module notes)."""
     if (settings.get('provider') != MICROSOFT_365 or settings.get('imap_host') != EXCHANGE_ONLINE

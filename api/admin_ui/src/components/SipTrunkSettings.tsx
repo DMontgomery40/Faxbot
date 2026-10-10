@@ -50,6 +50,9 @@ import TelnyxNames from './TelnyxNames';
 import FaxSettings from './FaxSettings';
 import { formatServerTime } from '../api/time';
 import { TrunkPicker } from './ProviderAccountsTrunks';
+import AnalogLinePanel from './AnalogLinePanel';
+import CopiersPanel from './CopiersPanel';
+import { ReceivedRegisteredSenders } from './CallerCheck';
 import { rulesApiFor } from './ProviderRulesApi';
 import TrunkAccountPanel from './TrunkAccountPanel';
 import SendOnlyNumbers from './SendOnlyNumbers';
@@ -91,6 +94,12 @@ type Reach = Pick<SipTrunkStatus, 'phone_system' | 'phone_system_command' | 'pho
   | 'phone_system_hidden' | 'ports_text'>;
 
 const isPhoneSystem = (preset?: SipPreset) => preset?.kind === 'phone_system';
+// An analog line through a gateway (N8): on the local network like a phone system, with its own wording.
+const isAnalogLine = (preset?: SipPreset) => preset?.kind === 'analog_line';
+const onLocalNetwork = (preset?: SipPreset) => isPhoneSystem(preset) || isAnalogLine(preset);
+const FORMAT_TEXT: Record<string, string> = {
+  local_area: 'Ten digits for numbers in this line\'s local calling area, 1 and ten digits for others',
+};
 const TRANSPORTS_OFFERED: Array<'tls' | 'tcp' | 'udp'> = ['tls', 'tcp', 'udp'];
 
 // A source's read date in the reader's own words ('2026-10-03' is a calendar day, not a moment).
@@ -122,6 +131,11 @@ const INTRO: Record<string, string> = {
   both: 'Send and receive faxes with Faxbot\'s own fax engine over your carrier account.',
   receives: 'Receive faxes with Faxbot\'s own fax engine over your carrier account.',
   sends: 'Send faxes with Faxbot\'s own fax engine over your carrier account.',
+};
+const ANALOG_INTRO: Record<string, string> = {
+  both: 'Send and receive faxes over the business line you already pay for, through a gateway on your local network.',
+  receives: 'Receive faxes over the business line you already pay for, through a gateway on your local network.',
+  sends: 'Send faxes over the business line you already pay for, through a gateway on your local network.',
 };
 const PHONE_INTRO: Record<string, string> = {
   both: 'Send and receive faxes with Faxbot\'s own fax engine through your office phone system and its lines.',
@@ -500,20 +514,25 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const transportInForce = form.transport || preset?.transport || 'udp';
   const portInForce = preset ? (transportInForce === preset.transport ? preset.port : DEFAULT_PORTS[transportInForce]) : 5060;
   const prefixLogin = !!preset?.ip_dial_prefix && form.auth === 'ip';
-  const phone = isPhoneSystem(preset);
+  const analogLine = isAnalogLine(preset);
+  const phone = onLocalNetwork(preset);
   const directions = use?.sends && !use.receives ? 'sends' : use?.receives && !use.sends ? 'receives' : 'both';
-  const carriers = presets.filter((item) => !isPhoneSystem(item));
+  const carriers = presets.filter((item) => !onLocalNetwork(item));
   const phoneSystems = presets.filter(isPhoneSystem);
+  const analogLines = presets.filter(isAnalogLine);
   const formats = preset?.dial_formats ?? [];
-  const localNumbers = form.dial_format === 'local';
+  const formatValue = form.dial_format || (formats.length === 0 || formats.includes('e164') ? 'e164' : formats[0]);
+  const localNumbers = formatValue === 'local' || formatValue === 'local_area';
   // The vendor names the checklist: "What you set in Avaya".
-  const vendor = preset?.label.split(' ')[0] ?? '';
+  // A Teams SBC preset names its vendor after the colon: "What you set in AudioCodes Mediant".
+  const vendor = preset?.label.includes(': ') ? preset.label.split(': ')[1] : preset?.label.split(' ')[0] ?? '';
 
   if (trunkKey && trunkKey !== 'sip') {
     return (
       <Stack spacing={2} data-testid="sip-trunk-settings">
         <TrunkPicker api={rules} value={trunkKey} onChange={setTrunkKey} />
         <TrunkAccountPanel api={rules} call={call} accountKey={trunkKey} />
+        <AnalogLinePanel call={call} accountKey={trunkKey} />
       </Stack>
     );
   }
@@ -522,15 +541,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       <TrunkPicker api={rules} value={trunkKey} onChange={setTrunkKey} />
       {Object.values(status?.trunk_problems ?? {}).map((problem) => <Alert key={problem} severity="warning">{problem}</Alert>)}
       {(status?.carrier_notes ?? []).map((note) => <Alert key={note} severity="info">{note}</Alert>)}
-      <Typography variant="h6">{phone ? 'SIP trunk to your phone system' : 'Carrier SIP trunk'}</Typography>
+      <Typography variant="h6">{analogLine ? 'SIP trunk to your analog line gateway' : phone ? 'SIP trunk to your phone system' : 'Carrier SIP trunk'}</Typography>
       <Typography variant="body2" color="text.secondary">
-        {phone ? `${PHONE_INTRO[directions]} The carrier behind your phone system bills these calls.`
+        {analogLine ? `${ANALOG_INTRO[directions]} Your phone company bills these calls on the line.`
+          : phone ? `${PHONE_INTRO[directions]} The carrier behind your phone system bills these calls.`
           : `${INTRO[directions]} Your carrier bills these calls by the minute.`}
       </Typography>
 
       {presetChosenElsewhere && preset ? (
         <Typography variant="body2" data-testid="sip-preset-chosen">
-          {phone ? `Phone system: ${preset.label}.` : `Carrier: ${preset.id === 'custom' ? 'your own carrier' : preset.label}.`}
+          {analogLine ? `Analog line gateway: ${preset.label}.` : phone ? `Phone system: ${preset.label}.` : `Carrier: ${preset.id === 'custom' ? 'your own carrier' : preset.label}.`}
           {' '}To use another, choose Add or change a provider.
         </Typography>
       ) : (
@@ -539,10 +559,12 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
         <Select labelId="sip-preset-label" label="Carrier" value={form.preset}
           onChange={(event) => choosePreset(String(event.target.value))}>
           <MenuItem value=""><em>No SIP trunk</em></MenuItem>
-          {phoneSystems.length > 0 && <ListSubheader>Carrier</ListSubheader>}
+          {(phoneSystems.length > 0 || analogLines.length > 0) && <ListSubheader>Carrier</ListSubheader>}
           {carriers.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
           {phoneSystems.length > 0 && <ListSubheader>Your phone system</ListSubheader>}
           {phoneSystems.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+          {analogLines.length > 0 && <ListSubheader>Analog line through a gateway</ListSubheader>}
+          {analogLines.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
         </Select>
       </FormControl>
       )}
@@ -583,6 +605,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
                     <li key={step}><Typography variant="body2">{step}</Typography></li>
                   ))}
                 </Box>
+                {(preset.port_checklist ?? []).length > 0 && (
+                  <Box data-testid="teams-port-checklist">
+                    <Typography variant="body2" fontWeight={600}>Before the Teams port order</Typography>
+                    <Box component="ol" sx={{ pl: 3, mt: 0 }}>
+                      {(preset.port_checklist ?? []).map((step) => (
+                        <li key={step}><Typography variant="body2">{step}</Typography></li>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
                 <Typography variant="body2" fontWeight={600}>Sources</Typography>
                 {preset.sources.map((source) => (
                   <Typography key={source.url} variant="body2">
@@ -594,8 +626,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
             </Accordion>
           )}
 
+          {analogLine && <AnalogLinePanel call={call} accountKey="sip" expectAnalog />}
+
           <Stack direction={narrow ? 'column' : 'row'} spacing={2}>
-            <TextField size="small" fullWidth label={phone ? 'Phone system address' : 'Server'} value={form.host}
+            <TextField size="small" fullWidth label={analogLine ? 'Gateway address' : phone ? 'Phone system address' : 'Server'} value={form.host}
               required={needsHost} placeholder={phone ? '192.168.1.10' : preset.host || 'sip.example.com'}
               InputLabelProps={{ shrink: true }}
               helperText={phone ? `${preset.label}'s address on your local network.`
@@ -689,29 +723,33 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
             <Stack direction={narrow ? 'column' : 'row'} spacing={2}>
               <FormControl size="small" fullWidth>
                 <InputLabel id="sip-dial-format-label">Number format</InputLabel>
-                <Select labelId="sip-dial-format-label" label="Number format" value={form.dial_format || 'e164'}
+                <Select labelId="sip-dial-format-label" label="Number format" value={formatValue}
                   onChange={(event) => update('dial_format', String(event.target.value))}>
-                  <MenuItem value="e164">
+                  {formats.includes('e164') && <MenuItem value="e164">
                     {`International, with + and the country code${numberFormat ? ` (${numberFormat.international})` : ''}`}
-                  </MenuItem>
+                  </MenuItem>}
                   <MenuItem value="local">
                     {`As a phone here dials it${numberFormat ? ` (${numberFormat.national})` : ''}`}
                   </MenuItem>
+                  {formats.includes('local_area') && <MenuItem value="local_area">{FORMAT_TEXT.local_area}</MenuItem>}
                 </Select>
               </FormControl>
               {localNumbers && (
                 <TextField size="small" fullWidth label="Outside-line prefix (optional)" value={form.dial_prefix}
-                  inputProps={{ inputMode: 'numeric', maxLength: 4 }}
-                  helperText={phone ? 'Digits your phone system needs before an outside number, such as 9.'
+                  inputProps={{ inputMode: analogLine ? 'text' : 'numeric', maxLength: analogLine ? 7 : 4 }}
+                  helperText={analogLine ? '*70 turns call waiting off for each call Faxbot places, where your exchange offers it.'
+                    : phone ? 'Digits your phone system needs before an outside number, such as 9.'
                     : 'Digits your carrier needs before each number, if any.'}
-                  onChange={(event) => update('dial_prefix', event.target.value.replace(/[^0-9]/g, ''))} />
+                  onChange={(event) => update('dial_prefix', event.target.value.replace(analogLine ? /[^0-9*]/g : /[^0-9]/g, ''))} />
               )}
             </Stack>
           )}
 
           <TextField size="small" fullWidth label={sends ? 'Caller ID' : 'Caller ID (optional)'} value={form.caller_id}
             required={sends} type="tel" placeholder={numberPlaceholder(numberFormat)}
-            helperText={phone
+            helperText={analogLine
+              ? 'The number of the line: your phone company shows it on faxes Faxbot sends over it.'
+              : phone
               ? 'The fax number your phone system shows for faxes Faxbot sends.'
               : sends
                 ? 'A number your carrier has assigned to you or verified for you. Faxbot never sends any other number.'
@@ -719,7 +757,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
             onChange={(event) => update('caller_id', event.target.value)} />
 
           <Box>
-            <Typography variant="subtitle2">{phone ? 'Fax numbers your phone system sends to Faxbot' : 'Fax numbers on this trunk'}</Typography>
+            <Typography variant="subtitle2">{analogLine ? 'Fax numbers on this line' : phone ? 'Fax numbers your phone system sends to Faxbot' : 'Fax numbers on this trunk'}</Typography>
             <Typography variant="body2" color="text.secondary">
               {numberHint(numberFormat, phone ? 'The fax numbers your phone system routes to Faxbot'
                 : 'The numbers your carrier sends to this trunk')}
@@ -911,6 +949,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
         </Box>
       )}
       {showCalls && <SendOnlyNumbers call={call} />}
+      {showCalls && <CopiersPanel call={call} />}
+      {showCalls && <ReceivedRegisteredSenders call={call} />}
     </Stack>
   );
 }

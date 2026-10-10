@@ -479,7 +479,7 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None, *, man
         return TRUNK_INCOMPLETE
     if ports_text in (BEHIND_ROUTER, LAN_HIDDEN, LAN_NOT_STARTED):
         return ports_text
-    phone = summary.get('kind') == sip_trunk.PHONE_SYSTEM
+    phone = summary.get('kind') in sip_trunk.LAN_KINDS
     if restarting:
         return RESTARTING
     if not applied:
@@ -525,7 +525,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
     asterisk = (await _asterisk_status(values, key) if configured
                 else {'connected': False, 'registration': 'unknown', 'reachability': 'unknown', 'permission': True,
                       'transport': None})
-    phone = configured and summary.get('kind') == sip_trunk.PHONE_SYSTEM
+    phone = configured and summary.get('kind') in sip_trunk.LAN_KINDS
     # A phone system is reached on the local network: no internet address to look up.
     network = await probe_network(values.sip_trunk_preset) if configured and not phone else None
     carrier = summary.get('preset_label') if configured and summary.get('preset') != 'custom' else 'the carrier'
@@ -566,7 +566,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
     if last and last['verdict'] == NOT_HANDED_OVER:
         # A received fax waits outside Faxbot; that matters more than any trunk detail.
         message = last['summary']
-    return {
+    view = {
         **summary, 'account': key or sip_trunk.PRIMARY,
         # Several trunks: every trunk account, and why one that is on is not in Asterisk's file yet.
         'trunks': [{'key': trunk.key, 'label': trunk.label, 'endpoint_loaded': trunk.endpoint in loaded}
@@ -629,6 +629,19 @@ async def status(request: Request, account: str | None = Query(default=None, max
         'engine_audio': bool(engine_state == 'running' and hylafax_engine.engine_audio(values)),
         'message': message,
     }
+    return _gateway_words(view) if summary.get('kind') == sip_trunk.ANALOG_LINE else view
+
+
+# An analog line's gateway (sip_trunk.ANALOG_GATEWAYS) is reached on the local network like a phone system; its
+# sentences name the gateway.
+GATEWAY_TEXT_FIELDS = ('message', 'registration_text', 'reachability_text', 'ports_text')
+
+
+def _gateway_words(view):
+    for name in GATEWAY_TEXT_FIELDS:
+        if isinstance(view.get(name), str):
+            view[name] = view[name].replace("phone system's", "gateway's").replace('phone system', 'gateway')
+    return view
 
 
 def _records(request):

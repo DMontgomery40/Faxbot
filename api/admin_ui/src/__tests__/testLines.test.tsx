@@ -88,6 +88,23 @@ describe('Public test lines in Diagnostics', () => {
     await waitFor(() => expect(marked).toEqual([{ inbound_id: 'in1' }]));
   });
 
+  it('reads one test fax again on request, without reading the whole list', async () => {
+    const send = { id: 's1', line_id: 'hp-us', operator: "HP's fax test service", number: '+18884732963', fax_id: 'f1',
+      sent_at_text: '10 Oct 9:00 AM MDT', actor_name: 'Dana', fax_state: 'on_its_way',
+      fax_sentence: 'The test fax is on its way.', reply: null, public_page: null, receipt: null };
+    let lists = 0;
+    server.use(
+      http.get('/diagnostics/test-lines', () => { lists += 1; return HttpResponse.json({ reply: REPLY, lines: [], sends: [send] }); }),
+      http.get('/diagnostics/test-lines/sends/s1', () => HttpResponse.json({ ...send, fax_state: 'sent',
+        fax_sentence: 'The test fax went through.' })),
+    );
+    render(<TestLines client={new AdminAPIClient({ kind: 'key', key: 'synthetic-console-key' })} />);
+    expect(await screen.findByText(/The test fax is on its way\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: "Check the test fax to HP's fax test service again" }));
+    expect(await screen.findByText(/The test fax went through\./)).toBeTruthy();
+    expect(lists).toBe(1);
+  });
+
   it('says so when the list cannot be read', async () => {
     server.use(http.get('/diagnostics/test-lines', () => HttpResponse.json({ detail: 'down' }, { status: 503 })));
     render(<TestLines client={new AdminAPIClient({ kind: 'key', key: 'synthetic-console-key' })} />);

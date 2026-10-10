@@ -1,6 +1,6 @@
 """Fax server renewal commands (N20, N24): channels at measured peak, and one page for the renewal.
 
-They hang off ``faxbot costs recommendations``; ``line_inventory.py`` imports this module so they register with that
+They hang off ``faxbot savings opportunities``; ``line_inventory.py`` imports this module so they register with that
 group. Nothing here changes a licence, cancels a renewal or contacts a vendor.
 """
 from pathlib import Path

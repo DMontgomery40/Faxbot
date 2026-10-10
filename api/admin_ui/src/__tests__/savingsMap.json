@@ -630,7 +630,7 @@
             "page_label": "Delivery setup → Providers & accounts",
             "link": "delivery/connections",
             "link_label": "Delivery setup → Providers & accounts",
-            "command": "faxbot delivery rules destinations list",
+            "command": "faxbot delivery providers destinations list",
             "turn_on": false
           },
           {
@@ -1622,7 +1622,7 @@
             "page_label": "Delivery setup → Number moves",
             "link": "delivery/moves",
             "link_label": "Delivery setup → Number moves",
-            "command": "faxbot delivery numbers move closures",
+            "command": "faxbot delivery numbers closures",
             "turn_on": false
           },
           {
@@ -1652,7 +1652,7 @@
             "page_label": "Recipients → Details",
             "link": "recipients/list",
             "link_label": "Recipients → Details",
-            "command": "faxbot delivery providers trunk registered-senders",
+            "command": "faxbot recipients registered-senders",
             "turn_on": false
           },
           {
@@ -1683,6 +1683,66 @@
             "link": "delivery/connections",
             "link_label": "Delivery setup → Providers & accounts",
             "command": "faxbot delivery providers accounts country-rules",
+            "turn_on": false
+          },
+          {
+            "key": "advice_renewal",
+            "name": "Fax server renewal",
+            "sentence": "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs your fax server's renewal or its call records; neither is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Savings & optimization → Opportunities",
+            "link": "costs/recommendations?section=renewal",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities renewal",
+            "turn_on": false
+          },
+          {
+            "key": "advice_pots",
+            "name": "Fax lines in a POTS-replacement order",
+            "sentence": "Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a POTS-replacement quote; none is entered yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "costs/recommendations",
+            "page_label": "Savings & optimization → Opportunities",
+            "link": "costs/recommendations?section=pots",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities pots",
             "turn_on": false
           }
         ]
@@ -1782,7 +1842,7 @@
     "    See: faxbot delivery providers trunk caller-ids",
     "  Where Faxbot may dial: On · Works here · Sample data",
     "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
-    "    See: faxbot delivery rules destinations list",
+    "    See: faxbot delivery providers destinations list",
     "  Power-aware sending: Off · Not here · Sample data",
     "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
     "    Needs a UPS that Faxbot reads through NUT; none is set.",
@@ -1905,14 +1965,22 @@
     "  Copper closures: On · Not here · Sample data",
     "    Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
     "    For phone lines in France; none of your sites has its commune set, and no line has a closing notice.",
-    "    See: faxbot delivery numbers move closures",
+    "    See: faxbot delivery numbers closures",
     "  Registered senders: On · Works here · Sample data",
     "    Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
-    "    See: faxbot delivery providers trunk registered-senders",
+    "    See: faxbot recipients registered-senders",
     "  Country service rules: On · Not here · Sample data",
     "    Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",
     "    None of your accounts is in a country whose service rules Faxbot knows.",
     "    See: faxbot delivery providers accounts country-rules",
+    "  Fax server renewal: On · Not here · Sample data",
+    "    Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
+    "    Needs your fax server's renewal or its call records; neither is entered yet.",
+    "    See: faxbot savings opportunities renewal",
+    "  Fax lines in a POTS-replacement order: On · Not here · Sample data",
+    "    Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
+    "    Needs a POTS-replacement quote; none is entered yet.",
+    "    See: faxbot savings opportunities pots",
     "",
     "On or Off: Whether it is switched on for your faxes.",
     "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",

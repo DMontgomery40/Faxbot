@@ -63,6 +63,7 @@ import { providerLabel } from '../providerLabels';
 import MarkJunk from './MarkJunk';
 import type { ReceivedForm } from '../api/formsTypes';
 import ReceivedFormLine from './forms/ReceivedFormLine';
+import { ReceivedCallerCheck } from './CallerCheck';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -532,6 +533,7 @@ export default function Received({
         {fax && canBlockSender && fax.fr && (
           <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
         )}
+        {fax && fax.backend === 'sip' && <ReceivedCallerCheck call={client.call.bind(client)} inboundId={fax.id} />}
       </Stack>
     );
   };

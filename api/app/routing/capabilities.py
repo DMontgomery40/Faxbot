@@ -371,6 +371,17 @@ def _country_with_rules(here):
     return bool(view(here.engine, here.values)['accounts'])
 
 
+def _renewal_facts(here):
+    from .channel_peak import imports
+    from .renewal import renewals_by_system
+    return bool(renewals_by_system(here.engine) or imports(here.engine))
+
+
+def _pots_quote(here):
+    from .pots_quote import quotes
+    return bool(quotes(here.engine))
+
+
 SENDS = Prerequisite('connection', 'A fax service account or your own SIP trunk that sends faxes.',
                      'delivery/connections', _sends)
 TRUNK_SENDS = Prerequisite('connection', 'Your own SIP trunk for sending, from a phone carrier or your phone system.',
@@ -666,7 +677,7 @@ CAPABILITIES = {
         'spend_less',
         'A typing slip turns a fax to a local clinic into a call to a premium-rate number. Faxbot holds that fax '
         'for your approval instead of dialling it.',
-        'faxbot delivery rules destinations allow {class}', (SENDS,)),
+        'faxbot delivery providers destinations allow {class}', (SENDS,)),
     'power_aware': Capability(
         'recover',
         'During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of '
@@ -728,6 +739,19 @@ CAPABILITIES = {
         'services and their sources, and you record that the provider meets them.',
         Prerequisite('connection', 'A fax service account in a country whose service rules Faxbot knows.',
                      'delivery/connections', _country_with_rules)),
+    'advice_renewal': advice(
+        'receiving',
+        "Your fax server's renewal quotes 24 channels, but its call records show at most 9 in use at once last "
+        'year. The advice sets the two side by side, with the faxes Faxbot already handles, so you renew only the '
+        'channels you need.',
+        Prerequisite('prices', "Your fax server's renewal, or its call records to measure the channels it used at "
+                               'peak.', 'savings/opportunities?section=renewal', _renewal_facts)),
+    'advice_pots': advice(
+        'receiving',
+        'Your carrier quotes a POTS-replacement order that includes eight fax lines. The advice shows what taking '
+        'those lines out removes from the quote, and what one shared trunk would cost for them instead.',
+        Prerequisite('prices', "Your carrier's POTS-replacement quote.", 'savings/opportunities?section=pots',
+                     _pots_quote)),
 }
 
 

@@ -68,6 +68,7 @@ export function routeFamiliesApi(client: AdminAPIClient) {
     list: () => client.call<RouteFamilies>({ method: 'GET', path: '/routing/families' }),
     close: (id: string) => client.call<RouteProblem>({ method: 'POST', path: `/routing/families/${encodeURIComponent(id)}/close` }),
     plan: (body: TestPlan) => client.call<RouteTest>({ method: 'POST', path: '/routing/families/tests', body }),
+    test: (testId: string) => client.call<RouteTest>({ method: 'GET', path: `/routing/families/tests/${encodeURIComponent(testId)}` }),
     send: (testId: string, cell: string) => client.call<{ fax_id: string; test: RouteTest; sentence: string }>({
       method: 'POST', path: `/routing/families/tests/${encodeURIComponent(testId)}/send/${encodeURIComponent(cell)}`,
     }),

@@ -1,4 +1,4 @@
-// Costs → Recommendations → Fax server renewal (N20, N24): the channels another fax server really needed, from its
+// Savings & optimization → Opportunities → Fax server renewal (N20, N24): the channels another fax server really needed, from its
 // call records, and one page for its renewal. Advice only: nothing changes a licence or contacts a vendor.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Link, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow,

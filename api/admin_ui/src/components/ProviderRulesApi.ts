@@ -596,6 +596,9 @@ export const requests = {
   confirmCountry: (account: string, country: string, evidence: string): ApiRequest => ({
     method: 'POST', path: '/routing/country-rules/confirm', body: { account, country, evidence, evidence_url: null },
   }),
+  withdrawCountry: (account: string, country: string): ApiRequest => ({
+    method: 'POST', path: '/routing/country-rules/withdraw', body: { account, country },
+  }),
 };
 
 export interface RulesApi {
@@ -624,6 +627,7 @@ export interface RulesApi {
   changeDialing(key: string, state: DialingChoice, ceiling?: string): Promise<DialingState>;
   countryRules(): Promise<CountryRulesView>;
   confirmCountry(account: string, country: string, evidence: string): Promise<CountryRulesView>;
+  withdrawCountry(account: string, country: string): Promise<CountryRulesView>;
 }
 
 // Country service rules: each account in a country with rules, and the rules with their sources.
@@ -673,5 +677,6 @@ export function rulesApi(send: Send): RulesApi {
     changeDialing: (key, state, ceiling) => send(requests.changeDialing(key, state, ceiling)),
     countryRules: () => send(requests.countryRules()),
     confirmCountry: (account, country, evidence) => send(requests.confirmCountry(account, country, evidence)),
+    withdrawCountry: (account, country) => send(requests.withdrawCountry(account, country)),
   };
 }

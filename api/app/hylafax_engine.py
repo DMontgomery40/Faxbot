@@ -744,7 +744,8 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
     """
     from .ami import FAX_PREFERENCE_VARIABLE, requested_keys
     channel = fields['Channel']
-    match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
+    match = re.fullmatch(r'PJSIP/((?:\*[0-9]{2})?(?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@'
+                         r'(trunk-(?:[a-z0-9][a-z0-9_-]{0,31}-)?endpoint)',
                          channel)
     caller = fields.get('CallerID', '')
     if match is None or not re.fullmatch(r'\+?[0-9]{0,20}', caller or ''):
