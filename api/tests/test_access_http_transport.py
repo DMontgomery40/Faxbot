@@ -91,3 +91,50 @@ def test_https_session_cookie_is_host_prefixed_and_secure(installation):
         (cookie,) = _set_cookie(login)
         assert cookie.startswith('__Host-faxbot_session=') and 'secure' in cookie.lower()
         assert client.get('/auth/me').json()['source'] == 'session'
+
+
+# A failed private operation answers 503 and logs why, never a parameter, hash or token -----------------------
+
+SECRET = 'fbk_live_synthetic_secret_token_0123456789'
+
+
+def _logged(caplog, operation):
+    import logging
+    from app.access.http import private_operation
+    from app.access.types import AccessUnavailableError
+    caplog.set_level(logging.WARNING, logger='app.access.http')
+    with pytest.raises(AccessUnavailableError):
+        private_operation(operation)()
+    records = [record for record in caplog.records if record.name == 'app.access.http']
+    assert len(records) == 1, [record.getMessage() for record in records]
+    assert records[0].levelno == logging.WARNING and records[0].exc_info is None
+    return logging.Formatter().format(records[0])
+
+
+def test_a_failed_statement_is_logged_with_its_class_statement_and_frames_but_no_parameter(caplog):
+    import sqlalchemy as sa
+    engine = sa.create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(sa.text('CREATE TABLE session_tokens (token TEXT UNIQUE)'))
+        connection.execute(sa.text('INSERT INTO session_tokens VALUES (:token)'), {'token': SECRET})
+
+    def store_session_token():
+        with engine.begin() as connection:
+            connection.execute(sa.text('INSERT INTO session_tokens VALUES (:token)'), {'token': SECRET})
+    text = _logged(caplog, store_session_token)
+    assert 'store_session_token' in text  # the operation, by name
+    assert 'sqlalchemy.exc.IntegrityError' in text and 'sqlite3.IntegrityError (SQLITE_CONSTRAINT_UNIQUE)' in text
+    assert 'INSERT INTO session_tokens VALUES (?)' in text
+    assert 'test_access_http_transport.py' in text  # a traceback: the frames that led to it
+    assert SECRET not in text
+
+
+def test_an_exception_message_that_holds_a_secret_is_never_logged(caplog):
+    def check_password():
+        try:
+            raise ValueError(f'hash mismatch for {SECRET}')
+        except ValueError as error:
+            raise RuntimeError(f'could not verify {SECRET}') from error
+    text = _logged(caplog, check_password)
+    assert 'check_password' in text and 'RuntimeError <- ValueError' in text
+    assert SECRET not in text

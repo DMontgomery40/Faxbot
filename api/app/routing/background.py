@@ -1,14 +1,21 @@
 """Fail-safe periodic work owned by a router lifespan.
 
-A failing step logs one plain warning and waits; it never stops the API, never
-logs provider payloads, addresses or credentials, and joins its database thread
-before shutdown completes.
+A failing step logs one plain warning with its traceback and waits; it never
+stops the API, never logs SQL parameters, and joins its database thread before
+shutdown completes.
 """
 import asyncio
 from contextlib import asynccontextmanager
 import logging
 
 from ..config_runtime import run_lifecycle_step
+from ..log_safety import hide_sql_parameters
+
+
+def _warn(warning, error):
+    """The step's plain warning with its traceback (``exc_info``), SQL parameters hidden."""
+    hide_sql_parameters(error)
+    logging.getLogger(__name__).warning(warning, exc_info=True)
 
 
 async def repeat(step, *, interval, warning, initial_delay=None):
@@ -19,8 +26,8 @@ async def repeat(step, *, interval, warning, initial_delay=None):
             busy = await run_lifecycle_step(step)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logging.getLogger(__name__).warning(warning)
+        except Exception as error:
+            _warn(warning, error)
             busy = False
         if not busy:
             await asyncio.sleep(interval)
@@ -34,8 +41,8 @@ async def repeat_async(step, *, interval, warning, initial_delay=None):
             busy = await step()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logging.getLogger(__name__).warning(warning)
+        except Exception as error:
+            _warn(warning, error)
             busy = False
         if not busy:
             await asyncio.sleep(interval)
