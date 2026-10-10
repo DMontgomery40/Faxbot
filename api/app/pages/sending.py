@@ -276,21 +276,33 @@ class RasterCache:
         return self._frames[key]
 
     def drawn(self, pdf):
-        """The PDF's pages drawn as fax pages, for a provider that takes the PDF; drawn once per attempt into a
-        temporary file beside the attempt files, which is removed at once."""
+        """The PDF's pages drawn as fax pages, for a provider that takes the PDF. Drawn once per document and kept
+        beside the fax's files (``packed-<fax>-drawn.tiff``, with the PDF's hash beside it) so a later attempt, or
+        a claim given back before it could send, reads them again at once; the retention cleanup removes them."""
         from .. import conversion
-        key = ('drawn', str(pdf), self.digest(pdf))
+        digest = self.digest(pdf)
+        key = ('drawn', str(pdf), digest)
         if key not in self._frames:
-            raster = paths(self.root, self.job_id, self.attempt_id)[0]
-            raster = raster.with_name(raster.stem + '.source.tiff')
+            raster = self.root / f'{PREFIX}{self.job_id}-drawn.tiff'
+            stamp = raster.with_name(raster.name + '.sha256')
+            frames = None
             try:
+                if (digest and raster.is_file() and not raster.is_symlink() and stamp.is_file()
+                        and stamp.read_text(encoding='ascii').strip() == digest):
+                    frames = conversion.read_fax_frames(str(raster))
+            except OSError:
+                frames = None
+            if frames is None:
+                # The hash goes only beside a finished drawing: one cut short is drawn again, never read.
+                stamp.unlink(missing_ok=True)
                 conversion.pdf_to_tiff(str(pdf), str(raster))
-                self._frames[key] = conversion.read_fax_frames(str(raster))
-            finally:
-                try:
-                    raster.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                frames = conversion.read_fax_frames(str(raster))
+                if digest:
+                    try:
+                        stamp.write_text(digest, encoding='ascii')
+                    except OSError:
+                        pass
+            self._frames[key] = frames
         return self._frames[key]
 
 
@@ -471,7 +483,7 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
                                       dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                       card=account.card, boundary_seconds=cap.boundary_seconds,
                                       predict=account.predict(), describe_dense=describe_dense, usable=usable,
-                                      measure_cache=_coding_cache(out_tiff) if usable is not None else None,
+                                      measure_cache=_coding_cache(root, job_id) if usable is not None else None,
                                       renderings=renderings, faster=faster)
     options = tuple(_option(account, item) for item in choice.get('candidates') or ())
     layout = None if choice['layout'] == 'normal' else choice['layout']
@@ -590,6 +602,14 @@ def still_current(engine, values, evaluated, configuration, job, pdf, tiff, *, r
     if evaluated.permission is not None and permission_for(
             engine, values, fresh, job, rule=rule).fingerprint() != evaluated.permission.fingerprint():
         return 'what the recipient accepts changed'
+    terms = getattr(fresh.facts, 'terms', None)
+    if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
+        # A plan's room is used by every fax sent on it: these pages are sent on it only if they still cost what
+        # they were chosen at (still inside the allowance, or the same overage).
+        from ..routing.predict import predict_from
+        cost = predict_from(fresh.facts, evaluated.shape).cost
+        if (cost.micros if cost is not None else None) != evaluated.chosen.micros:
+            return "the plan's room changed"
     return None
 
 
@@ -651,9 +671,12 @@ def _usable_codings(engine, values, route, mode, number, cap):
         return None
 
 
-def _coding_cache(out_tiff):
+def _coding_cache(root, job_id):
+    """The codings measured on this fax's pages, kept for every attempt and account of the fax
+    (``packed-<fax>-measured.coding.json``): its entries are keyed by the pages' pixels and the tuning, so a later
+    attempt measures nothing it measured before. The retention cleanup removes it with the fax's other files."""
     from .coding import cache_path
-    return cache_path(out_tiff)
+    return cache_path(Path(root) / f'{PREFIX}{job_id}-measured.tiff')
 
 
 def _record_coding(engine, job_id, attempt_id, number, route, choice, usable, now):

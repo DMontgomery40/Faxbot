@@ -113,6 +113,7 @@ const eventLabels: Record<string, string> = {
   provider_observed: 'Provider status update',
   operator_identity_bound: 'Receipt confirmed with the provider fax ID',
   route_assigned: 'Route chosen',
+  route_measured: 'Accounts compared on the pages they would send',
   route_fallback: 'Trying the next route',
   repair_started: 'Sending only the missing pages directly to the partner',
   repair_completed: 'Completed directly by the partner after the call broke',

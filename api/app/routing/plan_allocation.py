@@ -640,13 +640,35 @@ def _in_flight(routes, values, key, left, dims, now):
     from .plan import ledger_key
     t = _tables(routes.engine)
     c, j = t['delivery_attempt_costs'], t['fax_jobs']
+    # The pages each attempt really sends: its recorded selection (routing/selections.py, accounts compared on their
+    # measured pages), else its page change (long or encoded pages), else the document's own pages.
+    sent = _sent_pages(routes.engine)
+    source = c.join(j, j.c.id == c.c.job_id)
+    pages = j.c.pages
+    if sent:
+        for table in sent:
+            source = source.outerjoin(table, table.c.attempt_id == c.c.id)
+        pages = sa.func.coalesce(*(table.c.sent_pages for table in sent), j.c.pages)
     with read_connection(routes.engine) as connection:
-        rows = connection.execute(sa.select(c.c.destination, j.c.pages).select_from(c.join(j, j.c.id == c.c.job_id))
+        rows = connection.execute(sa.select(c.c.destination, pages.label('pages')).select_from(source)
                                   .where(c.c.route == ledger_key(key), c.c.outcome == 'pending',
                                          c.c.created_at >= left.period.start)).all()
     units = sum(_units(routes, values, key, left.budget, dims[0].name, row.destination, max(1, int(row.pages or 1)),
                        now) for row in rows)
     return units, len(rows)
+
+
+def _sent_pages(engine):
+    """The tables that say how many pages an attempt sent, newest kind first, each with ``attempt_id`` and
+    ``sent_pages``; those missing (an older database) are left out."""
+    from .database import DeliveryStoreError, reflect
+    found = []
+    for name in ('fax_route_selections', 'fax_page_changes'):
+        try:
+            found.append(reflect(engine, (name,))[name])
+        except DeliveryStoreError:
+            continue
+    return found
 
 
 _SECONDS = {}

@@ -31,6 +31,14 @@ from .store import RouteStore
 from . import envelope as envelopes, holds as hold_store
 
 
+class RecordDeferred(CapacityWait):
+    """The attempt's route choice could not be recorded just now (the database was busy): nothing was sent, and the
+    fax is given back to be chosen again in a moment, never failed for it."""
+
+    def __init__(self):
+        super().__init__(seconds=5)
+
+
 class RouteHeld(CapacityWait):
     """Nothing the fax's rules allow can take it now: the delivery store already gave the claim back and holds the
     fax in Sent. The worker's capacity handling then finds nothing left to give back."""
@@ -295,8 +303,10 @@ class RoutedTransport:
                            record=(lambda found: self._record_selection(claim, found)) if record else None)
 
     def _record_selection(self, claim, handoff):
-        """Write the attempt's selection (``routing.selections.record``); a database that cannot take it stops the
-        send before anything leaves Faxbot (``PreparationFailure``), with the cause logged."""
+        """Write the attempt's selection (``routing.selections.record``) before the submission marker. A database
+        that cannot take it just now (locked, unreachable) gives the fax back to wait a moment, nothing sent and
+        nothing failed (``RecordDeferred``); the file it names unreadable fails preparation, as a document would.
+        Both are logged."""
         import sqlalchemy as sa
         from . import selections
         from .database import DeliveryStoreError
@@ -305,9 +315,13 @@ class RoutedTransport:
             selections.record(self.store.configuration.engine, claim=claim, handoff=handoff,
                               evaluated=published['evaluated'], prepared=published.get('prepared'),
                               pdf=published.get('pdf'))
-        except (DeliveryStoreError, sa.exc.SQLAlchemyError, OSError) as error:
-            logging.getLogger(__name__).warning('Fax %s: its route choice could not be recorded, so nothing is '
-                                                'sent: %s', claim.job_id, error)
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            logging.getLogger(__name__).warning('Fax %s: its route choice could not be recorded just now, so it '
+                                                'waits a moment; nothing was sent: %s', claim.job_id, error)
+            raise RecordDeferred() from None
+        except OSError as error:
+            logging.getLogger(__name__).warning('Fax %s: the pages chosen for its route could not be read back, so '
+                                                'nothing is sent: %s', claim.job_id, error)
             raise PreparationFailure('preparation_failed') from None
 
     def _record_dialed(self, claim, plan, route, dial, values):
@@ -504,6 +518,9 @@ class RoutedTransport:
                 # with every rule, cap and preference as before (routing.joint).
                 measured = await run_lifecycle_step(lambda: _unexpected_raises(
                     lambda: self._measure(claim, plan, job, revision, profile)))
+                from . import selections
+                await run_lifecycle_step(lambda: selections.note_measured(
+                    self.store.configuration.engine, claim, measured))
                 if measured.measured:
                     planned = await run_lifecycle_step(lambda: self._plan(claim, measured=measured.measured))
                     plan, job, revision = planned

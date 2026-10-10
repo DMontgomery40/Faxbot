@@ -260,6 +260,8 @@ class RouteFacts:
     # When nothing published prices the number: the clause saying the rate was learned from this account's own carrier
     # records, and when ('the rate 4 of your Telnyx call records to numbers in the United Kingdom showed, ...').
     learned: str | None = None
+    # When the call would start (naive UTC): prices by time of day (``RateTerms.time_bands``) are read at it.
+    at: object = None
 
 
 # Sentences --------------------------------------------------------------------------
@@ -635,6 +637,10 @@ def predict_from(facts, shape):
     # Only Faxbot's own trunk learns each number's calls (predict_facts.learn); a fax service keeps the assumed one.
     spread = spread_for(seconds, facts.link, learns=facts.route_key == 'sip')
     terms = facts.terms
+    band = terms.band_at(facts.at) if terms is not None else None
+    if band is not None:
+        # The carrier's price for the time the call starts (its peak, off-peak or weekend rate).
+        terms = terms.at(facts.at)
     if terms is None:
         if facts.refused:
             return _with_spread(Prediction(None, seconds, None, _sentence(facts.missing), False), None, spread)
@@ -664,6 +670,8 @@ def predict_from(facts, shape):
             price += f", {facts.label}'s published price for {_what(facts)} to {_where(facts.destination)}"
         elif facts.learned:
             price += f', {facts.learned}'
+        if band is not None and band.label:
+            price += f", {facts.label}'s {band.label} rate"
         price += _spread_price(terms, spread, shape.pages, central, micros)
     return _with_spread(Prediction(billed_pages, seconds, cost, _sentence(price, how), False), terms, spread, billed,
                         expected_pages(terms, spread, shape.pages))

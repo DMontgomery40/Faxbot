@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import hashlib
 import json
+import logging
 import re
 from uuid import uuid4
 
@@ -25,7 +26,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -868,6 +869,27 @@ class OutboundStore:
             _event(connection, self.events, claim.job_id, 'preparation_failed', now,
                 attempt_id=claim.attempt_id, details={'category': category})
 
+    def renew_lease(self, claim, *, lease_seconds=30, now=None):
+        """Extend a preparing claim's lease while its worker is still preparing it (the worker's heartbeat).
+
+        Only the worker that holds the claim may extend it (``_owns``), only while every fax in it is still
+        ``preparing`` and its lease has not run out yet: a lease that already ran out stays lost, so a fax another
+        worker recovered is never taken back. True when every fax's lease was extended."""
+        if not isinstance(lease_seconds, (int, float)) or not 1 <= lease_seconds <= 300:
+            raise ValueError('Invalid lease length.')
+        with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
+            rows = [(member, self._row(connection, member.job_id)) for member in claim.everyone]
+            if any(not self._owns(row, member) or row['state'] != 'preparing' or row['claim_expires_at'] is None
+                   or row['claim_expires_at'] <= now for member, row in rows):
+                return False
+            expiry = now + timedelta(seconds=lease_seconds)
+            for member, row in rows:
+                connection.execute(self.deliveries.update().where(
+                    self.deliveries.c.id == member.job_id, self.deliveries.c.claim_token == member.token).values(
+                        claim_expires_at=max(expiry, row['claim_expires_at'])))
+            return True
+
     def recover_expired(self, *, now=None):
         # Idle: no fax holds a lease, so no lock. Whether a lease has run out is decided only with the time read
         # after the lock, so a lease that ends while this waits for the lock is recovered in this round.
@@ -880,6 +902,16 @@ class OutboundStore:
                 self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)).mappings().all()
             for row in rows:
                 preparing = row['state'] == 'preparing'
+                if preparing:
+                    # Said once in the log: preparation outlived its lease, so this attempt is given up (nothing was
+                    # sent) and the fax is claimed again.
+                    started = connection.scalar(sa.select(self.attempts.c.created_at).where(
+                        self.attempts.c.id == row['attempt_id']))
+                    spent = int((now - started).total_seconds()) if started is not None else None
+                    logging.getLogger(__name__).warning(
+                        'Fax %s: attempt %s was given up because its preparation outlived its lease (%s seconds); '
+                        'nothing was sent, and the fax is claimed again.', row['id'], row['attempt_id'],
+                        spent if spent is not None else 'unknown')
                 changes = {'state': 'ready' if preparing else 'reconciliation_required', 'claim_expires_at': None}
                 if preparing:
                     changes.update(claim_owner=None, claim_token=None)

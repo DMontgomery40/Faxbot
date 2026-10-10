@@ -1276,7 +1276,27 @@
       "notes": "eFax Corporate's FAQ says \"Outbound send rates are 10 cents per page to U.S. numbers.\" with no exception for toll-free numbers, and \"Inbound faxes to a toll free number are an additional 2 cents per page.\" for the receiver. eFax has no rate card in Faxbot, so the cost stays unknown until you add one."
     }
   ],
-  "origin_rates_description": "Prices by where calls start and the number called (provider-rules design §3.7): route (a card identity), origin (any, a site key, or country:XX), destination_prefix (E.164 digits without the plus; the longest match wins within the most specific origin), prices and billing as on cards (billing \"60-60\" is minimum seconds, then increment), source and date. pricing not_published records a carrier we looked up that publishes none: its price stays unknown, never zero.",
+  "time_bands_description": "Prices by time of day a carrier publishes, read on its own clock (zone): route (a card identity), number_class and country they apply to, currency, and bands (days 0 Monday to 6 Sunday, from and to as local HH:MM, per_minute). They replace the card's per-minute price for a call starting in that band, only for a card in the same currency. Empty for most carriers: most now price calls the same at every hour.",
+  "time_bands": [
+    {
+      "route": "sip-aaisp",
+      "label": "Andrews & Arnold VoIP, calls to UK geographic numbers (01, 02, 03)",
+      "number_class": "local",
+      "country": "GB",
+      "currency": "GBP",
+      "zone": "Europe/London",
+      "bands": [
+        {"days": [0, 1, 2, 3, 4], "from": "08:00", "to": "18:00", "per_minute": "0.0125", "label": "peak"},
+        {"days": [0, 1, 2, 3, 4], "from": "00:00", "to": "08:00", "per_minute": "0.010417", "label": "off-peak"},
+        {"days": [0, 1, 2, 3, 4], "from": "18:00", "to": "24:00", "per_minute": "0.010417", "label": "off-peak"},
+        {"days": [5, 6], "from": "00:00", "to": "24:00", "per_minute": "0.008333", "label": "weekend"}
+      ],
+      "source_url": "https://aa.net.uk/voice-and-mobile/prices/call-prices",
+      "read_on": "2026-10-10",
+      "notes": "Andrews & Arnold's call price page, read October 10, 2026: peak is 8am to 6pm Monday to Friday, off-peak the other weekday times, weekend all of Saturday and Sunday; 1.25p, 1.0417p and 0.8333p a minute excluding VAT (1.5p, 1.25p and 1p including 20% VAT), with a minimum cost of 2p a call excluding VAT. The page states no billing step and no time zone; UK time is assumed. Faxbot has no Andrews & Arnold trunk preset yet: these bands apply once a card named sip-aaisp, in GBP, is saved."
+    }
+  ],
+  "origin_rates_description":"Prices by where calls start and the number called (provider-rules design §3.7): route (a card identity), origin (any, a site key, or country:XX), destination_prefix (E.164 digits without the plus; the longest match wins within the most specific origin), prices and billing as on cards (billing \"60-60\" is minimum seconds, then increment), source and date. pricing not_published records a carrier we looked up that publishes none: its price stays unknown, never zero.",
   "origin_rates": [
     {
       "route": "sip-anveo",
