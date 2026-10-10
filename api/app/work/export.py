@@ -123,7 +123,8 @@ class EvidenceExport:
             missing.append('No provider receipt was retained for this fax.')
         if not any(item['source_received_at'] for item in imports):
             missing.append('The source did not report when it received this document.')
-        if not deliveries:
+        # An item still waiting in the email queue (or one that failed) is not a delivery.
+        if not any(item['state'] == 'delivered' for item in deliveries):
             missing.append('No email delivery was recorded for this document.')
         if row['acknowledged_at'] is None and not any(event['kind'] == 'acknowledged' for event in events):
             missing.append('No acknowledgement by an owner has been recorded.')
