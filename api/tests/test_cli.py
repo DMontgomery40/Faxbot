@@ -258,9 +258,8 @@ def test_no_help_or_hint_suggests_an_older_command_name():
         return tuple(path)
 
     cli_dir = Path(__file__).resolve().parents[1] / 'app' / 'cli'
-    # nouns.py names the older paths on purpose (its alias table). commands/capabilities.py is #50's, switching to the
-    # new names in its milestone 3; remove it here once that lands.
-    skip = {'nouns.py', 'capabilities.py'}
+    # nouns.py names the older paths on purpose (its alias table).
+    skip = {'nouns.py'}
     older = []
     for source in sorted(cli_dir.rglob('*.py')):
         if source.name in skip:
