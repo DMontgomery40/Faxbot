@@ -2,42 +2,34 @@
 
 The console is the web app Faxbot serves at `/admin/ui/`. Sign in with a username and password, or with an API key. Every screen follows the signed-in person's permissions: a page they may not use is not shown, and the server enforces the same rules.
 
-## Eight areas
+## Six areas
 
-The left panel lists eight areas. Each holds a few pages.
+The left panel lists six areas. Each holds the pages for that part of your installation.
 
 <div class="grid cards" markdown>
 
 - :material-view-dashboard: **Overview**
-  What needs a person now, and what sending costs.
+  What Faxbot is doing, what could improve, everyday fax counts and what needs attention.
   [Open](admin-console/overview.md)
 
+- :material-cash: **Savings & optimization**
+  Capabilities, opportunities, facts to establish, savings results, spending, charges, invoices, prices and plans.
+  [Open](admin-console/costs.md)
+
 - :material-fax: **Faxes**
-  Received, Sent, Send a fax, Forms and Expected.
+  Received, Sent, Send a fax, Expected, Forms and Case packets.
   [Open](admin-console/faxes.md)
 
-- :material-dialpad: **Numbers**
-  Your numbers, mailboxes, email delivery, Email and folders, and sender identity.
+- :material-tune: **Delivery setup**
+  Numbers and mailboxes, email delivery, providers and accounts, routing rules, and provider-specific settings.
   [Open](admin-console/numbers.md)
 
 - :material-contacts: **Recipients**
-  The numbers you fax, partners and case packets.
+  The numbers you fax and your direct-delivery partners.
   [Open](admin-console/recipients.md)
 
-- :material-cloud: **Providers**
-  What sends and receives, provider accounts and rules, and each provider in use.
-  [Open](admin-console/providers.md)
-
-- :material-cash: **Costs**
-  Spending, prices and plans, savings and recommendations.
-  [Open](admin-console/costs.md)
-
-- :material-lock-open: **Access**
-  Users, groups, roles, keys and phones, and sessions.
-  [Open](admin-console/access.md)
-
-- :material-cog: **System**
-  Setup, AI analysis, security, storage, audit log, diagnostics, logs and Developer.
+- :material-cog: **Administration**
+  People and access, setup, security, documents and retention, system health, audit, logs and Developer pages.
   [Open](admin-console/system.md)
 
 </div>
