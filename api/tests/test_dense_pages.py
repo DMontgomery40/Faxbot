@@ -6,6 +6,7 @@ import base64
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import json
+import math
 import random
 import shutil
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ import sqlalchemy as sa
 
 from api.app import schema, schema_dense_pages
 from app import conversion, fax_negotiation, hylafax_records
-from app.pages import capability, decision, marks, packing, resolution, sending, trim, unpack, views
+from app.pages import capability, coding, decision, marks, packing, resolution, sending, trim, unpack, views
 from app.routing.costs import RateCard
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
@@ -127,6 +128,74 @@ def test_a_page_longer_than_the_limit_is_split_at_a_white_row_and_marked_continu
     # The last original fits under the rest of the long page.
     assert layout.sheets[-1].pieces[-1].original == 2
     assert all(sheet.height() <= rows('a4') for sheet in layout.sheets)
+
+
+def noisy(seed, noise_rows):
+    """A letter page whose coded size is set by ``noise_rows`` rows of random dots (about 0.46 KiB of MMR each)."""
+    rng = random.Random(seed)
+    data = bytearray(b'\xff' * (216 * LETTER_ROWS))
+    data[216 * 200:216 * (200 + noise_rows)] = bytes(rng.getrandbits(8) for _ in range(216 * noise_rows))
+    image = Image.frombytes('1', (1728, LETTER_ROWS), bytes(data))
+    image.info['dpi'] = FINE
+    return image
+
+
+def partial_page_edges(originals, layout):
+    """Partial-page edges the layout's pages cross, measured in MMR on the pages as drawn."""
+    return sum(coding.ecm_blocks(math.ceil(bits / 8)) - 1
+               for bits in coding.measure(packing.render(originals, layout), codings=('MMR',))['MMR'])
+
+
+def shared_out(layout):
+    return [[piece.original for piece in sheet.pieces] for sheet in layout.sheets]
+
+
+def test_with_error_correction_the_same_pages_cross_the_fewest_partial_page_edges():
+    # Three letter pages fit one metre. Filled in turn, the first long page ends just over a 64 KiB partial page
+    # (one more turnaround on the line); giving its last original to the second page keeps both under one.
+    originals = [noisy(seed, rows) for seed, rows in enumerate((55, 55, 40, 55))]
+    measured = coding.measure(originals, codings=('MMR',))['MMR']
+    piece = coding.measure([packing.piece_frame(originals)], codings=('MMR',))['MMR'][0]
+    filled = packing.layout_for(originals, 'unlimited')
+    shared = packing.layout_for(originals, 'unlimited', page_bits=measured, piece_bits=piece)
+    assert shared_out(filled) == [[0, 1, 2], [3]] and shared_out(shared) == [[0, 1], [2, 3]]
+    # Measured on the pages as drawn, not only estimated: the same number of pages, one edge fewer.
+    assert (partial_page_edges(originals, filled), partial_page_edges(originals, shared)) == (1, 0)
+    assert all(sheet.height() <= rows('unlimited') for sheet in shared.sheets)
+    # Nothing to gain (every page under an edge, or no sharing crosses fewer): exactly the pages filled in turn.
+    light = [noisy(seed, 20) for seed in range(4)]
+    heavy = [noisy(seed, 80) for seed in range(4)]
+    for pages in (light, heavy):
+        bits = coding.measure(pages, codings=('MMR',))['MMR']
+        assert packing.layout_for(pages, 'unlimited', page_bits=bits, piece_bits=piece) == packing.layout_for(
+            pages, 'unlimited')
+    # A page longer than the limit keeps its cut and its pieces their pages.
+    tall = [noisy(1, 55), noisy(2, 55), page(9, height=9000), noisy(3, 40), noisy(4, 55)]
+    bits = coding.measure(tall, codings=('MMR',))['MMR']
+    layout = packing.layout_for(tall, 'unlimited', page_bits=bits, piece_bits=piece)
+    cut = [(p.original, p.top, p.rows) for sheet in packing.layout_for(tall, 'unlimited').sheets for p in sheet.pieces
+           if p.original == 2]
+    assert [(p.original, p.top, p.rows) for sheet in layout.sheets for p in sheet.pieces if p.original == 2] == cut
+    assert all(sheet.height() <= rows('unlimited') for sheet in layout.sheets)
+
+
+def test_the_layout_chooser_shares_dense_pages_out_by_the_calls_coding_only_with_error_correction():
+    originals = [noisy(seed, rows) for seed, rows in enumerate((55, 55, 40, 55))]
+    sinch = card('sinch', per_page='0.045')
+    usable = coding.Usable(codings=frozenset({'MH', 'MR', 'MMR'}), ecm=True, receiver=None, left_out={},
+                           ceiling='MMR')
+    heights = {}
+    for name, given in (('ecm', usable), ('no ecm', coding.Usable(codings=frozenset({'MH', 'MR'}), ecm=False,
+                                                                   receiver=None, left_out={}, ceiling='MR')),
+                        ('provider', None)):
+        chosen = conversion.choose_layout(originals, route='sinch', destination=PEER, limit='unlimited',
+                                          dense_allowed=True, card=sinch, usable=given)
+        assert chosen['layout'] == 'dense' and len(chosen['pages']) == 2, name
+        heights[name] = [image.height for image in chosen['pages']]
+    two = packing.TOP_ROWS + 2 * (marks.BAND_ROWS + LETTER_ROWS)
+    three = packing.TOP_ROWS + 3 * (marks.BAND_ROWS + LETTER_ROWS)
+    assert heights == {'ecm': [two, two], 'no ecm': [three, two - marks.BAND_ROWS - LETTER_ROWS],
+                       'provider': [three, two - marks.BAND_ROWS - LETTER_ROWS]}
 
 
 def test_pages_that_cannot_be_marked_or_resolved_are_not_packed():
