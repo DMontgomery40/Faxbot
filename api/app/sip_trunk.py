@@ -252,6 +252,145 @@ ANALOG_GATEWAYS = (
     ),
 )
 
+# -- Microsoft Teams Direct Routing: Faxbot as the fax annex behind the SBC (research N21, builder AP) ----------------
+#
+# Teams has no fax endpoint and no T.38 between Teams and the SBC (Microsoft lists fax machines as analog devices
+# behind an ATA on a certified SBC, learn.microsoft.com/microsoftteams/direct-routing-analog-devices, ms.date
+# 2026-09-10, read 2026-10-10). The SBC you already run can send the fax numbers to Faxbot as an IP peer before its
+# Teams route, and Faxbot's faxes out through the same SBC to your carrier; the fax leg never reaches Microsoft.
+# Faxbot is set up like a phone system: by address, on your network, with the SBC's administrator steps below,
+# from each vendor's own documents. The cutover checklist (TEAMS_PORT_CHECKLIST) splits the fax numbers out
+# before the Teams port order.
+TEAMS_NOTE = ('Faxbot is the fax annex behind your Teams Direct Routing SBC: the SBC sends the fax numbers to Faxbot '
+              'before its Teams route, and Faxbot\'s faxes go out through the SBC to your carrier.')
+TEAMS_SOURCE = Source('https://learn.microsoft.com/en-us/microsoftteams/direct-routing-analog-devices', '2026-10-10')
+TEAMS_SBCS = (
+    TrunkPreset(
+        id='teams-sbc-audiocodes', label='Microsoft Teams SBC: AudioCodes Mediant', host='', port=5060,
+        transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('alaw', 'ulaw'),
+        codecs_by_country=True, dial_format='e164', dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38=('In the IP Profile you give Faxbot, set the fax fields (Fax Mode, Fax Coders Group, Fax Offer Mode and '
+             'Fax Answer Mode) for T.38, and keep G.711 allowed, which AudioCodes uses for fax when T.38 is not.'),
+        notes=(TEAMS_NOTE, 'Enter the SBC\'s address as the phone system address.',
+               'These steps follow AudioCodes\' configuration note for analog devices with Teams Direct Routing '
+               '(LTRT-33426), with Faxbot in the place its SIP trunk example takes. Faxbot has not yet run against '
+               'a real Mediant.'),
+        admin_steps=(
+            'Proxy Sets (Setup, Signaling & Media, Core Entities): add one named Faxbot with Proxy Keep-Alive Using '
+            'Options, and in its Proxy Address table Faxbot\'s address with port 5060 and Transport Type UDP (or '
+            'TCP).',
+            'IP Profiles (Coders & Profiles): add one for Faxbot with SBC Media Security Mode Not Secured, and the '
+            'fax fields for T.38 (Fax Mode, Fax Coders Group, Fax Offer Mode, Fax Answer Mode).',
+            'IP Groups (Core Entities): add one named Faxbot, Type Server, with the Faxbot Proxy Set and IP Profile '
+            'and the media realm of your internal network.',
+            'IP-to-IP Routing (SBC, Routing): add a row from Source IP Group Any with Dest Username Pattern set to '
+            'your fax numbers (one row per number, or a pattern such as AudioCodes\' example 12345xxxxx#), Dest '
+            'Type IP Group and Dest IP Group Faxbot. Move it above the row that sends calls from your carrier to '
+            'Teams: the first matching row wins.',
+            'IP-to-IP Routing: add a row from Source IP Group Faxbot with Dest Type IP Group and Dest IP Group your '
+            'carrier\'s IP Group, so Faxbot\'s faxes go out to the carrier.',
+            'In Faxbot, enter the fax numbers as the numbers your phone system sends to Faxbot.',
+        ),
+        sources=(Source('https://www.audiocodes.com/media/14278/connecting-audiocodes-sbc-with-analog-device-to-'
+                        'microsoft-teams-direct-routing-enterprise-model-configuration-note.pdf', '2026-10-10'),
+                 Source('https://techdocs.audiocodes.com/session-border-controller-sbc/mediant-1000-sbc-gateway/'
+                        'user-manual/version-760/Content/UM/Fax%20Negotiation%20and%20Transcoding.htm', '2026-10-10'),
+                 TEAMS_SOURCE),
+    ),
+    TrunkPreset(
+        id='teams-sbc-ribbon', label='Microsoft Teams SBC: Ribbon SBC Edge', host='', port=5060, transport='udp',
+        transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('alaw', 'ulaw'), codecs_by_country=True,
+        dial_format='e164', dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38=('Ribbon: "T.38 must be added/selected in the Media Profiles List for both ends of the call", through a '
+             'Fax Codec Profile.'),
+        notes=(TEAMS_NOTE, 'Enter the SBC\'s address as the phone system address.',
+               'Ribbon\'s Teams guide for analog devices uses a port on the SBC itself; these steps use the same '
+               'objects with Faxbot as an IP PBX. Check how your release orders Call Routing Table entries. Faxbot '
+               'has not yet run against a real SBC Edge.'),
+        admin_steps=(
+            'Settings, Media, Media Profiles: create a Fax Codec Profile (T.38) and add it, with G.711, to a Media '
+            'List used on both the carrier and the Faxbot side.',
+            'SIP Server Table: add Faxbot with Host set to Faxbot\'s address, Protocol UDP (or TCP) and Port Number '
+            '5060.',
+            'Signaling Groups: add one for Faxbot that uses that SIP Server Table and the Media List with T.38.',
+            'Transformation Table: add one whose entry matches Called Address/Number with a regular expression for '
+            'your fax numbers.',
+            'Call Routing Table for calls from your carrier: add an entry with that Transformation Table and '
+            'Destination Signaling Group Faxbot, matched before the entry that sends calls to Teams.',
+            'Call Routing Table for the Faxbot Signaling Group: one entry to your carrier\'s Signaling Group, so '
+            'Faxbot\'s faxes go out to the carrier.',
+            'In Faxbot, enter the fax numbers as the numbers your phone system sends to Faxbot.',
+        ),
+        sources=(Source('https://publicdoc.rbbn.com/spaces/UXDOC122/pages/451249668/Connect+SBC+Edge+Portfolio+to+'
+                        'Microsoft+Teams+Direct+Routing+to+Support+Analog+Devices', '2026-10-10'),
+                 Source('https://publicdoc.rbbn.com/spaces/UXDOC122/pages/451774356/Configure+an+IP+PBX+with+'
+                        'Microsoft+Teams', '2026-10-10'),
+                 Source('https://publicdoc.rbbn.com/x/_pihG', '2026-10-10'),
+                 TEAMS_SOURCE),
+    ),
+    TrunkPreset(
+        id='teams-sbc-oracle', label='Microsoft Teams SBC: Oracle Enterprise SBC', host='', port=5060,
+        transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('alaw', 'ulaw'),
+        codecs_by_country=True, dial_format='e164', dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38='Oracle\'s Teams guide does not cover T.38; check your codec policy for the Faxbot realm.',
+        notes=(TEAMS_NOTE, 'Enter the SBC\'s address as the phone system address.',
+               'Oracle chooses among local policies by cost, then by the longest matching To address, so a fax '
+               'number or prefix wins over * when the costs are equal. Faxbot has not yet run against a real Oracle '
+               'SBC.'),
+        admin_steps=(
+            'realm-config: add a realm for Faxbot on your internal network with media-sec-policy RTP (no SRTP).',
+            'session-agent: add Faxbot with Faxbot\'s address as hostname and ip-address, realm-id the Faxbot realm, '
+            'state enabled, ping-method OPTIONS and ping-interval 60.',
+            'local-policy: from-address *, to-address your fax numbers or their prefix, source-realm your carrier\'s '
+            'realm, with a policy-attribute next-hop the Faxbot session agent and realm the Faxbot realm, at a cost '
+            'no higher than the policy that sends those calls to Teams.',
+            'local-policy: source-realm the Faxbot realm, to-address *, with next-hop your carrier\'s session agent, '
+            'so Faxbot\'s faxes go out to the carrier.',
+            'In Faxbot, enter the fax numbers as the numbers your phone system sends to Faxbot.',
+        ),
+        sources=(Source('https://www.oracle.com/a/otn/docs/SBCwithTeamsNonMediaBypass-31-08-2021.pdf', '2026-10-10'),
+                 Source('https://docs.oracle.com/en/industries/communications/session-border-controller/9.2.0/'
+                        'aclireference/local-policy.html', '2026-10-10'),
+                 Source('https://docs.oracle.com/cd/E80921_01/html/esbc_ecz740_configuration/GUID-F655BCC2-0E26-4584-'
+                        'B929-FAAF57BC0062.htm', '2026-10-10'),
+                 TEAMS_SOURCE),
+    ),
+    TrunkPreset(
+        id='teams-sbc-anynode', label='Microsoft Teams SBC: TE-SYSTEMS anynode', host='', port=5060,
+        transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('alaw', 'ulaw'),
+        codecs_by_country=True, dial_format='e164', dial_formats=('e164', 'local'), kind=PHONE_SYSTEM,
+        t38='anynode publishes no Teams fax guide that we could read; check its T.38 setting on the Faxbot node.',
+        notes=(TEAMS_NOTE, 'Enter the anynode server\'s address as the phone system address.',
+               'These steps follow anynode\'s note for a fax server beside it (XCAPI); Faxbot has not yet run '
+               'against a real anynode.'),
+        admin_steps=(
+            'Add a SIP node for Faxbot at Faxbot\'s address, port 5060.',
+            'Add a route from your carrier\'s node to the Faxbot node with "Use direct routing with prefix filter" '
+            'and your fax numbers\' root number with prefix in E.164 format; anynode picks the route after incoming '
+            'dial rules and before outgoing ones.',
+            'Add a route from the Faxbot node to your carrier\'s node, so Faxbot\'s faxes go out to the carrier.',
+            'In Faxbot, enter the fax numbers as the numbers your phone system sends to Faxbot.',
+        ),
+        sources=(Source('https://docs.anynode.de/anynode-technote-en-anynode-and-xcapi/routing.sec31.html',
+                        '2026-10-10'),
+                 TEAMS_SOURCE),
+    ),
+)
+# Before a Teams port order (research N21, Purdue and Florida Atlantic's published migrations): split the fax numbers
+# out, so they reach Faxbot instead of nowhere.
+TEAMS_PORT_CHECKLIST = (
+    'List every number on the carrier account and mark the fax numbers: those with a fax machine, a fax server or '
+    'an analog adapter behind them, and those no Teams user is assigned.',
+    'Take the fax numbers out of the port order to Microsoft or your operator, so they stay with the carrier that '
+    'reaches your SBC (or port them to the SIP trunk Faxbot uses).',
+    'On the SBC, add the fax route to Faxbot before the Teams route (the steps above), and send one test fax to each '
+    'fax number before the cutover date.',
+    'In Faxbot, enter the fax numbers on this trunk and give each one a mailbox, so received faxes reach the people '
+    'who had the fax machine.',
+    'After the cutover, take the analog adapters and fax lines out of service once each number has received a fax '
+    'in Faxbot.',
+)
+
 PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
         # Encrypted signaling by default: one outbound connection that home-router
@@ -509,6 +648,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                  Source('https://www.itu.int/rec/T-REC-T.38', '2026-10-10')),
     ),
     *ANALOG_GATEWAYS,
+    *TEAMS_SBCS,
     TrunkPreset(
         id='custom', label='Another carrier', host='', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='entered',
@@ -1329,6 +1469,8 @@ def preset_catalog():
         'single_registration': preset.single_registration, 'access_rule': preset.access_rule or None,
         # An analog line's gateway (N8): calls at once when you set none.
         'lines': preset.lines or None,
+        # A Teams Direct Routing SBC (N21): the checklist before the Teams port order.
+        'port_checklist': list(TEAMS_PORT_CHECKLIST) if preset.id.startswith('teams-sbc-') else [],
     } for preset in PRESETS.values()]
 
 

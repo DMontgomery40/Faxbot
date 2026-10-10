@@ -527,3 +527,9 @@ from . import countries as _countries  # noqa: E402,F401
 # An analog line through a gateway (routing/analog.py): its local calling area and prices.
 from .analog import analog as _analog  # noqa: E402
 trunk.add_typer(_analog, name='analog-line')
+
+# Faxbot as the fax annex behind a Teams Direct Routing SBC (N21).
+from .teams_annex import teams_annex as _teams_annex  # noqa: E402
+trunk.command('teams-annex')(_teams_annex)
+from .teams_annex import copiers as _copiers  # noqa: E402
+trunk.command('copiers')(_copiers)

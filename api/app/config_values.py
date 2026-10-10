@@ -120,7 +120,7 @@ class ConfigurationValues(BaseModel):
     # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
     # transport and codecs use the preset's documented values (see sip_trunk.py).
     sip_trunk_preset: str = Field('', validation_alias='SIP_TRUNK_PRESET',
-                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|swisscom-sbc|telekom-companyflex|ntt-hikari|grandstream-ht813|grandstream-gxw410x|patton-smartnode-fxo|audiocodes-mp11x-fxo|custom)$')
+                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|swisscom-sbc|telekom-companyflex|ntt-hikari|grandstream-ht813|grandstream-gxw410x|patton-smartnode-fxo|audiocodes-mp11x-fxo|teams-sbc-audiocodes|teams-sbc-ribbon|teams-sbc-oracle|teams-sbc-anynode|custom)$')
     sip_trunk_auth: str = Field('registration', validation_alias='SIP_TRUNK_AUTH', pattern=r'^(?:registration|ip)$')
     sip_trunk_host: str = Field('', validation_alias='SIP_TRUNK_HOST',
                                 pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$')

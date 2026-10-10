@@ -51,6 +51,7 @@ import FaxSettings from './FaxSettings';
 import { formatServerTime } from '../api/time';
 import { TrunkPicker } from './ProviderAccountsTrunks';
 import AnalogLinePanel from './AnalogLinePanel';
+import CopiersPanel from './CopiersPanel';
 import { rulesApiFor } from './ProviderRulesApi';
 import TrunkAccountPanel from './TrunkAccountPanel';
 import SendOnlyNumbers from './SendOnlyNumbers';
@@ -522,7 +523,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const formatValue = form.dial_format || (formats.length === 0 || formats.includes('e164') ? 'e164' : formats[0]);
   const localNumbers = formatValue === 'local' || formatValue === 'local_area';
   // The vendor names the checklist: "What you set in Avaya".
-  const vendor = preset?.label.split(' ')[0] ?? '';
+  // A Teams SBC preset names its vendor after the colon: "What you set in AudioCodes Mediant".
+  const vendor = preset?.label.includes(': ') ? preset.label.split(': ')[1] : preset?.label.split(' ')[0] ?? '';
 
   if (trunkKey && trunkKey !== 'sip') {
     return (
@@ -602,6 +604,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
                     <li key={step}><Typography variant="body2">{step}</Typography></li>
                   ))}
                 </Box>
+                {(preset.port_checklist ?? []).length > 0 && (
+                  <Box data-testid="teams-port-checklist">
+                    <Typography variant="body2" fontWeight={600}>Before the Teams port order</Typography>
+                    <Box component="ol" sx={{ pl: 3, mt: 0 }}>
+                      {(preset.port_checklist ?? []).map((step) => (
+                        <li key={step}><Typography variant="body2">{step}</Typography></li>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
                 <Typography variant="body2" fontWeight={600}>Sources</Typography>
                 {preset.sources.map((source) => (
                   <Typography key={source.url} variant="body2">
@@ -936,6 +948,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
         </Box>
       )}
       {showCalls && <SendOnlyNumbers call={call} />}
+      {showCalls && <CopiersPanel call={call} />}
     </Stack>
   );
 }

@@ -198,6 +198,9 @@ function ConnectorDialog({ connector, choices, busy, error, onSave, onClose }: {
                   </Box>
                   <Field label="Mail server that checks senders" value={value('checked_by')} onChange={(next) => set('checked_by', next)}
                     helperText="The name your mail server writes when it checks DKIM and SPF, such as mx.example.com." />
+                  <Field label="Copiers that send by direct SMTP (optional)" value={value('copier_senders')}
+                    onChange={(next) => set('copier_senders', next)}
+                    helperText="Each copier's email address and its address on your network, such as scanner@example.com 192.168.1.40, separated by commas. Faxbot admits their mail without DKIM or SPF, only from those addresses." />
                 </>
               )}
               <Typography variant="subtitle2" sx={{ mt: 2 }}>People who may send faxes by email</Typography>

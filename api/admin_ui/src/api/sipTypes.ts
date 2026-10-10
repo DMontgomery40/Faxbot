@@ -32,6 +32,8 @@ export interface SipPreset {
   audio_by_default?: boolean;
   // What the phone system's administrator sets, in order.
   admin_steps?: string[];
+  // A Teams Direct Routing SBC: what to do before the Teams port order, in order.
+  port_checklist?: string[];
   // Encrypted audio fax: 'sdes' encrypts the audio (SRTP) when the trunk signs in over TLS.
   media_encryption?: 'sdes' | null;
   encrypted_audio_only?: boolean;

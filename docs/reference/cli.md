@@ -2305,6 +2305,7 @@ $ faxbot numbers connectors add [OPTIONS] {name}
 * `--outgoing-security <str>`: tls or starttls.
 * `--checked-by <str>`: Name your mail server writes when it checks senders, such as mx.google.com.
 * `--sender <str>`: Who may send faxes by email: address=login. Repeat for more.
+* `--copier ADDRESS@NETWORK`: A copier that sends by direct SMTP, without DKIM or SPF: its email address and its network address, such as &#x27;scanner@example.com 192.168.1.40&#x27;. Repeat for more.
 * `--check-seconds <int>`: How often to check, in seconds.
 * `--ask-secret / --no-ask-secret`: Ask for the password or client secret without showing it.  [default: ask-secret]
 * `--help`: Show this message and exit.
@@ -5155,6 +5156,8 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `sender-evidence`: The sender&#x27;s evidence for a fax to a...
 * `own-access`: For Telekom CompanyFlex: the internet...
 * `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
+* `teams-annex`: Print what to set on your Teams Direct...
+* `copiers`: List the copier makers whose documents...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
@@ -5466,6 +5469,41 @@ $ faxbot providers trunk withdraw-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
 **Options**:
 
 * `--note TEXT`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk teams-annex`
+
+Print what to set on your Teams Direct Routing SBC so the fax numbers reach Faxbot before Teams, and the checklist before the Teams port order.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk teams-annex [OPTIONS]
+```
+
+**Options**:
+
+* `--vendor audiocodes|ribbon|oracle|anynode`: The company that makes your Teams Direct Routing SBC.  [required]
+* `--address ADDRESS`: Faxbot&#x27;s address on your network, written into the steps; Faxbot fills it in when it is published there.
+* `--numbers NUMBERS`: Your fax numbers or their pattern, written into the steps.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk copiers`
+
+List the copier makers whose documents show fax over the network with SIP and T.38, or show what to set on one.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk copiers [OPTIONS] [COPIER]
+```
+
+**Arguments**:
+
+* `[COPIER]`: Show one copier in full, such as ricoh-im.
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk network`
