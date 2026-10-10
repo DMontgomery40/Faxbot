@@ -360,9 +360,10 @@ def learn_memories(db, values, number, *, epoch, now=None, views=None) -> int:
     views = views if views is not None else joined_calls(db, number, since=since, limit=50)
     memory = _tables(db)['fax_destination_memory']
     added = 0
+    from .routing.route_families import covered  # RF: a route family incident's failure is not the number's
     for view in views:
         kind = memory_kind(view)
-        if kind is None or view['when'] < since:
+        if kind is None or view['when'] < since or covered(db, view):
             continue
         learned = view['ended'] or view['when']
         row = {'id': uuid.uuid4().hex, 'number': str(view['number'] or number)[:32], 'direction': view['direction'],
@@ -626,6 +627,8 @@ def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_
     rows = memories(db, number, epoch=epoch, now=now, views=views, direction='outbound')
     sent = [view for view in on_trunk(views, values) if view['direction'] == 'outbound'
             and view['when'] >= evidence_since(epoch, now, LEARN_DAYS)]
+    from .routing.route_families import without_covered  # RF: leave out a route family incident's failures
+    sent = without_covered(db, sent)
     reasons, notes = [], []
     what = effect(rows, 'outbound')
     audio = bool(what == 'audio' and t38)

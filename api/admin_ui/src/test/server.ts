@@ -660,8 +660,15 @@ const consoleHandlers = [
     found: null, problem: null })),
   // Delivery routes, intake and direct delivery: empty until a test says otherwise.
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
+  // Diagnostics → Sending routes (RF): no route problem, test or upstream, and no accounts or numbers yet.
+  http.get('/routing/families', () => json({ incidents: [], tests: [], upstreams: [], accounts: [], numbers: [] })),
+  // Diagnostics → Receiving readiness and Power (RF): receiving is off and no UPS is set.
+  http.get('/receiving/readiness', () => json({ numbers: [], checked_text: '', receiving_on: false })),
+  http.get('/power', () => json({ configured: false, host: null, port: 3493, ups_name: null, reserve_minutes: 2,
+    status: 'off', sentence: 'No UPS is set. Set its address so Faxbot holds long calls while the office runs on battery.',
+    on_battery: false, runtime_minutes: null, charge_percent: null })),
   // One fax's cost: nothing to say for a fax that placed no call.
-  http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
+  http.get('/routing/faxes/:jobId/cost',() => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
   // Provider rules (tests of their screens use providerRulesFake.ts): nothing held, a fax with no routing
   // decision to explain, and no provider accounts yet.
   http.get('/routing/holds', () => json({ holds: [] })),

@@ -15,7 +15,7 @@ PRIOR = '0070_closures'  # re-chained at merge (was 0073_header_notice)
 
 
 def test_station_check_follows_the_header_notice_and_is_the_only_head():
-    assert schema_station_check.REVISION == '0074_station_check' == schema.HEAD
+    assert schema_station_check.REVISION == '0074_station_check' == schema.STATION_CHECK
     assert schema.CLOSURES == PRIOR
     assert schema_station_check.TABLES <= schema.STRICT_TABLES and len(schema_station_check.TABLES) == 3
     from pathlib import Path
