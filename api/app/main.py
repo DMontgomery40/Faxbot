@@ -606,15 +606,20 @@ def _handle_fax_result(event):
         audit_event('native_result_requires_reconciliation', provider='sip')
     finally:
         # After the outcome is kept: the station the far end answered as, kept when the fax went through, and
-        # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble is logged
-        # there and never changes the outcome.
-        from .routing.stations import after_call
-        configuration = _deliveries().configuration
-        after_call(configuration.engine, job_id=job_id, attempt_id=attempt,
-                   station=sip_calls._station(event.get('Station64')),
-                   succeeded=str(fields.get('status', '')).upper() == 'SUCCESS',
-                   check_result=str(fields.get('csicheck') or '') or None,
-                   t0_capped=str(fields.get('t0capped') or '').strip() == '1', configuration=configuration)
+        # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble, in reaching
+        # the store or in writing to it, is logged and never changes the outcome.
+        try:
+            from .routing.stations import after_call
+            configuration = _deliveries().configuration
+            after_call(configuration.engine, job_id=job_id, attempt_id=attempt,
+                       station=sip_calls._station(event.get('Station64')),
+                       succeeded=str(fields.get('status', '')).upper() == 'SUCCESS',
+                       check_result=str(fields.get('csicheck') or '') or None,
+                       t0_capped=str(fields.get('t0capped') or '').strip() == '1', configuration=configuration)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                'The station check for fax %s, attempt %s, was not recorded; its outcome stands.', job_id, attempt,
+                exc_info=True)
 
 
 def _handle_originate_response(event):
