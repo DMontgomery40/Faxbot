@@ -3,11 +3,12 @@
  "name": "referral-note.txt",
  "secret": "synthetic shared key",
  "files": [
+  "capacity-pages.pdf",
+  "capacity.tiff",
   "encrypted.tiff",
   "grid.tiff",
   "picture.tiff",
-  "runs.pdf",
-  "zstd.tiff"
+  "runs.pdf"
  ],
  "rs": [
   {

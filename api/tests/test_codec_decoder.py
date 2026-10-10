@@ -51,3 +51,15 @@ def test_the_browser_decoder_decodes_every_fixture():
     result = subprocess.run(['node', '--test', str(TOOL / 'test' / 'decoder.test.mjs')], capture_output=True,
                             text=True, timeout=300)
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]
+
+
+def test_the_browser_decoder_carries_the_frozen_capacity_tables_byte_for_byte():
+    """The capacity layout's tables are data, never recomputed: the browser module embeds the exact JSON the Python
+    codec reads, pinned by its SHA-256."""
+    import hashlib
+    from app.codec import capacity
+    module = (TOOL / 'capacity-tables.js').read_text()
+    assert capacity.TABLES_SHA256 in module
+    embedded = json.loads(module.split('JSON.parse(', 1)[1].rsplit(').profiles', 1)[0])
+    assert (embedded + '\n').encode() == capacity.TABLES_PATH.read_bytes()
+    assert hashlib.sha256(capacity.TABLES_PATH.read_bytes()).hexdigest() == capacity.TABLES_SHA256
