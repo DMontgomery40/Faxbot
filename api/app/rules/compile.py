@@ -19,6 +19,8 @@ from .model import (CONDITIONS, DAYS, LIMIT_ACTIONS, ROUTE_ACTIONS, ROUTE_SETTIN
 _NUMBER = re.compile(r'\+[1-9][0-9]{1,14}')
 _PREFIX = re.compile(r'\+[1-9][0-9]{0,14}')
 _COUNTRY = re.compile(r'[A-Z]{2}')
+# A French commune's INSEE code: five characters, Corsica's starting 2A or 2B (routing/closures.py).
+_COMMUNE = re.compile(r'(?:[0-9]{2}|2[AB])[0-9]{3}')
 # A US site's state, for pricing calls by where they really start (routing/jurisdiction.py).
 _US_STATE = re.compile(r'A[KLRSZ]|C[AOT]|D[CE]|FL|G[AU]|HI|I[ADLN]|K[SY]|LA|M[ADEINOPST]|N[CDEHJMVY]|O[HKR]|P[AR]'
                        r'|RI|S[CD]|T[NX]|UT|V[AIT]|W[AIVY]')
@@ -255,7 +257,7 @@ def _check_definitions(document, problems):
             continue
         numbers += len(item.get('prefixes', []))
     for name, fields in (('sites', {'key', 'name', 'country', 'state', 'time_zone', 'mailboxes', 'groups',
-                                    'accounts'}),
+                                    'accounts', 'commune'}),
                          ('workflows', {'key', 'name', 'mailboxes', 'labels'})):
         items = document.get(name, [])
         if not isinstance(items, list):
@@ -283,6 +285,11 @@ def _check_definitions(document, problems):
                                                       or (item.get('country') or 'US') != 'US'):
                     problems.error('shape', f'{item["name"]}: the state is a two-letter US state code such as CO, '
                                    'for a site in the US.', path=here)
+                if item.get('commune') is not None and (not isinstance(item['commune'], str)
+                                                        or _COMMUNE.fullmatch(item['commune']) is None
+                                                        or (item.get('country') or 'FR') != 'FR'):
+                    problems.error('shape', f'{item["name"]}: the commune is a French INSEE code such as 75056, '
+                                   'for a site in France.', path=here)
                 if item.get('time_zone') is not None and not _valid_zone(item['time_zone']):
                     problems.error('shape', f'{item["name"]}: the time zone is not one Faxbot knows, such as '
                                    'Europe/London.', path=here)

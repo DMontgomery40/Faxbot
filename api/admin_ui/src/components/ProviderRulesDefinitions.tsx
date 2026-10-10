@@ -186,6 +186,13 @@ export function SitesAndRegions({ document, choices, editable, onSave }: {
               onChange={(event) => setSite({ ...site, value: { ...site.value,
                 state: event.target.value.toUpperCase() || undefined } })} />
           )}
+          {(site.value.country ?? '').toUpperCase() === 'FR' && (
+            <TextField size="small" label="Commune code (INSEE)" value={site.value.commune ?? ''} placeholder="75056"
+              helperText="Five characters, such as 75056 for Paris. Faxbot shows when copper, and the phone lines on it, close there."
+              inputProps={{ maxLength: 5 }}
+              onChange={(event) => setSite({ ...site, value: { ...site.value,
+                commune: event.target.value.toUpperCase().trim() || undefined } })} />
+          )}
           <Autocomplete options={zones} value={site.value.time_zone || null}
             onChange={(_, zone) => setSite({ ...site, value: { ...site.value, time_zone: zone ?? undefined } })}
             renderInput={(params) => <TextField {...params} size="small" label="Time zone"

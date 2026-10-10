@@ -209,6 +209,119 @@ def own_access(addresses: str = typer.Argument(None, metavar='ADDRESSES',
     state.out().result(result, human)
 
 
+def _move_group():
+    from .fact_advice import move
+    return move
+
+
+def _accounts_group():
+    from .accounts import accounts
+    return accounts
+
+
+def _closure_lines(out, result):
+    for item in result.get('files') or []:
+        out.line(f"{'Orange' if item['source'] == 'orange' else 'Government copy'}: {item['communes']:,} communes, "
+                 f"file of {local_date(item.get('file_date')) or 'an unknown date'}.")
+    if not result.get('files'):
+        out.line("No closure file yet. Import Orange's trajectory file or the government copy with 'faxbot numbers "
+                 "move import-closures FILE'.")
+    for site in result.get('sites') or []:
+        out.line(f"{site['name']} ({site['commune']}): {site['sentence']}")
+    out.table(['Number', 'Account', 'When'],
+              [[line['number'], line.get('account') or '-', ' '.join(line['sentences'])]
+               for line in result.get('lines') or []], empty='No lines with a closure date.')
+
+
+@_move_group().command('closures')
+def closures():
+    """When copper, and the phone lines on it, close: your French sites by commune, and lines with a carrier's
+    notice."""
+    result = state.api().get('/routing/closures')
+    state.out().result(result, lambda out: _closure_lines(out, result))
+
+
+@_move_group().command('import-closures')
+def import_closures(file: Path = typer.Argument(..., metavar='FILE', exists=True, dir_okay=False,
+                                                help="Orange's commune trajectory file, or the government copy, as "
+                                                     'CSV.'),
+                    source: str = typer.Option('gouv', '--source', metavar='orange|gouv',
+                                               help="Where the file comes from: Orange's own file or the copy on "
+                                                    'data.gouv.fr.'),
+                    file_date: str = typer.Option(None, '--file-date', metavar='DATE',
+                                                  help="The file's own date, such as 2025-12-19."),
+                    source_url: str = typer.Option(None, '--source-url', metavar='URL',
+                                                   help='Where you downloaded it.')):
+    """Import the commune-level copper-closure dates. The source's earlier file is kept as history."""
+    if source not in ('orange', 'gouv'):
+        raise CliError('Choose the source orange or gouv.')
+    data = {key: value for key, value in (('source', source), ('file_date', file_date), ('source_url', source_url))
+            if value}
+    with file.open('rb') as handle:
+        result = state.api().post('/routing/closures/files', data=data,
+                                  files={'file': (file.name, handle, 'text/csv')})
+
+    def human(out):
+        out.line(f"Imported {result['imported']:,} communes" + (f", {result['skipped']:,} lines skipped."
+                                                                 if result.get('skipped') else '.'))
+        _closure_lines(out, result)
+    state.out().result(result, human)
+
+
+@_move_group().command('notice')
+def line_notice(number: str = typer.Argument(..., metavar='NUMBER', help="The line's number."),
+                closes: str = typer.Option(None, '--closes', metavar='DATE',
+                                           help='The date the carrier says the line closes, such as 2026-11-04.'),
+                carrier: str = typer.Option('', '--carrier', metavar='NAME', help='The carrier that sent the notice.'),
+                received: str = typer.Option(None, '--received', metavar='DATE', help='When the notice arrived.'),
+                note: str = typer.Option('', '--note', metavar='TEXT', help='What the letter says, for the history.'),
+                remove: bool = typer.Option(False, '--remove', help="Withdraw this line's notice.")):
+    """Record a carrier's notice that a line closes (from its letter), so Faxbot warns before the date."""
+    api = state.api()
+    if remove:
+        result = api.delete(f'/routing/line-notices/{segment(number.strip())}')
+    else:
+        if not closes:
+            raise CliError('Give the date the line closes with --closes, such as 2026-11-04.')
+        result = api.put(f'/routing/line-notices/{segment(number.strip())}', json={
+            'closes_on': closes, 'carrier': carrier, 'received_on': received, 'note': note})
+    state.out().result(result, lambda out: _closure_lines(out, result))
+
+
+@_accounts_group().command('country-rules')
+def country_rules(confirm: str = typer.Option(None, '--confirm', metavar='ACCOUNT',
+                                              help="Confirm that this account's provider meets the country's "
+                                                   'rules.'),
+                  withdraw: str = typer.Option(None, '--withdraw', metavar='ACCOUNT',
+                                               help='Withdraw that confirmation.'),
+                  country: str = typer.Option(None, '--country', metavar='AE|SA', help='The country.'),
+                  evidence: str = typer.Option('', '--evidence', metavar='TEXT',
+                                               help="How you know, such as the provider's licence or your contract.")):
+    """Countries whose regulator licenses calls over the internet (the UAE and Saudi Arabia), and whether each of
+    your accounts there is confirmed. Faxes are never blocked for it."""
+    api = state.api()
+    if confirm or withdraw:
+        if not country:
+            raise CliError('Name the country with --country, such as AE.')
+        path = '/routing/country-rules/confirm' if confirm else '/routing/country-rules/withdraw'
+        result = api.post(path, json={'account': (confirm or withdraw).strip(), 'country': country.strip().upper(),
+                                      'evidence': evidence})
+    else:
+        result = api.get('/routing/country-rules')
+
+    def human(out):
+        for item in result.get('countries') or []:
+            out.line(f"{item['name'].capitalize()}: {item['sentence']}")
+            for source in item.get('sources') or []:
+                out.line(f"  {source['label']}: {source['url']}")
+        out.line()
+        if not result.get('accounts'):
+            out.line('None of your accounts is in one of these countries.')
+        for item in result.get('accounts') or []:
+            out.line(item['sentence'])
+    state.out().result(result, human)
+
+
 @trunk.command('withdraw-caller-id')
 def withdraw_caller_id(account: str = typer.Argument(..., metavar='ACCOUNT', help='The sending account.'),
                        number: str = typer.Argument(..., metavar='CALLER_ID', help='The confirmed caller ID.'),

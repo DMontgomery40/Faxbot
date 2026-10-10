@@ -17,7 +17,7 @@ PRIOR = '0066_analysis'
 
 
 def test_dialing_follows_analysis():
-    assert schema_dialing.REVISION == '0068_dialing_guard' == schema.HEAD
+    assert schema_dialing.REVISION == '0068_dialing_guard' == schema.DIALING  # 0070_closures follows it
     assert schema.ANALYSIS == PRIOR
     assert schema_dialing.TABLES <= schema.STRICT_TABLES and len(schema_dialing.TABLES) == 3
 

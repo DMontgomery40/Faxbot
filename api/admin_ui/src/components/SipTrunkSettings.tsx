@@ -38,6 +38,7 @@ import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { NumberFormat, Settings, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import { CountryRules } from './delivery/CountryLines';
 import LoadFailed, { saysFailure } from './common/LoadFailed';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
@@ -638,6 +639,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           {(preset?.encrypted_audio_only || preset?.access_rule) && saved.encryption_sentence && (
             <Alert severity="info" data-testid="trunk-encryption">{saved.encryption_sentence}</Alert>
           )}
+          {/* Country rules (the UAE, Saudi Arabia): shown only for accounts in those countries; the server checks writes. */}
+          <CountryRules client={client} canWrite />
           {preset?.access_rule && (
             <TextField size="small" fullWidth label="Your own line's internet address" value={form.own_access ?? ''}
               placeholder="203.0.113.7"
