@@ -187,3 +187,57 @@ def test_the_fixture_container_matches_a_real_faxbeep_receipt(encoded):
     with Image.open(RECEIPTS / 'au-combined-received-page-1-1.png') as picture:
         assert images[0].convert('1').tobytes() == picture.convert('1').tobytes()
     assert images[0].info['dpi'] == (204, 196)
+
+
+# --- bounded input: received files come from anyone, and the receive path reads every one ----------------------
+
+def _never_decoded(monkeypatch):
+    from PIL import TiffImagePlugin
+    monkeypatch.setattr(TiffImagePlugin.TiffImageFile, 'load',
+                        lambda *args, **kwargs: pytest.fail('pixels decoded before the size check'))
+
+
+def test_a_small_file_claiming_a_huge_page_is_refused_before_any_page_is_decoded(monkeypatch):
+    from app.codec import reading
+    huge = receipts.tiff_bytes([Image.new('1', (6000, 6000), 1)])  # 36 million blank pixels, a few kilobytes
+    assert len(huge) < 100_000
+    _never_decoded(monkeypatch)
+    with pytest.raises(codec.CodecError) as refused:
+        codec.read_images(huge)
+    assert str(refused.value) == reading.PAGES_TOO_LARGE
+    assert codec.first_page(huge) is None  # the automatic receive probe: not checked, delivered as received
+    pdf = receipts.pdf_bytes([Image.new('1', (6000, 6000), 1)])
+    monkeypatch.setattr(reading, 'ccitt_image', lambda *a, **k: pytest.fail('decoded before the size check'))
+    with pytest.raises(codec.CodecError, match='too large to be fax pages'):
+        codec.read_images(pdf)
+
+
+def test_many_pages_over_the_total_and_a_file_over_the_byte_limit_are_refused(monkeypatch):
+    from app.codec import reading
+    page = Image.new('1', (4800, 4800), 1)  # 23 million pixels, under the per-page limit
+    many = receipts.tiff_bytes([page] * 44)  # over a billion pixels in all
+    _never_decoded(monkeypatch)
+    with pytest.raises(codec.CodecError, match='too large to be fax pages'):
+        codec.read_images(many)
+    monkeypatch.setattr(reading, 'MAX_INPUT_BYTES', 1000)
+    with pytest.raises(codec.CodecError) as refused:
+        codec.read_images(b'II*\x00' + bytes(2000))
+    assert str(refused.value) == reading.TOO_LARGE == 'This file is too large to be a received fax.'
+
+
+def test_received_pages_are_decoded_one_at_a_time_when_used(encoded, monkeypatch):
+    from app.codec import reading
+    document, made = encoded
+    pages = codec.read_images(receipts.tiff_bytes(made['runs'] * 3))
+    assert isinstance(pages, reading.ReceivedPages) and len(pages) == 3 * len(made['runs'])
+    decoded = []
+
+    def counting(index, load):
+        def made_once():
+            decoded.append(index)
+            return load()
+        return made_once
+    pages._loaders = [(size, counting(index, load)) for index, (size, load) in enumerate(pages._loaders)]
+    assert pages.sizes() == [page.size for page in made['runs'] * 3] and not decoded
+    assert codec.decode_images(pages)[0] == document
+    assert sorted(decoded) == list(range(len(pages)))  # each page made once, as it was read

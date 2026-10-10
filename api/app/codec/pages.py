@@ -751,7 +751,9 @@ def decode(images):
             reads.append(read_page(image))
         except PageError as error:
             refusals.append(str(error))
-    small = bool(images) and all(image.size[0] < PREVIEW_WIDTH for image in images)
+    # Received pages (codec.reading.ReceivedPages) know their sizes without decoding a page again.
+    sizes = images.sizes() if hasattr(images, 'sizes') else [image.size for image in images]
+    small = bool(sizes) and all(width < PREVIEW_WIDTH for width, _ in sizes)
     if not reads:
         if small:
             raise PageError(PREVIEW)

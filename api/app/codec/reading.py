@@ -12,21 +12,65 @@ a public test line publishes. Run-coded pages need every pixel as it arrived, so
   comes out white whatever ``/BlackIs1`` or ``/Decode`` say; a page that still comes out inverted (a picture whose
   polarity a writer got wrong) is turned the right way round by the page reader (``pages.read_page``).
 - A page with no image, or one no reader here can decode, is drawn by Ghostscript at 204 x 196.
+
+Received files come from anyone who can send a fax or a file, and the automatic receive path reads every one, so
+the input is bounded before anything is decoded: the file's bytes (``MAX_INPUT_BYTES``), each page's pixels
+(``MAX_PAGE_PIXELS``, from the page's header or the PDF's image dictionaries) and the pixels of all its pages
+(``MAX_TOTAL_PIXELS``). Pages are decoded one at a time when used (``ReceivedPages``), never all at once.
 """
 from __future__ import annotations
 
 import io
 import logging
 import struct
+from collections.abc import Sequence
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 MAX_INPUT_PAGES = 200
 FINE = (204, 196)
+MAX_INPUT_BYTES = 64 * 1024 * 1024
+# A page up to 25 million pixels (a fine fax page is about 3.6 million) and 200 such pages' worth in all.
+MAX_PAGE_PIXELS = 25_000_000
+MAX_TOTAL_PIXELS = 1_000_000_000
+TOO_LARGE = 'This file is too large to be a received fax.'
+PAGES_TOO_LARGE = 'The pages in this file are too large to be fax pages.'
 
 
 class ReadingError(ValueError):
     """The file cannot be read as fax pages (one sentence a person can act on)."""
+
+
+class ReceivedPages(Sequence):
+    """A received file's pages, each decoded only when it is used: ``loaders`` are (width, height) and a function
+    that returns the page image. Iterating holds one decoded page at a time."""
+
+    def __init__(self, loaders):
+        self._loaders = list(loaders)
+
+    def __len__(self):
+        return len(self._loaders)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return ReceivedPages(self._loaders[index])
+        return self._loaders[index][1]()
+
+    def sizes(self):
+        return [size for size, _ in self._loaders]
+
+    def __iter__(self):
+        for _, load in self._loaders:
+            yield load()
+
+
+def _check_pixels(sizes):
+    total = 0
+    for width, height in sizes:
+        pixels = int(width) * int(height)
+        total += pixels
+        if pixels <= 0 or pixels > MAX_PAGE_PIXELS or total > MAX_TOTAL_PIXELS:
+            raise ReadingError(PAGES_TOO_LARGE)
 
 
 def _pdf_errors():
@@ -37,34 +81,52 @@ def _pdf_errors():
 
 
 def read_images(path_or_bytes, *, last_page=MAX_INPUT_PAGES):
-    """Page images from a received fax file: TIFF (any fax coding), PDF, PNG, JPEG, GIF or BMP."""
-    data = Path(path_or_bytes).read_bytes() if isinstance(path_or_bytes, (str, Path)) else bytes(path_or_bytes)
+    """Page images from a received fax file (``ReceivedPages``): TIFF (any fax coding), PDF, PNG, JPEG, GIF or BMP.
+    Raises ReadingError for a file that is too large, has pages too large, or cannot be read."""
+    if isinstance(path_or_bytes, (str, Path)):
+        path = Path(path_or_bytes)
+        if path.stat().st_size > MAX_INPUT_BYTES:
+            raise ReadingError(TOO_LARGE)
+        data = path.read_bytes()
+    else:
+        data = bytes(path_or_bytes)
+    if len(data) > MAX_INPUT_BYTES:
+        raise ReadingError(TOO_LARGE)
     if data[:5] == b'%PDF-':
         return pdf_images(data, last_page=last_page)
     from PIL import Image
-    images = []
+    sizes = []
     try:
         with Image.open(io.BytesIO(data)) as source:
             for index in range(min(MAX_INPUT_PAGES, last_page)):
                 try:
-                    source.seek(index)
+                    source.seek(index)  # the frame's header only; its pixels are decoded when the page is used
                 except EOFError:
                     break
-                frame = source.copy()
-                frame.info['dpi'] = _dpi(source.info.get('dpi'))
-                images.append(frame)
+                sizes.append(source.size)
     except (OSError, ValueError):
         raise ReadingError('This file is not an image Faxbot can read.') from None
-    return images
+    _check_pixels(sizes)
+
+    def frame(index):
+        try:
+            with Image.open(io.BytesIO(data)) as source:
+                source.seek(index)
+                image = source.copy()
+                image.info['dpi'] = _dpi(source.info.get('dpi'))
+                return image
+        except (OSError, ValueError):
+            raise ReadingError('This file is not an image Faxbot can read.') from None
+    return ReceivedPages((size, lambda index=index: frame(index)) for index, size in enumerate(sizes))
 
 
 def first_page(data):
     """Page one of a received fax file only, or None: the cheap probe before reading every page."""
     try:
         images = read_images(data, last_page=1)
+        return images[0] if images else None
     except ReadingError:
         return None
-    return images[0] if images else None
 
 
 def _dpi(value):
@@ -80,26 +142,56 @@ def _dpi(value):
 # --- PDF --------------------------------------------------------------------------------------------------------
 
 def pdf_images(data, *, last_page=MAX_INPUT_PAGES):
-    """One image per PDF page (see the module text); Ghostscript draws the pages no image reader here can."""
+    """One image per PDF page (see the module text), decoded when used; Ghostscript draws a page no image reader
+    here can decode. The image sizes are checked from the PDF's dictionaries before anything is decoded."""
     from pypdf import PdfReader
     errors = _pdf_errors()
     try:
         reader = PdfReader(io.BytesIO(data))
         pages = list(reader.pages)[:min(MAX_INPUT_PAGES, last_page)]
+        sizes = [_drawn_size(page) for page in pages]
     except errors as error:
         log.info('The PDF could not be opened (%s); Ghostscript draws its pages.', type(error).__name__)
         return rendered(data, last_page=last_page)
-    images = []
-    for page in pages:
+    _check_pixels(size for size in sizes if size is not None)
+
+    def page_or_drawing(number, page):
         try:
             image = page_image(page)
         except errors as error:
-            log.info('A PDF page image could not be decoded (%s); Ghostscript draws the pages.', type(error).__name__)
+            log.info('A PDF page image could not be decoded (%s); Ghostscript draws it.', type(error).__name__)
             image = None
         if image is None:
-            return rendered(data, last_page=last_page)
-        images.append(image)
-    return images
+            drawn = rendered(data, first_page=number + 1, last_page=number + 1)
+            if len(drawn) != 1:
+                raise ReadingError('This PDF could not be read.')
+            return drawn[0]
+        return image
+    loaders = []
+    for number, (page, size) in enumerate(zip(pages, sizes)):
+        if size is None:
+            size = _rendered_size(page)
+        loaders.append((size, lambda number=number, page=page: page_or_drawing(number, page)))
+    _check_pixels(size for size, _ in loaders)
+    return ReceivedPages(loaders)
+
+
+def _drawn_size(page):
+    """The pixels the page's image or strips hold, from their dictionaries (none decoded); None without images."""
+    placed = _placements(page)
+    if not placed:
+        return None
+    xobjects = page['/Resources'].get_object()['/XObject'].get_object()
+    sizes = [(int(xobjects[name].get_object().get('/Width', 0)), int(xobjects[name].get_object().get('/Height', 0)))
+             for name, _ in placed]
+    # Strips are joined (their heights add up); otherwise the largest image is the page. Either way at most this.
+    return max(width for width, _ in sizes), sum(height for _, height in sizes)
+
+
+def _rendered_size(page):
+    """The pixels Ghostscript draws for the page at 204 x 196."""
+    box = [float(value) for value in page.mediabox]
+    return (max(1, round(abs(box[2] - box[0]) * 204 / 72)), max(1, round(abs(box[3] - box[1]) * 196 / 72)))
 
 
 def _placements(page):
@@ -236,12 +328,14 @@ def ccitt_image(data, *, width, rows, k=-1, byte_aligned=False):
         return image.convert('1').copy()
 
 
-def rendered(data, last_page=MAX_INPUT_PAGES):
-    """The PDF's pages drawn by Ghostscript at 204 x 196 dots per inch."""
+def rendered(data, last_page=MAX_INPUT_PAGES, first_page=1):
+    """The PDF's pages drawn by Ghostscript at 204 x 196 dots per inch (``ReceivedPages``, kept as PNG files' bytes
+    and decoded when used)."""
     import shutil
     import subprocess
     import tempfile
     from PIL import Image
+    from ..conversion import ghostscript_slot
     executable = shutil.which('gs')
     if executable is None:
         raise ReadingError('This PDF needs Ghostscript to read, and it is not installed.')
@@ -250,15 +344,22 @@ def rendered(data, last_page=MAX_INPUT_PAGES):
         source.write_bytes(data)
         target = Path(folder) / 'page-%03d.png'
         try:
-            subprocess.run([executable, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pngmono', '-r204x196',
-                            f'-dLastPage={last_page}', f'-sOutputFile={target}', str(source)],
-                           check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with ghostscript_slot():
+                subprocess.run([executable, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pngmono',
+                                '-r204x196', f'-dFirstPage={first_page}', f'-dLastPage={last_page}',
+                                f'-sOutputFile={target}', str(source)],
+                               check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except (subprocess.SubprocessError, OSError):
             raise ReadingError('This PDF could not be read.') from None
-        images = []
+        drawings = []
         for path in sorted(Path(folder).glob('page-*.png')):
             with Image.open(path) as image:
-                copy = image.copy()
-                copy.info['dpi'] = FINE
-                images.append(copy)
-        return images
+                drawings.append((image.size, path.read_bytes()))
+    _check_pixels(size for size, _ in drawings)
+
+    def drawing(png):
+        with Image.open(io.BytesIO(png)) as image:
+            copy = image.copy()
+        copy.info['dpi'] = FINE
+        return copy
+    return ReceivedPages((size, lambda png=png: drawing(png)) for size, png in drawings)
