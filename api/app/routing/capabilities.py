@@ -382,6 +382,27 @@ def _pots_quote(here):
     return bool(quotes(here.engine))
 
 
+def _two_currencies(here):
+    return len(mechanisms.currencies(here)) >= 2
+
+
+def _ntt_trunk(here):
+    from . import data_connect_store
+    return any(t38 for _, _, t38, _ in data_connect_store.trunks_here(here.engine, here.values))
+
+
+def _data_connect_trunk_on(here):
+    """Missing when you turned Data Connect calls off on every NTT trunk with T.38; not needed with none."""
+    from . import data_connect_store
+    trunks = [enabled for _, _, t38, enabled in data_connect_store.trunks_here(here.engine, here.values) if t38]
+    return any(trunks) if trunks else 'not_needed'
+
+
+def _data_connect_recipient(here):
+    from . import data_connect_store
+    return bool(data_connect_store.capable_numbers(here.engine))
+
+
 SENDS = Prerequisite('connection', 'A fax service account or your own trunk that sends faxes.',
                      'delivery/connections', _sends)
 TRUNK_SENDS = Prerequisite('connection', 'Your own trunk for sending, from a phone carrier or your phone system.',
@@ -673,6 +694,14 @@ CAPABILITIES = {
         'faxbot savings rate-rows {route} --caller-id-deck {file}',
         (SENDS, Prerequisite('prices', "Your carrier's prices by caller ID, imported for its sending card.",
                              'savings/prices', _caller_id_prices))),
+    'exchange_rates': Capability(
+        'spend_less',
+        'One of your fax services bills in euros and your trunk in US dollars. Faxbot compares the two at the '
+        "European Central Bank's rate of the day, or the rate on your own invoice, so it sends by the one that "
+        'really costs less.',
+        'faxbot savings plans rates reference on',
+        (SECOND_ROUTE, Prerequisite('prices', 'Prices for sending routes in two or more currencies.',
+                                    'savings/prices', _two_currencies))),
     'dialing_guard': Capability(
         'spend_less',
         'A typing slip turns a fax to a local clinic into a call to a premium-rate number. Faxbot holds that fax '
@@ -681,7 +710,8 @@ CAPABILITIES = {
     'power_aware': Capability(
         'recover',
         'During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of '
-        'starting a call that would be cut off part way and still billed.',
+        'starting a call that would be cut off part way and still billed, and sends it by itself once the power '
+        'is back.',
         'faxbot admin diagnostics power set --address {address}',
         (Prerequisite('connection', 'A UPS that Faxbot reads over the network through NUT (Network UPS Tools).',
                       'admin/health', _ups),)),
@@ -711,6 +741,17 @@ CAPABILITIES = {
         'faxbot recipients set {number} --after-answer {keys}',
         (TRUNK_SENDS, Prerequisite('setting', "The keys a recipient's phone menu asks for, on their page.",
                                    'recipients/list', _keys_recorded))),
+    'data_connect': Capability(
+        'spend_less',
+        "A clinic in Osaka has a fax machine that takes NTT Data Connect calls. Your faxes to it go over your Hikari "
+        'Denwa trunk as Data Connect calls, billed by the bandwidth in 30-second steps instead of as voice calls.',
+        'faxbot recipients set {number} --data-connect on',
+        (Prerequisite('connection', 'An NTT Hikari Denwa trunk with T.38 that sends faxes.', 'delivery/trunk',
+                      _ntt_trunk),
+         Prerequisite('setting', "Data Connect calls on for that trunk; they are on by default, and you can switch "
+                                 "them from any recipient's page.", 'recipients/list', _data_connect_trunk_on),
+         Prerequisite('setting', "A recipient whose fax machine takes Data Connect calls, recorded on their page.",
+                      'recipients/list', _data_connect_recipient))),
     'route_problems': Capability(
         'recover',
         'Calls through one carrier start failing to many numbers at once. Faxbot holds that route back and keeps '

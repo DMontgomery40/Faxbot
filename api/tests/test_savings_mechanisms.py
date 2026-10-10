@@ -261,6 +261,17 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
                                'sentence': 'Needs a verified partner; you have none yet.'}
     assert direct['enabled']['on'] is False and direct['turn_on'] is False
 
+    # Exchange rates are on by default, but one trunk prices in one currency; Data Connect needs an NTT trunk.
+    rates = items['exchange_rates']
+    assert (rates['enabled'], rates['works']) == (
+        {'on': True, 'label': 'On', 'sentence': None},
+        {'here': False, 'label': 'Not here',
+         'sentence': 'Needs sending routes priced in two or more currencies; all of yours are priced in one.'})
+    connect = items['data_connect']
+    assert (connect['enabled']['on'], connect['works']['sentence'], connect['here']['sentence']) == (
+        False, 'Needs an NTT Hikari Denwa trunk that sends faxes; you send through Telnyx only.',
+        mechanisms.NO_PART['data_connect'])
+
     sslfax = items['sslfax']
     assert sslfax['page_label'] == 'Delivery setup → Telnyx' and sslfax['evidence']['level'] == 'lab'
     # The fax engine starts only after Apply and connect, which this installation never ran.
@@ -384,6 +395,72 @@ def test_each_wave_three_check_reads_its_own_records_and_turns_on(installation):
         assert saved.status_code == 200, saved.text
         cap = _by_key(client.get('/routing/savings/mechanisms', headers=ADMIN).json())['answer_cap']
         assert (cap['enabled']['on'], cap['works']['here'], cap['turn_on']) == (False, True, True)
+
+
+# An NTT Hikari Denwa trunk, as api/tests/test_data_connect_calls.py sets one up; all values synthetic.
+NTT = dict(FAX_BACKEND='sip', SIP_TRUNK_PRESET='ntt-hikari', SIP_TRUNK_HOST='192.0.2.60',
+           SIP_TRUNK_USERNAME='0312345678', SIP_TRUNK_PASSWORD='synthetic-Trunk-Pass!42', FAX_DEFAULT_COUNTRY='JP',
+           SIP_TRUNK_CALLER_ID='+81312345678')
+NTT_NUMBER = '+81355550123'
+
+
+def test_exchange_rates_and_data_connect_read_their_own_records(installation):
+    """Exchange rates are on while the ECB's rates or one of your own are, and work where your sending routes are
+    priced in two currencies; Data Connect works on an NTT trunk with T.38 and is on for the recipients whose machine
+    takes it, unless you turned it off on the trunk. Both answer through the map and Capabilities alike."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from app.routing import exchange
+    with installation.start(**NTT) as client:
+        engine = installation.store().engine
+
+        def item(key):
+            response = client.get('/routing/savings/mechanisms', headers=ADMIN)
+            assert response.status_code == 200, response.text
+            return _by_key(response.json())[key]
+
+        # On by default (the ECB's rates); one trunk prices in one currency, so it has nothing to compare here.
+        rates = item('exchange_rates')
+        assert (rates['enabled']['on'], rates['enabled']['sentence'], rates['works']['here']) == (True, None, False)
+        assert rates['works']['sentence'] == ('Needs sending routes priced in two or more currencies; all of yours '
+                                              'are priced in one.')
+        exchange.set_reference(engine, False, actor_name='Synthetic admin')
+        rates = item('exchange_rates')
+        assert (rates['enabled']['on'], rates['enabled']['sentence']) == (
+            False, 'Off: the ECB reference rates are off, and you have set no rate of your own.')
+        exchange.set_own(engine, 'EUR', 'JPY', Decimal('160.5'), actor_name='Synthetic admin')
+        rates = item('exchange_rates')
+        assert (rates['enabled']['on'], rates['enabled']['sentence']) == (
+            True, 'On with your own rate only; the ECB reference rates are off.')
+        # Two sending routes priced in two currencies: it works.
+        prices = {'a': SimpleNamespace(currency='EUR'), 'b': SimpleNamespace(currency='JPY'), 'c': None}
+        two = SimpleNamespace(engine=engine, sending=['a', 'b', 'c'], card=prices.get)
+        assert mechanisms.currencies(two) == ['EUR', 'JPY']
+        assert mechanisms.exchange_rates(two).works is True
+
+        # Data Connect works on this trunk, and is off until a recipient's machine is known to take it.
+        dc = item('data_connect')
+        assert (dc['enabled']['on'], dc['works']['here'], dc['turn_on']) == (False, True, True)
+        assert dc['enabled']['sentence'] == "No recipient's fax machine is recorded as taking Data Connect calls yet."
+        path = '/routing/destinations/%2B81355550123/data-connect'
+        assert client.put(path, headers=ADMIN, json={'capable': True}).status_code == 200
+        dc = item('data_connect')
+        assert (dc['enabled']['on'], dc['enabled']['sentence']) == (
+            True, 'On for 1 recipient whose fax machine takes Data Connect calls.')
+        assert client.put('/routing/data-connect/trunks/sip', headers=ADMIN, json={'enabled': False}).status_code \
+            == 200
+        dc = item('data_connect')
+        assert (dc['enabled']['on'], dc['works']['here'], dc['enabled']['sentence']) == (
+            False, True, 'Off: you turned Data Connect calls off for your NTT Hikari Denwa trunk.')
+        # Capabilities names what is missing: the trunk's switch, with the trunk and the recipient in place.
+        capabilities = client.get('/routing/capabilities', headers=ADMIN)
+        assert capabilities.status_code == 200, capabilities.text
+        found = {entry['key']: entry for outcome in capabilities.json()['outcomes']
+                 for entry in outcome['capabilities']}
+        assert [prerequisite['state'] for prerequisite in found['data_connect']['prerequisites']] == [
+            'in_place', 'missing', 'in_place']
+        assert [prerequisite['state'] for prerequisite in found['exchange_rates']['prerequisites']] == [
+            'missing', 'missing']
 
 
 def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation):

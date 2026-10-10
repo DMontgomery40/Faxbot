@@ -129,6 +129,20 @@ def takes_data_connect(engine, destination) -> bool:
     return bool(found and found['capable'])
 
 
+def capable_numbers(engine) -> set:
+    """The numbers whose newest fact says their machine takes Data Connect calls (Savings & optimization →
+    Capabilities); none before the tables exist."""
+    if not _has_tables(engine):
+        return set()
+    table = _table(engine, 'destination_data_connect')
+    newest = {}
+    with engine.connect() as connection:
+        for row in connection.execute(sa.select(table.c.destination, table.c.capable).order_by(
+                table.c.created_at, table.c.id)):
+            newest[row.destination] = bool(row.capable)
+    return {number for number, capable in newest.items() if capable}
+
+
 # -- the one predicate -------------------------------------------------------------------------------------------
 
 def _t38_on(values, account_key):
@@ -141,6 +155,19 @@ def _t38_on(values, account_key):
     except ValueError:
         # An unknown trunk or one that cannot be rendered places no call at all, Data Connect or not.
         return False
+
+
+def trunks_here(engine, values):
+    """[(account key, label, T.38 on, Data Connect on)] of the NTT Hikari Denwa trunks that send faxes."""
+    from ..accounts import all_accounts
+    sending = {account.key for account in all_accounts(values) if account.sends and account.enabled}
+    found = []
+    for key, label in ntt_trunks(values):
+        if key in sending:
+            enabled = trunk_state(engine, key)[0] if _has_tables(engine) else True
+            found.append((key, label, _t38_on(values, key), enabled))
+    return found
+
 
 def places(engine, values, account_key, destination) -> bool:
     """Whether a fax to ``destination`` by ``account_key`` goes as a Data Connect call.

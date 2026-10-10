@@ -387,7 +387,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": "2 suggestions now"
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -783,6 +783,73 @@
             "affected": null
           },
           {
+            "key": "exchange_rates",
+            "name": "Prices in different currencies",
+            "sentence": "Compares accounts that bill in different currencies at a dated exchange rate, the European Central Bank's or your own, so the cheapest route is chosen on the real price.",
+            "example": "One of your fax services bills in euros and your trunk in US dollars. Faxbot compares the two at the European Central Bank's rate of the day, or the rate on your own invoice, so it sends by the one that really costs less.",
+            "outcome": "spend_less",
+            "address": "savings/capabilities?key=exchange_rates",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs sending routes priced in two or more currencies; all of yours are priced in one."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 2,
+            "filters": [
+              "on",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A second sending route, such as another fax service account or your own trunk.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              },
+              {
+                "kind": "prices",
+                "kind_label": "Prices",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "Prices for sending routes in two or more currencies.",
+                "address": "savings/prices",
+                "address_label": "Savings & optimization → Prices & plans"
+              }
+            ],
+            "setting": {
+              "address": "savings/prices",
+              "label": "Savings & optimization → Prices & plans",
+              "command": "faxbot savings plans rates reference on"
+            },
+            "results": {
+              "address": "savings/prices",
+              "label": "Savings & optimization → Prices & plans",
+              "command": "faxbot savings plans rates list"
+            },
+            "affected": null
+          },
+          {
             "key": "dialing_guard",
             "name": "Where Faxbot may dial",
             "sentence": "Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
@@ -836,6 +903,79 @@
               "label": "Delivery setup → Providers & accounts",
               "command": "faxbot delivery providers destinations list"
             },
+            "affected": null
+          },
+          {
+            "key": "data_connect",
+            "name": "NTT Data Connect calls",
+            "sentence": "Sends a fax as an NTT Data Connect call when the receiving machine takes them, billed by its bandwidth in 30-second steps instead of as a voice call; a refused call is placed again at once as an ordinary fax call.",
+            "example": "A clinic in Osaka has a fax machine that takes NTT Data Connect calls. Your faxes to it go over your Hikari Denwa trunk as Data Connect calls, billed by the bandwidth in 30-second steps instead of as voice calls.",
+            "outcome": "spend_less",
+            "address": "savings/capabilities?key=data_connect",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient's fax machine is recorded as taking Data Connect calls yet."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs an NTT Hikari Denwa trunk that sends faxes; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 2,
+            "filters": [
+              "off",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "An NTT Hikari Denwa trunk with T.38 that sends faxes.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              },
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": true,
+                "state": "not_needed",
+                "label": "Not needed yet",
+                "sentence": "Data Connect calls on for that trunk; they are on by default, and you can switch them from any recipient's page.",
+                "address": "recipients/list",
+                "address_label": "Recipients"
+              },
+              {
+                "kind": "setting",
+                "kind_label": "Setting",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A recipient whose fax machine takes Data Connect calls, recorded on their page.",
+                "address": "recipients/list",
+                "address_label": "Recipients"
+              }
+            ],
+            "setting": {
+              "address": "recipients/list",
+              "label": "Recipients",
+              "command": "faxbot recipients set {number} --data-connect on"
+            },
+            "results": null,
             "affected": null
           }
         ]
@@ -2478,8 +2618,8 @@
           {
             "key": "power_aware",
             "name": "Power-aware sending",
-            "sentence": "Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
-            "example": "During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of starting a call that would be cut off part way and still billed.",
+            "sentence": "Starts a call only when your UPS has the runtime to finish it, and sends a held fax by itself once the power allows, so a power cut does not waste a call and its pages.",
+            "example": "During a power cut your UPS has four minutes left. Faxbot holds a long fax that needs six, instead of starting a call that would be cut off part way and still billed, and sends it by itself once the power is back.",
             "outcome": "recover",
             "address": "savings/capabilities?key=power_aware",
             "enabled": {
@@ -3564,7 +3704,7 @@
       "    No suggestions now",
       "  Other carriers' prices (advice_carriers): On · Works here · Sample data",
       "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
-      "    2 suggestions now",
+      "    No suggestions now",
       "  Calls just past a billed minute (advice_billing_steps): On · Works here · Sample data",
       "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
       "    No suggestions now",
@@ -3588,9 +3728,20 @@
       "    Missing: Prices",
       "    Faxbot keeps no count of the calls it priced by caller ID",
       "    Turn it on in Savings & optimization → Prices & plans.",
+      "  Prices in different currencies (exchange_rates): On · Not here · Sample data",
+      "    Compares accounts that bill in different currencies at a dated exchange rate, the European Central Bank's or your own, so the cheapest route is chosen on the real price.",
+      "    Needs sending routes priced in two or more currencies; all of yours are priced in one.",
+      "    Missing: Connection, Prices",
+      "    Not used in 30 days",
       "  Where Faxbot may dial (dialing_guard): On · Works here · Sample data",
       "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
       "    Held no faxes in 30 days",
+      "  NTT Data Connect calls (data_connect): Off · Not here · Test lab",
+      "    Sends a fax as an NTT Data Connect call when the receiving machine takes them, billed by its bandwidth in 30-second steps instead of as a voice call; a refused call is placed again at once as an ordinary fax call.",
+      "    No recipient's fax machine is recorded as taking Data Connect calls yet.",
+      "    Needs an NTT Hikari Denwa trunk that sends faxes; you send through Telnyx only.",
+      "    Missing: Connection, Setting",
+      "    Not used in 30 days",
       "",
       "Smaller documents and shorter calls",
       "Send fewer pages, and keep each page on the line for less time.",
@@ -3720,7 +3871,7 @@
       "    Missing: Partner, Setting",
       "    Not used in 30 days",
       "  Power-aware sending (power_aware): Off · Not here · Sample data",
-      "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
+      "    Starts a call only when your UPS has the runtime to finish it, and sends a held fax by itself once the power allows, so a power cut does not waste a call and its pages.",
       "    Needs a UPS that Faxbot reads through NUT; none is set.",
       "    Missing: Connection",
       "    Not used in 30 days",

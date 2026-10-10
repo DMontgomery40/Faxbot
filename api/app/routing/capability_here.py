@@ -327,8 +327,30 @@ def power_aware(here, now):
     count = len(jobs)
     if not count:
         return 0, f'Not used in {here.days} days'
-    return count, (f"Held {_plural(count, 'fax', 'faxes')} or sent {'it' if count == 1 else 'them'} another way "
-                   f'during power cuts in {here.days} days')
+    said = (f"Held {_plural(count, 'fax', 'faxes')} or sent {'it' if count == 1 else 'them'} another way "
+            f'during power cuts in {here.days} days')
+    # Of those, the faxes whose hold ended by itself once the power allowed (power.release_step's events, migration
+    # 0081).
+    events = _table('power_hold_events', 'job_id', 'event', 'created_at')
+    with read_connection(here.engine) as connection:
+        released = len(jobs & {row.job_id for row in connection.execute(sa.select(events.c.job_id).where(
+            events.c.event == 'released', events.c.created_at >= since))})
+    if released:
+        said += f"; {_plural(released, 'fax', 'faxes')} went by {'itself' if released == 1 else 'themselves'} " \
+                'once the power allowed'
+    return count, said
+
+
+def exchange_rates(here, now):
+    # Faxes whose route choice compared prices in different currencies at an exchange rate (exchange.record_uses).
+    return _acted(_rows(here, 'exchange_rate_uses', 'created_at', _since(here, now), distinct='job_id'), here,
+                  'Compared prices in different currencies for')
+
+
+def data_connect(here, now):
+    # Calls that went as NTT Data Connect calls (data_connect_store.record_call); a refused offer is not counted.
+    return _acted(_rows(here, 'data_connect_calls', 'created_at', _since(here, now), ('outcome', 'data_connect')),
+                  here, 'Placed', 'Data Connect call', 'Data Connect calls')
 
 
 def header_notice(here, now):
@@ -387,11 +409,13 @@ COUNTERS = {
     'power_aware': power_aware,
     'header_notice': header_notice,
     'route_problems': route_problems,
-    # These three have no part on Savings, and the catalogue's line says where their figures are not; this page says
+    'exchange_rates': exchange_rates,
+    # These four have no part on Savings, and the catalogue's line says where their figures are not; this page says
     # what they did, from the records that line points at.
     'answer_cap': answer_cap,
     'station_check': station_check,
     'keys_after_answer': keys_after_answer,
+    'data_connect': data_connect,
 }
 
 

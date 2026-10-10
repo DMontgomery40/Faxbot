@@ -569,12 +569,15 @@ ONE = {
                        'open Opportunities'),
     'measured_account': 'Used on 1 fax in 30 days',
     'dialing_guard': 'Held 1 fax for your approval in 30 days',
-    'power_aware': 'Held 1 fax or sent it another way during power cuts in 30 days',
+    'power_aware': ('Held 1 fax or sent it another way during power cuts in 30 days; 1 fax went by itself once '
+                    'the power allowed'),
     'header_notice': 'Used on 1 fax in 30 days',
     'route_problems': 'Found 1 route problem in 30 days',
     'answer_cap': 'Hung up 1 unanswered call in 30 days',
     'station_check': 'Caught 1 call answered by a different number in 30 days',
     'keys_after_answer': 'Pressed keys on 1 call in 30 days',
+    'exchange_rates': 'Compared prices in different currencies for 1 fax in 30 days',
+    'data_connect': 'Placed 1 Data Connect call in 30 days',
 }
 
 
@@ -623,8 +626,16 @@ def test_each_counter_counts_one_record_of_its_kind(installation, monkeypatch):
         hold = _insert(engine, 'outbound_holds', job_id=job, kind='approval', state='open', separate_approver=0,
                        version=1, requested_at=now)
         _insert(engine, 'dialing_guard_holds', id=hold['id'], job_id=job, why='not_allowed', created_at=now)
-        _insert(engine, 'outbound_holds', job_id=power_job, kind='no_route', state='open', separate_approver=0,
-                version=1, requested_at=now, reason=_power_hold_sentence())
+        power_hold = _insert(engine, 'outbound_holds', job_id=power_job, kind='no_route', state='open',
+                             separate_approver=0, version=1, requested_at=now, reason=_power_hold_sentence())
+        # The same fax, released by itself once the power allowed (power.release_step).
+        _insert(engine, 'power_hold_events', job_id=power_job, hold_id=power_hold['id'], event='released',
+                why='mains', created_at=now)
+        # A route choice that compared prices in two currencies, and a call that went as NTT Data Connect.
+        _insert(engine, 'exchange_rate_uses', attempt_id=attempt, job_id=job, route_key='sip', amount='0.5',
+                currency='EUR', compared_amount='0.55', compared_in='GBP', source='ecb', created_at=now)
+        _insert(engine, 'data_connect_calls', attempt_id=attempt, job_id=job, account_key='sip', destination=AGREED,
+                outcome='data_connect', kbps=64, created_at=now)
         _insert(engine, 'fax_header_notices', id=job, scope='organization', cover='dropped', original_pages=2,
                 sent_pages=1, created_at=now)
         _insert(engine, 'route_family_incidents', transport=TRANSPORTS[0], phase=PHASES[0], change_cause=CAUSES[0],

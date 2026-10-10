@@ -604,6 +604,36 @@
             "turn_on": true
           },
           {
+            "key": "exchange_rates",
+            "name": "Prices in different currencies",
+            "sentence": "Compares accounts that bill in different currencies at a dated exchange rate, the European Central Bank's or your own, so the cheapest route is chosen on the real price.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs sending routes priced in two or more currencies; all of yours are priced in one."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "savings/prices",
+            "page_label": "Savings & optimization → Prices & plans",
+            "link": "savings/prices",
+            "link_label": "Savings & optimization → Prices & plans",
+            "command": "faxbot savings plans rates list",
+            "turn_on": false
+          },
+          {
             "key": "dialing_guard",
             "name": "Where Faxbot may dial",
             "sentence": "Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
@@ -636,7 +666,7 @@
           {
             "key": "power_aware",
             "name": "Power-aware sending",
-            "sentence": "Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
+            "sentence": "Starts a call only when your UPS has the runtime to finish it, and sends a held fax by itself once the power allows, so a power cut does not waste a call and its pages.",
             "enabled": {
               "on": false,
               "label": "Off",
@@ -910,6 +940,36 @@
             "link_label": null,
             "command": null,
             "turn_on": true
+          },
+          {
+            "key": "data_connect",
+            "name": "NTT Data Connect calls",
+            "sentence": "Sends a fax as an NTT Data Connect call when the receiving machine takes them, billed by its bandwidth in 30-second steps instead of as a voice call; a refused call is placed again at once as an ordinary fax call.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No recipient's fax machine is recorded as taking Data Connect calls yet."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs an NTT Hikari Denwa trunk that sends faxes; you send through Telnyx only."
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "How each call went is in its fax's Sent details, not on Savings"
+            },
+            "part": null,
+            "page": "recipients/list",
+            "page_label": "Recipients",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": false
           }
         ]
       },
@@ -1840,11 +1900,15 @@
     "    No prices that depend on the caller ID are imported yet.",
     "    Turn it on in Savings & optimization → Prices & plans.",
     "    See: faxbot delivery providers trunk caller-ids",
+    "  Prices in different currencies: On · Not here · Sample data",
+    "    Compares accounts that bill in different currencies at a dated exchange rate, the European Central Bank's or your own, so the cheapest route is chosen on the real price.",
+    "    Needs sending routes priced in two or more currencies; all of yours are priced in one.",
+    "    See: faxbot savings plans rates list",
     "  Where Faxbot may dial: On · Works here · Sample data",
     "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
     "    See: faxbot delivery providers destinations list",
     "  Power-aware sending: Off · Not here · Sample data",
-    "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
+    "    Starts a call only when your UPS has the runtime to finish it, and sends a held fax by itself once the power allows, so a power cut does not waste a call and its pages.",
     "    Needs a UPS that Faxbot reads through NUT; none is set.",
     "    See: faxbot admin diagnostics power show",
     "",
@@ -1879,6 +1943,11 @@
     "    No recipient has keys to press after it answers yet.",
     "    The keys each call pressed are in its Sent details, not on Savings",
     "    Turn it on in Recipients.",
+    "  NTT Data Connect calls: Off · Not here · Test lab",
+    "    Sends a fax as an NTT Data Connect call when the receiving machine takes them, billed by its bandwidth in 30-second steps instead of as a voice call; a refused call is placed again at once as an ordinary fax call.",
+    "    No recipient's fax machine is recorded as taking Data Connect calls yet.",
+    "    Needs an NTT Hikari Denwa trunk that sends faxes; you send through Telnyx only.",
+    "    How each call went is in its fax's Sent details, not on Savings",
     "",
     "After the call",
     "  Only the missing pages: On · Works here · Sample data",

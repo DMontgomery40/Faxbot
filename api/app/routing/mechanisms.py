@@ -62,6 +62,7 @@ NO_PART = {
     'answer_cap': 'Its capped calls are not counted on Savings yet',
     'station_check': "What it caught is in each fax's Sent details, not on Savings",
     'keys_after_answer': "The keys each call pressed are in its Sent details, not on Savings",
+    'data_connect': "How each call went is in its fax's Sent details, not on Savings",
 }
 
 
@@ -545,6 +546,48 @@ def keys_after_answer(here):
     return State(on, why is None, sentence, why)
 
 
+def currencies(here):
+    """The currencies your sending routes' prices are in, sorted."""
+    return sorted({currency for account in here.sending
+                   if (currency := getattr(here.card(account), 'currency', None))})
+
+
+def exchange_rates(here):
+    from . import exchange
+    reference, own = exchange.reference_enabled(here.engine), len(exchange.own_rates(here.engine))
+    sentence = None
+    if not reference:
+        sentence = (f"On with your own {'rate' if own == 1 else 'rates'} only; the ECB reference rates are off."
+                    if own else 'Off: the ECB reference rates are off, and you have set no rate of your own.')
+    found = currencies(here)
+    why = _needs_sending(here)
+    if why is None and len(found) < 2:
+        # Never a currency code: neither the map nor Capabilities shows money.
+        why = ('Needs sending routes priced in two or more currencies; '
+               + ('all of yours are priced in one.' if found else 'Faxbot has no prices for yours yet.'))
+    return State(reference or bool(own), why is None, sentence, why)
+
+
+def data_connect(here):
+    from . import data_connect_store
+    trunks = data_connect_store.trunks_here(here.engine, here.values)
+    ready = [label for _, label, t38, _ in trunks if t38]
+    switched = [label for _, label, t38, enabled in trunks if t38 and enabled]
+    trunk = 'NTT Hikari Denwa trunk' if len(trunks) == 1 else 'NTT Hikari Denwa trunks'
+    why = None
+    if not trunks:
+        why = f'Needs an NTT Hikari Denwa trunk that sends faxes; {here.through()}.'
+    elif not ready:
+        why = f'Needs T.38 on your {trunk}; Data Connect calls carry fax only as T.38.'
+    if ready and not switched:
+        on, sentence = False, f'Off: you turned Data Connect calls off for your {trunk}.'
+    else:
+        on, sentence = _agreed(len(data_connect_store.capable_numbers(here.engine)),
+                               "No recipient's fax machine is recorded as taking Data Connect calls yet.",
+                               what='whose fax machine takes Data Connect calls')
+    return State(on, why is None, sentence, why)
+
+
 # -- advice: each section of Savings & optimization → Opportunities, and the advice kept on its own page ---------------------------
 
 def _always(here):
@@ -827,6 +870,12 @@ CATALOGUE = (
               'route', 'built', None, 'savings/prices', 'Savings & optimization → Prices & plans', caller_id_prices,
               link='savings/prices', link_label='Savings & optimization → Prices & plans',
               command='faxbot delivery providers trunk caller-ids'),
+    Mechanism('exchange_rates', 'Prices in different currencies',
+              'Compares accounts that bill in different currencies at a dated exchange rate, the European Central '
+              "Bank's or your own, so the cheapest route is chosen on the real price.",
+              'route', 'built', None, 'savings/prices', 'Savings & optimization → Prices & plans', exchange_rates,
+              link='savings/prices', link_label='Savings & optimization → Prices & plans',
+              command='faxbot savings plans rates list'),
     Mechanism('dialing_guard', 'Where Faxbot may dial',
               'Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, '
               'so no call is billed there by mistake.',
@@ -834,8 +883,8 @@ CATALOGUE = (
               link='delivery/connections', link_label='Delivery setup → Providers & accounts',
               command='faxbot delivery providers destinations list'),
     Mechanism('power_aware', 'Power-aware sending',
-              'Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a '
-              'call and its pages.',
+              'Starts a call only when your UPS has the runtime to finish it, and sends a held fax by itself once '
+              'the power allows, so a power cut does not waste a call and its pages.',
               'route', 'built', None, 'admin/health', 'Administration → System health', power_aware,
               link='admin/health', link_label='Administration → System health',
               command='faxbot admin diagnostics power show'),
@@ -858,6 +907,11 @@ CATALOGUE = (
               'Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a '
               'menu goes through instead of failing and being retried.',
               'call', 'lab', None, 'recipients/list', 'Recipients', keys_after_answer),
+    Mechanism('data_connect', 'NTT Data Connect calls',
+              'Sends a fax as an NTT Data Connect call when the receiving machine takes them, billed by its '
+              'bandwidth in 30-second steps instead of as a voice call; a refused call is placed again at once as an '
+              'ordinary fax call.',
+              'call', 'lab', None, 'recipients/list', 'Recipients', data_connect),
     Mechanism('route_problems', 'Route problems told apart from number problems',
               'Notices when calls through one route fail together, holds that route back and keeps the lesson off '
               'each number, so working numbers are not retried or abandoned for a route problem.',
