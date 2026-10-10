@@ -235,6 +235,9 @@ class Link:
     # says whose calls: 'number' (calls to this number) or 'route' (every number on the trunk).
     hour_factor: float | None = None
     hour_scope: str | None = None
+    # Error correction on Faxbot's own calls to this number (``routing.error_correction.Fact``): whether the call
+    # uses it, its frame size and what a partial page costs; None for a fax service, which codes the pages itself.
+    ecm: object = None
 
     def __post_init__(self):
         if self.coding is not None and self.coding not in CODINGS:
@@ -360,7 +363,7 @@ def line_seconds(shape, link, *, coding=None):
     if measured is not None:
         rate, how = _speed(link)
         seconds = setup + sum(measured) / rate + PAGE_SECONDS * shape.pages
-        extra = ecm_seconds(measured, coding, shape.ecm)
+        extra = ecm_seconds(measured, coding, shape.ecm, fact=link.ecm, rate=rate)
         seconds += extra
         clause = f'{duration_text(seconds)} on the line, from the measured size of each page in {coding} {how}'
         if extra:
@@ -369,10 +372,15 @@ def line_seconds(shape, link, *, coding=None):
         return seconds, clause
     if shape.page_bits is not None:
         rate, how = _speed(link)
-        data = sum(shape.page_bits) * WIRE_FACTOR[coding] / rate
-        seconds = setup + data + PAGE_SECONDS * shape.pages
+        coded = tuple(bits * WIRE_FACTOR[coding] for bits in shape.page_bits)
+        extra = ecm_seconds(coded, coding, shape.ecm, fact=link.ecm, rate=rate)
+        seconds = setup + sum(coded) / rate + PAGE_SECONDS * shape.pages + extra
         estimate = '' if coding == 'MMR' else f', with {coding} estimated from a fixed ratio to MMR'
-        return seconds, f'{duration_text(seconds)} on the line, from the size of each page {how}{estimate}'
+        clause = f'{duration_text(seconds)} on the line, from the size of each page {how}{estimate}'
+        if extra:
+            clause += (f', with about {round(extra)} seconds more where a page needs more than one error-correction '
+                       'block')
+        return seconds, clause
     if shape.layout == 'codec':
         return None, "the time on the line is unknown, because a coded page's size depends on its data"
     factor = LAYOUT_FACTOR[shape.layout]
@@ -387,15 +395,34 @@ def line_seconds(shape, link, *, coding=None):
     return seconds, f'{duration_text(seconds)} on the line, for typical pages {how}'
 
 
-def ecm_seconds(measured, coding, ecm=None):
+def ecm_seconds(measured, coding, ecm=None, *, fact=None, rate=None):
     """Seconds a call with error correction spends on the extra partial pages its pages need (each block edge past
     a page's first is another exchange and modem start, ``pages.coding.ecm_extra_seconds``; the first block's end is
-    in ``PAGE_SECONDS`` already). 0 without error correction: a call uses it when ``ecm`` says so, or, unsaid, when
-    its coding needs it (MMR, JBIG)."""
-    if ecm is False or (ecm is None and coding not in ('MMR', 'JBIG')):
+    in ``PAGE_SECONDS`` already), and on a 64-octet frame size's extra framing at ``rate``. 0 without error
+    correction: a call uses it when ``ecm`` says so, else when the number's ``fact``
+    (``routing.error_correction.Fact``) says so, else when its coding needs it (MMR, JBIG). The fact also gives the
+    frame size and the measured turnaround of a partial page."""
+    used = ecm if ecm is not None else getattr(fact, 'used', None)
+    if used is False or (used is None and coding not in ('MMR', 'JBIG')):
         return 0.0
     from ..pages.coding import ecm_extra_seconds
-    return ecm_extra_seconds(measured)
+    from .error_correction import frame_seconds
+    if fact is None:
+        return ecm_extra_seconds(measured)
+    return (ecm_extra_seconds(measured, frame_octets=fact.frame_octets, block_seconds=fact.turnaround)
+            + frame_seconds(measured, fact.frame_octets, rate))
+
+
+def shape_with(shape, **changes):
+    """A ``Shape`` like ``shape`` (this module's, or a ``pages.decision.Shape`` with the same fields) with
+    ``changes``: every field the predictor reads is carried (pages, page bits, resolution, layout, measured
+    codings, coding, error correction), so an adapter never drops one."""
+    fields = {name: getattr(shape, name, None) for name in ('pages', 'page_bits', 'resolution', 'layout', 'measured',
+                                                            'coding', 'ecm')}
+    if isinstance(fields['measured'], dict):
+        fields['measured'] = tuple(fields['measured'].items())
+    fields.update(changes)
+    return Shape(**fields)
 
 
 # The spread of a call's time ---------------------------------------------------------------------------

@@ -149,12 +149,11 @@ class Account:
         """The layout chooser's predictor on this account's facts, or None for the shared predictor."""
         if self.facts is None:
             return None
-        from ..routing.predict import Shape, predict_from
+        from ..routing.predict import predict_from, shape_with
         facts = self.facts
 
         def priced(route_key, destination, shape):
-            return predict_from(facts, Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout,
-                                             getattr(shape, 'measured', None), getattr(shape, 'coding', None)))
+            return predict_from(facts, shape_with(shape))
         return priced
 
     def fingerprint(self):
@@ -366,9 +365,8 @@ class Evaluated:
 
 def _shape_of(pages_count, shape, prediction):
     """``routing.predict.Shape`` for a candidate the chooser priced (a ``pages.decision.Shape``)."""
-    from ..routing.predict import Shape
-    return Shape(pages_count, shape.page_bits, shape.resolution, shape.layout, getattr(shape, 'measured', None),
-                 getattr(shape, 'coding', None))
+    from ..routing.predict import shape_with
+    return shape_with(shape, pages=pages_count)
 
 
 def _option(account, item):

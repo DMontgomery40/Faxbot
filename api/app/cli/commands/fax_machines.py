@@ -38,6 +38,11 @@ def fax_machine(number: str = typer.Argument(..., help='A fax number you send to
             out.line(f"{local_time(call['when'])}: {what}." + (f" {call['outcome']}" if call.get('outcome') else ''))
             for text in call['sentences'] + call.get('changes', []):
                 out.line('  ' + text)
+        correction = data.get('error_correction') or {}
+        if correction.get('sentences'):
+            out.line('Error correction:')
+            for text in correction['sentences']:
+                out.line('  ' + text)
         learned = data['learned']
         if learned['sentences']:
             out.line('What Faxbot changes for this number:')

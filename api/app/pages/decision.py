@@ -50,6 +50,9 @@ class Shape:
     boundary_seconds: float | None = None  # measured time between pages for this destination, when known
     measured: dict | None = None  # {coding: bits per page} measured on these pages (pages/coding.py)
     coding: str | None = None  # the coding the call is priced with, when chosen
+    # Whether the call uses error correction, when this shape says so; None leaves it to the number's own fact
+    # (routing/error_correction.py), as the shared predictor reads it.
+    ecm: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -108,9 +111,7 @@ def predictor():
     from ..routing import predict as shared
 
     def adapted(route_key, destination, shape):
-        return shared.predict(route_key, destination,
-                              shared.Shape(shape.pages, shape.page_bits, shape.resolution, shape.layout,
-                                           getattr(shape, 'measured', None), getattr(shape, 'coding', None)))
+        return shared.predict(route_key, destination, shared.shape_with(shape))
     return adapted
 
 

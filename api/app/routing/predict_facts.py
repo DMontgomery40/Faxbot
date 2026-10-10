@@ -731,6 +731,11 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
                                  typical_rate=link.typical_rate) or link
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, account, now=moment, values=values)
+    if route_key == 'sip' and values is not None:
+        # Error correction on this call (routing/error_correction.py): the one fact the predictor, the joint route
+        # choice and the page choosers all price partial pages with.
+        from .error_correction import fact_for
+        link = replace(link, ecm=fact_for(engine, values, number, recipient=recipient, now=moment))
     if route_key != 'sip' and link.rate is None:
         link = replace(link, typical_note=UNKNOWN_SPEED)
     currency = card.currency if card is not None else 'USD'

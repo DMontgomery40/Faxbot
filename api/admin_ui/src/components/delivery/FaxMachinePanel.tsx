@@ -18,7 +18,8 @@ function message(error: unknown, fallback: string) {
 
 // Recipients → Details, "Their fax machine": this number's recent calls on either fax engine (how each went and what
 // its fax machine said), what Faxbot learned from them and changes for the number (audio fax or fax over IP, the
-// speed to start at, compression, error correction), a way to forget what failed, and Internet Aware Fax between
+// speed to start at, compression, error correction), how error correction goes on calls to it (whether it is used,
+// the frame size and what one more partial page costs), a way to forget what failed, and Internet Aware Fax between
 // fax servers, which you approve per number.
 export default function FaxMachinePanel({ client, number, canWrite }: FaxMachinePanelProps) {
   const [view, setView] = useState<FaxMachineView | null>(null);
@@ -77,6 +78,14 @@ export default function FaxMachinePanel({ client, number, canWrite }: FaxMachine
           ))}
         </Box>
       ))}
+      {(view.error_correction?.sentences.length ?? 0) > 0 && (
+        <Box data-testid="fax-machine-error-correction" sx={{ mt: 2 }}>
+          <Typography variant="subtitle2">Error correction</Typography>
+          {view.error_correction?.sentences.map((text) => (
+            <Typography key={text} variant="body2" color="text.secondary">{text}</Typography>
+          ))}
+        </Box>
+      )}
       {view.learned.sentences.length > 0 && (
         <Typography variant="subtitle2" sx={{ mt: 2 }}>What Faxbot changes for this number</Typography>
       )}

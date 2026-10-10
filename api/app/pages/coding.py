@@ -557,6 +557,13 @@ class Usable:
     # How the engine expected to place the call codes MR and JBIG (``Tuning``, from ``usable_for``); measuring
     # prices exactly that. None: not known (libtiff's MR and plain JBIG, an estimate).
     tuning: Tuning | None = None
+    # Error correction on this call to the number (``routing.error_correction.Fact``): the frame size the dense-page
+    # cutter counts block edges with, and what the predictor prices. None: not read (the 256-octet default).
+    error_correction: object = None
+
+    @property
+    def frame_octets(self) -> int:
+        return getattr(self.error_correction, 'frame_octets', 256)
 
     def allowed(self, coding) -> bool:
         return coding in self.codings
@@ -700,7 +707,11 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
         learned, _ = learning.compression_rule(views, configured)
     elif getattr(capability, 'codings', None):
         dis = receiver_dis((), capability)
-    far_ecm = getattr(capability, 'ecm', None)
+    # Whether the receiving machine offers error correction: the same fact the predictor prices partial pages with.
+    from ..routing.error_correction import fact_for
+    fact = fact_for(engine, values, number, recipient=recipient, settings=settings, views=views,
+                    capability=capability, now=now)
+    far_ecm = fact.far
     found = usable_codings(ecm=settings.ecm, far_ecm=far_ecm, dis=dis, views=views, configured=configured,
                            learned=learned)
     from dataclasses import replace
@@ -711,7 +722,7 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
         # it sends (a measured JBIG would price the call below what it costs, and send it in MMR).
         found = replace(found, codings=found.codings - {'JBIG'},
                         left_out={**found.left_out, 'JBIG': BUILTIN_NO_JBIG})
-    return replace(found, tuning=tuning)
+    return replace(found, tuning=tuning, error_correction=fact)
 
 
 def measuring_tuning(values, engine, number, *, ecm, far_ecm, max_rate, capability=None) -> Tuning:

@@ -213,9 +213,10 @@ def _dpi(frame):
     return tuple(round(float(value)) for value in dpi)
 
 
-def layout_for(frames, limit, *, page_bits=None, piece_bits=0):
+def layout_for(frames, limit, *, page_bits=None, piece_bits=0, frame_octets=256):
     """The layout of these fax frames (mode "1") under the receiver's ``limit``; ``page_bits`` and ``piece_bits``
-    (error correction on, the call's coding known) share the originals out as ``plan`` says."""
+    (error correction on, the call's coding known) share the originals out as ``plan`` says, with block edges at the
+    call's error-correction ``frame_octets`` (``routing.error_correction``)."""
     width, (_, y_dpi) = check_frames(frames)
     rows = limit_rows(limit, y_dpi)
     blanks = {}
@@ -225,7 +226,7 @@ def layout_for(frames, limit, *, page_bits=None, piece_bits=0):
             blanks[original] = _white_rows(frames[original])
         return blanks[original]
     return plan([frame.height for frame in frames], width, rows, white_rows=white_rows, page_bits=page_bits,
-                piece_bits=piece_bits)
+                piece_bits=piece_bits, frame_octets=frame_octets)
 
 
 def piece_frame(frames):

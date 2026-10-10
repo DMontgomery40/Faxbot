@@ -841,7 +841,7 @@ def _coded_sizes(pages, usable, measured):
     name = codings.best_coding(pages, usable.codings, ecm=usable.ecm, measured=measured,
                                negotiate=usable.left_out.get("JBIG") == codings.JBIG_NOT_ON_RECORD).priced
     piece = codings.measure([packing.piece_frame(pages)], codings=(name,), tuning=usable.tuning)[name][0]
-    return {"page_bits": tuple(measured[name]), "piece_bits": piece}
+    return {"page_bits": tuple(measured[name]), "piece_bits": piece, "frame_octets": usable.frame_octets}
 
 
 def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=None, card=None,
@@ -898,8 +898,10 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     if dense_allowed:
         for name, pages, faithful in sources:
             try:
+                # Block edges count only on a call that uses error correction (both ends offer it).
                 coded = (_coded_sizes(pages, usable, measured_for((name, "normal"), pages))
-                         if usable is not None and usable.ecm else {})
+                         if usable is not None and usable.ecm
+                         and getattr(usable.error_correction, "used", None) is not False else {})
                 layout = packing.layout_for(pages, limit, **coded)
                 if layout.pages < len(pages):
                     packed = FaxFrames(packing.render_sheets(pages, layout))

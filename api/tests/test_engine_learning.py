@@ -746,6 +746,12 @@ def test_their_fax_machine_joins_both_engines_calls_and_forgets_with_an_audit_ro
     assert body['calls'][0]['outcome'] == 'Sent: 2 pages confirmed by the receiving machine.'
     assert body['calls'][1]['outcome'].startswith('The other fax machine answered but the fax failed')
     assert "The far end's fax machine accepts up to 14,400 bit/s" in body['calls'][1]['sentences'][0]
+    # Error correction (routing/error_correction.py): the newest successful call used it, so calls to it use it.
+    assert body['error_correction']['used'] is True and body['error_correction']['frame_octets'] == 256
+    assert body['error_correction']['sentences'] == [
+        'Calls to this number use error correction: the last fax to it used it.',
+        "Each 64 KB of a page past the first adds about 3.3 seconds on the line (measured on Faxbot's own test "
+        'calls).']
     # Reading changes nothing: what the failure taught is kept when a call is placed or by the background work.
     assert body['memory'] == [] and not body['can_forget']
     engine_learning.learn_recent(engine, app.state.configuration_runtime.manager.store.read().active.values)
@@ -782,6 +788,8 @@ def test_the_command_line_shows_what_faxbot_changes_and_forgets_a_number(monkeyp
         assert 'Sent, Fax over IP (T.38). The other fax machine answered but the fax failed' in out
         assert 'What Faxbot changes for this number: Fax over IP (T.38) to this number failed on ' in out
         assert f'To forget what failed with this number: faxbot recipients fax-machine {NUMBER} --forget' in out
+        assert ('Error correction: Faxbot has not yet seen whether its fax machine offers error correction.'
+                in out)
         forgot = cli('recipients', 'fax-machine', NUMBER, '--forget')
         assert forgot.exit_code == 0 and 'its next calls use the usual settings' in forgot.stdout
         assert cli.json('recipients', 'fax-machine', NUMBER)['can_forget'] is False

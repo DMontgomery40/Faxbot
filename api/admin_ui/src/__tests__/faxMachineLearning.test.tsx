@@ -40,6 +40,11 @@ const VIEW = {
     active: true, ended: null }],
   can_forget: true,
   iaf: null,
+  error_correction: {
+    used: true, frame_octets: 256, block_seconds: 3.3, block_calls: 0,
+    sentences: ['Calls to this number use error correction: its fax machine offers it.',
+      "Each 64 KB of a page past the first adds about 3.3 seconds on the line (measured on Faxbot's own test calls)."],
+  },
 };
 
 function client() {
@@ -70,6 +75,9 @@ describe('Recipients → Details, their fax machine: what Faxbot learned', () =>
     expect(within(panel).getByText('What Faxbot changes for this number')).toBeTruthy();
     expect(within(panel).getByText(COMPRESSION)).toBeTruthy();
     expect(within(panel).getByText(VIEW.learned.notes[0])).toBeTruthy();
+    const correction = within(panel).getByTestId('fax-machine-error-correction');
+    expect(within(correction).getByText('Error correction')).toBeTruthy();
+    for (const text of VIEW.error_correction.sentences) expect(within(correction).getByText(text)).toBeTruthy();
     fireEvent.click(within(panel).getByRole('button', { name: 'Forget what failed' }));
     expect(await within(panel).findByText('Faxbot forgot what failed with this number; its next calls use the usual settings.')).toBeTruthy();
     expect(forgotten).toEqual(['+13035550150']);

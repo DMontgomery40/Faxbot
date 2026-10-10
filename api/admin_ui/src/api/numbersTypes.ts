@@ -110,6 +110,11 @@ export interface FaxMachineView {
   memory?: FaxMachineMemory[];
   can_forget?: boolean;
   iaf: 'peer' | 'endpoint' | null;
+  // Error correction on calls to this number: whether they use it (null: not seen yet), the frame size, and the
+  // seconds one more partial page costs, with plain sentences.
+  error_correction?: {
+    used: boolean | null; frame_octets: number; block_seconds: number; block_calls: number; sentences: string[];
+  };
 }
 
 export interface IafServer {

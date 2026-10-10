@@ -230,6 +230,10 @@ def fax_machine_view(engine, values, number, *, now=None):
     if learned.inbound_rate:
         sentences.append('Calls from this number over audio are received at 14,400 bit/s: its line trained '
                          'cleanly at that speed on your faxes to it.')
+    # Error correction on calls to this number: whether they use it, the frame size and what a partial page costs
+    # (routing/error_correction.py, the same fact every price reads).
+    from .routing.error_correction import fact_for
+    correction = fact_for(engine, values, number, now=now)
     since = None
     if not epoch.get('first'):
         since = (f'Faxbot started learning about fax numbers again on {engine_learning._day(epoch["started_at"])}, '
@@ -241,7 +245,7 @@ def fax_machine_view(engine, values, number, *, now=None):
                     'ecm_on': any(decision.ecm_on for decision in decisions), 'sentences': sentences,
                     'notes': notes, 'since': since},
         'memory': [_memory_view(row) for row in rows], 'can_forget': any(row['active'] for row in rows),
-        'iaf': engine_frames.iaf_for(store, engine, number),
+        'iaf': engine_frames.iaf_for(store, engine, number), 'error_correction': correction.view(),
         'sentence': ('No fax call with this number has reported its fax machine yet.' if not calls else
                      f'From the last {len(calls)} call{"" if len(calls) == 1 else "s"} with this number.'),
     }
