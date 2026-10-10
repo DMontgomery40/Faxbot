@@ -57,11 +57,9 @@ class Choice:
 
 
 def predictor():
-    """(predict, Shape) from the shared predictor, or None while it is not installed."""
-    try:
-        from ..routing.predict import Shape, predict
-    except ImportError:
-        return None
+    """(predict, Shape) from the shared predictor (routing/predict.py), imported when first used as the codec's other
+    routing imports are; it is merged, so a failed import is a defect and raises."""
+    from ..routing.predict import Shape, predict
     return predict, Shape
 
 
