@@ -110,8 +110,8 @@ async def test_a_trunk_that_would_not_show_the_registered_number_holds_the_fax_a
     from api.app.routing import transport
     original = transport.RoutedTransport._assign
 
-    def assign(self, claim, plan, revision):  # the fax's settings as they would be after the caller ID moved
-        return original(self, claim, plan, SimpleNamespace(values=moved))
+    def assign(self, claim, plan, revision, *more, **named):  # the fax's settings after the caller ID moved
+        return original(self, claim, plan, SimpleNamespace(values=moved), *more, **named)
     transport.RoutedTransport._assign = assign
     try:
         inner = Inner(trunked.delivery)

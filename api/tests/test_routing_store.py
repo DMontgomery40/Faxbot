@@ -186,7 +186,7 @@ async def test_failed_definite_attempt_counts_against_route_reliability(installa
 
 
 @pytest.mark.asyncio
-async def test_route_choice_failure_falls_back_to_the_outbound_provider(installation, monkeypatch):
+async def test_route_choice_failure_falls_back_to_the_outbound_provider(installation, monkeypatch, caplog):
     _, delivery, _ = installation
     job = accept(installation)
     inner = Inner(delivery)
@@ -195,8 +195,12 @@ async def test_route_choice_failure_falls_back_to_the_outbound_provider(installa
     def broken(claim):
         raise RuntimeError('synthetic route storage failure')
     monkeypatch.setattr(transport, '_plan', broken)
-    assert await OutboundWorker(delivery, transport).step() is True
+    with caplog.at_level('WARNING'):
+        assert await OutboundWorker(delivery, transport).step() is True
     assert inner.submissions == 1 and delivery.get(job)['state'] == 'success'
+    # The fallback never hides its cause: the warning carries the error that made route choice unavailable.
+    (warned,) = [record for record in caplog.records if record.getMessage().startswith('Route choice is unavailable')]
+    assert warned.exc_info and str(warned.exc_info[1]) == 'synthetic route storage failure'
 
 
 @pytest.mark.asyncio
