@@ -134,7 +134,7 @@ faxbot savings spending             # spending per route and for received calls
 faxbot savings reconcile            # ask Telnyx now, instead of waiting for the next check
 faxbot savings fax FAX_ID           # one sent fax
 faxbot savings received --all       # every received fax you can see; or one: faxbot savings received ID
-faxbot savings plans --in-use       # published plans for the services you send with that have no price yet
+faxbot savings plans published --in-use # published plans for the services you send with that have no price yet
 faxbot savings opportunities      # route, plan and receiving-cost advice
 ```
 

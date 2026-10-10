@@ -20,6 +20,8 @@ The receiving line says how faxes reach Faxbot. Over your own carrier line it sa
 
 **Faxes → Send a fax** (`#/faxes/send`) takes a number and a PDF or TXT document within the upload limit. Before sending it shows the route Faxbot will use and what this fax should cost there, in the route's own unit: "About $0.01 for this 2-page fax ($0.005 a minute, at least 1 minute)." A fax through a flat plan shows no estimate. For a number that sends faxes together, **Send now** sends at once and takes the waiting faxes with it. After sending, **See it in Sent** opens the fax.
 
+To print a notice at the top of every page, first set it under **Delivery setup → Sending identity → Header notice**. You can set an organization notice or a different notice for a mailbox. On **Send a fax**, select **The first page is a cover sheet: print its notice at the top of every page instead and leave it out** when the first page is only a cover carrying that notice. Faxbot then omits that page and records the choice in Sent details. If the recipient is marked as needing a cover sheet in **Recipients → Recipients → Details**, Faxbot keeps the cover page. Faxbot keeps the original document with the fax. This choice applies to faxes sent from this screen, the `faxbot send` command or `POST /fax`; it does not apply to faxes sent from email or folders, forms, case packets or partner relays.
+
 The route and estimate need permission to read settings; others see the form without them.
 
 ## Forms
