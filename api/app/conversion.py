@@ -27,11 +27,24 @@ MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_DOCUMENT_PAGES = 500
 MAX_RASTER_PAGE_PIXELS = 25_000_000
-MAX_RASTER_TOTAL_PIXELS = 100_000_000
+# A fax page at fine resolution (204 x 196 dpi) is about 3.7 million pixels on US Letter, 3.9 million on A4 and
+# 4.8 million on US Legal. The total allows the page limit's worth of Legal pages, so a document the page limit
+# accepts is never refused for its total size (100 million refused a 27-page Letter document). Pages are drawn,
+# checked and written one at a time, so memory follows the largest page; the total bounds one document's work.
+FAX_PAGE_PIXELS = 5_000_000
+MAX_RASTER_TOTAL_PIXELS = MAX_DOCUMENT_PAGES * FAX_PAGE_PIXELS
 MAX_PDF_STREAM_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_PDF_STREAM_BYTES = 32 * 1024 * 1024
 GHOSTSCRIPT_TIMEOUT_SECONDS = 120
+# Added for each page of the document being drawn (``ghostscript_timeout``). Measured on 10 October 2026: 100
+# synthetic text pages took 1.2 seconds to draw as a fax image; scanned pages take longer, so one second a page.
+GHOSTSCRIPT_SECONDS_PER_PAGE = 1
 SUPPORTED_TIFF_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "CMYK"})
+
+
+def ghostscript_timeout(pages: int) -> int:
+    """Seconds Ghostscript may take to draw a document of ``pages`` pages: the base, plus a second a page."""
+    return GHOSTSCRIPT_TIMEOUT_SECONDS + GHOSTSCRIPT_SECONDS_PER_PAGE * max(0, int(pages))
 
 
 class DocumentConversionError(Exception):
@@ -443,7 +456,7 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
         ]
         try:
             subprocess.run(
-                arguments, check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS,
+                arguments, check=True, timeout=ghostscript_timeout(pages),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             _check_file_size(temporary, limit=MAX_OUTPUT_BYTES)

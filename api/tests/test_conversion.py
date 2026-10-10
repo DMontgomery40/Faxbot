@@ -1,5 +1,6 @@
 """Regression checks inspect real document contents through public converters."""
 
+import math
 from pathlib import Path
 import shutil
 import struct
@@ -706,10 +707,12 @@ def test_tiff_pixel_limit_is_checked_before_decoding(monkeypatch, tmp_path):
 
 
 def test_total_raster_limit_is_checked_before_starting_ghostscript(monkeypatch, tmp_path):
+    # 120 pages, each just under the per-page limit (5,001 x 4,805 pixels at fine resolution), are far more than
+    # the page limit's worth of fax pages.
     source = tmp_path / "many-pages.pdf"
     writer = PdfWriter()
-    for _ in range(30):
-        writer.add_blank_page(width=612, height=792)
+    for _ in range(120):
+        writer.add_blank_page(width=1765, height=1765)
     writer.write(source)
     output = tmp_path / "converted.tiff"
 
@@ -752,8 +755,8 @@ def test_generated_output_limit_does_not_publish_oversized_pdf(monkeypatch, tmp_
     assert list(tmp_path.iterdir()) == [source]
 
 
-@pytest.mark.parametrize("pages, operational", [(26, True), (27, False)])
-def test_letter_fax_raster_budget_supports_26_pages(monkeypatch, tmp_path, pages, operational):
+@pytest.mark.parametrize("pages, operational", [(26, True), (27, True), (100, True), (500, True), (501, False)])
+def test_letter_fax_raster_budget_supports_the_page_limit(monkeypatch, tmp_path, pages, operational):
     source = tmp_path / "letter-pages.pdf"
     writer = PdfWriter()
     for _ in range(pages):
@@ -765,6 +768,80 @@ def test_letter_fax_raster_budget_supports_26_pages(monkeypatch, tmp_path, pages
     with pytest.raises(conversion.DocumentConversionError) as error:
         conversion.pdf_to_tiff(str(source), str(output))
 
-    # 26 pages reach the unavailable tool; page 27 exceeds the input raster budget.
+    # Up to the page limit, Letter pages reach the (here unavailable) tool; page 501 exceeds the page limit. Until
+    # 10 October 2026 the raster total refused page 27.
     assert error.value.operational is operational
     assert not output.exists()
+
+
+def _letter_pdf(path, pages):
+    """A synthetic Letter document of ``pages`` pages, each with its own text, as a long medical record would be."""
+    from reportlab.lib.pagesizes import letter
+    document = canvas.Canvas(str(path), pagesize=letter, invariant=1)
+    for number in range(pages):
+        document.setFont("Helvetica-Bold", 16)
+        document.drawString(72, 740, f"SYNTHETIC RECORD PAGE {number + 1} OF {pages}")
+        document.setFont("Helvetica", 10)
+        for line in range(40):
+            document.drawString(72, 710 - line * 14, f"Line {line + 1} of page {number + 1}: synthetic text only.")
+        document.showPage()
+    document.save()
+
+
+def test_the_raster_total_admits_the_page_limits_worth_of_fax_pages():
+    letter_fine = math.ceil(612 * 204 / 72) * math.ceil(792 * 196 / 72)
+    legal_fine = math.ceil(612 * 204 / 72) * math.ceil(1008 * 196 / 72)
+    assert conversion.MAX_DOCUMENT_PAGES * legal_fine <= conversion.MAX_RASTER_TOTAL_PIXELS
+    assert letter_fine < legal_fine < conversion.FAX_PAGE_PIXELS < conversion.MAX_RASTER_PAGE_PIXELS
+    assert conversion.ghostscript_timeout(0) == conversion.GHOSTSCRIPT_TIMEOUT_SECONDS
+    assert conversion.ghostscript_timeout(500) > conversion.ghostscript_timeout(100) > 120
+
+
+@pytest.mark.skipif(shutil.which("gs") is None, reason="real Ghostscript not installed")
+def test_a_100_page_letter_pdf_is_accepted_and_converted(tmp_path):
+    """Medical records of 30 to 100+ pages are common; 32 Letter pages were refused before (2026-10-10)."""
+    source = tmp_path / "record.pdf"
+    _letter_pdf(source, 100)
+    assert conversion.validate_pdf(str(source)) == 100
+    output = tmp_path / "record.tiff"
+    assert conversion.pdf_to_tiff(str(source), str(output)) == (100, str(output))
+    frames = conversion.read_fax_frames(str(output))
+    assert len(frames) == 100 and all(frame.size == (1728, 2156) or frame.size[1] == 2156 for frame in frames)
+    assert frames[0].tobytes() != frames[99].tobytes()  # every page drawn, not one page repeated
+    # And back to a PDF through the TIFF path, which checks the same totals.
+    back = tmp_path / "record-back.pdf"
+    assert conversion.tiff_to_pdf(str(output), str(back)) == (100, str(back))
+
+
+def test_the_ghostscript_timeout_grows_with_the_page_count(monkeypatch, tmp_path):
+    source = tmp_path / "record.pdf"
+    writer = PdfWriter()
+    for _ in range(60):
+        writer.add_blank_page(width=612, height=792)
+    writer.write(source)
+    seen = []
+
+    def run_process(arguments, **kwargs):
+        seen.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(arguments, kwargs["timeout"])
+
+    monkeypatch.setattr(conversion.shutil, "which", lambda command: "/synthetic/gs")
+    monkeypatch.setattr(conversion.subprocess, "run", run_process)
+    with pytest.raises(conversion.DocumentConversionError):
+        conversion.pdf_to_tiff(str(source), str(tmp_path / "record.tiff"))
+    assert seen == [conversion.ghostscript_timeout(60)]
+
+
+def test_a_single_oversized_page_is_still_refused_on_both_paths(monkeypatch, tmp_path):
+    """The per-page limit is unchanged: one page over 25 million pixels is refused before any drawing."""
+    source = tmp_path / "one-huge-page.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=2600, height=2600)  # 7,367 x 7,078 pixels at fine resolution
+    writer.write(source)
+
+    def unexpected_process(*args, **kwargs):
+        pytest.fail("An oversized page must fail before starting Ghostscript")
+
+    monkeypatch.setattr(conversion.subprocess, "run", unexpected_process)
+    with pytest.raises(conversion.DocumentConversionError, match="raster limits"):
+        conversion.pdf_to_tiff(str(source), str(tmp_path / "out.tiff"))

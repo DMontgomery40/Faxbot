@@ -43,7 +43,7 @@ import re
 import struct
 import tempfile
 
-from ..conversion import MAX_DOCUMENT_PAGES, MAX_RASTER_TOTAL_PIXELS
+from ..conversion import MAX_DOCUMENT_PAGES, MAX_RASTER_PAGE_PIXELS, MAX_RASTER_TOTAL_PIXELS
 from ..tiff_bytes import settle
 from .crypto import FAX_COMPRESSIONS, FAX_IMAGE, FAX_LINES, FAX_WIDTHS
 
@@ -60,6 +60,7 @@ FONT_PIXELS = 22
 # The conversion's own limits: an image the receiver could not turn into a PDF is never built or accepted.
 MAX_PAGES = MAX_DOCUMENT_PAGES
 MAX_TOTAL_PIXELS = MAX_RASTER_TOTAL_PIXELS
+MAX_PAGE_PIXELS = MAX_RASTER_PAGE_PIXELS
 MAX_PAGE_ROWS = 20000
 MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 # What a page body's digest covers (``layout``): the version names the strip layout and the fields below.
@@ -292,7 +293,8 @@ def check(data, facts, pages):
                 total += width * height
                 if (image.mode != '1' or width != facts['width'] or x_dpi != facts['x_dpi']
                         or y_dpi != facts['y_dpi'] or image.info.get('compression') != compression
-                        or not 0 < height <= MAX_PAGE_ROWS or total > MAX_TOTAL_PIXELS):
+                        or not 0 < height <= MAX_PAGE_ROWS or width * height > MAX_PAGE_PIXELS
+                        or total > MAX_TOTAL_PIXELS):
                     raise FaxImageInvalid('The fax image does not match its description.')
     except FaxImageInvalid:
         raise
@@ -348,6 +350,7 @@ def layout(data):
                 if (image.mode != '1' or tags.get(_TAG_COMPRESSION) != _TIFF_GROUP4 or band is None
                         or page_width not in FAX_WIDTHS or tags.get(_TAG_ROWS_PER_STRIP) != band
                         or not band < height <= band + MAX_PAGE_ROWS or total > MAX_TOTAL_PIXELS
+                        or page_width * height > MAX_PAGE_PIXELS
                         or len(offsets) != len(counts) or len(offsets) != -(-height // band)
                         or (rows is not None and (band, page_width) != (rows, width))):
                     return None
