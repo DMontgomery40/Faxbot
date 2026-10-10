@@ -88,6 +88,7 @@ from .routing.countries_http import router as routing_countries_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
+from .routing.route_families_http import router as route_families_router
 from .routing.polling_http import router as routing_polling_router
 from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
@@ -229,6 +230,7 @@ app.include_router(routing_countries_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
+app.include_router(route_families_router)
 app.include_router(routing_polling_router)
 app.include_router(routing_charges_router)
 app.include_router(rules_router)

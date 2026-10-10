@@ -82,6 +82,7 @@ config.attributes["schema_dialing"] = importlib.import_module(package + ".schema
 config.attributes["schema_header_notice"] = importlib.import_module(package + ".schema_header_notice")
 config.attributes["schema_route_selections"] = importlib.import_module(
     package + ".schema_route_selections")
+config.attributes["schema_route_families"] = importlib.import_module(package + ".schema_route_families")
 
 
 def migrate(connection):

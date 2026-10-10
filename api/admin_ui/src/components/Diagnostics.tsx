@@ -22,6 +22,7 @@ import AdminAPIClient from '../api/client';
 import type { DiagnosticsFinding, DiagnosticsReport, DiagnosticsStatus } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import DatabaseStatus from './DatabaseStatus';
+import RouteFamilies from './RouteFamilies';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -217,6 +218,8 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
           </Stack>
         </>
       )}
+
+      <RouteFamilies client={client} />
 
       <DatabaseStatus client={client} />
 

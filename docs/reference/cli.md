@@ -8863,6 +8863,7 @@ $ faxbot system diagnostics [OPTIONS] COMMAND [ARGS]...
 * `show`: Show the last diagnostics results without...
 * `engine`: List what the fax engine reports now:...
 * `test-fax`: Add a test fax with a real one-page...
+* `routes`: Route problems: failures that belong to...
 
 #### `faxbot system diagnostics database`
 
@@ -8938,6 +8939,138 @@ $ faxbot system diagnostics test-fax [OPTIONS]
 
 * `--from <str>`: Sender fax number to show.  [default: +15550000000]
 * `--to <str>`: Your fax number the test fax arrives on, for example +15551234567.
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics routes`
+
+Route problems: failures that belong to one of your sending routes rather than to the numbers it called, and the 2-by-2 test that tells them apart.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Route problems Faxbot found (open ones...
+* `close`: Close a route problem by hand, for example...
+* `test`: Plan a 2-by-2 test: two of your sending...
+* `send`: Send one test fax of a 2-by-2 test.
+* `show-test`: What a 2-by-2 test shows so far.
+* `upstream`: Record which carrier a provider uses...
+
+##### `faxbot system diagnostics routes list`
+
+Route problems Faxbot found (open ones first), recent 2-by-2 tests, and known shared upstreams.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics routes close`
+
+Close a route problem by hand, for example after you fixed the trunk; Faxbot sets aside what it taught.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes close [OPTIONS] {PROBLEM}
+```
+
+**Arguments**:
+
+* `PROBLEM`: The first characters of the problem, from routes list.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics routes test`
+
+Plan a 2-by-2 test: two of your sending accounts against two of your own numbers. Nothing is sent yet.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes test [OPTIONS]
+```
+
+**Options**:
+
+* `--route-a ACCOUNT`: The first sending account, such as sip or sinch.  [required]
+* `--route-b ACCOUNT`: The second sending account.  [required]
+* `--number-a NUMBER`: Your first own receiving number.  [required]
+* `--number-b NUMBER`: Your second own receiving number.  [required]
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics routes send`
+
+Send one test fax of a 2-by-2 test. This places one real call; each test fax is sent once.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes send [OPTIONS] {TEST} {CELL}
+```
+
+**Arguments**:
+
+* `TEST`: The first characters of the test.  [required]
+* `CELL`: a1, a2, b1 or b2: the first or second account (a, b) to your first or second number (1, 2).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics routes show-test`
+
+What a 2-by-2 test shows so far.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes show-test [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The first characters of the test.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics routes upstream`
+
+Record which carrier a provider uses upstream, so Faxbot can say when two routes share a path.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics routes upstream [OPTIONS] {PROVIDER}
+```
+
+**Arguments**:
+
+* `PROVIDER`: The provider, such as sinch.  [required]
+
+**Options**:
+
+* `--upstream CARRIER`: The carrier the provider is known to use upstream.
+* `--source WEB_ADDRESS`: Where that is published (required with --upstream).
+* `--read-on DATE`: The day you read the source, such as 2026-10-10.
+* `--unknown`: Faxbot no longer knows what this provider uses upstream.
 * `--help`: Show this message and exit.
 
 ### `faxbot system logs`
