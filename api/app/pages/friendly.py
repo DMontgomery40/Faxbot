@@ -218,11 +218,12 @@ def fidelity_of(result):
 # The hook: conversion.pdf_to_tiff calls apply() after Ghostscript made today's fax image -------------------------
 
 def _render_gray(pdf_path, out_path, gs):
-    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS
-    subprocess.run(
-        [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', '-sDEVICE=tiffgray', '-sCompression=lzw',
-         '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
-        check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS, ghostscript_slot
+    with ghostscript_slot():  # at most conversion.GHOSTSCRIPT_SLOTS drawings at once
+        subprocess.run(
+            [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', '-sDEVICE=tiffgray', '-sCompression=lzw',
+             '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
+            check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class GrayPages:

@@ -8,6 +8,7 @@ import unicodedata
 import warnings
 from collections.abc import Sequence
 from contextlib import contextmanager
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple, Optional
@@ -27,7 +28,9 @@ import os
 MAX_DOCUMENT_BYTES = 32 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_DOCUMENT_PAGES = 500
-MAX_RASTER_PAGE_PIXELS = 25_000_000
+# About four times the largest fax page at fine resolution (US Legal, 4.8 million pixels), with room for a Legal page
+# scanned at 400 dpi (3,400 x 5,600 = 19 million pixels) and sent as a TIFF.
+MAX_RASTER_PAGE_PIXELS = 20_000_000
 # A fax page at fine resolution (204 x 196 dpi) is about 3.7 million pixels on US Letter, 3.9 million on A4 and
 # 4.8 million on US Legal. The total allows the page limit's worth of Legal pages, so a document the page limit
 # accepts is never refused for its total size (100 million refused a 27-page Letter document). Pages are drawn,
@@ -37,6 +40,14 @@ MAX_RASTER_TOTAL_PIXELS = MAX_DOCUMENT_PAGES * FAX_PAGE_PIXELS
 MAX_PDF_STREAM_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_PDF_STREAM_BYTES = 32 * 1024 * 1024
 GHOSTSCRIPT_TIMEOUT_SECONDS = 120
+# Ghostscript runs at once in this process (``ghostscript_slot``); others wait for a slot. One run draws one
+# document, which can keep a core busy for minutes on a long scanned document.
+GHOSTSCRIPT_SLOTS = 2
+# The fax image a document becomes may take at least 64 MB, about 1 MB a page beyond that (a dense scanned page in
+# Group 4), and never more than 512 MB. A longer or denser document is refused as too large to fax.
+MAX_FAX_IMAGE_BYTES = 512 * 1024 * 1024
+FAX_IMAGE_BYTES_PER_PAGE = 1024 * 1024
+TOO_LARGE_TO_FAX = "This document is too large to fax: its fax pages would take more than {size} MB."
 # The longest fax whose pages each attempt may still change (packed, shaded, trimmed, encoded or measured for
 # their coding). Measured on 10 October 2026 with the pages kept packed (FaxFrames) and the shading drawn a page at
 # a time: 100 synthetic Letter pages peaked at 354 MB (1,521 MB before), about 2.7 MB a page. A longer fax goes
@@ -70,6 +81,25 @@ def document_page_count(path) -> Optional[int]:
         return None
 
 
+_GHOSTSCRIPT = threading.BoundedSemaphore(GHOSTSCRIPT_SLOTS)
+
+
+class TooLargeToFax(Exception):
+    """The fax image a document became is larger than its limit (``fax_image_limit``)."""
+
+
+@contextmanager
+def ghostscript_slot():
+    """Hold one of the ``GHOSTSCRIPT_SLOTS`` while one Ghostscript run draws; never held across two runs."""
+    with _GHOSTSCRIPT:
+        yield
+
+
+def fax_image_limit(pages: int) -> int:
+    """Bytes the fax image of a ``pages``-page document may take (at most ``MAX_FAX_IMAGE_BYTES``)."""
+    return min(MAX_FAX_IMAGE_BYTES, max(MAX_OUTPUT_BYTES, FAX_IMAGE_BYTES_PER_PAGE * max(0, int(pages))))
+
+
 def ghostscript_timeout(pages: int) -> int:
     """Seconds Ghostscript may take to draw a document of ``pages`` pages: the base, plus a second a page."""
     return GHOSTSCRIPT_TIMEOUT_SECONDS + GHOSTSCRIPT_SECONDS_PER_PAGE * max(0, int(pages))
@@ -93,7 +123,7 @@ def _check_file_size(path: str, *, limit: int = MAX_DOCUMENT_BYTES) -> None:
 
 
 @contextmanager
-def _atomic_output(output_path: str):
+def _atomic_output(output_path: str, *, limit: Optional[int] = None):
     """Only publish a complete artifact, leaving prior output intact on failure."""
     temporary = None
     try:
@@ -103,7 +133,7 @@ def _atomic_output(output_path: str):
         )
         os.close(fd)
         yield temporary
-        _check_file_size(temporary, limit=MAX_OUTPUT_BYTES)
+        _check_file_size(temporary, limit=MAX_OUTPUT_BYTES if limit is None else limit)
         os.replace(temporary, output_path)
     except DocumentConversionError:
         raise
@@ -476,18 +506,22 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
     executable = shutil.which("gs")
     if executable is None:
         raise DocumentConversionError("PDF rasterization is unavailable.", operational=True)
-    with _atomic_output(tiff_path) as temporary:
+    limit = fax_image_limit(pages)
+    with _atomic_output(tiff_path, limit=MAX_FAX_IMAGE_BYTES) as temporary:
         arguments = [
             executable, "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-dPDFSTOPONERROR",
             "-sDEVICE=tiffg4", "-r204x196", f"-sOutputFile={temporary}",
             "-f", str(Path(pdf_path).resolve()),
         ]
         try:
-            subprocess.run(
-                arguments, check=True, timeout=ghostscript_timeout(pages),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            _check_file_size(temporary, limit=MAX_OUTPUT_BYTES)
+            with ghostscript_slot():
+                subprocess.run(
+                    arguments, check=True, timeout=ghostscript_timeout(pages),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            if Path(temporary).stat().st_size > limit:
+                raise TooLargeToFax()
+            _check_file_size(temporary, limit=limit)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
                 warnings.filterwarnings("error", category=UserWarning, module=r"PIL\.TiffImagePlugin")
@@ -503,6 +537,9 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str, *, match_resolution: bool = False
                 if standard is not None:
                     _write_frames(standard, temporary)
             os.chmod(temporary, FAX_IMAGE_MODE)
+        except TooLargeToFax:
+            # The document itself is too large, not a failure of the server: said plainly, never retried.
+            raise DocumentConversionError(TOO_LARGE_TO_FAX.format(size=limit // (1024 * 1024))) from None
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None
     return pages, tiff_path
@@ -618,7 +655,7 @@ class FaxFrames(Sequence):
 def read_fax_frames(tiff_path: str):
     """Every frame of a fax TIFF as a mode "1" image with its resolution (``FaxFrames``: packed, one page made at a
     time), or None when a frame is not one-bit (then it is not a fax image Faxbot can pack or split)."""
-    _check_file_size(tiff_path, limit=MAX_OUTPUT_BYTES)
+    _check_file_size(tiff_path, limit=MAX_FAX_IMAGE_BYTES)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -696,7 +733,7 @@ def _write_frames(frames, path: str) -> None:
 
 def write_fax_tiff(frames, tiff_path: str) -> int:
     """Publish mode "1" frames as a fax TIFF once they read back unchanged; returns the page count."""
-    with _atomic_output(tiff_path) as temporary:
+    with _atomic_output(tiff_path, limit=MAX_FAX_IMAGE_BYTES) as temporary:
         _write_frames(frames, temporary)
     return len(frames)
 

@@ -276,11 +276,12 @@ class MasksUnavailable(Exception):
 
 
 def _render(gs, pdf_path, out_path, options):
-    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS
-    subprocess.run(
-        [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', *options, '-sDEVICE=tiffgray',
-         '-sCompression=lzw', '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
-        check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS, ghostscript_slot
+    with ghostscript_slot():  # at most conversion.GHOSTSCRIPT_SLOTS drawings at once
+        subprocess.run(
+            [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', *options, '-sDEVICE=tiffgray',
+             '-sCompression=lzw', '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
+            check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _frames(path, sizes):

@@ -833,7 +833,7 @@ def test_the_ghostscript_timeout_grows_with_the_page_count(monkeypatch, tmp_path
 
 
 def test_a_single_oversized_page_is_still_refused_on_both_paths(monkeypatch, tmp_path):
-    """The per-page limit is unchanged: one page over 25 million pixels is refused before any drawing."""
+    """One page over the per-page limit is refused before any drawing."""
     source = tmp_path / "one-huge-page.pdf"
     writer = PdfWriter()
     writer.add_blank_page(width=2600, height=2600)  # 7,367 x 7,078 pixels at fine resolution
@@ -845,3 +845,90 @@ def test_a_single_oversized_page_is_still_refused_on_both_paths(monkeypatch, tmp
     monkeypatch.setattr(conversion.subprocess, "run", unexpected_process)
     with pytest.raises(conversion.DocumentConversionError, match="raster limits"):
         conversion.pdf_to_tiff(str(source), str(tmp_path / "out.tiff"))
+
+
+def test_a_page_over_the_per_page_limit_is_refused_and_a_legal_scan_at_400_dpi_is_not(monkeypatch, tmp_path):
+    """The per-page limit is about four times a Legal page at fine resolution (20 million pixels)."""
+    assert conversion.MAX_RASTER_PAGE_PIXELS == 20_000_000
+    legal_fine = math.ceil(612 * 204 / 72) * math.ceil(1008 * 196 / 72)
+    assert 4 * legal_fine <= conversion.MAX_RASTER_PAGE_PIXELS < 5 * legal_fine
+    source = tmp_path / "oversized.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=1800, height=1800)  # 5,100 x 4,900 = 25 million pixels at fine resolution
+    writer.write(source)
+    monkeypatch.setattr(conversion.subprocess, "run", lambda *a, **k: pytest.fail("refused before drawing"))
+    with pytest.raises(conversion.DocumentConversionError, match="raster limits"):
+        conversion.pdf_to_tiff(str(source), str(tmp_path / "out.tiff"))
+    scan = tmp_path / "legal-400.tiff"
+    Image.new("1", (3400, 5600), 1).save(scan, "TIFF", compression="group4", dpi=(400, 400))
+    assert conversion.tiff_to_pdf(str(scan), str(tmp_path / "scan.pdf"))[0] == 1
+
+
+def test_no_more_than_two_ghostscript_drawings_run_at_once(monkeypatch, tmp_path):
+    import threading
+    import time
+    source = tmp_path / "one.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.write(source)
+    lock, release = threading.Lock(), threading.Event()
+    state = {"active": 0, "most": 0}
+
+    def drawing(arguments, **kwargs):
+        with lock:
+            state["active"] += 1
+            state["most"] = max(state["most"], state["active"])
+        release.wait(timeout=30)
+        with lock:
+            state["active"] -= 1
+        raise subprocess.TimeoutExpired(arguments, kwargs["timeout"])
+
+    monkeypatch.setattr(conversion.shutil, "which", lambda command: "/synthetic/gs")
+    monkeypatch.setattr(conversion.subprocess, "run", drawing)
+    refused = []
+
+    def convert(index):
+        try:
+            conversion.pdf_to_tiff(str(source), str(tmp_path / f"out-{index}.tiff"))
+        except conversion.DocumentConversionError:
+            refused.append(index)
+    threads = [threading.Thread(target=convert, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:  # waits on the condition, not a fixed time
+        with lock:
+            if state["active"] == conversion.GHOSTSCRIPT_SLOTS:
+                break
+    with lock:
+        assert state["active"] == conversion.GHOSTSCRIPT_SLOTS
+    release.set()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert state["most"] == conversion.GHOSTSCRIPT_SLOTS == 2 and sorted(refused) == [0, 1, 2, 3]
+
+
+def test_a_fax_image_over_its_size_limit_is_refused_as_too_large_to_fax(monkeypatch, tmp_path):
+    assert conversion.fax_image_limit(10) == conversion.MAX_OUTPUT_BYTES
+    assert conversion.fax_image_limit(200) == 200 * 1024 * 1024
+    assert conversion.fax_image_limit(500) == 500 * 1024 * 1024
+    assert conversion.fax_image_limit(10_000) == conversion.MAX_FAX_IMAGE_BYTES == 512 * 1024 * 1024
+    source = tmp_path / "two.pdf"
+    writer = PdfWriter()
+    for _ in range(2):
+        writer.add_blank_page(width=612, height=792)
+    writer.write(source)
+    monkeypatch.setattr(conversion, "MAX_OUTPUT_BYTES", 2 * 1024 * 1024)
+
+    def drawing(arguments, **kwargs):
+        temporary = next(item.split("=", 1)[1] for item in arguments if item.startswith("-sOutputFile="))
+        Path(temporary).write_bytes(b"\0" * (3 * 1024 * 1024))
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(conversion.shutil, "which", lambda command: "/synthetic/gs")
+    monkeypatch.setattr(conversion.subprocess, "run", drawing)
+    output = tmp_path / "out.tiff"
+    with pytest.raises(conversion.DocumentConversionError) as refused:
+        conversion.pdf_to_tiff(str(source), str(output))
+    assert str(refused.value) == "This document is too large to fax: its fax pages would take more than 2 MB."
+    assert refused.value.operational is False and not output.exists()
