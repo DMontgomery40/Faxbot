@@ -302,6 +302,19 @@ def import_local_calls(engine, store, values, account, data, *, filename='', pla
     return line_view(engine, store, values, account)
 
 
+def _routed(values, account):
+    """(whether the automatic choice may use the line, the delivery routes setting that would let it)."""
+    from ..accounts import account_named
+    try:
+        found = account_named(values, account)
+    except Exception:
+        found = None
+    routes = list(getattr(values, 'outbound_route_providers', ()) or ())
+    if (found is not None and found.automatic) or account in routes:
+        return True, None
+    return False, ','.join([*routes, account])
+
+
 def line_view(engine, store, values, account):
     """What Providers → the analog line shows: its local area, its prices and one sentence."""
     from .costs import rate_text
@@ -332,7 +345,13 @@ def line_view(engine, store, values, account):
     else:
         sentence = (f'{len(rows):,} local prefixes go out on this line at no extra cost; other numbers cost {toll} '
                     'on it, and Faxbot sends them the cheapest way.')
+    routed, suggested = _routed(values, account or 'sip')
     return {'analog': True, 'account': account or 'sip', 'label': found_account.label, 'preset': preset.id,
+            # Whether the automatic choice may use the line now; when not, how to let it (one sentence).
+            'routed': routed,
+            'route_sentence': None if routed else (
+                "Faxbot does not choose this line by itself yet: add it to your delivery routes with faxbot system "
+                f"settings set outbound_routes={suggested}, or name it in a sending rule under Providers → Rules."),
             'preset_label': preset.label, 'calls_at_once': trunk_calls_at_once(found_account.values),
             'local_prefixes': len(rows), 'imported_at': imported.isoformat(timespec='seconds') + 'Z' if imported else None,
             'sources': sources, 'toll_rate': toll, 'monthly_fee': fee, 'sentence': sentence,

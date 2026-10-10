@@ -148,9 +148,10 @@ ANALOG_GATEWAYS = (
             'SIP Registration to No, Outgoing Call without Registration to Yes and Unregister on Reboot to No.',
             'FXO PORT page: SIP User ID and Authenticate ID can be any number (Grandstream\'s peering example uses '
             '5555); Faxbot does not check them.',
-            'Set Unconditional Call Forward to VoIP with any User ID, SIP Server set to Faxbot\'s address and SIP '
-            'Destination Port 5060, so every call on the line goes to Faxbot; enter the line\'s number as a fax '
-            'number on this trunk in Faxbot.',
+            'Set Unconditional Call Forward to VoIP with User ID set to the line\'s own number with its area code '
+            '(such as 3034260100), SIP Server set to Faxbot\'s address and SIP Destination Port 5060, so every call '
+            'on the line goes to Faxbot under that number; enter the same number as a fax number on this trunk in '
+            'Faxbot.',
             'Set Number of Rings to 1 (Grandstream\'s peering example; the default is 4), PSTN Ring Thru FXS to No, '
             'Wait for Dial Tone to No and Stage Method to 1, so Faxbot\'s calls are dialled in one step.',
             'Fax Mode: T.38 (Auto Detect); Re-Invite after Fax Tone Detected: Enabled; Preferred Vocoder: PCMU first.',
@@ -181,8 +182,9 @@ ANALOG_GATEWAYS = (
             'Channels page: give each channel a SIP User ID and Authentication ID (any number); set DTMF Method to '
             'RFC2833.',
             'Set the fax mode to T.38.',
-            'FXO Lines page: set Unconditional Call Forward to VoIP for the channels you use to Faxbot (Grandstream\'s '
-            'example: ch1-4:200;), and enter the line\'s number as a fax number on this trunk in Faxbot.',
+            'FXO Lines page: set Unconditional Call Forward to VoIP for each channel to that line\'s own number with '
+            'its area code, in Grandstream\'s channels:number; form (its example: ch1-4:200;), so Faxbot files the '
+            'calls under that number; enter the same numbers as fax numbers on this trunk in Faxbot.',
             'FXO Lines page: Wait for Dial-Tone N and Stage Method 1, so Faxbot\'s calls are dialled in one step; '
             'Grandstream warns that two-stage dialing lets callers on the line reach your VoIP side.',
             'AC Termination: 600 Ohm in North America; keep Enable Current Disconnect at Y (the default).',
@@ -212,7 +214,9 @@ ANALOG_GATEWAYS = (
             'port fxo: dial-after dial-tone (the default); connect-signal battery-reversal if your line gives it '
             '(both methods are off by default); disconnect-signal loop-break (the default).',
             'Route calls from the FXO interface to a SIP gateway pointed at Faxbot\'s address, with no registration, '
-            'and calls from Faxbot to the FXO interface.',
+            'and calls from Faxbot to the FXO interface. Give calls from the line the line\'s own number with its '
+            'area code as the called number (see your firmware\'s guide for the command), so Faxbot files them '
+            'under it, and enter that number as a fax number on this trunk in Faxbot.',
             ANALOG_STEPS_CALL_WAITING,
         ),
         sources=(Source('https://www.patton.com/manuals/scg-r61.pdf', '2026-10-10'),

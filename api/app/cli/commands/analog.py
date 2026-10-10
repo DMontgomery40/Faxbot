@@ -25,6 +25,8 @@ def _lines(out, view):
                 ('Other numbers cost', view.get('toll_rate')), ('Monthly fee', view.get('monthly_fee')),
                 ('List from', ', '.join(view.get('sources') or []) or None)])
     out.line(view.get('saved') or view['sentence'])
+    if view.get('route_sentence'):
+        out.line(view['route_sentence'])
 
 
 @analog.command('show')

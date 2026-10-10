@@ -191,6 +191,35 @@ def test_local_numbers_go_out_on_the_line_at_no_cost_and_toll_numbers_by_the_che
     assert not analog.is_local(database, 'sip-line', 'grandstream-ht813', '+13032980000')
 
 
+def test_a_line_that_is_not_a_delivery_route_says_how_to_make_it_one(database):  # noqa: F811
+    store = _install(database)
+    unrouted = values(FAX_OUTBOUND_ROUTES='')
+    analog.import_local_calls(database, store, unrouted, 'sip-line', '303-426\n', toll_per_minute='0.10')
+    order, prices = _choices(store, unrouted, LOCAL)
+    # The automatic choice uses the default sending account and the listed routes only: the line is not a candidate.
+    assert 'sip-line' not in order and order[0] == 'sip'
+    view = analog.line_view(database, store, unrouted, 'sip-line')
+    assert view['routed'] is False
+    assert view['route_sentence'] == ('Faxbot does not choose this line by itself yet: add it to your delivery routes '
+                                      'with faxbot system settings set outbound_routes=sip-line, or name it in a '
+                                      'sending rule under Providers → Rules.')
+    assert analog.line_view(database, store, values(), 'sip-line')['routed'] is True
+
+
+def test_calls_the_gateway_forwards_under_the_lines_number_are_filed_under_it():
+    """The gateway forwards each call on the line to Faxbot under the line's own number (the admin steps); the
+    line's endpoint names its trunk on every call, and the number in either written form is the stored one."""
+    from app.inbound.http import received_number
+    from app.inbound.sip_handover import receiving_trunk
+    assert received_number('3034260100', 'US') == received_number('13034260100', 'US') == '+13034260100'
+    assert received_number('200', 'US') == '200'  # a short forward target would not match: the steps say so
+    for preset_id in ('grandstream-ht813', 'grandstream-gxw410x', 'patton-smartnode-fxo'):
+        assert any("line's own number with its area code" in step for step in sip_trunk.PRESETS[preset_id].admin_steps)
+    assert receiving_trunk(values(), {'trunk': 'sip-line', 'to_number': '3034260100'}) == 'sip-line'
+    assert 'set_var=FAXBOT_TRUNK=sip-line' in sip_trunk.render_pjsip(values())
+    assert sip_trunk.trunk_numbers(values())['sip-line'] == ('+13034260100',)
+
+
 def test_ten_digits_for_local_numbers_when_the_exchange_refuses_a_1(database, monkeypatch):  # noqa: F811
     store = _install(database)
     local_area = values({'sip-line': {**LINE, 'settings': {**LINE['settings'], 'dial_format': 'local_area'}}})
