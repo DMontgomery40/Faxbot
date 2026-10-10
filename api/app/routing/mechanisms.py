@@ -633,6 +633,20 @@ def _copper_closures(here):
     return State(True, why is None, None, why)
 
 
+def _renewal(here):
+    from .channel_peak import imports
+    from .renewal import renewals_by_system
+    why = None if renewals_by_system(here.engine) or imports(here.engine) else \
+        "Needs your fax server's renewal or its call records; neither is entered yet."
+    return State(True, why is None, None, why)
+
+
+def _pots_quote(here):
+    from .pots_quote import quotes
+    why = None if quotes(here.engine) else 'Needs a POTS-replacement quote; none is entered yet.'
+    return State(True, why is None, None, why)
+
+
 def _advice(key, name, sentence, section, command, check):
     return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Savings & optimization → Opportunities',
                      check, link=f'costs/recommendations?section={section}', link_label='Savings & optimization → Opportunities',
@@ -818,7 +832,7 @@ CATALOGUE = (
               'so no call is billed there by mistake.',
               'route', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', dialing_guard,
               link='delivery/connections', link_label='Delivery setup → Providers & accounts',
-              command='faxbot delivery rules destinations list'),
+              command='faxbot delivery providers destinations list'),
     Mechanism('power_aware', 'Power-aware sending',
               'Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a '
               'call and its pages.',
@@ -861,19 +875,27 @@ CATALOGUE = (
               'line in time.',
               'advice', 'built', None, 'delivery/moves', 'Delivery setup → Number moves', _copper_closures,
               link='delivery/moves', link_label='Delivery setup → Number moves',
-              command='faxbot delivery numbers move closures'),
+              command='faxbot delivery numbers closures'),
     Mechanism('advice_registered_senders', 'Registered senders',
               'Sends a recipient that accepts faxes only from a registered number by the account and caller ID '
               'registered with it, so its faxes are not refused and sent again.',
               'advice', 'built', None, 'recipients/list', 'Recipients → Details', _sends,
               link='recipients/list', link_label='Recipients → Details',
-              command='faxbot delivery providers trunk registered-senders'),
+              command='faxbot recipients registered-senders'),
     Mechanism('advice_country_rules', 'Country service rules',
               "Shows the rules a country sets for fax services, with their sources, and which of your accounts "
               'you confirmed meet them.',
               'advice', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', _country_rules,
               link='delivery/connections', link_label='Delivery setup → Providers & accounts',
               command='faxbot delivery providers accounts country-rules'),
+    _advice('advice_renewal', 'Fax server renewal',
+             "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already "
+             'handles, so you renew only the channels you need.',
+             'renewal', 'faxbot savings opportunities renewal', _renewal),
+    _advice('advice_pots', 'Fax lines in a POTS-replacement order',
+             'Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one '
+             'shared trunk costs for them instead.',
+             'pots', 'faxbot savings opportunities pots', _pots_quote),
 )
 BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
