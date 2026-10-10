@@ -100,6 +100,8 @@ export interface RecipientList { name: string; numbers?: string[]; prefixes?: st
 export interface Region { name: string; countries?: string[]; prefixes?: string[] }
 export interface Site {
   key: string; name: string; country?: string; state?: string; time_zone?: string; mailboxes?: string[]; groups?: string[];
+  // A French site's commune (its INSEE code): copper-closure dates come from Orange's trajectory file for it.
+  commune?: string;
   // Accounts the site lists; accounts whose own site names it belong to it too.
   accounts?: string[];
 }

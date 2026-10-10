@@ -2543,6 +2543,9 @@ $ faxbot numbers move [OPTIONS] COMMAND [ARGS]...
 * `record`: Record a step as done or not_done.
 * `test`: Start watching for a receipt test from...
 * `forget`: Forget learned call properties from the...
+* `closures`: When copper, and the phone lines on it,...
+* `import-closures`: Import the commune-level copper-closure...
+* `notice`: Record a carrier&#x27;s notice that a line...
 
 #### `faxbot numbers move show`
 
@@ -2637,6 +2640,67 @@ $ faxbot numbers move forget [OPTIONS] {number}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move closures`
+
+When copper, and the phone lines on it, close: your French sites by commune, and lines with a carrier&#x27;s
+notice.
+
+**Usage**:
+
+```console
+$ faxbot numbers move closures [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move import-closures`
+
+Import the commune-level copper-closure dates. The source&#x27;s earlier file is kept as history. The government
+copy with only the columns Faxbot reads: https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/
+fermeture-reseau-cuivre/exports/csv?select=code_insee,nom_commune,fermeture_technique,fermeture_commerciale,lot
+
+**Usage**:
+
+```console
+$ faxbot numbers move import-closures [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: Orange&#x27;s commune trajectory file, or the government copy, as CSV.  [required]
+
+**Options**:
+
+* `--source orange|gouv`: Where the file comes from: Orange&#x27;s own file or the copy on data.gouv.fr.  [default: gouv]
+* `--file-date DATE`: The file&#x27;s own date, such as 2025-12-19.
+* `--source-url URL`: Where you downloaded it.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers move notice`
+
+Record a carrier&#x27;s notice that a line closes (from its letter), so Faxbot warns before the date.
+
+**Usage**:
+
+```console
+$ faxbot numbers move notice [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The line&#x27;s number.  [required]
+
+**Options**:
+
+* `--closes DATE`: The date the carrier says the line closes, such as 2026-11-04.
+* `--carrier NAME`: The carrier that sent the notice.
+* `--received DATE`: When the notice arrived.
+* `--note TEXT`: What the letter says, for the history.
+* `--remove`: Withdraw this line&#x27;s notice.
 * `--help`: Show this message and exit.
 
 ### `faxbot numbers forwarded-trust`
@@ -5627,6 +5691,7 @@ $ faxbot providers accounts [OPTIONS] COMMAND [ARGS]...
 * `default-sending`: Choose the account Faxbot sends by when no...
 * `default-receiving`: Choose the account whose notifications...
 * `health`: Whether each account is ready, and what to...
+* `country-rules`: Countries whose regulator licenses calls...
 
 #### `faxbot providers accounts list`
 
@@ -5804,6 +5869,25 @@ $ faxbot providers accounts health [OPTIONS] [KEY]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot providers accounts country-rules`
+
+Countries whose regulator licenses calls over the internet (the UAE and Saudi Arabia), and whether each of
+your accounts there is confirmed. Faxes are never blocked for it.
+
+**Usage**:
+
+```console
+$ faxbot providers accounts country-rules [OPTIONS]
+```
+
+**Options**:
+
+* `--confirm ACCOUNT`: Confirm that this account&#x27;s provider meets the country&#x27;s rules.
+* `--withdraw ACCOUNT`: Withdraw that confirmation.
+* `--country AE|SA`: The country.
+* `--evidence TEXT`: How you know, such as the provider&#x27;s licence or your contract.
 * `--help`: Show this message and exit.
 
 ### `faxbot providers digital`

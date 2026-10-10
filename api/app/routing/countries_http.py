@@ -312,3 +312,145 @@ async def original_request(job_id: str, payload: OriginalIn, request: Request, i
             raise HTTPException(409, detail=str(error)) from None
         return evidence(store.engine, job_id, fax_data_dir=folder)
     return await _call(save)
+
+
+# -- when a line's copper closes (N16) ---------------------------------------------------------------------------------
+
+def _day(text, what):
+    from datetime import date
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(400, detail=f'Write the {what} as 2026-11-04.') from None
+
+
+@router.get('/closures', dependencies=[Depends(require_permission('settings:read'))])
+async def line_closures(request: Request):
+    """Copper-closure dates for your French sites and their numbers, and every line with a carrier's notice."""
+    from .closures import view
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: view(store.engine, values))
+
+
+@router.post('/closures/files', dependencies=[Depends(require_permission('settings:write'))])
+async def import_closures(request: Request, identity=Depends(require_identity), file: UploadFile = File(...),
+                          source: str = Form(default='gouv', max_length=16),
+                          source_url: str | None = Form(default=None, max_length=512),
+                          file_date: str | None = Form(default=None, max_length=10)):
+    """Import Orange's commune-level trajectory file, or the government copy of it; the source's earlier file is kept
+    as history."""
+    from .closures import ClosureFileError, import_file, parse_file, view
+    store = _store(request)
+    values = _values(request)
+    data = await file.read(MAX_DECK_FILE * 6 + 1)
+    if len(data) > MAX_DECK_FILE * 6:
+        raise HTTPException(413, detail='The file is larger than 240 MB.')
+    dated = _day(file_date, "file's date")
+
+    def save():
+        try:
+            closures, skipped = parse_file(data.decode('utf-8-sig', errors='replace'), source=source)
+            import_file(store.engine, closures, source=source, source_url=source_url or None, file_date=dated,
+                        actor=_who(store.engine, identity))
+        except ClosureFileError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return {**view(store.engine, values), 'imported': len(closures), 'skipped': skipped}
+    return await _call(save)
+
+
+class NoticeIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    closes_on: str = Field(min_length=10, max_length=10)
+    carrier: str = Field(default='', max_length=100)
+    received_on: str | None = Field(default=None, max_length=10)
+    note: str = Field(default='', max_length=2000)
+
+
+@router.put('/line-notices/{number}', dependencies=[Depends(require_permission('settings:write'))])
+async def record_line_notice(number: str, payload: NoticeIn, request: Request, identity=Depends(require_identity)):
+    """Record a carrier's notice that this line closes on a date (from its letter). Earlier notices stay as history."""
+    from .closures import NoticeError, record_notice, view
+    store = _store(request)
+    values = _values(request)
+    closes, received = _day(payload.closes_on, 'closing date'), _day(payload.received_on, "notice's date")
+
+    def save():
+        try:
+            record_notice(store.engine, number, closes_on=closes, carrier=payload.carrier or None,
+                          received_on=received, note=payload.note or None, actor=_who(store.engine, identity))
+        except NoticeError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return view(store.engine, values)
+    return await _call(save)
+
+
+@router.delete('/line-notices/{number}', dependencies=[Depends(require_permission('settings:write'))])
+async def remove_line_notice(number: str, request: Request, identity=Depends(require_identity)):
+    """Withdraw a line's carrier notice; its history stays."""
+    from .closures import NoticeError, remove_notice, view
+    store = _store(request)
+    values = _values(request)
+
+    def save():
+        try:
+            remove_notice(store.engine, number, actor=_who(store.engine, identity))
+        except NoticeError as error:
+            raise HTTPException(404, detail=str(error)) from None
+        return view(store.engine, values)
+    return await _call(save)
+
+
+# -- country service rules (M4) ----------------------------------------------------------------------------------------
+
+class CountryConfirmIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account: str = Field(min_length=1, max_length=64)
+    country: str = Field(min_length=2, max_length=2)
+    evidence: str = Field(default='', max_length=2000)
+    evidence_url: str | None = Field(default=None, max_length=512)
+
+
+@router.get('/country-rules', dependencies=[Depends(require_permission('settings:read'))])
+async def country_rules(request: Request):
+    """Countries whose regulator licenses calls over the internet, and whether each affected account is confirmed."""
+    from .country_rules import view
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: view(store.engine, values))
+
+
+@router.post('/country-rules/confirm', dependencies=[Depends(require_permission('settings:write'))])
+async def confirm_country_rules(payload: CountryConfirmIn, request: Request, identity=Depends(require_identity)):
+    """Record that an account's provider meets a country's rules, with your evidence. Nothing is blocked either way."""
+    from .country_rules import EligibilityError, confirm, view
+    store = _store(request)
+    values = _values(request)
+    _known_account(values, payload.account)
+
+    def save():
+        try:
+            confirm(store.engine, payload.account, payload.country, evidence=payload.evidence,
+                    evidence_url=payload.evidence_url or None, actor=_who(store.engine, identity))
+        except EligibilityError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return view(store.engine, values)
+    return await _call(save)
+
+
+@router.post('/country-rules/withdraw', dependencies=[Depends(require_permission('settings:write'))])
+async def withdraw_country_rules(payload: CountryConfirmIn, request: Request, identity=Depends(require_identity)):
+    """Withdraw a confirmation; the account shows the country's rules as not confirmed again."""
+    from .country_rules import EligibilityError, view, withdraw
+    store = _store(request)
+    values = _values(request)
+
+    def save():
+        try:
+            withdraw(store.engine, payload.account, payload.country, actor=_who(store.engine, identity))
+        except EligibilityError as error:
+            raise HTTPException(409, detail=str(error)) from None
+        return view(store.engine, values)
+    return await _call(save)

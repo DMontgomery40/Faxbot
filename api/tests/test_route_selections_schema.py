@@ -22,7 +22,7 @@ def _row(**changes):
 
 def test_the_head_is_the_route_selection_revision_and_validates(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema.HEAD == '0067_route_selections'
+    assert schema.ROUTE_SELECTIONS == '0067_route_selections'
     assert 'fax_route_selections' in _tables(database)
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD

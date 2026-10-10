@@ -5,6 +5,7 @@ import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './net
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type { CallerIdDeckImport } from './countriesTypes';
+import type { Closures } from '../components/delivery/CountryLines';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type {
@@ -1121,6 +1122,17 @@ class AdminAPIClient {
     if (options.sourceUrl) form.append('source_url', options.sourceUrl);
     if (options.publishedOn) form.append('published_on', options.publishedOn);
     return this.json(`/routing/rate-cards/${id(route)}/caller-id-prices`, { method: 'POST', body: form });
+  }
+
+  // Orange's commune-level copper-closure dates, or the government copy (CSV).
+  async importClosureFile(file: File, options: { source?: string; fileDate?: string; sourceUrl?: string } = {}):
+    Promise<Closures & { imported: number; skipped: number }> {
+    const form = new FormData();
+    form.append('file', file);
+    if (options.source) form.append('source', options.source);
+    if (options.fileDate) form.append('file_date', options.fileDate);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    return this.json('/routing/closures/files', { method: 'POST', body: form });
   }
 
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
