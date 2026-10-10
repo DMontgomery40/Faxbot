@@ -798,15 +798,16 @@ def test_providers_import_adds_several_descriptions(plugins_cli, tmp_path):
 # -- routing, intake, direct delivery, cases ------------------------------------------------
 
 def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
+    # A valid synthetic US destination lets the country-aware predictor select the domestic tariff.
     assert cli.json('recipients', 'list')['destinations'] == []
-    updated = cli.json('recipients', 'set', '+15551230001', '--name', 'County records',
+    updated = cli.json('recipients', 'set', '+12025550123', '--name', 'County records',
                        '--accepts-references')
     assert updated['display_name'] == 'County records' and updated['accepts_references'] is True
-    view = cli.json('recipients', 'show', '+15551230001')
+    view = cli.json('recipients', 'show', '+12025550123')
     assert view['display_name'] == 'County records'
-    assert cli('recipients', 'show', '+15551230001').exit_code == 0
+    assert cli('recipients', 'show', '+12025550123').exit_code == 0
     # The console's words: the preferred way to send, and what a case packet sends.
-    shown = cli('recipients', 'show', '+15551230001').stdout
+    shown = cli('recipients', 'show', '+12025550123').stdout
     assert re.search(r'Preferred way to send\s+Cheapest reliable', shown) and 'automatic' not in shown
     assert re.search(r'Case packets\s+Takes a one-page list instead', shown) and 'Accepts references' not in shown
     listed = cli('recipients', 'list').stdout
@@ -833,11 +834,11 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert 'Calls to toll-free numbers' in shown and 'Caller ID it needs' in shown
     assert 'USD' not in shown and '0.07 ' not in shown.replace('$0.07', '') and '2026-10-01' not in shown
     # Each route says how it charges and what this fax would cost, for the pages asked.
-    three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
+    three = cli.json('recipients', 'show', '+12025550123', '--pages', '3')['recommended_routes']
     assert three and three[0]['pages'] == 3 and three[0]['rate'] and three[0]['estimated_cost']
-    table = cli('recipients', 'show', '+15551230001', '--pages', '3').stdout
+    table = cli('recipients', 'show', '+12025550123', '--pages', '3').stdout
     assert 'Estimated cost, 3 pages' in table and 'Rate' in table and ' estimate' in table
-    assert 'Estimated cost, 1 page' in cli('recipients', 'show', '+15551230001').stdout
+    assert 'Estimated cost, 1 page' in cli('recipients', 'show', '+12025550123').stdout
     bad = cli('recipients', 'show', 'not-a-number')
     assert bad.exit_code == 9
     human = cli('costs', 'spending')

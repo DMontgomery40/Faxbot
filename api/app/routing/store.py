@@ -396,8 +396,31 @@ class RouteStore:
                 route=row['decided_route'] or provider, pages_source=origin))
         return targets
 
+    def _capture_card(self, target, now):
+        """The actual called number's current tariff on the attempt's own account."""
+        from .. import config
+        from ..config_store import UnboundProviderProfile
+        from ..config_values import ConfigurationValues
+        from .predict_facts import facts_for
+
+        values = config.managed_configuration_values()
+        source = getattr(config, '_source', None)
+        if source is not None and source.engine is self.engine:
+            try:
+                # Keep the accepted country, carrier and account settings even if setup changed meanwhile.
+                values = source.outbound_context(target.job_id)[0].values
+            except UnboundProviderProfile:
+                pass  # Legacy attempts have no accepted revision; use the available installation settings.
+        if values is None:
+            values = ConfigurationValues.from_environment({'SIP_TRUNK_PRESET': self.sip_preset()})
+        account = target.route or target.provider_id
+        key = account if self.card_for(account) is not None else target.provider_id
+        facts = facts_for(key, target.dialed or target.destination, now=now, engine=self.engine,
+                          values=values, account=account)
+        return facts.terms.card if facts.terms is not None and not facts.refused else None
+
     def capture(self, target, *, observed_seconds=None, now=None):
-        """Estimate one finished attempt from the provider's current rate card.
+        """Estimate one finished attempt from the current tariff applicable to the number called.
 
         ``observed_seconds`` is a measured connected duration (for example a SIP
         call record) and is preferred over Faxbot's submit-to-finish time, which
@@ -407,11 +430,7 @@ class RouteStore:
         """
         now = now or utcnow()
         outcome = OUTCOMES[target.phase]
-        card = self.card_for_route(target.route, target.provider_id)
-        if target.dialed:
-            # Priced by the class of the number called: a toll-free call by the route's toll-free price.
-            from .dialing import class_card
-            card = class_card(card, target.provider_id, target.dialed, sip_preset=self.sip_preset())
+        card = self._capture_card(target, now)
         seconds = observed_seconds
         if seconds is None and target.completed_at is not None and target.submitted_at is not None:
             seconds = max(0, int((target.completed_at - target.submitted_at).total_seconds()))

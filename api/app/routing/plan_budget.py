@@ -761,15 +761,23 @@ def _values():
 
 
 def _cards(engine, route, values):
-    """(sending card, receiving card) for the route: the saved cards, else the shipped ones without a database."""
+    """Account cards first, then its provider or trunk carrier; usage remains keyed to the account."""
+    document = (getattr(values, 'provider_accounts', None) or {}).get(route) or {}
+    provider = document.get('provider') or route
+    if provider == 'sip':
+        from .predict_facts import _extra_trunk
+        own = _extra_trunk(values, route)
+        preset = getattr(own or values, 'sip_trunk_preset', '') or ''
+        inherited = (f'sip-{preset}', 'sip') if preset else ('sip',)
+    else:
+        inherited = (provider,)
+    identities = ((route,) if route != provider else ()) + inherited
     if engine is not None:
         # Found as ``RouteStore.card_for`` finds it (the trunk by its carrier's card, then a plain "sip" card),
         # from the cached reflection rather than a new store on every prediction.
         import sqlalchemy as sa
         from .database import read_connection
         from .store import RouteStore
-        preset = getattr(values, 'sip_trunk_preset', '') or ''
-        identities = ((f'sip-{preset}', 'sip') if preset else ('sip',)) if route == 'sip' else (route,)
         cards = _tables(engine)['provider_rate_cards']
         with read_connection(engine) as connection:
             rows = connection.execute(sa.select(cards).where(
@@ -780,9 +788,8 @@ def _cards(engine, route, values):
         return pick('outbound'), pick('inbound')
     from .seed import load_cards
     cards = load_cards()
-    identity = f"sip-{getattr(values, 'sip_trunk_preset', '') or ''}" if route == 'sip' else route
-    pick = lambda direction: next((card for card in cards if card.provider_id == identity
-                                   and card.direction == direction), None)
+    pick = lambda direction: next((card for identity in identities for card in cards
+                                   if card.provider_id == identity and card.direction == direction), None)
     return pick('outbound'), pick('inbound')
 
 

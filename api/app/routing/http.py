@@ -229,9 +229,22 @@ def _recommendation(store, number, revision, bound, pages=1):
     planner = RoutePlanner(store, direct_ready=lambda: True, local_ready=lambda: True)
     # A fax accepted now dials the recipient's approved toll-free number where a route can, priced for that class.
     from .alternates import current
+    from .pricing import Price, prices_for
     approval = current(number, engine=store.engine)
     dial = {'alternate': approval.alternate, 'refused': False} if approval is not None else None
-    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True, dial=dial)
+    keys = [bound, *extra_routes(revision.values, bound)]
+
+    def estimates(count):
+        found = prices_for(store, revision.values, number, count, bound=bound, dial=dial)
+        # A lookup failure must not let the planner fall back to an unrelated generic tariff.
+        for key in keys:
+            found.setdefault(key, Price(key, None, None))
+        return found
+
+    prices = estimates(pages)
+    one_page = prices if pages == 1 else estimates(1)
+    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True,
+                        dial=dial, prices=prices)
     def plan_fee(card):
         if card is None or not card.flat_plan:
             return None
@@ -239,16 +252,21 @@ def _recommendation(store, number, revision, bound, pages=1):
 
     def money(card, micros):
         return None if card is None or micros is None else {'currency': card.currency, 'amount': format_amount(micros)}
-    return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
-             'explanation': explain(choice, plan.destination, plan.number_for(choice.route.key)),
-             'estimated_cost_one_page': money(choice.route.card, None if choice.route.card is None
-                                               else estimate_cost(choice.route.card, 1)),
-             # This fax: setup plus typical seconds a page, rounded the way the card bills.
-             'pages': pages, 'estimated_cost': money(choice.route.card, choice.estimated_cost_micros),
-             'rate': rate_text(choice.route.card),
-             'included_in_plan': plan_fee(choice.route.card) is not None,
-             'monthly_fee': plan_fee(choice.route.card)}
-            for choice in plan.choices]
+    rows = []
+    for choice in plan.choices:
+        priced, single = prices.get(choice.route.key), one_page.get(choice.route.key)
+        # The provider's generic card may describe a different destination or a domestic-only plan.
+        # Non-provider routes keep the planner's own signed/verified price representation.
+        card = (priced.rate_card if priced is not None else None) if choice.route.kind == 'provider' else choice.route.card
+        included = bool(priced.in_plan) if priced is not None else plan_fee(card) is not None
+        single_cost = single.micros if single is not None else estimate_cost(card, 1) if card is not None else None
+        rows.append({'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
+                     'explanation': explain(choice, plan.destination, plan.number_for(choice.route.key)),
+                     'estimated_cost_one_page': money(card, single_cost),
+                     'pages': pages, 'estimated_cost': money(card, choice.estimated_cost_micros),
+                     'rate': rate_text(card), 'included_in_plan': included,
+                     'monthly_fee': plan_fee(card) if included else None})
+    return rows
 
 
 @router.get('/destinations/{number}', dependencies=[Depends(require_permission('settings:read'))])

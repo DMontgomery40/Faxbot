@@ -161,7 +161,7 @@ class RoutePolicy:
                 return 'included'
             if estimate is None:
                 return 'reliable' if doubtful else 'unknown_cost'
-            if getattr(candidate.card, 'flat_plan', False):
+            if price is None and getattr(candidate.card, 'flat_plan', False):
                 return 'included'
             if len(remaining) == 1:
                 return 'configured' if candidate.bound else 'cheapest'
