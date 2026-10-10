@@ -71,16 +71,17 @@ class AuthorizedFaxQueries:
         columns += ('send_by',) if 'send_by' in jobs.c else ()
         # The provider of the account the latest attempt used (an attempt bound to another route), else the
         # account the fax was accepted with: which advice an uncertain result gets (delivery_fields). Wording only.
-        attempts = self.configuration.delivery_tables['outbound_attempts']
-        bindings, profiles = self.configuration.job_bindings, self.configuration.profiles
-        profile = sa.func.coalesce(
-            sa.select(attempts.c.profile_id).where(attempts.c.id == delivery.c.attempt_id).scalar_subquery(),
-            sa.select(bindings.c.profile_id).where(bindings.c.id == jobs.c.id).scalar_subquery())
-        route_provider = sa.select(profiles.c.provider_id).where(profiles.c.id == profile).scalar_subquery()
+        # Each join is on a primary key, so a fax is still one row.
+        attempt = self.configuration.delivery_tables['outbound_attempts'].alias('route_attempt')
+        binding = self.configuration.job_bindings.alias('route_binding')
+        profile = self.configuration.profiles.alias('route_profile')
         return sa.select(*(jobs.c[name] for name in columns),
             delivery.c.state.label('delivery_state'), delivery.c.dispatch_mode,
-            delivery.c.version.label('delivery_version'), route_provider.label('route_provider')).select_from(
-                jobs.outerjoin(delivery, delivery.c.id == jobs.c.id))
+            delivery.c.version.label('delivery_version'), profile.c.provider_id.label('route_provider')).select_from(
+                jobs.outerjoin(delivery, delivery.c.id == jobs.c.id)
+                .outerjoin(attempt, attempt.c.id == delivery.c.attempt_id)
+                .outerjoin(binding, binding.c.id == jobs.c.id)
+                .outerjoin(profile, profile.c.id == sa.func.coalesce(attempt.c.profile_id, binding.c.profile_id)))
 
     def _visible(self, connection, actor, now):
         source = self.resources.control._current_source_on(connection, actor, now)

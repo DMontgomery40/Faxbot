@@ -188,3 +188,26 @@ def test_an_uncertain_fax_reads_the_route_its_attempt_used(aw, queries):
         connection.execute(attempts.update().where(attempts.c.job_id == 'new').values(profile_id=trunk))
     assert queries.job(aw.actor, 'new')['reconciliation_reason'] == OWN_CALL
     assert queries.page(aw.actor, status='reconciliation_required')['jobs'][0]['reconciliation_reason'] == OWN_CALL
+
+
+def test_each_fax_in_a_page_reads_its_own_route(aw, queries):
+    """Two uncertain faxes on one page, one sent through the fax service and one over the trunk: each row's sentence
+    comes from that fax's own attempt and binding, never another fax's."""
+    from api.app.config_profiles import ProviderConfiguration
+    aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': 'third', 'to_number': '+12025550188'})
+    uncertain = set()
+    for _ in range(3):  # new and third (and second, another person's, if its number is free)
+        claim = queries.delivery.claim('internal-test', now=NOW)
+        if claim is None:
+            break
+        queries.delivery.begin_submission(claim, now=NOW)
+        queries.delivery.record_uncertain(claim, now=NOW)
+        uncertain.add(claim.job_id)
+    assert {'new', 'third'} <= uncertain
+    trunk = aw.configuration.account_profile(ProviderConfiguration('sip'))
+    attempts = aw.configuration.delivery_tables['outbound_attempts']
+    with aw.engine.begin() as connection:
+        connection.execute(attempts.update().where(attempts.c.job_id == 'third').values(profile_id=trunk))
+    page = queries.page(aw.actor, status='reconciliation_required')
+    assert page['total'] == 2
+    assert {row['id']: row['reconciliation_reason'] for row in page['jobs']} == {'new': SERVICE, 'third': OWN_CALL}
