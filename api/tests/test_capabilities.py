@@ -153,11 +153,18 @@ def test_every_command_runs_as_shown():
 
 
 def test_every_settings_command_changes_a_real_setting(cli):
-    """The settings commands run against a real server and are accepted."""
-    for key, capability in capabilities.CAPABILITIES.items():
-        if capability.command and capability.command.startswith('faxbot system settings set '):
-            result = cli(*capability.command.split()[1:])
-            assert result.exit_code == 0, (key, result.stdout, result.stderr)
+    """Each settings command, run against a real server from the other value, is accepted and changes the setting."""
+    opposite = {'true': 'false', 'where_it_saves': 'never'}
+    commands = {capability.command for capability in capabilities.CAPABILITIES.values()
+                if capability.command and capability.command.startswith('faxbot system settings set ')}
+    assert len(commands) == 4, commands
+    for command in sorted(commands):
+        name, value = command.split()[-1].split('=')
+        before = cli('system', 'settings', 'set', f'{name}={opposite[value]}')
+        assert before.exit_code == 0, (command, before.stdout, before.stderr)
+        result = cli(*command.split()[1:])
+        assert result.exit_code == 0, (command, result.stdout, result.stderr)
+        assert 'Nothing changed' not in result.stdout, (command, result.stdout)
 
 
 def test_every_address_opens_in_the_console():
@@ -304,8 +311,10 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
         ('connection', True), ('prices', True), ('agreement', True)]
     assert together['setting'] == {'address': 'recipients/list', 'label': 'Recipients',
                                    'command': 'faxbot recipients together set {number} --recipient-agreed'}
+    the_map = {item['key']: item for stage in mapped['stages'] for item in stage['mechanisms']}
     assert together['results'] == {'address': 'savings/results?part=sending_together',
-                                   'label': 'Savings & optimization → Savings', 'command': 'faxbot costs savings'}
+                                   'label': 'Savings & optimization → Savings',
+                                   'command': the_map['sending_together']['command']}
 
     # Lighter shading is off by the setting and the trunk bills by time: ready, and you can do it now.
     friendly = items['fax_friendly']
@@ -352,7 +361,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
                                 'label': 'Savings & optimization → Opportunities', 'command': None}
     assert plans['results'] == {'address': 'savings/opportunities?section=plans',
                                 'label': 'Savings & optimization → Opportunities',
-                                'command': 'faxbot costs recommendations plans'}
+                                'command': mechanisms.BY_KEY['advice_plans'].command}
     assert items['charge_checks']['setting']['address'] == 'savings/charges'
     assert items['busy_hours']['results'] is None
 
@@ -467,7 +476,9 @@ def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
     lines = shown.stdout.splitlines()
     assert lines[:2] == ['Faster pages', 'On · Not here · Test lab']
     assert 'Command line: faxbot system settings set sip_sslfax_enabled=true' in lines
-    assert 'Its figures: Savings & optimization → Savings (faxbot costs savings)' in lines
+    figures = {item['key']: item for stage in cli.json('costs', 'mechanisms')['stages']
+               for item in stage['mechanisms']}
+    assert f"Its figures: Savings & optimization → Savings ({figures['sslfax']['command']})" in lines
     assert cli.json('costs', 'capabilities', 'show', 'sslfax')['key'] == 'sslfax'
     unknown = cli('costs', 'capabilities', 'show', 'cheapest')
     assert unknown.exit_code != 0
