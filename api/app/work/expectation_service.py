@@ -1127,8 +1127,8 @@ class ExpectationService:
         if row['missing_since'] is not None:
             missing.append(f"The source's full export of {text.time_text(row['missing_since'])} no longer lists it.")
         if row['conflict_at'] is not None:
-            missing.append('The import changed this row without a new revision, and no one has decided which '
-                           'version stands.')
+            missing.append('The import changed this expected fax without marking it as a new version, and no one has '
+                           'chosen which version stands.')
         history = [{'occurred_at': _iso(event['occurred_at']), 'kind': event['kind'], 'source': event['source'],
                     'actor': event['actor_name'], 'evidence': loads(event['evidence']),
                     'text': self.event_view(event)['text']} for event in events]
@@ -1196,7 +1196,8 @@ def import_sentence(run):
         return 'The file has no rows.'
     counts = ((run['created_count'], 'new', 'new'), (run['unchanged_count'], 'unchanged', 'unchanged'),
               (run['revised_count'], 'new revision', 'new revisions'),
-              (run['conflict_count'], 'changed without a new revision', 'changed without a new revision'),
+              (run['conflict_count'], 'changed without being marked as a new version',
+               'changed without being marked as a new version'),
               (run['problem_count'], 'with a problem', 'with problems'))
     parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
     return f"{rows} {'row' if rows == 1 else 'rows'}: " + ', '.join(parts) + '.'

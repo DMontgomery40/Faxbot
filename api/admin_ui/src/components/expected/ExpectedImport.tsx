@@ -193,8 +193,8 @@ export default function ExpectedImport({ api, onNotice }: { api: ExpectedApi; on
       <DeliveryError error={error} onClose={() => setError(null)} />
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Import an export of open work, such as open purchase orders, from another system. Importing the same file
-        again adds nothing; a row that changed without a new revision waits for you; rows a full export no longer
-        lists are shown to you and stay open.
+        again adds nothing; an expected fax that changed without being marked as a new version waits for you to
+        choose; expected faxes a full export no longer lists are shown to you and stay open.
       </Typography>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 3 }}>
         {(sources ?? []).map((source) => (

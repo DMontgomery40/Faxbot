@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { Capabilities as CapabilitiesView, Capability } from '../api/capabilityTypes';
 import Capabilities from '../components/capabilities/Capabilities';
+import Dashboard from '../components/Dashboard';
 import { resolvesTo } from '../navigation';
 import { server } from '../test/server';
 import fixture from './capabilities.json';
@@ -51,6 +52,15 @@ describe('The capabilities read contract', () => {
       // "Not here" always names what is missing.
       if (!item.works.here) expect(item.missing).toBeGreaterThan(0);
     }
+  });
+
+  it('says what every capability did here, and counts advice as suggestions, never as faxes acted on', () => {
+    for (const item of items) {
+      expect(item.here.sentence, item.key).toBeTruthy();
+      if (item.key.startsWith('advice_')) expect(item.here.used, item.key).toBe(0);
+    }
+    expect(items.some((item) => item.key.startsWith('advice_') && /^[1-9]\d* suggestions? now$/.test(item.here.sentence ?? '')))
+      .toBe(true);
   });
 
   it('only names console addresses that open a page', () => {
@@ -162,6 +172,16 @@ describe('One capability (?key=)', () => {
     });
   }
 
+  it("shows an advice entry's suggestions under What it did here", async () => {
+    const advice = items.find((item) => item.key.startsWith('advice_') && item.here.sentence !== 'No suggestions now')!;
+    serve();
+    render(<Capabilities client={client()} capability={advice.key} />);
+    await screen.findByTestId('capability-page');
+    const results = screen.getByTestId('capability-results');
+    expect(within(results).getByRole('heading', { level: 2, name: 'What it did here' })).toBeTruthy();
+    expect(results.textContent).toContain(`On this installation: ${advice.here.sentence}`);
+  });
+
   it('links its setting, its prerequisites and its figures to their pages', async () => {
     const item = byKey.get('encoded_pages')!;
     const onNavigate = vi.fn();
@@ -182,6 +202,19 @@ describe('One capability (?key=)', () => {
     expect(await screen.findByText('This capability is not in the list.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'All capabilities' }).getAttribute('href')).toBe('#/savings/capabilities');
     expect(screen.queryByTestId('capability-page')).toBeNull();
+  });
+});
+
+describe("The Overview's read", () => {
+  it('asks for the capabilities without what advice and charge checks found', async () => {
+    const asked: string[] = [];
+    server.use(http.get('/routing/capabilities', ({ request }) => {
+      asked.push(request.url);
+      return HttpResponse.json(answer as never);
+    }));
+    render(<Dashboard client={client()} onNavigate={vi.fn()} canReadSettings />);
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    for (const url of asked) expect(new URL(url).searchParams.get('findings')).toBe('false');
   });
 });
 

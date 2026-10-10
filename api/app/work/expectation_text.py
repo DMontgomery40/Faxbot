@@ -146,7 +146,8 @@ def event_text(kind, details):
     if kind == 'replaced':
         return f"Replaced by revision {details.get('revision') or 'unnamed'} from the import."
     if kind == 'conflict':
-        return 'The import changed this row without a new revision; the first version is kept until you decide.'
+        return ('The import changed this expected fax without marking it as a new version; the first version is kept '
+                'until you choose.')
     if kind == 'conflict_kept':
         return f"{actor} kept the first version and set the import's change aside."
     if kind == 'conflict_applied':
