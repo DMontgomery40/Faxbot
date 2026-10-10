@@ -92,7 +92,9 @@ def show_lines(result, key):
     if not item['prerequisites']:
         lines.append('  Nothing more than any installation has.')
     lines.append('')
-    if not item['results'] or item['setting']['address'] != item['results']['address']:
+    # Advice and charge checks keep their home on the page with what they found: their figures line says it.
+    if (not item['results'] or item['setting']['address'] != item['results']['address'] or item['setting']['command']
+            or item['ready']):
         lines.append(f"Its setting: {item['setting']['label']}")
     if item['setting']['command']:
         lines.append(f"Command line: {item['setting']['command']}")
