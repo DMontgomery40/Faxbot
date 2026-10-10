@@ -256,6 +256,21 @@ def test_the_console_routes_and_the_command_line_register_list_and_remove_a_send
     assert client.get('/routing/sender-pins', headers={'X-API-Key': 'wrong'}).status_code in (401, 403)
 
 
+def test_a_registered_sender_lets_the_dialing_guard_dial_its_country_from_a_us_installation(database, tmp_path):  # noqa: F811
+    """Lead's decision (2026-10-10): a pin is an administrator's explicit record naming the recipient, so the
+    dialing guard (routing/guard.py) allows its country, with that reason."""
+    from api.app.routing import guard
+    us = installation(database, tmp_path, {**WITH_TRUNK, 'FAX_DEFAULT_COUNTRY': 'US'})
+    before = accept(us, to=BANK)
+    assert [item['kind'] for item in holds(us, before)] == ['approval']  # Turkey: never dialed, no rule names it
+    sender_pins.record(us.engine, values(FAX_DEFAULT_COUNTRY='US'), BANK, account='sip', caller_id=REGISTERED)
+    after = accept(us, to=BANK)
+    assert holds(us, after) == []
+    with us.engine.connect() as connection:
+        verdict = guard.verdict_on(connection, guard.dial_class(BANK, 'US'), guard.policy_on(connection), 'US', BANK)
+    assert (verdict.allowed, verdict.source, verdict.detail) == (True, 'registered_sender', BANK)
+
+
 @pytest.fixture
 def companyflex_cli(monkeypatch, tmp_path):
     from api.tests.test_cli import Cli, _serve

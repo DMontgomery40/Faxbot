@@ -290,6 +290,20 @@ def dispatch_refusal(engine, values, destination, route_key):
     return None if ok else SKIP
 
 
+def pinned_in_on(connection, classify, key):
+    """An actively pinned recipient whose dialing class (``classify(number).key``) is ``key``, or None; read on
+    ``connection`` for the dialing guard (``guard.verdict_on``)."""
+    rows = connection.execute(sa.select(PINS).order_by(PINS.c.created_at, PINS.c.id)).mappings().all()
+    newest = {}
+    for row in rows:
+        newest[row['recipient']] = row
+    for number, row in sorted(newest.items()):
+        found = classify(number) if row['state'] == ACTIVE else None
+        if found is not None and found.key == key:
+            return number
+    return None
+
+
 def pinned(engine, destination):
     """Whether ``destination`` has an active pin (cheap: one indexed read)."""
     return current(engine, destination) is not None

@@ -28,7 +28,8 @@ class in ``dialing_class_changes`` counts):
 - a country: allowed when this installation had already delivered a fax there
   over a call before it started checking (recorded once, with that reason),
   when an active routing rule names it (its countries, prefixes, numbers,
-  lists or regions), or when a saved recipient's number is there;
+  lists or regions), when a saved recipient's number is there, or when a
+  registered sender (``sender_pins``) names a recipient there;
 - premium-rate, special-service and satellite numbers: never, unless an
   administrator allows that exact class. Approving a held fax does not dial
   one of these while its class is not allowed.
@@ -389,7 +390,8 @@ def recipients_on(connection, home_country, limit=5000):
 class Verdict:
     key: str
     allowed: bool
-    source: str                   # 'national', 'delivered', 'rule', 'recipient', 'administrator', 'default'
+    source: str                   # 'national', 'delivered', 'rule', 'recipient', 'registered_sender',
+    #                               'administrator', 'default'
     detail: str | None = None     # the rule's name, or the recipient's number
     setting: Setting | None = None
 
@@ -419,6 +421,11 @@ def verdict_on(connection, found, policy, home_country, number=None, named=None)
     recipient = recipient_in_on(connection, found, home_country)
     if recipient is not None:
         return Verdict(found.key, True, 'recipient', recipient, setting=setting)
+    # A registered sender is an administrator's explicit record naming that recipient (sender_pins, N17).
+    from .sender_pins import pinned_in_on
+    pinned = pinned_in_on(connection, lambda number: dial_class(number, home_country), found.key)
+    if pinned is not None:
+        return Verdict(found.key, True, 'registered_sender', pinned, setting=setting)
     return Verdict(found.key, False, 'default', setting=setting)
 
 
@@ -611,6 +618,8 @@ def _row(key, verdict, policy, *, changeable=True):
         why = f'Allowed: the routing rule ‘{verdict.detail}’ names it.'
     elif verdict.source == 'recipient':
         why = f'Allowed: a saved recipient, {verdict.detail}, is there.'
+    elif verdict.source == 'registered_sender':
+        why = f'Allowed: a registered sender names {verdict.detail}.'
     elif verdict.source == 'administrator':
         who = f' by {setting.actor_name}' if setting is not None and setting.actor_name else ''
         why = f'{"Allowed" if allowed else "Blocked"}{who}.'
