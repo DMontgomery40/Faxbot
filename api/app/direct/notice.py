@@ -204,6 +204,18 @@ def read_barcode(image, *, digits=DIGITS):
     return best if count >= 2 else None
 
 
+def barcode_in(data):
+    """The barcode on the first page of a received file (its bytes), or None. The page is read with white paper
+    (``codec.pages.paper_white``): the file reader keeps a page as its CCITT codes say, and a writer may store it
+    the other way round (Pillow writes a PDF's page with /BlackIs1 true, so its codes' white runs are the ink)."""
+    from ..codec import first_page
+    from ..codec.pages import paper_white
+    page = first_page(data)
+    if page is None:
+        return None
+    return read_barcode(paper_white(page)[0])
+
+
 # -- the notice page ----------------------------------------------------------------------------------
 
 def notice_page(*, notice_id, sender, sender_number, recipient, recipient_number):
@@ -716,12 +728,9 @@ class NoticeReceiver:
         if found:
             return found, 'sub'
         if data:
-            from ..codec import first_page
-            page = first_page(data)
-            if page is not None:
-                found = read_barcode(page)
-                if found:
-                    return found, 'barcode'
+            found = barcode_in(data)
+            if found:
+                return found, 'barcode'
         return None, None
 
     def step(self, *, now=None):
