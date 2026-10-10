@@ -7,9 +7,10 @@ Each prerequisite has a kind (``KINDS``), one sentence saying who or what satisf
 that happens, and a check of whether this installation has it.
 
 ``evaluate`` joins those with the catalogue's own evaluation, so the Capabilities page, the Overview's map and
-``faxbot savings mechanisms`` never disagree about whether something is on, works here, is proven or was used. Like the
-map, it reads only this installation's settings and stored records, never the network, and it never shows money:
-amounts stay on Savings & optimization → Savings.
+``faxbot savings mechanisms`` never disagree about whether something is on, works here, is proven or was used. Where
+the catalogue has no count of what an entry did here, ``capability_here.py`` counts it from the entry's own records.
+Like the map, it reads only this installation's settings and stored records, never the network, and it never shows
+money: amounts stay on Savings & optimization → Savings.
 
 A new catalogue entry needs one line in ``CAPABILITIES``. ``api/tests/test_capabilities.py`` fails, naming this
 module, when a key has none, names an unknown outcome or prerequisite kind, or points at a console address or
@@ -24,8 +25,8 @@ from typing import Callable
 
 import sqlalchemy as sa
 
-from . import mechanisms
-from .database import read_connection, reflect
+from . import capability_here, mechanisms
+from .database import read_connection, reflect, utcnow
 from .store import WINDOW_DAYS
 
 log = logging.getLogger(__name__)
@@ -789,7 +790,7 @@ def _improvement(ready, experimental, prerequisites):
     return {'kind': kind, 'label': IMPROVEMENTS[kind]}
 
 
-def _view(key, capability, item, here, label):
+def _view(key, capability, item, here, label, now):
     prerequisites = []
     for prerequisite in capability.prerequisites:
         found = prerequisite.met(here)
@@ -814,13 +815,20 @@ def _view(key, capability, item, here, label):
         command = capability.command if setting == address(mechanisms.BY_KEY[key].page) else None
     filters = [name for name, matches in (('on', on), ('off', not on), ('ready', ready), ('needs', missing > 0),
                                           ('experimental', capability.experimental)) if matches]
+    used = item['here']
+    counted = capability_here.line(key, here, now)
+    if counted is not None:
+        # What it did here, counted from its own records (capability_here.py). Advice and charge checks find things
+        # rather than act on faxes, so their count stays out of the Overview's "What Faxbot is doing".
+        used = {'used': 0 if capability.findings else counted[0], 'sentence': counted[1]}
     return {
         'key': key, 'name': item['name'], 'sentence': item['sentence'], 'example': capability.example,
         'outcome': capability.outcome,
         # This capability's own page.
         'address': f'savings/capabilities?key={key}',
-        # The catalogue's evaluation, unchanged: the map and this page never disagree.
-        'enabled': item['enabled'], 'works': item['works'], 'evidence': item['evidence'], 'here': item['here'],
+        # The catalogue's evaluation: the map and this page never disagree, except that this page counts what the
+        # entries the map has no count for did here.
+        'enabled': item['enabled'], 'works': item['works'], 'evidence': item['evidence'], 'here': used,
         'experimental': capability.experimental,
         # Off, but works here: the page offers to turn it on, at its setting.
         'ready': ready,
@@ -842,6 +850,7 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
     items = {item['key']: item for stage in evaluated['stages'] for item in stage['mechanisms']}
     # What this installation has, for the prerequisites; the facts above already came from the same reads.
     here = mechanisms.Installation(values, routes, engine, saved={}, days=days)
+    now = now or utcnow()
     label = _labels(values)
     grouped = {key: [] for key, _, _ in OUTCOMES}
     for mechanism in mechanisms.CATALOGUE:
@@ -851,7 +860,7 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
             # taking the whole read down. api/tests/test_capabilities.py fails until the line is added.
             log.warning('Capability %s has no entry in routing/capabilities.py; listing it without one', mechanism.key)
             capability = UNMAPPED
-        grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label))
+        grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label, now))
     return {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
         'legend': evaluated['legend'],

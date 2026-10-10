@@ -53,6 +53,15 @@ describe('The capabilities read contract', () => {
     }
   });
 
+  it('says what every capability did here, and counts advice as suggestions, never as faxes acted on', () => {
+    for (const item of items) {
+      expect(item.here.sentence, item.key).toBeTruthy();
+      if (item.key.startsWith('advice_')) expect(item.here.used, item.key).toBe(0);
+    }
+    expect(items.some((item) => item.key.startsWith('advice_') && /^[1-9]\d* suggestions? now$/.test(item.here.sentence ?? '')))
+      .toBe(true);
+  });
+
   it('only names console addresses that open a page', () => {
     expect(fixture.addresses.length).toBeGreaterThan(10);
     for (const address of [...fixture.addresses, ...items.map((item) => item.address)]) {
@@ -161,6 +170,16 @@ describe('One capability (?key=)', () => {
       expect(page.textContent).not.toMatch(/\$|USD/);
     });
   }
+
+  it("shows an advice entry's suggestions under What it did here", async () => {
+    const advice = items.find((item) => item.key.startsWith('advice_') && item.here.sentence !== 'No suggestions now')!;
+    serve();
+    render(<Capabilities client={client()} capability={advice.key} />);
+    await screen.findByTestId('capability-page');
+    const results = screen.getByTestId('capability-results');
+    expect(within(results).getByRole('heading', { level: 2, name: 'What it did here' })).toBeTruthy();
+    expect(results.textContent).toContain(`On this installation: ${advice.here.sentence}`);
+  });
 
   it('links its setting, its prerequisites and its figures to their pages', async () => {
     const item = byKey.get('encoded_pages')!;

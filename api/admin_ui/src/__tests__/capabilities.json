@@ -320,7 +320,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -387,7 +387,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "2 suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -443,7 +443,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -499,7 +499,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "1 suggestion now"
             },
             "experimental": false,
             "ready": false,
@@ -555,7 +555,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -611,7 +611,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -677,7 +677,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Not used in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -734,7 +734,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Faxbot keeps no count of the calls it priced by caller ID"
             },
             "experimental": false,
             "ready": true,
@@ -805,7 +805,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Held no faxes in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -1255,7 +1255,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Faxbot measures your recent faxes for this when you open Opportunities"
             },
             "experimental": false,
             "ready": false,
@@ -1311,7 +1311,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Not used in 30 days"
             },
             "experimental": false,
             "ready": true,
@@ -2038,7 +2038,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2094,7 +2094,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2150,7 +2150,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2207,7 +2207,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2498,7 +2498,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Not used in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -2555,7 +2555,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": "Its capped calls are not counted on Savings yet"
+              "sentence": "Not used in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -2617,7 +2617,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": "What it caught is in each fax's Sent details, not on Savings"
+              "sentence": "Caught no calls answered by a different number in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -2668,8 +2668,8 @@
               "label": "Test lab"
             },
             "here": {
-              "used": 0,
-              "sentence": "The keys each call pressed are in its Sent details, not on Savings"
+              "used": 1,
+              "sentence": "Pressed keys on 1 call in 30 days"
             },
             "experimental": false,
             "ready": true,
@@ -2736,7 +2736,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "Found no route problems in 30 days"
             },
             "experimental": false,
             "ready": false,
@@ -2865,7 +2865,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2922,7 +2922,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -2978,7 +2978,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3035,7 +3035,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3091,7 +3091,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3158,7 +3158,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3215,7 +3215,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3272,7 +3272,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3329,7 +3329,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3393,7 +3393,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No charges in 30 days that your faxes don't explain"
             },
             "experimental": false,
             "ready": false,
@@ -3449,7 +3449,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions prepared yet; select Preview suggestions in Administration → Setup"
             },
             "experimental": false,
             "ready": false,
@@ -3494,7 +3494,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": null
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -3561,27 +3561,36 @@
       "    Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
       "    Needs a second sending route to compare with; you send through Telnyx only.",
       "    Missing: Connection, Prices",
+      "    No suggestions now",
       "  Other carriers' prices (advice_carriers): On · Works here · Sample data",
       "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
+      "    2 suggestions now",
       "  Calls just past a billed minute (advice_billing_steps): On · Works here · Sample data",
       "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
+      "    No suggestions now",
       "  Toll-free numbers on file (advice_toll_free): On · Works here · Sample data",
       "    Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
+      "    1 suggestion now",
       "  Fax marker on calls (advice_fax_marker): On · Works here · Sample data",
       "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
+      "    No suggestions now",
       "  Calls by state (advice_sites): On · Works here · Sample data",
       "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+      "    No suggestions now",
       "  Account chosen after measuring its pages (measured_account): On · Not here · Sample data",
       "    Measures the pages each of your sending accounts would really send, then sends by the account whose fax costs least.",
       "    Needs two or more sending accounts to compare; you send through Telnyx only.",
       "    Missing: Connection",
+      "    Not used in 30 days",
       "  Prices by the caller ID a call shows (caller_id_prices): Off · Works here · Sample data · Ready to turn on",
       "    Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
       "    No prices that depend on the caller ID are imported yet.",
       "    Missing: Prices",
+      "    Faxbot keeps no count of the calls it priced by caller ID",
       "    Turn it on in Savings & optimization → Prices & plans.",
       "  Where Faxbot may dial (dialing_guard): On · Works here · Sample data",
       "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
+      "    Held no faxes in 30 days",
       "",
       "Smaller documents and shorter calls",
       "Send fewer pages, and keep each page on the line for less time.",
@@ -3611,10 +3620,12 @@
       "    Not used in 30 days",
       "  Time lighter shading would save (advice_shading): On · Works here · Sample data",
       "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
+      "    Faxbot measures your recent faxes for this when you open Opportunities",
       "  Header notice instead of a cover page (header_notice): Off · Works here · Sample data · Ready to turn on",
       "    Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
       "    No header notice is set yet.",
       "    Missing: Setting",
+      "    Not used in 30 days",
       "    Turn it on in Delivery setup → Sending identity.",
       "",
       "Avoid repeated calls and documents",
@@ -3675,14 +3686,18 @@
       "    Not used in 30 days",
       "  Partner candidates (advice_partners): On · Works here · Sample data",
       "    Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
+      "    No suggestions now",
       "  Recipients that run Faxbot (advice_discovery): On · Works here · Sample data",
       "    Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
+      "    No suggestions now",
       "  Partners that could relay (advice_relays): On · Not here · Sample data",
       "    Names partners whose signed local price would have cost less than your own calls.",
       "    Needs a verified partner; you have none yet.",
       "    Missing: Partner",
+      "    No suggestions now",
       "  Registered senders (advice_registered_senders): On · Works here · Sample data",
       "    Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
+      "    No suggestions now",
       "",
       "Recover delivery with less waste",
       "Wait for the right moment, and resend only what is missing.",
@@ -3708,20 +3723,22 @@
       "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
       "    Needs a UPS that Faxbot reads through NUT; none is set.",
       "    Missing: Connection",
+      "    Not used in 30 days",
       "  50-second answer cap (answer_cap): On · Works here · Test lab",
       "    Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, so an unanswered call is not billed a second minute.",
-      "    Its capped calls are not counted on Savings yet",
+      "    Not used in 30 days",
       "  Station check (station_check): On · Works here · Test lab",
       "    Compares the fax number the far machine shows with the number you dialled before any page, and says so in Sent details, or hangs up before any page where you choose, so a wrong number is caught.",
-      "    What it caught is in each fax's Sent details, not on Savings",
+      "    Caught no calls answered by a different number in 30 days",
       "  Keys after answer (keys_after_answer): Off · Works here · Test lab · Ready to turn on",
       "    Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
       "    No recipient has keys to press after it answers yet.",
       "    Missing: Setting",
-      "    The keys each call pressed are in its Sent details, not on Savings",
+      "    Pressed keys on 1 call in 30 days",
       "    Turn it on in Recipients.",
       "  Route problems told apart from number problems (route_problems): On · Works here · Sample data",
       "    Notices when calls through one route fail together, holds that route back and keeps the lesson off each number, so working numbers are not retried or abandoned for a route problem.",
+      "    Found no route problems in 30 days",
       "",
       "Lower receiving and service costs",
       "Keep only the numbers, lines and plans you need, and turn away junk calls.",
@@ -3733,45 +3750,57 @@
       "    Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
       "    Needs a monthly plan; none of your fax services has one.",
       "    Missing: Prices",
+      "    No suggestions now",
       "  Receiving lines and numbers (advice_receiving): On · Works here · Sample data",
       "    Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
+      "    No suggestions now",
       "  Your trunks compared (advice_trunks): On · Not here · Sample data",
       "    Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
       "    Needs two or more trunks to compare; you have one.",
       "    Missing: Connection",
+      "    No suggestions now",
       "  Where each number should live (advice_numbers): On · Works here · Sample data",
       "    Says where each of your fax numbers costs least to receive on, and the steps to move it.",
+      "    No suggestions now",
       "  Caller-name lookup (advice_caller_names): On · Not here · Sample data",
       "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
       "    Needs your Telnyx key saved on the Telnyx page.",
       "    Missing: Setting",
+      "    No suggestions now",
       "  Lines and carrier closing dates (advice_line_inventory): On · Not here · Sample data",
       "    Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
       "    Needs your line inventory; none is imported yet.",
       "    Missing: Setting",
+      "    No suggestions now",
       "  Copper closures (advice_copper_closures): On · Not here · Sample data",
       "    Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
       "    For phone lines in France; none of your sites has its commune set, and no line has a closing notice.",
       "    Missing: Setting",
+      "    No suggestions now",
       "  Fax server renewal (advice_renewal): On · Not here · Sample data",
       "    Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
       "    Needs your fax server's renewal or its call records; neither is entered yet.",
       "    Missing: Prices",
+      "    No suggestions now",
       "  Fax lines in a POTS-replacement order (advice_pots): On · Not here · Sample data",
       "    Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
       "    Needs a POTS-replacement quote; none is entered yet.",
       "    Missing: Prices",
+      "    No suggestions now",
       "",
       "Explain results and choose improvements",
       "Check what you were billed, and find the next change worth making.",
       "  Charge checks (charge_checks): On · Works here · Sample data",
       "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
+      "    No charges in 30 days that your faxes don't explain",
       "  Suggested packs (advice_setup_packs): On · Works here · Sample data",
       "    Gathers the settings and rules that would save money here into packs you review and apply.",
+      "    No suggestions prepared yet; select Preview suggestions in Administration → Setup",
       "  Country service rules (advice_country_rules): On · Not here · Sample data",
       "    Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",
       "    None of your accounts is in a country whose service rules Faxbot knows.",
       "    Missing: Connection",
+      "    No suggestions now",
       "",
       "On or Off: Whether it is switched on for your faxes.",
       "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
@@ -3793,6 +3822,7 @@
         "    Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
         "    No prices that depend on the caller ID are imported yet.",
         "    Missing: Prices",
+        "    Faxbot keeps no count of the calls it priced by caller ID",
         "    Turn it on in Savings & optimization → Prices & plans.",
         "",
         "Smaller documents and shorter calls",
@@ -3811,6 +3841,7 @@
         "    Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
         "    No header notice is set yet.",
         "    Missing: Setting",
+        "    Not used in 30 days",
         "    Turn it on in Delivery setup → Sending identity.",
         "",
         "Avoid repeated calls and documents",
@@ -3834,7 +3865,7 @@
         "    Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
         "    No recipient has keys to press after it answers yet.",
         "    Missing: Setting",
-        "    The keys each call pressed are in its Sent details, not on Savings",
+        "    Pressed keys on 1 call in 30 days",
         "    Turn it on in Recipients.",
         "",
         "On or Off: Whether it is switched on for your faxes.",
@@ -3947,6 +3978,7 @@
         "What it needs",
         "  Missing · Prices: A monthly plan on one of your fax services, with its fee entered. See Savings & optimization → Prices & plans.",
         "",
+        "On this installation: No suggestions now",
         "Its figures: Savings & optimization → Opportunities (faxbot savings opportunities plans)"
       ],
       "measured_coding": [
@@ -3993,6 +4025,7 @@
         "Its setting: Savings & optimization → Prices & plans",
         "Command line: faxbot savings rate-rows {route} --caller-id-deck {file}",
         "Turn it on in Savings & optimization → Prices & plans.",
+        "On this installation: Faxbot keeps no count of the calls it priced by caller ID",
         "Its figures: Savings & optimization → Prices & plans (faxbot delivery providers trunk caller-ids)"
       ],
       "measured_account": [
@@ -4007,7 +4040,38 @@
         "  Missing · Connection: A second sending route, such as another fax service account or your own SIP trunk. See Delivery setup → Providers & accounts.",
         "",
         "Its setting: Delivery setup → Providers & accounts",
+        "On this installation: Not used in 30 days",
         "Its figures: Faxes → Sent (faxbot faxes sent)"
+      ],
+      "advice_toll_free": [
+        "Toll-free numbers on file",
+        "On · Works here · Sample data",
+        "Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
+        "For example: A pharmacy's toll-free fax number is in the national provider directory. The advice lists it, so you can record the pharmacy's approval.",
+        "Helps with: Spend less on sending",
+        "",
+        "What it needs",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Providers & accounts.",
+        "",
+        "On this installation: 1 suggestion now",
+        "Its figures: Savings & optimization → Opportunities (faxbot savings opportunities toll-free)"
+      ],
+      "keys_after_answer": [
+        "Keys after answer",
+        "Off · Works here · Test lab · Ready to turn on",
+        "Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
+        "For example: A hospital's fax number answers with a menu: press 2 for the fax machine. Faxbot presses 2 once it answers, so the fax goes through instead of failing and being retried.",
+        "No recipient has keys to press after it answers yet.",
+        "Helps with: Recover delivery with less waste",
+        "",
+        "What it needs",
+        "  In place · Connection: Your own SIP trunk for sending, from a phone carrier or your phone system. See Delivery setup → Telnyx.",
+        "  Missing · Setting: The keys a recipient's phone menu asks for, on their page. See Recipients.",
+        "",
+        "Its setting: Recipients",
+        "Command line: faxbot recipients set {number} --after-answer {keys}",
+        "Turn it on in Recipients.",
+        "On this installation: Pressed keys on 1 call in 30 days"
       ]
     }
   },

@@ -27,7 +27,7 @@ from typer._click.exceptions import UsageError
 from typer.main import get_command
 
 from app.cli.commands import capabilities as capability_commands
-from app.routing import capabilities, mechanisms
+from app.routing import capabilities, capability_here, mechanisms
 from api.tests.test_cli import cli, server  # noqa: F401 (fixtures)
 from api.tests.test_config_env_secrets import (  # noqa: F401 (fixtures)
     ADMIN, database_url, installation)
@@ -36,11 +36,13 @@ from api.tests.test_savings_mechanisms import AGREED, DID, JUNK, TOLL_FREE_FOR, 
 API_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = API_ROOT / 'admin_ui' / 'src' / '__tests__' / 'capabilities.json'
 MODULE = 'api/app/routing/capabilities.py'
+HERE_MODULE = 'api/app/routing/capability_here.py'
 # FAXBOT_WRITE_FIXTURES=1 rewrites the shared fixture from the scenario below (SQLite run) instead of checking it.
 WRITE = os.environ.get('FAXBOT_WRITE_FIXTURES') == '1'
 # The capabilities the fixture also prints one by one (faxbot savings capabilities show KEY).
 SHOWN = ('sending_together', 'fax_friendly', 'encoded_pages', 'direct_delivery', 'separator_pages', 'advice_plans',
-         'measured_coding', 'busy_hours', 'caller_id_prices', 'measured_account')
+         'measured_coding', 'busy_hours', 'caller_id_prices', 'measured_account', 'advice_toll_free',
+         'keys_after_answer')
 
 # Spec #48's navigation table: every page of the six areas, as 'area/page'.
 SPEC_PAGES = {
@@ -141,6 +143,21 @@ def test_every_catalogue_key_has_one_capability_in_a_known_outcome():
     assert capabilities.CAPABILITIES['measured_coding'].command is None
 
 
+def test_every_catalogue_key_says_what_it_did_here():
+    """Each entry's "What it did here" line comes from its Savings part, from a counter in capability_here.py, or
+    from the catalogue's own sentence that Faxbot keeps no count of it; a new entry with none of those fails here."""
+    keys = [mechanism.key for mechanism in mechanisms.CATALOGUE]
+    silent = [key for key in keys if not mechanisms.BY_KEY[key].part and key not in capability_here.COUNTERS
+              and key not in mechanisms.NO_PART]
+    assert silent == [], (f'Catalogue keys with no "What it did here" line: add a counter for each to COUNTERS in '
+                          f'{HERE_MODULE}, counted from its own stored records: {silent}')
+    assert sorted(set(capability_here.COUNTERS) - set(keys)) == [], f'{HERE_MODULE} counts keys the catalogue lacks'
+    # A counter never replaces the count of a Savings part.
+    assert [key for key in capability_here.COUNTERS if mechanisms.BY_KEY[key].part] == []
+    # Where the catalogue's line only says where the figures are not, this page counts what was done instead.
+    assert {'answer_cap', 'station_check', 'keys_after_answer'} <= set(capability_here.COUNTERS)
+
+
 def test_every_address_is_a_six_area_page():
     assert set(capabilities.PAGES) <= SPEC_PAGES, sorted(set(capabilities.PAGES) - SPEC_PAGES)
     assert set(capabilities.MOVED.values()) <= set(capabilities.PAGES)
@@ -229,14 +246,14 @@ def test_every_address_opens_in_the_console():
 
 # -- a real installation -------------------------------------------------------------------------------------------
 
-def scenario(installation):
+def scenario(installation, **extra):
     """A real installation with a Telnyx trunk, a recipient who shares calls, a blocked sender with one call turned
-    away, a toll-free approval, faxes sent by their cheapest route and calls over fax over IP:
-    (capabilities, map) as the API answers them."""
+    away, a toll-free approval (one suggestion now), faxes sent by their cheapest route, calls over fax over IP and a
+    call that pressed keys after answer: (capabilities, map) as the API answers them."""
     from app.inbound.screening import Rejection, ScreeningStore
     from app.routing.tollfree import TollFreeApprovals
     settings = dict(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID, SIP_TRUNK_CALLER_ID=DID,
-                    INBOUND_ENABLED='true', FAX_FRIENDLY_DOCUMENTS='never')
+                    INBOUND_ENABLED='true', FAX_FRIENDLY_DOCUMENTS='never', **extra)
     with installation.start(**settings) as client:
         engine = installation.store().engine
         agreed = client.put(f'/batching/numbers/{AGREED}', headers=ADMIN, json={'enabled': True, 'recipient_agreed': True})
@@ -251,6 +268,8 @@ def scenario(installation):
         jobs = [_fax(client) for _ in range(2)]
         for job in jobs:
             _record(engine, job_id=job, route='sip', reason='cheapest_delivered')
+        from app.routing.after_answer import record_submission
+        assert record_submission(engine, {'Digits': '2', 'AttemptID': uuid4().hex, 'JobID': jobs[0], 'Called': AGREED})
         calls = sa.Table('sip_call_records', sa.MetaData(), autoload_with=engine)
         start = datetime.utcnow() - timedelta(days=2)
         with engine.begin() as connection:
@@ -292,8 +311,16 @@ def _check_answer(body, mapped):
     for key, item in _by_key(body).items():
         fact, capability = the_map[key], capabilities.CAPABILITIES[key]
         assert (item['name'], item['sentence']) == (fact['name'], fact['sentence'])
-        assert (item['enabled'], item['works'], item['evidence'], item['here']) == (
-            fact['enabled'], fact['works'], fact['evidence'], fact['here']), key
+        assert (item['enabled'], item['works'], item['evidence']) == (fact['enabled'], fact['works'], fact['evidence'])
+        # What it did here: the map's own line, unless the map has no count for it.
+        assert item['here']['sentence'], (f'{key} says nothing under "What it did here": add a counter for it to '
+                                          f'COUNTERS in {HERE_MODULE}')
+        if key in capability_here.COUNTERS:
+            assert item['here']['sentence'] != fact['here']['sentence'], key
+            # Advice and charge checks find things; only what acted on faxes counts on the Overview.
+            assert item['here']['used'] == 0 or not capability.findings, key
+        else:
+            assert item['here'] == fact['here'], key
         assert item['ready'] == fact['turn_on'], key
         assert item['address'] == f'savings/capabilities?key={key}'
         met = [prerequisite['met'] for prerequisite in item['prerequisites']]
@@ -416,6 +443,14 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert items['charge_checks']['setting']['address'] == 'savings/charges'
     assert items['busy_hours']['results'] is None
 
+    # What it did here: the toll-free number on file is one suggestion now, the call behind a phone menu pressed keys,
+    # and what found nothing says so.
+    assert items['advice_toll_free']['here'] == {'used': 0, 'sentence': '1 suggestion now'}
+    assert items['advice_plans']['here'] == {'used': 0, 'sentence': 'No suggestions now'}
+    assert items['keys_after_answer']['here'] == {'used': 1, 'sentence': 'Pressed keys on 1 call in 30 days'}
+    assert items['dialing_guard']['here'] == {'used': 0, 'sentence': 'Held no faxes in 30 days'}
+    assert items['charge_checks']['here']['sentence'] == "No charges in 30 days that your faxes don't explain"
+
     if WRITE and installation.base['DATABASE_URL'].startswith('sqlite'):
         _write_fixture(body)
 
@@ -466,6 +501,181 @@ def test_settings_faxbot_changed_itself_or_set_elsewhere_are_said_with_their_own
     assert [(p['kind'], p['state']) for p in t38['prerequisites']] == [
         ('connection', 'in_place'), ('connection', 'missing')]
     assert t38['filters'] == ['off', 'needs']
+
+
+def _insert(engine, table, **values):
+    """One synthetic row of a migrated table: the given values, and a plain value for every other required column."""
+    found = sa.Table(table, sa.MetaData(), autoload_with=engine)
+    row = dict(values)
+    for column in found.columns:
+        if column.name in row or column.nullable or column.server_default is not None:
+            continue
+        try:
+            kind = column.type.python_type
+        except NotImplementedError:
+            kind = str
+        row[column.name] = (datetime.utcnow() if kind is datetime else 1 if kind is int else
+                            uuid4().hex[:min(32, getattr(column.type, 'length', None) or 32)])
+    with engine.begin() as connection:
+        connection.execute(found.insert().values(**row))
+    return row
+
+
+def _stub(monkeypatch, target, value):
+    """Replace a section's reader with one that answers ``value``: its count is what is checked, not its figures."""
+    monkeypatch.setattr(target, lambda *args, **kwargs: value)
+
+
+# One suggestion from each section's own reader, in the shape that reader answers. These readers work over months
+# of priced faxes and calls; the empty and seeded scenarios above run every one of them for real.
+ONE_SUGGESTION = {
+    'advice_sending': ('app.routing.recommendations.sending_recommendations',
+                       [{'kind': 'cheaper_route', 'suggested': {'route': 'sip'}}]),
+    'advice_plans': ('app.routing.plan_check.plan_report',
+                     {'plans': [{'state': 'keep'}, {'state': 'too_little_history'}]}),
+    'advice_receiving': ('app.routing.receiving.receiving_report', {
+        'pool': {'state': 'share'}, 'quiet_numbers': {'state': 'too_little_history'},
+        'provider_numbers': {'state': 'none'}}),
+    'advice_carriers': ('app.routing.carrier_compare.compare', {'carriers': [
+        {'yours': False, 'difference': [{'currency': 'EUR', 'amount': '1.25'}]},
+        {'yours': True, 'difference': []}, {'yours': False, 'difference': [{'currency': 'EUR', 'amount': '-2.00'}]}]}),
+    'advice_billing_steps': ('app.routing.boundaries.billing_boundaries', {'numbers': [{'number': AGREED}]}),
+    'advice_partners': ('app.routing.partners.partner_candidates', {'items': [{'number': AGREED}]}),
+    'advice_fax_marker': ('app.routing.preference.fax_marker_report', {'state': 'compared'}),
+    'advice_shading': ('app.pages.friendly.recommendation', {'recommend': True}),
+    'advice_trunks': ('app.routing.trunk_advice.advice', {'items': [{}]}),
+    'advice_numbers': ('app.routing.number_placement.placement',
+                       {'numbers': [{'state': 'move'}, {'state': 'keep'}], 'accounts': []}),
+    'advice_sites': ('app.routing.jurisdiction.site_advice', {'items': [{}]}),
+    'advice_caller_names': ('app.telnyx_numbers.report',
+                            {'numbers': [{'lookup': True}, {'lookup': False}, {'lookup': None}]}),
+    'advice_line_inventory': ('app.routing.inventory.view', {'lines': [
+        {'dates': [{'state': 'soon'}], 'match': None}, {'dates': [], 'match': {'state': 'listed'}}]}),
+    'advice_copper_closures': ('app.routing.closures.view',
+                               {'sites': [], 'lines': [{'state': 'soon'}, {'state': 'later'}]}),
+    'advice_country_rules': ('app.routing.country_rules.view',
+                             {'accounts': [{'confirmed': False}, {'confirmed': True}]}),
+    'advice_renewal': ('app.routing.renewal.view', {'pages': [{}], 'channels': {'systems': [{'own': True}]}}),
+    'advice_pots': ('app.routing.pots_quote.view', {'quotes': [{}]}),
+}
+
+# What each counter says about one record of its kind; advice says '1 suggestion now'.
+ONE = {
+    'charge_checks': "Found 1 charge in 30 days that your faxes don't explain",
+    'measured_account': 'Used on 1 fax in 30 days',
+    'dialing_guard': 'Held 1 fax for your approval in 30 days',
+    'power_aware': 'Held 1 fax or sent it another way during power cuts in 30 days',
+    'header_notice': 'Used on 1 fax in 30 days',
+    'route_problems': 'Found 1 route problem in 30 days',
+    'answer_cap': 'Hung up 1 unanswered call in 30 days',
+    'station_check': 'Caught 1 call answered by a different number in 30 days',
+    'keys_after_answer': 'Pressed keys on 1 call in 30 days',
+}
+
+
+def _power_hold_sentence():
+    """The reason power-aware sending gives a fax it holds, from power.admission itself."""
+    from app import power
+    # A UPS reading with the two fields admission reads: on battery, two minutes left.
+    on_battery = power.PowerState(True, reading=SimpleNamespace(on_battery=True, runtime_seconds=120))
+    held = power.admission(on_battery, provider='sip', p90_seconds=900)
+    assert held.action == 'hold' and held.sentence.startswith(capability_here.POWER_HOLD), (
+        f'power.py now words its hold differently; update POWER_HOLD in {HERE_MODULE}: {held.sentence}')
+    return held.sentence
+
+
+def test_each_counter_counts_one_record_of_its_kind(installation, monkeypatch):
+    """One record of each kind, read through GET /routing/capabilities: its count is 1 and its sentence says so.
+    Advice counts suggestions and charge checks count charges; neither acts on faxes, so the Overview's "What Faxbot
+    is doing" lists neither."""
+    from app.cli.commands.overview import used_capabilities
+    from app.direct.relay import RelayService
+    from app.routing import sender_pins, stations
+    from app.routing.after_answer import record_submission
+    from app.routing.tollfree import TollFreeApprovals
+    from app.schema_discovery import SUGGESTION_SOURCES
+    from app.schema_route_families import CAUSES, PHASES, TRANSPORTS
+    from app.schema_route_selections import LAYOUTS, RENDERINGS
+    for target, value in ONE_SUGGESTION.values():
+        _stub(monkeypatch, target, value)
+    # Relay advice names only verified partners, and registered senders are checked one by one.
+    monkeypatch.setattr(mechanisms.Installation, 'partners', property(lambda self: [False]))
+    monkeypatch.setattr(RelayService, 'recommendations', lambda self, **kwargs: [{'partner': 'Synthetic partner'}])
+    monkeypatch.setattr(sender_pins, 'pins', lambda engine: [SimpleNamespace(account='sip', caller_id=DID,
+                                                                             station_id=None)])
+    monkeypatch.setattr(sender_pins, 'presentable', lambda *args, **kwargs: (False, 'Synthetic reason.'))
+    _stub(monkeypatch, 'app.setup_plan.store.PlanStore.latest', {'plan': {'packs': [{'items': [{}]}, {'items': []}]}})
+    with installation.start(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID) as client:
+        engine = installation.store().engine
+        job, power_job, attempt, now = _fax(client), _fax(client), uuid4().hex, datetime.utcnow()
+        TollFreeApprovals(engine).record(TOLL_FREE_FOR, action='approved', alternate_number='+18005550100',
+                                         approved_by='Synthetic clinic', approved_on=now, evidence='Synthetic letter')
+        _insert(engine, 'direct_discovery_suggestions', number=AGREED, source=SUGGESTION_SOURCES[0])
+        _insert(engine, 'provider_unrecorded_faxes', direction='sent', provider_time=now, version=1, pages=1,
+                provider_id='humblefax')
+        _insert(engine, 'fax_route_selections', job_id=job, attempt_id=attempt, layout=LAYOUTS[0],
+                rendering=RENDERINGS[0], measured=1, compared=2, original_pages=1, sent_pages=1, created_at=now)
+        hold = _insert(engine, 'outbound_holds', job_id=job, kind='approval', state='open', separate_approver=0,
+                       version=1, requested_at=now)
+        _insert(engine, 'dialing_guard_holds', id=hold['id'], job_id=job, why='not_allowed', created_at=now)
+        _insert(engine, 'outbound_holds', job_id=power_job, kind='no_route', state='open', separate_approver=0,
+                version=1, requested_at=now, reason=_power_hold_sentence())
+        _insert(engine, 'fax_header_notices', id=job, scope='organization', cover='dropped', original_pages=2,
+                sent_pages=1, created_at=now)
+        _insert(engine, 'route_family_incidents', transport=TRANSPORTS[0], phase=PHASES[0], change_cause=CAUSES[0],
+                destinations=1, failures=1, calls=1, corroborated=0, opened_at=now)
+        with engine.begin() as connection:
+            stations.record_cap_on(connection, attempt_id=attempt, job_id=job, card=None, now=now)
+            stations.record_on(connection, attempt_id=attempt, job_id=job, number=AGREED, station='+12025550999',
+                               outcome='differs', engine='builtin', now=now)
+        assert record_submission(engine, {'Digits': '2', 'AttemptID': attempt, 'JobID': job, 'Called': AGREED})
+        answer = client.get('/routing/capabilities', headers=ADMIN)
+    assert answer.status_code == 200, answer.text
+    items = _by_key(answer.json())
+    for key in capability_here.COUNTERS:
+        if key == 'caller_id_prices':
+            continue
+        assert items[key]['here'] == {'used': 0 if capabilities.CAPABILITIES[key].findings else 1,
+                                      'sentence': ONE.get(key, '1 suggestion now')}, key
+    assert items['caller_id_prices']['here'] == {
+        'used': 0, 'sentence': 'Faxbot keeps no count of the calls it priced by caller ID'}
+    listed = {item['key'] for item in used_capabilities(answer.json())}
+    assert set(ONE) - {'charge_checks'} <= listed
+    assert [key for key in listed if capabilities.CAPABILITIES[key].findings] == []
+
+
+def test_the_lines_read_no_network(installation, monkeypatch):
+    """Every line is read from stored records: with every way out to the network refusing, the read still answers,
+    HumbleFax's account numbers included (the plans advice never asks HumbleFax for them)."""
+    import urllib.request
+    import httpx
+    from app import humblefax_service, telnyx_t38
+    from app.routing import carriers, nppes, provider_sweep
+
+    def refuse(*args, **kwargs):
+        raise AssertionError('The Capabilities read reached for the network')
+    monkeypatch.setattr(httpx.HTTPTransport, 'handle_request', refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', refuse)
+    monkeypatch.setattr(urllib.request, 'urlopen', refuse)
+    for owner, name in [(humblefax_service, 'account_numbers'), (provider_sweep.ProviderSweep, 'step'),
+                        (carriers.CarrierReconciler, 'sweep'), (carriers.CarrierReconciler, 'sweep_unrecorded'),
+                        (telnyx_t38, 'check'), (telnyx_t38, 'check_all'),
+                        (nppes, 'lookup'), (nppes, 'search'), (nppes, 'refresh_own')]:
+        monkeypatch.setattr(owner, name, refuse)
+    body, mapped = scenario(installation, HUMBLEFAX_API_ACCESS_KEY='synthetic-access',
+                            HUMBLEFAX_API_SECRET_KEY='synthetic-secret')
+    _check_answer(body, mapped)
+
+
+def test_shading_advice_never_draws_a_fax_again(installation):
+    """The shading advice counts only measurements Faxbot already made: a recent fax it has not measured is left to
+    Opportunities, which draws it, and nothing is remembered for that fax in the meantime."""
+    from app.pages import friendly
+    before = dict(friendly._MEASURED)
+    body, _ = scenario(installation)
+    assert _by_key(body)['advice_shading']['here']['sentence'] == (
+        'Faxbot measures your recent faxes for this when you open Opportunities')
+    assert dict(friendly._MEASURED) == before
 
 
 def test_the_fixture_is_an_answer_from_the_modules():
