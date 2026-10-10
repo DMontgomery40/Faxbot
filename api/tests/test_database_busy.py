@@ -534,3 +534,54 @@ def test_postgresql_lock_timeout_is_a_busy_database(database):  # noqa: F811
         waiter.rollback()
         holder.rollback()
     assert busy_cause(refused.value) == 'lock not available'
+
+
+# -- Who opens the database: the API and `docker compose exec api faxbot ...` --------------------------------------
+
+def test_the_api_and_its_command_line_run_as_the_same_user_under_the_real_compose_file():
+    """WAL adds -wal and -shm files that every process opening the database must be able to write. In Compose the
+    API and anything run with ``docker compose exec api`` (the faxbot command, the campaign harness) are one user:
+    the api service sets no ``user`` and its image no ``USER``, so both are the image's root. A ``user:`` added to
+    one of them later fails here first."""
+    import re
+    from pathlib import Path
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    api = yaml.safe_load((root / 'docker-compose.yml').read_text())['services']['api']
+    assert 'user' not in api
+    assert api['environment'].count('DATABASE_URL=sqlite:////faxdata/faxbot.db') == 1
+    dockerfile = (root / 'api' / 'Dockerfile').read_text()
+    assert re.search(r'^\s*USER\s', dockerfile, re.MULTILINE) is None
+    # Both make their files their own alone (umask 077), the server and the faxbot command.
+    assert 'umask 077 && exec uvicorn' in dockerfile and r'#!/bin/sh\numask 077\nexec env' in dockerfile
+
+
+def test_a_process_with_another_umask_keeps_the_log_files_private(tmp_path):
+    """``docker compose exec api python ...`` runs without the faxbot wrapper's umask. SQLite gives -wal and -shm the
+    database's own mode, and every Faxbot connection takes away anything more (``keep_database_private``)."""
+    import os
+    import stat
+    import subprocess
+    import sys
+    from pathlib import Path
+    path = tmp_path / 'faxbot.db'
+    engine = create_database_engine('sqlite:///' + str(path))
+    with engine.begin() as connection:
+        connection.exec_driver_sql('CREATE TABLE probe (x INTEGER)')
+    engine.dispose()
+    script = ("import sys; from api.app.schema import create_database_engine as e; "
+              "x = e('sqlite:///' + sys.argv[1]); c = x.connect(); "
+              "c.exec_driver_sql('INSERT INTO probe VALUES (1)'); c.commit(); "
+              "import os, json; d = sys.argv[2]; "
+              "print(json.dumps({n: os.stat(os.path.join(d, n)).st_mode & 0o777 for n in os.listdir(d)})); "
+              "c.close(); x.dispose()")
+    root = Path(__file__).resolve().parents[2]
+    seen = subprocess.run([sys.executable, '-c', script, str(path), str(tmp_path)], cwd=root, check=True,
+                          capture_output=True, text=True, preexec_fn=lambda: os.umask(0o022),
+                          env={'PATH': os.environ.get('PATH', ''), 'PYTHONPATH': str(root)}).stdout
+    import json
+    # While it wrote, under umask 022: the database and both log files were the owner's alone.
+    assert json.loads(seen) == {'faxbot.db': 0o600, 'faxbot.db-wal': 0o600, 'faxbot.db-shm': 0o600}
+    with sqlite3.connect(path) as check:
+        assert check.execute('SELECT count(*) FROM probe').fetchone() == (1,)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
