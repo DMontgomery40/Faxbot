@@ -169,7 +169,8 @@ def prepare_originate_fields(
         raise ValueError("Unsupported AMI destination")
     if dial is None:
         dial = dest
-    elif not isinstance(dial, str) or not re.fullmatch(r"(?:[0-9]{4,16}\*)?\+?[0-9]{3,20}", dial):
+    # *70 (cancel call waiting) only in front of a number dialled on an analog line (sip_trunk.effective_trunk).
+    elif not isinstance(dial, str) or not re.fullmatch(r"(?:\*[0-9]{2})?(?:[0-9]{4,16}\*)?\+?[0-9]{3,20}", dial):
         raise ValueError("Unsupported AMI destination")
     if station_id is None:
         station_id = caller_id
@@ -410,6 +411,12 @@ def frame_options(values, dest, max_rate=None):
     return found
 
 
+def analog_local(account, preset_id, dest) -> bool:
+    """Whether ``dest`` is in the local calling area of analog line ``account`` (routing/analog.py)."""
+    from .routing import analog
+    return analog.is_local(_database(), account, preset_id, dest)
+
+
 class UnknownTrunk(ValueError):
     """The fax was given a trunk account that is not in Asterisk's file (not set up, turned off or removed)."""
 
@@ -451,6 +458,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     """
     from . import sip_trunk
     from .routing.reply_number import caller_id_for
+    account = trunk or sip_trunk.PRIMARY
     values, endpoint = trunk_values(values, trunk)
     limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     # The coding Faxbot measured for this attempt's pages; the built-in engine has no JBIG (T.85), so JBIG offers
@@ -504,7 +512,8 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
         job_id, dest, tiff_path, caller_id=caller_id_for(values, choice.number) or trunk.caller_id,
         header=header, attempt_id=attempt_id,
         station_id=identity[1] if identity is not None else (choice.number or None),
-        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest),
+        dial=dest if peer is not None else sip_trunk.dial_number(trunk, dest, local=(
+            trunk.dial_format == "local_area" and analog_local(account, trunk.preset.id, dest))),
         fax_preference=trunk.fax_preference and peer is None, endpoint=endpoint, **limits)
 
 

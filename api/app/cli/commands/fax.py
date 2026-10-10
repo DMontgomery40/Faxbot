@@ -368,6 +368,11 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     coded = (job.get('coding') or {}).get('sentence')
     # What lossless tuning sent, or that the machine refused a tuned page (pages/tuning.py).
     smaller = (job.get('coding') or {}).get('tuning_sentence')
+    # The keys each call pressed after answer for a phone menu, and that those seconds are billed (N7).
+    try:
+        keys = api.get('/routing/after-answer/faxes/' + segment(fax_id)).get('sentences') or []
+    except CliError:
+        keys = []
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -387,6 +392,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         # The layout the newest attempt kept (long pages, or the experimental encoded pages), then blank space left
         # out, standard resolution kept or shading lightened.
         for sentence in (job.get('page_layout') or {}).get('sentences') or []:
+            out.line(sentence)
+        for sentence in keys:
             out.line(sentence)
     state.out().result(job, human)
 

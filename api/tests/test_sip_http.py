@@ -76,7 +76,8 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
     presets = {preset['id']: preset for preset in response.json()['presets']}
     assert set(presets) == {'telnyx', 'signalwire', 'sinch', 'anveo', 'flowroute', 'gamma', 'bt-one-voice',
                             'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'swisscom-sbc',
-                            'telekom-companyflex', 'ntt-hikari', 'custom'}
+                            'telekom-companyflex', 'ntt-hikari', 'grandstream-ht813', 'grandstream-gxw410x',
+                            'patton-smartnode-fxo', 'audiocodes-mp11x-fxo', 'custom'}
     assert (presets['swisscom-sbc']['encrypted_audio_only'], presets['swisscom-sbc']['media_encryption'],
             presets['telekom-companyflex']['access_rule']) == (True, 'sdes', 'telekom')
     assert presets['anveo']['auth_modes'] == ['ip'] and presets['signalwire']['needs_host'] is True

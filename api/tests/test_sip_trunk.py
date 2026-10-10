@@ -67,6 +67,17 @@ CASES = {
                                       'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp',
                                       'SIP_TRUNK_OUTBOUND_PROXY': 'k0001.primary.companyflex.de',
                                       'FAX_DEFAULT_COUNTRY': 'DE'},
+    # Analog lines through an FXO gateway on the local network (N8, routing/analog.py): by address, T.38, *70.
+    'grandstream-ht813-line': {'SIP_TRUNK_PRESET': 'grandstream-ht813', 'SIP_TRUNK_AUTH': 'ip',
+                               'SIP_TRUNK_HOST': '192.168.1.50', 'FAX_DEFAULT_COUNTRY': 'US',
+                               'SIP_TRUNK_DIAL_PREFIX': '*70'},
+    'grandstream-gxw410x-tcp': {'SIP_TRUNK_PRESET': 'grandstream-gxw410x', 'SIP_TRUNK_AUTH': 'ip',
+                                'SIP_TRUNK_HOST': '192.168.1.51', 'SIP_TRUNK_TRANSPORT': 'tcp',
+                                'FAX_DEFAULT_COUNTRY': 'US', 'SIP_TRUNK_DIAL_FORMAT': 'local_area'},
+    'patton-smartnode-fxo-line': {'SIP_TRUNK_PRESET': 'patton-smartnode-fxo', 'SIP_TRUNK_AUTH': 'ip',
+                                  'SIP_TRUNK_HOST': '192.168.1.52', 'FAX_DEFAULT_COUNTRY': 'US'},
+    'audiocodes-mp11x-fxo-uk': {'SIP_TRUNK_PRESET': 'audiocodes-mp11x-fxo', 'SIP_TRUNK_AUTH': 'ip',
+                                'SIP_TRUNK_HOST': '192.168.1.53', 'FAX_DEFAULT_COUNTRY': 'GB'},
 }
 
 

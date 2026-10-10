@@ -5158,6 +5158,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
+* `analog-line`: An analog phone line through a gateway:...
 
 #### `faxbot providers trunk status`
 
@@ -5308,8 +5309,8 @@ $ faxbot providers trunk use [OPTIONS] {PRESET}
 * `--host <str>`: The carrier&#x27;s server address, or your phone system&#x27;s address (IP Office, or Aura Session Manager).
 * `--port <int range>`: The carrier&#x27;s port, when not the usual one.  [1&lt;=x&lt;=65535]
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
-* `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
-* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
+* `--number-format e164|local|local_area`: How numbers are dialed: e164 (international format, +44...), local (as a phone at your site dials them), or on an analog line local_area (ten digits for numbers in its local calling area, 1 and ten digits for others).
+* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9; on an analog line, *70 turns call waiting off for the call.
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk caller-ids`
@@ -5688,6 +5689,65 @@ $ faxbot providers trunk send-only remove [OPTIONS] {NUMBER}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk analog-line`
+
+An analog phone line through a gateway: its local calling area and its prices, so local numbers go out on it at no extra cost.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk analog-line [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show an analog line&#x27;s local calling area...
+* `import`: Import an analog line&#x27;s local calling area...
+
+##### `faxbot providers trunk analog-line show`
+
+Show an analog line&#x27;s local calling area and prices.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk analog-line show [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk analog-line import`
+
+Import an analog line&#x27;s local calling area from a file you saved, so local numbers go out on it at no extra cost. Faxbot never looks the area up itself.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk analog-line import [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: The list of local prefixes for your line: the Local Calling Guide&#x27;s Local prefixes page saved as HTML, its XML, a CSV with NPA and NXX columns, or one prefix a line such as 303-426.  [required]
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--plan <str>`: The calling plan your line has, when the list names several.
+* `--line NPA-NXX`: Your line&#x27;s own prefix or number, checked against the list.
+* `--toll-rate AMOUNT`: What the line charges a minute for calls outside the local area, from your phone bill; 0 when your plan includes them. Needed the first time.
+* `--monthly-fee AMOUNT`: The line&#x27;s monthly fee, shown with its prices.
+* `--increment <int range>`: The billing step for calls outside the local area, in seconds.  [default: 60; 1&lt;=x&lt;=3600]
+* `--source URL`: The address of the page the list came from.
 * `--help`: Show this message and exit.
 
 ### `faxbot providers accounts`

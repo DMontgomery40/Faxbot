@@ -33,6 +33,11 @@ INBOUND_CONTEXT = 'faxbot-inbound'
 FAX_PREFERENCE = '*;+sip.fax="t38"'
 CARRIER = 'carrier'
 PHONE_SYSTEM = 'phone_system'
+# An analog line through an FXO gateway on the local network (research N8, routing/analog.py): reached on the local
+# network like a phone system, one call at a time per line.
+ANALOG_LINE = 'analog_line'
+# Reached on the local network, never at the internet address.
+LAN_KINDS = (PHONE_SYSTEM, ANALOG_LINE)
 
 
 class TrunkConfigurationError(ValueError):
@@ -92,6 +97,8 @@ class TrunkPreset:
     single_registration: bool = False
     # The trunk's media depends on the internet access it is reached over ('telekom': CompanyFlex).
     access_rule: str = ''
+    # Calls at once when you set none (0: the fax engine's lines). An analog line carries one call.
+    lines: int = 0
 
     @property
     def needs_host(self):
@@ -99,8 +106,147 @@ class TrunkPreset:
 
     @property
     def phone_system(self):
-        return self.kind == PHONE_SYSTEM
+        """Reached on the local network (a phone system, or an analog line's gateway), never at the internet address."""
+        return self.kind in (PHONE_SYSTEM, ANALOG_LINE)
 
+    @property
+    def analog_line(self):
+        return self.kind == ANALOG_LINE
+
+
+# -- analog lines through an FXO gateway (research N8, builder AP) --------------------------------------------------
+#
+# The business line you already pay for becomes a Faxbot trunk: an FXO gateway on your local network answers the
+# line and hands its calls to Faxbot over SIP, with T.38 between the two on the local network, and dials Faxbot's
+# calls out on the line in one step. Faxbot and the gateway recognise each other by address (the vendors' own
+# peer-to-peer setups, with no registration). Local calls on a flat-rate line cost nothing more; routing/analog.py
+# imports the line's local calling area as $0 prices on its rate card, so the usual price ranking picks the line
+# for local numbers. *70 before a number turns call waiting off for that call where the exchange offers it
+# (NANPA vertical service codes, "*70 Cancel Call Waiting", read 2026-10-10); for received faxes call waiting must
+# come off the line at your carrier. Settings below are from each vendor's documentation, read 2026-10-10.
+ANALOG_STEPS_CALL_WAITING = ('Ask your carrier to remove call waiting from the line: a call-waiting tone breaks a fax '
+                             'in progress. For faxes Faxbot sends, the outside-line prefix *70 turns it off for that '
+                             'call where your exchange offers it.')
+ANALOG_NOTE_ONE_CALL = 'Each line carries one call at a time; set Calls at once to the number of lines you connect.'
+ANALOG_NOTE_LOCAL = ('Under Local calls on this line, import the list of local prefixes for the line, so local '
+                     'numbers go out on it at no extra cost.')
+NANPA_CODES = Source('https://nanpa.com/numbering/vertical-service-codes', '2026-10-10')
+
+ANALOG_GATEWAYS = (
+    TrunkPreset(
+        id='grandstream-ht813', label='Grandstream HT813 (analog line)', host='', port=5062, transport='udp',
+        transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('ulaw', 'alaw'), codecs_by_country=True,
+        dial_format='local', dial_formats=('local', 'local_area'), kind=ANALOG_LINE, lines=1,
+        t38=('Keep Fax Mode at T.38 (Auto Detect), the HT813\'s default, and Re-Invite after Fax Tone Detected on, so '
+             'fax runs as T.38 between the gateway and Faxbot.'),
+        notes=('Enter the HT813\'s address on your local network; Faxbot reaches its FXO port on port 5062, the '
+               'HT813\'s default for that port.',
+               ANALOG_NOTE_ONE_CALL, ANALOG_NOTE_LOCAL,
+               'Faxbot has not yet run against a real HT813.'),
+        admin_steps=(
+            'FXO PORT page: set Primary SIP Server to Faxbot\'s address on your local network, SIP Transport to UDP, '
+            'SIP Registration to No, Outgoing Call without Registration to Yes and Unregister on Reboot to No.',
+            'FXO PORT page: SIP User ID and Authenticate ID can be any number (Grandstream\'s peering example uses '
+            '5555); Faxbot does not check them.',
+            'Set Unconditional Call Forward to VoIP with any User ID, SIP Server set to Faxbot\'s address and SIP '
+            'Destination Port 5060, so every call on the line goes to Faxbot; enter the line\'s number as a fax '
+            'number on this trunk in Faxbot.',
+            'Set Number of Rings to 1 (Grandstream\'s peering example; the default is 4), PSTN Ring Thru FXS to No, '
+            'Wait for Dial Tone to No and Stage Method to 1, so Faxbot\'s calls are dialled in one step.',
+            'Fax Mode: T.38 (Auto Detect); Re-Invite after Fax Tone Detected: Enabled; Preferred Vocoder: PCMU first.',
+            'AC Termination Model: Country-based, with your country.',
+            'Turn on the hang-up signal your line gives: Enable Current Disconnect, or Enable PSTN Disconnect Tone '
+            'Detection; Enable Polarity Reversal only if your line has that service.',
+            ANALOG_STEPS_CALL_WAITING,
+        ),
+        sources=(Source('https://documentation.grandstream.com/knowledge-base/ht813-administration-guide/',
+                        '2026-10-10'),
+                 Source('https://documentation.grandstream.com/knowledge-base/ht813-user-guide/', '2026-10-10'),
+                 Source('https://documentation.grandstream.com/knowledge-base/peering-ip-phone-with-ht813/',
+                        '2026-10-10'),
+                 NANPA_CODES),
+    ),
+    TrunkPreset(
+        id='grandstream-gxw410x', label='Grandstream GXW4104 or GXW4108 (analog lines)', host='', port=5060,
+        transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('ulaw', 'alaw'),
+        codecs_by_country=True, dial_format='local', dial_formats=('local', 'local_area'), kind=ANALOG_LINE, lines=1,
+        t38='Set the fax mode to T.38 on the gateway, so fax runs as T.38 between the gateway and Faxbot.',
+        notes=('Enter the gateway\'s address on your local network, and its SIP port if it is not 5060.',
+               ANALOG_NOTE_ONE_CALL, ANALOG_NOTE_LOCAL,
+               'A reseller lists the GXW4104 as discontinued since July 2024; Grandstream\'s product page does not.',
+               'Faxbot has not yet run against a real GXW410x.'),
+        admin_steps=(
+            'Accounts, General Settings (Profile 1): set SIP Server to Faxbot\'s address on your local network and SIP '
+            'Registration to No (Grandstream\'s peer mode with Asterisk).',
+            'Channels page: give each channel a SIP User ID and Authentication ID (any number); set DTMF Method to '
+            'RFC2833.',
+            'Set the fax mode to T.38.',
+            'FXO Lines page: set Unconditional Call Forward to VoIP for the channels you use to Faxbot (Grandstream\'s '
+            'example: ch1-4:200;), and enter the line\'s number as a fax number on this trunk in Faxbot.',
+            'FXO Lines page: Wait for Dial-Tone N and Stage Method 1, so Faxbot\'s calls are dialled in one step; '
+            'Grandstream warns that two-stage dialing lets callers on the line reach your VoIP side.',
+            'AC Termination: 600 Ohm in North America; keep Enable Current Disconnect at Y (the default).',
+            ANALOG_STEPS_CALL_WAITING,
+        ),
+        sources=(Source('https://documentation.grandstream.com/knowledge-base/gxw410x-user-manual/', '2026-10-10'),
+                 Source('https://www.grandstream.com/hubfs/Product_Documentation/gxw410x_interop_asterisk.pdf',
+                        '2026-10-10'),
+                 NANPA_CODES),
+    ),
+    TrunkPreset(
+        id='patton-smartnode-fxo', label='Patton SmartNode SN4112 or SN4114 FXO (analog lines)', host='', port=5060,
+        transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('ulaw', 'alaw'),
+        codecs_by_country=True, dial_format='local', dial_formats=('local', 'local_area'), kind=ANALOG_LINE, lines=1,
+        t38=('In the SmartNode\'s VoIP profile, T.38 must be the first fax transmission, with G.711 bypass as the '
+             'second.'),
+        notes=('Enter the SmartNode\'s address on your local network.',
+               ANALOG_NOTE_ONE_CALL, ANALOG_NOTE_LOCAL,
+               'Patton\'s configuration guide used here is for SmartWare R6.1 (2012); check the commands against the '
+               'guide for your firmware.',
+               'Faxbot has not yet run against a real SmartNode.'),
+        admin_steps=(
+            'profile voip: fax transmission 1 relay t38-udp, then fax transmission 2 bypass g711ulaw64k (g711alaw64k '
+            'outside North America); fax max-bit-rate 14400 (the default).',
+            'port fxo: use profile fxo fcc68_25Hz in the US (the default is etsi), and caller-id format bell in the US '
+            'and Canada.',
+            'port fxo: dial-after dial-tone (the default); connect-signal battery-reversal if your line gives it '
+            '(both methods are off by default); disconnect-signal loop-break (the default).',
+            'Route calls from the FXO interface to a SIP gateway pointed at Faxbot\'s address, with no registration, '
+            'and calls from Faxbot to the FXO interface.',
+            ANALOG_STEPS_CALL_WAITING,
+        ),
+        sources=(Source('https://www.patton.com/manuals/scg-r61.pdf', '2026-10-10'),
+                 Source('https://www.patton.com/support/kb_art.asp?art=170&p=126', '2026-10-10'),
+                 NANPA_CODES),
+    ),
+    TrunkPreset(
+        id='audiocodes-mp11x-fxo', label='AudioCodes MediaPack MP-114 or MP-118 FXO (analog lines)', host='',
+        port=5060, transport='udp', transports=('udp', 'tcp'), auth_modes=('ip',), codecs=('ulaw', 'alaw'),
+        codecs_by_country=True, dial_format='local', dial_formats=('local', 'local_area'), kind=ANALOG_LINE, lines=1,
+        t38='Set IsFaxUsed to 1 (T.38 relay), so fax runs as T.38 between the MediaPack and Faxbot.',
+        notes=('Enter the MediaPack\'s address on your local network.',
+               ANALOG_NOTE_ONE_CALL, ANALOG_NOTE_LOCAL,
+               'Faxbot has not yet run against a real MediaPack.'),
+        admin_steps=(
+            'IsFaxUsed = 1 (T.38 relay); AudioCodes\' T.38 guide also sets FaxRelayMaxRate = 5, FaxRelayECMEnable = 1 '
+            'and FaxRelayRedundancyDepth = 2.',
+            'IsRegisterNeeded = 0 and IsProxyUsed = 0; in Tel to IP Routing, send every number to Faxbot\'s address '
+            'on your local network.',
+            'IsTwoStageDial = 0, so the MediaPack dials the number in Faxbot\'s call in one step (the default is two '
+            'stages); keep IsWaitForDialTone = 1 (the default).',
+            'Automatic Dialing (TargetOfChannel): send each FXO port\'s calls to the line\'s fax number, and enter that '
+            'number as a fax number on this trunk in Faxbot.',
+            'EnableReversalPolarity = 1 if your line gives polarity reversal on answer, and EnableCurrentDisconnect = 1 '
+            'if it drops loop current at hang-up; CountryCoefficients: your country (USA is the default).',
+            ANALOG_STEPS_CALL_WAITING,
+        ),
+        sources=(Source('https://www.audiocodes.com/media/13280/mp-11x-and-mp-124-sip-users-manual-ver-66.pdf',
+                        '2026-10-10'),
+                 Source('https://www.audiocodes.com/media/11262/verizon-t38-fax-configuration-guide-for-audiocodes-'
+                        'mp-11x.pdf', '2026-10-10'),
+                 NANPA_CODES),
+    ),
+)
 
 PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
@@ -358,6 +504,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                         '2026-10-10'),
                  Source('https://www.itu.int/rec/T-REC-T.38', '2026-10-10')),
     ),
+    *ANALOG_GATEWAYS,
     TrunkPreset(
         id='custom', label='Another carrier', host='', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='entered',
@@ -512,6 +659,9 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
     # outside-line prefix only to numbers written the way a phone here dials them.
     dial_format = values.sip_trunk_dial_format if values.sip_trunk_dial_format in preset.dial_formats else ''
     dial_format = dial_format or preset.dial_format
+    # *70 (cancel call waiting for this call) only goes in front of numbers dialled on an analog line.
+    if '*' in (values.sip_trunk_dial_prefix or '') and not preset.analog_line:
+        raise TrunkConfigurationError(['sip_trunk_dial_prefix'])
     return Trunk(preset=preset, auth=auth, host=host, port=port, transport=transport,
                  username=values.sip_trunk_username, password=values.sip_trunk_password,
                  outbound_proxy='' if preset.phone_system else values.sip_trunk_outbound_proxy,
@@ -520,23 +670,30 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
                  fax_preference=values.sip_fax_preference_header, codecs=codecs,
                  # A phone system is reached on the local network, never at the internet address.
                  external_address='' if preset.phone_system else values.sip_external_address,
-                 dial_format=dial_format, dial_prefix=values.sip_trunk_dial_prefix if dial_format == 'local' else '',
+                 dial_format=dial_format,
+                 dial_prefix=values.sip_trunk_dial_prefix if dial_format in ('local', 'local_area') else '',
                  country=values.fax_default_country, media_encryption=media_encryption)
 
 
-def dial_number(trunk: Trunk, number: str) -> str:
+def dial_number(trunk: Trunk, number: str, *, local: bool = False) -> str:
     """The Request-URI user part for one canonical E.164 destination, in the carrier's format.
 
     Destinations reach this point already resolved for the installation country,
     so nothing here guesses a country. Raises ValueError for anything but a
-    canonical number, before any call is placed.
+    canonical number, before any call is placed. ``local_area`` (an analog line,
+    routing/analog.py) dials a number in the line's local calling area (``local``)
+    without the national prefix (ten digits in North America), every other number
+    as a phone here dials it.
     """
     from .routing.numbers import canonical_number
     canonical = canonical_number(number)
-    if trunk.dial_format == 'local':
-        dialled = trunk.dial_prefix + local_digits(canonical, trunk.country)
-        # The fax engine takes at most 20 digits; a longer number is refused before any call.
-        if not re.fullmatch(r'[0-9]{3,20}', dialled):
+    if trunk.dial_format in ('local', 'local_area'):
+        digits = local_digits(canonical, trunk.country)
+        if trunk.dial_format == 'local_area' and local:
+            digits = national_digits(canonical, trunk.country) or digits
+        dialled = trunk.dial_prefix + digits
+        # The fax engine takes at most 20 digits (after *70 on an analog line); a longer number is refused.
+        if not re.fullmatch(r'(?:\*[0-9]{2})?[0-9]{3,20}', dialled):
             raise ValueError('The number is too long to dial through this phone system.')
         return dialled
     if trunk.dial_format != 'digits':
@@ -546,6 +703,18 @@ def dial_number(trunk: Trunk, number: str) -> str:
     if trunk.auth == 'ip' and trunk.preset.ip_dial_prefix:
         return trunk.username + '*' + digits
     return digits
+
+
+def national_digits(canonical: str, country: str):
+    """A number in ``country`` without its national prefix (ten digits in North America), or None for a number in
+    another country or a country whose numbers carry their prefix (GB keeps its 0: 02079460000)."""
+    import phonenumbers
+    parsed = phonenumbers.parse(canonical)
+    if phonenumbers.region_code_for_number(parsed) != str(country or 'US').upper() and not (
+            parsed.country_code == 1 and phonenumbers.country_code_for_region(str(country or 'US').upper()) == 1):
+        return None
+    digits = re.sub(r'[^0-9]', '', phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL))
+    return digits or None
 
 
 def local_digits(canonical: str, country: str) -> str:
@@ -708,8 +877,9 @@ def _rendered(values):
             problems[account.key] = f'{account.label} is not loaded yet: fill in its settings.'
             continue
         if trunk.transport in kinds and kinds[trunk.transport] != trunk.preset.phone_system:
-            problems[account.key] = (f'{account.label} is not loaded: a phone system and a carrier cannot share one '
-                                     f'{trunk.transport.upper()} connection. Choose another connection type for it.')
+            problems[account.key] = (f'{account.label} is not loaded: a phone system or analog line gateway on your '
+                                     f'local network and a carrier cannot share one {trunk.transport.upper()} '
+                                     'connection. Choose another connection type for it.')
             continue
         kinds.setdefault(trunk.transport, trunk.preset.phone_system)
         if trunk.preset.single_registration and any(
@@ -1153,6 +1323,8 @@ def preset_catalog():
         # Encrypted audio fax (sip_access.py, N18).
         'media_encryption': preset.media_encryption or None, 'encrypted_audio_only': preset.encrypted_audio_only,
         'single_registration': preset.single_registration, 'access_rule': preset.access_rule or None,
+        # An analog line's gateway (N8): calls at once when you set none.
+        'lines': preset.lines or None,
     } for preset in PRESETS.values()]
 
 
