@@ -676,7 +676,7 @@ class ExpectationService:
         summary = (f"{rate} in the last {days} days; {totals['waiting']} are still waiting, {totals['overdue']} "
                    f"overdue. {unlinked} of {arrived} received faxes answered no expected fax"
                    + (f", and {not_stored} received faxes could not be stored; they are listed with the reason in "
-                      'Faxes → Received (faxbot received list).' if not_stored else '.'))
+                      'Faxes → Received (faxbot faxes received list).' if not_stored else '.'))
         return {'days': days, 'since': since, **totals, 'arrived': arrived, 'arrived_unmatched': unlinked,
                 'not_stored': not_stored, 'unmatched_expected': views, 'unmatched_arrivals': entries,
                 'summary': summary}

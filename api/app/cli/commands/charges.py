@@ -1,4 +1,4 @@
-"""faxbot costs charges and faxbot costs invoices: what each provider charged, faxes it billed that Faxbot has no
+"""faxbot savings charges and faxbot costs invoices: what each provider charged, faxes it billed that Faxbot has no
 record of, and monthly invoices compared with your faxes."""
 from pathlib import Path
 
@@ -50,7 +50,7 @@ def charges_show(context: typer.Context,
 
 @charges.command('sweep')
 def charges_sweep(account: str = typer.Option(None, '--account', metavar='KEY',
-                                              help="One account's key, from 'faxbot providers accounts list'. "
+                                              help="One account's key, from 'faxbot delivery providers accounts list'. "
                                                    'Default: every account whose provider lists its faxes.'),
                   days: int = typer.Option(7, '--days', min=1, max=31, help='How many days back to list.')):
     """List each account's faxes at its provider now and show any Faxbot has no record of. This never sends, fetches or changes a fax."""
@@ -59,7 +59,7 @@ def charges_sweep(account: str = typer.Option(None, '--account', metavar='KEY',
     def human(out):
         out.line(result['summary'])
         if any(item.get('unrecorded') for item in result.get('results', [])):
-            out.line("Run 'faxbot costs charges' to see each one.")
+            out.line("Run 'faxbot savings charges' to see each one.")
     state.out().result(result, human)
 
 
@@ -82,14 +82,14 @@ def invoices_list(account: str = typer.Option(None, '--account', metavar='KEY', 
                   [[item['id'], item['label'], item['period_name'], money([item['total']]), money([item['explained']]),
                     money([item['residual']]) + (' (incomplete)' if not item['complete'] else '')]
                    for item in result.get('invoices', [])],
-                  empty="No invoices entered yet. Add one with 'faxbot costs invoices add'.")
+                  empty="No invoices entered yet. Add one with 'faxbot savings invoices add'.")
         for advice in result.get('recommendations', []):
             out.line(advice['text'])
     state.out().result(result, human)
 
 
 @invoices.command('show')
-def invoices_show(invoice_id: str = typer.Argument(..., help="Invoice ID, from 'faxbot costs invoices list'."),
+def invoices_show(invoice_id: str = typer.Argument(..., help="Invoice ID, from 'faxbot savings invoices list'."),
                   save: Path = typer.Option(None, '--save-file', metavar='PATH',
                                             help='Save the invoice file entered with it to this path.')):
     """Show one invoice: what your faxes explain, what they don't, and each version entered."""
@@ -118,7 +118,7 @@ def invoices_show(invoice_id: str = typer.Argument(..., help="Invoice ID, from '
 
 @invoices.command('add')
 def invoices_add(account: str = typer.Option(..., '--account', metavar='KEY',
-                                             help="The account the invoice is for, from 'faxbot providers accounts "
+                                             help="The account the invoice is for, from 'faxbot delivery providers accounts "
                                                   "list', such as humblefax."),
                  total: str = typer.Option(..., '--total', metavar='AMOUNT', help='The invoice total, such as 13.20.'),
                  month: str = typer.Option(None, '--month', metavar='YYYY-MM',

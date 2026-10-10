@@ -111,7 +111,7 @@ def received_counts():
 
 
 @work.command('show')
-def work_show(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
+def work_show(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'.")):
     """Show who has owned a received fax and everything that happened to it."""
     api = state.api()
     item = _item(api, item_id)
@@ -127,7 +127,7 @@ def work_show(item_id: str = typer.Argument(..., help="A received fax's ID, from
 
 
 @work.command('assign')
-def work_assign(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
+def work_assign(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'."),
                 user: str = typer.Argument(..., help='The new owner: their login or name.')):
     """Give a received fax to an owner. They must already be able to see it."""
     api = state.api()
@@ -140,7 +140,7 @@ def work_assign(item_id: str = typer.Argument(..., help="A received fax's ID, fr
 
 
 @work.command('acknowledge')
-def work_acknowledge(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
+def work_acknowledge(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'.")):
     """Acknowledge a received fax you own."""
     api = state.api()
     item = _item(api, item_id)
@@ -149,7 +149,7 @@ def work_acknowledge(item_id: str = typer.Argument(..., help="A received fax's I
 
 
 @work.command('done')
-def work_done(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
+def work_done(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'."),
               note: str = typer.Option(..., '--note', help='What was done, up to 200 characters.')):
     """Mark a received fax done, with a short note."""
     api = state.api()
@@ -159,7 +159,7 @@ def work_done(item_id: str = typer.Argument(..., help="A received fax's ID, from
 
 
 @work.command('reopen')
-def work_reopen(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
+def work_reopen(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'.")):
     """Reopen a received fax marked done. Its owner acknowledges it again."""
     api = state.api()
     item = _item(api, item_id)
@@ -168,7 +168,7 @@ def work_reopen(item_id: str = typer.Argument(..., help="A received fax's ID, fr
 
 
 @work.command('export')
-def work_export(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
+def work_export(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids' or 'faxbot faxes received owners --ids'."),
                 output: str = typer.Option(None, '--output', '-o', help="Zip file to write. Use '-' for standard "
                                                                         'output.'),
                 force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):

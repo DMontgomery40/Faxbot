@@ -146,28 +146,137 @@ def _plain(text):
     return re.sub(r'\x1b\[[0-9;]*m', '', text)
 
 
-def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server():
+def _listed(*path):
+    """The commands and groups `faxbot <path> --help` lists, in order."""
+    shown = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
+    assert shown.exit_code == 0, (path, shown.stdout)
+    return re.findall(r'^│ ([a-z][a-z-]*) ', _plain(shown.stdout), re.MULTILINE)
+
+
+def test_help_lists_send_status_and_the_six_areas_without_starting_the_server():
     import typer.main
     from app.cli.nouns import NOUNS
-    assert NOUNS == ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
+    assert NOUNS == ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
     root = typer.main.get_command(cli_app)
-    # Faxes → Forms is `faxbot forms` and Faxes → Expected is `faxbot expected`, beside received and sent.
-    assert [name for name, command in root.commands.items() if not command.hidden] == [
-        'send', 'status', 'received', 'sent', 'forms', 'expected', *NOUNS[2:]]
+    # `faxbot overview` is the Overview page; the other five areas are groups.
+    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     plain = _plain(result.stdout)
-    assert result.exit_code == 0 and ' received ' in plain and ' system ' in plain
-    assert ' jobs ' not in plain and ' admin ' not in plain and ' config ' not in plain
+    assert result.exit_code == 0 and ' savings ' in plain and ' admin ' in plain
+    for older in ('received', 'sent', 'forms', 'expected', 'numbers', 'providers', 'costs', 'access', 'system',
+                  'jobs', 'config'):
+        assert f'│ {older} ' not in plain, older
     for noun in NOUNS:
         shown = CliRunner().invoke(cli_app, [noun, '--help'], env={'COLUMNS': '200'})
         assert shown.exit_code == 0 and 'Usage: faxbot ' + noun in _plain(shown.stdout)
 
 
-def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
+def test_each_area_lists_the_commands_of_its_console_pages():
+    # Typer lists an area's own commands first, then its groups. Other work adds commands to savings and recipients,
+    # so those two are checked for what they must hold.
+    savings = _listed('savings')
+    assert savings[:3] == ['mechanisms', 'facts', 'results']
+    assert {'opportunities', 'spending', 'charges', 'invoices', 'plans', 'rate-cards', 'analysis'} <= set(savings)
+    assert not {'savings', 'recommendations', 'advice'} & set(savings)
+    assert _listed('faxes') == ['received', 'sent', 'expected', 'forms', 'cases']
+    assert _listed('delivery') == [
+        'numbers', 'mailboxes', 'blocked', 'identity', 'email', 'connectors', 'providers', 'rules']
+    assert _listed('delivery', 'numbers') == [
+        'list', 'add', 'update', 'explain', 'advice', 'dependencies', 'move', 'forwarded-trust']
+    assert 'rules' not in _listed('delivery', 'providers') and 'trunk' in _listed('delivery', 'providers')
+    assert 'cases' not in _listed('recipients') and 'partners' in _listed('recipients')
+    assert _listed('admin')[:9] == [
+        'health', 'audit', 'restart', 'status', 'migrate', 'recover-owner', 'backup', 'restore', 'access']
+    assert {'setup', 'settings', 'analysis', 'npi', 'diagnostics', 'logs', 'codec', 'profiles'} <= set(_listed('admin'))
+    assert 'users' in _listed('admin', 'access')
+
+
+def test_hidden_names_are_exactly_the_older_names_in_the_alias_table():
+    from app.cli.nouns import ALIASES, canonical
     commands = _commands(cli_app)
-    assert [path for path, (_, hidden) in commands.items() if hidden] == []
-    # Names from before the console's eight areas, removed before the first tagged release that had them.
-    for older in (('jobs', 'list'), ('inbound', 'list'), ('settings', 'get'), ('admin', 'migrate'), ('health',),
+    hidden = [path for path, (_, is_hidden) in commands.items() if is_hidden]
+    # Every hidden command is under an older name, and every older name is hidden and still exists.
+    assert hidden and all(any(path[:len(old)] == old for old in ALIASES) for path in hidden)
+    for old in ALIASES:
+        assert all(hidden_flag for path, (_, hidden_flag) in commands.items() if path[:len(old)] == old), old
+        assert any(path[:len(old)] == old for path in commands), old
+    # Each older path runs the same command as the visible path it means now.
+    for path, (callback, is_hidden) in commands.items():
+        if is_hidden:
+            now = canonical(path)
+            assert now in commands and not commands[now][1], (path, now)
+            assert _original(commands[now][0]) is _original(callback), (path, now)
+    assert canonical(('costs', 'savings')) == ('savings', 'results')
+    assert canonical(('numbers', 'mailboxes', 'list')) == ('delivery', 'mailboxes', 'list')
+    assert canonical(('system', 'settings', 'set')) == ('admin', 'settings', 'set')
+    assert canonical(('providers', 'rules', 'publish')) == ('delivery', 'rules', 'publish')
+
+
+@pytest.mark.parametrize('older,now', [
+    (('received', 'list'), ('faxes', 'received', 'list')),
+    (('sent', 'list'), ('faxes', 'sent', 'list')),
+    (('forms', 'list'), ('faxes', 'forms', 'list')),
+    (('expected', 'list'), ('faxes', 'expected', 'list')),
+    (('recipients', 'cases', 'list'), ('faxes', 'cases', 'list')),
+    (('numbers', 'list'), ('delivery', 'numbers', 'list')),
+    (('numbers', 'mailboxes', 'list'), ('delivery', 'mailboxes', 'list')),
+    (('numbers', 'reply', 'show'), ('delivery', 'identity', 'show')),
+    (('numbers', 'npi', 'list'), ('admin', 'npi', 'list')),
+    (('providers', 'list'), ('delivery', 'providers', 'list')),
+    (('providers', 'rules', 'show'), ('delivery', 'rules', 'show')),
+    (('costs', 'spending'), ('savings', 'spending')),
+    (('costs', 'savings'), ('savings', 'results')),
+    (('costs', 'recommendations', 'sending'), ('savings', 'opportunities', 'sending')),
+    (('costs', 'advice'), ('savings', 'facts')),
+    (('costs', 'mechanisms'), ('savings', 'mechanisms')),
+    (('access', 'users', 'list'), ('admin', 'access', 'users', 'list')),
+    (('system', 'settings', 'set'), ('admin', 'settings', 'set')),
+    (('system', 'migrate'), ('admin', 'migrate')),
+])
+def test_an_older_command_name_still_runs_the_command_it_names_now(older, now):
+    commands = _commands(cli_app)
+    assert commands[older][1] and not commands[now][1], (older, now)
+    assert _original(commands[older][0]) is _original(commands[now][0])
+    for path in (older, now):
+        typed = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
+        assert typed.exit_code == 0 and 'Usage: faxbot ' + ' '.join(path) in _plain(typed.stdout), path
+
+
+def test_no_help_or_hint_suggests_an_older_command_name():
+    """Help and output name each command as it is now: an older name still runs, but nothing suggests it."""
+    import typer.main
+    from app.cli.nouns import canonical
+    root = typer.main.get_command(cli_app)
+
+    def command_path(words):
+        node, path = root, []
+        for word in words:
+            children = getattr(node, 'commands', None) or {}
+            if word not in children:
+                break
+            node, path = children[word], [*path, word]
+        return tuple(path)
+
+    cli_dir = Path(__file__).resolve().parents[1] / 'app' / 'cli'
+    # nouns.py names the older paths on purpose (its alias table).
+    skip = {'nouns.py'}
+    older = []
+    for source in sorted(cli_dir.rglob('*.py')):
+        if source.name in skip:
+            continue
+        for number, line in enumerate(source.read_text(encoding='utf-8').splitlines(), 1):
+            for match in re.finditer(r'faxbot((?: [a-z][a-z0-9-]*)+)', line):
+                path = command_path(match.group(1).split())
+                if path and canonical(path) != path:
+                    older.append(f'{source.relative_to(cli_dir)}:{number}: faxbot {" ".join(path)} '
+                                 f'(now faxbot {" ".join(canonical(path))})')
+    assert older == [], 'Hints that name an older command:\n' + '\n'.join(older)
+
+
+def test_names_older_than_the_areas_are_gone():
+    commands = _commands(cli_app)
+    # Names from before the console's areas, removed before the first tagged release that had them.
+    for older in (('jobs', 'list'), ('inbound', 'list'), ('settings', 'get'), ('health',),
                   ('me',), ('tunnel', 'status'), ('actions', 'list'), ('sent', 'history'), ('sent', 'reconcile'),
                   ('providers', 'config'), ('providers', 'registry'), ('access', 'grant')):
         typed = CliRunner().invoke(cli_app, [*older, '--help'], env={'COLUMNS': '200'})
@@ -534,7 +643,7 @@ def test_providers_diagnostics_and_status(cli, monkeypatch):
     assert by_id['sending.provider']['status'] == 'problem'  # the synthetic Phaxio profile has no keys
     human = cli('system', 'diagnostics', 'show')
     assert human.exit_code == 0 and diagnostics['summary'] in human.stdout
-    assert 'Not working: Sending account. ' in human.stdout and '(Open Providers in the console.)' in human.stdout
+    assert 'Not working: Sending account. ' in human.stdout and '(Open Providers & accounts in the console.)' in human.stdout
 
 
 def test_pairing_a_device_and_reusing_the_code(cli):
@@ -706,7 +815,7 @@ def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path
         assert result.exit_code == 0, result.stderr
         assert result.stdout.strip().splitlines() == [
             f'Settings written to {target} on the server.',
-            "The recovery copy goes away in the next release. To back up everything, run 'faxbot system backup'."]
+            "The recovery copy goes away in the next release. To back up everything, run 'faxbot admin backup'."]
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
         written = target.read_text()
         assert 'MAX_FILE_SIZE_MB=' in written and f'API_KEY={BOOTSTRAP}' in written
@@ -727,7 +836,7 @@ def test_providers_validate_and_install_an_http_manifest(plugins_cli, tmp_path):
     assert checked.stdout.strip() == 'The manifest is valid.'
     installed = cli('providers', 'install', manifest)
     assert installed.exit_code == 0, installed.stderr
-    assert installed.stdout.strip() == ('Provider synthetic-http installed. Configure it with faxbot providers '
+    assert installed.stdout.strip() == ('Provider synthetic-http installed. Configure it with faxbot delivery providers '
                                         'configure synthetic-http.')
     assert any(item['id'] == 'synthetic-http' for item in cli.json('providers', 'list'))
     broken = tmp_path / 'broken.json'
@@ -760,7 +869,7 @@ def test_providers_show_and_configure_work_on_a_default_install(cli):
     assert cli.json('providers', 'show', 'phaxio')['settings']['callback_url'] == address
     unknown = cli('providers', 'configure', 'phaxio', 'colour=blue')
     assert unknown.exit_code == 1 and unknown.stderr.strip() == (
-        "Phaxio has no setting named 'colour'. Run 'faxbot providers show phaxio' to see them.")
+        "Phaxio has no setting named 'colour'. Run 'faxbot delivery providers show phaxio' to see them.")
     assert cli('providers', 'configure', 'phaxio', '--enable').exit_code == 1
     assert cli('providers', 'configure', 'phaxio', '--role', 'inbound').exit_code == 1
     chosen = cli('providers', 'configure', 'phaxio', '--enable', '--role', 'inbound')
@@ -772,7 +881,7 @@ def test_providers_show_and_configure_work_on_a_default_install(cli):
     assert freeswitch.exit_code == 0 and freeswitch.stdout.strip().endswith(
         'FreeSWITCH is removed in the next release. Choose another provider with the Setup wizard.')
     missing = cli('providers', 'show', 'interfax')
-    assert missing.exit_code == 5 and 'faxbot providers list' in missing.stderr
+    assert missing.exit_code == 5 and 'faxbot delivery providers list' in missing.stderr
     assert cli.client.get('/plugins', headers={'X-API-Key': BOOTSTRAP}).status_code == 404
 
 
@@ -847,6 +956,7 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert refused.exit_code != 0
     assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
     # The key has a console field and a setting: never sent to .env.
+    # The sentence is routing/http.py's (another lane): it still names the older command, which still works.
     assert 'faxbot system settings set --secret telnyx_api_key' in ' '.join((refused.stdout + refused.stderr).split())
     assert '.env' not in refused.stdout + refused.stderr
     assert cli('costs', 'fax', '0' * 32).exit_code != 0
@@ -1260,7 +1370,7 @@ def trunk_cli(monkeypatch, tmp_path):
 
 
 def test_trunk_restart_engine_asks_the_engine_or_says_why_there_is_nothing_to_restart(trunk_cli):
-    """`faxbot providers trunk restart-engine`, the console's Restart the fax engine."""
+    """`faxbot delivery providers trunk restart-engine`, the console's Restart the fax engine."""
     import json as json_module
     from app import hylafax_engine
     refused = trunk_cli('providers', 'trunk', 'restart-engine')
@@ -1301,7 +1411,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli('providers', 'trunk', 'calls', '--direction', 'sideways').exit_code != 0
     # After that verdict, the owner can switch new calls to audio fax and back.
     assert trunk_cli.json('providers', 'trunk', 'status')['suggest_audio'] is True
-    assert 'Audio fax may work for new calls: run faxbot providers trunk mode audio.' in \
+    assert 'Audio fax may work for new calls: run faxbot delivery providers trunk mode audio.' in \
         trunk_cli('providers', 'trunk', 'status').stdout
     audio = trunk_cli('providers', 'trunk', 'mode', 'audio')
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
@@ -1318,7 +1428,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK)
     status = trunk_cli('providers', 'trunk', 'status').stdout
     assert 'a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.' in status
-    assert 'To try T.38 again, run faxbot providers trunk mode t38.' in status
+    assert 'To try T.38 again, run faxbot delivery providers trunk mode t38.' in status
     # Provider names read the same as in the console.
     health = trunk_cli('system', 'health')
     assert 'Phaxio' in health.stdout and ' phaxio' not in health.stdout
@@ -1330,7 +1440,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
 
 
 def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was_not(trunk_cli, tmp_path):
-    """`faxbot providers trunk negotiation`, `sent show` and `received show`: the same words as the console."""
+    """`faxbot delivery providers trunk negotiation`, `sent show` and `received show`: the same words as the console."""
     from datetime import datetime, timedelta
     from app import hylafax_engine, hylafax_records, sip_calls
     engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
@@ -1398,7 +1508,7 @@ def test_trunk_telnyx_shows_t38_per_number_and_turns_it_on_for_one(monkeypatch, 
             assert sentence in shown.stdout, sentence
         status = cli('providers', 'trunk', 'status').stdout
         assert 'Telnyx has fax over IP (T.38) turned off for +1 555-555-0100' in status
-        assert 'To turn it on, run faxbot providers trunk telnyx t38-on followed by the number.' in status
+        assert 'To turn it on, run faxbot delivery providers trunk telnyx t38-on followed by the number.' in status
         turned = cli('providers', 'trunk', 'telnyx', 't38-on', FIRST)
         assert turned.exit_code == 0, turned.stdout
         assert 'Telnyx now has fax over IP (T.38) turned on for +1 555-555-0100.' in turned.stdout
@@ -1439,7 +1549,7 @@ def test_trunk_network_says_whether_t38_can_come_back_and_what_to_do(trunk_cli, 
     assert trunk_cli('providers', 'trunk', 'network', 'router-ports', 'maybe').exit_code != 0
     assert trunk_cli.json('providers', 'trunk', 'network', 'router-ports', 'on')['router_ports_enabled'] is True
     status = trunk_cli('providers', 'trunk', 'status').stdout
-    assert 'If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.' \
+    assert 'If the network check shows a problem, run faxbot delivery providers trunk network status to see how to fix it.' \
         in status
     assert 'No ports need to be opened or forwarded.' not in status
 
@@ -1458,7 +1568,7 @@ def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carrier
     used = trunk_cli('providers', 'trunk', 'use', 'avaya-ipoffice', '--host', '192.168.10.5', '--number-format', 'local',
                      '--prefix', '9')
     assert used.exit_code == 0, used.stdout
-    assert "Saved Avaya IP Office as the trunk's phone system. Run faxbot providers trunk apply to connect it." in used.stdout
+    assert "Saved Avaya IP Office as the trunk's phone system. Run faxbot delivery providers trunk apply to connect it." in used.stdout
     status = trunk_cli.json('providers', 'trunk', 'status')
     assert (status['kind'], status['auth'], status['host'], status['dial_format'], status['dial_prefix']) == (
         'phone_system', 'ip', '192.168.10.5', 'local', '9')

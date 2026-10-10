@@ -48,7 +48,7 @@ def admin_options(ctx: typer.Context,
 
 
 def on_this_computer(command):
-    """The command with the options that find the installation, for its home under faxbot system."""
+    """The command with the options that find the installation, for its home under faxbot admin."""
     signature = inspect.signature(command)
     located = [inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, annotation=str,
                                  default=_location_option(flag, variable, metavar, help))
@@ -106,7 +106,7 @@ def admin_status():
         out.table(['Records', 'Count'], [[labels[name], '-' if count is None else count]
                                           for name, count in result['counts'].items()])
         if not result['schema_current']:
-            out.line('The database needs an upgrade; run faxbot system migrate before starting Faxbot.')
+            out.line('The database needs an upgrade; run faxbot admin migrate before starting Faxbot.')
     state.out().result(result, human)
 
 
@@ -126,7 +126,7 @@ def admin_migrate():
 def admin_recover_owner(yes: bool = typer.Option(False, '--yes', '-y', help='Do not ask for confirmation.')):
     """Recover owner access when no owner can sign in: create a new installation key and show it once.
 
-    Run it while Faxbot is stopped. Anything that used the old installation key stops working. Then start Faxbot and create an owner with faxbot access owner enroll.
+    Run it while Faxbot is stopped. Anything that used the old installation key stops working. Then start Faxbot and create an owner with faxbot admin access owner enroll.
     """
     from ..local import recover_owner, stopped
     if not yes and (state.out().json_mode or state.out().quiet):
@@ -166,7 +166,7 @@ def admin_backup(folder: str = typer.Argument(..., help='New, empty folder for t
 
 
 @admin.command('restore')
-def admin_restore(folder: str = typer.Argument(..., help='Backup folder made by faxbot system backup.'),
+def admin_restore(folder: str = typer.Argument(..., help='Backup folder made by faxbot admin backup.'),
                   force: bool = typer.Option(False, '--force', help='Replace the database, data folder and keys '
                                                                     'already on this computer.')):
     """Restore a backup after checking every file in it."""
@@ -179,5 +179,5 @@ def admin_restore(folder: str = typer.Argument(..., help='Backup folder made by 
         out.line(f"Restored {result['database']} and {result['data_files']} data files from the backup made "
                  f"{local_time(result.get('created_at'))}.")
         if result['needs_upgrade']:
-            out.line('Run faxbot system migrate before starting Faxbot.')
+            out.line('Run faxbot admin migrate before starting Faxbot.')
     state.out().result(result, human)

@@ -25,7 +25,7 @@ Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That 
 
 ### 2. Configure Faxbot
 
-On an existing installation, open **System → Setup** or **Providers → Phaxio**, select Phaxio for outbound and fill in the credential and address fields. Apply the changes you want. If Faxbot asks for a restart, stop every API process and start the installation again. An empty outbound or inbound override uses the default provider.
+On an existing installation, open **Administration → Setup** or **Delivery setup → Phaxio**, select Phaxio for outbound and fill in the credential and address fields. Apply the changes you want. If Faxbot asks for a restart, stop every API process and start the installation again. An empty outbound or inbound override uses the default provider.
 
 The following `.env` values only apply when a new installation starts for the first time; later edits are not imported:
 
@@ -99,7 +99,7 @@ How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot 
 
 ### 5. Configure callback (optional but recommended)
 
-In **Providers → Phaxio**, leave **Address for Phaxio status updates** empty to use Faxbot's public address, or enter a reachable HTTPS address. Enter the account's **Callback Token** and keep **Check that status updates come from Phaxio** on. If signature checks are off, Faxbot ignores status callbacks and checks status with Phaxio instead. Phaxio must be able to reach the callback address.
+In **Delivery setup → Phaxio**, leave **Address for Phaxio status updates** empty to use Faxbot's public address, or enter a reachable HTTPS address. Enter the account's **Callback Token** and keep **Check that status updates come from Phaxio** on. If signature checks are off, Faxbot ignores status callbacks and checks status with Phaxio instead. Phaxio must be able to reach the callback address.
 
 ## Costs & HIPAA
 
@@ -120,7 +120,7 @@ In **Providers → Phaxio**, leave **Address for Phaxio status updates** empty t
 
 ## Troubleshooting
 
-- "Phaxio not configured": check **Providers → Phaxio** and enter the API key and API secret.
+- "Phaxio not configured": check **Delivery setup → Phaxio** and enter the API key and API secret.
 - No callback updates: confirm the captured callback URL/query, public reachability, account Callback Token and `PHAXIO_VERIFY_SIGNATURE=true`. Polling can still report status from the captured original account.
 - 403 when fetching PDF: token mismatch or expired URL.
 - See docs/TROUBLESHOOTING.md for more.

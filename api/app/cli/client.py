@@ -47,7 +47,7 @@ class Api:
         if auth:
             if not self._key:
                 raise CliError("No API key. Use --key, set FAXBOT_API_KEY, or save one with "
-                               "'faxbot system profiles save'.", EXIT_AUTHENTICATION)
+                               "'faxbot admin profiles save'.", EXIT_AUTHENTICATION)
             sent['X-API-Key'] = self._key
         sent.update(headers or {})
         if params:

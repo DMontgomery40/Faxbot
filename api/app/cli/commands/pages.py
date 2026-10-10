@@ -77,7 +77,7 @@ def providers_long_pages(route: str = typer.Argument(None, help='Route to change
         state.out().result({'routes': routes}, human)
         return
     if route is None:
-        raise CliError('Name the route to change, for example: faxbot providers long-pages sinch --long-pages on')
+        raise CliError('Name the route to change, for example: faxbot delivery providers long-pages sinch --long-pages on')
     body = {}
     for name, value in (('long_pages', long_pages), ('trim_blank', blank_space)):
         if value is not None:

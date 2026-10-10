@@ -20,4 +20,4 @@ An explicit enumerative fax sent through Telnyx to HumbleFax on 9 October 2026 r
 
 ## Case packets
 
-**Recipients → Case packets** (`#/recipients/cases`) lists the recent cases this installation sent packets for, one row per case and recipient, with documents sent and received, pages and when the last one went. "No case packets have been sent yet." when there are none. **Open** or **Look up** shows what a recipient already has for a case; **Preview** shows what will be left out before **Send the documents**. See [case packets](../operations/delivery-routes.md#case-packets).
+**Faxes → Case packets** (`#/faxes/cases`) lists the recent cases this installation sent packets for, one row per case and recipient, with documents sent and received, pages and when the last one went. "No case packets have been sent yet." when there are none. **Open** or **Look up** shows what a recipient already has for a case; **Preview** shows what will be left out before **Send the documents**. See [case packets](../operations/delivery-routes.md#case-packets).

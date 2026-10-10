@@ -6,7 +6,7 @@ configuration that still holds exactly those values has them cleared once at
 the next start. An empty station ID on a trunk call is the trunk's caller ID,
 FreeSWITCH refuses to call without a caller ID, and HumbleFax's own account
 numbers are read (GetUser, cached, never while sending) so the console and
-`faxbot numbers list` can show them. All values are synthetic.
+`faxbot delivery numbers list` can show them. All values are synthetic.
 """
 import asyncio
 import json
@@ -132,7 +132,7 @@ def test_under_the_test_harness_no_real_humblefax_request_is_made(humblefax):
     assert humblefax.account_numbers(ACCESS, SECRET) is None and humblefax._reading == {}
 
 
-# -- faxbot numbers list ------------------------------------------------------------------------
+# -- faxbot delivery numbers list ------------------------------------------------------------------------
 
 @pytest.fixture
 def numbers_cli(monkeypatch, tmp_path):

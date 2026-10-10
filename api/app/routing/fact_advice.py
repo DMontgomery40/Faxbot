@@ -61,7 +61,7 @@ RESOLUTION = 'standard'
 NO_CALL = ('local', 'direct')
 NOT_A_CALL_PREFIXES = ('relay', 'dsm', 'fhir')
 REALIZED = ('These figures are what your faxes would have cost, not savings. Once a fact is established and used, '
-            'Costs → Savings counts what it really saved.')
+            'Savings & optimization → Savings results counts what it really saved.')
 ADVICE_ONLY = ('Faxbot only advises: it never enrolls a partner, records an approval, enters a price or changes a '
                'route for you.')
 
@@ -105,16 +105,16 @@ CATALOGUE = (
     Fact('route_price', 'price', 'No price for a route you may use',
          'Only you can supply it: {route} publishes no price for these calls, so read it from your bill or '
          'contract.',
-         'Enter the price under Costs → Prices & plans.',
+         'Enter the price under Savings & optimization → Prices & plans.',
          'about 10 minutes of your time'),
     Fact('receiving_price', 'price', 'No receiving price for one of your accounts',
          'Only you can supply it: {route} publishes no price for receiving faxes, so read it from your bill or '
          'contract.',
-         'Enter the receiving price under Costs → Prices & plans.',
+         'Enter the receiving price under Savings & optimization → Prices & plans.',
          'about 10 minutes of your time'),
     Fact('plan_allowance', 'information', "Your plan's real allowance is not known",
          "{route} must tell you in writing how many pages a month its plan carries for normal use.",
-         'Set that allowance under Costs → Prices & plans.',
+         'Set that allowance under Savings & optimization → Prices & plans.',
          'about 15 minutes of your time'),
 )
 FACTS = {fact.key: fact for fact in CATALOGUE}

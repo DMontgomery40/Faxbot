@@ -1,4 +1,4 @@
-"""faxbot system setup plan|show|apply, through the real faxbot command against the real application."""
+"""faxbot admin setup plan|show|apply, through the real faxbot command against the real application."""
 import pytest
 
 from api.tests.test_cli import BOOTSTRAP, Cli, _serve
@@ -29,7 +29,7 @@ def test_plan_show_and_apply_from_the_command_line(cli):
     assert 'Setup plan 1, made ' in text and 'Faxes to +12025550123 try SignalWire first' in text
     assert 'Print your business name at the top of each page' in text
     assert "What's missing" in text and 'Your choice' in text and 'Not in Faxbot yet' in text
-    assert 'Apply the chosen suggestions with: faxbot system setup apply 1' in text
+    assert 'Apply the chosen suggestions with: faxbot admin setup apply 1' in text
     shown = cli.json('system', 'setup', 'show')
     assert shown['number'] == 1 and shown['context'] == {'organization_name': 'Synthetic Clinic', 'country': 'US',
                                                          'mailboxes': {}}
@@ -46,7 +46,7 @@ def test_plan_show_and_apply_from_the_command_line(cli):
 
 def test_the_command_line_says_what_to_fix(cli):
     empty = cli('system', 'setup', 'show')
-    assert empty.exit_code != 0 and 'faxbot system setup plan' in (empty.stdout + empty.stderr)
+    assert empty.exit_code != 0 and 'faxbot admin setup plan' in (empty.stdout + empty.stderr)
     assert cli('system', 'setup', 'plan').exit_code == 0
     wrong = cli('system', 'setup', 'apply', '1', '--only', '99')
     assert wrong.exit_code != 0 and 'Plan 1 has suggestions 1 to' in (wrong.stdout + wrong.stderr)
@@ -76,4 +76,4 @@ def test_lists_saved_plans_and_opens_an_earlier_one(cli):
     assert shown['context']['organization_name'] == 'First synthetic organization'
     assert shown['applications'] == []
     human = cli('system', 'setup', 'list')
-    assert human.exit_code == 0 and 'faxbot system setup show NUMBER' in human.stdout
+    assert human.exit_code == 0 and 'faxbot admin setup show NUMBER' in human.stdout

@@ -45,7 +45,7 @@ def notice_faxes(notice: str = typer.Argument(..., help="The notice's ID, from '
 def notice_pair(notice: str = typer.Argument(..., help="The notice's ID, from 'faxbot recipients partners notices --ids'."),
                 code: str = typer.Option(None, '--code', help='The 20-digit code printed on the notice page.'),
                 fax: str = typer.Option(None, '--fax', help="The received fax that is the notice, from "
-                                                            "'faxbot received list --ids'."),
+                                                            "'faxbot faxes received list --ids'."),
                 without_notice: bool = typer.Option(False, '--without-notice',
                                                     help='File the document in Received without its notice fax.')):
     """Pair a document a partner delivered directly with its notice fax, or file it without one."""

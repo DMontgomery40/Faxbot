@@ -99,7 +99,7 @@ describe('Costs → Recommendations: Add as rule', () => {
     expect(saved.expected_version).toBe(0);
     expect(saved.document.routes.map((rule) => rule.id)).toEqual(['r-faxes-to-44-numbers-go-through-sinch-uk', 'r-uk']);
     expect(fake.sent('POST', '/routing/rules/publish')).toEqual([]);
-    expect(notice).toBe('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.');
+    expect(notice).toBe('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.');
   });
 });
 
@@ -203,7 +203,7 @@ describe('rules views say when they cannot load', () => {
       <MailboxSendingRulesPicker api={new FakeRules().api()} loadMailboxes={() => Promise.reject(refused(403))} canWrite />,
     );
     const summary = render(<ReceivingSummary load={() => Promise.reject(refused(403))} />);
-    expect(await summary.findByText('Which mailbox each of your numbers delivers to is set on Numbers.')).toBeTruthy();
+    expect(await summary.findByText('Which mailbox each of your numbers delivers to is set on Delivery setup, Numbers.')).toBeTruthy();
     await waitFor(() => expect(summary.queryAllByRole('alert')).toHaveLength(0));
     expect(container.textContent).toBe('');
   });

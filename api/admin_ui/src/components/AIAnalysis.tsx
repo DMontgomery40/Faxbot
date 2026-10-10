@@ -106,7 +106,7 @@ export function AnalysisCard({ client, canRun = false, onNavigate, settingsPage 
   };
   const openSettings = () => {
     if (onNavigate) onNavigate('system/analysis');
-    else window.location.hash = '#/system/analysis';
+    else window.location.hash = '#/admin/analysis';
   };
   const runResult = status?.last_run;
   return (

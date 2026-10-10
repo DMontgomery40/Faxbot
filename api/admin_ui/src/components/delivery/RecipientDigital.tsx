@@ -148,8 +148,8 @@ export default function RecipientDigitalPanel({ client, number, canWrite }: {
           )}
           {accounts.length === 0 && (
             <Alert severity="info">
-              {kind === 'direct' ? 'Add your HISP account under Providers → In use before Faxbot can send Direct messages.'
-                : 'Add a FHIR client under Providers → In use before Faxbot can send to a FHIR server.'}
+              {kind === 'direct' ? 'Add your HISP account under Delivery setup → Providers & accounts before Faxbot can send Direct messages.'
+                : 'Add a FHIR client under Delivery setup → Providers & accounts before Faxbot can send to a FHIR server.'}
             </Alert>
           )}
           <TextField size="small" label="Organization (optional)" value={organization} disabled={busy}

@@ -28,7 +28,7 @@ def user(api, who):
     matches = [item for item in items if _same(item.get('login'), who)]
     if not matches:
         matches = [item for item in items if _same(item.get('display_name'), who)]
-    found = _one(matches, 'user or integration', who, "See 'faxbot access users list'.")
+    found = _one(matches, 'user or integration', who, "See 'faxbot admin access users list'.")
     return api.get('/access/users/' + segment(found['id']))
 
 
@@ -37,20 +37,20 @@ def group(api, name):
         return api.get('/access/groups/' + segment(name))
     items = api.pages('/access/groups')
     found = _one([item for item in items if _same(item['name'], name) or item['id'] == name],
-                 'group', name, "See 'faxbot access groups list'.")
+                 'group', name, "See 'faxbot admin access groups list'.")
     return api.get('/access/groups/' + segment(found['id']))
 
 
 def role(api, name):
     items = api.pages('/access/roles')
     return _one([item for item in items if item['id'] == name or _same(item['name'], name)],
-                'role', name, "See 'faxbot access roles list'.")
+                'role', name, "See 'faxbot admin access roles list'.")
 
 
 def mailbox(api, label):
     items = api.pages('/access/mailboxes')
     return _one([item for item in items if item['id'] == label or _same(item['label'], label)],
-                'mailbox', label, "See 'faxbot numbers mailboxes list'.")
+                'mailbox', label, "See 'faxbot delivery mailboxes list'.")
 
 
 def _digits(number):
@@ -62,7 +62,7 @@ def inbound_rule(api, number):
     matches = [item for item in items if item['id'] == number]
     if not matches and _digits(number):
         matches = [item for item in items if _digits(item['to_number']) == _digits(number)]
-    return _one(matches, 'fax number rule', number, "See 'faxbot numbers list'.")
+    return _one(matches, 'fax number rule', number, "See 'faxbot delivery numbers list'.")
 
 
 def key(api, key_id):
@@ -70,7 +70,7 @@ def key(api, key_id):
     matches = [item for item in items if item['id'] == key_id]
     if not matches:
         matches = [item for item in items if _same(item.get('name'), key_id)]
-    return _one(matches, 'API key', key_id, "See 'faxbot access keys list'.")
+    return _one(matches, 'API key', key_id, "See 'faxbot admin access keys list'.")
 
 
 def resource(api, reference):
@@ -90,7 +90,7 @@ def resource(api, reference):
     else:
         matches = [item for item in items if item['id'] == value] or [
             item for item in items if _same(item['name'], value)]
-    return _one(matches, 'place', reference, "See 'faxbot access resources list'.")
+    return _one(matches, 'place', reference, "See 'faxbot admin access resources list'.")
 
 
 def subject(api, who):

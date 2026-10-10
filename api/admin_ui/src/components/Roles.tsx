@@ -123,7 +123,7 @@ export default function Roles({ client, me }: { client: AdminAPIClient; me: Auth
 
   return (
     <Box>
-      <ScreenHeader title="Roles" subtitle="A role is a set of permissions. Give roles to people and groups under Access."
+      <ScreenHeader title="Roles" subtitle="A role is a set of permissions. Give roles to people and groups under Who has access."
         onRefresh={() => void reload()} busy={state === 'loading'}>
         {canManage && (
           <Button variant="contained" startIcon={<AddIcon />} disabled={state !== 'ready'}

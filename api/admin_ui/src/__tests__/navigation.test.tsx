@@ -1,5 +1,7 @@
-// The console's navigation: one table of areas and pages, who sees each page,
-// an address per page, breadcrumbs, and the person's own menu.
+// The console's navigation: one table of six areas and their pages, who sees each page,
+// an address per page, breadcrumbs, Send a fax, the states for moved, unknown and
+// forbidden addresses, and the person's own menu. Every old address is checked one by
+// one in navigationCoverage.test.tsx.
 import { describe, expect, it } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -17,6 +19,7 @@ import {
   pageAddress,
   parseAddress,
   resolveAddress,
+  resolvesTo,
   visibleNavigation,
   type ConsoleNavigation,
   type LegacyDestination,
@@ -30,51 +33,70 @@ const noScreens = { send: false, jobs: false, inbox: false, work: false };
 const visible = (permissions: Iterable<string>, navigation: ConsoleNavigation = noScreens, pluginsEnabled = false) =>
   visibleNavigation(new Set(permissions), navigation, { pluginsEnabled });
 const pagesOf = (areas: ReturnType<typeof visible>, area: string) => areas.find((a) => a.id === area)?.pages.map((p) => p.id) ?? [];
+const groupsOf = (areas: ReturnType<typeof visible>, area: string) =>
+  [...new Set(areas.find((a) => a.id === area)?.pages.map((p) => p.group ?? '') ?? [])];
 
 describe('the navigation table', () => {
-  it('lists the eight areas in order for someone who may see everything', () => {
-    const areas = visible(everything, allScreens, true);
+  it('lists the six areas in order for someone who may see everything, long areas under group headings', () => {
+    // Expected needs work:read, which the test server's principals do not carry.
+    const areas = visible([...everything, 'work:read'], allScreens, true);
     expect(areas.map((area) => area.label)).toEqual(
-      ['Overview', 'Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs', 'Access', 'System']);
-    expect(pagesOf(areas, 'providers')).toEqual(
-      ['sending', 'rules', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
-    const system = areas.find((area) => area.id === 'system')!;
-    expect(system.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
+      ['Overview', 'Savings & optimization', 'Faxes', 'Delivery setup', 'Recipients', 'Administration']);
+    expect(areas.map((area) => area.id)).toEqual(['overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin']);
+    expect(pagesOf(areas, 'savings')).toEqual(
+      ['capabilities', 'opportunities', 'facts', 'results', 'spending', 'charges', 'invoices', 'prices']);
+    expect(pagesOf(areas, 'faxes')).toEqual(['received', 'sent', 'send', 'expected', 'forms', 'cases']);
+    expect(pagesOf(areas, 'delivery')).toEqual(['numbers', 'mailboxes', 'moves', 'blocked', 'identity', 'email', 'connectors',
+      'connections', 'rules', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
+    expect(groupsOf(areas, 'delivery')).toEqual(['Numbers & mailboxes', 'Documents in and out', 'Connections']);
+    expect(pagesOf(areas, 'recipients')).toEqual(['list', 'partners']);
+    expect(pagesOf(areas, 'admin')).toEqual(['users', 'groups', 'roles', 'who', 'keys', 'sessions',
+      'setup', 'security', 'retention', 'analysis', 'npi', 'health', 'audit', 'logs',
+      'api', 'assistants', 'terminal', 'scripts', 'plugins']);
+    expect(groupsOf(areas, 'admin')).toEqual(['People & access', 'Installation', 'Monitoring', 'Developer']);
+    const admin = areas.find((area) => area.id === 'admin')!;
+    expect(admin.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
       .toEqual(['API & SDKs', 'AI assistants', 'Terminal', 'Scripts & checks', 'Provider plugins']);
+    // The 52 entries the console had, and Capabilities.
+    expect(NAVIGATION.flatMap((area) => area.pages)).toHaveLength(53);
   });
 
   it('shows a fax operator their faxes and their own sessions only', () => {
     const areas = visible(['fax:send', 'fax:read', 'inbound:list', 'inbound:read'], { send: true, jobs: true, inbox: true });
-    expect(areas.map((area) => area.id)).toEqual(['faxes', 'access']);
+    expect(areas.map((area) => area.id)).toEqual(['faxes', 'admin']);
     expect(pagesOf(areas, 'faxes')).toEqual(['received', 'sent', 'send', 'forms']);
-    expect(pagesOf(areas, 'access')).toEqual(['sessions']);
+    expect(pagesOf(areas, 'admin')).toEqual(['sessions']);
   });
 
   it('keeps Sessions for everyone signed in, even with no permissions', () => {
     const areas = visible([]);
-    expect(areas.map((area) => area.id)).toEqual(['access']);
-    expect(pagesOf(areas, 'access')).toEqual(['sessions']);
+    expect(areas.map((area) => area.id)).toEqual(['admin']);
+    expect(pagesOf(areas, 'admin')).toEqual(['sessions']);
   });
 
-  it('shows Numbers to someone who may only read mailboxes', () => {
+  it('shows Numbers and Mailboxes to someone who may only read mailboxes', () => {
     const areas = visible(['mailboxes:read']);
-    expect(pagesOf(areas, 'numbers')).toEqual(['list', 'mailboxes']);
-    expect(areas.some((area) => area.id === 'providers')).toBe(false);
+    expect(pagesOf(areas, 'delivery')).toEqual(['numbers', 'mailboxes']);
+    expect(areas.some((area) => area.id === 'savings')).toBe(false);
   });
 
-  it('follows each page permission as the old tabs did', () => {
+  it('follows each page permission as the old pages did', () => {
     expect(pagesOf(visible(['diagnostics:read']), 'overview')).toEqual(['overview']);
-    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['analysis', 'security', 'storage', 'api', 'assistants', 'plugins']);
-    expect(pagesOf(visible(['settings:write']), 'system')).toEqual(['setup']);
-    expect(pagesOf(visible(['host:terminal', 'logs:read']), 'system')).toEqual(['logs', 'terminal']);
-    expect(pagesOf(visible(['keys:manage']), 'access')).toEqual(['keys', 'sessions']);
-    expect(pagesOf(visible(['grants:read']), 'access')).toEqual(['who', 'sessions']);
-    expect(pagesOf(visible(['audit:read']), 'system')).toEqual(['audit']);
+    expect(pagesOf(visible(['diagnostics:read']), 'admin')).toEqual(['sessions', 'health', 'api']);
+    expect(pagesOf(visible(['settings:read']), 'admin'))
+      .toEqual(['sessions', 'security', 'retention', 'analysis', 'npi', 'api', 'assistants', 'plugins']);
+    expect(pagesOf(visible(['settings:write']), 'admin')).toEqual(['sessions', 'setup']);
+    expect(pagesOf(visible(['settings:write']), 'delivery')).toEqual(['change']);
+    expect(pagesOf(visible(['host:terminal', 'logs:read']), 'admin')).toEqual(['sessions', 'logs', 'terminal']);
+    expect(pagesOf(visible(['keys:manage']), 'admin')).toEqual(['keys', 'sessions']);
+    expect(pagesOf(visible(['grants:read']), 'admin')).toEqual(['who', 'sessions']);
+    expect(pagesOf(visible(['audit:read']), 'admin')).toEqual(['sessions', 'audit']);
+    expect(pagesOf(visible(['providers:write']), 'admin')).toEqual(['sessions', 'scripts']);
   });
 
   it('lists Provider plugins whether or not plugins are on, so they can be turned on there', () => {
-    expect(pagesOf(visible(['providers:read']), 'system')).toEqual(['plugins']);
-    expect(pagesOf(visible(['providers:read'], noScreens, true), 'system')).toEqual(['plugins']);
+    expect(pagesOf(visible(['providers:read']), 'admin')).toEqual(['sessions', 'plugins']);
+    expect(pagesOf(visible(['providers:read'], noScreens, true), 'admin')).toEqual(['sessions', 'plugins']);
   });
 
   it('gives every legacy destination a page that exists', () => {
@@ -82,10 +104,28 @@ describe('the navigation table', () => {
     for (const destination of Object.keys(LEGACY_DESTINATIONS) as LegacyDestination[]) {
       expect(all.has(LEGACY_DESTINATIONS[destination])).toBe(true);
     }
-    expect(destinationAddress('trunk')).toBe('#/providers/trunk');
-    expect(destinationAddress('routes')).toBe('#/costs/spending');
+    expect(destinationAddress('trunk')).toBe('#/delivery/trunk');
+    expect(destinationAddress('routes')).toBe('#/savings/spending');
     expect(destinationAddress('recipients/partners')).toBe('#/recipients/partners');
-    expect(destinationAddress('access/keys?mine=1')).toBe('#/access/keys?mine=1');
+    expect(destinationAddress('admin/keys?mine=1')).toBe('#/admin/keys?mine=1');
+  });
+
+  it('writes an old address a screen still uses as its new one, with its query', () => {
+    expect(destinationAddress('access/keys?mine=1')).toBe('#/admin/keys?mine=1');
+    expect(destinationAddress('costs/savings?part=sslfax')).toBe('#/savings/results?part=sslfax');
+    expect(destinationAddress('providers/trunk')).toBe('#/delivery/trunk');
+    expect(destinationAddress('recipients/cases')).toBe('#/faxes/cases');
+    expect(destinationAddress('faxes/work')).toBe('#/faxes/received?show=waiting');
+  });
+
+  it('tells a check where any address leads, whoever is looking', () => {
+    expect(resolvesTo('costs/recommendations?section=plans')?.page.id).toBe('opportunities');
+    expect(resolvesTo('savings/capabilities')?.area.id).toBe('savings');
+    expect(resolvesTo('providers/change')?.page.id).toBe('setup');
+    expect(resolvesTo('setup')?.area.id).toBe('admin');
+    expect(resolvesTo('costs')?.page.id).toBe('spending');
+    expect(resolvesTo('costs/no-such-page')).toBeNull();
+    expect(resolvesTo('nowhere/at-all')).toBeNull();
   });
 });
 
@@ -93,30 +133,49 @@ describe('page addresses', () => {
   const areas = visible(everything, allScreens);
 
   it('reads an area, a page and its query', () => {
-    expect(parseAddress('#/providers/trunk')).toMatchObject({ area: 'providers', page: 'trunk' });
+    expect(parseAddress('#/delivery/trunk')).toMatchObject({ area: 'delivery', page: 'trunk' });
     expect(parseAddress('#/overview')).toMatchObject({ area: 'overview', page: null });
-    expect(parseAddress('#/access/keys?mine=1')?.params.get('mine')).toBe('1');
+    expect(parseAddress('#/admin/keys?mine=1')?.params.get('mine')).toBe('1');
     expect(parseAddress('')).toBeNull();
     expect(parseAddress('#settings')).toBeNull();
   });
 
   it('opens the named page, or the area first page when only the area is named', () => {
-    expect(resolveAddress(areas, parseAddress('#/system/no-such-page'))?.address).toBe('#/overview');
-    expect(resolveAddress(areas, parseAddress('#/providers/trunk'))?.address).toBe('#/providers/trunk');
-    expect(resolveAddress(areas, parseAddress('#/providers'))?.address).toBe('#/providers/sending');
+    expect(resolveAddress(areas, parseAddress('#/delivery/trunk'))).toMatchObject({ kind: 'page', address: '#/delivery/trunk' });
+    expect(resolveAddress(areas, parseAddress('#/delivery'))?.address).toBe('#/delivery/numbers');
+    expect(resolveAddress(areas, parseAddress('#/savings'))?.address).toBe('#/savings/capabilities');
     expect(resolveAddress(areas, parseAddress('#/overview'))?.address).toBe('#/overview');
     expect(resolveAddress(areas, null)?.address).toBe('#/overview');
   });
 
-  it('falls back to the first page this person may open', () => {
+  it('opens a former area at the first of its old pages this person may open', () => {
+    expect(resolveAddress(areas, parseAddress('#/providers'))).toMatchObject({ address: '#/delivery/connections', movedFrom: 'Providers' });
+    expect(resolveAddress(areas, parseAddress('#/costs'))?.address).toBe('#/savings/spending');
+    expect(resolveAddress(areas, parseAddress('#/system'))?.address).toBe('#/admin/setup');
+    expect(resolveAddress(visible(['logs:read']), parseAddress('#/system'))?.address).toBe('#/admin/logs');
+    expect(resolveAddress(visible([]), parseAddress('#/access'))?.address).toBe('#/admin/sessions');
+    expect(resolveAddress(visible([]), parseAddress('#/costs'))?.kind).toBe('forbidden');
+  });
+
+  it('says an address names no page, or a page this person may not open, instead of opening another page', () => {
+    expect(resolveAddress(areas, parseAddress('#/admin/no-such-page'))).toEqual({ kind: 'unknown', address: '#/admin/no-such-page' });
+    expect(resolveAddress(areas, parseAddress('#/nowhere'))?.kind).toBe('unknown');
+    expect(resolveAddress(areas, parseAddress('#/system/no-such-page'))?.kind).toBe('unknown');
     const operator = visible(['fax:send'], { send: true, jobs: true, inbox: true });
-    expect(resolveAddress(operator, parseAddress('#/system/security'))?.address).toBe('#/faxes/received');
+    expect(resolveAddress(operator, parseAddress('#/admin/security'))).toEqual({ kind: 'forbidden', address: '#/admin/security' });
+    expect(resolveAddress(operator, parseAddress('#/system/security'))).toEqual({ kind: 'forbidden', address: '#/system/security' });
+    expect(resolveAddress(operator, parseAddress('#/savings'))?.kind).toBe('forbidden');
   });
 });
 
 function grant(...permissions: string[]) {
   const admin = backend.state.principals.get('p_admin')!;
   admin.permissions = [...new Set([...admin.permissions, ...permissions])];
+}
+
+function revoke(...permissions: string[]) {
+  const admin = backend.state.principals.get('p_admin')!;
+  admin.permissions = admin.permissions.filter((permission) => !permissions.includes(permission));
 }
 
 async function signIn() {
@@ -135,51 +194,199 @@ async function openPage(area: string, page: string) {
 }
 
 const crumbs = () => within(screen.getByRole('navigation', { name: 'You are here' }));
+const panel = () => within(screen.getByRole('navigation', { name: 'Console' }));
 
 describe('the console shell', () => {
   it('opens the page a link names once the person signs in', async () => {
-    window.history.replaceState(null, '', '/#/access/roles');
+    window.history.replaceState(null, '', '/#/admin/roles');
     await signIn();
     expect(await screen.findByRole('heading', { name: 'Roles' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/access/roles');
-    expect(crumbs().getByRole('link', { name: 'Access' }).getAttribute('href')).toBe('#/access/users');
+    expect(window.location.hash).toBe('#/admin/roles');
+    expect(crumbs().getByRole('link', { name: 'Administration' }).getAttribute('href')).toBe('#/admin/users');
+    expect(crumbs().getByRole('link', { name: 'People & access' }).getAttribute('href')).toBe('#/admin/users');
     expect(crumbs().getByText('Roles').getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByTestId('moved-notice')).toBeNull();
   });
 
-  it('writes the page address on navigation, with the area and page in the breadcrumbs', async () => {
+  it('writes the page address on navigation, with the area, group and page in the breadcrumbs', async () => {
     await signIn();
-    await openPage('Access', 'Groups');
-    expect(window.location.hash).toBe('#/access/groups');
+    await openPage('Administration', 'Groups');
+    expect(window.location.hash).toBe('#/admin/groups');
     expect(await screen.findByRole('heading', { name: 'Groups' })).toBeTruthy();
-    expect(crumbs().getByRole('link', { name: 'Access' })).toBeTruthy();
+    expect(crumbs().getByRole('link', { name: 'Administration' })).toBeTruthy();
+    expect(crumbs().getByRole('link', { name: 'People & access' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Groups' }).getAttribute('aria-current')).toBe('page');
     // The area crumb opens the area's first page.
-    fireEvent.click(crumbs().getByRole('link', { name: 'Access' }));
-    expect(window.location.hash).toBe('#/access/users');
+    fireEvent.click(crumbs().getByRole('link', { name: 'Administration' }));
+    expect(window.location.hash).toBe('#/admin/users');
     expect(await screen.findByRole('heading', { name: 'Users' })).toBeTruthy();
+  });
+
+  it('keeps the area of the current page open and closes the others when the page changes area', async () => {
+    await signIn();
+    await openPage('Administration', 'Groups');
+    await openPage('Faxes', 'Sent');
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/sent'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Administration' }).getAttribute('aria-expanded')).toBe('false'));
+    expect(screen.getByRole('button', { name: 'Faxes' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('follows Back and Forward through the address', async () => {
     await signIn();
-    await openPage('Access', 'Roles');
+    await openPage('Administration', 'Roles');
     await screen.findByRole('heading', { name: 'Roles' });
     act(() => {
-      window.history.replaceState(null, '', '#/access/groups');
+      window.history.replaceState(null, '', '#/admin/groups');
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
     expect(await screen.findByRole('heading', { name: 'Groups' })).toBeTruthy();
   });
 
-  it('shows a page this person may open instead of one they may not, without adding history', async () => {
-    window.history.replaceState(null, '', '/#/system/security');
+  it('opens an old bookmark at the new page with its query, says once where it moved from, and adds no history', async () => {
+    grant('settings:read');
+    window.history.replaceState(null, '', '/#/costs/savings?part=sslfax');
     const before = window.history.length;
     await signIn();
-    await waitFor(() => expect(window.location.hash).toBe('#/faxes/received'));
+    await waitFor(() => expect(window.location.hash).toBe('#/savings/results?part=sslfax'));
     expect(window.history.length).toBe(before);
+    expect((await screen.findByTestId('moved-notice')).textContent)
+      .toBe('You opened an old link to Costs › Savings; this is its new home.');
+    expect(crumbs().getByText('Savings results').getAttribute('aria-current')).toBe('page');
+    // Moving on clears the notice.
+    await openPage('Savings & optimization', 'Spending');
+    await waitFor(() => expect(window.location.hash).toBe('#/savings/spending'));
+    expect(screen.queryByTestId('moved-notice')).toBeNull();
+  });
+
+  it('never shows the moved notice for a link inside the console', async () => {
+    grant('settings:read', 'settings:write');
+    window.history.replaceState(null, '', '/#/savings/results');
+    await signIn();
+    fireEvent.click(await screen.findByRole('button', { name: 'AI analysis settings' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/admin/analysis'));
+    expect(crumbs().getByText('AI analysis').getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByTestId('moved-notice')).toBeNull();
+  });
+
+  it('opens the old Work address as Received, waiting for an owner', async () => {
+    window.history.replaceState(null, '', '/#/faxes/work');
+    await signIn();
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/received?show=waiting'));
+    expect((await screen.findByTestId('moved-notice')).textContent).toContain('Faxes › Work');
+  });
+
+  it('shows its own state for a page this person may not open, without opening another page or changing the address', async () => {
+    window.history.replaceState(null, '', '/#/system/security?section=secret-value');
+    const before = window.history.length;
+    await signIn();
+    const state = await screen.findByTestId('address-forbidden');
+    expect(within(state).getByRole('heading', { name: 'Not available to you' })).toBeTruthy();
+    expect(state.textContent).toContain('Your account does not have access to this page.');
+    expect(document.body.textContent).not.toContain('secret-value');
+    expect(window.location.hash).toBe('#/system/security?section=secret-value');
+    expect(window.history.length).toBe(before);
+    expect(screen.queryByRole('navigation', { name: 'You are here' })).toBeNull();
+    // The way on is the first page this person may open.
+    fireEvent.click(within(state).getByRole('link', { name: 'Go to Received' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/received'));
+    expect(screen.queryByTestId('address-forbidden')).toBeNull();
+  });
+
+  it('shows its own state for an address that names no page', async () => {
+    window.history.replaceState(null, '', '/#/admin/no-such-page');
+    await signIn();
+    const state = await screen.findByTestId('address-unknown');
+    expect(within(state).getByRole('heading', { name: 'Page not found' })).toBeTruthy();
+    expect(state.textContent).toContain('There is no page at this address.');
+    expect(window.location.hash).toBe('#/admin/no-such-page');
+    // The panel stays, with nothing marked as the current page.
+    expect(panel().queryAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')).toEqual([]);
+  });
+
+  it('opens the first page this person may open when the address is empty', async () => {
+    window.history.replaceState(null, '', '/#/');
+    await signIn();
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/received'));
+    expect(screen.queryByTestId('moved-notice')).toBeNull();
+  });
+
+  it('says an address that is not an address names no page, instead of opening the first page', async () => {
+    window.history.replaceState(null, '', '/#/faxes/received/123');
+    await signIn();
+    expect(await screen.findByTestId('address-unknown')).toBeTruthy();
+    expect(window.location.hash).toBe('#/faxes/received/123');
+  });
+
+  it('closes the other areas when the person opens one, except the area of the current page', async () => {
+    window.history.replaceState(null, '', '/#/admin/roles');
+    await signIn();
+    await screen.findByRole('heading', { name: 'Roles' });
+    const expanded = (name: string) => screen.getByRole('button', { name }).getAttribute('aria-expanded');
+    fireEvent.click(screen.getByRole('button', { name: 'Faxes' }));
+    await waitFor(() => expect(expanded('Faxes')).toBe('true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery setup' }));
+    await waitFor(() => expect(expanded('Faxes')).toBe('false'));
+    expect(expanded('Delivery setup')).toBe('true');
+    expect(expanded('Administration')).toBe('true');
+    // Closing an area by hand still works.
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery setup' }));
+    await waitFor(() => expect(expanded('Delivery setup')).toBe('false'));
+  });
+
+  it('names the six areas on the sign-in page', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    for (const label of ['Overview', 'Savings & optimization', 'Faxes', 'Delivery setup', 'Recipients', 'Administration']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    for (const older of ['Numbers', 'Providers', 'Costs']) expect(screen.queryByText(older)).toBeNull();
+  });
+
+  it('keeps Send a fax at the top of the panel for people who may send, and only once', async () => {
+    await signIn();
+    const send = await screen.findByRole('link', { name: 'Send a fax' });
+    expect(send.getAttribute('href')).toBe('#/faxes/send');
+    expect(screen.getAllByRole('link', { name: 'Send a fax' })).toHaveLength(1);
+    fireEvent.click(send);
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/send'));
+    expect(screen.getByRole('link', { name: 'Send a fax' }).getAttribute('aria-current')).toBe('page');
     expect(crumbs().getByRole('link', { name: 'Faxes' })).toBeTruthy();
   });
 
-  it('opens every page at its own address, with its area and name above it', async () => {
+  it('keeps Send a fax in the phone bar, and in the menu drawer while it is open', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('max-width') })) as typeof window.matchMedia;
+    try {
+      window.history.replaceState(null, '', '/#/admin/roles');
+      // On a phone the person's own menu is in the drawer, so wait for the page instead of their name.
+      render(<App />);
+      await screen.findByRole('heading', { name: 'Sign in' });
+      fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } });
+      fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct horse' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      expect(await screen.findByRole('heading', { name: 'Roles' })).toBeTruthy();
+      expect((await screen.findAllByRole('link', { name: 'Send a fax' }))).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: 'open navigation' }));
+      // The drawer opens on the current page's area, with Send a fax at its top instead of in the bar.
+      const drawerPanel = await screen.findByRole('navigation', { name: 'Console' });
+      expect(within(drawerPanel).getByRole('link', { name: 'Roles' }).getAttribute('aria-current')).toBe('page');
+      await waitFor(() => expect(screen.getAllByRole('link', { name: 'Send a fax' })).toHaveLength(1));
+      fireEvent.click(screen.getByRole('link', { name: 'Send a fax' }));
+      await waitFor(() => expect(window.location.hash).toBe('#/faxes/send'));
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it('offers no Send a fax to people who may not send', async () => {
+    revoke('fax:send');
+    await signIn();
+    await screen.findByRole('button', { name: 'Faxes' });
+    expect(screen.queryByRole('link', { name: 'Send a fax' })).toBeNull();
+    expect(screen.queryByTestId('send-action')).toBeNull();
+  });
+
+  it('opens every page at its own address, with its area, group and name above it', async () => {
     grant(...everything);
     backend.state.providerView = { plugins_enabled: true, install_enabled: false, active_outbound: 'phaxio', active_inbound: '' };
     server.use(
@@ -197,18 +404,17 @@ describe('the console shell', () => {
         if (area.pages.length > 1) {
           await waitFor(() => expect(crumbs().getByText(page.label).getAttribute('aria-current')).toBe('page'));
           if (page.label !== area.label) expect(crumbs().getByRole('link', { name: area.label })).toBeTruthy();
+          if (page.group) expect(crumbs().getByRole('link', { name: page.group })).toBeTruthy();
         } else {
           expect(await screen.findByRole('heading', { name: area.label })).toBeTruthy();
         }
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    // With Providers → Rules, Numbers → Blocked senders, Numbers → Email and folders, Numbers → Your NPI record,
-    // Faxes → Forms, Costs → Charges, Costs → Invoices and System → AI analysis.
-    expect(opened).toEqual(expect.arrayContaining(['numbers/advice', 'system/analysis', 'costs/recommendations']));
+    expect(opened).toEqual(expect.arrayContaining(['delivery/moves', 'admin/analysis', 'savings/opportunities', 'savings/capabilities']));
     expect(new Set(opened).size).toBe(opened.length);
-    expect(opened).not.toContain('system/remote');
-    expect(opened).not.toContain('providers/freeswitch');
+    expect(opened).not.toContain('admin/remote');
+    expect(opened).not.toContain('delivery/freeswitch');
   }, 60000);
 
   it('keeps the old destination names working', async () => {
@@ -231,11 +437,11 @@ describe('the user menu', () => {
     expect((await screen.findByTestId('user-role')).textContent).toBe('Fax Operator');
     fireEvent.click(screen.getByTestId('user-menu-button'));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'My API keys' }));
-    await waitFor(() => expect(window.location.hash).toBe('#/access/keys?mine=1'));
+    await waitFor(() => expect(window.location.hash).toBe('#/admin/keys?mine=1'));
     expect(await screen.findByText('My laptop')).toBeTruthy();
     expect(screen.queryByText('Scanner')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
-    await waitFor(() => expect(window.location.hash).toBe('#/access/keys'));
+    await waitFor(() => expect(window.location.hash).toBe('#/admin/keys'));
     expect(await screen.findByText('Scanner')).toBeTruthy();
   });
 
@@ -247,7 +453,7 @@ describe('the user menu', () => {
     expect(await screen.findByRole('menuitem', { name: 'My sessions' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'My API keys' })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: 'My sessions' }));
-    await waitFor(() => expect(window.location.hash).toBe('#/access/sessions'));
+    await waitFor(() => expect(window.location.hash).toBe('#/admin/sessions'));
   });
 
   it('saves the chosen appearance', async () => {

@@ -121,10 +121,10 @@ def new_reference():
 
 
 def may_see_on(control, connection, principal_id, resource_id):
-    """Whether this user can read this sent fax now (``fax:read``)."""
+    """Whether this user holds ``fax:read`` on this sent fax now; a temporary password does not count against them."""
     if not principal_id or not resource_id:
         return False
-    context, source = _target(control, principal_id)
+    context, source = _target(control, principal_id, grants_only=True)
     return connection.execute(control._allowed_query(context, source, 'fax:read', resource_id=resource_id)
                               ).first() is not None
 

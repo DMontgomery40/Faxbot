@@ -1,10 +1,15 @@
-"""The shape of the faxbot command: two verbs, then the console's eight areas.
+"""The shape of the faxbot command: two verbs, then the console's six areas.
 
-`faxbot send` and `faxbot status`, then received, sent, numbers, recipients,
-providers, costs, access and system, each holding what its console area holds.
-`faxbot forms` is the Faxes area's Forms page, beside send, received and sent; `faxbot expected` is its
-Expected page.
+`faxbot send` and `faxbot status`, then overview, savings, faxes, delivery,
+recipients and admin, each holding what its console area holds.
 Commands are defined in their modules; this module gives each one its home.
+
+The groups the command had before the six areas (received, sent, forms, expected,
+numbers, providers, costs, access, system) are the same group objects, mounted twice:
+visible under their new home and hidden under their old name, so scripts keep
+working and a command added to an old group appears under its new name too. A few
+commands were renamed in their group (costs savings is savings results); the old
+name stays registered beside the new one, hidden. ALIASES lists every hidden name.
 """
 import typer
 
@@ -23,8 +28,11 @@ from .commands import digital
 from .commands import forwarded_trust
 from .commands import expected as expected_commands
 from .commands import cases as case_commands
+from .commands import capabilities as capability_commands
+from .commands import overview as overview_commands
 
-NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
+# The console's six areas. Overview is one command; the others are groups.
+NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
 
 
 def _group(help):
@@ -91,8 +99,8 @@ sent.command('continue')(continuation.continue_fax)
 
 # -- numbers -------------------------------------------------------------------------
 
-numbers = _group("Your fax numbers: which mailbox each number's faxes go to, the mailboxes themselves, email "
-                 'delivery, and the mailboxes and folders that bring documents in or send faxes.')
+numbers = _group("Your fax numbers: which mailbox each number's faxes go to, advice on keeping or moving them, "
+                 'and moving one between your accounts.')
 numbers.command('list')(access.numbers_list)
 numbers.command('add')(access.numbers_add)
 numbers.command('update')(access.numbers_update)
@@ -102,14 +110,15 @@ mailboxes.command('list')(access.mailboxes_list)
 mailboxes.command('add')(access.mailboxes_add)
 mailboxes.command('update')(access.mailboxes_update)
 mailboxes.command('target')(work.work_settings)
-numbers.add_typer(mailboxes, name='mailboxes')
-email = _group('Email delivery of received faxes.')
+email = _group('Email delivery of received faxes to your staff.')
 email.add_typer(delivery.connectors, name='connectors')
-numbers.add_typer(email, name='email')
-numbers.add_typer(reply.reply, name='reply')
-numbers.add_typer(blocked.blocked, name='blocked')
-numbers.add_typer(connectors.connectors, name='connectors')
-numbers.add_typer(number_advice.npi, name='npi')
+# Their own homes are under delivery (and admin npi); the older names under numbers still work.
+numbers.add_typer(mailboxes, name='mailboxes', hidden=True)
+numbers.add_typer(email, name='email', hidden=True)
+numbers.add_typer(reply.reply, name='reply', hidden=True)
+numbers.add_typer(blocked.blocked, name='blocked', hidden=True)
+numbers.add_typer(connectors.connectors, name='connectors', hidden=True)
+numbers.add_typer(number_advice.npi, name='npi', hidden=True)
 numbers.command('advice')(fact_advice.numbers_advice)
 numbers.command('dependencies')(fact_advice.numbers_dependencies)
 numbers.add_typer(fact_advice.move, name='move')
@@ -117,8 +126,8 @@ numbers.add_typer(forwarded_trust.forwarded_trust, name='forwarded-trust')
 
 # -- recipients ----------------------------------------------------------------------
 
-recipients = _group('Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and'
-                    ' case packets.')
+recipients = _group('Fax numbers you send to: routing, batching several faxes into one call, and direct delivery '
+                    'partners.')
 recipients.command('list')(delivery.routing_destinations)
 recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
@@ -161,8 +170,9 @@ partners.command('introduce')(discovery.introduce)
 partners.command('may-introduce')(discovery.may_introduce)
 partners.add_typer(discovery.publish, name='publish')
 recipients.add_typer(partners, name='partners')
-# The case group, with the commands case_commands adds (accept, repair, checklists ...).
-recipients.add_typer(case_commands.cases, name='cases')
+# The case group, with the commands case_commands adds (accept, repair, checklists ...). Its home is faxes cases;
+# recipients cases still works.
+recipients.add_typer(case_commands.cases, name='cases', hidden=True)
 recipients.add_typer(delivery.toll_free, name='toll-free')
 recipients.command('check')(number_advice.recipient_check)
 recipients.add_typer(digital.recipients, name='digital')
@@ -189,28 +199,36 @@ providers.add_typer(humblefax, name='humblefax')
 providers.add_typer(trunk.trunk, name='trunk')
 providers.add_typer(accounts.accounts, name='accounts')
 providers.add_typer(digital.accounts, name='digital')
-providers.add_typer(rules.rules, name='rules')
+# Its home is delivery rules; providers rules still works.
+providers.add_typer(rules.rules, name='rules', hidden=True)
 
-# -- costs ---------------------------------------------------------------------------
+# -- savings (the costs group, mounted as savings) --------------------------------------
 
-costs = _group('What faxing costs you: spending by route, charges from your carrier, and the prices and plans Faxbot'
-               ' uses.')
+costs = _group('What Faxbot can do to save money here and what it has saved, and what faxing costs you: spending, '
+               'charges, invoices, and the prices and plans Faxbot uses.')
+# The Savings & optimization pages first, in the console's order. The map of every way Faxbot saves money stays
+# `mechanisms`; the capabilities commands (#50) are their own group, `savings capabilities`.
+costs.command('mechanisms')(delivery.routing_mechanisms)
+costs.add_typer(delivery.recommendations, name='opportunities')
+costs.command('facts')(fact_advice.costs_advice)
+costs.command('results')(delivery.routing_savings)
+# Their older names still work, hidden.
+costs.add_typer(delivery.recommendations, name='recommendations', hidden=True)
+costs.command('advice', hidden=True)(fact_advice.costs_advice)
+costs.command('savings', hidden=True)(delivery.routing_savings)
 costs.command('spending')(delivery.routing_costs)
 costs.command('reconcile')(delivery.routing_reconcile)
 costs.command('fax')(delivery.routing_fax_cost)
 costs.command('received')(delivery.routing_received_costs)
-costs.command('savings')(delivery.routing_savings)
-costs.command('advice')(fact_advice.costs_advice)
 costs.command('portfolio')(portfolio_commands.portfolio)
-costs.command('mechanisms')(delivery.routing_mechanisms)
-costs.add_typer(delivery.recommendations, name='recommendations')
+costs.add_typer(capability_commands.capabilities, name='capabilities')
+costs.add_typer(charge_commands.charges, name='charges')
+costs.add_typer(charge_commands.invoices, name='invoices')
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('rate-rows')(delivery.routing_rate_rows)
 costs.add_typer(delivery.plans, name='plans')
 costs.command('state-prices')(number_advice.state_prices)
 costs.command('predict')(delivery.routing_predict)
-costs.add_typer(charge_commands.charges, name='charges')
-costs.add_typer(charge_commands.invoices, name='invoices')
 
 costs.command('analysis')(analysis_commands.analysis_status)
 
@@ -234,13 +252,16 @@ people.add_typer(settings.pair, name='pair')
 people.add_typer(access.resources, name='resources')
 people.add_typer(access.owner, name='owner')
 
-# -- system --------------------------------------------------------------------------
+# -- admin (the system group, mounted as admin) -------------------------------------------
 
-system = _group('Look after the installation: settings, checks, logs, the security log, backups and restarts.')
+system = _group('Look after the installation: people and access, setup, settings, checks, logs, the security log, '
+                'backups and restarts.')
+system.add_typer(people, name='access')
 # Suggested packs from what Faxbot knows: the Setup page's Suggested packs.
 system.add_typer(setup_plan.setup, name='setup')
 system.add_typer(settings.settings, name='settings')
 system.add_typer(analysis_commands.analysis, name='analysis')
+system.add_typer(number_advice.npi, name='npi')
 checks = _copy(settings.diagnostics)
 checks.command('test-fax')(fax.inbound_simulate)
 system.add_typer(checks, name='diagnostics')
@@ -258,17 +279,81 @@ for _name, _command in (('status', admin.admin_status), ('migrate', admin.admin_
                         ('restore', admin.admin_restore)):
     system.command(_name)(admin.on_this_computer(_command))
 
-HOMES = {'received': received, 'sent': sent, 'numbers': numbers, 'recipients': recipients, 'providers': providers,
-         'costs': costs, 'access': people, 'system': system}
+# -- faxes ----------------------------------------------------------------------------
+
+faxes = _group('Faxes received, sent and expected, forms to fill in and send, and case packets.')
+faxes.add_typer(received, name='received')
+faxes.add_typer(sent, name='sent')
+# Faxes recorded before they arrive, and recovery after a source system's outage.
+faxes.add_typer(expected_commands.expected, name='expected')
+faxes.add_typer(forms.forms, name='forms')
+faxes.add_typer(case_commands.cases, name='cases')
+
+# -- delivery -------------------------------------------------------------------------
+
+delivery_setup = _group('How faxes come in, go out and reach your staff: numbers, mailboxes, sending identity, '
+                        'email delivery, the email and folders that bring documents in, providers and routing rules.')
+delivery_setup.add_typer(numbers, name='numbers')
+delivery_setup.add_typer(mailboxes, name='mailboxes')
+delivery_setup.add_typer(blocked.blocked, name='blocked')
+delivery_setup.add_typer(reply.reply, name='identity')
+delivery_setup.add_typer(email, name='email')
+delivery_setup.add_typer(connectors.connectors, name='connectors')
+delivery_setup.add_typer(providers, name='providers')
+delivery_setup.add_typer(rules.rules, name='rules')
+
+# The six areas after send and status. Overview is a command of its own.
+HOMES = {'savings': costs, 'faxes': faxes, 'delivery': delivery_setup, 'recipients': recipients, 'admin': system}
+
+# The older top-level names, each the same group as its new home, hidden from help.
+OLD_HOMES = {'received': received, 'sent': sent, 'forms': forms.forms, 'expected': expected_commands.expected,
+             'numbers': numbers, 'providers': providers, 'costs': costs, 'access': people, 'system': system}
+
+# Every hidden name, as the command path it is typed with, and the visible path it means now.
+ALIASES = {
+    ('received',): ('faxes', 'received'),
+    ('sent',): ('faxes', 'sent'),
+    ('forms',): ('faxes', 'forms'),
+    ('expected',): ('faxes', 'expected'),
+    ('numbers',): ('delivery', 'numbers'),
+    ('providers',): ('delivery', 'providers'),
+    ('costs',): ('savings',),
+    ('access',): ('admin', 'access'),
+    ('system',): ('admin',),
+    ('recipients', 'cases'): ('faxes', 'cases'),
+    ('savings', 'recommendations'): ('savings', 'opportunities'),
+    ('savings', 'advice'): ('savings', 'facts'),
+    ('savings', 'savings'): ('savings', 'results'),
+    ('delivery', 'numbers', 'mailboxes'): ('delivery', 'mailboxes'),
+    ('delivery', 'numbers', 'email'): ('delivery', 'email'),
+    ('delivery', 'numbers', 'reply'): ('delivery', 'identity'),
+    ('delivery', 'numbers', 'blocked'): ('delivery', 'blocked'),
+    ('delivery', 'numbers', 'connectors'): ('delivery', 'connectors'),
+    ('delivery', 'numbers', 'npi'): ('admin', 'npi'),
+    ('delivery', 'providers', 'rules'): ('delivery', 'rules'),
+}
+
+
+def canonical(path):
+    """The visible path an older command path means now: ('costs', 'savings') -> ('savings', 'results').
+
+    Arguments after the command words are kept as they are."""
+    path = tuple(path)
+    while True:
+        for length in range(len(path), 0, -1):
+            if path[:length] in ALIASES:
+                path = ALIASES[path[:length]] + path[length:]
+                break
+        else:
+            return path
 
 
 def register(app):
     app.command('send')(fax.send)
     app.command('status')(fax.status)
+    # The console's Overview: what Faxbot is doing here and what needs attention.
+    app.command('overview')(overview_commands.overview)
     for name, home in HOMES.items():
         app.add_typer(home, name=name)
-        if name == 'sent':
-            # The Faxes area's third page.
-            app.add_typer(forms.forms, name='forms')
-            # Faxes -> Expected: faxes recorded before they arrive, and recovery after a source system's outage.
-            app.add_typer(expected_commands.expected, name='expected')
+    for name, group in OLD_HOMES.items():
+        app.add_typer(group, name=name, hidden=True)

@@ -39,7 +39,7 @@ export default function NpiRecordPanel({ client, canWrite }: { client: AdminAPIC
   if (!record) return error ? <DeliveryError error={error} /> : null;
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="npi-record">
-      <Typography variant="h6" component="h3">Your NPI record</Typography>
+      <Typography variant="h6" component="h3">NPI record</Typography>
       <Typography variant="body2" sx={{ mb: 1 }}>{record.sentence}</Typography>
       {record.problem && <Alert severity="warning" sx={{ mb: 1 }}>{record.problem}</Alert>}
       {error ? <DeliveryError error={error} onClose={() => setError(null)} /> : null}

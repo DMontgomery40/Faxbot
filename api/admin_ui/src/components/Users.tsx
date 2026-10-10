@@ -417,7 +417,7 @@ export default function Users({ client, me }: { client: AdminAPIClient; me: Auth
             control={<Checkbox checked={creating.enabled} onChange={(e) => setCreating({ ...creating, enabled: e.target.checked })} />} />
         )}
         {creating?.kind === 'user' && (
-          <Typography variant="body2" color="text.secondary">New people start with no access. Give them a role under Access.</Typography>
+          <Typography variant="body2" color="text.secondary">New people start with no access. Give them a role under Who has access.</Typography>
         )}
       </FormDialog>
 

@@ -425,3 +425,42 @@ def test_a_simulated_test_fax_is_marked_as_a_test_in_the_queue(client):
     feed()
     (item,) = client.get('/work', headers=B).json()['items']
     assert item['is_test'] is True and item['inbound_fax_id'] == simulated.json()['id']
+
+
+def test_people_who_hold_the_document_can_own_it_before_they_set_their_password(client, tmp_path):
+    """A new user still has a temporary password; their grants decide, for a test fax and a received fax alike.
+
+    The symptom on a fresh install: the Owner, never signed in, was refused as "cannot see this document".
+    """
+    from api.tests.test_access_management_http import create_user
+    front = mailbox(client, 'Front Desk', '+15550100001')
+    billing = mailbox(client, 'Billing', '+15550100002')
+    owner = create_user(client, 'owner', 'Dev Owner')['user']  # installation grant, temporary password
+    assign(client, owner['id'], 'role_owner')
+    mara = create_user(client, 'mara')['user']  # mailbox grant, temporary password
+    assign(client, mara['id'], 'role_fax_operator', front['resource_id'])
+    _, olive = ready_user(client, 'olive')  # mailbox grant, password set
+    assign(client, olive['id'], 'role_fax_operator', front['resource_id'])
+    _, otto = ready_user(client, 'otto')  # no grant, password set
+    nell = create_user(client, 'nell')['user']  # no grant, temporary password
+    _, bill = ready_user(client, 'bill')  # another mailbox only
+    assign(client, bill['id'], 'role_fax_operator', billing['resource_id'])
+    simulated = client.post('/admin/inbound/simulate', headers=B, json={'fr': '+15550000000', 'to': '+15550100001'})
+    assert simulated.status_code == 200, simulated.text
+    received = receive(tmp_path, '+15550100001', content=pdf('Synthetic referral'))
+    feed()
+    for fax, is_test in ((simulated.json()['id'], True), (received, False)):
+        item = item_of(client, fax)
+        assert item['is_test'] is is_test and item['mailbox'] == 'Front Desk'
+        people = client.get(f"/work/{item['id']}/assignees", headers=B).json()['people']
+        assert [person['login'] for person in people] == ['owner', 'mara', 'olive'], is_test
+        for outsider, name in ((otto, 'Otto'), (nell, 'Nell'), (bill, 'Bill')):
+            refused = client.post(f"/work/{item['id']}/assign", headers=B,
+                                  json={'principal_id': outsider['id'], 'version': item['version']})
+            assert refused.status_code == 400
+            assert refused.json()['detail'] == f'{name} cannot see this document, so it cannot be assigned to them.'
+        assigned = client.post(f"/work/{item['id']}/assign", headers=B,
+                               json={'principal_id': owner['id'], 'version': item['version']})
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()['owner'] == {'id': owner['id'], 'name': 'Dev Owner'}
+        assert client.get(f"/work/{item['id']}", headers=B).json()['owner_can_see'] is True

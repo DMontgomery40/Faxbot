@@ -1,6 +1,6 @@
 """Direct messages and FHIR on the command line: the accounts (Providers) and each recipient's addresses (Recipients).
 
-`faxbot providers digital` manages HISP accounts and FHIR clients. Secrets (passwords, private keys) are read
+`faxbot delivery providers digital` manages HISP accounts and FHIR clients. Secrets (passwords, private keys) are read
 from a hidden prompt, from standard input, or from a file, never from the command line, and Faxbot never shows
 them again. `faxbot recipients digital` puts a recipient's Direct address or FHIR endpoint on file, confirms or
 withdraws it, and asks the NPI registry for suggestions. Faxbot uses an address only once it is confirmed.
@@ -22,9 +22,9 @@ recipients = typer.Typer(help="A recipient's Direct address or FHIR endpoint: pu
                               'it, or look one up in the NPI registry.', no_args_is_help=True)
 
 KINDS = {'hisp': 'Direct messages (HISP)', 'fhir': 'FHIR client'}
-NO_PUBLIC_ADDRESS = ("Set this Faxbot's public web address (faxbot system settings set public_api_url=...) so the "
+NO_PUBLIC_ADDRESS = ("Set this Faxbot's public web address (faxbot admin settings set public_api_url=...) so the "
                      "recipient's system can read its public key set, or give it the key set from "
-                     "'faxbot providers digital public-keys'.")
+                     "'faxbot delivery providers digital public-keys'.")
 HEALTH = {'ready': 'Ready', 'not_set_up': 'Not set up', 'off': 'Turned off'}
 STATES = {'suggested': 'Suggested', 'confirmed': 'Confirmed', 'withdrawn': 'Withdrawn', 'dismissed': 'Dismissed'}
 SOURCES = {'entered': 'You entered it', 'nppes': 'NPI registry'}
@@ -41,7 +41,7 @@ def find(current, key):
     for account in current.get('accounts') or []:
         if account['key'] == key or account['label'].strip().casefold() == key.strip().casefold():
             return account
-    raise CliError(f"No Direct or FHIR account is called '{key}'. See 'faxbot providers digital list'.",
+    raise CliError(f"No Direct or FHIR account is called '{key}'. See 'faxbot delivery providers digital list'.",
                    EXIT_NOT_FOUND)
 
 
@@ -146,7 +146,7 @@ def accounts_list():
         [[item['label'], item['key'], KINDS[item['provider']], 'on' if item['enabled'] else 'off',
           HEALTH.get(item['health']['state'], item['health']['state']), item.get('plan') or '-']
          for item in current.get('accounts') or []],
-        empty="No Direct or FHIR account yet. Add one with 'faxbot providers digital add'."))
+        empty="No Direct or FHIR account yet. Add one with 'faxbot delivery providers digital add'."))
 
 
 @accounts.command('show')
@@ -241,7 +241,7 @@ def accounts_public_keys(key: str = typer.Argument(..., metavar='KEY', help="The
     current = load(state.api())
     account = find(current, key)
     if not account.get('public_keys'):
-        raise CliError("This FHIR client has no signing key yet. Make one with 'faxbot providers digital "
+        raise CliError("This FHIR client has no signing key yet. Make one with 'faxbot delivery providers digital "
                        "signing-key'.")
     state.out().result(account['public_keys'], lambda out: out.line(json.dumps(account['public_keys'], indent=2)))
 

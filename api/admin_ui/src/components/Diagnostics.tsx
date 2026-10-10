@@ -166,7 +166,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}
         flexDirection={{ xs: 'column', sm: 'row' }} gap={2} mb={1}>
-        <Typography variant="h4" component="h1">Diagnostics</Typography>
+        <Typography variant="h4" component="h1">System health</Typography>
         <Box display="flex" gap={1} flexWrap="wrap">
           <Button variant="contained" onClick={() => void checkNow()} disabled={checking}
             startIcon={checking ? <CircularProgress size={18} color="inherit" /> : <RefreshIcon />}>

@@ -938,7 +938,7 @@ describe('System, milestone 5', () => {
     expect(within(rows).getByText('Where the installation key is kept')).toBeTruthy();
     // The recovery copy is kept one release; its button says what replaces it.
     expect(screen.getByTestId('recovery-retiring').textContent).toBe(
-      'The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot system backup).');
+      'The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot admin backup).');
     expect(within(rows).getAllByText('Not set: Faxbot keeps it in its data folder.')).toHaveLength(2);
   });
 
@@ -959,7 +959,7 @@ describe('System, milestone 5', () => {
     reply = report('attention', 'Received faxes go to online storage, but Faxbot has not checked that it can reach it. '
       + 'Turn on Also check the S3 bucket below.');
     fireEvent.click(screen.getByRole('button', { name: 'Check the bucket' }));
-    expect(await screen.findByText('Turn on Also check the S3 bucket under System → Diagnostics, then check again.')).toBeTruthy();
+    expect(await screen.findByText('Turn on Also check the S3 bucket under Administration → System health, then check again.')).toBeTruthy();
     expect(runs).toBe(2);
   });
 

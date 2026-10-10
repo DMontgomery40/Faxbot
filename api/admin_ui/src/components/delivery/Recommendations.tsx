@@ -89,7 +89,7 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
 
   return (
     <Box>
-      <ScreenHeader title="Recommendations" />
+      <ScreenHeader title="Opportunities" />
       <AnalysisCard client={client} onNavigate={onNavigate} />
       <Stack spacing={3}>
         {empty && (

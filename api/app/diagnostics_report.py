@@ -131,9 +131,9 @@ async def _sign_in(configuration):
     try:
         service = service_from_profile(ProviderProfile('diagnostics', 'diagnostics', configuration))
     except ProviderExecutionError:
-        return PROBLEM, f'Faxbot cannot use the saved {name} settings. Open Providers and save them again.'
+        return PROBLEM, f'Faxbot cannot use the saved {name} settings. Open Providers & accounts and save them again.'
     if not service.is_configured():
-        return PROBLEM, f'Some of {name}\'s sign-in details are missing. Add them in Providers.'
+        return PROBLEM, f'Some of {name}\'s sign-in details are missing. Add them in Delivery setup.'
     provider = configuration.provider_id
     try:
         if provider == 'humblefax':
@@ -147,7 +147,7 @@ async def _sign_in(configuration):
         return ATTENTION, f'{name} did not answer within {int(CHECK_SECONDS)} seconds. Check again in a minute.'
     except Exception as error:  # the services raise their own credential errors
         if 'credential' in type(error).__name__.lower() or 'auth' in type(error).__name__.lower():
-            return PROBLEM, f'{name} did not accept Faxbot\'s sign-in details. Enter them again in Providers.'
+            return PROBLEM, f'{name} did not accept Faxbot\'s sign-in details. Enter them again in Delivery setup.'
         return ATTENTION, f'Faxbot could not reach {name} just now. Check this server\'s internet connection.'
     return OK, f'{name} has its sign-in details. The next fax shows whether {name} accepts them.'
 
@@ -161,8 +161,8 @@ async def sending(context: Context) -> list[Finding]:
                         'Set up sending', 'system/setup')]
     if configuration is False:
         return [Finding('sending.provider', 'sending', 'Sending', PROBLEM,
-                        'Faxbot cannot read its saved sending settings. Open Providers and save them again.',
-                        'Open Providers', 'providers/sending')]
+                        'Faxbot cannot read its saved sending settings. Open Providers & accounts and save them again.',
+                        'Open Providers & accounts', 'providers/sending')]
     if configuration.provider_id == 'freeswitch':
         return [Finding('sending.provider', 'sending', 'Sending', ATTENTION,
                         "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup.", 'Open Setup', 'system/setup')]
@@ -172,7 +172,7 @@ async def sending(context: Context) -> list[Finding]:
                         f'Faxes are sent through {name}. Fax engine, below, shows whether {name} accepts Faxbot\'s calls.')]
     status, sentence = await _sign_in(configuration)
     return [Finding('sending.provider', 'sending', 'Sending account', status, sentence,
-                    None if status == OK else 'Open Providers', None if status == OK else 'providers/sending')]
+                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'providers/sending')]
 
 
 @check('receiving')
@@ -180,7 +180,7 @@ async def receiving(context: Context) -> list[Finding]:
     main = _main()
     if not main.settings.inbound_enabled:
         return [Finding('receiving.provider', 'receiving', 'Receiving', OFF, 'Receiving is turned off.',
-                        'Open Providers', 'providers/sending')]
+                        'Open Providers & accounts', 'providers/sending')]
     configuration = _profile(context.request, 'inbound')
     if not configuration:
         return [Finding('receiving.provider', 'receiving', 'Receiving', PROBLEM,
@@ -196,7 +196,7 @@ async def receiving(context: Context) -> list[Finding]:
                         f'{name} receives faxes with the same account it sends with.')]
     status, sentence = await _sign_in(configuration)
     return [Finding('receiving.provider', 'receiving', 'Receiving account', status, sentence,
-                    None if status == OK else 'Open Providers', None if status == OK else 'providers/sending')]
+                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'providers/sending')]
 
 
 # ---------------------------------------------------------------------------

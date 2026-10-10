@@ -151,7 +151,7 @@ def test_a_row_you_save_for_a_sites_trunk_prices_its_calls_and_the_quote_says_wh
 
 
 def test_a_quote_from_a_site_prices_each_account_from_that_site_and_names_it(client):  # noqa: F811
-    """GET /routing/quote?site= (``faxbot costs fax --from-site``) prices each allowed account as a call from the
+    """GET /routing/quote?site= (``faxbot savings fax --from-site``) prices each allowed account as a call from the
     site, with the site's name from the organization's rules: the price and the name come only from the real
     pricing and the real rules store, never from a fallback."""
     publish(client, {'format': 1, 'sites': [{'key': 'leeds', 'name': 'Leeds office', 'country': 'GB',

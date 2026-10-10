@@ -99,12 +99,12 @@ export default function UserMenu({ client, me, onNavigate, onSignOut, onIdentity
             <ListItemText>Change password</ListItemText>
           </MenuItem>
         )}
-        <MenuItem onClick={() => go('access/sessions')}>
+        <MenuItem onClick={() => go('admin/sessions')}>
           <ListItemIcon><DevicesIcon fontSize="small" /></ListItemIcon>
           <ListItemText>My sessions</ListItemText>
         </MenuItem>
         {canSeeKeys && (
-          <MenuItem onClick={() => go('access/keys?mine=1')}>
+          <MenuItem onClick={() => go('admin/keys?mine=1')}>
             <ListItemIcon><VpnKeyIcon fontSize="small" /></ListItemIcon>
             <ListItemText>My API keys</ListItemText>
           </MenuItem>

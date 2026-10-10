@@ -1,6 +1,6 @@
 """Connectors: email mailboxes and folders that bring documents in or send faxes, each document once.
 
-Lives at `faxbot numbers connectors`. Secrets are never taken from the command
+Lives at `faxbot delivery connectors`. Secrets are never taken from the command
 line: Faxbot asks for them without showing what you type, or reads a key file.
 """
 from pathlib import Path
@@ -27,7 +27,7 @@ def _find(api, name):
     items = api.get('/intake/sources')['connectors']
     matches = [item for item in items if item['id'] == name or item['name'].casefold() == name.casefold()]
     if len(matches) != 1:
-        raise CliError(f"No single connector is called '{name}'. See 'faxbot numbers connectors list'.")
+        raise CliError(f"No single connector is called '{name}'. See 'faxbot delivery connectors list'.")
     return matches[0]
 
 
@@ -43,13 +43,13 @@ def connectors_list():
     state.out().result(items, lambda out: out.table(
         ['Name', 'What it does', 'Status', 'Last check', 'Counts'],
         [[item['name'], item['what'], item['status'], local_time(item.get('last_checked_at')), _counts(item)]
-         for item in items], empty='No connectors yet. Add one with: faxbot numbers connectors add'))
+         for item in items], empty='No connectors yet. Add one with: faxbot delivery connectors add'))
 
 
 def _resolve_mailbox(choices, name):
     matches = [box for box in choices['mailboxes'] if box['id'] == name or box['label'].casefold() == name.casefold()]
     if len(matches) != 1:
-        raise CliError(f"No single mailbox is called '{name}'. See 'faxbot numbers mailboxes list'.")
+        raise CliError(f"No single mailbox is called '{name}'. See 'faxbot delivery mailboxes list'.")
     return matches[0]['id']
 
 
@@ -62,7 +62,7 @@ def _resolve_senders(choices, entries):
         matches = [person for person in choices['people']
                    if login.casefold() in ((person.get('login') or '').casefold(), person['id'])]
         if len(matches) != 1:
-            raise CliError(f"No single Faxbot person signs in as '{login}'. See 'faxbot access users list'.")
+            raise CliError(f"No single Faxbot person signs in as '{login}'. See 'faxbot admin access users list'.")
         senders.append({'address': address.strip(), 'principal_id': matches[0]['id']})
     return senders
 
@@ -143,7 +143,7 @@ def connectors_add(
         body['secret'] = _secret(method, service_account_file, ask_secret)
     created = api.post('/intake/sources', json=body)
     state.out().result(created, lambda out: out.line(
-        f"Connector {created['name']} added. Check it with: faxbot numbers connectors test \"{created['name']}\""))
+        f"Connector {created['name']} added. Check it with: faxbot delivery connectors test \"{created['name']}\""))
 
 
 @connectors.command('update')
@@ -240,7 +240,7 @@ def connectors_items(name: str = typer.Argument(None, help='Only this connector.
 
 
 @connectors.command('fax')
-def connectors_fax(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot sent list'.")):
+def connectors_fax(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot faxes sent list'.")):
     """Show who asked for a fax that came in by email or from a folder."""
     result = state.api().get(f'/intake/sources/faxes/{segment(fax_id)}')
     state.out().result(result, lambda out: out.line(result['sentence']))

@@ -87,6 +87,7 @@ from .routing.number_http import router as routing_number_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.polling_http import router as routing_polling_router
 from .routing.charges_http import router as routing_charges_router
+from .routing.capabilities_http import router as routing_capabilities_router
 from .rules.http import router as rules_router
 from .routing.reply_http import router as reply_number_router
 from .inbound.screening_http import router as screening_router
@@ -225,6 +226,7 @@ app.include_router(routing_number_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_polling_router)
 app.include_router(routing_charges_router)
+app.include_router(routing_capabilities_router)
 app.include_router(rules_router)
 app.include_router(reply_number_router)
 app.include_router(screening_router)
@@ -1692,10 +1694,12 @@ async def list_admin_jobs(
     backend: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    # Only faxes whose delivery changed in the last this many hours (Overview: failed in the last 24 hours).
+    since_hours: Optional[int] = Query(default=None, ge=1, le=8784),
     identity=Depends(require_identity),
 ):
     page = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.page(
-        identity.actor, status=status, backend=backend, limit=limit, offset=offset)))
+        identity.actor, status=status, backend=backend, limit=limit, offset=offset, since_hours=since_hours)))
     together = await run_lifecycle_step(lambda: batching_summaries(
         _configuration_manager().store.engine, [row['id'] for row in page['jobs']]))
     return {'total': page['total'], 'jobs': [{**_admin_fax_view(row), 'together': together.get(row['id'])}
@@ -1837,7 +1841,7 @@ class PersistSettingsIn(BaseModel):
           dependencies=[Depends(require_permission('owner:recover', audit=True, complete_owner=True))],
           responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def persist_settings(payload: PersistSettingsIn):
-    """Deprecated: removed in the next release; back up with `faxbot system backup` instead.
+    """Deprecated: removed in the next release; back up with `faxbot admin backup` instead.
 
     Atomically export desired settings to the installation's private recovery file.
 

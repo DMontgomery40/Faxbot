@@ -1,7 +1,8 @@
 """Screen paths in the guides name areas the console really has.
 
-The console's navigation was reorganized (Tools, Settings and Jobs became Faxes, Numbers, Recipients,
-Providers, Costs, Access and System), and guides kept naming the old areas for weeks because
+The console's navigation was reorganized twice (Tools, Settings and Jobs became Faxes, Numbers, Recipients,
+Providers, Costs, Access and System; those became Overview, Savings & optimization, Faxes, Delivery setup,
+Recipients and Administration in October 2026), and guides kept naming the old areas for weeks because
 Docs Autopilot checked labels but not paths. This check reads the top-level areas from
 api/admin_ui/src/navigation.tsx and fails on any bold path such as **Tools → Delivery routes** whose
 first step is not one of them. Pages inside an area are left to Docs Autopilot, since some are
@@ -16,7 +17,9 @@ PATH = re.compile(r"\*\*([A-Z][A-Za-z &]+) → ")
 # Other products' screens that guides walk through, by page.
 OTHER_PRODUCTS = {
     ('docs/setup/avaya.md', 'Line'),  # Avaya IP Office Manager
+    ('docs/setup/avaya.md', 'System'),  # Avaya IP Office Manager: System → LAN1 (or LAN2) → VoIP
     ('docs/setup/sip-trunk.md', 'Account settings'),  # the Telnyx portal
+    ('docs/setup/sip-trunk.md', 'Numbers'),  # the Telnyx portal: Numbers → My Numbers
 }
 
 
@@ -29,7 +32,7 @@ def guides():
 
 def test_every_screen_path_starts_with_an_area_the_console_has():
     areas = set(AREA.findall((ROOT / 'api/admin_ui/src/navigation.tsx').read_text()))
-    assert {'Faxes', 'Costs', 'System'} <= areas, areas
+    assert {'Faxes', 'Savings & optimization', 'Administration'} <= areas, areas
     wrong = [f'{name}:{number}: **{area} → …'
              for name, text in guides()
              for number, line in enumerate(text.splitlines(), 1)

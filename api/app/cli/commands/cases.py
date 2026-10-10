@@ -1,6 +1,6 @@
 """Case packets, continued: kept originals, what the recipient acknowledged, repairs and checklists.
 
-The commands join the ``cases`` group in ``delivery`` (``faxbot recipients cases ...``).
+The commands join the ``cases`` group in ``delivery`` (``faxbot faxes cases ...``).
 """
 from contextlib import ExitStack
 import json
@@ -141,7 +141,7 @@ def cases_repair(case_id: str = typer.Argument(..., help='Your case reference.')
         out.table(['Document', 'Version and source', 'Pages'],
                   [[item['title'], detail(item), item['pages']] for item in result.get('documents', [])])
         for entry in result.get('missing') or []:
-            out.line(missing_sentence(entry) + " Use 'faxbot recipients cases add'.")
+            out.line(missing_sentence(entry) + " Use 'faxbot faxes cases add'.")
         if result.get('packets_in_flight'):
             out.line(f"{result['packets_in_flight']} earlier packet for this case has not finished sending.")
         out.line(f"{result['pages']} pages.")
@@ -256,7 +256,7 @@ def checklist_list():
     state.out().result(result, lambda out: out.table(
         ['Checklist', 'Version', 'Items', 'Used'],
         [[item['name'], item['version'], len(item['items']), item['used']] for item in result.get('checklists', [])],
-        empty="No checklists yet. Start from the example with: faxbot recipients cases checklist add NAME --example"))
+        empty="No checklists yet. Start from the example with: faxbot faxes cases checklist add NAME --example"))
 
 
 @checklist.command('show')

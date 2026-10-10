@@ -104,7 +104,7 @@ export default function NumberMoves({client, canWrite}: {client: AdminAPIClient;
     catch (e) {setError(accessErrorMessage(e));}
   }
   return <Stack spacing={2}>
-    <Typography variant="h4">Number advice and moves</Typography>
+    <Typography variant="h4">Number moves</Typography>
     {error && <Alert severity="error">{error}</Alert>}
     {!advice ? <Typography>Loading number advice…</Typography> : <>
       <Typography>{advice.sentence}</Typography><Typography color="text.secondary">{advice.note}</Typography>

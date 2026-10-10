@@ -11,8 +11,8 @@ from ..output import local_time
 from .fax import _report_saved, save_document
 
 
-CODE_HELP = "The expected fax's code, from 'faxbot expected list'."
-OUTAGE_HELP = "The outage's code, from 'faxbot expected outage list'."
+CODE_HELP = "The expected fax's code, from 'faxbot faxes expected list'."
+OUTAGE_HELP = "The outage's code, from 'faxbot faxes expected outage list'."
 VIEWS = ('overdue', 'proposed', 'missing', 'conflicts', 'closed', 'all')
 
 expected = typer.Typer(help='Expected faxes: record a fax before it arrives, see what is missing or overdue, confirm '
@@ -75,7 +75,7 @@ def _show(out, item, events=()):
     if item.get('missing_from_export'):
         out.line("The latest full export no longer lists it; it stays open until you decide.")
     if item.get('conflict'):
-        out.line("The import changed this row without a new revision; decide with 'faxbot expected conflict'.")
+        out.line("The import changed this row without a new revision; decide with 'faxbot faxes expected conflict'.")
     proposals = item.get('proposals') or []
     if proposals:
         out.table(['#', 'Received', 'From', 'Why it may be the one'],
@@ -165,7 +165,7 @@ def expected_add(reference: str = typer.Argument(..., help='The business referen
 @expected.command('confirm')
 def expected_confirm(code: str = typer.Argument(..., help=CODE_HELP),
                      number: int = typer.Option(None, '--proposal', min=1,
-                                                help="Which proposed fax, as numbered in 'faxbot expected show'.")):
+                                                help="Which proposed fax, as numbered in 'faxbot faxes expected show'.")):
     """Confirm that a proposed received fax is the one expected. This closes it."""
     api = state.api()
     item = _get(api, code)
@@ -178,7 +178,7 @@ def expected_confirm(code: str = typer.Argument(..., help=CODE_HELP),
 @expected.command('reject')
 def expected_reject(code: str = typer.Argument(..., help=CODE_HELP),
                     number: int = typer.Option(None, '--proposal', min=1,
-                                               help="Which proposed fax, as numbered in 'faxbot expected show'."),
+                                               help="Which proposed fax, as numbered in 'faxbot faxes expected show'."),
                     reason: str = typer.Option(None, '--reason', help='Why it is not the one (up to 300 characters).')):
     """Say a proposed received fax is not the one expected. The expected fax keeps waiting."""
     api = state.api()
@@ -194,7 +194,7 @@ def expected_reject(code: str = typer.Argument(..., help=CODE_HELP),
 @expected.command('match')
 def expected_match(code: str = typer.Argument(..., help=CODE_HELP),
                    fax_id: str = typer.Option(..., '--received-fax',
-                                              help="The received fax's ID, from 'faxbot received list --ids'."),
+                                              help="The received fax's ID, from 'faxbot faxes received list --ids'."),
                    note: str = typer.Option(None, '--note', help='Why it is the one (up to 300 characters).')):
     """Link a received fax to an expected fax by hand. This closes it."""
     api = state.api()
@@ -279,7 +279,7 @@ def expected_export(code: str = typer.Argument(..., help=CODE_HELP),
 def expected_import(file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
                                                 help='The export file (CSV or JSON, as the source says).'),
                     source: str = typer.Option(..., '--source', help="The saved import source's name, from "
-                                                                     "'faxbot expected sources list'."),
+                                                                     "'faxbot faxes expected sources list'."),
                     full: bool = typer.Option(False, '--full', help='The file lists all open work, so anything '
                                                                     'missing from it is reported.')):
     """Import open work from another system as expected faxes. Importing the same file again adds nothing."""
@@ -299,7 +299,7 @@ def expected_import(file: Path = typer.Argument(..., exists=True, dir_okay=False
                                                              for entry in result['missing']])
         if result.get('reconciled_outage'):
             out.line(f"Sorted against outage {result['reconciled_outage']}: "
-                     f"faxbot expected outage show {result['reconciled_outage']}")
+                     f"faxbot faxes expected outage show {result['reconciled_outage']}")
     state.out().result(result, human)
 
 
@@ -430,7 +430,7 @@ def outage_end(code: str = typer.Argument(..., help=OUTAGE_HELP),
         body['ended_at'] = _time(at, '--at')
     found = api.post(f"/expected-faxes/outages/{segment(current['id'])}/end", json=body)
     state.out().result(found, lambda out: (out.line(found['text']),
-                                           out.line('Import the next export with faxbot expected import --full.')))
+                                           out.line('Import the next export with faxbot faxes expected import --full.')))
 
 
 @outage.command('record')
@@ -441,7 +441,7 @@ def outage_record(code: str = typer.Argument(..., help=OUTAGE_HELP),
                   revision: str = typer.Option(None, '--revision', help="The item's revision, when it has one."),
                   reference: str = typer.Option(None, '--reference', help='The business reference, such as "PO 483".'),
                   uncertain: bool = typer.Option(False, '--uncertain', help='It may not have gone through.'),
-                  fax_id: str = typer.Option(None, '--sent-fax', help="The sent fax's ID, from 'faxbot sent list "
+                  fax_id: str = typer.Option(None, '--sent-fax', help="The sent fax's ID, from 'faxbot faxes sent list "
                                                                       "--ids'."),
                   note: str = typer.Option(None, '--evidence', help='Where the evidence is, such as "Fax log page 3".'),
                   at: str = typer.Option(None, '--at', help='When it was done (local time). Default: now.')):
