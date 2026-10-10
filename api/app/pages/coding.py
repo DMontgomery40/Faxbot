@@ -474,8 +474,10 @@ class CodingChoice:
         SSL Fax engine and a machine not on record: nothing is asked, so no job control narrows the engine."""
         if engine == 'hylafax' and self.negotiate:
             return None
-        if engine == 'builtin' and self.coding == 'JBIG' and self.fallback is not None:
-            return self.fallback  # measured or not, the built-in engine has no JBIG
+        if engine == 'builtin' and self.coding == 'JBIG':
+            # Measured or not, the built-in engine has no JBIG: the smallest other measured coding, or MH (which
+            # every machine takes) when none was measured. Never JBIG, which that engine would turn into MMR.
+            return self.fallback or 'MH'
         return self.coding if self.measured or engine == 'hylafax' else self.fallback
 
 

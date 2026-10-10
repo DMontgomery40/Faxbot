@@ -124,6 +124,21 @@ def test_the_newest_dis_from_either_engine_decides():
     assert coding.receiver_dis(older, engine_said)['jbig']
 
 
+def test_the_built_in_engine_is_never_asked_for_jbig_even_without_a_fallback():
+    """A JBIG choice always carries the smallest other measured coding; one built without it (only JBIG measured)
+    still asks the built-in engine for MH, never JBIG, which that engine would turn into MMR."""
+    pages = frames('shaded_0')
+    measured = coding.measure(pages, codings=('MH', 'MR', 'MMR'))
+    measured['JBIG'] = (1,)  # JBIG smallest by far
+    choice = coding.best_coding(pages, {'MH', 'MR', 'MMR', 'JBIG'}, ecm=True, measured=measured)
+    assert choice.coding == 'JBIG' and choice.fallback in ('MH', 'MR', 'MMR')
+    alone = coding.CodingChoice('JBIG', (1,), {'JBIG': (1,)}, 'JBIG: the only coding measured.')
+    assert alone.fallback is None and alone.request('builtin') == 'MH' and alone.request('hylafax') == 'JBIG'
+    from app import hylafax_engine
+    call = hylafax_engine.CallSettings(t38=True, max_rate=14400, ecm=True, fine=True, compression='jbig')
+    assert hylafax_engine.with_coding(call, alone.request('builtin')).compression == 'mh'
+
+
 def test_jbig_measured_smallest_for_a_known_jbig_machine_is_chosen_and_priced_as_jbig(monkeypatch):
     pages = frames('shaded_0')
     measured = coding.measure(pages, codings=('MH', 'MR', 'MMR'))
