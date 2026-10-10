@@ -39,6 +39,8 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
 # route would ring that person again, so the fax fails and a person checks the number (research N9).
 # ``wrong_station``: the number answered as a fax machine Faxbot did not expect there and the station check refused
 # it before any page (routing/stations.py): another route would reach the same machine.
+# How long a shared call's priced partition costs are kept between claims (``OutboundStore._call_costs``).
+COST_SECONDS = 60
 NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered',
                                     'wrong_station'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
@@ -704,7 +706,19 @@ class OutboundStore:
             raise ConfigurationStoreError('Configuration transaction could not complete.') from None
         if not numbers or values is None or values.fax_disabled:
             return {}
-        return batching.call_costs(self.configuration.engine, values, numbers)
+        # Prices change rarely and the worker claims often: each number's cost is kept for a minute per revision,
+        # so a fax waiting for its group adds no predictor reads to every poll.
+        import time
+        revision = (getattr(self, '_values_for', None) or (None,))[0]
+        clock, kept = time.monotonic(), getattr(self, '_kept_costs', {})
+        kept = {key: item for key, item in kept.items() if item[0] > clock and key[0] == revision}
+        missing = [number for number in numbers if (revision, number) not in kept]
+        priced = batching.call_costs(self.configuration.engine, values, missing)
+        for number in missing:
+            kept[(revision, number)] = (clock + COST_SECONDS, priced.get(number))  # an unknown price is kept too
+        self._kept_costs = kept
+        return {number: kept[(revision, number)][1] for number in numbers
+                if kept.get((revision, number), (0, None))[1] is not None}
 
     def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""

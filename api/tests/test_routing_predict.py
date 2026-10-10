@@ -543,6 +543,32 @@ def test_a_fax_service_to_your_own_number_is_priced_at_the_speed_calls_into_it_r
         predict_from(other, p003_shape()).basis
 
 
+def test_the_receiving_speed_is_learned_from_a_fax_stored_by_the_real_receiving_path(database):
+    """Companion with the real writers: the SSL Fax engine's hand-over stores the call (``record_inbound_call``) and
+    its negotiation (``record_inbound_engine``) under the same Asterisk call name, as LC-P003's arrived."""
+    import base64
+    import json
+    from app import hylafax_engine, sip_calls
+    schema.upgrade_schema(database)
+    now = datetime.utcnow() - timedelta(hours=1)
+    epoch = str(int((now - datetime(1970, 1, 1)).total_seconds()))
+    later = str(int((now + timedelta(seconds=1349) - datetime(1970, 1, 1)).total_seconds()))
+    uniqueid = 'engine.1760086987'
+    sip_calls.record_inbound_call(database, {'did': OWN, 'caller': HUMBLEFAX_NUMBER, 'pages': 7, 't38': True,
+                                             'started_at': epoch, 'answered_at': epoch, 'ended_at': later},
+                                  call_id=uniqueid, inbound_fax_id='e' * 32, preset='telnyx', fax_status='SUCCESS')
+    report = base64.b64encode(json.dumps({'rate_first': 9600, 'rate_lowest': 9600, 'rate_last': 9600,
+                                          'compression': 'MR', 'ecm': 'off', 'resolution': 'fine',
+                                          'trainings': 1, 'session': 1349}).encode()).decode()
+    hylafax_engine.record_inbound_engine(database, {'engine': {
+        'engine': 'hylafax', 'engine_ref': 'fc0c2150ff5d5efe:000000014.synthetic', 'sslfax': False,
+        'transfer_seconds': 1339, 'session_seconds': 1349, 'negotiation_b64': report}},
+        call_key=uniqueid, inbound_fax_id='e' * 32, number=HUMBLEFAX_NUMBER)
+    found = predict_facts.facts_for('humblefax', OWN, values=own_values(HUMBLEFAX_FROM_NUMBER=HUMBLEFAX_NUMBER),
+                                    engine=database)
+    assert (found.link.rate, found.link.rate_scope, found.link.coding) == (9600, 'receiver', 'MR')
+
+
 def test_the_receiving_leg_of_a_fax_to_your_own_trunk_number_is_priced_on_its_receiving_card(database):
     """The owner pays both ends: Telnyx's published receiving price ($0.0032 a minute, whole minutes) over the call's
     time, as the carrier billed P003 (1,352 s billed as 1,380 s, $0.0736). A saved receiving card wins; any other

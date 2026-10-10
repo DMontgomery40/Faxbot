@@ -307,9 +307,11 @@ def _need(rows, layout):
 
 
 def waiting_numbers(connection, t, limit=50):
-    """The numbers with faxes waiting to go together (at most ``limit``), for ``call_costs``."""
+    """The numbers with at least two faxes waiting to go together (at most ``limit``), for ``call_costs``: a single
+    fax has no partition to price."""
     members = t['outbound_batch_members']
-    return connection.execute(sa.select(members.c.phone_number).where(members.c.state == 'waiting').distinct()
+    return connection.execute(sa.select(members.c.phone_number).where(members.c.state == 'waiting')
+                              .group_by(members.c.phone_number).having(sa.func.count() >= 2)
                               .limit(limit)).scalars().all()
 
 
