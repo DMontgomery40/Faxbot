@@ -84,7 +84,7 @@ describe('The savings map on Overview', () => {
     expect(navigate.mock.calls).toEqual([[shading.setting.address]]);
     // No Turn on names an older menu path.
     for (const button of screen.getAllByRole('button', { name: /^Turn on / })) {
-      expect(button.getAttribute('aria-label')).not.toMatch(/Providers|Costs|Numbers|System/);
+      expect(button.getAttribute('aria-label')).not.toMatch(/ in (Providers|Costs|Numbers|System) →/);
     }
   });
 

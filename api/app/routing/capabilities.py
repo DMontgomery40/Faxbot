@@ -7,7 +7,7 @@ Each prerequisite has a kind (``KINDS``), one sentence saying who or what satisf
 that happens, and a check of whether this installation has it.
 
 ``evaluate`` joins those with the catalogue's own evaluation, so the Capabilities page, the Overview's map and
-``faxbot costs mechanisms`` never disagree about whether something is on, works here, is proven or was used. Like the
+``faxbot savings mechanisms`` never disagree about whether something is on, works here, is proven or was used. Like the
 map, it reads only this installation's settings and stored records, never the network, and it never shows money:
 amounts stay on Savings & optimization → Savings.
 
@@ -80,19 +80,20 @@ IMPROVEMENTS = {
     'experimental': 'Experimental',
 }
 
-# The six-area console pages this module links to, with their names as the console shows them. The trunk page is
-# named after its carrier (``_labels``).
+# The six-area console pages this module links to, with their names as the console's menu shows them (area → page;
+# api/tests/test_capabilities.py checks them against navigation.tsx). The trunk page is named after its carrier
+# (``_labels``), and the recipients list is just "Recipients".
 PAGES = {
     'savings/capabilities': 'Savings & optimization → Capabilities',
     'savings/opportunities': 'Savings & optimization → Opportunities',
-    'savings/results': 'Savings & optimization → Savings',
+    'savings/results': 'Savings & optimization → Savings results',
     'savings/charges': 'Savings & optimization → Charges',
     'savings/prices': 'Savings & optimization → Prices & plans',
     'faxes/sent': 'Faxes → Sent',
     'delivery/numbers': 'Delivery setup → Numbers',
     'delivery/blocked': 'Delivery setup → Blocked senders',
-    'delivery/identity': 'Delivery setup → Sender identity',
-    'delivery/connections': 'Delivery setup → Connections',
+    'delivery/identity': 'Delivery setup → Sending identity',
+    'delivery/connections': 'Delivery setup → Providers & accounts',
     'delivery/trunk': 'Delivery setup → Carrier trunk',
     'recipients/list': 'Recipients',
     'recipients/partners': 'Recipients → Partners',
@@ -365,7 +366,7 @@ CAPABILITIES = {
         'shorter_calls',
         'A two-page lab result with half-empty pages goes as one long fax page to a machine that takes long pages, '
         'so the call carries one page instead of two.',
-        'faxbot providers long-pages {route} --long-pages on', (SENDS,)),
+        'faxbot delivery providers long-pages {route} --long-pages on', (SENDS,)),
     'encoded_pages': Capability(
         'shorter_calls',
         "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the "
@@ -378,28 +379,28 @@ CAPABILITIES = {
         'shorter_calls',
         'A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks '
         'removed first, so each page takes fewer seconds to send.',
-        'faxbot system settings set fax_friendly_documents=where_it_saves',
+        'faxbot admin settings set fax_friendly_documents=where_it_saves',
         (SENDS, Prerequisite('prices', 'A sending route billed by the minute or second, such as your own SIP trunk.',
                              'savings/prices', _billed_by_time))),
     'own_numbers': Capability(
         'spend_less',
         'Billing faxes a statement to one of your own fax numbers. It lands in Received at once, with no phone call.',
-        'faxbot system settings set local_delivery_enabled=true', (RECEIVING_NUMBER,)),
+        'faxbot admin settings set local_delivery_enabled=true', (RECEIVING_NUMBER,)),
     'direct_delivery': Capability(
         'no_repeats',
         'A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes '
         'over the internet as the original file, with no fax call.',
-        'faxbot system settings set direct_delivery_enabled=true', (PARTNER,)),
+        'faxbot admin settings set direct_delivery_enabled=true', (PARTNER,)),
     'fax_images': Capability(
         'no_repeats',
         "A partner's intake files every fax as an image. Faxbot sends it the exact fax pages over the internet, so "
         'its records look like a received fax, with no call.',
-        'faxbot system settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON)),
+        'faxbot admin settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON)),
     'reuse': Capability(
         'no_repeats',
         "The same consent form goes to three of a partner's numbers. Faxbot sends it once, and next month sends "
         'only a reference to the copy the partner already holds.',
-        'faxbot system settings set direct_delivery_enabled=true', (PARTNER, DIRECT_ON), experimental=True),
+        'faxbot admin settings set direct_delivery_enabled=true', (PARTNER, DIRECT_ON), experimental=True),
     'partner_tunnel': Capability(
         'relationships',
         "Your Faxbot and a partner's Faxbot share a private tunnel. A fax to the partner is a fax call inside that "
@@ -431,7 +432,7 @@ CAPABILITIES = {
         'spend_less',
         'Your fax service plan includes a set number of pages each month. Faxbot sends through it while it has room '
         'under its budget, and then uses routes that charge per fax.',
-        'faxbot costs plans budget {plan} --pages {count}',
+        'faxbot savings plans budget {plan} --pages {count}',
         (Prerequisite('prices', 'A monthly plan among your sending routes, with its fee and allowance entered.',
                       'savings/prices', _plan_on_sending),)),
     'busy_hours': Capability(
@@ -456,7 +457,7 @@ CAPABILITIES = {
     'fax_over_ip': Capability(
         'shorter_calls',
         'A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.',
-        'faxbot providers trunk mode t38',
+        'faxbot delivery providers trunk mode t38',
         (TRUNK, Prerequisite('connection', 'A network and carrier that carry T.38. Faxbot checks this itself and '
                                            'switches T.38 back on when they do.', 'delivery/trunk',
                              _network_passes_t38))),
@@ -487,18 +488,18 @@ CAPABILITIES = {
         'shorter_calls',
         'When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during '
         'the call instead of as audio, so the call ends sooner.',
-        'faxbot system settings set sip_sslfax_enabled=true',
+        'faxbot admin settings set sip_sslfax_enabled=true',
         (TRUNK_SENDS, Prerequisite('engine', "Faxbot's fax engine, which starts when you select Apply and connect on "
                                              'the trunk page.', 'delivery/trunk', _engine))),
     'continuation': Capability(
         'recover',
         'A 30-page fax broke after page 22 was confirmed. You send only pages 23 to 30 instead of all 30 again.',
-        'faxbot sent continue {fax_id} --send', (SENDS,)),
+        'faxbot faxes sent continue {fax_id} --send', (SENDS,)),
     'partner_repair': Capability(
         'recover',
         'A call to a partner broke after 12 of 20 pages. Faxbot asks the partner which pages it holds, and sends the '
         'other 8 over the internet with no new call.',
-        'faxbot system settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON), experimental=True),
+        'faxbot admin settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON), experimental=True),
     'charge_checks': Capability(
         'explain',
         "Your carrier's invoice lists three more calls than Faxbot recorded. Charges lists those three calls, so you "
@@ -510,7 +511,7 @@ CAPABILITIES = {
         'receiving',
         'A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot '
         'answers, so nothing is received or stored.',
-        'faxbot numbers blocked add {number} --reason {reason}',
+        'faxbot delivery blocked add {number} --reason {reason}',
         (TRUNK_RECEIVES, Prerequisite('setting', 'A number on your blocked list.', 'delivery/blocked',
                                       _blocked_listed))),
     'advice_sending': advice(

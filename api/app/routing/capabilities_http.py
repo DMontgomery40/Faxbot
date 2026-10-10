@@ -2,7 +2,7 @@
 
 Every mechanism in the catalogue, grouped by the outcome it serves, each with whether it is on, works here and is
 proven, what it did here, what it needs, and where its setting and figures are (``routing/capabilities.py``). The
-console's Capabilities page and Overview, and ``faxbot costs capabilities``, read it. It never carries money, and
+console's Capabilities page and Overview, and ``faxbot savings capabilities``, read it. It never carries money, and
 like the savings map it needs settings:read.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request

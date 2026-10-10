@@ -3,7 +3,7 @@
 // that saves money once you act on it sits below the path. A card shows three statuses at a glance (On or Off,
 // Works here or Not here, and how it is tested) with the reason where a status is negative. Selecting a card
 // opens its own page in Savings & optimization → Capabilities, which links on to its figures; the map never shows
-// money. Every sentence comes from the server (GET /routing/savings/mechanisms), and `faxbot costs mechanisms`
+// money. Every sentence comes from the server (GET /routing/savings/mechanisms), and `faxbot savings mechanisms`
 // prints the same ones (__tests__/savingsMap.json). Given the capabilities read, Turn on leads to each setting's
 // page under its six-area name.
 import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';

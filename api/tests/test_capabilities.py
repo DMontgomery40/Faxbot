@@ -9,19 +9,21 @@ The capabilities module (app/routing/capabilities.py) must keep up with the mech
 
 The rest evaluates GET /routing/capabilities on a real installation (SQLite and PostgreSQL) and checks that every
 key appears exactly once, carries the map's own facts, names something missing whenever it does not work here, and
-never carries money; and that `faxbot costs capabilities` prints the shared fixture's lines
+never carries money; and that `faxbot savings capabilities` prints the shared fixture's lines
 (admin_ui/src/__tests__/capabilities.json), which the console's test renders too. All numbers and names are synthetic.
 """
 from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
+import re
 from types import SimpleNamespace
 from uuid import uuid4
 
-import click
 import pytest
 import sqlalchemy as sa
+# Typer builds its commands with its own copy of Click (as test_cli.py's Context does), so its errors are these.
+from typer._click.exceptions import UsageError
 from typer.main import get_command
 
 from app.cli.commands import capabilities as capability_commands
@@ -36,7 +38,7 @@ FIXTURE = API_ROOT / 'admin_ui' / 'src' / '__tests__' / 'capabilities.json'
 MODULE = 'api/app/routing/capabilities.py'
 # FAXBOT_WRITE_FIXTURES=1 rewrites the shared fixture from the scenario below (SQLite run) instead of checking it.
 WRITE = os.environ.get('FAXBOT_WRITE_FIXTURES') == '1'
-# The capabilities the fixture also prints one by one (faxbot costs capabilities show KEY).
+# The capabilities the fixture also prints one by one (faxbot savings capabilities show KEY).
 SHOWN = ('sending_together', 'fax_friendly', 'encoded_pages', 'direct_delivery', 'separator_pages', 'advice_plans',
          'measured_coding', 'busy_hours')
 
@@ -83,19 +85,26 @@ def _static_addresses():
     return found
 
 
-def _parse(command):
-    """Parse a command line as faxbot would, hidden older names included; raises click.UsageError if it would not
-    run as shown. Returns the command reached and its words."""
+def _parse(command, whole=True):
+    """Parse a command line as faxbot would, hidden older names included; raises UsageError if it would not run as
+    shown. With whole, it must reach a command, not a group that only lists its own. Returns the command reached and
+    its words."""
     from app.cli.main import app
     words = command.split()
     assert words[0] == 'faxbot', command
     node, path, rest = get_command(app), ['faxbot'], words[1:]
-    while rest and isinstance(node, click.Group) and rest[0] in node.commands:
+    while rest and rest[0] in (getattr(node, 'commands', None) or {}):
         path.append(rest[0])
         node, rest = node.commands[rest[0]], rest[1:]
+    if whole:
+        # It must reach a command that runs on its own, not stop at a group that would ask for one.
+        assert not getattr(node, 'commands', None) or getattr(node, 'invoke_without_command', False), (
+            f'{command}: stops at the group {" ".join(path)}')
     unknown = [word for word in rest if word.startswith('{') and word not in FILL_IN]
     assert unknown == [], f'{command}: no synthetic value for {unknown} in FILL_IN'
-    node.make_context(' '.join(path), [FILL_IN.get(word, word) for word in rest])
+    if whole or not getattr(node, 'commands', None):
+        # A group named on its own lists its commands; there is nothing more to parse.
+        node.make_context(' '.join(path), [FILL_IN.get(word, word) for word in rest])
     return node, path
 
 
@@ -137,30 +146,69 @@ def test_every_address_is_a_six_area_page():
             f'{key}: its {what} address {where} has no six-area page; add its page to MOVED or PAGES in {MODULE}')
 
 
+def _navigation_labels():
+    """{'area/page': 'Area → Page'} as navigation.tsx names them."""
+    text = (API_ROOT / 'admin_ui' / 'src' / 'navigation.tsx').read_text(encoding='utf-8')
+    body = text[text.index('export const NAVIGATION'):]
+    starts = [(match.start(), match.group(1), match.group(2)) for match in re.finditer(
+        r"\{\s*id: '([a-z]+)', label: '([^']+)', icon: <\w+ />,\s*pages: \[", body)]
+    labels = {}
+    for index, (start, area, area_label) in enumerate(starts):
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(body)
+        for page, page_label in re.findall(r"\{ id: '([a-z-]+)', label: '([^']+)'", body[start:end]):
+            labels[f'{area}/{page}'] = f'{area_label} → {page_label}'
+    return labels
+
+
+def test_every_page_is_named_as_the_menu_names_it():
+    labels = _navigation_labels()
+    assert labels.get('savings/capabilities') == 'Savings & optimization → Capabilities', 'navigation.tsx was not read'
+    for page, label in capabilities.PAGES.items():
+        if page == 'delivery/trunk':
+            continue  # named after its carrier
+        expected = 'Recipients' if page == 'recipients/list' else labels.get(page)
+        assert label == expected, f'{page}: {MODULE} names it {label!r}; the menu says {expected!r}'
+
+
 def test_every_command_runs_as_shown():
-    """Each command reaches a faxbot command (a visible path or a hidden older name) and parses there, required
-    arguments and options included; the catalogue's own commands, which the read passes on, reach one too."""
-    commands = [(key, capability.command) for key, capability in capabilities.CAPABILITIES.items()
+    """Each command this module shows reaches a faxbot command (a visible path or a hidden older name) and parses
+    there, required arguments and options included. The catalogue's own commands, which the read passes on as its
+    figures, must reach a command or group too (two name a group that lists its findings by subcommand)."""
+    commands = [(key, capability.command, True) for key, capability in capabilities.CAPABILITIES.items()
                 if capability.command]
-    commands += [(mechanism.key, mechanism.command) for mechanism in mechanisms.CATALOGUE if mechanism.command]
-    commands.append(('savings parts', 'faxbot costs savings'))
-    for key, command in commands:
+    commands += [(mechanism.key, mechanism.command, False) for mechanism in mechanisms.CATALOGUE if mechanism.command]
+    commands.append(('savings parts', 'faxbot savings results', True))
+    for key, command, whole in commands:
         assert '...' not in command, f'{key}: {command} has a value no one can run'
         try:
-            _parse(command)
-        except click.UsageError as error:
+            _parse(command, whole)
+        except UsageError as error:
             raise AssertionError(f'{key}: {command!r} does not run as shown: {error.format_message()}') from None
+
+
+def test_every_command_shown_uses_its_visible_name_in_the_reference():
+    """The commands this module shows, and its own, use the six-area names (never an older hidden one) and are
+    headings in the generated command reference."""
+    from app.cli.nouns import canonical
+    reference = (API_ROOT.parent / 'docs' / 'reference' / 'cli.md').read_text(encoding='utf-8')
+    shown = [(key, capability.command) for key, capability in capabilities.CAPABILITIES.items() if capability.command]
+    shown += [('list', capability_commands.COMMAND), ('show', f'{capability_commands.COMMAND} show KEY')]
+    for key, command in shown:
+        _, path = _parse(command.replace(' KEY', ' sslfax'))
+        words = tuple(path[1:])
+        assert canonical(words) == words, f"{key}: {command} uses an older name; use faxbot {' '.join(canonical(words))}"
+        assert f"### `{' '.join(path)}`" in reference, f"{key}: {' '.join(path)} is not in docs/reference/cli.md"
 
 
 def test_every_settings_command_changes_a_real_setting(cli):
     """Each settings command, run against a real server from the other value, is accepted and changes the setting."""
     opposite = {'true': 'false', 'where_it_saves': 'never'}
     commands = {capability.command for capability in capabilities.CAPABILITIES.values()
-                if capability.command and capability.command.startswith('faxbot system settings set ')}
+                if capability.command and capability.command.startswith('faxbot admin settings set ')}
     assert len(commands) == 4, commands
     for command in sorted(commands):
         name, value = command.split()[-1].split('=')
-        before = cli('system', 'settings', 'set', f'{name}={opposite[value]}')
+        before = cli('admin', 'settings', 'set', f'{name}={opposite[value]}')
         assert before.exit_code == 0, (command, before.stdout, before.stderr)
         result = cli(*command.split()[1:])
         assert result.exit_code == 0, (command, result.stdout, result.stderr)
@@ -284,7 +332,7 @@ def _cli_lines(body):
 def _write_fixture(body):
     FIXTURE.write_text(json.dumps({
         'about': ('Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot '
-                  'costs capabilities, cli/commands/capabilities.py) show exactly what the server says. The response '
+                  'savings capabilities, cli/commands/capabilities.py) show exactly what the server says. The response '
                   'is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py '
                   'scenario), and cli holds the lines the command prints from it: all of them, those ready to turn '
                   'on, and some capabilities one by one. Its catalogue and capability fields must match '
@@ -313,7 +361,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
                                    'command': 'faxbot recipients together set {number} --recipient-agreed'}
     the_map = {item['key']: item for stage in mapped['stages'] for item in stage['mechanisms']}
     assert together['results'] == {'address': 'savings/results?part=sending_together',
-                                   'label': 'Savings & optimization → Savings',
+                                   'label': 'Savings & optimization → Savings results',
                                    'command': the_map['sending_together']['command']}
 
     # Lighter shading is off by the setting and the trunk bills by time: ready, and you can do it now.
@@ -345,7 +393,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert [(p['kind'], p['met']) for p in cheapest['prerequisites']] == [('connection', False), ('prices', False)]
     assert items['sslfax']['setting']['label'] == 'Delivery setup → Telnyx'
     assert items['fax_over_ip']['here']['sentence'] == 'Used on 3 calls in 30 days'
-    assert items['fax_over_ip']['setting']['command'] == 'faxbot providers trunk mode t38'
+    assert items['fax_over_ip']['setting']['command'] == 'faxbot delivery providers trunk mode t38'
     # A T.38 call went through, so the network carries it; the header text is not needed while no recipient chose
     # page marks.
     assert [p['state'] for p in items['fax_over_ip']['prerequisites']] == ['in_place', 'in_place']
@@ -405,7 +453,7 @@ def test_settings_faxbot_changed_itself_or_set_elsewhere_are_said_with_their_own
 
     marks = items['separator_pages']
     assert marks['ready'] and marks['setting'] == {'address': 'delivery/identity',
-                                                   'label': 'Delivery setup → Sender identity', 'command': None}
+                                                   'label': 'Delivery setup → Sending identity', 'command': None}
     header = marks['prerequisites'][-1]
     assert (header['kind'], header['met'], header['address']) == ('setting', False, 'delivery/identity')
     assert marks['improvement'] == {'kind': 'now', 'label': 'You can do this now'}
@@ -452,10 +500,10 @@ def test_the_fixture_is_an_answer_from_the_modules():
 
 
 def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
-    result = cli('costs', 'capabilities')
+    result = cli('savings', 'capabilities')
     assert result.exit_code == 0, result.stdout
     lines = result.stdout.splitlines()
-    assert lines[0] == 'Capabilities' and lines[-1] == 'One capability in full: faxbot costs capabilities show KEY'
+    assert lines[0] == 'Capabilities' and lines[-1] == 'One capability in full: faxbot savings capabilities show KEY'
     for _, title, _ in capabilities.OUTCOMES:
         assert title in lines
     assert '  Sending together (sending_together): Off · Not here · Test lab' in lines
@@ -463,26 +511,26 @@ def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
     assert '    Missing: Connection, Prices, Recipient\'s agreement' in lines[together:together + 6]
     assert '$' not in result.stdout
 
-    ready = cli('costs', 'capabilities', '--filter', 'ready')
+    ready = cli('savings', 'capabilities', '--filter', 'ready')
     assert ready.exit_code == 0 and 'Showing: Ready to turn on' in ready.stdout.splitlines()
-    assert all(item['ready'] for outcome in cli.json('costs', 'capabilities', '--filter', 'ready')['outcomes']
+    assert all(item['ready'] for outcome in cli.json('savings', 'capabilities', '--filter', 'ready')['outcomes']
                for item in outcome['capabilities'])
-    refused = cli('costs', 'capabilities', '--filter', 'cheap')
+    refused = cli('savings', 'capabilities', '--filter', 'cheap')
     assert refused.exit_code != 0 and 'Use one of on, off, ready, needs, experimental for --filter.' in (
         refused.stdout + (refused.stderr or ''))
 
-    shown = cli('costs', 'capabilities', 'show', 'sslfax')
+    shown = cli('savings', 'capabilities', 'show', 'sslfax')
     assert shown.exit_code == 0, shown.stdout
     lines = shown.stdout.splitlines()
     assert lines[:2] == ['Faster pages', 'On · Not here · Test lab']
-    assert 'Command line: faxbot system settings set sip_sslfax_enabled=true' in lines
-    figures = {item['key']: item for stage in cli.json('costs', 'mechanisms')['stages']
+    assert 'Command line: faxbot admin settings set sip_sslfax_enabled=true' in lines
+    figures = {item['key']: item for stage in cli.json('savings', 'mechanisms')['stages']
                for item in stage['mechanisms']}
-    assert f"Its figures: Savings & optimization → Savings ({figures['sslfax']['command']})" in lines
-    assert cli.json('costs', 'capabilities', 'show', 'sslfax')['key'] == 'sslfax'
-    unknown = cli('costs', 'capabilities', 'show', 'cheapest')
+    assert f"Its figures: Savings & optimization → Savings results ({figures['sslfax']['command']})" in lines
+    assert cli.json('savings', 'capabilities', 'show', 'sslfax')['key'] == 'sslfax'
+    unknown = cli('savings', 'capabilities', 'show', 'cheapest')
     assert unknown.exit_code != 0
-    assert 'There is no capability cheapest. List them with: faxbot costs capabilities' in (
+    assert 'There is no capability cheapest. List them with: faxbot savings capabilities' in (
         unknown.stdout + (unknown.stderr or ''))
 
 
