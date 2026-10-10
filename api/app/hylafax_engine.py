@@ -898,13 +898,14 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     """
     from . import sip_trunk
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for, trunk_values
-    from .ami import reply_choice, sender_identity
+    from .ami import job_mailbox, reply_choice, sender_identity
     endpoints = sip_trunk.rendered_endpoints(values) or (sip_trunk.ENDPOINT,)
     full_values = values
     values, _ = trunk_values(values, trunk)
     settings = settings or call_settings(values, dest, engine=True)
     # The reply number: the job's station ID and the number in its header line, as on the built-in engine.
-    choice = await asyncio.to_thread(reply_choice, values)
+    # The fax's own mailbox, so a mailbox's reply number shows on its faxes, as on the built-in engine.
+    choice = await asyncio.to_thread(lambda: reply_choice(values, mailbox_id=job_mailbox(job_id)))
     # A fax relayed for a partner carries that partner's header text and station ID (direct.relay).
     identity = await asyncio.to_thread(sender_identity, job_id)
     header, station = identity if identity is not None else (values.fax_header or '', choice.number)

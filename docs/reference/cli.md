@@ -71,6 +71,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-family-name NAME`: The patient&#x27;s family name, for a recipient that confirms the patient.
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
+* `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot numbers reply notice set&#x27;); a recipient that needs a cover sheet still gets it.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -1999,6 +2000,7 @@ $ faxbot numbers reply [OPTIONS] COMMAND [ARGS]...
 * `numbers`: List your numbers with the mailbox each...
 * `set`: Print this number on every fax (or on...
 * `clear`: Let Faxbot choose the number again (or...
+* `notice`: A notice line, such as a confidentiality...
 
 #### `faxbot numbers reply show`
 
@@ -2055,6 +2057,74 @@ Let Faxbot choose the number again (or give a mailbox&#x27;s faxes the organizat
 
 ```console
 $ faxbot numbers reply clear [OPTIONS]
+```
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+#### `faxbot numbers reply notice`
+
+A notice line, such as a confidentiality notice, printed at the top of every page you send, so a cover sheet carrying it can stay unsent.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply notice [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show the notice your faxes carry, and each...
+* `set`: Print this notice at the top of every page...
+* `clear`: Stop printing the notice (a mailbox&#x27;s...
+
+##### `faxbot numbers reply notice show`
+
+Show the notice your faxes carry, and each mailbox&#x27;s own.
+
+**Usage**:
+
+```console
+$ faxbot numbers reply notice show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot numbers reply notice set`
+
+Print this notice at the top of every page (or of every page sent from one mailbox).
+
+**Usage**:
+
+```console
+$ faxbot numbers reply notice set [OPTIONS] {NOTICE}
+```
+
+**Arguments**:
+
+* `NOTICE`: One line of up to 120 characters, such as &quot;Confidential: for the addressee only. If you received this in error, call us.&quot;  [required]
+
+**Options**:
+
+* `--mailbox <str>`: A mailbox, for faxes sent from it; leave out for every fax.
+* `--help`: Show this message and exit.
+
+##### `faxbot numbers reply notice clear`
+
+Stop printing the notice (a mailbox&#x27;s faxes then carry the organization&#x27;s notice, if any).
+
+**Usage**:
+
+```console
+$ faxbot numbers reply notice clear [OPTIONS]
 ```
 
 **Options**:
@@ -2739,6 +2809,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--pages-per-sheet MACHINE|NEVER`: Several pages on one long page: machine (as the receiving machine allows) or never.
 * `--blank-space ON|OFF|DEFAULT`: Leave out the blank bottom of pages when this machine has no error correction: on, off, or default for the setting all faxes use.
 * `--shading ON|OFF|DEFAULT`: Fax-friendly shading on documents sent to this recipient: on (always when it shortens the call), off (never), or default for the setting all faxes use.
+* `--needs-cover / --no-cover-needed`: Whether this recipient needs a cover sheet: its faxes then keep their cover even when the sender sends the cover&#x27;s notice in the header.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients limits`
