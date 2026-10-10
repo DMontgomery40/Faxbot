@@ -7267,6 +7267,10 @@ $ faxbot costs recommendations [OPTIONS] COMMAND [ARGS]...
 * `trunks`: Compare your trunks&#x27; monthly fees, busiest...
 * `numbers`: Show where each of your fax numbers costs...
 * `sites`: Show whether your carriers price US calls...
+* `channels`: Show how many calls your fax systems...
+* `import-calls`: Import another fax server&#x27;s or phone system&#x27;s call records for one system.
+* `renewal`: One page for a fax server&#x27;s renewal; record it with --system.
+* `import-routing`: Import a fax server&#x27;s number-to-user routing (number, user, email, cover sheet).
 
 #### `faxbot costs recommendations sending`
 
@@ -7448,6 +7452,92 @@ $ faxbot costs recommendations sites [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations channels`
+
+Show how many calls your fax systems carried at once: at their peak, in 99 hours out of 100, and by hour of
+the day, with the licensed channels never needed.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations channels [OPTIONS]
+```
+
+**Options**:
+
+* `--remove IMPORT`: Leave one imported file out of the report, by the import code shown beside it; its calls stay as history.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations import-calls`
+
+Import call records for one system. Formats: Asterisk&#x27;s Master.csv, Cisco Unified CM CDR files, RightFax&#x27;s
+DocTransport audit log (level 3 or 4), GFI FaxMaker&#x27;s activity export, or a CSV with the columns start, end or
+duration, direction, channel and number.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations import-calls [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: The call records file.  [required]
+
+**Options**:
+
+* `--system NAME`: The system they come from, such as &quot;RightFax at HQ&quot;.  [required]
+* `--format asterisk|cucm|rightfax|faxmaker|csv`: The file&#x27;s format; Faxbot recognises it when left out.
+* `--licensed CHANNELS`: The channels the system is licensed for.  [1&lt;=x&lt;=10000]
+* `--time-zone ZONE`: The time zone of the times in the file, such as America/Denver; the installation&#x27;s when left out.
+* `--numbers NUMBERS`: Only calls to or from these numbers (comma-separated), for a phone system&#x27;s records that include voice calls.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations renewal`
+
+Show one page per fax server renewal: the amount and date, the channels it really needed, what Faxbot handled
+beside it, and the numbers still to move. With --system, --renews and --amount, record the renewal.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations renewal [OPTIONS]
+```
+
+**Options**:
+
+* `--system NAME`: The fax server, such as &quot;RightFax at HQ&quot;.
+* `--renews DATE`: The renewal date, such as 2027-05-31.
+* `--amount AMOUNT`: The renewal amount, such as 26756.71.
+* `--currency CODE`: The amount&#x27;s currency.  [default: USD]
+* `--product NAME`: The product, such as RightFax 22.2.
+* `--channels CHANNELS`: The channels the renewal licenses.  [1&lt;=x&lt;=10000]
+* `--source-url URL`: Where the amount comes from, such as the quote.
+* `--parallel NUMBERS`: The numbers Faxbot runs beside it (comma-separated).
+* `--parallel-since DATE`: When the parallel run began.
+* `--remove`: Withdraw the system&#x27;s renewal.
+* `--help`: Show this message and exit.
+
+#### `faxbot costs recommendations import-routing`
+
+Import a fax server&#x27;s number-to-user routing, so the renewal page lists the numbers and users still to
+move. It replaces the system&#x27;s earlier routing, which is kept as history.
+
+**Usage**:
+
+```console
+$ faxbot costs recommendations import-routing [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: A CSV with the columns number, user, email and cover sheet.  [required]
+
+**Options**:
+
+* `--system NAME`: The fax server it comes from.  [required]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs plans`

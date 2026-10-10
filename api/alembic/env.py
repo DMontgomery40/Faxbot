@@ -87,6 +87,7 @@ config.attributes["schema_station_check"] = importlib.import_module(package + ".
 config.attributes["schema_route_families"] = importlib.import_module(package + ".schema_route_families")
 config.attributes["schema_codec_decoder"] = importlib.import_module(package + ".schema_codec_decoder")
 config.attributes["schema_line_inventory"] = importlib.import_module(package + ".schema_line_inventory")
+config.attributes["schema_fax_server_renewal"] = importlib.import_module(package + ".schema_fax_server_renewal")
 
 
 def migrate(connection):

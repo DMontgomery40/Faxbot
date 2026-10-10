@@ -112,3 +112,7 @@ def import_carrier_list(file: Path = typer.Argument(..., metavar='FILE', exists=
         _skipped(out, result)
         _show(out, result)
     state.out().result(result, human)
+
+
+# The renewal and channel commands (renewal.py) hang off costs recommendations; importing them here registers them.
+from . import renewal as _renewal  # noqa: E402,F401
