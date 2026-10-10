@@ -53,7 +53,9 @@ def test_patch_0007_carries_the_same_steps_and_applies_after_0006():
     assert '+\t\tt30_terminate(p->t30_state);' in patch
     assert '"FAXBOT_CSI_CHECK"' in patch and '"FAXBOT_T0_CAPPED"' in patch
     names = sorted(path.name for path in (ROOT / 'asterisk' / 'patches').glob('*.patch'))
-    assert names[-1] == '0007-faxbot-station-check-t0-cap.patch' and names[-2].startswith('0006-')
+    # 0007 applies right after 0006 (later patches, such as 0008, follow it).
+    at = names.index('0007-faxbot-station-check-t0-cap.patch')
+    assert at > 0 and names[at - 1].startswith('0006-')
     dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
     assert 'CsiCheck:${FILTER(abcdefghijklmnopqrstuvwxyz,${FAXBOT_CSI_CHECK})},T0Capped:${FILTER(1,${FAXBOT_T0_CAPPED})}' \
         in dialplan
