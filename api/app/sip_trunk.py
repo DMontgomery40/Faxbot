@@ -319,7 +319,8 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                'outbound proxy (it ends in .primary.companyflex.de).',
                "List your Telekom line's internet address under \"Your own line's internet address\": on any other "
                'access Faxbot encrypts the calls by itself, as CompanyFlex requires.',
-               'Telekom recommends 9,600 bit/s and error correction (ECM) for fax; Faxbot uses both for audio fax.',
+               'Telekom recommends 9,600 bit/s and error correction (ECM) for fax; Faxbot sends audio fax at 9,600 '
+               'bit/s at most, with error correction on whenever the calls are encrypted.',
                'Faxbot tested these settings against its own Asterisk; a live CompanyFlex trunk has not been tested '
                'yet.'),
         sources=(Source('https://hilfe.companyflex.de/de/einrichtung/anschalteszenarien/'
@@ -422,13 +423,17 @@ def fax_options(values) -> FaxOptions:
         t38_max_datagram=datagram if isinstance(datagram, int) and 100 <= datagram <= 1400 else defaults.t38_max_datagram,
         max_rate=pick('sip_fax_max_rate', FAX_RATES, defaults.max_rate),
         # Encrypted audio fax runs with error correction on (Telekom's fax guidance; sip_access.py).
-        ecm=bool(getattr(values, 'sip_fax_ecm', True)) or bool(
-            getattr(PRESETS.get(getattr(values, 'sip_trunk_preset', '')), 'encrypted_audio_only', False)),
+        ecm=bool(getattr(values, 'sip_fax_ecm', True)) or _encrypted(values),
         compression=pick('sip_fax_compression', COMPRESSIONS, defaults.compression),
         fine=bool(getattr(values, 'sip_fax_fine', True)),
         sslfax=bool(getattr(values, 'sip_sslfax_enabled', True)),
         lines=lines if isinstance(lines, int) and 1 <= lines <= 8 else defaults.lines,
         listener_port=port if isinstance(port, int) and 1024 <= port <= 65535 else defaults.listener_port)
+
+
+def _encrypted(values):
+    from . import sip_access
+    return sip_access.encryption_required(values)
 
 
 def effective_trunk(values, *, for_calls=False) -> Trunk:

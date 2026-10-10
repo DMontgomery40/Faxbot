@@ -232,7 +232,7 @@ def pins_view(engine, values):
         caller, station, how = presented_identity(values, account.key, engine=engine)
         if how != 'provider':
             trunks.append({'account': account.key, 'label': account.label, 'caller_id': caller,
-                           'station_id': station})
+                           'station_id': station or caller})
     return {'pins': found, 'trunks': trunks}
 
 

@@ -174,8 +174,9 @@ def presentable(values, account_key, caller_id, station_id=None, *, engine=None)
         return False, (f'{account.label} shows {caller} as caller ID now, not {caller_id}. Set its caller ID, or your '
                        'reply number, to the registered number.')
     if station_id and station != station_id:
-        return False, (f'{account.label} sends {station or "no station ID"} as station ID now, not {station_id}. Set '
-                       'your station ID, or your reply number, to the registered one.')
+        # Only a reply number (or the station ID setting) is sent as the station ID by both fax engines.
+        return False, (f'{account.label} sends {station or "no station ID of its own"} as station ID now, not '
+                       f'{station_id}. Set your station ID, or your reply number, to the registered one.')
     return True, None
 
 

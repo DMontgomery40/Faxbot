@@ -53,8 +53,14 @@ def test_a_pin_needs_a_trunk_that_shows_the_registered_number_now(trunked):
         pin(trunked, station='+90 212 000 0000')
     with pytest.raises(sender_pins.PinError, match='country code'):
         sender_pins.record(trunked.engine, values(), '2122220000', account='sip', caller_id=REGISTERED)
-    saved = pin(trunked, station=REGISTERED)
+    # A pinned station ID must be the one both fax engines send: the station ID setting or the reply number. Without
+    # one, the SSL Fax engine would send its own identifier, so the pin is refused until it is set.
+    with pytest.raises(sender_pins.PinError, match='no station ID of its own'):
+        pin(trunked, station=REGISTERED)
+    saved = pin(trunked, station=REGISTERED, settings=values(FAX_LOCAL_STATION_ID=REGISTERED))
     assert (saved.account, saved.caller_id, saved.station, saved.recorded_by) == ('sip', REGISTERED, REGISTERED, 'Anne')
+    assert sender_pins.presentable(values(), 'sip', REGISTERED, REGISTERED)[0] is False
+    assert sender_pins.presentable(values(FAX_LOCAL_STATION_ID=REGISTERED), 'sip', REGISTERED, REGISTERED) == (True, None)
     # A trunk whose caller ID is now its other number cannot carry the pin: the check follows what the call shows.
     with pytest.raises(sender_pins.PinError, match=re.escape(f'shows {OTHER} as caller ID now')):
         pin(trunked, settings=values(SIP_TRUNK_CALLER_ID=OTHER))
@@ -134,6 +140,55 @@ async def test_when_the_trunk_is_not_ready_send_anyway_offers_only_the_registere
     assert [item['account'] for item in view['options']] == ['sip']
     assert sender_pins.pinned_options(trunked.engine, job, [{'account': 'signalwire'}, {'account': 'sip'}]) == [
         {'account': 'sip'}]
+
+
+@pytest.fixture
+def bound_trunk(database, tmp_path):  # noqa: F811
+    """The trunk is the default sending account, with SignalWire as an extra route the automatic choice may use."""
+    from api.app.config_profiles import ProviderConfiguration
+    return installation(database, tmp_path, {**WITH_TRUNK, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': 'signalwire'},
+                        outbound=ProviderConfiguration('sip', traits={'requires_tiff': True}))
+
+
+@pytest.mark.parametrize('pinned_first', [True, False], ids=['accepted-pinned', 'accepted-before-the-pin'])
+@pytest.mark.asyncio
+async def test_a_call_that_ends_before_any_page_holds_the_fax_and_never_tries_another_number(
+        bound_trunk, monkeypatch, pinned_first):
+    """The pinned trunk's call ends before any fax data (busy, no answer): today's fallback would try the next
+    account. A fax accepted under the pin (a strict decision), and one accepted before the pin (automatic, not
+    strict, so it goes through the fallback policy and the planner again), both wait in Sent instead."""
+    from api.app.outbound_store import OutboundStore
+    from api.app.routing import transport
+    from api.app.routing.fallback import FallbackPolicy, FallbackScheduler
+    from api.tests.test_rules_delivery import _fail
+    env = bound_trunk
+    monkeypatch.setattr(transport, 'route_ready', lambda configuration, ami=None: True)
+    OutboundStore.fallback_policy = FallbackPolicy(FallbackScheduler(env.delivery, env.routes))
+    try:
+        if pinned_first:
+            pin(env)
+            job = accept(env, to=BANK)
+            assert envelopes.load(env.engine, job).strict
+        else:
+            job = accept(env, to=BANK)
+            assert not envelopes.load(env.engine, job).strict
+            pin(env)
+        inner = Inner(env.delivery)
+        worker = OutboundWorker(env.delivery, RoutedTransport(inner, direct=None))
+        assert await worker.step() is True and inner.used == ['sip']
+        _fail(env, job, before_data=True)
+        worker.paused.clear()
+        await worker.step()
+        worker.paused.clear()
+        await worker.step()
+        assert inner.used == ['sip']  # never SignalWire, never another number
+        assert env.delivery.get(job)['state'] == 'ready'
+        [hold] = holds(env, job)
+        assert hold['kind'] == 'no_route' and 'nothing was sent' in hold['reason']
+        view = HoldStore(env.delivery).view(dict(hold, to_number=BANK), ANNE, approver=True)
+        assert all(item['account'] == 'sip' for item in view['options'])
+    finally:
+        OutboundStore.fallback_policy = None
 
 
 def _call(env, job, *, station='BANK CSI 1', caller=REGISTERED):

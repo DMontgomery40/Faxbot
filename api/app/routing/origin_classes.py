@@ -519,13 +519,15 @@ def presented_caller_id(values, account_key, *, engine=None, mailbox_id=None):
 
 def presented_identity(values, account_key, *, engine=None, mailbox_id=None):
     """(caller ID, station ID, how) a fax sent by ``account_key`` would show, as ``ami.originate_fields_for`` sets
-    them: the station ID is the reply number (``reply_number.choose``), else the caller ID. None where unknown."""
+    them. The station ID is the reply number (``reply_number.choose``), which both engines send; None when there is
+    none, and then each engine sends its own (the built-in one the caller ID, the SSL Fax engine its configured
+    identifier), so only a reply number is an exact station ID."""
     from ..accounts import AccountsError, account_named, account_values
     account = account_named(values, account_key)
     provider = account.provider if account is not None else account_key
     if provider == 'freeswitch':
         caller = getattr(values, 'fs_caller_id_number', '') or None
-        return caller, caller, 'freeswitch'
+        return caller, None, 'freeswitch'
     if provider != 'sip':
         return None, None, 'provider'
     own = values
@@ -547,7 +549,7 @@ def presented_identity(values, account_key, *, engine=None, mailbox_id=None):
     except Exception:  # noqa: BLE001 - mirrors ami.reply_choice: an unreadable reply number means the line's own
         choice = Choice(None, 'line', '')
     caller = caller_id_for(own, choice.number) or getattr(own, 'sip_trunk_caller_id', '') or None
-    return caller, choice.number or caller, 'trunk'
+    return caller, choice.number, 'trunk'
 
 
 # -- pricing one call --------------------------------------------------------------------------------------------------
