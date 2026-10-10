@@ -950,28 +950,28 @@ export async function unpack(container, secrets = []) {
 // ---------------------------------------------------------------- everything together
 export async function decodeFiles(files, { secrets = [] } = {}) {
   const reads = [];
-  let newer = false; let resized = false;
+  let newer = false; let refusedResized = false; let readResized = false;
   const widths = [];
   for (const { bytes, type } of files) {
     for (const page of await readFile(bytes, type)) {
       widths.push(page.width);
       const read = readPage(page);
       if (read && read.newer) newer = true;
-      else if (read && read.resized && !read.header) resized = true;
-      else if (read) { reads.push(read); resized = resized || read.resized; }
+      else if (read && read.resized && !read.header) refusedResized = true;
+      else if (read) { reads.push(read); readResized = readResized || read.resized; }
     }
   }
   const small = widths.length > 0 && widths.every((width) => width < PREVIEW_WIDTH);
   if (!reads.length && newer) throw new DecodeError(NEWER);
   if (!reads.length && small) throw new DecodeError(PREVIEW);
-  if (!reads.length && resized) throw new DecodeError(RESIZED);
+  if (!reads.length && refusedResized) throw new DecodeError(RESIZED);
   if (!reads.length) throw new DecodeError('No payload pages were found in this file.');
   let assembled;
   try {
     assembled = assemble(reads);
   } catch (error) {
     if (small) throw new DecodeError(PREVIEW);
-    if (resized) throw new DecodeError(RESIZED);
+    if (readResized) throw new DecodeError(RESIZED);
     throw error;
   }
   const { container, pagesRead, pagesExpected } = assembled;

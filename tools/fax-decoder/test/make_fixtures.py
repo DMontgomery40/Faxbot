@@ -88,6 +88,7 @@ def write_receipts(folder, document, salt, nonce):
         'receipt-inverted.tiff': (receipts.tiff_bytes([receipts.inverted(page) for page in capacity]), 'decodes'),
         'receipt-moved.tiff': (receipts.tiff_bytes([receipts.moved(page, 3) for page in capacity]), 'decodes'),
         'receipt-padded.tiff': (receipts.tiff_bytes([receipts.centred(page) for page in runs]), 'decodes'),
+        'receipt-cut.tiff': (receipts.tiff_bytes([receipts.moved(page, -3) for page in runs]), 'decodes'),
         'receipt-resized.tiff': (receipts.tiff_bytes([receipts.resampled(page, 200, 200) for page in runs]),
                                  'resized'),
         'receipt-preview.tiff': (receipts.tiff_bytes([receipts.thumbnail(runs[0]).convert('1')]), 'preview'),

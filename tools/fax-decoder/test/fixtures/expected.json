@@ -1603,6 +1603,7 @@
   "receipt-inverted.tiff": "decodes",
   "receipt-moved.tiff": "decodes",
   "receipt-padded.tiff": "decodes",
+  "receipt-cut.tiff": "decodes",
   "receipt-resized.tiff": "resized",
   "receipt-preview.tiff": "preview"
  }
