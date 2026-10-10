@@ -591,7 +591,9 @@ def publish(engine, evaluated, claim, pdf, tiff, *, now=None):
             # A shared call on long pages: which call pages each long page carries, so its result maps the long
             # pages the engine confirms back to each fax's own pages (batching/results.py).
             _write_sheets(out_tiff, work['frames'], cap.limit)
-        if layout is not None or trimmed_pages or matched:
+        # A shared call's long pages are the call's, not its first fax's: no page change is recorded for that fax
+        # (its Sent details and the savings count it as before; the call's own saving is sending together's).
+        if (layout is not None or trimmed_pages or matched) and not getattr(claim, 'members', None):
             records.record_change(
                 job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=frames_count,
                 sent_pages=len(pages), capability=cap, billing=_billing(account.card) if layout is not None else None,

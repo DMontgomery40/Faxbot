@@ -284,6 +284,14 @@ async def test_a_shared_call_goes_on_long_pages_and_its_result_maps_back_to_each
     assert [frame.tobytes() for frame in recovered] == [frame.tobytes() for frame in call_image]
     sheets = __import__('json').loads((data / f'packed-{first}-{attempt}.sheets.json').read_text())
     assert [[page for page, _ in sheet] for sheet in sheets] == [[1, 2, 3], [4, 5]]
+    # The long pages are the call's: the first fax keeps no page change of its own, so its Sent details never say
+    # it went as long pages and no saving is counted twice beside sending together's.
+    from api.app.pages import views
+    import sqlalchemy as sa
+    table = sa.Table('fax_page_changes', sa.MetaData(), autoload_with=configuration.engine)
+    with configuration.engine.connect() as connection:
+        assert connection.execute(sa.select(table.c.id).where(table.c.attempt_id == attempt)).first() is None
+    assert views.sent_view(configuration.engine, first) is None
     assert results.apply_fax_result(delivery, {'JobID': first, 'AttemptID': attempt, 'Status': 'FAILED',
                                                'Pages': '1'}) is True
     assert delivery.get(first)['state'] == 'success'
