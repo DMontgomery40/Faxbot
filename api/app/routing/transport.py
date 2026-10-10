@@ -25,7 +25,7 @@ from dataclasses import replace
 from .alternates import attempt_number, claim_dial_state
 from .dialing import reaches
 from .policy import RouteCandidate
-from .plan import RoutePlan, RoutePlanner, ledger_key
+from .plan import RoutePlan, RoutePlanner, ledger_key, route_label
 from .routes import RouteUnavailable, ensure_route_artifact, route_ready
 from .store import RouteStore
 from . import envelope as envelopes, holds as hold_store
@@ -372,7 +372,7 @@ class RoutedTransport:
         except Exception:
             return False
 
-    def _assign(self, claim, plan, revision):
+    def _assign(self, claim, plan, revision, measured=None, job=None):
         """Bind the first usable provider route; the fax's own provider needs no change.
 
         A route over the trunk is used only while the trunk has room; otherwise the
@@ -392,6 +392,15 @@ class RoutedTransport:
                 continue
             if route.kind in ('direct', 'local', 'relay', 'digital'):
                 return self._chosen(plan, choice, skipped), claim
+            # On battery (power.py, the UPS): a call that could outlast what is left goes by another approved route
+            # whose call does not depend on this office's power, or the fax waits in Sent; never a cut-off call.
+            admitted = _unexpected_raises(lambda: self._admission(revision, plan, place, measured, job))
+            if admitted is not None and admitted.action == 'hold':
+                self._skipped = tuple(skipped)
+                self._hold(claim, replace(plan, skipped=tuple(skipped)), admitted.sentence)
+            if admitted is not None and admitted.action == 'other' and admitted.account != route.key:
+                skipped.append((route.key, 'power'))
+                continue
             # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).
             if (route.provider_id == 'sip' or self._limited(revision, route.key)) and not self._trunk_has_room(
                     claim, revision, route.key):
@@ -425,7 +434,49 @@ class RoutedTransport:
             # Every allowed account that could take the fax is busy for now: it waits for room (it stays ready),
             # never held in Sent for a person; a line frees up by itself.
             raise CapacityWait()
+        powered = next((place for place, choice in enumerate(plan.choices)
+                        if (choice.route.key, 'power') in skipped), None)
+        if powered is not None:
+            # A call was kept off this office's battery and no other route took the fax: it waits in Sent, never
+            # a call on the battery by the fax's own account instead.
+            admitted = _unexpected_raises(lambda: self._admission(revision, plan, powered, measured, job,
+                                                                  alone=True))
+            self._hold(claim, replace(plan, skipped=tuple(skipped)), admitted.sentence)
         return None, claim
+
+    def _admission(self, revision, plan, place, measured=None, job=None, *, alone=False):
+        """``power.Admission`` (power.py, the UPS) for the provider choice at ``place``, the choices after it its
+        alternatives (none when ``alone``), from each route's predicted time 9 in 10 such calls finish within; None
+        for anything but a provider route, and on mains power or without a UPS set up (nothing predicted then)."""
+        from ..power import admission_for, state
+        choice = plan.choices[place]
+        engine = self.store.configuration.engine
+        if choice.route.kind != 'provider' or not state(engine).on_battery:
+            return None
+        others = [] if alone else [
+            (item.route.key, route_label(item.route.key), item.route.provider_id,
+             self._p90(revision, plan, item.route, measured, job)) for item in plan.choices[place + 1:]
+            if item.route.kind in ('provider', 'relay', 'digital')]
+        return admission_for(engine, revision.values, choice.route.key,
+                             self._p90(revision, plan, choice.route, measured, job),
+                             urgent=bool((job or {}).get('urgent')), others=others)
+
+    def _p90(self, revision, plan, route, measured=None, job=None):
+        """The time 9 in 10 calls of this fax on ``route`` finish within: from the pages measured for the account
+        (``routing.joint``) when they were, else from its page count with the account's own terms
+        (``pricing.account_facts``); None for a route that is not a call from here."""
+        from .predict import Shape, predict_from
+        from .pricing import account_facts
+        found = (getattr(measured, 'measured', None) or {}).get(route.key)
+        if found is not None:
+            shape, facts = found
+            return predict_from(facts, shape).p90_seconds
+        if route.kind != 'provider':
+            return None
+        facts = account_facts(self.store.configuration.engine, revision.values, route.key,
+                              plan.number_for(route.key), provider=route.provider_id)
+        pages = max(1, int((job or {}).get('pages') or 1))
+        return predict_from(facts, Shape(pages, None, 'standard', 'normal')).p90_seconds
 
     def _bound_ready(self, claim):
         """Whether the fax's own (bound) account can take a call now: local readiness only, never a provider call."""
@@ -542,7 +593,7 @@ class RoutedTransport:
                     plan, job, revision = planned
                     profile, prices = _extras(planned)
             self._skipped = _skipped(plan)
-            choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision))
+            choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision, measured, job))
             # What this attempt could not use, for its record and for "send anyway" on a held fax.
             if isinstance(plan, RoutePlan):
                 plan = replace(plan, skipped=self._skipped)

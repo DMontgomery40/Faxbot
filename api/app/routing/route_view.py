@@ -72,7 +72,8 @@ def attempt_sentence(account_label, choice, decision, cost_row, attempt, next_la
            'tried': 'it was already tried',
            'needs_patient': "its server needs the patient's details, which this fax does not have",
            'not_served': "it does not send faxes to this number's country",
-           'pin': 'it did not show the caller ID and station ID this recipient has registered'}
+           'pin': 'it did not show the caller ID and station ID this recipient has registered',
+           'power': "its call could outlast this office's battery"}
     for key, reason_code in skipped:
         if key and reason_code in why:
             parts.append(f'{label(key) if label else key} was skipped: {why[reason_code]}.')

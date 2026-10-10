@@ -142,6 +142,8 @@ class Shape:
     # {coding: bits per page} measured on the actual pages (pages.coding.measure); kept as sorted pairs.
     measured: object = None
     coding: str | None = None            # the coding the call uses, when chosen ('MH', 'MR', 'MMR', 'JBIG')
+    # Whether the call uses error correction; None: only when its coding needs it (MMR, JBIG).
+    ecm: bool | None = None
 
     def __post_init__(self):
         if type(self.pages) is not int or not 1 <= self.pages <= 10_000:
@@ -349,7 +351,13 @@ def line_seconds(shape, link, *, coding=None):
     if measured is not None:
         rate, how = _speed(link)
         seconds = setup + sum(measured) / rate + PAGE_SECONDS * shape.pages
-        return seconds, f'{duration_text(seconds)} on the line, from the measured size of each page in {coding} {how}'
+        extra = ecm_seconds(measured, coding, shape.ecm)
+        seconds += extra
+        clause = f'{duration_text(seconds)} on the line, from the measured size of each page in {coding} {how}'
+        if extra:
+            clause += (f', with about {round(extra)} seconds more where a page needs more than one error-correction '
+                       'block')
+        return seconds, clause
     if shape.page_bits is not None:
         rate, how = _speed(link)
         data = sum(shape.page_bits) * WIRE_FACTOR[coding] / rate
@@ -368,6 +376,17 @@ def line_seconds(shape, link, *, coding=None):
     bits = TYPICAL_PAGE_BITS[shape.resolution] * factor * WIRE_FACTOR[coding]
     seconds = setup + shape.pages * (bits / rate + PAGE_SECONDS)
     return seconds, f'{duration_text(seconds)} on the line, for typical pages {how}'
+
+
+def ecm_seconds(measured, coding, ecm=None):
+    """Seconds a call with error correction spends on the extra partial pages its pages need (each block edge past
+    a page's first is another exchange and modem start, ``pages.coding.ecm_extra_seconds``; the first block's end is
+    in ``PAGE_SECONDS`` already). 0 without error correction: a call uses it when ``ecm`` says so, or, unsaid, when
+    its coding needs it (MMR, JBIG)."""
+    if ecm is False or (ecm is None and coding not in ('MMR', 'JBIG')):
+        return 0.0
+    from ..pages.coding import ecm_extra_seconds
+    return ecm_extra_seconds(measured)
 
 
 # The spread of a call's time ---------------------------------------------------------------------------

@@ -4,9 +4,10 @@ Both ways of sending, as they are and packed, are put to one predictor:
 ``predict(route_key, destination, shape) -> Prediction(billed_pages,
 seconds, cost, basis, marginal)``. Builder AH's shared ``routing/predict.py``
 (``predict(route_key, destination, Shape(pages, page_bits, resolution,
-layout), *, now=None)``) is used when it is installed (``predictor``); until
-then the stand-in below follows the route's rate card and its page model in
-provider_traits.json, with the same meanings: ``billed_pages`` are pages
+layout), *, now=None)``) is used (``predictor``; a failed import raises). The
+stand-in below prices only a shape the shared predictor refuses (logged): it
+follows the route's rate card and its page model in provider_traits.json,
+with the same meanings: ``billed_pages`` are pages
 charged at a page price (0 on a per-minute route), ``marginal`` is True for a
 monthly plan, and None is always unknown, never 0:
 
@@ -102,11 +103,9 @@ def stand_in_predict(route_key, destination, shape, *, card=None):
 
 
 def predictor():
-    """AH's shared predictor behind this module's signature once it is installed; None means use the stand-in."""
-    try:
-        from ..routing import predict as shared  # type: ignore[attr-defined]
-    except ImportError:
-        return None
+    """The shared predictor (routing/predict.py) behind this module's signature. It is merged, so a failed import
+    is a defect and raises (as codec/decision.py's does); the stand-in is only for a shape the predictor refuses."""
+    from ..routing import predict as shared
 
     def adapted(route_key, destination, shape):
         return shared.predict(route_key, destination,

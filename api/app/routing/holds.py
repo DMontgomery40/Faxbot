@@ -140,7 +140,8 @@ def no_route_sentence(label_by_key, skipped):
            'tried': 'was already tried',
            'needs_patient': "needs the patient's details, which this fax does not have",
            'not_served': "does not send faxes to this number's country",
-           'pin': 'does not show the caller ID and station ID this recipient has registered'}
+           'pin': 'does not show the caller ID and station ID this recipient has registered',
+           'power': "would need longer than this office's battery has left"}
     parts = [f'{label_by_key(key)} {why.get(reason, "is not available")}' for key, reason in skipped]
     if not parts:
         return 'No account your rules allow can send this fax now. It waits for you in Sent; nothing was sent.'

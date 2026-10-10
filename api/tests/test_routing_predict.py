@@ -117,6 +117,27 @@ def test_predicted_seconds_match_the_recorded_spike_call():
     assert 'from the size of each page at the speed 1 earlier fax to this number reached' in how
 
 
+def test_a_page_past_an_error_correction_block_edge_costs_one_more_exchange():
+    """With error correction a page goes in blocks of 256 frames of 256 octets (65,536 octets); each block past a
+    page's first is another exchange and modem start (pages.coding.ECM_BLOCK_SECONDS). The first block's end is in
+    PAGE_SECONDS already. MMR and JBIG need error correction; MH and MR use it only when the call says so."""
+    from app.pages.coding import ECM_BLOCK_SECONDS
+
+    def seconds(octets, coding='MMR', ecm=None):
+        return line_seconds(Shape(1, None, 'fine', 'normal', {coding: (octets * 8,)}, coding, ecm=ecm), Link())
+
+    data = 1000 * 8 / 14400  # 1,000 more octets of page data at 14,400 bit/s
+    under, _ = seconds(65_000)
+    over, how = seconds(66_000)
+    assert over - under - data == pytest.approx(ECM_BLOCK_SECONDS)
+    assert how.endswith(', with about 3 seconds more where a page needs more than one error-correction block')
+    mh_under, _ = seconds(65_000, 'MH')
+    mh_over, mh_how = seconds(66_000, 'MH')
+    assert mh_over - mh_under == pytest.approx(data) and 'error-correction' not in mh_how
+    assert seconds(66_000, 'MH', ecm=True)[0] - mh_over == pytest.approx(ECM_BLOCK_SECONDS)
+    assert seconds(66_000, 'MMR', ecm=False)[0] == pytest.approx(over - ECM_BLOCK_SECONDS)
+
+
 def test_learned_figures_come_only_from_successful_reported_calls(database):
     schema.upgrade_schema(database)
     reported = {'negotiation_by': 'hylafax', 'number': NUMBER, 'compression': 'MR', 'ecm': 'off',
