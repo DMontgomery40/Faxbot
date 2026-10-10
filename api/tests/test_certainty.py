@@ -330,6 +330,27 @@ def test_only_the_owner_or_someone_who_may_confirm_receipt_settles(cw):
     assert cw.service.counts(admin) == {'open': 0, 'mine': 0, 'unassigned': 0, 'overdue': 0, 'settled': 1}
 
 
+def test_people_with_a_temporary_password_still_own_and_settle_by_their_grants(cw):
+    """The sender, the fallback and an assignee are chosen by who holds the sent fax, password set or not."""
+    cw.operator('dana')
+    cw.operator('fran', 'role_fax_viewer')
+    cw.user('nell')
+    admin = cw.operator('admin', 'role_administrator')
+    for name in ('dana', 'fran', 'nell'):
+        cw.update('access_users', name, password_change_required=1)
+    cw.service.update_settings(admin, fallback_principal_id='fran', settle_hours=2, version=0)
+    with pytest.raises(CertaintyInputError, match='cannot see every sent fax'):
+        cw.service.update_settings(admin, fallback_principal_id='nell', settle_hours=2, version=1)
+    cw.sent('fax-1', sender='dana')
+    cw.feed()
+    item = cw.item_for('fax-1')
+    assert (item['owner_principal_id'], item['owner_source']) == ('dana', 'sender')
+    assert [person['id'] for person in cw.service.assignees(admin, item['id'])] == ['admin', 'dana', 'fran']
+    with pytest.raises(CertaintyInputError, match='nell cannot see this fax'):
+        cw.service.assign(admin, item['id'], 'nell', version=1)
+    assert cw.service.assign(admin, item['id'], 'fran', version=1)['owner'] == {'id': 'fran', 'name': 'fran'}
+
+
 def test_an_item_past_its_deadline_is_escalated_once_to_the_fallback_person(cw):
     cw.operator('dana')
     cw.operator('fran', 'role_fax_viewer')

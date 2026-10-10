@@ -327,6 +327,35 @@ def test_owner_who_loses_access_is_shown_for_reassignment(ww):
     assert [person['id'] for person in ww.service.assignees(admin, item['id'])] == ['admin']
 
 
+def test_a_person_with_a_temporary_password_can_own_back_up_and_take_an_escalation(ww):
+    """Their grants decide who may own a document; the temporary password only stops them acting until set."""
+    ww.hours = 1
+    admin = operator(ww, 'admin', 'installation', 'role_administrator')
+    owner = ww.user('owner')
+    ww.assignment('owner', 'role_owner', 'installation')
+    dana = operator(ww, 'dana')
+    ww.user('nobody')
+    for name in ('owner', 'dana', 'nobody'):
+        ww.update('access_users', name, password_change_required=1)
+    ww.service.update_settings(admin, [{'mailbox_id': 'front', 'acknowledge_hours': 1,
+                                        'backup_principal_id': 'dana', 'version': 0}])
+    ww.received('fax', '+15550100001')
+    ww.feed()
+    item = ww.item_for('fax')
+    assert [person['id'] for person in ww.service.assignees(admin, item['id'])] == ['admin', 'dana', 'owner']
+    with pytest.raises(WorkInputError, match='nobody cannot see this document'):
+        ww.service.assign(admin, item['id'], 'nobody', version=1)
+    assert ww.service.assign(admin, item['id'], 'owner', version=1)['owner_can_see'] is True
+    # Escalation hands it to the backup, who has not set a password yet either.
+    assert ww.work.escalate(ww.control, now=NOW + timedelta(hours=2)) == 1
+    assert ww.item_for('fax')['owner_principal_id'] == 'dana'
+    # Until they set a password they still read nothing.
+    later = ww.at(NOW + timedelta(hours=2))
+    assert later.list(owner) == [] and later.list(dana) == []
+    with pytest.raises(WorkNotFound):
+        later.detail(dana, item['id'])
+
+
 def test_mailbox_settings_require_a_backup_who_sees_the_whole_mailbox(ww):
     admin = operator(ww, 'admin', 'installation', 'role_administrator')
     operator(ww, 'dana')
