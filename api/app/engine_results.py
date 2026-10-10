@@ -6,14 +6,19 @@ handlers write to the delivery store, which can wait for the database's write lo
 behind it and two events about one call are always handled in the order Asterisk sent them.
 
 A result the database still refused after its last try leaves the fax in progress. ``settle_lost_results`` is the
-safety net: a built-in engine fax still in progress ``capacity.HOLD`` after it was handed to Asterisk had its result
+safety net: a built-in engine fax still in progress ``LOST_AFTER`` after it was handed to Asterisk had its result
 lost, so it waits for a person (uncertain, ``result_lost``) and is never sent again by itself. Its line was already
 free by then (``capacity.HOLD``). A result that arrives later still replaces that with the real outcome.
+
+Which engine took a send comes from its engine record (``fax_engine_calls``, written when the call is placed). The
+SSL Fax engine's own sends are left to its check (``hylafax_http._sweep``), because that engine queues and retries
+for hours. A send with no engine record (the record is evidence, and a busy database can skip it) could be either,
+so it waits as long as the SSL Fax engine's check does before the safety net marks it.
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import contextvars
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import threading
 
@@ -21,6 +26,9 @@ import sqlalchemy as sa
 
 
 THREAD_NAME = 'faxbot-engine-results'
+# A fax call's longest time (capacity.HOLD, 30 minutes: longer than a 20-page fax at 9,600 bit/s, about 15 minutes)
+# plus a margin, before the safety net treats a built-in engine call's result as lost.
+LOST_AFTER = timedelta(minutes=45)
 _executor = None
 _pending = set()
 _guard = threading.Lock()
@@ -54,26 +62,27 @@ async def drain(timeout=60.0):
         await asyncio.wait([asyncio.wrap_future(future) for future in pending], timeout=timeout)
 
 
-def settle_lost_results(store, *, now=None, wait=None):
-    """Mark each built-in engine fax still in progress ``wait`` (``capacity.HOLD``) after it was handed to the
-    engine as uncertain (``result_lost``); returns how many. Never sends anything."""
-    from .capacity import HOLD
+def settle_lost_results(store, *, now=None):
+    """Mark each built-in engine fax still in progress ``LOST_AFTER`` after it was handed to the engine as uncertain
+    (``result_lost``); returns how many. Never sends anything."""
     from .config_store import ConfigurationStoreError
     from .database_busy import retry_when_busy
+    from .hylafax_http import NO_RESULT_AFTER
     from .outbound_store import DeliveryConflict
     now = now or datetime.utcnow()
-    cutoff = now - (wait or HOLD)
     deliveries, attempts = store.deliveries, store.attempts
-    lost = (sa.select(deliveries.c.id, deliveries.c.attempt_id).join(attempts, attempts.c.id == deliveries.c.attempt_id)
+    lost = (sa.select(deliveries.c.id, deliveries.c.attempt_id, attempts.c.submitted_at)
+            .join(attempts, attempts.c.id == deliveries.c.attempt_id)
             .where(deliveries.c.state == 'in_progress', attempts.c.submitted_at.is_not(None),
-                   attempts.c.submitted_at <= cutoff).order_by(attempts.c.submitted_at).limit(100))
+                   attempts.c.submitted_at <= now - LOST_AFTER).order_by(attempts.c.submitted_at).limit(100))
     with store.configuration.engine.connect() as connection:
         rows = connection.execute(lost).all()
-        took = _taken_by_hylafax(connection, [attempt_id for _, attempt_id in rows])
+        engines = _engines(connection, [attempt_id for _, attempt_id, _ in rows])
     marked = 0
-    for job_id, attempt_id in rows:
-        if attempt_id in took:
-            continue  # the SSL Fax engine's own sends: hylafax_http._sweep waits for them (it queues and retries)
+    for job_id, attempt_id, submitted_at in rows:
+        engine = engines.get(attempt_id)
+        if engine == 'hylafax' or (engine is None and submitted_at > now - NO_RESULT_AFTER):
+            continue
         try:
             _, profile = store.attempt_context(job_id, attempt_id)
         except (DeliveryConflict, ConfigurationStoreError, LookupError, ValueError):
@@ -90,12 +99,13 @@ def settle_lost_results(store, *, now=None, wait=None):
     return marked
 
 
-def _taken_by_hylafax(connection, attempt_ids):
+def _engines(connection, attempt_ids):
+    """{attempt: 'builtin' or 'hylafax'} from the engine records of these sends; a send without one is absent."""
     if not attempt_ids:
-        return set()
+        return {}
     try:
         calls = sa.Table('fax_engine_calls', sa.MetaData(), autoload_with=connection)
     except sa.exc.NoSuchTableError:
-        return set()
-    return set(connection.execute(sa.select(calls.c.call_key).where(
-        calls.c.direction == 'outbound', calls.c.engine == 'hylafax', calls.c.call_key.in_(attempt_ids))).scalars())
+        return {}
+    return dict(connection.execute(sa.select(calls.c.call_key, calls.c.engine).where(
+        calls.c.direction == 'outbound', calls.c.call_key.in_(attempt_ids))).all())

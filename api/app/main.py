@@ -606,7 +606,7 @@ def _result_unsaved(error, job_id, attempt):
         audit_event('native_result_requires_reconciliation', provider='sip', reason='database_busy')
         logging.getLogger(__name__).error(
             'The result of fax %s (attempt %s) was not saved because the database stayed busy; the fax shows as '
-            'sending until Faxbot marks it uncertain, half an hour after its call started.', job_id, attempt)
+            'sending until Faxbot marks it uncertain, 45 minutes after its call started.', job_id, attempt)
     else:
         audit_event('native_result_requires_reconciliation', provider='sip')
 

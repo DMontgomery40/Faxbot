@@ -298,11 +298,15 @@ def test_a_shared_call_result_outlasts_a_busy_database_for_every_fax(busy, monke
 def test_a_lost_result_frees_the_line_then_waits_for_a_person_and_is_never_sent_again(busy, monkeypatch, caplog):
     """The database stays busy through every try: the fax must not stay sending for ever (the safety net)."""
     from api.app import capacity, main
-    from api.app.engine_results import settle_lost_results
+    from api.app.engine_results import LOST_AFTER, settle_lost_results
+    from api.app.hylafax_records import records_for
     from api.app.work.certainty_service import CATEGORY_TEXT
     from api.tests.test_partly_sent import attempt_of, item_category
     installation, job, claim = _sip_on_the_line(busy.installation)
     _, store, _ = installation
+    # The built-in engine took the call (outbound_transport records it when the call is placed).
+    records_for(store.configuration.engine).record_call(direction='outbound', call_key=claim.attempt_id,
+                                                        engine='builtin', job_id=job)
     monkeypatch.setattr(main, '_deliveries', lambda: store)
     lock = busy.holder()
     lock.hold()
@@ -321,15 +325,17 @@ def test_a_lost_result_frees_the_line_then_waits_for_a_person_and_is_never_sent_
             return {row.delivery_id for row in connection.execute(holding.holds(at))}
         assert job in holds(submitted + capacity.HOLD - timedelta(minutes=1))
         assert job not in holds(submitted + capacity.HOLD + timedelta(seconds=1))  # its line is free again
-    assert settle_lost_results(store, now=submitted + capacity.HOLD - timedelta(minutes=1)) == 0
-    assert settle_lost_results(store, now=submitted + capacity.HOLD + timedelta(seconds=1)) == 1
+    # The longest fax call plus a margin: still sending at its line's limit, uncertain after the margin.
+    assert LOST_AFTER > capacity.HOLD
+    assert settle_lost_results(store, now=submitted + capacity.HOLD + timedelta(seconds=1)) == 0
+    assert settle_lost_results(store, now=submitted + LOST_AFTER + timedelta(seconds=1)) == 1
     assert store.get(job)['state'] == 'reconciliation_required'
     assert attempt_of(store, claim.attempt_id) == {'phase': 'uncertain', 'error_category': 'result_lost'}
     assert item_category(store, job) == 'result_lost'
     assert CATEGORY_TEXT['result_lost'] == ("Faxbot lost this call's result; check whether it arrived before "
                                             'sending again.')
     # Settling again changes nothing, and nothing is claimed for another try.
-    assert settle_lost_results(store, now=submitted + capacity.HOLD + timedelta(hours=1)) == 0
+    assert settle_lost_results(store, now=submitted + LOST_AFTER + timedelta(hours=1)) == 0
     assert store.claim('another-worker') is None
     # A result that still arrives replaces the uncertainty with the real outcome.
     main._handle_fax_result(_result(job, claim.attempt_id))
@@ -337,20 +343,26 @@ def test_a_lost_result_frees_the_line_then_waits_for_a_person_and_is_never_sent_
 
 
 def test_the_safety_net_leaves_ssl_fax_engine_sends_and_cloud_faxes_to_their_own_checks(busy):
-    from api.app import capacity
-    from api.app.engine_results import settle_lost_results
+    """The SSL Fax engine queues and retries for hours (hylafax_http._sweep waits three hours for it); a cloud fax is
+    polled again. A send without an engine record could be either, so it waits as long as the SSL Fax engine's
+    check does before the safety net marks it."""
+    from api.app.engine_results import LOST_AFTER, settle_lost_results
+    from api.app.hylafax_http import NO_RESULT_AFTER
     from api.app.hylafax_records import records_for
-    from api.tests.test_partly_sent import on_the_line
-    from api.tests.test_partly_sent import DOCUMO
+    from api.tests.test_partly_sent import DOCUMO, on_the_line
     installation, engine_job, engine_claim = _sip_on_the_line(busy.installation)
     _, store, _ = installation
-    # The SSL Fax engine took this send (hylafax_http._sweep waits three hours for it: the engine queues retries).
     records_for(store.configuration.engine).record_call(direction='outbound', call_key=engine_claim.attempt_id,
                                                         engine='hylafax', job_id=engine_job)
+    installation, unknown_job, unknown_claim = _sip_on_the_line(installation)
     installation, cloud_job, cloud_claim = on_the_line(installation, DOCUMO, 'documo-synthetic-1')
-    later = _submitted(store, cloud_claim.attempt_id) + capacity.HOLD + timedelta(minutes=1)
-    assert settle_lost_results(store, now=later) == 0
+    submitted = _submitted(store, cloud_claim.attempt_id)
+    assert settle_lost_results(store, now=submitted + LOST_AFTER + timedelta(minutes=1)) == 0
+    assert {store.get(job)['state'] for job in (engine_job, unknown_job, cloud_job)} == {'in_progress'}
+    assert settle_lost_results(store, now=submitted + NO_RESULT_AFTER + timedelta(minutes=1)) == 1
+    assert store.get(unknown_job)['state'] == 'reconciliation_required'
     assert store.get(engine_job)['state'] == 'in_progress' and store.get(cloud_job)['state'] == 'in_progress'
+
 
 
 # -- The delivery worker: the hand-over receipt and the claim's heartbeat ---------------------------------------
