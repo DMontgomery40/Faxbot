@@ -430,6 +430,33 @@ def test_the_built_in_engines_negotiation_never_changes_a_sent_faxs_outcome(monk
     assert len(observed) == 3 and observed[0] == observed[1] == observed[2]
 
 
+def test_a_store_error_after_a_built_in_result_is_logged_and_never_changes_its_outcome(monkeypatch, caplog):
+    """The station check runs after the outcome is kept; when its store cannot be reached or written, the handler
+    logs it and returns, and the outcome observed is the one a working store gives."""
+    from types import SimpleNamespace
+    from app import main
+    from app.routing import stations
+    observed = []
+    monkeypatch.setattr(main.batching_results, 'apply_fax_result', lambda *args, **kwargs: False)
+    monkeypatch.setattr(main, '_observe_native', lambda *args, **kwargs: observed.append((args, kwargs)))
+    monkeypatch.setattr(main, '_deliveries', lambda: SimpleNamespace(configuration=SimpleNamespace(engine=None)))
+    monkeypatch.setattr(stations, 'after_call', lambda *args, **kwargs: None)
+    main._handle_fax_result(fax_result())
+
+    def broken(*args, **kwargs):
+        raise RuntimeError('synthetic station store failure')
+    monkeypatch.setattr(stations, 'after_call', broken)
+    with caplog.at_level('WARNING', logger='app.main'):
+        main._handle_fax_result(fax_result())
+    # A store that cannot even be reached is the same: logged, outcome unchanged.
+    monkeypatch.setattr(main, '_deliveries', lambda: None)
+    with caplog.at_level('WARNING', logger='app.main'):
+        main._handle_fax_result(fax_result())
+    assert len(observed) == 3 and observed[0] == observed[1] == observed[2]
+    warned = [record for record in caplog.records if record.name == 'app.main' and record.levelname == 'WARNING']
+    assert len(warned) == 2 and all(JOB in record.getMessage() for record in warned)
+
+
 def test_a_recording_failure_on_a_built_in_call_keeps_the_call_record_and_never_raises(installation, database,
                                                                                      monkeypatch):
     calls, records = installation

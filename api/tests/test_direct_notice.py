@@ -176,6 +176,27 @@ async def test_the_original_goes_directly_held_and_paired_by_its_subaddress(noti
     assert view['status'] == 'County Clinic paired the faxed notice with the document delivered directly.'
 
 
+def test_a_notice_page_is_read_with_white_paper_whichever_way_its_file_stores_it(tmp_path):
+    """The barcode is read from the first page with white paper, whichever polarity the file keeps: Pillow writes a
+    PDF's CCITT image with /BlackIs1 true (its codes' white runs are the ink), a fax engine writes a TIFF as it
+    arrived, and a writer may store a page the other way round."""
+    from PIL import Image, ImageOps
+    notice_id = notice.new_notice_id()
+    pdf = notice.notice_page(notice_id=notice_id, sender='Synthetic clinic', sender_number='+13035550100',
+                             recipient='Synthetic lab', recipient_number='+12025550123')
+    with Image.open(fax_image(pdf, tmp_path, resolution='204x98', noise=0.003)) as image:
+        page = image.convert('1')
+    files = {}
+    for name, picture, kind, options in (
+            ('pdf', page, 'PDF', {'resolution': 98}),
+            ('tiff', page, 'TIFF', {'compression': 'group4'}),
+            ('inverted tiff', ImageOps.invert(page.convert('L')).convert('1'), 'TIFF', {'compression': 'group4'})):
+        buffer = io.BytesIO()
+        picture.save(buffer, kind, **options)
+        files[name] = buffer.getvalue()
+    assert {name: notice.barcode_in(data) for name, data in files.items()} == dict.fromkeys(files, notice_id)
+
+
 @pytest.mark.asyncio
 async def test_without_a_subaddress_the_printed_barcode_pairs_it(noticed, tmp_path):
     original, _, attempt, sent, _, _ = await send_with_notice(noticed, 'Second referral')
