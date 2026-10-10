@@ -132,9 +132,7 @@
   {
     "version": "4655369c633b57c5d528d2f7d79a01f123e77c3b",
     "title": "4655369c633b57c5d528d2f7d79a01f123e77c3b",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "1894069a",
@@ -285,6 +283,13 @@
     "version": "48d6a5a",
     "title": "48d6a5a",
     "aliases": []
+  },
+  {
+    "version": "37a6890cbe343b4a6b38427393876336e48f09e8",
+    "title": "37a6890cbe343b4a6b38427393876336e48f09e8",
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "36b54905",
