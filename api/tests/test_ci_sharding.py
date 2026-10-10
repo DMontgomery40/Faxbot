@@ -1,4 +1,6 @@
 """CI partitioning must retain every collected case exactly once."""
+import os
+from pathlib import Path
 import random
 
 import pytest
@@ -28,3 +30,16 @@ def test_invalid_shard_cannot_silently_skip_the_suite(value):
 def test_cli_shard_numbers_are_one_based():
     assert parse_shard('1/8') == (0, 8)
     assert parse_shard('8/8') == (7, 8)
+
+
+def test_only_the_test_suite_holds_files_pytest_collects():
+    """CI runs pytest in api/ with no path, so it collects every test_*.py and *_test.py under it: a product module
+    named like one (app/test_lines.py was) is run as tests and fails CI. Only tests/ may hold such files."""
+    api = Path(__file__).resolve().parents[1]
+    skipped = {'tests', 'node_modules', 'faxdata', '__pycache__', '.venv', '.pytest_cache'}
+    found = []
+    for folder, children, files in os.walk(api):
+        children[:] = [child for child in children if child not in skipped]
+        found += [str(Path(folder, name).relative_to(api)) for name in files
+                  if name.endswith('.py') and (name.startswith('test_') or name.endswith('_test.py'))]
+    assert found == []

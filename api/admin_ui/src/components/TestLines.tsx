@@ -1,4 +1,4 @@
-// Administration → System health → Public test lines (test_lines.py, research N10): send one test fax to a service whose
+// Administration → System health → Public test lines (public_test_lines.py, research N10): send one test fax to a service whose
 // operator invites test faxes, at your request only, and see what came back. The dialing guard is never bypassed:
 // a line in a country Faxbot may not dial yet offers to allow that country, with your confirmation, through the
 // guard's own change (Delivery setup → Providers & accounts → Where Faxbot may dial).

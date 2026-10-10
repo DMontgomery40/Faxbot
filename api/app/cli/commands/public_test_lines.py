@@ -1,4 +1,4 @@
-"""Public test lines: ``faxbot admin diagnostics test-lines`` (test_lines.py, research N10).
+"""Public test lines: ``faxbot admin diagnostics test-lines`` (public_test_lines.py, research N10).
 
 Hangs off the diagnostics group (``settings.diagnostics``); ``settings.py`` imports this module so the commands
 exist before ``nouns.py`` copies the group. Only ``send`` places a call, and only to the one line you name.
