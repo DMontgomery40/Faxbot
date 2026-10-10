@@ -93,6 +93,9 @@ FIELDS = {
         # Each trunk's own fax and number settings (WP-T), so a second trunk never inherits the first one's.
         ('t38', 'sip_t38_enabled', 'Fax over IP (T.38)', False,
          'Leave it on unless this carrier turns fax calls into audio itself.'),
+        ('answer_cap', 'sip_fax_answer_cap', 'Hang up when no fax machine answers within 50 seconds', False,
+         'Leave it on: where this carrier bills by the whole minute, a call no fax machine answers costs one minute '
+         'instead of two.'),
         ('codecs', 'sip_trunk_codecs', 'Audio codecs', False,
          "ulaw, alaw or both in order; leave it empty for the carrier's usual order."),
         ('dial_format', 'sip_trunk_dial_format', 'Number format', False,

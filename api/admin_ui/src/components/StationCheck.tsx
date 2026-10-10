@@ -1,6 +1,6 @@
 // The station check (routing/stations.py): what Faxbot does when a number answers as another fax machine, per
 // recipient (Recipients → Details) and per mailbox (Numbers → Sender identity), and what Sent details say.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Card, CardContent, MenuItem, Stack, TextField, Typography,
 } from '@mui/material';
@@ -90,19 +90,40 @@ export function RecipientStationCheck({ client, number, canWrite }: { client: Cl
   );
 }
 
-// Numbers → Sender identity: the same choice for one mailbox's faxes.
+// Numbers → Sender identity: the same choice for one mailbox's faxes, with what each mailbox does now.
+interface MailboxMode { mailbox_id: string; label: string; mode: Mode; chosen: boolean; actor_name: string | null; sentence: string }
+
 export function MailboxStationCheck({ client, canWrite, mailboxes }: {
   client: Client; canWrite: boolean; mailboxes: Array<{ id: string; label: string }>;
 }) {
   const [mailboxId, setMailboxId] = useState('');
   const [mode, setMode] = useState<Mode>('refuse');
   const [message, setMessage] = useState<{ severity: 'success' | 'error'; text: string } | null>(null);
-  if (!canWrite || mailboxes.length === 0) return null;
+  const [current, setCurrent] = useState<MailboxMode[] | null>(null);
+  const [unread, setUnread] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const found = await read<{ mailboxes: MailboxMode[] }>(client, '/routing/stations/mailboxes');
+      setCurrent(found.mailboxes ?? []);
+      setUnread(false);
+    } catch (failure) {
+      setCurrent(null);
+      setUnread(!(failure instanceof AdminAPIError && failure.status === 403));
+    }
+  }, [client]);
+  useEffect(() => { void load(); }, [load, mailboxes.length]);
+  if (mailboxes.length === 0) return null;
+  const choose = (value: string) => {
+    setMailboxId(value);
+    const found = current?.find((item) => item.mailbox_id === value);
+    if (found) setMode(found.mode);
+  };
   const save = async () => {
     try {
       const result = await client.call<{ sentence: string }>({
         method: 'PUT', path: `/routing/stations/mailboxes/${path(mailboxId)}`, body: { mode } });
       setMessage({ severity: 'success', text: result.sentence });
+      await load();
     } catch (failure) {
       setMessage({ severity: 'error', text: problem(failure, 'This could not be saved. Try again.') });
     }
@@ -115,18 +136,28 @@ export function MailboxStationCheck({ client, canWrite, mailboxes }: {
           Before any page, Faxbot compares the fax number the answering machine shows with the number dialled and the
           ones it showed before. By default the fax goes on and Sent says so. A recipient's own choice comes first.
         </Typography>
-        {message && <Alert severity={message.severity} sx={{ mb: 2 }} onClose={() => setMessage(null)}>{message.text}</Alert>}
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
-          <TextField select size="small" label="Mailbox" value={mailboxId} sx={{ minWidth: 180 }}
-            onChange={(event) => setMailboxId(event.target.value)}>
-            {mailboxes.map((box) => <MenuItem key={box.id} value={box.id}>{box.label}</MenuItem>)}
-          </TextField>
-          <TextField select size="small" label="What Faxbot does" value={mode} sx={{ minWidth: 260 }}
-            onChange={(event) => setMode(event.target.value as Mode)}>
-            {(Object.keys(MODE_LABELS) as Mode[]).map((item) => <MenuItem key={item} value={item}>{MODE_LABELS[item]}</MenuItem>)}
-          </TextField>
-          <Button variant="outlined" disabled={!mailboxId} onClick={() => void save()}>Save</Button>
-        </Stack>
+        {unread && (
+          <Typography variant="body2" color="error" sx={{ mb: 1 }}>What each mailbox does could not be loaded. Try again.</Typography>
+        )}
+        {(current ?? []).map((item) => (
+          <Typography key={item.mailbox_id} variant="body2" sx={{ mb: 0.5 }} data-testid={`station-mode-${item.mailbox_id}`}>
+            {item.sentence}
+          </Typography>
+        ))}
+        {message && <Alert severity={message.severity} sx={{ my: 2 }} onClose={() => setMessage(null)}>{message.text}</Alert>}
+        {canWrite && (
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} sx={{ mt: 1.5 }}>
+            <TextField select size="small" label="Mailbox" value={mailboxId} sx={{ minWidth: 180 }}
+              onChange={(event) => choose(event.target.value)}>
+              {mailboxes.map((box) => <MenuItem key={box.id} value={box.id}>{box.label}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="What Faxbot does" value={mode} sx={{ minWidth: 260 }}
+              onChange={(event) => setMode(event.target.value as Mode)}>
+              {(Object.keys(MODE_LABELS) as Mode[]).map((item) => <MenuItem key={item} value={item}>{MODE_LABELS[item]}</MenuItem>)}
+            </TextField>
+            <Button variant="outlined" disabled={!mailboxId} onClick={() => void save()}>Save</Button>
+          </Stack>
+        )}
       </CardContent>
     </Card>
   );

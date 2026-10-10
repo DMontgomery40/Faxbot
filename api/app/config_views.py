@@ -251,6 +251,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_compression': values.sip_fax_compression,
                 'fax_fine': values.sip_fax_fine,
                 'fax_tune_coding': values.sip_fax_tune_coding,
+                # The answer cap's switch (routing/stations.py); its sentence comes from /routing/stations/answer-cap.
+                'fax_answer_cap': values.sip_fax_answer_cap,
                 'sslfax_enabled': values.sip_sslfax_enabled,
                 'fax_lines': values.sip_fax_lines,
                 # Calls at once on the trunk and new calls a second, as set (0: the default) and as in effect.

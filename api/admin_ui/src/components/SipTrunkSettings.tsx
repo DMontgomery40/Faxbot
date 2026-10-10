@@ -331,7 +331,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       // Fax settings.
       ['t38_error_correction', 'sip_t38_error_correction'], ['t38_max_datagram', 'sip_t38_max_datagram'],
       ['fax_max_rate', 'sip_fax_max_rate'], ['fax_ecm', 'sip_fax_ecm'], ['fax_compression', 'sip_fax_compression'],
-      ['fax_fine', 'sip_fax_fine'], ['fax_tune_coding', 'sip_fax_tune_coding'],
+      ['fax_fine', 'sip_fax_fine'], ['fax_tune_coding', 'sip_fax_tune_coding'], ['fax_answer_cap', 'sip_fax_answer_cap'],
       ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
       ['sslfax_listener_port', 'sip_sslfax_listener_port'],
       // How many calls the trunk takes: faxes beyond them wait for a free line.
@@ -755,7 +755,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
             Some carriers use this to pick a fax-capable route; others ignore it. Faxbot never calls again because of it.
           </Typography>
-          <FaxSettings form={form} update={update} />
+          <FaxSettings form={form} update={update} client={client} />
         </>
       )}
 

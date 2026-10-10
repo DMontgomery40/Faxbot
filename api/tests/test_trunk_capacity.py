@@ -250,7 +250,10 @@ def test_a_fax_bound_to_a_second_trunk_keeps_that_trunk_through_dispatch(trunked
     from api.app import ami
     from api.app.routing import envelope as envelopes
     from api.app.routing.plan import RoutePlan, RoutePlanner
+    from api.tests.guard_support import allow_country
     publish(trunked, {'format': 1, 'routes': [rule('r-leeds', {'use': 'sip-leeds'})]})
+    # About trunk binding, not dialing policy: the UK is allowed as an administrator would allow it (N14).
+    allow_country(trunked.engine, 'GB')
     job = accept(trunked, to='+442079460000')
     found = claim(trunked)
     assert found.job_id == job

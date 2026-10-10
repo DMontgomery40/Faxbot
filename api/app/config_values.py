@@ -150,6 +150,9 @@ class ConfigurationValues(BaseModel):
     # Lossless tuning (hylafax/patches/0003, pages/tuning.py): the fewest-bytes MR schedule on every call, and
     # tuned JBIG only where the receiving machine is known to decode it; the same pixels either way.
     sip_fax_tune_coding: bool = Field(True, validation_alias='SIP_FAX_TUNE_CODING')
+    # The answer cap (routing/stations.py, asterisk patch 0007): on a trunk billed by the minute in steps of 60 s or
+    # more, the built-in engine hangs up 50 s after answer when no fax machine has answered. Each trunk has its own.
+    sip_fax_answer_cap: bool = Field(True, validation_alias='SIP_FAX_ANSWER_CAP')
     # SSL Fax engine (HylaFAX+): offered on every call; fax lines at once; the receiving listener's port,
     # used only when docker-compose.sslfax.yml publishes it.
     sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')

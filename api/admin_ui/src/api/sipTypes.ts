@@ -127,6 +127,8 @@ export interface SipTrunkSettings {
   fax_compression?: 'mh' | 'mr' | 'mmr' | 'jbig';
   fax_fine?: boolean;
   fax_tune_coding?: boolean;
+  // Hang up 50 seconds after answer when no fax machine answers, on a trunk billed by the minute.
+  fax_answer_cap?: boolean;
   sslfax_enabled?: boolean;
   fax_lines?: number;
   // Calls at once on the trunk (0: as many as the fax lines) and new calls a second (0: the carrier's limit).

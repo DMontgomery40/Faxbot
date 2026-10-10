@@ -16,6 +16,8 @@ import type {
 } from './ProviderRulesApi';
 import ProviderAccountsDialog from './ProviderAccountsDialog';
 import DialDestinations from './DialDestinations';
+import AccountCountryRules, { useCountryRules } from './delivery/AccountCountryRules';
+import LoadFailed from './common/LoadFailed';
 
 export const HEALTH: Record<HealthState, { label: string; color: 'success' | 'default' | 'warning' | 'error' | 'info' }> = {
   ready: { label: 'Ready', color: 'success' },
@@ -53,6 +55,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
   const [editing, setEditing] = useState<{ account: ProviderAccount | null } | null>(null);
   const [saving, setSaving] = useState(false);
   const [health, setHealth] = useState<{ account: ProviderAccount; result: AccountHealth } | null>(null);
+  // Country service rules on the rows of the accounts they concern (the UAE, Saudi Arabia).
+  const countries = useCountryRules(api);
 
   // Someone who may not see provider accounts sees no list.
   const [hidden, setHidden] = useState(false);
@@ -98,6 +102,7 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
       </Typography>
       <Notice message={notice} onClose={() => setNotice(null)} />
       <DeliveryError error={error} onClose={() => setError(null)} />
+      {countries.failed && <LoadFailed testId="account-country-rules-unread" text="Country rules could not be loaded. Try again." />}
       <Paper variant="outlined" sx={{ borderRadius: 2, overflowX: 'auto' }}>
         <Table size="small" aria-label="Provider accounts">
           <TableHead>
@@ -117,6 +122,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
                     <Typography variant="caption" color="text.secondary">
                       {state.providers.find((kind) => kind.id === account.provider)?.label ?? account.provider}
                     </Typography>
+                    <AccountCountryRules api={api} account={account.key} rules={countries.rules} canWrite={canWrite}
+                      onChange={countries.setRules} />
                   </TableCell>
                   <TableCell>{siteName(account.site)}</TableCell>
                   <TableCell>{rolesText(account, state)}</TableCell>

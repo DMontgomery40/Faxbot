@@ -603,3 +603,7 @@ def pair_device(code: str = typer.Argument(..., help='The six-digit pairing code
 # Route problems and the 2-by-2 test (route_families.py) hang off diagnostics; importing them here registers them
 # before nouns.py copies the group.
 from . import route_families as _route_families  # noqa: E402,F401
+
+# Public test lines (test_lines.py) hang off diagnostics as test-lines; importing them here registers them before
+# nouns.py copies the group.
+from . import test_lines as _test_lines  # noqa: E402,F401

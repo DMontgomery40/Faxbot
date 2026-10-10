@@ -69,7 +69,8 @@ class CheckSources:
     """The stored records the checks read; the direct path's tables only when they exist."""
 
     OPTIONAL = ('direct_call_repairs', 'direct_notices', 'carrier_charges', 'delivery_charges', 'sip_call_records',
-                'direct_deliveries', 'direct_peers', 'provider_profiles', 'fax_job_rule_decisions')
+                'direct_deliveries', 'direct_peers', 'provider_profiles', 'fax_job_rule_decisions',
+                'test_line_sends')
 
     def __init__(self, engine):
         self.engine = engine

@@ -84,11 +84,12 @@ def test_every_sip_trunk_setting_is_a_provider_setting():
                      'sip_trunk_transport', 'sip_trunk_username', 'sip_trunk_password',
                      'sip_trunk_outbound_proxy', 'sip_trunk_caller_id', 'sip_trunk_dids', 'sip_t38_enabled',
                      'sip_fax_preference_header', 'sip_trunk_codecs', 'sip_trunk_dial_format',
-                     'sip_trunk_dial_prefix', 'sip_external_address', 'sip_public_address_check_minutes',
+                     'sip_trunk_dial_prefix', 'sip_trunk_own_access', 'sip_external_address', 'sip_public_address_check_minutes',
                      'sip_router_ports',
                      # Fax settings (both fax engines) and the SSL Fax engine.
                      'sip_t38_error_correction', 'sip_t38_max_datagram', 'sip_fax_max_rate', 'sip_fax_ecm',
-                     'sip_fax_compression', 'sip_fax_fine', 'sip_fax_tune_coding', 'sip_sslfax_enabled', 'sip_fax_lines',
+                     'sip_fax_compression', 'sip_fax_fine', 'sip_fax_tune_coding', 'sip_fax_answer_cap',
+                     'sip_sslfax_enabled', 'sip_fax_lines',
                      'sip_sslfax_listener_port',
                      # How many calls the trunk takes at once and new calls a second (capacity.py).
                      'sip_trunk_max_calls', 'sip_trunk_calls_per_second'}

@@ -42,6 +42,10 @@ DIGITS_MAX = 20
 CALL_DAYS = 180
 PERSON_DAYS = 365
 T0_CAP_MS = 50000
+# The answer cap's switch, one per trunk (accounts.FIELDS['sip'] gives each extra trunk its own): on by default.
+CAP_SETTING = 'sip_fax_answer_cap'
+# Without the cap, spandsp's own T0 (60 s) ends a call no fax machine answers just after a minute.
+UNCAPPED_SECONDS = 61
 MODES = ('warn', 'refuse')
 NO_SIGNAL, MATCHES, DIFFERS = 'no_signal', 'matches', 'differs'
 log = logging.getLogger(__name__)
@@ -191,6 +195,79 @@ def bills_by_minute(card):
         (getattr(card, 'billing_increment_seconds', 0) or 0) >= 60
 
 
+def cap_on(values):
+    """The trunk's own switch (``CAP_SETTING``); on unless someone turned it off."""
+    return getattr(values, CAP_SETTING, True) is not False
+
+
+def _billed(increment, minimum, seconds):
+    from types import SimpleNamespace
+    from .costs import billed_seconds
+    return billed_seconds(SimpleNamespace(billing_increment_seconds=increment, minimum_seconds=minimum or 0), seconds)
+
+
+_NUMBERS = {1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five'}
+
+
+def _billed_text(seconds):
+    if seconds % 60:
+        return f'{seconds} seconds'
+    minutes = seconds // 60
+    return f'{_NUMBERS.get(minutes, minutes)} minute{"" if minutes == 1 else "s"}'
+
+
+def _saving(increment, minimum):
+    """('one minute instead of two', 'two minutes') when the cap puts an unanswered call in an earlier billed step:
+    what it is billed as with the cap, and without it. None when it saves no step or the step is unknown."""
+    if not increment:
+        return None
+    capped = _billed(increment, minimum, T0_CAP_MS // 1000)
+    uncapped = _billed(increment, minimum, UNCAPPED_SECONDS)
+    if capped >= uncapped:
+        return None
+    other = _NUMBERS.get(uncapped // 60, uncapped // 60) if not capped % 60 and not uncapped % 60 \
+        else _billed_text(uncapped)
+    return f'{_billed_text(capped)} instead of {other}', _billed_text(uncapped)
+
+
+def cap_view(values, engine):
+    """The answer cap for one trunk (``values`` as that trunk sees them): whether it is on, whether Faxbot uses it,
+    and one sentence each for on and off, so the switch can show the right one before it is saved."""
+    card = trunk_card(values, engine)
+    applies = bills_by_minute(card)
+    cap = T0_CAP_MS // 1000
+    if applies:
+        saving = _saving(card.billing_increment_seconds, card.minimum_seconds)
+        step = card.billing_increment_seconds
+        # Only the built-in fax engine (asterisk patch 0007) ends a call at the cap; the SSL Fax engine keeps its own.
+        if saving:
+            on = (f'On: your carrier bills this trunk by the minute, so when no fax machine answers within {cap} '
+                  "seconds Faxbot's built-in fax engine hangs up, and the call is billed as "
+                  f'{saving[0]}.')
+            off = ('Off: Faxbot waits the usual 60 seconds for a fax machine to answer, so a call no fax machine '
+                   f'answers is billed as {saving[1]}.')
+        else:
+            on = (f"On: when no fax machine answers within {cap} seconds, Faxbot's built-in fax engine hangs up; on "
+                  f"this trunk's {step}-second billing steps that does not change the charge.")
+            off = ('Off: Faxbot waits the usual 60 seconds for a fax machine to answer; on this trunk\'s '
+                   f'{step}-second billing steps the charge is the same either way.')
+    else:
+        if card is None:
+            on = ('On, but Faxbot does not use it yet: it has no call prices for this trunk, so it cannot tell '
+                  'whether hanging up early saves anything. Enter your carrier\'s prices for this trunk to use it.')
+        elif not getattr(card, 'per_minute_micros', 0):
+            on = ('On, but Faxbot does not use it on this trunk: your carrier does not bill its calls by the minute, '
+                  'so a longer wait for a fax machine costs nothing more.')
+        else:
+            on = ('On, but Faxbot does not use it on this trunk: your carrier bills its calls in '
+                  f'{card.billing_increment_seconds}-second steps, so the usual 60-second wait for a fax machine '
+                  'adds at most one short step.')
+        off = 'Off: Faxbot waits the usual 60 seconds for a fax machine to answer.'
+    switched_on = cap_on(values)
+    return {'on': switched_on, 'applies': applies and switched_on, 'cap_seconds': cap,
+            'sentence': on if switched_on else off, 'on_sentence': on, 'off_sentence': off}
+
+
 def trunk_card(values, engine):
     """The trunk's outbound rate card: the one saved in Faxbot, else the shipped published one."""
     from .predict_facts import _card_for, shipped, stored_card
@@ -212,7 +289,7 @@ def call_guard(values, job_id, number, *, engine, mailbox_id=None, peer=False):
     if peer:
         return CallGuard()
     try:
-        t0 = T0_CAP_MS if bills_by_minute(trunk_card(values, engine)) else None
+        t0 = T0_CAP_MS if cap_on(values) and bills_by_minute(trunk_card(values, engine)) else None
         if engine is None:
             return CallGuard(t0)
         now = datetime.utcnow()
@@ -235,21 +312,67 @@ def _dialed_on(connection, job_id, attempt_id):
     return dialed or connection.execute(sa.select(jobs.c.to_number).where(jobs.c.id == job_id)).scalar()
 
 
-def after_call(engine, *, job_id, attempt_id, station, succeeded, check_result=None, engine_name='builtin'):
+def _caps():
+    return sa.table('answer_cap_calls', sa.column('id'), sa.column('job_id'), sa.column('cap_seconds'),
+                    sa.column('increment_seconds'), sa.column('minimum_seconds'),
+                    sa.column('created_at', sa.DateTime()))
+
+
+def _call_card(connection, configuration, attempt_id, engine):
+    """The rate card of the trunk this attempt went over, read when its result arrives (None when unknown)."""
+    if configuration is None:
+        return None
+    from ..accounts import account_values
+    values = configuration.read().active.values
+    choices = sa.table('delivery_rule_choices', sa.column('id'), sa.column('account_key'))
+    key = connection.execute(sa.select(choices.c.account_key).where(choices.c.id == attempt_id)).scalar() \
+        if sa.inspect(connection).has_table('delivery_rule_choices') else None
+    if key and key != 'sip':
+        values = account_values(values, key)
+    return trunk_card(values, engine)
+
+
+def record_cap_on(connection, *, attempt_id, job_id, card, now):
+    """Keep that the built-in engine ended this attempt at the answer cap, with the billing step it fitted in."""
+    table = _caps()
+    if connection.execute(sa.select(table.c.id).where(table.c.id == attempt_id)).first() is not None:
+        return
+    connection.execute(table.insert().values(
+        id=attempt_id, job_id=job_id, cap_seconds=T0_CAP_MS // 1000,
+        increment_seconds=getattr(card, 'billing_increment_seconds', None) if card is not None else None,
+        minimum_seconds=getattr(card, 'minimum_seconds', None) if card is not None else None, created_at=now))
+
+
+def after_call(engine, *, job_id, attempt_id, station, succeeded, check_result=None, engine_name='builtin',
+               t0_capped=False, configuration=None):
     """After a sent call: keep the station every successful call answered as (one that differed included: it has
     now shown on a successful call, research N5's rule), and what the check found.
 
     ``check_result`` is the built-in engine's own (patch 0007's CsiCheck: matches, differs or refused); the SSL Fax
-    engine has none, so its station is checked here, after the call. Storage that cannot be written now is logged
-    and skipped: it never changes the fax's outcome."""
+    engine has none, so its station is checked here, after the call. ``t0_capped`` (patch 0007's T0Capped) keeps
+    that the call ended at the answer cap, with the trunk's billing step read from ``configuration`` now. Storage
+    that cannot be written now is logged and skipped: it never changes the fax's outcome."""
     if engine is None or not job_id:
         return None
     now = datetime.utcnow()
+    capped = bool(t0_capped and attempt_id and not succeeded)
+    card = None
+    if capped:
+        from ..config_store import ConfigurationStoreError
+        from .database import DeliveryStoreError
+        try:
+            with engine.connect() as connection:
+                card = _call_card(connection, configuration, attempt_id, engine)
+        except (sa.exc.SQLAlchemyError, DeliveryStoreError, ConfigurationStoreError, ValueError) as error:
+            # Kept without the billing step: Sent details then say only that Faxbot hung up.
+            log.warning('The trunk prices for fax %s could not be read (%s).', job_id, type(error).__name__)
     try:
         with engine.begin() as connection:
             number = _dialed_on(connection, job_id, attempt_id)
             if not number:
                 return None
+            if capped:
+                record_cap_on(connection, attempt_id=attempt_id, job_id=job_id, card=card, now=now)
             outcome = check_result if check_result in ('differs', 'refused') else None
             if engine_name == 'sslfax' and check_result is None:
                 found = check(station, expected_on(connection, number, now))
@@ -267,14 +390,30 @@ def after_call(engine, *, job_id, attempt_id, station, succeeded, check_result=N
 
 # Views ---------------------------------------------------------------------------------------------------------------
 
+def cap_sentence(row):
+    """What Sent details say about a call the answer cap ended, with the billed step it fitted in when known."""
+    text = (f'Faxbot hung up {row["cap_seconds"]} seconds after the call was answered because no fax machine '
+            'answered')
+    saving = _saving(row['increment_seconds'], row['minimum_seconds'])
+    return f'{text}, so it is billed as {saving[0]}.' if saving else f'{text}.'
+
+
 def fax_sentences(engine, job_id):
-    """What Sent details say about the stations a fax's calls answered as, one sentence per call that differed."""
-    table = _results()
+    """What Sent details say about a fax's calls: one sentence per call that answered as another station, and one
+    per call the answer cap ended, in call order."""
+    table, caps = _results(), _caps()
     with engine.connect() as connection:
-        rows = connection.execute(sa.select(table).where(table.c.job_id == job_id)
-                                  .order_by(table.c.created_at, table.c.id)).mappings().all()
+        rows = [dict(row) for row in connection.execute(sa.select(table).where(table.c.job_id == job_id))
+                .mappings().all()]
+        if sa.inspect(connection).has_table('answer_cap_calls'):
+            rows += [{**row, 'outcome': 'capped'} for row in connection.execute(
+                sa.select(caps).where(caps.c.job_id == job_id)).mappings().all()]
+    rows.sort(key=lambda row: (row['created_at'], row['id']))
     sentences = []
     for row in rows:
+        if row['outcome'] == 'capped':
+            sentences.append(cap_sentence(row))
+            continue
         station = shown(row['station'])
         if row['outcome'] == 'refused':
             sentences.append(f'The number answered as {station}, a fax machine Faxbot did not expect there, so '
@@ -286,6 +425,29 @@ def fax_sentences(engine, job_id):
             sentences.append(f'The number answered as {station}, not the fax machine Faxbot expected there; the fax '
                              'went on. Check the number with the recipient.')
     return sentences
+
+
+MAILBOX_MODE_TEXT = {'warn': 'the fax goes on and Sent details say so',
+                     'refuse': 'Faxbot hangs up before any page'}
+
+
+def mailbox_view(engine, labels):
+    """Each mailbox's choice (``labels``: {mailbox ID: name}): its mode, whether someone chose it, and one sentence.
+    A recipient's own choice still comes first; this is what the mailbox's faxes do otherwise."""
+    table = _settings()
+    found = []
+    with engine.connect() as connection:
+        for mailbox_id, label in sorted(labels.items(), key=lambda item: (str(item[1]).lower(), item[0])):
+            row = connection.execute(sa.select(table.c.mode, table.c.actor_name, table.c.created_at).where(
+                table.c.scope == 'mailbox', table.c.scope_key == mailbox_id[:40])
+                .order_by(table.c.created_at.desc(), table.c.id.desc()).limit(1)).mappings().first()
+            mode = row['mode'] if row else 'warn'
+            who = f' Chosen by {row["actor_name"]}.' if row and row['actor_name'] else ''
+            sentence = (f'When a number answers as another fax machine on a fax from {label}, '
+                        f'{MAILBOX_MODE_TEXT[mode]}.' + (who if row else ' This is Faxbot\'s default.'))
+            found.append({'mailbox_id': mailbox_id, 'label': label, 'mode': mode, 'chosen': row is not None,
+                          'actor_name': row['actor_name'] if row else None, 'sentence': sentence})
+    return found
 
 
 def recipient_view(engine, number, now=None):
