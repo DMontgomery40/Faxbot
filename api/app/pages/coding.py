@@ -916,6 +916,34 @@ def sent_sentence(record, phase=None) -> str | None:
     return f'{verb} {reason}'
 
 
+# ECM partial pages (brief 85 M4, N3) ----------------------------------------------------------------------------
+# T.30 Annex A: with error correction a page goes in partial pages of at most 256 frames of 256 octets (64 when the
+# call negotiated 64-octet frames). Every page ends with one partial-page exchange (PPS-EOP or PPS-MPS and its
+# answer), which the predictor's page exchange already counts; each further partial page adds PPS-NULL, its answer
+# and the next block's modem start. Measured on 10 October 2026 on the SSL Fax engine's loopback (HylaFAX+ 7.0.11
+# over an IAX modem, error correction, 256-octet frames, MH; test_sslfax_loopback case w): a page of 66,256 coded
+# octets went in two partial pages, and the second added 1.26 s from PPS-NULL to its first frame plus about 2.0 s
+# of modem start and flags before its data: about 3.3 s. One run; not yet measured on a T.38 path or with 64-octet
+# frames, where the research estimate from a two-gateway capture was 4.24 s.
+ECM_FRAMES_PER_BLOCK = 256
+ECM_BLOCK_SECONDS = 3.3
+
+
+def ecm_blocks(octets, frame_octets=256):
+    """Partial pages one page of ``octets`` coded octets needs (at least one)."""
+    if frame_octets not in (64, 256):
+        raise ValueError('ECM frames are 64 or 256 octets')
+    return max(1, math.ceil(max(0, int(octets)) / (ECM_FRAMES_PER_BLOCK * frame_octets)))
+
+
+def ecm_extra_seconds(page_bits, *, frame_octets=256, block_seconds=ECM_BLOCK_SECONDS):
+    """Seconds the partial pages beyond each page's first add to a call with error correction: ``block_seconds``
+    for every block edge a page crosses. ``page_bits`` are the pages' coded bits in the coding the call uses. The
+    step is the same whether a page is one octet or 65,535 octets past an edge, so a page just over an edge costs a
+    whole turnaround more than one just under it."""
+    return block_seconds * sum(ecm_blocks(math.ceil(bits / 8), frame_octets) - 1 for bits in page_bits)
+
+
 def seconds_text(bits, rate=14400):
     """'about 49 seconds' of page data at ``rate`` bit/s."""
     from ..routing.predict import duration_text
