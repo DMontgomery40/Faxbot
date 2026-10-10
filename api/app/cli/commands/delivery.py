@@ -1128,10 +1128,30 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
                                                   help="The sending card's route, as 'faxbot costs rate-cards' lists "
                                                        'it, such as sip-gamma or sinch-uk.'),
-                      replace: str = typer.Option(..., '--replace', metavar='FILE',
+                      replace: str = typer.Option(None, '--replace', metavar='FILE',
                                                   help='Your prices by where calls start for that card, from this JSON '
-                                                       'file ({"rows": [...]}, or \'-\' for standard input).')):
-    """Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history."""
+                                                       'file ({"rows": [...]}, or \'-\' for standard input).'),
+                      caller_id_deck: Path = typer.Option(None, '--caller-id-deck', metavar='FILE', exists=True,
+                                                          dir_okay=False,
+                                                          help="A carrier's rate deck priced by the caller ID a call "
+                                                               "shows (CSV): Twilio's voice price file, or Faxbot's "
+                                                               'own layout.'),
+                      deck_format: str = typer.Option(None, '--deck-format', metavar='twilio|faxbot',
+                                                      help='The deck layout; Faxbot recognises Twilio\'s file by its '
+                                                           'first line.'),
+                      source: str = typer.Option(None, '--source', metavar='URL',
+                                                 help='Where the deck came from.'),
+                      published: str = typer.Option(None, '--published', metavar='DATE',
+                                                    help='The date the deck was published or read, such as '
+                                                         '2026-10-09.')):
+    """Replace the prices by where calls start that you entered for one sending card, or import a rate deck priced
+    by caller ID for it. Earlier rows and decks are kept as history."""
+    if (replace is None) == (caller_id_deck is None):
+        raise CliError('Give either --replace FILE or --caller-id-deck FILE.')
+    if caller_id_deck is not None:
+        from .countries import import_caller_id_deck
+        return import_caller_id_deck(route, caller_id_deck, deck_format=deck_format, source=source,
+                                     published=published)
     try:
         document = json.loads(_read_document(replace))
     except ValueError:

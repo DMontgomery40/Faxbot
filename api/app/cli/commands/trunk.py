@@ -514,3 +514,7 @@ def send_only_remove(number: str = typer.Argument(..., metavar='NUMBER', help='T
     if number.strip() not in current:
         raise CliError(f'{number.strip()} is not one of your send-only numbers.')
     _save_send_only([item for item in current if item != number.strip()])
+
+
+# The caller-ID commands (countries.py) hang off this group; importing it registers them.
+from . import countries as _countries  # noqa: E402,F401

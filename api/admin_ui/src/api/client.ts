@@ -4,6 +4,7 @@ import type {
 import type { SipNetworkReport, TelnyxNamesReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
+import type { CallerIdDeckImport } from './countriesTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type {
@@ -1107,6 +1108,17 @@ class AdminAPIClient {
     if (options.readOn) form.append('read_on', options.readOn);
     const res = await this.fetch('/routing/jurisdiction-rates', { method: 'POST', body: form });
     return res.json();
+  }
+
+  // A carrier's rate deck priced by the caller ID a call shows (Twilio's voice price file or Faxbot's own layout).
+  async importCallerIdDeck(route: string, file: File, options: { deckFormat?: string; sourceUrl?: string;
+    publishedOn?: string } = {}): Promise<CallerIdDeckImport> {
+    const form = new FormData();
+    form.append('file', file);
+    if (options.deckFormat) form.append('deck_format', options.deckFormat);
+    if (options.sourceUrl) form.append('source_url', options.sourceUrl);
+    if (options.publishedOn) form.append('published_on', options.publishedOn);
+    return this.json(`/routing/rate-cards/${id(route)}/caller-id-prices`, { method: 'POST', body: form });
   }
 
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.
