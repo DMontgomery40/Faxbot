@@ -1,8 +1,10 @@
-// "Providers › Carrier trunk" above the page; the area opens its first page.
+// "Delivery setup › Connections › Routing rules" above the page: the area opens its
+// first page, and the group its first page.
 import type React from 'react';
 import { Breadcrumbs, Link, Typography } from '@mui/material';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { pageAddress, type NavArea, type NavPage } from '../../navigation';
+import { plainClick } from './NavPanel';
 
 interface PageBreadcrumbsProps {
   area: NavArea;
@@ -14,7 +16,7 @@ export default function PageBreadcrumbs({ area, page, onNavigate }: PageBreadcru
   const crumb = (target: NavPage, label: string) => (
     <Link underline="hover" color="inherit" href={pageAddress(area.id, target.id)}
       onClick={(event: React.MouseEvent) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (!plainClick(event)) return;
         event.preventDefault();
         onNavigate(area, target);
       }}>
@@ -29,7 +31,7 @@ export default function PageBreadcrumbs({ area, page, onNavigate }: PageBreadcru
     <Breadcrumbs aria-label="You are here" separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: { xs: 1, md: 2 } }}>
       {/* Recipients › Recipients would say the same thing twice. */}
       {page.label !== area.label && crumb(area.pages[0], area.label)}
-      {groupFirst && page.group && crumb(groupFirst, page.group)}
+      {groupFirst && page.group && page.group !== page.label && crumb(groupFirst, page.group)}
       <Typography color="text.primary" aria-current="page">{page.label}</Typography>
     </Breadcrumbs>
   );
