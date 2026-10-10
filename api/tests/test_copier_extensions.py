@@ -94,14 +94,15 @@ def test_the_hand_over_script_passes_the_copier_and_the_dialled_number_and_nothi
 OUTSIDE = '+13035550199'
 
 
-@pytest.fixture
-def sip_client(monkeypatch, tmp_path):
+@pytest.fixture(params=['receiving', 'send_only'])
+def sip_client(request, monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
     from api.tests.test_access_management_http import ORIGIN, _environment
     from app.main import app
     _environment(monkeypatch, tmp_path)
     for name, value in {'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_BACKEND': 'sip', 'FAX_INBOUND_BACKEND': 'sip',
-                        'INBOUND_ENABLED': 'true', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                        'INBOUND_ENABLED': 'true' if request.param == 'receiving' else 'false',
+                        'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
                         'SIP_TRUNK_PASSWORD': 'Synthetic-Password-1', 'SIP_TRUNK_CALLER_ID': '+13035550160',
                         'SIP_TRUNK_DIDS': '+13035550160,+13035550161', 'AMI_PASSWORD': 'synthetic-ami-pass',
                         'ASTERISK_INBOUND_SECRET': 'sekret', 'FAX_HEADER': 'Example Clinic'}.items():
@@ -166,6 +167,18 @@ def test_a_copier_fax_is_queued_from_its_mailbox_to_the_number_it_dialled(sip_cl
     again = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'},
                             json={**payload, 'tiff_path': str(_copier_tiff(sip_client, 'again.tiff'))})
     assert again.json()['queued'] == job
+    assert created['server_text'].startswith('On the copier, set the SIP server (registrar) to')
+    import os
+    if os.environ.get('INBOUND_ENABLED') != 'true':
+        return  # a send-only installation queued the copier's fax above; filing a refused one needs receiving on
+    # A call that ended before every page arrived is never sent on: its pages are filed in Received, with why.
+    partial = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'}, json={
+        **payload, 'faxstatus': 'FAILED', 'uniqueid': '1791100005.2',
+        'tiff_path': str(_copier_tiff(sip_client, 'partial.tiff'))})
+    assert partial.status_code == 200 and 'queued' not in partial.json()
+    with _engine().connect() as connection:
+        report = connection.execute(sa.text('SELECT report FROM inbound_imports ORDER BY created_at DESC')).scalar()
+    assert 'ended before every page arrived, so nothing was sent on' in report
     # Removing the copier revokes its key: a later fax from it is filed as received, with why, never lost.
     assert sip_client.post(f"/admin/sip/copiers/extensions/{created['id']}/remove", headers=_b()).status_code == 200
     lost = sip_client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'}, json={

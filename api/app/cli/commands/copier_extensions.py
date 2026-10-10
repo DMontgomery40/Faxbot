@@ -51,6 +51,8 @@ def extensions_add(name: str = typer.Argument(..., help='The copier, such as "Fr
         out.line(f"Realm: {created['realm']}")
         out.line(created['password_text'])
         out.line(created['apply_text'])
+        if created.get('server_text'):
+            out.line(created['server_text'])
     state.out().result(created, show)
 
 

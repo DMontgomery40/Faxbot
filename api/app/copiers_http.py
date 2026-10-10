@@ -101,7 +101,21 @@ async def add_extension(body: ExtensionIn, request: Request, identity=Depends(re
             'password_text': 'Enter this password on the copier now; Faxbot shows it only once and keeps only its '
                              'digest.',
             'apply_text': 'Press Apply on the trunk page so the fax engine loads the extension; the copier can '
-                          'register after that.'}
+                          'register after that.',
+            'server_text': _server_text(values)}
+
+
+def _server_text(values):
+    """Where the copier registers: Faxbot's address on your network and port 5060, which only the phone system
+    overlay publishes there (docker-compose.phone-system.yml)."""
+    import os
+    address = os.environ.get('FAXBOT_PHONE_SYSTEM_ADDRESS') or os.environ.get('FAXBOT_LAN_ADDRESS')
+    if address:
+        return (f'On the copier, set the SIP server (registrar) to {address}, port 5060, UDP, and send ordinary fax '
+                'numbers to it.')
+    return ('On the copier, set the SIP server (registrar) to this computer\'s address on your network, port 5060, '
+            'UDP. Start Faxbot with docker-compose.phone-system.yml and FAXBOT_LAN_ADDRESS set to that address, on a '
+            'Linux host, so the copier can reach it.')
 
 
 @router.post('/extensions/{copier_id}/remove')

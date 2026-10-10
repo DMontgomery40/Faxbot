@@ -43,6 +43,7 @@ interface Created extends CopierExtension {
   realm: string;
   password_text: string;
   apply_text: string;
+  server_text?: string;
 }
 
 function problem(error: unknown, fallback: string): string {
@@ -151,6 +152,7 @@ export default function CopiersPanel({ call }: { call: Call }) {
             <Typography variant="body2">{`Password: ${created.password}`}</Typography>
             <Typography variant="body2">{`Realm: ${created.realm}`}</Typography>
             <Typography variant="body2">{created.apply_text}</Typography>
+            {created.server_text && <Typography variant="body2">{created.server_text}</Typography>}
           </Alert>
         )}
         {message && <Alert severity="info" sx={{ my: 1 }}>{message}</Alert>}

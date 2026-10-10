@@ -179,6 +179,9 @@ def queue(app, payload, tiff_path):
     from .routing.background import installation_engine
     from .routing.numbers import InvalidNumber, normalize_number
     from .routing.submit import accept_generated_fax
+    if str(payload.get('faxstatus') or '').upper() != 'SUCCESS':
+        raise HandoverRefused("The copier's call ended before every page arrived, so nothing was sent on; the pages "
+                              'that arrived are here.')
     engine, runtime = installation_engine(app)
     if engine is None or runtime is None:
         raise HandoverRefused('Faxbot was not ready to take the copier\'s fax.')
@@ -307,9 +310,10 @@ def _tiff_for(values, row, forward_id):
     import os
     if row['tiff_path'] and os.path.isfile(row['tiff_path']):
         return row['tiff_path']
-    from .conversion import pdf_to_tiff
+    from .conversion import FAX_IMAGE_MODE, pdf_to_tiff
     target = os.path.join(values.fax_data_dir, f'copier-{forward_id}.tiff')
     pdf_to_tiff(row['pdf_path'], target)
+    os.chmod(target, FAX_IMAGE_MODE)  # the fax engine reads it, as it reads every fax image Faxbot writes
     return target
 
 
@@ -392,5 +396,10 @@ def fax_view(engine, inbound_fax_id):
         return (f"Sent on to {name} at extension {copier.extension if copier else '?'}"
                 f"{f', {count} page' + ('s' if count != 1 else '') if count else ''}.")
     if last['state'] == 'calling':
+        from datetime import timedelta
+        from .routing.database import utcnow
+        if last['created_at'] < utcnow() - timedelta(minutes=10):
+            return (f"Faxbot doesn't know whether this fax reached {name}: the call's result never came back, so it "
+                    'stays in Received and is not sent again.')
         return f'Sending this fax on to {name} now.'
     return last['reason'] or f"This fax stays in Received; it didn't reach {name}."
