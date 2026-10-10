@@ -823,6 +823,11 @@ def receive_handover(request: Request, payload: dict, root: str):
     if diverted is not None:
         report['diversion'] = {'from': diverted.diverted_from, 'state': diverted.state, 'source': diverted.source,
                                'reason': diverted.reason, 'sentence': diverted.sentence}
+    # The caller-verification stamp (N25): what the network asserted about the caller number, kept with the fax.
+    from .caller_check import received as caller_stamp
+    stamp, kept_headers = caller_stamp(payload, call, received_at=source_time)
+    if stamp is not None:
+        report['caller_check'] = stamp
     snapshot = request.scope.get('faxbot.configuration')
     runtime = getattr(request.app.state, 'configuration_runtime', None)
     binding = (account_binding(runtime.manager.store, snapshot.active, account_key)
@@ -834,7 +839,7 @@ def receive_handover(request: Request, payload: dict, root: str):
         source_received_at=source_time, tiff_path=tiff_path, schedule=False,
         country=settings.fax_default_country, account_key=account_key, subaddress=subaddress, binding=binding,
         diversion=diverted))()
-    if diverted is not None:
+    if diverted is not None or kept_headers:
         from .diversion import forget_headers
         forget_headers(settings.fax_data_dir, payload.get('uniqueid'))
     if begun.state == 'pending':

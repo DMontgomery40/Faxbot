@@ -94,6 +94,11 @@ def trunk_calls_at_once(values):
     chosen = getattr(values, 'sip_trunk_max_calls', 0) or 0
     if chosen > 0:
         return chosen
+    # An analog line's gateway carries one call per line (sip_trunk.ANALOG_GATEWAYS).
+    from .sip_trunk import PRESETS
+    preset = PRESETS.get(getattr(values, 'sip_trunk_preset', '') or '')
+    if preset is not None and preset.lines:
+        return preset.lines
     from .hylafax_engine import line_count
     return line_count(values)
 

@@ -60,7 +60,8 @@ FETCH_SECONDS = 3.0
 CACHE_SECONDS = 3600
 FAILED_CACHE_SECONDS = 300
 HEADERS_BYTES = 64 * 1024
-HEADER_NAMES = ('Diversion', 'History-Info', 'Identity')
+# P-Asserted-Identity and From carry the carrier's STIR/SHAKEN verstat (inbound/caller_check.py).
+HEADER_NAMES = ('Diversion', 'History-Info', 'Identity', 'P-Asserted-Identity', 'From')
 SIGNED, UNANCHORED, UNCHECKED, FAILED, STATED = 'signed', 'unanchored', 'unchecked', 'failed', 'stated'
 _TOKEN = re.compile(r'[0-9]{1,40}')
 _USER = re.compile(r'(?:sips?|tel):\+?([0-9][0-9\-.() ]{2,31})', re.IGNORECASE)

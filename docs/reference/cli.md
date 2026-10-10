@@ -3878,6 +3878,7 @@ $ faxbot delivery connectors add [OPTIONS] {name}
 * `--outgoing-security <str>`: tls or starttls.
 * `--checked-by <str>`: Name your mail server writes when it checks senders, such as mx.google.com.
 * `--sender <str>`: Who may send faxes by email: address=login. Repeat for more.
+* `--copier ADDRESS@NETWORK`: A copier that sends by direct SMTP, without DKIM or SPF: its email address and its network address, such as &#x27;scanner@example.com 192.168.1.40&#x27;. Repeat for more.
 * `--check-seconds <int>`: How often to check, in seconds.
 * `--ask-secret / --no-ask-secret`: Ask for the password or client secret without showing it.  [default: ask-secret]
 * `--help`: Show this message and exit.
@@ -4331,9 +4332,13 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `own-access`: For Telekom CompanyFlex: the internet...
 * `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
 * `answer-cap`: See or change whether Faxbot hangs up when...
+* `teams-annex`: Print what to set on your Teams Direct...
+* `copiers`: List the copier makers whose documents...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
+* `analog-line`: An analog phone line through a gateway:...
+* `caller-check`: The caller-verification stamp on received...
 
 ##### `faxbot delivery providers trunk status`
 
@@ -4484,8 +4489,8 @@ $ faxbot delivery providers trunk use [OPTIONS] {PRESET}
 * `--host <str>`: The carrier&#x27;s server address, or your phone system&#x27;s address (IP Office, or Aura Session Manager).
 * `--port <int range>`: The carrier&#x27;s port, when not the usual one.  [1&lt;=x&lt;=65535]
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
-* `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
-* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
+* `--number-format e164|local|local_area`: How numbers are dialed: e164 (international format, +44...), local (as a phone at your site dials them), or on an analog line local_area (ten digits for numbers in its local calling area, 1 and ten digits for others).
+* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9; on an analog line, *70 turns call waiting off for the call.
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk caller-ids`
@@ -4583,6 +4588,41 @@ $ faxbot delivery providers trunk answer-cap [OPTIONS] [on|off]
 **Options**:
 
 * `--account KEY`: Which trunk, by its key from &#x27;faxbot delivery providers accounts list&#x27;; the first trunk when left out.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk teams-annex`
+
+Print what to set on your Teams Direct Routing SBC so the fax numbers reach Faxbot before Teams, and the checklist before the Teams port order.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk teams-annex [OPTIONS]
+```
+
+**Options**:
+
+* `--vendor audiocodes|ribbon|oracle|anynode`: The company that makes your Teams Direct Routing SBC.  [required]
+* `--address ADDRESS`: Faxbot&#x27;s address on your network, written into the steps; Faxbot fills it in when it is published there.
+* `--numbers NUMBERS`: Your fax numbers or their pattern, written into the steps.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk copiers`
+
+List the copier makers whose documents show fax over the network with SIP and T.38, or show what to set on one.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copiers [OPTIONS] [COPIER]
+```
+
+**Arguments**:
+
+* `[COPIER]`: Show one copier in full, such as ricoh-im.
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk network`
@@ -4803,6 +4843,155 @@ $ faxbot delivery providers trunk send-only remove [OPTIONS] {NUMBER}
 **Arguments**:
 
 * `NUMBER`: The send-only number to remove.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk analog-line`
+
+An analog phone line through a gateway: its local calling area and its prices, so local numbers go out on it at no extra cost.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show an analog line&#x27;s local calling area...
+* `routing`: Let Faxbot choose an analog line by...
+* `import`: Import an analog line&#x27;s local calling area...
+
+###### `faxbot delivery providers trunk analog-line show`
+
+Show an analog line&#x27;s local calling area and prices.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line show [OPTIONS]
+```
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk analog-line routing`
+
+Let Faxbot choose an analog line by itself, or stop it. Importing a local calling area turns this on.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line routing [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on: Faxbot may choose the line by itself; off: only a sending rule that names it uses it.  [required]
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk analog-line import`
+
+Import an analog line&#x27;s local calling area from a file you saved, so local numbers go out on it at no extra cost. Faxbot never looks the area up itself.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk analog-line import [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: The list of local prefixes for your line: the Local Calling Guide&#x27;s Local prefixes page saved as HTML, its XML, a CSV with NPA and NXX columns, or one prefix a line such as 303-426.  [required]
+
+**Options**:
+
+* `--account KEY`: Which trunk, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--plan <str>`: The calling plan your line has, when the list names several.
+* `--line NPA-NXX`: Your line&#x27;s own prefix or number, checked against the list.
+* `--toll-rate AMOUNT`: What the line charges a minute for calls outside the local area, from your phone bill; 0 when your plan includes them. Needed the first time.
+* `--monthly-fee AMOUNT`: The line&#x27;s monthly fee, shown with its prices.
+* `--increment <int range>`: The billing step for calls outside the local area, in seconds.  [default: 60; 1&lt;=x&lt;=3600]
+* `--source URL`: The address of the page the list came from.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk caller-check`
+
+The caller-verification stamp on received faxes: what the network asserted about who called, and your registered senders.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show your registered senders for received...
+* `set`: Replace your registered senders for...
+* `fax`: Show what the network asserted about who...
+
+###### `faxbot delivery providers trunk caller-check show`
+
+Show your registered senders for received faxes.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk caller-check set`
+
+Replace your registered senders for received faxes: caller numbers a received fax&#x27;s stamp checks.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check set [OPTIONS] [NUMBER]...
+```
+
+**Arguments**:
+
+* `[NUMBER]...`: Every registered sender, such as +13035550150; none clears the list.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk caller-check fax`
+
+Show what the network asserted about who called for one received fax.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk caller-check fax [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Received fax ID.  [required]
 
 **Options**:
 

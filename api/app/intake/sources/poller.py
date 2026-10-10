@@ -232,9 +232,12 @@ class Poller:
             return record(text.NO_SENDER)
         confirmed_by = None
         if not mail.confirmed(message, address, settings.get('checked_by')):
-            if not mail.microsoft_internal(message, address, settings):
+            if mail.copier_sender(message, address, settings):
+                confirmed_by = text.ACCEPTED_COPIER
+            elif not mail.microsoft_internal(message, address, settings):
                 return record(text.NOT_AUTHENTICATED if settings.get('checked_by') else text.NO_TRUSTED_SERVER)
-            confirmed_by = text.ACCEPTED_INTERNAL
+            else:
+                confirmed_by = text.ACCEPTED_INTERNAL
         # The sender is confirmed: from here on they hear what happened, unless the message forbids a reply.
         reply_to = address if mail.may_reply(message) else None
         person_id, person_name = self.store.person_for(source.id, address)

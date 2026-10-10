@@ -120,7 +120,7 @@ class ConfigurationValues(BaseModel):
     # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
     # transport and codecs use the preset's documented values (see sip_trunk.py).
     sip_trunk_preset: str = Field('', validation_alias='SIP_TRUNK_PRESET',
-                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|swisscom-sbc|telekom-companyflex|ntt-hikari|custom)$')
+                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|swisscom-sbc|telekom-companyflex|ntt-hikari|grandstream-ht813|grandstream-gxw410x|patton-smartnode-fxo|audiocodes-mp11x-fxo|teams-sbc-audiocodes|teams-sbc-ribbon|teams-sbc-oracle|teams-sbc-anynode|custom)$')
     sip_trunk_auth: str = Field('registration', validation_alias='SIP_TRUNK_AUTH', pattern=r'^(?:registration|ip)$')
     sip_trunk_host: str = Field('', validation_alias='SIP_TRUNK_HOST',
                                 pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$')
@@ -167,8 +167,13 @@ class ConfigurationValues(BaseModel):
     sip_trunk_codecs: str = Field('', validation_alias='SIP_TRUNK_CODECS', pattern=r'^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$')
     # Phone systems only: how Faxbot writes the number it dials. Empty or e164 sends +<country><number>;
     # local sends the digits a phone at the installation dials, after the optional outside-line prefix.
-    sip_trunk_dial_format: str = Field('', validation_alias='SIP_TRUNK_DIAL_FORMAT', pattern=r'^(?:|e164|local)$')
-    sip_trunk_dial_prefix: str = Field('', validation_alias='SIP_TRUNK_DIAL_PREFIX', pattern=r'^[0-9]{0,4}$')
+    # local_area (an analog line's gateway, routing/analog.py): numbers in the line's local calling area without
+    # the national prefix, others as a phone here dials them.
+    sip_trunk_dial_format: str = Field('', validation_alias='SIP_TRUNK_DIAL_FORMAT',
+                                       pattern=r'^(?:|e164|local|local_area)$')
+    # *70 in front cancels call waiting for the call, on an analog line only (sip_trunk.effective_trunk).
+    sip_trunk_dial_prefix: str = Field('', validation_alias='SIP_TRUNK_DIAL_PREFIX',
+                                       pattern=r'^(?:\*[0-9]{2})?[0-9]{0,4}$')
     # Your own line's internet addresses or ranges (Telekom CompanyFlex: unencrypted calls are allowed only there;
     # sip_access.py), comma-separated.
     sip_trunk_own_access: str = Field('', validation_alias='SIP_TRUNK_OWN_ACCESS', pattern=r'^[0-9A-Fa-f:./, ]{0,500}$')
@@ -252,6 +257,10 @@ class ConfigurationValues(BaseModel):
     # Certificate authorities you trust for forwarded calls (inbound/trust.py; STIR/SHAKEN STI-CAs): a JSON list of
     # {"pem", "source", "added_on"}. A forwarding is verified only when its signing certificate chains to one.
     stir_trust_anchors: str = Field('', validation_alias='STIR_TRUST_ANCHORS', max_length=1_000_000)
+    # Registered senders for received faxes (inbound/caller_check.py, N25): caller numbers a received fax's stamp
+    # checks, comma-separated E.164. Not the sending side's registered-sender pins (routing/sender_pins.py).
+    received_registered_senders: str = Field('', validation_alias='RECEIVED_REGISTERED_SENDERS',
+                                             pattern=r'^[+0-9,]{0,9000}$')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
