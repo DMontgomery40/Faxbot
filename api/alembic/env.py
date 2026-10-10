@@ -79,6 +79,7 @@ config.attributes["schema_polled_transmit"] = importlib.import_module(package + 
 config.attributes["schema_analysis"] = importlib.import_module(package + ".schema_analysis")
 config.attributes["schema_countries"] = importlib.import_module(package + ".schema_countries")
 config.attributes["schema_dialing"] = importlib.import_module(package + ".schema_dialing")
+config.attributes["schema_header_notice"] = importlib.import_module(package + ".schema_header_notice")
 
 
 def migrate(connection):

@@ -259,6 +259,20 @@ def reply_choice(values, *, mailbox_id=None):
         return reply_number.Choice(None, 'line', "Faxes show the number of the line they leave on.")
 
 
+def job_mailbox(job_id) -> Optional[str]:
+    """The mailbox a fax was sent from (its sending rules' facts, kept with the fax at acceptance), so it shows that
+    mailbox's own reply number; None for a fax sent from no mailbox, or accepted before sending rules existed."""
+    engine = _database()
+    if engine is None or not job_id:
+        return None
+    from .routing import envelope as envelopes
+    try:
+        pinned = envelopes.load(engine, job_id)
+    except envelopes.UnreadableDecision:
+        return None
+    return getattr(pinned.facts, "mailbox_id", None) if pinned is not None else None
+
+
 def sender_identity(job_id):
     """(header text, station ID) for a fax Faxbot relays for a partner (``direct.relay``), or None for every
     other fax. Never raises: without the relay, or when nothing can be read, the fax carries its own."""
@@ -389,6 +403,9 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     coding = getattr(call, "coding", None)
     if coding is not None:
         limits["compression"] = {"MH": "mh", "MR": "mr", "MMR": "mmr", "JBIG": "mmr"}[coding]
+    if choice is None and mailbox_id is None:
+        # The fax's own mailbox, so a mailbox's reply number shows on its faxes (header line, TSI, caller ID).
+        mailbox_id = job_mailbox(job_id)
     choice = choice if choice is not None else reply_choice(values, mailbox_id=mailbox_id)
     learned = getattr(call, "learned", None)
     if learned is not None:

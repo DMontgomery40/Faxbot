@@ -273,6 +273,50 @@ def test_the_numbers_screen_saves_only_a_number_that_reaches_the_same_mailbox(cl
     assert client.put('/numbers/reply', headers=B, json={'number': ''}).json()['number'] is None
 
 
+def test_a_fax_from_a_mailbox_shows_that_mailbox_reply_number_on_both_engines(client, monkeypatch):
+    """The mailbox a fax is sent from reaches both engines' reply number: header line, TSI and caller ID."""
+    import asyncio
+    from types import SimpleNamespace
+    from api.tests.test_access_management_http import B
+    from api.tests.test_work_http import mailbox
+    mailbox(client, 'Front desk', DID_A)
+    billing = mailbox(client, 'Billing', DID_B)
+    assert client.put('/numbers/reply', headers=B, json={'number': DID_A}).status_code == 200
+    assert client.put(f"/numbers/reply/mailboxes/{billing['id']}", headers=B, json={'number': DID_B}).status_code == 200
+
+    def send(**fields):
+        sent = client.post('/fax', headers=B, data={'to': '+13035550150', **fields},
+                           files={'file': ('note.txt', b'Synthetic page', 'text/plain')})
+        assert sent.status_code == 202, sent.text
+        return sent.json()['id']
+    from app.main import app
+    running = app.state.configuration_runtime.manager.store.read().active.values
+    boxed, plain = send(mailbox=billing['id']), send()
+    assert ami.job_mailbox(boxed) == billing['id'] and ami.job_mailbox(plain) is None
+    # The built-in engine: station ID (TSI, printed in the header line) and caller ID, with no mailbox passed in.
+    fields = ami.originate_fields_for(running, boxed, '+13035550150', '/faxdata/boxed.tiff')
+    assert _decoded(fields, 'FAXSTATION64') == DID_B and fields['CallerID'] == DID_B
+    fields = ami.originate_fields_for(running, plain, '+13035550150', '/faxdata/plain.tiff')
+    assert _decoded(fields, 'FAXSTATION64') == DID_A and fields['CallerID'] == DID_A
+
+    # The SSL Fax engine's job: its TSI and the caller ID of the call that carries it.
+    class Plans:
+        async def db_put(self, family, key, value):
+            return None
+
+        async def db_del(self, family, key):
+            return None
+    jobs = []
+
+    def create_job(values, **kwargs):
+        jobs.append(kwargs)
+        return SimpleNamespace(submission=None)
+    monkeypatch.setattr(hylafax_engine, 'create_job', create_job)
+    job = asyncio.run(hylafax_engine.prepare_job(running, Plans(), job_id=boxed, attempt_id='a' * 32,
+                                                 dest='+13035550150', tiff_path='/faxdata/boxed.tiff'))
+    assert jobs[0]['station'] == DID_B and job.submission['CallerID'] == DID_B
+
+
 def test_reading_and_changing_the_reply_number_need_settings_permissions(client):
     unauthenticated = client.get('/numbers/reply')
     assert unauthenticated.status_code in (401, 403)

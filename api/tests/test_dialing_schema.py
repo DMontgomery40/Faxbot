@@ -1,4 +1,4 @@
-"""Actual 0066 to 0068 upgrade: where Faxbot may dial (SQLite and PostgreSQL)."""
+"""Actual 0069 to 0068 upgrade: where Faxbot may dial (SQLite and PostgreSQL)."""
 from datetime import datetime
 
 import pytest
@@ -12,13 +12,13 @@ from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 10, 9, 0)
-# Chained after the integration head when merged; the lead re-chains it after brief 84's 0067 if that lands first.
-PRIOR = '0066_analysis'
+# Chained after the integration head when merged: 0068 follows 0069_countries (merge order, not number order).
+PRIOR = '0069_countries'
 
 
-def test_dialing_follows_analysis():
-    assert schema_dialing.REVISION == '0068_dialing_guard' == schema.HEAD
-    assert schema.ANALYSIS == PRIOR
+def test_dialing_follows_countries():
+    assert schema_dialing.REVISION == '0068_dialing_guard' == schema.DIALING
+    assert schema.COUNTRIES == PRIOR
     assert schema_dialing.TABLES <= schema.STRICT_TABLES and len(schema_dialing.TABLES) == 3
 
 
