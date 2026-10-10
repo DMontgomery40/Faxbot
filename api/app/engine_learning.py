@@ -635,6 +635,12 @@ def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_
     if audio:
         reasons.append(memory_sentence(rows, 'outbound'))
         t38 = False
+    # RF: the trunk's T.38 has an open route problem: audio fax, unless this number's own audio fax failed.
+    from .routing.route_families import t38_audio_reason
+    route_problem = t38_audio_reason(db) if t38 and what != 't38' else None
+    if route_problem:
+        audio, t38 = True, False
+        reasons.append(route_problem)
     learned = engine_frames.learn([as_frames(view) for view in sent], values)
     t38_now = False
     if engine == 'builtin' and t38 and getattr(values, 'sip_t38_enabled', True):

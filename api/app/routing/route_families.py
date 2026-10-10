@@ -430,6 +430,23 @@ def t38_problem(db, account='sip', *, connection=None):
     return family_incident(db, account, 't38', connection=connection)
 
 
+def t38_audio_reason(db, account='sip') -> str | None:
+    """The sentence for sending a new call by audio fax while ``account``'s T.38 family has an open incident, or
+    None. For the call's own decision (``engine_learning.decide``); a database that cannot be read here answers
+    None (the usual settings) and logs why."""
+    try:
+        if not available(db):
+            return None
+        row = t38_problem(db, account)
+    except sa.exc.SQLAlchemyError:
+        log.warning('Faxbot could not read its route problems; this call uses the usual settings.')
+        return None
+    if row is None:
+        return None
+    return (f"Fax over IP (T.38) on this trunk has failed for {row['destinations']} different numbers since "
+            f"{_clock(row['change_at'])}, so Faxbot sends this fax by audio fax until that route problem ends.")
+
+
 def watch(db, *, now=None) -> dict:
     """Background: record new incidents and close finished ones; {'opened': n, 'closed': n}."""
     now = now or utcnow()

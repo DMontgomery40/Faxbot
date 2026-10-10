@@ -76,8 +76,40 @@ def test_the_incident_teaches_the_numbers_nothing_and_other_lessons_stay(install
     # Only X's own audio failure is a lesson; D1..D3's T.38 failures were the route's.
     assert [(row['number'], row['kind']) for row in rows] == [(X, 'audio_failed')]
     for number in (D1, D2, D3):
-        assert not engine_learning.decide(after, number, db=db, now=now).audio
+        # Audio fax for now because the route has a problem, never because the number was taught it.
+        reasons = engine_learning.decide(after, number, db=db, now=now).reasons
+        assert reasons[0].startswith('Fax over IP (T.38) on this trunk has failed for 3 different numbers')
+        assert not any('to this number failed' in reason for reason in reasons)
+    # X's own audio fax failed: the route problem does not push it onto audio fax.
     assert engine_learning.decide(after, X, db=db, now=now).t38_now
+
+
+def test_while_t38_has_a_route_problem_new_calls_go_by_audio_fax_and_t38_returns_when_it_ends(installation):
+    from app import ami, hylafax_engine
+    db = installation
+    now = _now()
+    _, after, _ = replay_broken_t38(db, now)
+    # Before the watcher sees the pattern, a new number's call would try T.38 as usual.
+    assert not engine_learning.decide(after, D4, db=db, now=now).audio
+    route_families.watch(db, now=now)
+    decision = engine_learning.decide(after, D4, db=db, now=now)
+    assert decision.audio and not decision.t38_now
+    assert decision.reasons[-1].startswith('Fax over IP (T.38) on this trunk has failed for 3 different numbers since ')
+    assert decision.reasons[-1].endswith('so Faxbot sends this fax by audio fax until that route problem ends.')
+    # Both engines apply it: the built-in engine's call is audio only, and the SSL Fax engine's call plan too.
+    call = hylafax_engine.call_settings(after, D4)
+    assert call.t38 is False and call.learned.audio
+    trunk = values(SIP_TRUNK_CALLER_ID='+13035550100', SIP_TRUNK_PORT='5062')
+    fields = ami.originate_fields_for(trunk, 'job4', D4, '/faxdata/job4.tiff', call=call,
+                                      choice=ami.reply_choice(trunk))
+    assert 'FAXBOT_AUDIO=yes' in fields['Variable']
+    assert hylafax_engine.call_settings(after, D4, engine=True).t38 is False
+    # An audio-only trunk is untouched, and once T.38 goes through again calls try it as before.
+    assert not engine_learning.decide(after, D4, db=db, now=now, t38=False).reasons
+    for number, minutes in ((D4, 30), (D5, 20)):
+        record(db, number=number, status='SUCCESS', when=now - timedelta(minutes=minutes), pages=1)
+    route_families.watch(db, now=now)
+    assert not engine_learning.decide(after, D4, db=db, now=now).audio
 
 
 def test_without_corroboration_new_numbers_failing_are_not_a_route_problem(db):
