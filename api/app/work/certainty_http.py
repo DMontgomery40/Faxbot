@@ -29,10 +29,14 @@ def _background(app):
     engine, _ = installation_engine(app)
     if engine is None:
         return []
-    try:
-        store = CertaintyStore(engine)
-    except DeliveryStoreError:
-        return []
+    store = getattr(app.state, 'certainty_store', None)
+    if store is None or store.engine is not engine:
+        try:
+            store = CertaintyStore(engine)
+        except DeliveryStoreError:
+            return []
+        # One store for the background checks and the pages, so a detail page uses the predictions they keep.
+        app.state.certainty_store = store
 
     def control():
         access = getattr(app.state, 'access_runtime', None)

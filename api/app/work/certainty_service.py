@@ -309,9 +309,11 @@ class CertaintyService:
                     checks.number_check(row, organization=self._organization(),
                                         number=number or mask(row['to_number']), when_text=when, station=True),
                     *checks.npi_checks(self.store.engine, row)]
+        # The call's predicted length the background checks already worked out, while nothing it depends on changed.
+        facts = checks.call_record_facts(sources, connection, row)
         return [
             checks.partner_check(sources, connection, row, job, answer),
-            checks.call_record_check(sources, connection, row, job, now=now),
+            checks.call_record_reading(facts, job, now=now, predict=self.store.predictor(row, job, facts, now=now)),
             checks.receipt_query_check(row, query_job),
             checks.phone_check(row, job, organization=self._organization(), number=number or mask(row['to_number']),
                                when_text=when),
