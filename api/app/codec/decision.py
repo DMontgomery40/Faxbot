@@ -19,8 +19,9 @@ raster, so they are only a candidate on a route where Faxbot makes the fax
 image itself and a previous call to the number negotiated ECM and fine
 resolution. Capacity pages (format 2, ``capacity.py``) join them only for a
 recipient whose decoder you recorded as reading them: the 'time' profile (the
-shortest call) and the 'pages' profile (the fewest pages), and the route's
-bill decides between them. Other routes use grid pages, sturdy ones when a provider renders
+shortest call) and the 'pages' profile (the fewest pages), and on a route
+that bills the greater of pages and started periods on the line also the
+'balanced' profile; the route's bill decides between them. Other routes use grid pages, sturdy ones when a provider renders
 the PDF itself.
 
 On Faxbot's own engines each candidate, and the normal pages it competes
@@ -44,6 +45,16 @@ import hashlib
 RUN_LIMITS = (7, 15, 63)
 # The capacity profiles tried for a recipient whose decoder reads them: the shortest call and the fewest pages.
 CAPACITY_PROFILES = ('time', 'pages')
+# On a route that bills the greater of the pages sent and each started period on the line (Fax.Plus's rule, priced
+# by the predictor as ``Prediction.expected_billed_pages``), the cheapest point lies where the page count and the
+# period count cross, between the two pure profiles; the balanced profile (capacity.PROFILES 2, pixel price 0.3)
+# is tried there too and the predictor's bill decides. It is never tried where the bill counts only one of them.
+GREATER_OF_PROFILES = ('time', 'balanced', 'pages')
+
+
+def greater_of(prediction) -> bool:
+    """Whether the predictor priced this route by the greater of pages and started periods on the line."""
+    return prediction is not None and getattr(prediction, 'expected_billed_pages', None) is not None
 
 
 @dataclass(frozen=True)
@@ -226,8 +237,8 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         candidates = [dict(layout='runs', run_limit=limit) for limit in RUN_LIMITS] + [dict(layout='grid')]
         if capacity:
             from .capacity import PROFILE_NAMES
-            candidates = [dict(layout='capacity', profile=PROFILE_NAMES[name]) for name in CAPACITY_PROFILES] \
-                + candidates
+            names = GREATER_OF_PROFILES if greater_of(original) else CAPACITY_PROFILES
+            candidates = [dict(layout='capacity', profile=PROFILE_NAMES[name]) for name in names] + candidates
     else:
         candidates = [dict(layout='grid', sturdy=provider_renders)]
     best = None
