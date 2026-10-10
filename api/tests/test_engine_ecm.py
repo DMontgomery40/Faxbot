@@ -359,6 +359,10 @@ def test_the_trunks_measured_loss_sets_t38_protection_and_reaches_every_call(db,
     (first,) = view['trunks']
     assert (first['trunk'], first['protect'], first['loss_percent']) == ('sip', '3.2.3.1.3', 1.2)
     assert first['sentence'] == 'Telnyx: ' + found.sentence
+    keep(db, bad=1, runs=1)
+    assert engine_ecm.trunk_view(db, settings)['sentences'] == [
+        'On 7 sent calls with error correction in the last 30 days, the receiving machines asked for 1 damaged frame '
+        'again, in 1 stretch.']
     # The SSL Fax engine's call plan carries it in a ninth field, for the gateway on the engine's channel.
     fields = {'Channel': f'PJSIP/{NUMBER}@trunk-endpoint', 'CallerID': LINE, 'Variable': ''}
     job, attempt = 'a' * 32, 'b' * 32

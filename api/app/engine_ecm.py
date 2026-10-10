@@ -509,8 +509,10 @@ def trunk_view(engine, values, *, days=30, now=None) -> dict:
         sentences.append(f'No sent call in the last {days} days has reported what error correction did yet.')
     else:
         calls = 'call' if sent.calls == 1 else 'calls'
+        frames = 'frame' if sent.bad == 1 else 'frames'
+        stretches = 'stretch' if sent.runs == 1 else 'stretches'
         sentences.append(f'On {sent.calls} sent {calls} with error correction in the last {days} days, the receiving '
-                         f'machines asked for {sent.bad} damaged frames again, in {sent.runs} stretches.')
+                         f'machines asked for {sent.bad} damaged {frames} again, in {sent.runs} {stretches}.')
     if seconds is not None:
         sentences.append(f'Each block of a page after the first took about {seconds:.1f} seconds more on the line '
                          f'({timed} calls).'.replace('.0 seconds', ' seconds'))
