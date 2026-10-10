@@ -55,6 +55,25 @@ describe('Sending routes in Diagnostics', () => {
     expect(sends).toEqual(['b2']);
   });
 
+  it('reads a test again while its faxes are on their way, and offers that only then', async () => {
+    const waiting: RouteTest = { ...test, cells: test.cells.map((cell) => (cell.cell === 'b2'
+      ? { ...cell, state: 'pending' as const, fax_id: 'f1' } : cell)) };
+    const ended: RouteTest = { ...waiting, cells: waiting.cells.map((cell) => (cell.cell === 'b2'
+      ? { ...cell, state: 'success' as const } : cell)) };
+    let lists = 0;
+    server.use(
+      http.get('/routing/families', () => { lists += 1; return HttpResponse.json(families({ tests: [waiting] })); }),
+      http.get('/routing/families/tests/t1', () => HttpResponse.json(ended)),
+    );
+    render(<RouteFamilies client={client()} />);
+    const table = await screen.findByTestId('route-test-t1');
+    expect(within(table).getByText('Sending')).toBeTruthy();
+    fireEvent.click(within(table).getByRole('button', { name: 'Check the test of Telnyx and Sinch again' }));
+    await waitFor(() => expect(within(screen.getByTestId('route-test-t1')).getByText('Went through')).toBeTruthy());
+    expect(within(screen.getByTestId('route-test-t1')).queryByRole('button', { name: /^Check the test/ })).toBeNull();
+    expect(lists).toBe(1);
+  });
+
   it('closes a problem and shows a refusal in plain words', async () => {
     let closed = 0;
     server.use(http.get('/routing/families', () => HttpResponse.json(families())),

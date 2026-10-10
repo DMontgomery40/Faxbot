@@ -218,6 +218,10 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['send_by'] = by
     if cover_in_header:
         data['cover_in_header'] = 'true'
+        # As Send a fax offers the choice only when a notice applies: say which notice every page will carry.
+        cover_line = _cover_notice_line(api, data.get('mailbox'))
+    else:
+        cover_line = None
     # The patient goes only into the request; no output repeats it.
     for name, value in (('patient_record_number', patient_record_number),
                         ('patient_record_system', patient_record_system),
@@ -234,6 +238,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         if warning:
             out.line(warning)
         out.line('Fax accepted.')
+        if cover_line:
+            out.line(cover_line)
         out.fields(_fax_fields(job, route))
         if waiting:
             out.line(waiting)
@@ -372,6 +378,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     coded = (job.get('coding') or {}).get('sentence')
     # What lossless tuning sent, or that the machine refused a tuned page (pages/tuning.py).
     smaller = (job.get('coding') or {}).get('tuning_sentence')
+    # As Sent details show them: the header notice and cover sheet, the keys pressed after the call was answered,
+    # and the stations the calls answered as when they were not the expected ones.
+    extra = _sent_detail_sentences(api, fax_id)
 
     def human(out):
         place = {'index_page': 'Reference on the index page',
@@ -392,7 +401,44 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         # out, standard resolution kept or shading lightened.
         for sentence in (job.get('page_layout') or {}).get('sentences') or []:
             out.line(sentence)
+        for sentence in extra:
+            out.line(sentence)
     state.out().result(job, human)
+
+
+def _cover_notice_line(api, mailbox):
+    """The notice every page carries when the first page is a cover sheet; the server refuses a cover sheet with no
+    notice to carry it, so the command says so before uploading. None when this key may not ask."""
+    try:
+        found = api.get('/header-notice/for-send', params={'mailbox': mailbox} if mailbox else None)
+    except CliError:
+        return None
+    if not found.get('notice'):
+        raise CliError("There is no header notice to carry the cover sheet's notice. Set one with faxbot delivery "
+                       'identity notice set, or send the fax with its cover sheet.')
+    return f"Every page carries: {found['notice']}"
+
+
+def _sent_detail_sentences(api, fax_id):
+    """The header notice, after-answer and station-check sentences Sent details show for one fax; a part this key may
+    not read, or that has nothing to say, is left out."""
+    found = []
+    try:
+        notice = api.get('/header-notice/faxes/' + segment(fax_id))
+    except CliError:
+        notice = {}
+    found += [text for text in (notice.get('sentence'), notice.get('encoded')) if text]
+    if notice.get('sentence') and notice.get('notice'):
+        found.append(f"Notice: {notice['notice']}")
+    try:
+        found += (api.get('/routing/after-answer/faxes/' + segment(fax_id)) or {}).get('sentences') or []
+    except CliError:
+        pass
+    try:
+        found += (api.get('/routing/stations/faxes/' + segment(fax_id)) or {}).get('sentences') or []
+    except CliError:
+        pass
+    return found
 
 
 @jobs.command('send-now')

@@ -20,13 +20,24 @@ function refusal(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function TestTable({ test, onSend, sending }: { test: RouteTest; onSend: (cell: string) => void; sending: string | null }) {
+function TestTable({ test, onSend, onCheck, sending }: {
+  test: RouteTest; onSend: (cell: string) => void; onCheck: () => void; sending: string | null;
+}) {
+  const waiting = test.cells.some((cell) => cell.state === 'pending');
   return (
     <Box sx={{ mt: 1.5 }} data-testid={`route-test-${test.id}`}>
-      <Typography variant="subtitle2">
-        {test.route_a_label} and {test.route_b_label} to {test.number_a} and {test.number_b}
-        {test.created_text ? `, started ${test.created_text}` : ''}
-      </Typography>
+      <Box display="flex" gap={1} alignItems="baseline" justifyContent="space-between" flexWrap="wrap">
+        <Typography variant="subtitle2">
+          {test.route_a_label} and {test.route_b_label} to {test.number_a} and {test.number_b}
+          {test.created_text ? `, started ${test.created_text}` : ''}
+        </Typography>
+        {waiting && (
+          <Button size="small" disabled={sending !== null} onClick={onCheck}
+            aria-label={`Check the test of ${test.route_a_label} and ${test.route_b_label} again`}>
+            Check again
+          </Button>
+        )}
+      </Box>
       <Table size="small" sx={{ my: 1 }}>
         <TableHead>
           <TableRow><TableCell>Sent by</TableCell><TableCell>To</TableCell><TableCell>Result</TableCell><TableCell /></TableRow>
@@ -111,6 +122,20 @@ export default function RouteFamilies({ client }: { client: AdminAPIClient }) {
     }
   };
 
+  // One test read again, while its faxes are on their way.
+  const check = async (test: RouteTest) => {
+    setNotice(null);
+    setSending(`${test.id}:check`);
+    try {
+      const fresh = await api.test(test.id);
+      setData((current) => current && ({ ...current, tests: current.tests.map((item) => (item.id === fresh.id ? fresh : item)) }));
+    } catch (error) {
+      setNotice({ severity: 'error', text: refusal(error, 'The test could not be read. Try again in a moment.') });
+    } finally {
+      setSending(null);
+    }
+  };
+
   const saveUpstream = async () => {
     setNotice(null);
     try {
@@ -190,7 +215,8 @@ export default function RouteFamilies({ client }: { client: AdminAPIClient }) {
                 </Typography>
               )}
               {data.tests.map((test) => (
-                <TestTable key={test.id} test={test} sending={sending} onSend={(cell) => void send(test, cell)} />
+                <TestTable key={test.id} test={test} sending={sending} onSend={(cell) => void send(test, cell)}
+                  onCheck={() => void check(test)} />
               ))}
             </Box>
 
