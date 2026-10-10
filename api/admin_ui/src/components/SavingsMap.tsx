@@ -2,9 +2,10 @@
 // The stages run left to right (top to bottom on a phone), each with its mechanisms as small cards; the advice
 // that saves money once you act on it sits below the path. A card shows three statuses at a glance (On or Off,
 // Works here or Not here, and how it is tested) with the reason where a status is negative. Selecting a card
-// opens its part on Costs → Savings, the only place amounts appear, or the page with its own advice or
-// figures; the map never shows money. Every sentence comes from the server (GET /routing/savings/mechanisms),
-// and `faxbot costs mechanisms` prints the same ones (__tests__/savingsMap.json).
+// opens its own page in Savings & optimization → Capabilities, which links on to its figures; the map never shows
+// money. Every sentence comes from the server (GET /routing/savings/mechanisms), and `faxbot costs mechanisms`
+// prints the same ones (__tests__/savingsMap.json). Given the capabilities read, Turn on leads to each setting's
+// page under its six-area name.
 import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
 import {
   ArrowDownward as ArrowDownIcon,
@@ -12,6 +13,7 @@ import {
   Science as TestedIcon,
 } from '@mui/icons-material';
 import type { SavingsMechanism, SavingsMechanisms } from '../api/deliveryTypes';
+import type { Capabilities, Capability } from '../api/capabilityTypes';
 import type { AdminDestination } from '../navigation';
 
 const STATUS_CHIP = { size: 'small', variant: 'outlined', sx: { height: 22, fontSize: '0.75rem' } } as const;
@@ -28,14 +30,24 @@ function span(count: number, wide: boolean): number {
 // How far each mechanism is proven, at a glance; the legend says what each means.
 const TESTED_COLOR = { live: 'info', lab: 'secondary', built: 'default' } as const;
 
-function MechanismCard({ item, onNavigate }: { item: SavingsMechanism; onNavigate?: Navigate }) {
-  const link = item.link;
-  const open = link && onNavigate ? () => onNavigate(link as AdminDestination) : undefined;
+// Each mechanism's own page in Capabilities.
+export function capabilityAddress(key: string): AdminDestination {
+  return `savings/capabilities?key=${key}`;
+}
+
+function MechanismCard({ item, capability, onNavigate }: {
+  item: SavingsMechanism; capability?: Capability; onNavigate?: Navigate;
+}) {
+  const open = onNavigate ? () => onNavigate(capabilityAddress(item.key)) : undefined;
+  // Where Turn on leads: the setting's page as Capabilities names it, else the catalogue's own page.
+  const setting = capability
+    ? { address: capability.setting.address, label: capability.setting.label }
+    : { address: item.page, label: item.page_label };
   const reasons = [item.enabled.sentence, item.works.sentence].filter((sentence): sentence is string => Boolean(sentence));
   return (
     <Paper variant="outlined" data-testid={`savings-map-${item.key}`}
       role={open ? 'link' : undefined} tabIndex={open ? 0 : undefined}
-      aria-label={open ? `${item.name}: open ${item.link_label}` : undefined}
+      aria-label={open ? `${item.name}: open it in Capabilities` : undefined}
       onClick={open}
       onKeyDown={open ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } } : undefined}
       sx={{
@@ -62,8 +74,9 @@ function MechanismCard({ item, onNavigate }: { item: SavingsMechanism; onNavigat
       )}
       {item.turn_on && onNavigate && (
         <Button size="small" variant="text" sx={{ alignSelf: 'flex-start', px: 0.5, minWidth: 0 }}
-          onClick={(event) => { event.stopPropagation(); onNavigate(item.page as AdminDestination); }}
-          aria-label={`Turn on ${item.name} in ${item.page_label}`}>
+          onClick={(event) => { event.stopPropagation(); onNavigate(setting.address as AdminDestination); }}
+          onKeyDown={(event) => event.stopPropagation()}
+          aria-label={`Turn on ${item.name} in ${setting.label}`}>
           Turn on
         </Button>
       )}
@@ -84,7 +97,14 @@ function StageTitle({ number, title }: { number: number; title: string }) {
   );
 }
 
-export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanisms; onNavigate?: Navigate }) {
+export default function SavingsMap({ data, capabilities, onNavigate }: {
+  data: SavingsMechanisms;
+  // GET /routing/capabilities, when the page has it: its setting addresses and names for Turn on.
+  capabilities?: Capabilities | null;
+  onNavigate?: Navigate;
+}) {
+  const byKey = new Map((capabilities?.outcomes ?? []).flatMap((outcome) => outcome.capabilities)
+    .map((capability) => [capability.key, capability]));
   const path = data.stages.filter((stage) => stage.path && stage.mechanisms.length > 0);
   const beside = data.stages.filter((stage) => !stage.path && stage.mechanisms.length > 0);
   if (path.length === 0 && beside.length === 0) return null;
@@ -92,7 +112,7 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
     <Box component="section" aria-labelledby="savings-map-title" data-testid="savings-map" sx={{ mt: { xs: 3, md: 4 } }}>
       <Typography id="savings-map-title" variant="h5" component="h2" gutterBottom>{data.title}</Typography>
       <Typography variant="body2" color="text.secondary">
-        {data.sentence} Select one to see what it saved, or its advice.
+        {data.sentence} Select one to see what it needs and what it did here.
       </Typography>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 0.5, md: 2 }} sx={{ mt: 1.5, mb: 2 }}
         data-testid="savings-map-legend">
@@ -123,7 +143,7 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
               <Box sx={{ display: 'grid', gap: 1, alignItems: 'start',
                 gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: `repeat(${span(count, false)}, minmax(0, 1fr))`,
                   xl: `repeat(${span(count, true)}, minmax(0, 1fr))` } }}>
-                {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} onNavigate={onNavigate} />)}
+                {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} capability={byKey.get(item.key)} onNavigate={onNavigate} />)}
               </Box>
               {!last && (
                 // And downwards on a narrow one.
@@ -144,7 +164,7 @@ export default function SavingsMap({ data, onNavigate }: { data: SavingsMechanis
           <Box sx={{ display: 'grid', gap: 1,
             gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))',
               lg: 'repeat(4, minmax(0, 1fr))' } }}>
-            {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} onNavigate={onNavigate} />)}
+            {stage.mechanisms.map((item) => <MechanismCard key={item.key} item={item} capability={byKey.get(item.key)} onNavigate={onNavigate} />)}
           </Box>
         </Box>
       ))}

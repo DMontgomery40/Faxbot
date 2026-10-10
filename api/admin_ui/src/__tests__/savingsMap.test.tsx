@@ -3,12 +3,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { SavingsMechanisms } from '../api/deliveryTypes';
+import type { Capabilities } from '../api/capabilityTypes';
 import Dashboard from '../components/Dashboard';
 import SavingsMap from '../components/SavingsMap';
 import Recommendations, { recommendationSectionId } from '../components/delivery/Recommendations';
 import Savings, { savingsPartId } from '../components/delivery/Savings';
 import { emptySavings, server } from '../test/server';
 import fixture from './savingsMap.json';
+import capabilityFixture from './capabilities.json';
 
 // One answer of GET /routing/savings/mechanisms, evaluated on a real synthetic installation; `faxbot costs
 // mechanisms` prints exactly fixture.cli from it (api/tests/test_savings_mechanisms.py).
@@ -45,13 +47,13 @@ describe('The savings map on Overview', () => {
     expect(map.textContent).not.toMatch(/USD|[0-9a-f]{32}/);
   });
 
-  it('opens each mechanism\'s part on Costs, Savings, and offers Turn on only where it is off and works here', () => {
+  it('opens each mechanism\'s page in Capabilities, and offers Turn on only where it is off and works here', () => {
     const navigate = vi.fn();
     render(<SavingsMap data={answer} onNavigate={navigate} />);
     fireEvent.click(screen.getByTestId('savings-map-sending_together'));
-    expect(navigate).toHaveBeenLastCalledWith('costs/savings?part=sending_together');
+    expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=sending_together');
     fireEvent.keyDown(screen.getByTestId('savings-map-blocked_senders'), { key: 'Enter' });
-    expect(navigate).toHaveBeenLastCalledWith('costs/savings?part=blocked_calls');
+    expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=blocked_senders');
 
     const offered = items.filter((item) => item.turn_on);
     expect(offered.length).toBeGreaterThan(0);
@@ -61,13 +63,29 @@ describe('The savings map on Overview', () => {
     fireEvent.click(screen.getByRole('button', { name: `Turn on ${shading.name} in ${shading.page_label}` }));
     // The setting's page only: the card's own link to Savings does not fire as well.
     expect(navigate.mock.calls).toEqual([['providers/sending']]);
-    // A mechanism with no part on Savings and no page of its own figures is not a link.
-    expect(screen.getByTestId('savings-map-busy_hours').getAttribute('role')).toBeNull();
-    // Advice opens its own section of Recommendations, and charge checks the page with their figures.
-    fireEvent.click(screen.getByRole('link', { name: 'Plans worth their fee: open Costs → Recommendations' }));
-    expect(navigate).toHaveBeenLastCalledWith('costs/recommendations?section=plans');
+    // Every mechanism has its page, even one with no figures of its own; advice and charge checks too.
+    fireEvent.click(screen.getByTestId('savings-map-busy_hours'));
+    expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=busy_hours');
+    fireEvent.click(screen.getByRole('link', { name: 'Plans worth their fee: open it in Capabilities' }));
+    expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=advice_plans');
     fireEvent.click(screen.getByTestId('savings-map-charge_checks'));
-    expect(navigate).toHaveBeenLastCalledWith('costs/charges');
+    expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=charge_checks');
+    for (const item of items) {
+      expect(screen.getByTestId(`savings-map-${item.key}`).getAttribute('role')).toBe('link');
+    }
+  });
+
+  it('names each Turn on by its setting\'s six-area page when it has the capabilities read', () => {
+    const navigate = vi.fn();
+    const capabilities = capabilityFixture.response as unknown as Capabilities;
+    render(<SavingsMap data={answer} capabilities={capabilities} onNavigate={navigate} />);
+    const shading = capabilities.outcomes.flatMap((outcome) => outcome.capabilities).find((item) => item.key === 'fax_friendly')!;
+    fireEvent.click(screen.getByRole('button', { name: `Turn on ${shading.name} in ${shading.setting.label}` }));
+    expect(navigate.mock.calls).toEqual([[shading.setting.address]]);
+    // No Turn on names an older menu path.
+    for (const button of screen.getAllByRole('button', { name: /^Turn on / })) {
+      expect(button.getAttribute('aria-label')).not.toMatch(/Providers|Costs|Numbers|System/);
+    }
   });
 
   it('draws the fax path with arrows and the advice beside it', () => {
