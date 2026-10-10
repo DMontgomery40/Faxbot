@@ -164,13 +164,14 @@ def guard_state(connection, line, home_country, now):
     from .routing import guard
     found = guard.dial_class(line.number, home_country)
     if found is None:
-        return {'allowed': False, 'class': None, 'class_label': None, 'fenced': False,
+        return {'allowed': False, 'class': None, 'class_label': None, 'class_text': None, 'fenced': False,
                 'sentence': 'Faxbot cannot tell what kind of number this is, so it does not dial it.'}
     guard.ensure_history_on(connection, home_country, now)
     verdict = guard.verdict_on(connection, found, guard.policy_on(connection), home_country, number=line.number)
-    label = guard.class_label(found.key)
+    label, text = guard.class_label(found.key), guard.class_text(found.key)
     if verdict.allowed:
-        return {'allowed': True, 'class': found.key, 'class_label': label, 'fenced': False, 'sentence': None}
+        return {'allowed': True, 'class': found.key, 'class_label': label, 'class_text': text, 'fenced': False,
+                'sentence': None}
     fenced = found.key in guard.FENCED
     if fenced:
         sentence = (f'Faxbot never dials {guard.class_text(found.key)} unless you allow them in {guard.WHERE}.')
@@ -179,7 +180,8 @@ def guard_state(connection, line, home_country, now):
     else:
         sentence = (f'Faxbot has not sent to {guard.class_text(found.key)} before, so it does not dial this line '
                     'until you allow that country.')
-    return {'allowed': False, 'class': found.key, 'class_label': label, 'fenced': fenced, 'sentence': sentence}
+    return {'allowed': False, 'class': found.key, 'class_label': label, 'class_text': text, 'fenced': fenced,
+            'sentence': sentence}
 
 
 # -- records --------------------------------------------------------------------------------------------------------

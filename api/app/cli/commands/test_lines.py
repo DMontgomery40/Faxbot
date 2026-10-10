@@ -104,7 +104,7 @@ def test_lines_send(line: str = typer.Argument(..., metavar='LINE',
         if needs.get('fenced') or not needs.get('class'):
             raise CliError(result['sentence'])
         if not allow_country:
-            typer.confirm(f"{result['sentence']} Allow Faxbot to dial {needs['class_label']} from now on?", abort=True)
+            typer.confirm(f"{result['sentence']} Allow Faxbot to dial {needs['class_text']} from now on?", abort=True)
         allowed = api.put('/routing/dialing/' + segment(needs['class']), json={'state': 'allowed'})
         state.out().line(allowed.get('sentence') or '')
         result = api.post(f'/diagnostics/test-lines/{segment(chosen["id"])}/send')
