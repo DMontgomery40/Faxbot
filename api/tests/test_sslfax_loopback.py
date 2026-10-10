@@ -2129,3 +2129,173 @@ def test_w_an_ecm_partial_page_boundary_measured_on_the_line(tmp_path, loopback)
     for found in proof.values():
         assert str(found['status']).upper() == 'SUCCESS' and found['engine'][0]['compression'] == 'MH', proof
         assert found['engine'][0]['ecm'] == 'on', proof
+
+
+# The SSL Fax engine's header line (TagLineFont) over encoded, packed and ordinary pages ----------------------------
+
+def header_line(page, rows=60):
+    """What Tesseract reads in the top ``rows`` rows of a received page (the sending engine's tag line), or None
+    without Tesseract. Scaled the same both ways on a fine page; a normal-resolution page's rows count twice."""
+    from PIL import Image, ImageOps
+    if not shutil.which('tesseract'):
+        return None
+    strip = page.convert('L').crop((0, 0, page.size[0], rows))
+    ink = ImageOps.invert(strip).getbbox() or (0, 0, strip.size[0], rows)
+    strip = strip.crop((max(0, ink[0] - 10), max(0, ink[1] - 4), min(strip.size[0], ink[2] + 10),
+                        min(rows, ink[3] + 4)))
+    tall = 2 if page.size[1] < 1500 else 1
+    strip = ImageOps.expand(strip.resize((strip.size[0] * 2, strip.size[1] * 2 * tall), Image.NEAREST),
+                            border=20, fill=255)
+    with tempfile.TemporaryDirectory() as folder:
+        picture = Path(folder) / 'header.png'
+        strip.save(picture)
+        result = subprocess.run(['tesseract', str(picture), 'stdout', '--psm', '7'], capture_output=True, text=True,
+                                timeout=60)
+    return ' '.join(result.stdout.split()).lower()
+
+
+def band_check(sent, received, band):
+    """Where the received page differs from the page Faxbot sent: how many rows differ and the last of them, any
+    differing row that had ink on the sent page (content the header line covered), whether the received page has
+    ink above ``band`` (the header line), any ink the sent page had above it, and whether the rows only one page
+    has (HylaFAX may leave out a white page bottom) are white."""
+    width = min(sent.size[0], received.size[0])
+    rows = min(sent.size[1], received.size[1])
+    stride = (width + 7) // 8
+    a = sent.crop((0, 0, width, sent.size[1])).tobytes()
+    b = received.crop((0, 0, width, received.size[1])).tobytes()
+
+    def row(data, y):
+        return data[y * stride:(y + 1) * stride]
+
+    def inked(data, y):
+        # Mode "1" packs white as 1 bits; the last byte's padding bits beyond the width are ignored.
+        line = row(data, y)
+        spare = stride * 8 - width
+        last = line[-1] | ((1 << spare) - 1) if spare else line[-1]
+        return any(value != 0xFF for value in line[:-1]) or last != 0xFF
+    differing = [y for y in range(rows) if row(a, y) != row(b, y)]
+    longer, height = (a, sent.size[1]) if sent.size[1] > received.size[1] else (b, received.size[1])
+    return {'sizes': [list(sent.size), list(received.size)], 'differing_rows': len(differing),
+            'last_differing_row': max(differing) if differing else None,
+            'covered_ink_rows': [y for y in differing if inked(a, y)][:10],
+            'header_ink': any(inked(b, y) for y in range(min(band, rows))),
+            'sent_ink_above_band': [y for y in range(min(band, rows)) if inked(a, y)][:10],
+            'extra_rows_white': not any(inked(longer, y) for y in range(rows, height))}
+
+
+def short_pages_pdf(count=4):
+    """``count`` letter pages, each with a few lines at the top and white below: Faxbot packs them onto fewer,
+    longer pages where the receiving machine takes them."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=letter, invariant=1)
+    for number in range(1, count + 1):
+        page.setFont('Helvetica-Bold', 24)
+        page.drawString(72, 720, f'SHORT PAGE {number} OF {count}')
+        page.setFont('Helvetica', 14)
+        for line in range(3):
+            page.drawString(72, 690 - line * 20, f'Line {line + 1} of short page {number}: 0123456789 ABCDEFGHIJ')
+        page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def encoded_pdf(document, layout):
+    """``document`` as codec pages in ``layout`` (fine resolution), as a lossless PDF Faxbot sends like any other;
+    with the page count."""
+    from PIL import Image
+    from app import codec
+    from app.conversion import tiff_to_pdf
+    options = {'picture': Image.radial_gradient('L').resize((1200, 900))} if layout == 'picture' else {}
+    pages = codec.encode_document(codec.Document(document, 'application/pdf', 'proof.pdf'), resolution='fine',
+                                  layout=layout, **options).pages
+    with tempfile.TemporaryDirectory() as folder:
+        tiff, pdf = Path(folder) / 'pages.tiff', Path(folder) / 'pages.pdf'
+        pages[0].save(tiff, 'TIFF', compression='group4', dpi=(204, 196), save_all=True, append_images=pages[1:])
+        tiff_to_pdf(str(tiff), str(pdf))
+        return pdf.read_bytes(), len(pages)
+
+
+ENCODED_LAYOUTS = ('grid', 'runs', 'picture', 'enumerative', 'capacity')
+
+
+def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_path, loopback):
+    """The SSL Fax engine prints its header line (HylaFAX+ tag line, TagLineFont etc/lutRS18.pcf) over the top rows
+    of every page it sends. (c) An ordinary fax: the peer's page 1 reads the date, the header text, the reply number
+    and "Page 1 of 3". (b) Short pages Faxbot packs onto longer ones: every row the header line changed lies above
+    packing.TOP_ROWS and was white on the page Faxbot sent, and every row below matches pixel for pixel. (a) Encoded
+    pages in each layout (grid, runs, picture, enumerative, capacity), sent as an ordinary fax, decode on the
+    receiving side to the document byte for byte, and the header line changed only white rows above the codec's
+    8 mm top margin."""
+    from datetime import datetime, timezone
+    from app import codec
+    from app.pages.packing import TOP_ROWS
+    context = loopback('x', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False,
+                       api_extra={'FAX_HEADER': 'Leeds HQ', 'FAX_FRIENDLY_DOCUMENTS': 'never',
+                                  'SIP_FAX_COMPRESSION': 'mh'})
+    docker, key = context['docker'], context['key']
+    number = '/routing/destinations/%2B' + PEER_NUMBER.lstrip('+')
+    proof = {}
+
+    # (c) An ordinary fax.
+    ordinary = send_and_collect(tmp_path, context)
+    text = header_line(ordinary['received_pages'][0]) if ordinary['received_pages'] else None
+    digits = ''.join(character for character in (text or '') if character.isdigit())
+    days = {moment.strftime('%d %b %Y').lower() for moment in (datetime.now(timezone.utc), datetime.now())}
+    proof['ordinary'] = {'status': ordinary['job'].get('status'), 'header_line_read': text,
+                         'pages': len(ordinary['received_pages']),
+                         'bands': [band_check(a, b, TOP_ROWS) for a, b in zip(ordinary['sent_pages'],
+                                                                               ordinary['received_pages'])]}
+
+    # (b) Packed pages.
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'allow'})['status'] == 200
+    packed = send_and_collect(tmp_path, context, document=short_pages_pdf())
+    change = database(context, change="SELECT layout, original_pages, sent_pages FROM fax_page_changes "
+                                      f"WHERE job_id = '{packed['job']['id']}'")['change']
+    proof['packed'] = {'status': packed['job'].get('status'), 'change': change,
+                       'sent_pages': len(packed['sent_pages']), 'received_pages': len(packed['received_pages']),
+                       'bands': [band_check(a, b, TOP_ROWS) for a, b in zip(packed['sent_pages'],
+                                                                             packed['received_pages'])]}
+
+    # (a) Encoded pages in every layout, with packing off so the pages go as they are.
+    assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
+    document = proof_pdf()
+    margin = codec.RESOLUTIONS['fine'].mm_lines(8)
+    for layout in ENCODED_LAYOUTS:
+        pdf, count = encoded_pdf(document, layout)
+        outcome = send_and_collect(tmp_path, context, document=pdf)
+        try:
+            found, report = codec.decode_images(outcome['received_pages'])
+            decoded = {'matches': found.data == document, 'bytes': len(found.data), 'layout': report['layout']}
+        except codec.CodecError as error:
+            decoded = {'error': str(error)}
+        proof[layout] = {'status': outcome['job'].get('status'), 'encoded_pages': count,
+                         'sent_pages': len(outcome['sent_pages']), 'received_pages': len(outcome['received_pages']),
+                         'decoded': decoded,
+                         'bands': [band_check(a, b, margin) for a, b in zip(outcome['sent_pages'],
+                                                                            outcome['received_pages'])]}
+    print('\nSSLFAX_PROOF_X ' + json.dumps(proof, indent=2, default=str))
+
+    found = proof['ordinary']
+    assert str(found['status']).upper() == 'SUCCESS' and found['pages'] == PAGES, proof
+    if text is not None:
+        assert any(day in text for day in days) and 'leeds hq' in text, proof
+        assert FAXBOT_NUMBER.lstrip('+') in digits and f'page 1 of {PAGES}' in text, proof
+    found = proof['packed']
+    assert str(found['status']).upper() == 'SUCCESS' and found['change'], proof
+    assert found['change'][0]['layout'] == 'dense' and found['sent_pages'] < 4, proof
+    assert found['received_pages'] == found['sent_pages'], proof
+    for band in found['bands']:
+        assert band['header_ink'] and not band['sent_ink_above_band'] and not band['covered_ink_rows'], proof
+        assert band['last_differing_row'] is not None and band['last_differing_row'] < TOP_ROWS, proof
+        assert band['extra_rows_white'], proof
+    for layout in ENCODED_LAYOUTS:
+        found = proof[layout]
+        assert str(found['status']).upper() == 'SUCCESS', proof
+        assert found['decoded'].get('matches') is True and found['decoded']['layout'] == layout, proof
+        for band in found['bands']:
+            assert band['header_ink'] and not band['covered_ink_rows'], proof
+            assert band['last_differing_row'] is not None and band['last_differing_row'] < margin, proof
+            assert band['extra_rows_white'], proof
