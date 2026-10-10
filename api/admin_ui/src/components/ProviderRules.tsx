@@ -42,7 +42,7 @@ export function ReceivingSummary({ load, onNavigate }: {
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mt: 3 }} aria-label="Receiving">
       <Typography variant="h6" component="h2">Receiving</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        Which mailbox each of your numbers delivers to is set on Numbers.
+        Which mailbox each of your numbers delivers to is set on Delivery setup, Numbers.
       </Typography>
       <DeliveryError error={error} onClose={() => setError(null)} />
       {rules && rules.length === 0 && <Typography variant="body2">No number has a mailbox yet.</Typography>}
@@ -87,7 +87,7 @@ export default function ProviderRules({ api, canWrite, currency = 'USD', loadNum
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ mb: 1 }}>Rules</Typography>
+      <Typography variant="h4" component="h1" sx={{ mb: 1 }}>Routing rules</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Choose which provider account sends each fax. Faxbot follows these rules first, then picks the cheapest
         reliable route among the accounts they allow.

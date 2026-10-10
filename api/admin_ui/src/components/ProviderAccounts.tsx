@@ -93,7 +93,7 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
         {canWrite && <Button startIcon={<AddIcon />} onClick={() => setEditing({ account: null })}>Add an account</Button>}
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        Every account here can be used at the same time. Rules on Providers → Rules choose which one sends each fax.
+        Every account here can be used at the same time. Rules on Delivery setup → Routing rules choose which one sends each fax.
       </Typography>
       <Notice message={notice} onClose={() => setNotice(null)} />
       <DeliveryError error={error} onClose={() => setError(null)} />

@@ -4,7 +4,7 @@ The builtin Documo adapter uploads prepared PDFs directly and polls the original
 
 ## Configure the installation
 
-1. Open the **Setup Wizard** (**System → Setup**), or **Providers → Documo** when it is already in use.
+1. Open the **Setup Wizard** (**Administration → Setup**), or **Delivery setup → Documo** when it is already in use.
 2. Select **Documo (mFax)** for outbound and enter the API key for the intended account. Leave unchanged secret masks alone.
 3. Choose production or sandbox. In Settings, review **Documo Base URL** using the rules below.
 4. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.

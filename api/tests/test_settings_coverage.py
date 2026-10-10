@@ -1,6 +1,6 @@
 """Every configuration value can be set from the command line and has a place in the console.
 
-Each field of ConfigurationValues is accepted by `faxbot system settings set` and its
+Each field of ConfigurationValues is accepted by `faxbot admin settings set` and its
 name appears in a console screen (api/admin_ui/src outside api/, tests and
 mocks excluded: the API client and the type files are not a place), unless
 READ_ONLY_OR_ENV says why not. AWAITING_CONSOLE holds the
@@ -37,11 +37,11 @@ READ_ONLY_OR_ENV = {
     'faxbot_config_path': 'the older settings file, read once at first start; shown read-only under System → Developer',
     'require_api_key': 'authentication is always required; the console offers no switch to turn it off',
     # FreeSWITCH is kept for one release without a console page or a Setup choice; an installation that
-    # still uses it reads and changes these with `faxbot providers show|configure freeswitch`.
-    'fs_esl_host': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
-    'fs_esl_port': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
-    'fs_esl_password': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
-    'fs_t38_enable': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
+    # still uses it reads and changes these with `faxbot delivery providers show|configure freeswitch`.
+    'fs_esl_host': 'FreeSWITCH, kept one release without a console page; faxbot delivery providers configure freeswitch',
+    'fs_esl_port': 'FreeSWITCH, kept one release without a console page; faxbot delivery providers configure freeswitch',
+    'fs_esl_password': 'FreeSWITCH, kept one release without a console page; faxbot delivery providers configure freeswitch',
+    'fs_t38_enable': 'FreeSWITCH, kept one release without a console page; faxbot delivery providers configure freeswitch',
 }
 
 # Settings the console has not placed yet, with the home the map gives them. Builder L shrinks this.
@@ -125,11 +125,11 @@ def test_the_command_line_sets_every_setting(cli):
         else:
             assignments.append(f'{name}={written.get(_variable(field), typed)}')
     assert secrets, 'the secret settings are set through --secret-stdin'
-    result = cli('--json', 'system', 'settings', 'set', *assignments, *secrets, input=''.join(f'{line}\n' for line in lines))
+    result = cli('--json', 'admin', 'settings', 'set', *assignments, *secrets, input=''.join(f'{line}\n' for line in lines))
     assert result.exit_code == 0, result.stdout + result.stderr
 
     # Text that looks like a number stays text: a caller ID, an outside-line prefix.
-    typed = cli('system', 'settings', 'set', 'fs_caller_id_number=3035551234', 'sip_trunk_dial_prefix=9',
+    typed = cli('admin', 'settings', 'set', 'fs_caller_id_number=3035551234', 'sip_trunk_dial_prefix=9',
                 'fax_backend=phaxio', 'max_file_size_mb=12', 'fax_disabled=yes')
     assert typed.exit_code == 0, typed.stdout + typed.stderr
     saved = _store(cli).read().desired.values
@@ -361,7 +361,7 @@ def test_the_time_zone_is_a_setting_refused_with_one_sentence_when_unknown(cli):
     refused = _put(client, time_zone='Mars/Olympus')
     assert refused.status_code == 400
     assert refused.json()['detail'] == 'Choose a time zone from the list, such as America/Denver.'
-    assert cli('system', 'settings', 'set', 'time_zone=Europe/London').exit_code == 0
+    assert cli('admin', 'settings', 'set', 'time_zone=Europe/London').exit_code == 0
     assert _settings(client)['installation'] == {'time_zone': 'Europe/London'}
 
 

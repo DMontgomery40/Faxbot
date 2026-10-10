@@ -55,10 +55,13 @@ export function SendFaxButton({ send, size = 'medium', fullWidth = false, sx }: 
 const itemSx = { borderRadius: 2, mx: 1, mb: 0.25 };
 
 export default function NavPanel({ areas, currentArea, currentPage, onNavigate, send, logo, footer }: NavPanelProps) {
-  // The area holding the current page is open and the others are closed; any area
-  // can still be opened or closed by hand until the page changes area.
+  // The area holding the current page is open. Opening another area closes the rest,
+  // except the current page's area, so the panel never grows into a wall of links.
   const [open, setOpen] = useState<Record<string, boolean>>(() => ({ [currentArea]: true }));
   useEffect(() => { setOpen({ [currentArea]: true }); }, [currentArea]);
+  const toggle = (areaId: string) => setOpen((previous) => (previous[areaId]
+    ? { ...previous, [areaId]: false }
+    : { [currentArea]: Boolean(previous[currentArea]), [areaId]: true }));
 
   const link = (area: NavArea, page: NavPage, nested: boolean, label = page.label, icon = page.icon) => {
     const selected = area.id === currentArea && page.id === currentPage;
@@ -97,11 +100,13 @@ export default function NavPanel({ areas, currentArea, currentPage, onNavigate, 
             const groups = [...new Set(listed.map((page) => page.group ?? ''))];
             return (
               <Fragment key={area.id}>
-                <ListItemButton onClick={() => setOpen((previous) => ({ ...previous, [area.id]: !expanded }))}
+                <ListItemButton onClick={() => toggle(area.id)}
                   aria-expanded={expanded} aria-controls={`nav-${area.id}`} selected={holdsCurrent && !expanded}
-                  sx={{ ...itemSx, py: 0.75 }}>
+                  sx={{ ...itemSx, py: 0.75, pr: 1.5 }}>
                   <ListItemIcon sx={{ minWidth: 36 }}>{area.icon}</ListItemIcon>
-                  <ListItemText primary={area.label} primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }} />
+                  {/* An area name stays on one line (the panel is wide enough for the longest). */}
+                  <ListItemText primary={area.label}
+                    primaryTypographyProps={{ variant: 'body2', fontWeight: 500, sx: { whiteSpace: 'nowrap' } }} />
                   {expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
                 </ListItemButton>
                 <Collapse in={expanded} timeout="auto" unmountOnExit>

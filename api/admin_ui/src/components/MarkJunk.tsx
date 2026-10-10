@@ -41,7 +41,7 @@ function MarkJunk({ client, inboundId, from, onDone }: MarkJunkProps) {
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 2 }}>
             Faxbot turns away calls from {from} before answering for 90 days, so they cost nothing. You can unblock them
-            under Numbers, Blocked senders.
+            under Delivery setup, Blocked senders.
           </Typography>
           <TextField autoFocus fullWidth label="Why it is junk" value={reason} inputProps={{ maxLength: 200 }}
             onChange={(event) => setReason(event.target.value)} error={!!error} helperText={error ?? 'For example: unsolicited offers.'} />

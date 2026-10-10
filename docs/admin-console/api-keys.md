@@ -5,7 +5,7 @@ API keys let apps, scanners and phones use Faxbot. Every API request needs a key
 
 ## Create, replace and revoke keys
 
-1. Open **Access → Keys & phones**.
+1. Open **Administration → Keys & phones**.
 2. Create a key, choose the user or integration it belongs to, and pick only the permissions the app needs, for example `fax:send` and `fax:read`.
 3. Copy the key (`fbk_live_<id>_<secret>`). It is shown only once.
 4. Use **Replace key** to issue a new secret, or **Revoke** to stop the key for good. Faxbot records both in the security audit.
@@ -22,7 +22,7 @@ A key can never do more than the user or integration it belongs to. See [Access 
 
 === "Console"
 
-    1. Open **Access → Keys & phones**  
+    1. Open **Administration → Keys & phones**  
     2. Create a key with the permissions you need (for example `fax:send` and `fax:read`)  
     3. Sign in with that key (**Sign in with API key**) and queue a test on **Send a fax**  
     4. Check **Sent** for status updates
@@ -68,7 +68,7 @@ A key can never do more than the user or integration it belongs to. See [Access 
 
 - **401 Unauthorized** → The key is missing, mistyped, expired or revoked, or its owner is disabled.
 - **403 Forbidden** → The key is valid but lacks the permission. Create a key with the permission you need; its owner must also have it.
-- **429 Too Many Requests** → The per-key limit was reached; adjust **Requests per minute for each key** under **System → Storage & retention**.
+- **429 Too Many Requests** → The per-key limit was reached; adjust **Requests per minute for each key** under **Administration → Documents & retention**.
 - **413 / 415** → File too large or wrong type; review [document submission](../api.md#submit-a-document).
 
 For automation examples, see the [Node SDK](../sdks/node.md) and [Python SDK](../sdks/python.md).

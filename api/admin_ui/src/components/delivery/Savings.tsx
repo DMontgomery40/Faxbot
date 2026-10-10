@@ -73,7 +73,7 @@ export default function Savings({ client, focus = null }: { client: AdminAPIClie
 
   return (
     <Box>
-      <ScreenHeader title="Savings" subtitle={data?.sentence} onRefresh={() => void load()} busy={busy} />
+      <ScreenHeader title="Savings results" subtitle={data?.sentence} onRefresh={() => void load()} busy={busy} />
       <AnalysisCard client={client} />
       <DeliveryError error={error} onClose={() => setError(null)} />
       {!data && busy && <CircularProgress size={24} />}

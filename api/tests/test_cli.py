@@ -146,29 +146,106 @@ def _plain(text):
     return re.sub(r'\x1b\[[0-9;]*m', '', text)
 
 
-def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server():
+def _listed(*path):
+    """The commands and groups `faxbot <path> --help` lists, in order."""
+    shown = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
+    assert shown.exit_code == 0, (path, shown.stdout)
+    return re.findall(r'^│ ([a-z][a-z-]*) ', _plain(shown.stdout), re.MULTILINE)
+
+
+def test_help_lists_send_status_and_the_six_areas_without_starting_the_server():
     import typer.main
     from app.cli.nouns import NOUNS
-    assert NOUNS == ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
+    assert NOUNS == ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
     root = typer.main.get_command(cli_app)
-    # Faxes → Forms is `faxbot forms` and Faxes → Expected is `faxbot expected`, beside received and sent.
-    # `faxbot overview` is the Overview page.
-    assert [name for name, command in root.commands.items() if not command.hidden] == [
-        'send', 'status', 'overview', 'received', 'sent', 'forms', 'expected', *NOUNS[2:]]
+    # `faxbot overview` is the Overview page; the other five areas are groups.
+    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     plain = _plain(result.stdout)
-    assert result.exit_code == 0 and ' received ' in plain and ' system ' in plain
-    assert ' jobs ' not in plain and ' admin ' not in plain and ' config ' not in plain
+    assert result.exit_code == 0 and ' savings ' in plain and ' admin ' in plain
+    for older in ('received', 'sent', 'forms', 'expected', 'numbers', 'providers', 'costs', 'access', 'system',
+                  'jobs', 'config'):
+        assert f'│ {older} ' not in plain, older
     for noun in NOUNS:
         shown = CliRunner().invoke(cli_app, [noun, '--help'], env={'COLUMNS': '200'})
         assert shown.exit_code == 0 and 'Usage: faxbot ' + noun in _plain(shown.stdout)
 
 
-def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
+def test_each_area_lists_the_commands_of_its_console_pages():
+    # Typer lists an area's own commands first, then its groups. Other work adds commands to savings and recipients,
+    # so those two are checked for what they must hold.
+    savings = _listed('savings')
+    assert savings[:3] == ['mechanisms', 'facts', 'results']
+    assert {'opportunities', 'spending', 'charges', 'invoices', 'plans', 'rate-cards', 'analysis'} <= set(savings)
+    assert not {'savings', 'recommendations', 'advice'} & set(savings)
+    assert _listed('faxes') == ['received', 'sent', 'expected', 'forms', 'cases']
+    assert _listed('delivery') == [
+        'numbers', 'mailboxes', 'blocked', 'identity', 'email', 'connectors', 'providers', 'rules']
+    assert _listed('delivery', 'numbers') == [
+        'list', 'add', 'update', 'explain', 'advice', 'dependencies', 'move', 'forwarded-trust']
+    assert 'rules' not in _listed('delivery', 'providers') and 'trunk' in _listed('delivery', 'providers')
+    assert 'cases' not in _listed('recipients') and 'partners' in _listed('recipients')
+    assert _listed('admin')[:9] == [
+        'health', 'audit', 'restart', 'status', 'migrate', 'recover-owner', 'backup', 'restore', 'access']
+    assert {'setup', 'settings', 'analysis', 'npi', 'diagnostics', 'logs', 'codec', 'profiles'} <= set(_listed('admin'))
+    assert 'users' in _listed('admin', 'access')
+
+
+def test_hidden_names_are_exactly_the_older_names_in_the_alias_table():
+    from app.cli.nouns import ALIASES, canonical
     commands = _commands(cli_app)
-    assert [path for path, (_, hidden) in commands.items() if hidden] == []
-    # Names from before the console's eight areas, removed before the first tagged release that had them.
-    for older in (('jobs', 'list'), ('inbound', 'list'), ('settings', 'get'), ('admin', 'migrate'), ('health',),
+    hidden = [path for path, (_, is_hidden) in commands.items() if is_hidden]
+    # Every hidden command is under an older name, and every older name is hidden and still exists.
+    assert hidden and all(any(path[:len(old)] == old for old in ALIASES) for path in hidden)
+    for old in ALIASES:
+        assert all(hidden_flag for path, (_, hidden_flag) in commands.items() if path[:len(old)] == old), old
+        assert any(path[:len(old)] == old for path in commands), old
+    # Each older path runs the same command as the visible path it means now.
+    for path, (callback, is_hidden) in commands.items():
+        if is_hidden:
+            now = canonical(path)
+            assert now in commands and not commands[now][1], (path, now)
+            assert _original(commands[now][0]) is _original(callback), (path, now)
+    assert canonical(('costs', 'savings')) == ('savings', 'results')
+    assert canonical(('numbers', 'mailboxes', 'list')) == ('delivery', 'mailboxes', 'list')
+    assert canonical(('system', 'settings', 'set')) == ('admin', 'settings', 'set')
+    assert canonical(('providers', 'rules', 'publish')) == ('delivery', 'rules', 'publish')
+
+
+@pytest.mark.parametrize('older,now', [
+    (('received', 'list'), ('faxes', 'received', 'list')),
+    (('sent', 'list'), ('faxes', 'sent', 'list')),
+    (('forms', 'list'), ('faxes', 'forms', 'list')),
+    (('expected', 'list'), ('faxes', 'expected', 'list')),
+    (('recipients', 'cases', 'list'), ('faxes', 'cases', 'list')),
+    (('numbers', 'list'), ('delivery', 'numbers', 'list')),
+    (('numbers', 'mailboxes', 'list'), ('delivery', 'mailboxes', 'list')),
+    (('numbers', 'reply', 'show'), ('delivery', 'identity', 'show')),
+    (('numbers', 'npi', 'list'), ('admin', 'npi', 'list')),
+    (('providers', 'list'), ('delivery', 'providers', 'list')),
+    (('providers', 'rules', 'show'), ('delivery', 'rules', 'show')),
+    (('costs', 'spending'), ('savings', 'spending')),
+    (('costs', 'savings'), ('savings', 'results')),
+    (('costs', 'recommendations', 'sending'), ('savings', 'opportunities', 'sending')),
+    (('costs', 'advice'), ('savings', 'facts')),
+    (('costs', 'mechanisms'), ('savings', 'mechanisms')),
+    (('access', 'users', 'list'), ('admin', 'access', 'users', 'list')),
+    (('system', 'settings', 'set'), ('admin', 'settings', 'set')),
+    (('system', 'migrate'), ('admin', 'migrate')),
+])
+def test_an_older_command_name_still_runs_the_command_it_names_now(older, now):
+    commands = _commands(cli_app)
+    assert commands[older][1] and not commands[now][1], (older, now)
+    assert _original(commands[older][0]) is _original(commands[now][0])
+    for path in (older, now):
+        typed = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
+        assert typed.exit_code == 0 and 'Usage: faxbot ' + ' '.join(path) in _plain(typed.stdout), path
+
+
+def test_names_older_than_the_areas_are_gone():
+    commands = _commands(cli_app)
+    # Names from before the console's areas, removed before the first tagged release that had them.
+    for older in (('jobs', 'list'), ('inbound', 'list'), ('settings', 'get'), ('health',),
                   ('me',), ('tunnel', 'status'), ('actions', 'list'), ('sent', 'history'), ('sent', 'reconcile'),
                   ('providers', 'config'), ('providers', 'registry'), ('access', 'grant')):
         typed = CliRunner().invoke(cli_app, [*older, '--help'], env={'COLUMNS': '200'})

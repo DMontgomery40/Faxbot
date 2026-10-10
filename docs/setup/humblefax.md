@@ -10,7 +10,7 @@ The builtin HumbleFax adapter uploads prepared PDFs directly and polls the origi
 
 ## Configure the installation
 
-1. Open the **Setup Wizard** (**System → Setup**), or **Providers → HumbleFax** when it is already in use.
+1. Open the **Setup Wizard** (**Administration → Setup**), or **Delivery setup → HumbleFax** when it is already in use.
 2. Select **HumbleFax** as the outbound provider.
 3. Paste the access key and secret key. Leave unchanged secret masks alone.
 4. Optional: enter **HumbleFax From Number** as 10 digits, or 11 digits starting with `1` (for example `13035550199`). It must be a fax number on the same HumbleFax account.

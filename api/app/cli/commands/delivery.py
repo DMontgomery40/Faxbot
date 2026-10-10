@@ -497,17 +497,17 @@ def mechanism_lines(result):
                     lines.append(f'    {sentence}')
             if item['turn_on']:
                 lines.append(f"    Turn it on in {item['page_label']}.")
-            # Advice and charge checks keep their own figures elsewhere; savings are all in faxbot costs savings.
+            # Advice and charge checks keep their own figures elsewhere; savings are all in faxbot savings results.
             if not item['part'] and item.get('command'):
                 lines.append(f"    See: {item['command']}")
     lines.append('')
     lines += [f"{entry['label']}: {entry['sentence']}" for entry in result['legend']]
-    lines.append('What each one saved: faxbot costs savings')
+    lines.append('What each one saved: faxbot savings results')
     return lines
 
 
 def routing_mechanisms():
-    """List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot costs savings."""
+    """List every way Faxbot saves money, grouped by where it acts on a fax: whether each is on, whether it works on this installation, and how far it is tested. What each one saved is in faxbot savings results."""
     result = state.api().get('/routing/savings/mechanisms')
     state.out().result(result, lambda out: [out.line(line) for line in mechanism_lines(result)])
 

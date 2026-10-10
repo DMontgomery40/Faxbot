@@ -618,7 +618,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
     const environment = environmentManaged(settings);
     return <Paper variant="outlined" sx={{ p: 2, mt: 2 }} key={id} data-testid={`provider-section-${id}`}>
       <Typography variant="h6" component="h3">{heading}</Typography>
-      {!known ? <Alert severity="info" sx={{ mt: 2 }}>Set up this provider under System → Developer → Provider plugins.</Alert> : <>
+      {!known ? <Alert severity="info" sx={{ mt: 2 }}>Set up this provider under Administration → Developer → Provider plugins.</Alert> : <>
         {id !== 'sip' && <Alert severity="info" sx={{ my: 2 }}>Saved secrets are hidden; leave them unchanged to keep them.</Alert>}
         {credentialFields[id].length > 0 && <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[id].map(field)}

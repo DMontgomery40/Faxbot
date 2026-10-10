@@ -18,7 +18,7 @@ Structure
 
 ## Existing installations
 
-Once initialized, canonical desired/active revisions in the database are authoritative. Editing this JSON file or `.env` and restarting does not import a new runtime selection. Use **System → Developer → Provider plugins** to edit the desired revision and inspect active/pending status. Pending changes require every API worker to stop and the installation restart successfully.
+Once initialized, canonical desired/active revisions in the database are authoritative. Editing this JSON file or `.env` and restarting does not import a new runtime selection. Use **Administration → Developer → Provider plugins** to edit the desired revision and inspect active/pending status. Pending changes require every API worker to stop and the installation restart successfully.
 
 - `GET /plugins/{id}/config` returns sanitized desired `enabled`, `settings`, `role` and `_meta` identity/apply state.
 - `PUT /plugins/{id}/config` accepts intended `enabled`, `settings`, `role` and the editor's loaded `expected_revision_id`. Use a role of outbound, inbound or storage as supported by that provider.

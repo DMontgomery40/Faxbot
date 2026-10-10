@@ -10,8 +10,8 @@ One card lists what needs a person, each with the page that handles it:
 
 - sent faxes that failed, or whose result is uncertain: **Faxes → Sent**;
 - received faxes waiting for an owner, overdue, or not delivered by email: **Faxes → Received**, already filtered;
-- calls the carrier billed that Faxbot has no record of: **Costs → Spending**;
-- no provider set up: **System → Setup**, or **Diagnostics** for people who may not change settings.
+- calls the carrier billed that Faxbot has no record of: **Savings & optimization → Spending**;
+- no provider set up: **Administration → Setup**, or **Diagnostics** for people who may not change settings.
 
 ## Sending and costs
 

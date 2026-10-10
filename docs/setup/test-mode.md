@@ -4,12 +4,12 @@ Turn **Sending is on** off to check document preparation and **Faxes → Sent** 
 
 ## Configure an existing installation
 
-1. Open **Providers → In use** and turn **Sending is on** off (it asks first).
+1. Open **Delivery setup → Providers & accounts** and turn **Sending is on** off (it asks first).
 2. Click **Apply settings**. If Faxbot asks for a restart, stop every API process and start the installation again.
 3. Reload the page and confirm that sending is off and no restart is pending.
 4. In **Faxes → Send a fax**, attach a synthetic PDF or TXT document and select **Queue test fax**. The server refuses a stale queue-only form if sending has been enabled; reload the page before proceeding.
 
-`FAX_DISABLED=true` in the environment only applies when a new installation starts for the first time. Changing it later does not change an existing installation; use **Providers → In use** instead.
+`FAX_DISABLED=true` in the environment only applies when a new installation starts for the first time. Changing it later does not change an existing installation; use **Delivery setup → Providers & accounts** instead.
 
 ## What happens
 

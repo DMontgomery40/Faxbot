@@ -2,7 +2,7 @@
 
 Choose your provider, then deploy.
 
-A new installation starts with no fax provider. The console and `/health/ready` say "No fax provider set up yet." Sending is refused until you choose one in **System → Setup**. The Dashboard's **Set up a fax provider** button opens that page. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio.
+A new installation starts with no fax provider. The console and `/health/ready` say "No fax provider set up yet." Sending is refused until you choose one in **Administration → Setup**. The Dashboard's **Set up a fax provider** button opens that page. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio.
 
 <div class="grid cards" markdown>
 

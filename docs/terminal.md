@@ -30,7 +30,7 @@ Using the terminal needs the `host:terminal` permission. The built-in **Owner** 
 ## Usage
 
 1. Sign in to the admin console.
-2. Open **System → Developer → Terminal** and start typing.
+2. Open **Administration → Developer → Terminal** and start typing.
 
 The console first asks the server for a one-time ticket that is valid for 60 seconds, then opens the terminal connection with it. While the terminal is open, Faxbot keeps checking that you still have `host:terminal` and that host commands are still allowed. If either changes, for example because your role was removed or your session ended, the terminal closes within a few seconds.
 

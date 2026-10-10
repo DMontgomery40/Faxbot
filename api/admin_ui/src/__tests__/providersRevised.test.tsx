@@ -70,7 +70,7 @@ describe('Providers in the panel', () => {
     await screen.findByText('Ada Admin');
   }
 
-  it('lists In use, the providers in use by name, and Add or change a provider; other providers keep their addresses', async () => {
+  it('lists Providers & accounts, the providers in use by name, and Add or change a provider; other providers keep their addresses', async () => {
     useInstall();
     await signIn();
     const delivery = await screen.findByRole('button', { name: 'Delivery setup' });
@@ -78,7 +78,7 @@ describe('Providers in the panel', () => {
     const list = document.getElementById('nav-delivery') as HTMLElement;
     const names = within(list).getAllByRole('link').map((link) => link.textContent);
     // The Connections group, after Numbers & mailboxes and Documents in and out.
-    expect(names.slice(names.indexOf('In use'))).toEqual(['In use', 'Routing rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
+    expect(names.slice(names.indexOf('Providers & accounts'))).toEqual(['Providers & accounts', 'Routing rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
     expect(within(list).getByRole('link', { name: 'Add or change a provider' }).getAttribute('href')).toBe('#/admin/setup');
     // A provider not in use still opens at its address.
     window.location.hash = '#/delivery/phaxio';

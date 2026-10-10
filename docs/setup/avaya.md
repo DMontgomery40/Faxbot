@@ -70,7 +70,7 @@ Faxbot tells the phone system this address in every call. A phone system on a pr
 
 ## 2. Set up Faxbot
 
-In the console, open the **Setup Wizard** (**System → Setup**) and choose **Avaya IP Office** or **Avaya Aura** under **Your phone system**. Afterwards its page is under **Providers**, named after it.
+In the console, open the **Setup Wizard** (**Administration → Setup**) and choose **Avaya IP Office** or **Avaya Aura** under **Your phone system**. Afterwards its page is under **Delivery setup**, named after it.
 
 | Field | What to enter |
 | --- | --- |

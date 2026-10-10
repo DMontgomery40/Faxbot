@@ -10,6 +10,7 @@ import {
   destinationAddress,
   parseAddress,
   resolveAddress,
+  resolveHash,
   visibleNavigation,
   type Gate,
   type LegacyDestination,
@@ -98,10 +99,15 @@ const pageAt = (key: string) => {
 };
 const opened = (resolved: ReturnType<typeof resolveAddress>) =>
   resolved?.kind === 'page' ? `${resolved.area.id}/${resolved.page.id}` : resolved?.kind;
-// The person who holds only what this gate asks for.
-const onlyThrough = (gate: Gate) => visibleNavigation(new Set(gate.anyOf?.slice(0, 1) ?? []),
-  { ...noScreens, ...Object.fromEntries([gate.navigation ?? []].flat().slice(0, 1).map((key) => [key, true])) },
-  { pluginsEnabled: false });
+// One person for each way through a gate, holding only that permission or that kind of screen.
+const throughEachOption = (gate: Gate) => {
+  const people = [
+    ...(gate.anyOf ?? []).map((permission) => visibleNavigation(new Set([permission]), noScreens, { pluginsEnabled: false })),
+    ...[gate.navigation ?? []].flat().map((key) =>
+      visibleNavigation(new Set(), { ...noScreens, [key]: true }, { pluginsEnabled: false })),
+  ];
+  return people.length ? people : [visibleNavigation(new Set(), noScreens, { pluginsEnabled: false })];
+};
 
 describe('the 52 old navigation entries', () => {
   it('are all here, each once, each with a new home that is a page of the table', () => {
@@ -128,8 +134,10 @@ describe('the 52 old navigation entries', () => {
     expect(Boolean(resolved.movedFrom)).toBe(moved);
   });
 
-  it.each(OLD_ENTRIES)('%s opens for the person who holds only its gate', (old, home, gate, lands) => {
-    expect(opened(resolveAddress(onlyThrough(gate), parseAddress(`#/${old}`)))).toBe(lands ?? home);
+  it.each(OLD_ENTRIES)('%s opens for a person who holds any one option of its gate and nothing else', (old, home, gate, lands) => {
+    for (const person of throughEachOption(gate)) {
+      expect(opened(resolveAddress(person, parseAddress(`#/${old}`)))).toBe(lands ?? home);
+    }
   });
 
   it.each(OLD_ENTRIES)('%s is forbidden to a person without its gate, and the address is kept', (old, home, gate) => {
@@ -151,6 +159,18 @@ describe('the 52 old navigation entries', () => {
     expect(resolveAddress(permitted, parseAddress('#/access/keys?mine=1'))?.address).toBe('#/admin/keys?mine=1');
     expect(resolveAddress(permitted, parseAddress('#/costs/recommendations?section=plans'))?.address)
       .toBe('#/savings/opportunities?section=plans');
+  });
+});
+
+describe('addresses that are not addresses', () => {
+  it.each(['', '#', '#/'])('%j opens the first page this person may open', (hash) => {
+    expect(resolveHash(permitted, hash)).toMatchObject({ kind: 'page', address: '#/overview' });
+  });
+
+  it.each(['#/faxes/received/123', '#/Costs/savings', '#/costs/savings/extra', '#settings', '#/faxes/sent//',
+    '#//faxes', '#/1/2'])('%s names no page, and the address is kept', (hash) => {
+    expect(resolveHash(permitted, hash)).toEqual({ kind: 'unknown', address: hash });
+    expect(resolveHash(nobody, hash)).toEqual({ kind: 'unknown', address: hash });
   });
 });
 

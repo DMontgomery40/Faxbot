@@ -1,6 +1,6 @@
 # Diagnostics
 
-**System → Diagnostics** answers one question: is Faxbot working, and if not, what should you do about it? Each check is a single sentence, and when one needs you, a button next to it opens the page where you fix it.
+**Administration → System health** answers one question: is Faxbot working, and if not, what should you do about it? Each check is a single sentence, and when one needs you, a button next to it opens the page where you fix it.
 
 The page shows the last results as soon as it opens. The first time you open it after Faxbot starts, it runs the checks on its own; after that, select **Check now** whenever you want fresh results. The checks only read: they never send a fax, change a setting or cost money.
 
@@ -38,7 +38,7 @@ faxbot system diagnostics engine registrations|contacts|calls|faxes
 ## Related endpoints
 
 - `POST /admin/diagnostics/report` runs every check now; `GET` returns the last results without contacting anything.
-- `GET /admin/diagnostics/engine/{view}` shows what the fax engine reports (**System → Developer → Scripts & checks**).
+- `GET /admin/diagnostics/engine/{view}` shows what the fax engine reports (**Administration → Developer → Scripts & checks**).
 - `GET /admin/health-status` is the readiness the Overview shows. `GET /health/ready` is the public readiness check: it answers 200 when the installation is ready for what it is set up to do (sending, receiving or both) and 503 otherwise, and the Overview reads its fax engine sentence from it.
 - `GET /admin/db-status` feeds the **Database** card.
 - `POST /admin/restart` is the optional restart request.

@@ -21,7 +21,7 @@ Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start 
 
 A Telnyx trial account can only call verified numbers until you upgrade it.
 
-In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 setting on each trunk number and lets Faxbot show call charges. Under **Providers → Carrier trunk**, **Fax over IP (T.38) at Telnyx** reports what Telnyx shows and offers **Turn on T.38** for a number that has it off. Faxbot changes only the number you select. If Telnyx refuses the change, open **Numbers → My Numbers**, select the gear next to that number, open **Expert Configuration**, and tick **Enable T.38 Fax Gateway**.
+In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 setting on each trunk number and lets Faxbot show call charges. Under **Delivery setup → Carrier trunk**, **Fax over IP (T.38) at Telnyx** reports what Telnyx shows and offers **Turn on T.38** for a number that has it off. Faxbot changes only the number you select. If Telnyx refuses the change, open **Numbers → My Numbers**, select the gear next to that number, open **Expert Configuration**, and tick **Enable T.38 Fax Gateway**.
 
 ### In Faxbot
 
@@ -99,7 +99,7 @@ Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP tr
 
 **Gamma** is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it ([Swyx, updated 17 June 2024](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK)). Choose the **Gamma** preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use **Another carrier** for those. **Telnyx** has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.
 
-No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Costs → Prices & plans**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
+No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Savings & optimization → Prices & plans**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
 
 ## Australia
 
@@ -121,7 +121,7 @@ A-law comes first for UK and Australian installations; an Avaya phone system pre
 
 ## Set it up
 
-1. In the console, open the **Setup Wizard**, choose your carrier (or phone system) for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; Afterwards, **Providers** shows the same form on the page named after your carrier (such as **Providers → Telnyx**).
+1. In the console, open the **Setup Wizard**, choose your carrier (or phone system) for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; Afterwards, **Providers** shows the same form on the page named after your carrier (such as **Delivery setup → Telnyx**).
 2. Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example `sip.telnyx.com`, `5061`, **Default: Encrypted (TLS)**) until you type your own. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot providers trunk apply` does the same.
@@ -174,7 +174,7 @@ Behind a router, the fax engine (Asterisk) registers with the carrier over one e
 
 Leave **Internet address** empty. It is only an override for a host whose address you want to state yourself, and if you enter one that differs from what Faxbot sees, **Check trunk status** tells you.
 
-Faxbot finds its internet address with STUN when you select **Apply and connect**, and checks again every five minutes. You can change the interval with **Check the internet address every … minutes** under **Providers → Carrier trunk**, or with `faxbot system settings set sip_public_address_check_minutes=10`; `0` stops the repeat. A change takes effect from the next check, without a restart.
+Faxbot finds its internet address with STUN when you select **Apply and connect**, and checks again every five minutes. You can change the interval with **Check the internet address every … minutes** under **Delivery setup → Carrier trunk**, or with `faxbot system settings set sip_public_address_check_minutes=10`; `0` stops the repeat. A change takes effect from the next check, without a restart.
 
 Faxbot only tells the carrier its internet address when your network keeps port numbers, because then the address and port are exactly right and the call doesn't depend on the carrier following Faxbot's packets. When your network changes port numbers, an internet address with the wrong port would mislead the carrier, so Faxbot leaves it out and lets the carrier follow its packets instead. The fax engine reads the address when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." For a fax engine that Faxbot doesn't manage, it tells you to restart the Asterisk service instead.
 
@@ -264,7 +264,7 @@ Check your carrier account for your actual rates before you rely on these figure
 
 ### How actual charges arrive (Telnyx)
 
-The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Costs → Spending**, in Sent's fax details and in Received.
+The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Savings & optimization → Spending**, in Sent's fax details and in Received.
 
 1. In the Telnyx portal, create an API key (**Account settings → Keys & credentials → API keys**).
 2. Add it to `.env` and restart:
