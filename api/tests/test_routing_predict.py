@@ -472,6 +472,96 @@ def test_routes_without_a_call_cost_nothing():
         assert (found.cost, found.seconds, found.billed_pages) == (Money(0, 'USD'), 0.0, 0)
 
 
+# The receiving end of a fax to one of your own numbers (live pilot LC-P003, 2026-10-10) ---------------------------
+#
+# HumbleFax sent 7 encoded grid pages to the installation's own Telnyx number. The predictor said 586 s (a typical
+# 14,400 bit/s, MR from a fixed ratio to MMR); the call took 1,352 s at 9,600 bit/s, MR, no error correction,
+# HumbleFax's side setting the speed, and Telnyx billed the receiving leg 1,380 s at $0.0032 a minute ($0.0736).
+
+OWN = '+13035550100'
+HUMBLEFAX_NUMBER = '+13035550188'
+# The MR bits of each of the 7 pages: 1,339 s of transfer at 9,600 bit/s, as the receiving engine reported it.
+P003_MR_BITS = 1_836_343
+
+
+def own_values(**extra):
+    from app.config_values import ConfigurationValues
+    return ConfigurationValues.from_environment({
+        'FAX_BACKEND': 'humblefax', 'INBOUND_ENABLED': 'true', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip',
+        'SIP_TRUNK_DIDS': OWN, **extra})
+
+
+def received(database, *, caller, rate, coding='MR', ecm='off', when=None):
+    """A fax this installation received on OWN, as the SSL Fax engine reports one (its call record and its
+    negotiation)."""
+    import sqlalchemy as sa
+    from uuid import uuid4
+    when = when or datetime.utcnow() - timedelta(hours=1)
+    tables = {name: sa.Table(name, sa.MetaData(), autoload_with=database)
+              for name in ('fax_engine_calls', 'sip_call_records')}
+    key = uuid4().hex
+    with database.begin() as connection:
+        connection.execute(tables['sip_call_records'].insert().values(
+            id=uuid4().hex, direction='inbound', call_id=key, did=OWN, called=OWN, caller=caller, started_at=when,
+            answered_at=when, ended_at=when, connected_seconds=1349, disposition='answered', t38='yes', pages=7,
+            fax_status='SUCCESS', fax_preference=0, created_at=when, updated_at=when))
+        connection.execute(tables['fax_engine_calls'].insert().values(
+            id=uuid4().hex, direction='inbound', call_key=key, engine='hylafax', negotiation_by='hylafax',
+            number=caller, rate_first=rate, rate_lowest=rate, compression=coding, ecm=ecm, created_at=when,
+            updated_at=when))
+
+
+def p003_shape():
+    """The 7 encoded pages as measured (MR from the receiving engine's report; MMR as the pilot's predictor read
+    them, 0.85 Mbit a page, so 1.35 x MMR is far below the real MR)."""
+    return Shape(7, (850_000,) * 7, 'fine', 'codec',
+                 measured={'MH': (2_100_000,) * 7, 'MR': (P003_MR_BITS,) * 7, 'MMR': (850_000,) * 7})
+
+
+def test_a_fax_service_to_your_own_number_is_priced_at_the_speed_calls_into_it_reached(database):
+    """LC-P003 replayed: measured MR bits at the speed faxes from HumbleFax's own number reached on the way in
+    (9,600 bit/s, though faster senders reached 14,400), within a few percent of the 1,352 s Telnyx reported."""
+    schema.upgrade_schema(database)
+    received(database, caller=HUMBLEFAX_NUMBER, rate=9600)
+    for _ in range(3):
+        received(database, caller='+12025550177', rate=14400, coding='MMR', ecm='on')
+    values = own_values(HUMBLEFAX_FROM_NUMBER=HUMBLEFAX_NUMBER)
+    found = predict_facts.facts_for('humblefax', OWN, values=values, engine=database)
+    assert (found.link.rate, found.link.rate_scope, found.link.rate_calls, found.link.coding) == (
+        9600, 'receiver', 1, 'MR')
+    priced = predict_from(found, p003_shape())
+    assert abs(priced.seconds - 1352) / 1352 < 0.03, priced.seconds
+    assert 'from the measured size of each page in MR at the speed 1 earlier fax into this number reached' in \
+        priced.basis
+    # Without the sending account's own number, every fax into the number counts: here the faster senders.
+    anyone = predict_facts.facts_for('humblefax', OWN, values=own_values(), engine=database)
+    assert (anyone.link.rate, anyone.link.rate_calls) == (14400, 4)
+    # A number that is not yours: nothing is known about the receiving end's speed, and the basis says so.
+    other = predict_facts.facts_for('humblefax', NUMBER, values=values, engine=database)
+    assert other.link.rate is None
+    assert "at a typical fax speed, as the receiving fax machine's speed is unknown" in \
+        predict_from(other, p003_shape()).basis
+
+
+def test_the_receiving_leg_of_a_fax_to_your_own_trunk_number_is_priced_on_its_receiving_card(database):
+    """The owner pays both ends: Telnyx's published receiving price ($0.0032 a minute, whole minutes) over the call's
+    time, as the carrier billed P003 (1,352 s billed as 1,380 s, $0.0736). A saved receiving card wins; any other
+    number, or a partner, has no receiving price Faxbot knows."""
+    schema.upgrade_schema(database)
+    leg = predictor.receiving_leg(OWN, engine=database, values=own_values())
+    assert leg.known and leg.label == 'Telnyx'
+    assert leg.cost(1352) == Money(73_600, 'USD')
+    assert leg.clause(1352, against=1700) == ('the receiving call on your Telnyx trunk adds about $0.0736 (about '
+                                              '$0.0928 for the normal pages)')
+    from app.routing.store import RouteStore
+    RouteStore(database).replace_cards([RateCard(None, 'sip-telnyx', 'inbound', 'Telnyx receiving', 'USD', 6000, 0,
+                                                 0, 6, 6, None, DAY)])
+    assert predictor.receiving_leg(OWN, engine=database, values=own_values()).cost(1352) == Money(135_600, 'USD')
+    unknown = predictor.receiving_leg(NUMBER, engine=database, values=own_values())
+    assert not unknown.known and unknown.cost(1352) is None
+    assert unknown.clause(1352) == 'what the receiving end pays for the call is unknown'
+
+
 def test_predict_works_without_a_database_and_takes_injected_facts():
     shape = Shape(2, None, 'fine', 'normal')
     shipped = predictor.predict('phaxio', NUMBER, shape)

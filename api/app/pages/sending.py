@@ -506,19 +506,24 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
         return packed_sentence({'layout': 'dense', 'original_pages': original, 'sent_pages': sent,
                                 'page_limit': cap.limit, 'limit_learned_at': cap.learned_at})
 
+    # When the number is one of your own trunk numbers you pay its receiving call too: both choosers add its
+    # expected bill to each candidate's price (routing.predict.ReceivingLeg, live pilot LC-P003).
+    from ..routing.predict import receiving_leg
+    receiving = receiving_leg(number, engine=engine, values=values) if codec_ok else None
+
     def codec(pages):
         # Encoded pages carry the original document; ``pages`` are what they are priced against.
         return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap,
                                       pdf_path=str(pdf), seal=seal, recipient=chosen,
                                       exact_raster=mode == 'image',
                                       resolution='fine' if call_fine else 'standard', usable=usable,
-                                      memo=cache.codec)
+                                      memo=cache.codec, receiving=receiving)
     choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
                                       dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                       card=account.card, boundary_seconds=cap.boundary_seconds,
                                       predict=account.predict(), describe_dense=describe_dense, usable=usable,
                                       measure_cache=_coding_cache(root, job_id) if usable is not None else None,
-                                      renderings=renderings, faster=faster)
+                                      renderings=renderings, faster=faster, receiving=receiving, memo=cache.codec)
     options = tuple(_option(account, item) for item in choice.get('candidates') or ())
     layout = None if choice['layout'] == 'normal' else choice['layout']
     rendering = choice['rendering']

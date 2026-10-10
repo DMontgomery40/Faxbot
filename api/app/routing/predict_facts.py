@@ -386,6 +386,118 @@ def recorded_calls(engine, *, since, number=None, limit=CALLS_READ):
         return [dict(row) for query in queries for row in connection.execute(query).mappings()]
 
 
+# The receiving end of a call to one of your own numbers (live pilot LC-P003, 2026-10-10) -----------------------
+#
+# HumbleFax sent 7 encoded pages to the installation's own Telnyx number: the predictor said 586 s at a typical
+# 14,400 bit/s, and the call took 1,352 s at 9,600 bit/s without error correction (HumbleFax's side set the
+# speed), all of it billed again on the receiving trunk. For one of your own numbers Faxbot knows both: the speed
+# calls into that number reached (its own received-call records) and what the trunk charges to receive.
+
+# Said when a fax service sends and Faxbot has no record of the receiving end's speed.
+UNKNOWN_SPEED = "as the receiving fax machine's speed is unknown"
+
+
+def _own_receiving_trunk(values, number):
+    """The key of the trunk account that receives ``number`` into this installation, or None."""
+    from .own_numbers import receiving_numbers
+    from .plan import _own_trunks
+    trunks = _own_trunks(values, number) if number in receiving_numbers(values) else set()
+    return 'sip' if 'sip' in trunks else (sorted(trunks)[0] if trunks else None)
+
+
+def received_calls(engine, number, *, since, limit=CALLS_READ):
+    """Successful, engine-reported calls this installation received on ``number`` since ``since``, newest first:
+    the caller, the speed, the coding and error correction the call reached. [] when the tables are missing."""
+    try:
+        tables = _tables(engine)
+    except Exception:
+        return []
+    calls, records = tables['fax_engine_calls'], tables['sip_call_records']
+    if 'negotiation_by' not in calls.c:
+        return []
+    query = sa.select(
+        records.c.caller, calls.c.sslfax, calls.c.negotiation_by, calls.c.rate_lowest, calls.c.rate_last_page,
+        calls.c.compression, calls.c.ecm, calls.c.created_at,
+    ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key)).where(
+        calls.c.direction == 'inbound', calls.c.created_at >= since, calls.c.negotiation_by.is_not(None),
+        records.c.fax_status == 'SUCCESS', records.c.pages > 0,
+        sa.or_(records.c.did == number, records.c.called == number)).order_by(
+        calls.c.created_at.desc(), calls.c.id.desc()).limit(limit)
+    with engine.connect() as connection:
+        return [dict(row) for row in connection.execute(query).mappings()]
+
+
+def receiver_link(rows, *, caller=None, typical_rate=TYPICAL_RATE):
+    """A ``Link`` (scope 'receiver') from calls received on the number: those from ``caller`` (the sending account's
+    own number) when there are any, else all of them; None without a reported speed."""
+    from_caller = [row for row in rows if caller and row.get('caller') == caller]
+    chosen = from_caller or rows
+    rates = [rate for rate in (_rate(row) for row in chosen) if rate]
+    if not rates:
+        return None
+    coding = next((row['compression'] for row in chosen if row.get('compression') in CODINGS), None)
+    return Link(rate=statistics.median_low(rates), rate_calls=len(rates), rate_scope='receiver', coding=coding,
+                typical_rate=typical_rate)
+
+
+def _sending_number(values, route_key):
+    """The number the sending account's calls show, when you set one (``own_numbers.PROVIDER_NUMBERS``)."""
+    from .numbers import InvalidNumber, normalize_number
+    from .own_numbers import PROVIDER_NUMBERS
+    country = getattr(values, 'fax_default_country', 'US') or 'US'
+    for field in PROVIDER_NUMBERS.get(route_key, ()):
+        found = getattr(values, field, '') or ''
+        if found:
+            try:
+                return normalize_number(found, country=country)
+            except InvalidNumber:
+                continue
+    return None
+
+
+def _receiving_card(engine, preset, kind):
+    """The trunk's receiving price: its saved receiving card, else the carrier's published one; None if neither."""
+    if engine is not None:
+        from .database import DeliveryStoreError
+        from .store import RouteStore
+        try:
+            cards = _tables(engine)['provider_rate_cards']
+            identities = (f'sip-{preset}', 'sip') if preset else ('sip',)
+            with engine.connect() as connection:
+                rows = {row['provider_id']: row for row in connection.execute(sa.select(cards).where(
+                    cards.c.superseded_at.is_(None), cards.c.direction == 'inbound',
+                    cards.c.provider_id.in_(identities))).mappings()}
+            saved = next((RouteStore._card(rows[identity]) for identity in identities if identity in rows), None)
+            if saved is not None:
+                return saved
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            import logging
+            logging.getLogger(__name__).warning('Saved receiving prices could not be read: %s', error)
+    if not preset:
+        return None
+    from .receiving import carrier_prices
+    published = carrier_prices(preset).per_minute
+    return published.get('toll_free' if kind == TOLL_FREE else 'local')
+
+
+def receiving_for(destination, *, engine=None, values=None):
+    """The ``predict.ReceivingLeg`` of a fax to ``destination``: its trunk's receiving price when it is one of this
+    installation's own trunk numbers; unknown otherwise (a partner publishes no receiving price to Faxbot)."""
+    from .predict import ReceivingLeg
+    values = _values() if values is None else values
+    engine = _engine() if engine is None else engine
+    if values is None:
+        return ReceivingLeg()
+    where = classify(destination, getattr(values, 'fax_default_country', 'US') or 'US')
+    number = where.number or destination
+    key = _own_receiving_trunk(values, number)
+    if key is None:
+        return ReceivingLeg()
+    trunk = values if key == 'sip' else (_extra_trunk(values, key) or values)
+    preset = getattr(trunk, 'sip_trunk_preset', '') or ''
+    return ReceivingLeg(_receiving_card(engine, preset, where.kind), route_label('sip', preset))
+
+
 def _hour_facts(engine, number, link, moment, values):
     """``link`` with this hour's time a page against the number's typical hour (routing/schedule.py, M26), when the
     learned call hours have enough calls; unchanged otherwise. Unreadable records leave it unchanged (logged)."""
@@ -611,8 +723,16 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
                 # A speed limit set for this number (Recipients) holds whatever earlier calls reached.
                 link = replace(link, rate=cap)
             link = _hour_facts(engine, number, link, moment, values)
+        elif _own_receiving_trunk(values, number) is not None:
+            # A fax service (or another account) calling one of your own trunk numbers: the speed is what calls
+            # into that number reached, from the sending account's own number when it has one (LC-P003).
+            rows = received_calls(engine, number, since=moment - timedelta(days=WINDOW_DAYS))
+            link = receiver_link(rows, caller=_sending_number(values, route_key),
+                                 typical_rate=link.typical_rate) or link
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
             plan = plan_use(engine, account, now=moment, values=values)
+    if route_key != 'sip' and link.rate is None:
+        link = replace(link, typical_note=UNKNOWN_SPEED)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
                       origin=origin, learned=learned, at=moment)
