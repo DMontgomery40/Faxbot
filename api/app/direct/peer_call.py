@@ -337,13 +337,19 @@ async def call_for(ami, values, engine, number):
     None (the fax goes by the carrier as before). Reads only; never raises for a partner that does not qualify."""
     if engine is None or not number:
         return None
+    from ..routing.database import DeliveryStoreError
     from ..routing.sender_pins import pinned
-    if pinned(engine, number):
-        return None  # a registered-sender recipient is called over the phone network only (sender_pins, N17)
+    try:
+        if pinned(engine, number):
+            return None  # a registered-sender recipient is called over the phone network only (sender_pins, N17)
+    except DeliveryStoreError as error:
+        # Unread pins never block the call: the fax goes by the carrier, where dispatch applies the pin.
+        logging.getLogger(__name__).warning('Registered senders could not be read for a peer fax call (%s); the '
+                                            'fax goes by your carrier.', error)
+        return None
     from ..routing.numbers import stored_number
     country = getattr(values, 'fax_default_country', 'US') or 'US'
     wanted = stored_number(number, country=country)
-    from ..routing.database import DeliveryStoreError
     try:
         # Read inline, as the rest of the Originate's facts are (ami.originate_fields_for): no await before the
         # check, so concurrent submissions keep their order.
