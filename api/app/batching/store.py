@@ -214,7 +214,7 @@ def waiting_ids(t):
     return sa.select(members.c.id).where(members.c.state == 'waiting')
 
 
-def due_group_on(connection, t, now, values=None):
+def due_group_on(connection, t, now, values=None, costs=None):
     """The first group of waiting faxes that should go now, in call order, or None.
 
     A group shares a number, an accepted account and configuration, and a
@@ -232,6 +232,10 @@ def due_group_on(connection, t, now, values=None):
     was turned off releases its waiting faxes one at a time. A group with a
     fax its recipient's schedule holds (``capacity.Capacity.held``) is passed
     over for now, so it never keeps another number's group waiting.
+
+    ``costs`` ({number: cost(pages)}, ``call_costs``) prices the partition of a group into calls; it is read before
+    the claim takes its write lock, because the predictor reads through connections of its own. A number without
+    one keeps arrival order.
     """
     held = _held_by_schedule(connection, now)
     members, deliveries, bindings = t['outbound_batch_members'], t['outbound_deliveries'], t['fax_job_bindings']
@@ -277,7 +281,7 @@ def due_group_on(connection, t, now, values=None):
             if not any(row['urgent'] for row in group):
                 # Which of the waiting faxes share this call: the partition of the group into calls that costs least
                 # in money, each call billed on its own (brief 84, M3), when it costs less than arrival order.
-                better = best_partition(group, cap, layout, _call_cost(connection, key[0], values))
+                better = best_partition(group, cap, layout, (costs or {}).get(key[0]))
                 if better is not None:
                     chosen = better
             return [{**row, 'layout': layout} for row in chosen]
@@ -302,13 +306,33 @@ def _need(rows, layout):
     return pages
 
 
-def _call_cost(connection, number, values):
+def waiting_numbers(connection, t, limit=50):
+    """The numbers with faxes waiting to go together (at most ``limit``), for ``call_costs``."""
+    members = t['outbound_batch_members']
+    return connection.execute(sa.select(members.c.phone_number).where(members.c.state == 'waiting').distinct()
+                              .limit(limit)).scalars().all()
+
+
+def call_costs(engine, values, numbers):
+    """{number: cost(pages)} for ``due_group_on``, read through ``engine`` before the claim's write lock: the
+    predictor's facts open connections of their own, and a second connection while the claim holds the SQLite
+    write lock blocks the next writer ("database is locked"; test_capacity's locked-connection checks). A number
+    whose price is unknown is left out (its group keeps arrival order)."""
+    found = {}
+    for number in numbers:
+        cost = _call_cost(engine, number, values)
+        if cost is not None:
+            found[number] = cost
+    return found
+
+
+def _call_cost(engine, number, values):
     """``cost(pages)``: the expected bill of one call of that many pages to ``number`` over Faxbot's own trunk (the
     shared predictor, each call rounded on its own), or None when the price is unknown."""
     try:
         from ..routing.predict import Shape, predict_from
         from ..routing.predict_facts import facts_for
-        facts = facts_for('sip', number, engine=connection.engine, values=values)
+        facts = facts_for('sip', number, engine=engine, values=values)
     except (sa.exc.SQLAlchemyError, ValueError):
         return None
     memo = {}

@@ -616,6 +616,7 @@ class OutboundStore:
             ready = ready.where(self.deliveries.c.id.not_in(gate))
         if not self._any(ready):
             return None
+        costs = self._call_costs()
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             values = self._active_values(connection)
@@ -623,7 +624,7 @@ class OutboundStore:
                 return None
             capacity = self.capacity(connection)
             together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
-                                               values=values)
+                                               values=values, costs=costs)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
@@ -689,7 +690,23 @@ class OutboundStore:
         _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
         return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None):
+    def _call_costs(self):
+        """{number: cost(pages)} for faxes waiting to go together (``batching.store.call_costs``), read before the
+        claim's write lock with plain reads: the predictor reads through connections of its own, which must never
+        happen while the claim holds the lock. Empty when nothing waits to go together."""
+        from .batching import store as batching
+        try:
+            with self.configuration.engine.connect() as connection:
+                numbers = batching.waiting_numbers(connection, self._batching(connection))
+                values = self._active_values(connection) if numbers else None
+        except sa.exc.SQLAlchemyError:
+            from .config_store import ConfigurationStoreError
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
+        if not numbers or values is None or values.fax_disabled:
+            return {}
+        return batching.call_costs(self.configuration.engine, values, numbers)
+
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
@@ -701,7 +718,7 @@ class OutboundStore:
             for job_id in connection.execute(sa.select(members.c.id).where(
                     members.c.state == 'waiting', members.c.id.in_(gate))).scalars().all():
                 batching.separate_on(connection, t, job_id, now)
-        group = batching.due_group_on(connection, t, now, values=values)
+        group = batching.due_group_on(connection, t, now, values=values, costs=costs)
         if group is None:
             return None
         if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
