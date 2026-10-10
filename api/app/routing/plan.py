@@ -14,7 +14,7 @@ from .costs import plan_fee_text
 from .database import DeliveryStoreError, read_connection
 from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
-from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
+from .policy import CALLING, DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from . import dialing, local as local_delivery
 from .alternates import attempt_number
 from .store import destination_key
@@ -22,6 +22,9 @@ from ..provider_labels import PROVIDER_LABELS, trunk_name
 
 
 MIN_ATTEMPTS = 3
+# The reason a route took a fax that asked for a real call to one of a trunk's own numbers when that trunk, with
+# only one line, would otherwise have taken it (``RoutePlanner.plan``; live pilot LC-P003, 2026-10-10).
+ONE_LINE = 'own_trunk_one_line'
 LABELS = {'local': 'This Faxbot', 'direct': 'Direct delivery', **PROVIDER_LABELS}
 REASON_TEXT = {
     'direct_peer': 'Delivered straight to a verified partner, with no fax call.',
@@ -41,6 +44,7 @@ REASON_TEXT = {
     'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot kept your '
                        'order between them and compared prices only within each currency.'),
     'cheapest_converted': 'The cheapest route at the exchange rate you set.',
+    'own_trunk_one_line': "Your own trunk can't call its own number with one line.",
 }
 
 
@@ -61,6 +65,8 @@ def decided_text(route, reason):
     """One sentence for a sent fax's stored route reason, or None for a reason Faxbot does not know."""
     if reason == 'included':
         return f'Included in your {route_label(route)} plan.'
+    if reason == ONE_LINE:
+        return f"Your own trunk can't call its own number with one line, so this fax went through {route_label(route)}."
     return DECIDED_TEXT.get(reason) or REASON_TEXT.get(reason)
 
 
@@ -90,6 +96,9 @@ def _explain(choice, destination=None):
         from .local import display_number
         return (f'{display_number(destination)} is one of your own fax numbers, so the fax goes straight into '
                 'Received without a phone call.')
+    if choice.reason == ONE_LINE:
+        return (f"Your own trunk can't call its own number with one line, so this fax goes through "
+                f'{route_label(choice.route.key)}.')
     if choice.reason == 'included':
         card = choice.route.card
         if card is None or card.monthly_fee_micros is None:
@@ -238,6 +247,22 @@ def _own_trunks(values, destination):
     return found
 
 
+def _lines_to_itself(values, key):
+    """How many calls at once the trunk ``key`` can carry when it calls one of its own numbers, or None when
+    Faxbot does not manage its lines. The carrier hairpins such a call back to the trunk, so it needs two lines at
+    once: the fewest of the trunk's calls at once (``capacity.limited_accounts``), the carrier account it shares
+    with other trunks, and the fax engine's lines (one sends while another receives)."""
+    from ..capacity import limited_accounts
+    from ..hylafax_engine import line_count
+    limited = limited_accounts(values)
+    found = limited.get(key)
+    if found is None or not found.trunk:
+        return None
+    counts = [found.at_once, line_count(values)]
+    counts += [group.at_once for group in limited.values() if key in group.members]
+    return min(count for count in counts if count is not None)
+
+
 @dataclass(frozen=True)
 class RoutePlan:
     destination: str
@@ -255,6 +280,9 @@ class RoutePlan:
     # ``(plan_allocation.Hold, route key, estimated micros)`` when the first route is first only because a scarce
     # plan's room is held for other faxes (reason ``plan_reserved``); kept with the attempt for Sent details.
     held: object = None
+    # Trunk keys this fax may use to call one of that trunk's own numbers (a real call the carrier hairpins); the
+    # call needs two free lines on it at dispatch (``transport._assign``).
+    hairpin: tuple = ()
 
     def number_for(self, key):
         return self.dialed.get(key, self.destination)
@@ -402,7 +430,18 @@ class RoutePlanner:
                 kept.append(candidate)
             candidates = kept
         own_trunks = _own_trunks(values, destination)
-        if own_trunks:
+        hairpin, one_line, before = (), (), candidates
+        if own_trunks and by_call:
+            # A real call to one of a trunk's own numbers, asked for by the sender: the carrier hairpins it back
+            # to the trunk, one line sending while another receives, so the trunk takes it only with two lines
+            # (live pilot LC-P003, 2026-10-10). With one line it cannot, even as the fax's own account; the route
+            # that takes the fax instead says so when that trunk would have taken it (``ONE_LINE``, below).
+            own = [candidate for candidate in candidates if candidate.kind == 'provider' and
+                   candidate.key in own_trunks]
+            hairpin = tuple(candidate.key for candidate in own if (_lines_to_itself(values, candidate.key) or 0) >= 2)
+            one_line = tuple(candidate.key for candidate in own if candidate.key not in hairpin)
+            candidates = [candidate for candidate in candidates if candidate.key not in one_line]
+        elif own_trunks:
             # One of a trunk's own numbers: an extra route over that trunk only calls itself back
             # (seen live on 2026-10-04 when a fallback faxed the Telnyx number over the Telnyx trunk).
             # With several trunks each trunk is kept off its own numbers; another account may still call them.
@@ -411,17 +450,18 @@ class RoutePlanner:
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
         stats = self.store.route_stats(destination)
-        # An account with an open route family incident on every transport it would use is doubtful, ranked as an
-        # unreliable one is; a trunk's T.38 incident alone leaves its audio fax usable (route_families).
-        incident = self._incidents(candidates)
-        unreliable = ()
-        if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
-            # The administrator's order wins; an account that often failed here keeps its place and is noted.
-            choices = _in_order(candidates, prices, pages)
-            unreliable = tuple(candidate.key for candidate in candidates
-                               if candidate.kind == 'provider' and (policy.unreliable(stats.get(candidate.key))
-                                                                    or candidate.key in incident))
-        else:
+
+        def rank(candidates):
+            """``(choices, held, unreliable)`` for these candidates."""
+            # An account with an open route family incident on every transport it would use is doubtful, ranked as
+            # an unreliable one is; a trunk's T.38 incident alone leaves its audio fax usable (route_families).
+            incident = self._incidents(candidates)
+            if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
+                # The administrator's order wins; an account that often failed here keeps its place and is noted.
+                return _in_order(candidates, prices, pages), None, tuple(
+                    candidate.key for candidate in candidates
+                    if candidate.kind == 'provider' and (policy.unreliable(stats.get(candidate.key))
+                                                         or candidate.key in incident))
             # What each route really cost per delivered fax here; it decides only with enough evidence.
             providers = sum(candidate.kind == 'provider' for candidate in candidates)
             # Costs observed calling the destination say nothing about calling its approved alternate.
@@ -433,15 +473,26 @@ class RoutePlanner:
             else:
                 # Pinned when the fax was accepted; a rule that chose "cheapest" ranks only its own accounts.
                 preferred = pinned.envelope.preferred if pinned.automatic else None
-            choices = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
+            ordered = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
                                    prices=prices, doubtful=incident)
-            choices, held = _reserved(choices, prices)
+            ordered, kept = _reserved(ordered, prices)
+            return ordered, kept, ()
+
+        choices, held, unreliable = rank(candidates)
+        if one_line and choices and choices[0].route.kind in CALLING:
+            # Never silently: when the one-line trunk would have taken the fax (pinned, or first by its rules or
+            # price), the route that takes it instead says why.
+            would, _, _ = rank(before)
+            if would and would[0].route.key in one_line:
+                from dataclasses import replace
+                choices, held = [replace(choices[0], reason=ONE_LINE)] + list(choices[1:]), None
         held_back = {key for key, why in skipped if why != 'tried'}
         if not choices and (pinned is None or (pinned.allows(bound) and bound not in held_back)):
             choices = [RouteChoice(provider(bound, True), 'configured', None)]
         return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None,
                          {key: number for key, number in dialed.items() if number != destination},
-                         skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held)
+                         skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held,
+                         hairpin=tuple(key for key in hairpin if any(c.route.key == key for c in choices)))
 
     def _incidents(self, candidates):
         """Keys of provider candidates with an open route family incident on every transport they would use: a

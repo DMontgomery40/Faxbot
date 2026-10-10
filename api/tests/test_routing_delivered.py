@@ -456,6 +456,20 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     details = ' '.join(cli('sent', 'show', sent[0]).stdout.split())
     assert 'Route SignalWire' in details and 'Why this route You chose this route for this number.' in details
 
+    # A real call to the trunk's own number that its one line could not place (live pilot LC-P003): the route that
+    # took the fax says why, in Sent details and in `faxbot sent show`.
+    import app.main as main_module
+    from app.routing.store import RouteStore
+    engine = main_module.app.state.configuration_runtime.manager.store.engine
+    routes = RouteStore(engine)
+    with engine.begin() as connection:
+        connection.execute(routes.costs.update().where(routes.costs.c.job_id == sent[1]).values(
+            route_reason='own_trunk_one_line'))
+    sentence = "Your own trunk can't call its own number with one line, so this fax went through SignalWire."
+    response = cli.client.get(f'/routing/faxes/{sent[1]}/cost', headers={'X-API-Key': cli_bootstrap()})
+    assert response.json()['route_explanation'] == sentence
+    assert f'Why this route {sentence}' in ' '.join(cli('sent', 'show', sent[1]).stdout.split())
+
     view = cli.json('recipients', 'show', number)
     figures = {item['route']: item for item in view['delivered_costs']}
     assert [item['route'] for item in view['delivered_costs']] == ['phaxio', 'signalwire']
