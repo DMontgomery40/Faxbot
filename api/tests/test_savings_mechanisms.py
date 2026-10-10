@@ -318,6 +318,74 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
         assert not item['turn_on'] or (not item['enabled']['on'] and item['works']['here']), item['key']
 
 
+def test_each_wave_three_check_reads_its_own_records_and_turns_on(installation):
+    """Every newer check run on its "on" path from the module's own records: none raises, and each says what it read.
+    A check that raised would take down the map and Capabilities together."""
+    from app import power
+    from app.header_notice import set_notice_on
+    from app.routing.after_answer import set_on
+    from app.routing.guard import PREMIUM, change_on
+    settings = dict(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID, SIP_TRUNK_CALLER_ID=DID)
+    with installation.start(**settings) as client:
+        engine = installation.store().engine
+        now = datetime.utcnow()
+        with engine.begin() as connection:
+            set_notice_on(connection, text='Synthetic notice: for the named recipient only.',
+                          actor_name='Synthetic admin', now=now)
+            set_on(connection, AGREED, '2w105', actor_name='Synthetic admin', now=now)
+            change_on(connection, PREMIUM, state='allowed', actor_name='Synthetic admin', now=now)
+            rates = sa.Table('origin_class_rates', sa.MetaData(), autoload_with=connection)
+            connection.execute(rates.insert().values(
+                id=uuid4().hex, import_id=uuid4().hex, route='sip', destination_prefix='43',
+                origination_type='eea', origin_prefixes=json.dumps(['+43']), currency='USD',
+                per_minute_micros=12000, billing_increment_seconds=60, minimum_seconds=60, deck_format='twilio',
+                captured_on=now, created_at=now))
+            incidents = sa.Table('route_family_incidents', sa.MetaData(), autoload_with=connection)
+            connection.execute(incidents.insert().values(
+                id=uuid4().hex, account_key='sip', provider_id='telnyx', transport='t38', phase='media',
+                generation='synthetic-1', change_at=now - timedelta(hours=2), change_cause='settings',
+                first_failure_at=now - timedelta(hours=1), last_failure_at=now, destinations=4, failures=6,
+                calls=6, corroborated=1, opened_at=now))
+        power.save(engine, '192.0.2.10', actor_name='Synthetic admin', now=now)
+
+        response = client.get('/routing/savings/mechanisms', headers=ADMIN)
+        assert response.status_code == 200, response.text
+        items = _by_key(response.json())
+        said = {key: (items[key]['enabled']['on'], items[key]['works']['here'], items[key]['enabled']['sentence'])
+                for key in ('header_notice', 'keys_after_answer', 'power_aware', 'dialing_guard', 'route_problems',
+                            'caller_id_prices', 'answer_cap', 'station_check')}
+        assert said == {
+            'header_notice': (True, True, 'On for your organization.'),
+            'keys_after_answer': (True, True, 'On for 1 recipient behind a phone menu.'),
+            'power_aware': (True, True, None),
+            'dialing_guard': (True, True, 'On, with your own choice for 1 kind of number.'),
+            'route_problems': (True, True, 'On; 1 route problem is open now.'),
+            'caller_id_prices': (True, True, None),
+            # Telnyx's shipped card bills whole minutes, so the cap applies on this trunk.
+            'answer_cap': (True, True, None),
+            'station_check': (True, True, None),
+        }
+        assert all(items[key]['here']['sentence'] == mechanisms.NO_PART[key]
+                   for key in ('answer_cap', 'station_check', 'keys_after_answer'))
+        # Capabilities reads the same checks; it answers too.
+        assert client.get('/routing/capabilities', headers=ADMIN).status_code == 200
+
+        # A notice set and then removed is off again, not "On for your organization".
+        with engine.begin() as connection:
+            set_notice_on(connection, text=None, actor_name='Synthetic admin', now=now + timedelta(minutes=1))
+        cleared = _by_key(client.get('/routing/savings/mechanisms', headers=ADMIN).json())['header_notice']
+        assert (cleared['enabled']['on'], cleared['enabled']['sentence']) == (False, 'No header notice is set yet.')
+        assert cleared['turn_on'] is True
+
+        # The answer cap switched off on the trunk: off, still works here, so "Turn on" is offered.
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        saved = client.put('/admin/settings', headers=ADMIN, json={
+            'sip_fax_answer_cap': False, 'expected_revision_id': current['_meta']['desired_revision_id']})
+        assert saved.status_code == 200, saved.text
+        cap = _by_key(client.get('/routing/savings/mechanisms', headers=ADMIN).json())['answer_cap']
+        assert (cap['enabled']['on'], cap['works']['here'], cap['turn_on']) == (False, True, True)
+
+
 def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation):
     """Defaults on: when Faxbot turned something off itself, the map says why and offers the way that fixes it."""
     from types import SimpleNamespace
