@@ -130,10 +130,11 @@ def render(items) -> str:
         name = item.endpoint
         lines += [f'[{name}-auth]', 'type=auth', 'auth_type=md5', f'username={item.username}', f'realm={REALM}',
                   f'md5_cred={item.md5_cred}', '',
-                  f'[{name}]', 'type=aor', 'max_contacts=1', 'remove_existing=yes', 'qualify_frequency=60',
-                  'contact_deny=0.0.0.0/0.0.0.0', *[f'contact_permit={network}' for network in PRIVATE], '',
+                  f'[{name}]', 'type=aor', 'max_contacts=1', 'remove_existing=yes', 'qualify_frequency=60', '',
                   f'[{name}]', 'type=endpoint', 'transport=transport-udp', f'aors={name}', f'auth={name}-auth',
                   f'context={CONTEXT}', 'disallow=all', 'allow=ulaw,alaw', 't38_udptl=yes',
                   't38_udptl_ec=redundancy', 't38_udptl_maxdatagram=400', 'direct_media=no', 'rtp_symmetric=yes',
-                  'force_rport=yes', 'rewrite_contact=yes', deny, *permit, f'set_var=FAXBOT_COPIER={item.id}', '']
+                  'force_rport=yes', 'rewrite_contact=yes', deny, *permit,
+                  'contact_deny=0.0.0.0/0.0.0.0', *[f'contact_permit={network}' for network in PRIVATE],
+                  f'set_var=FAXBOT_COPIER={item.id}', '']
     return '\n'.join(lines)

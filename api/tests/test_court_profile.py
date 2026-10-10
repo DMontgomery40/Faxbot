@@ -177,6 +177,27 @@ def test_by_fax_must_be_below_each_title_or_confirmed_for_a_scan(client):  # noq
     assert view['purpose_text'] == 'Service on a party by fax (rule 2.306)'
 
 
+def test_the_service_date_comes_from_the_calls_own_end_not_a_later_update(client):  # noqa: F811
+    job = _send(client, document('NOTICE OF MOTION', 'Two'), court=json.dumps(SERVICE)).json()['id']
+    engine = _engine()
+    ended = utc(2026, 9, 24, 17, 30)  # 5:30 p.m. California time, the day before Native American Day
+    attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(attempts.insert().values(id='a' * 32, job_id=job, sequence=1, phase='success',
+                                                    created_at=ended, completed_at=ended))
+        # A status read the next week moves the fax's own updated time; the service date must not move with it.
+        connection.execute(sa.text("UPDATE fax_jobs SET status = 'success', updated_at = :later WHERE id = :job"),
+                           {'later': ended + __import__('datetime').timedelta(days=7), 'job': job})
+    view = client.get(f'/court/faxes/{job}', headers=_B()).json()['court']
+    assert view['timing'][0].endswith('deemed to occur on the next court day, Monday 28 September 2026 (rule '
+                                      '2.306(g)).')
+    assert view['record_ready'] is True
+    pdf = client.get(f'/court/faxes/{job}/record', headers=_B())
+    text = ' '.join(' '.join(page.extract_text() or '' for page in PdfReader(io.BytesIO(pdf.content)).pages).split())
+    assert 'Transmission completed: Thursday 24 September 2026, 5:30 p.m.' in text
+    assert 'Draft proof of service by fax (rule 2.306(h))' in text
+
+
 def test_a_mailbox_or_rule_under_the_profile_needs_the_case_details(client):  # noqa: F811
     from api.tests.test_work_http import mailbox
     from api.tests.test_reply_number import DID_B
