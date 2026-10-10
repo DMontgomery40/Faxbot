@@ -8864,6 +8864,8 @@ $ faxbot system diagnostics [OPTIONS] COMMAND [ARGS]...
 * `engine`: List what the fax engine reports now:...
 * `test-fax`: Add a test fax with a real one-page...
 * `routes`: Route problems: failures that belong to...
+* `receiving`: Whether each of your numbers can receive...
+* `power`: The UPS Faxbot reads, so it holds long...
 
 #### `faxbot system diagnostics database`
 
@@ -9071,6 +9073,127 @@ $ faxbot system diagnostics routes upstream [OPTIONS] {PROVIDER}
 * `--source WEB_ADDRESS`: Where that is published (required with --upstream).
 * `--read-on DATE`: The day you read the source, such as 2026-10-10.
 * `--unknown`: Faxbot no longer knows what this provider uses upstream.
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics receiving`
+
+Whether each of your numbers can receive faxes now, and which receiver owns each number.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics receiving [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `check`: Check each number you receive on, from...
+* `owner`: Name the one receiver of a number&#x27;s faxes,...
+
+##### `faxbot system diagnostics receiving check`
+
+Check each number you receive on, from receiving evidence only. Sends nothing.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics receiving check [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics receiving owner`
+
+Name the one receiver of a number&#x27;s faxes, so two places never take them without you knowing.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics receiving owner [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: One of your fax numbers.  [required]
+
+**Options**:
+
+* `--account KEY`: The receiving account that takes its faxes, such as sip.
+* `--elsewhere NAME`: A receiver outside this Faxbot, such as &quot;the fax machine at reception&quot;.
+* `--release`: Name no receiver for the number.
+* `--move`: Move the number from the receiver that has it now.
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics power`
+
+The UPS Faxbot reads, so it holds long calls while the office runs on battery.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics power [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: What the UPS says now and how Faxbot uses it.
+* `set`: Read this UPS through NUT; Faxbot then...
+* `off`: Stop reading the UPS; calls start without...
+
+##### `faxbot system diagnostics power show`
+
+What the UPS says now and how Faxbot uses it.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics power show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics power set`
+
+Read this UPS through NUT; Faxbot then holds a call that the battery could not see through.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics power set [OPTIONS]
+```
+
+**Options**:
+
+* `--address HOST`: The NUT server&#x27;s address, such as 192.168.1.5.  [required]
+* `--port <int>`: The NUT server&#x27;s port; NUT uses 3493.  [default: 3493]
+* `--ups NAME`: The UPS name on that server; the first it lists when left out.
+* `--reserve-minutes <int>`: Minutes of battery a call must leave to spare.  [default: 2]
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics power off`
+
+Stop reading the UPS; calls start without checking the battery.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics power off [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot system logs`

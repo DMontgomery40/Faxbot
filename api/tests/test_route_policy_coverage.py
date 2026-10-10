@@ -28,6 +28,13 @@ OWN_AUTHENTICATION = {
     ("POST", "/phaxio-inbound/{key}"): "verified provider ingest for one Phaxio account (its own signature)",
     ("POST", "/sinch-inbound/{key}"): "verified provider ingest for one Sinch account (its own basic auth)",
     ("POST", "/efax-inbound/{key}"): "verified provider signal for one eFax account; stores nothing",
+    # Receiving readiness (RF): each answers only this server's own one-time code from the last minute, else 404.
+    ("GET", "/sinch-inbound"): "public: echoes only this server's one-time receiving-address check code",
+    ("GET", "/sinch-inbound/{key}"): "public: echoes only this server's one-time receiving-address check code",
+    ("GET", "/phaxio-inbound"): "public: echoes only this server's one-time receiving-address check code",
+    ("GET", "/phaxio-inbound/{key}"): "public: echoes only this server's one-time receiving-address check code",
+    ("GET", "/efax-inbound"): "public: echoes only this server's one-time receiving-address check code",
+    ("GET", "/efax-inbound/{key}"): "public: echoes only this server's one-time receiving-address check code",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",

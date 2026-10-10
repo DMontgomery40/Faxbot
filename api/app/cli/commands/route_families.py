@@ -147,3 +147,7 @@ def routes_upstream(provider: str = typer.Argument(..., metavar='PROVIDER', help
         else:
             out.line(f"Faxbot no longer says what {result['provider']} uses upstream.")
     state.out().result(result, human)
+
+
+# Receiving readiness and the UPS (readiness.py) hang off the same diagnostics group.
+from . import readiness as _readiness  # noqa: E402,F401
