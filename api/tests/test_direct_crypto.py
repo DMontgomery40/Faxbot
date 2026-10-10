@@ -89,3 +89,19 @@ def test_key_file_is_private_created_once_and_never_replaced(tmp_path):
     path.chmod(0o644)
     with pytest.raises(IdentityUnavailable):
         load_identity(path)
+
+
+def test_a_signed_capability_statement_with_a_key_this_release_does_not_know_still_parses():
+    """A newer partner may add a capability (for example the encoded-page layouts its decoder reads): the statement
+    still parses and the known keys still count; a malformed or missing known key is still refused."""
+    from api.app.direct.crypto import capabilities, parse_capabilities, parse_own_engine
+    said = capabilities(fax_images=True, peer_calls=False, own_engine=True, said_at='2026-10-10T12:00:00Z')
+    newer = {**said, 'payload_layouts': ['grid', 'runs', 'capacity'], 'something_later': {'any': 'shape'}}
+    found = parse_capabilities(newer)
+    assert found is not None and found[:2] == (True, False) and parse_own_engine(newer) is True
+    assert parse_capabilities({**newer, 'fax_images': 'yes'}) is None
+    assert parse_capabilities({**newer, 'own_engine': 1}) is None
+    assert parse_capabilities({**newer, 'said_at': 'not a time'}) is None
+    assert parse_capabilities({key: value for key, value in newer.items() if key != 'peer_calls'}) is None
+    # This release never sends a key of its own beyond the known ones.
+    assert set(said) <= {'fax_images', 'peer_calls', 'said_at', 'own_engine'}

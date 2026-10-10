@@ -116,10 +116,17 @@ def parse_own_engine(value):
     return found if type(found) is bool else None
 
 
+CAPABILITY_KEYS = frozenset({'fax_images', 'peer_calls', 'said_at'})
+
+
 def parse_capabilities(value):
     """A partner's capabilities from a statement it signed: (fax_images, peer_calls, said_at), or None. The
-    optional ``own_engine`` is read by ``parse_own_engine``."""
-    if (not isinstance(value, dict) or set(value) - {'own_engine'} != {'fax_images', 'peer_calls', 'said_at'}
+    optional ``own_engine`` is read by ``parse_own_engine``.
+
+    Keys this release does not know are ignored, so a newer partner can add one (for example which encoded-page
+    layouts its decoder reads) without this installation refusing its whole statement; the known keys are still
+    required and checked. This release never sends a new key itself."""
+    if (not isinstance(value, dict) or not CAPABILITY_KEYS <= set(value)
             or type(value['fax_images']) is not bool or type(value['peer_calls']) is not bool
             or ('own_engine' in value and type(value['own_engine']) is not bool)):
         return None
