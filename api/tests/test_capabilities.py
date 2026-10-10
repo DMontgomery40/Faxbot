@@ -575,6 +575,8 @@ ONE = {
     'answer_cap': 'Hung up 1 unanswered call in 30 days',
     'station_check': 'Caught 1 call answered by a different number in 30 days',
     'keys_after_answer': 'Pressed keys on 1 call in 30 days',
+    'ecm_frames': 'Sent 1 call in 64-byte frames in 30 days',
+    'fax_over_ip_protection': 'Protected 1 fax-over-IP call in 30 days',
 }
 
 
@@ -634,6 +636,11 @@ def test_each_counter_counts_one_record_of_its_kind(installation, monkeypatch):
             stations.record_on(connection, attempt_id=attempt, job_id=job, number=AGREED, station='+12025550999',
                                outcome='differs', engine='builtin', now=now)
         assert record_submission(engine, {'Digits': '2', 'AttemptID': attempt, 'JobID': job, 'Called': AGREED})
+        # One sent call in 64-byte error-correction frames, and one with fax-over-IP protection (engine_ecm.py).
+        _insert(engine, 'fax_call_ecm', direction='outbound', call_key=attempt, source='builtin', frame_octets=64,
+                small_frames=1, created_at=now)
+        _insert(engine, 'fax_call_ecm', direction='outbound', call_key=uuid4().hex, source='gateway',
+                t38_protect='3.2.3.1.3', created_at=now)
         answer = client.get('/routing/capabilities', headers=ADMIN)
     assert answer.status_code == 200, answer.text
     items = _by_key(answer.json())

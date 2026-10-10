@@ -62,6 +62,8 @@ NO_PART = {
     'answer_cap': 'Its capped calls are not counted on Savings yet',
     'station_check': "What it caught is in each fax's Sent details, not on Savings",
     'keys_after_answer': "The keys each call pressed are in its Sent details, not on Savings",
+    'ecm_frames': "Each number's frame size is under its fax machine in Recipients, not on Savings",
+    'fax_over_ip_protection': "Each trunk's protection is on its trunk page, not on Savings",
 }
 
 
@@ -446,6 +448,22 @@ def measured_coding(here):
     return State(True, why is None, None, why)
 
 
+def ecm_frames(here):
+    # Automatic: engine learning chooses the frame size for each number from its own calls (engine_ecm.py).
+    why = None if here.trunk_sends else f"Needs your own SIP trunk and Faxbot's fax engines; {here.through()}."
+    return State(True, why is None, None, why)
+
+
+def t38_protection(here):
+    # Automatic: each trunk's protection follows the fax-over-IP loss measured on its calls (engine_ecm.py).
+    why = None
+    if not (here.trunk_sends or here.trunk_receives):
+        why = f'Needs your own SIP trunk; {here.through()}.'
+    elif not getattr(here.values, 'sip_t38_enabled', True):
+        why = 'Needs fax over IP (T.38), which is off on your trunk.'
+    return State(True, why is None, None, why)
+
+
 def partner_tunnel(here):
     peers = reflect(here.engine, ('direct_peers',))['direct_peers']
     with read_connection(here.engine) as connection:
@@ -731,6 +749,15 @@ CATALOGUE = (
               'less time on the line.',
               'call', 'lab', 'coding', 'providers/trunk', 'Delivery setup → Carrier trunk', measured_coding,
               settings=('sip_fax_compression',)),
+    Mechanism('ecm_frames', 'Error-correction frame size',
+              'Sends a number whose calls keep losing short stretches of a page in smaller error-correction frames, '
+              'so less is sent again and calls are shorter.',
+              'call', 'lab', None, 'recipients/list', 'Recipients → Details', ecm_frames),
+    Mechanism('fax_over_ip_protection', 'Fax-over-IP protection',
+              'On a trunk that loses fax-over-IP packets, sends the short packets that carry the fax handshake more '
+              'than once, so a lost one does not stall or fail the call.',
+              'call', 'lab', None, 'providers/trunk', 'Delivery setup → Carrier trunk', t38_protection,
+              settings=('sip_t38_enabled',)),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
               'call', 'lab', 'sending_together', 'recipients/list', 'Recipients', sending_together),

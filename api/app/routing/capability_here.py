@@ -357,6 +357,24 @@ def keys_after_answer(here, now):
                   'call', 'calls')
 
 
+def ecm_frames(here, now):
+    # Sent calls that asked for 64-byte error-correction frames, from either engine's record (fax_call_ecm).
+    count = _rows(here, 'fax_call_ecm', 'created_at', _since(here, now), ('direction', 'outbound'),
+                  ('small_frames', 1), distinct='call_key')
+    return _acted(count, here, 'Sent', 'call in 64-byte frames', 'calls in 64-byte frames',
+                  none='Sent no calls in 64-byte frames in {days} days')
+
+
+def t38_protection(here, now):
+    # Calls whose fax-over-IP packets went with protection: the counts each engine reported sending with.
+    table = _table('fax_call_ecm', 'call_key', 'created_at', 't38_protect')
+    with read_connection(here.engine) as connection:
+        count = int(connection.scalar(sa.select(sa.func.count(sa.distinct(table.c.call_key))).where(
+            table.c.created_at >= _since(here, now), table.c.t38_protect.is_not(None))) or 0)
+    return _acted(count, here, 'Protected', 'fax-over-IP call', 'fax-over-IP calls',
+                  none='Protected no fax-over-IP calls in {days} days')
+
+
 COUNTERS = {
     'charge_checks': charge_checks,
     'advice_sending': advice_sending,
@@ -392,6 +410,8 @@ COUNTERS = {
     'answer_cap': answer_cap,
     'station_check': station_check,
     'keys_after_answer': keys_after_answer,
+    'ecm_frames': ecm_frames,
+    'fax_over_ip_protection': t38_protection,
 }
 
 

@@ -732,6 +732,66 @@
             "turn_on": false
           },
           {
+            "key": "ecm_frames",
+            "name": "Error-correction frame size",
+            "sentence": "Sends a number whose calls keep losing short stretches of a page in smaller error-correction frames, so less is sent again and calls are shorter.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Each number's frame size is under its fax machine in Recipients, not on Savings"
+            },
+            "part": null,
+            "page": "recipients/list",
+            "page_label": "Recipients → Details",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": false
+          },
+          {
+            "key": "fax_over_ip_protection",
+            "name": "Fax-over-IP protection",
+            "sentence": "On a trunk that loses fax-over-IP packets, sends the short packets that carry the fax handshake more than once, so a lost one does not stall or fail the call.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Each trunk's protection is on its trunk page, not on Savings"
+            },
+            "part": null,
+            "page": "providers/trunk",
+            "page_label": "Delivery setup → Telnyx",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": false
+          },
+          {
             "key": "sending_together",
             "name": "Sending together",
             "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
@@ -1855,6 +1915,12 @@
     "  Smallest page coding: On · Works here · Test lab",
     "    Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
     "    Used on 1 fax in 30 days",
+    "  Error-correction frame size: On · Works here · Test lab",
+    "    Sends a number whose calls keep losing short stretches of a page in smaller error-correction frames, so less is sent again and calls are shorter.",
+    "    Each number's frame size is under its fax machine in Recipients, not on Savings",
+    "  Fax-over-IP protection: On · Works here · Test lab",
+    "    On a trunk that loses fax-over-IP packets, sends the short packets that carry the fax handshake more than once, so a lost one does not stall or fail the call.",
+    "    Each trunk's protection is on its trunk page, not on Savings",
     "  Sending together: On · Works here · Test lab",
     "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
     "    On for 1 recipient who agreed.",

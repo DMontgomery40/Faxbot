@@ -387,7 +387,7 @@
             },
             "here": {
               "used": 0,
-              "sentence": "2 suggestions now"
+              "sentence": "No suggestions now"
             },
             "experimental": false,
             "ready": false,
@@ -1163,6 +1163,58 @@
               "label": "Savings & optimization → Savings results",
               "command": "faxbot savings results"
             },
+            "affected": null
+          },
+          {
+            "key": "ecm_frames",
+            "name": "Error-correction frame size",
+            "sentence": "Sends a number whose calls keep losing short stretches of a page in smaller error-correction frames, so less is sent again and calls are shorter.",
+            "example": "A clinic's fax machine keeps asking for short stretches of each page again. After three such calls, Faxbot sends that number smaller error-correction frames, so less goes again and the call is shorter.",
+            "outcome": "shorter_calls",
+            "address": "savings/capabilities?key=ecm_frames",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Sent no calls in 64-byte frames in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              }
+            ],
+            "setting": {
+              "address": "recipients/list",
+              "label": "Recipients",
+              "command": null
+            },
+            "results": null,
             "affected": null
           },
           {
@@ -2347,6 +2399,68 @@
               "address": "recipients/list",
               "label": "Recipients",
               "command": "faxbot recipients set {number} --calls-at-once 1"
+            },
+            "results": null,
+            "affected": null
+          },
+          {
+            "key": "fax_over_ip_protection",
+            "name": "Fax-over-IP protection",
+            "sentence": "On a trunk that loses fax-over-IP packets, sends the short packets that carry the fax handshake more than once, so a lost one does not stall or fail the call.",
+            "example": "Your carrier's network loses a few fax-over-IP packets on each call. Faxbot measures that and sends the packets that carry the fax handshake more than once, so a lost one does not stall the call or fail it.",
+            "outcome": "recover",
+            "address": "savings/capabilities?key=fax_over_ip_protection",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Protected no fax-over-IP calls in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "Your own trunk, from a phone carrier or your phone system.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              },
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A network and carrier that carry T.38. Faxbot checks this itself and switches T.38 back on when they do.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              }
+            ],
+            "setting": {
+              "address": "delivery/trunk",
+              "label": "Delivery setup → Telnyx",
+              "command": null
             },
             "results": null,
             "affected": null
@@ -3564,7 +3678,7 @@
       "    No suggestions now",
       "  Other carriers' prices (advice_carriers): On · Works here · Sample data",
       "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
-      "    2 suggestions now",
+      "    No suggestions now",
       "  Calls just past a billed minute (advice_billing_steps): On · Works here · Sample data",
       "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
       "    No suggestions now",
@@ -3613,6 +3727,9 @@
       "  Smallest page coding (measured_coding): On · Works here · Test lab",
       "    Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
       "    Not used in 30 days",
+      "  Error-correction frame size (ecm_frames): On · Works here · Test lab",
+      "    Sends a number whose calls keep losing short stretches of a page in smaller error-correction frames, so less is sent again and calls are shorter.",
+      "    Sent no calls in 64-byte frames in 30 days",
       "  Faster pages (sslfax): On · Not here · Test lab",
       "    Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
       "    Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
@@ -3709,6 +3826,9 @@
       "    Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
       "    On; each number takes one call at a time unless you allow more.",
       "    Faxbot keeps no count of the faxes that waited",
+      "  Fax-over-IP protection (fax_over_ip_protection): On · Works here · Test lab",
+      "    On a trunk that loses fax-over-IP packets, sends the short packets that carry the fax handshake more than once, so a lost one does not stall or fail the call.",
+      "    Protected no fax-over-IP calls in 30 days",
       "  Only the missing pages (continuation): On · Works here · Sample data",
       "    Finishes a fax whose call broke by sending only the pages the call did not confirm.",
       "    On; you choose it for each fax whose call broke.",

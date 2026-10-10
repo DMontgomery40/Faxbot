@@ -528,6 +528,18 @@ CAPABILITIES = {
         'Before a call, Faxbot measures a scanned page in each coding the receiving machine accepts, and sends the '
         'smallest, so the page takes less time on the line.',
         None, (TRUNK_SENDS,)),
+    'ecm_frames': Capability(
+        'shorter_calls',
+        "A clinic's fax machine keeps asking for short stretches of each page again. After three such calls, Faxbot "
+        'sends that number smaller error-correction frames, so less goes again and the call is shorter.',
+        None, (TRUNK_SENDS,)),
+    'fax_over_ip_protection': Capability(
+        'recover',
+        "Your carrier's network loses a few fax-over-IP packets on each call. Faxbot measures that and sends the "
+        'packets that carry the fax handshake more than once, so a lost one does not stall the call or fail it.',
+        None, (TRUNK, Prerequisite('connection', 'A network and carrier that carry T.38. Faxbot checks this itself '
+                                                 'and switches T.38 back on when they do.', 'delivery/trunk',
+                                   _network_passes_t38))),
     'sending_together': Capability(
         'no_repeats',
         'Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that '
