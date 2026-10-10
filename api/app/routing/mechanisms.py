@@ -818,7 +818,7 @@ CATALOGUE = (
               'so no call is billed there by mistake.',
               'route', 'built', None, 'delivery/connections', 'Delivery setup → Providers & accounts', dialing_guard,
               link='delivery/connections', link_label='Delivery setup → Providers & accounts',
-              command='faxbot delivery rules destinations list'),
+              command='faxbot delivery providers destinations list'),
     Mechanism('power_aware', 'Power-aware sending',
               'Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a '
               'call and its pages.',
@@ -861,13 +861,13 @@ CATALOGUE = (
               'line in time.',
               'advice', 'built', None, 'delivery/moves', 'Delivery setup → Number moves', _copper_closures,
               link='delivery/moves', link_label='Delivery setup → Number moves',
-              command='faxbot delivery numbers move closures'),
+              command='faxbot delivery numbers closures'),
     Mechanism('advice_registered_senders', 'Registered senders',
               'Sends a recipient that accepts faxes only from a registered number by the account and caller ID '
               'registered with it, so its faxes are not refused and sent again.',
               'advice', 'built', None, 'recipients/list', 'Recipients → Details', _sends,
               link='recipients/list', link_label='Recipients → Details',
-              command='faxbot delivery providers trunk registered-senders'),
+              command='faxbot recipients registered-senders'),
     Mechanism('advice_country_rules', 'Country service rules',
               "Shows the rules a country sets for fax services, with their sources, and which of your accounts "
               'you confirmed meet them.',

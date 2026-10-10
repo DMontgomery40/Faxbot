@@ -630,7 +630,7 @@
             "page_label": "Delivery setup → Providers & accounts",
             "link": "delivery/connections",
             "link_label": "Delivery setup → Providers & accounts",
-            "command": "faxbot delivery rules destinations list",
+            "command": "faxbot delivery providers destinations list",
             "turn_on": false
           },
           {
@@ -1622,7 +1622,7 @@
             "page_label": "Delivery setup → Number moves",
             "link": "delivery/moves",
             "link_label": "Delivery setup → Number moves",
-            "command": "faxbot delivery numbers move closures",
+            "command": "faxbot delivery numbers closures",
             "turn_on": false
           },
           {
@@ -1652,7 +1652,7 @@
             "page_label": "Recipients → Details",
             "link": "recipients/list",
             "link_label": "Recipients → Details",
-            "command": "faxbot delivery providers trunk registered-senders",
+            "command": "faxbot recipients registered-senders",
             "turn_on": false
           },
           {
@@ -1782,7 +1782,7 @@
     "    See: faxbot delivery providers trunk caller-ids",
     "  Where Faxbot may dial: On · Works here · Sample data",
     "    Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
-    "    See: faxbot delivery rules destinations list",
+    "    See: faxbot delivery providers destinations list",
     "  Power-aware sending: Off · Not here · Sample data",
     "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
     "    Needs a UPS that Faxbot reads through NUT; none is set.",
@@ -1905,10 +1905,10 @@
     "  Copper closures: On · Not here · Sample data",
     "    Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
     "    For phone lines in France; none of your sites has its commune set, and no line has a closing notice.",
-    "    See: faxbot delivery numbers move closures",
+    "    See: faxbot delivery numbers closures",
     "  Registered senders: On · Works here · Sample data",
     "    Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
-    "    See: faxbot delivery providers trunk registered-senders",
+    "    See: faxbot recipients registered-senders",
     "  Country service rules: On · Not here · Sample data",
     "    Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",
     "    None of your accounts is in a country whose service rules Faxbot knows.",

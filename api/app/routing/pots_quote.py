@@ -302,7 +302,7 @@ def counter_quote(engine, values, quote, *, routes=None):
         else:
             sentences.append(f'No carrier Faxbot knows publishes a price for a number in {currency}, so the shared '
                              'trunk cannot be priced here.')
-        sentences.append('Move each fax number to the trunk with its move plan (Numbers, Advice and moves) before the '
+        sentences.append('Move each fax number to the trunk with its move plan (Delivery setup, Number moves) before the '
                          'copper line goes.')
     if keep:
         sentences.append(f"Keep the {len(keep):,} alarm, elevator and emergency "

@@ -113,6 +113,15 @@ def test_lines_send(line: str = typer.Argument(..., metavar='LINE',
     state.out().result(result, lambda out: out.line(result['sentence']))
 
 
+@test_lines.command('replies')
+def test_lines_replies():
+    """Received faxes that are replies to test faxes, as Received labels them."""
+    result = state.api().get('/diagnostics/test-lines/replies')
+    state.out().result(result, lambda out: out.table(
+        ['Received fax', 'What it is'], [[item['inbound_id'], item['sentence']] for item in result.get('replies') or []],
+        empty='No replies to test faxes yet.'))
+
+
 @test_lines.command('show')
 def test_lines_show(test: str = typer.Argument(..., metavar='TEST',
                                                help='The start of a recent test fax ID (see test-lines list).')):

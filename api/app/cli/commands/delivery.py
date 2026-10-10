@@ -129,6 +129,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
         keys = api.get('/routing/after-answer/' + segment(number))
     except CliError:
         keys = None
+    try:
+        cover = api.get('/header-notice/recipients/' + segment(number))
+    except CliError:
+        cover = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -139,7 +143,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
                     *(limits_fields(limits) if limits else []), *(page_fields(page_view) if page_view else []),
-                    ('Keys pressed after it answers', (keys or {}).get('spoken'))])
+                    ('Keys pressed after it answers', (keys or {}).get('spoken')),
+                    *([('Cover sheet', 'Always sent, even when the sender puts its notice in the header'
+                        if cover.get('needs_cover') else 'May go in the header notice when the sender chooses')]
+                      if cover else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         if view.get('delivered_costs'):

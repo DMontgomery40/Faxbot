@@ -9617,6 +9617,7 @@ $ faxbot admin diagnostics test-lines [OPTIONS] COMMAND [ARGS]...
 
 * `list`: The public test lines, whether Faxbot may...
 * `send`: Send one test fax to a public test line, now.
+* `replies`: Received faxes that are replies to test...
 * `show`: One test fax&#x27;s result and what came back.
 * `receipt`: Look up a Faxbeep test fax on Faxbeep&#x27;s...
 * `reply`: Mark a received fax as a test fax&#x27;s reply.
@@ -9653,6 +9654,20 @@ $ faxbot admin diagnostics test-lines send [OPTIONS] {LINE}
 
 * `--allow-country`: If Faxbot may not dial this country yet, allow it from now on without asking.
 * `--yes`: Do not ask before sending to a public page.
+* `--help`: Show this message and exit.
+
+##### `faxbot admin diagnostics test-lines replies`
+
+Received faxes that are replies to test faxes, as Received labels them.
+
+**Usage**:
+
+```console
+$ faxbot admin diagnostics test-lines replies [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ##### `faxbot admin diagnostics test-lines show`

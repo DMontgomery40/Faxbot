@@ -32,17 +32,18 @@ export interface Closures {
   sources: { orange: string; gouv: string; arcep: string };
 }
 
-function useRead<T>(client: AdminAPIClient, path: string) {
+// One read on entry; ``read`` is the request itself, so each screen names the route it reads.
+function useRead<T>(read: () => Promise<T>) {
   const [value, setValue] = useState<T | null>(null);
   const [failed, setFailed] = useState(false);
   const load = useCallback(async () => {
     try {
-      setValue(await client.call<T>({ method: 'GET', path }));
+      setValue(await read());
       setFailed(false);
     } catch (failure) {
       setFailed(saysFailure(failure));
     }
-  }, [client, path]);
+  }, [read]);
   useEffect(() => { void load(); }, [load]);
   return { value, setValue, failed };
 }
@@ -136,7 +137,8 @@ function AddNotice({ client, onDone }: { client: AdminAPIClient; onDone: (next: 
 }
 
 export function LineClosures({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
-  const { value: closures, setValue, failed } = useRead<Closures>(client, '/routing/closures');
+  const readClosures = useCallback(() => client.call<Closures>({ method: 'GET', path: '/routing/closures' }), [client]);
+  const { value: closures, setValue, failed } = useRead<Closures>(readClosures);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const remove = async (number: string) => {
@@ -236,7 +238,9 @@ function ConfirmCountry({ client, account, country, label, onDone }: {
 }
 
 export function CountryRules({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
-  const { value: rules, setValue, failed } = useRead<CountryRulesView>(client, '/routing/country-rules');
+  const readRules = useCallback(() => client.call<CountryRulesView>({ method: 'GET', path: '/routing/country-rules' }),
+    [client]);
+  const { value: rules, setValue, failed } = useRead<CountryRulesView>(readRules);
   if (failed) return <LoadFailed testId="country-rules-unread" text="Country rules could not be loaded. Try again." />;
   if (!rules || !Array.isArray(rules.accounts) || !Array.isArray(rules.countries) || rules.accounts.length === 0) return null;
   const countries = new Set(rules.accounts.map((item) => item.country));

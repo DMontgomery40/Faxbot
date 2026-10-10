@@ -296,3 +296,38 @@ def test_the_command_line_sets_the_notice_and_sends_a_cover_as_it(client, tmp_pa
     import json
     job = json.loads(sent.stdout)
     assert job['pages'] == 2, _view(client, job['id'])
+    # Sent details on the command line say what happened to the cover, with the notice, as the console does.
+    shown = run('faxes', 'sent', 'show', job['id'])
+    assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    flat = ' '.join(shown.stdout.split())
+    assert ('The first page was a cover sheet. Its notice went in the header of every page instead, so it was not '
+            'sent: 2 pages went instead of 3.') in flat
+    assert f'Notice: {NOTICE}' in flat
+    # The recipient's cover sheet choice, as Recipients → Details shows it.
+    recipient = run('recipients', 'show', TO)
+    assert recipient.exit_code == 0, (recipient.stdout, recipient.stderr)
+    assert 'May go in the header notice when the sender chooses' in ' '.join(recipient.stdout.split())
+
+
+def test_the_command_line_refuses_a_cover_in_the_header_with_no_notice_before_uploading(client, tmp_path):  # noqa: F811
+    from typer.testing import CliRunner
+    from app.cli.main import app as cli_app
+    from api.tests.test_access_management_http import B, BOOTSTRAP
+
+    def run(*args):
+        return CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', BOOTSTRAP, *args],
+                                  obj={'client_factory': lambda address, timeout: (client, False)},
+                                  env={'COLUMNS': '220', 'TZ': 'UTC'})
+    pdf = tmp_path / 'referral.pdf'
+    pdf.write_bytes(document('Cover sheet', 'Referral letter'))
+    before = client.get('/admin/fax-jobs', headers=B).json()['total']
+    refused = run('send', TO, str(pdf), '--cover-in-header')
+    assert refused.exit_code != 0
+    assert "There is no header notice to carry the cover sheet's notice." in ' '.join(
+        (refused.stdout + refused.stderr).split())
+    # Refused before the upload: no fax was made.
+    assert client.get('/admin/fax-jobs', headers=B).json()['total'] == before
+    _set(client, '/header-notice', {'notice': NOTICE})
+    sent = run('send', TO, str(pdf), '--cover-in-header')
+    assert sent.exit_code == 0, (sent.stdout, sent.stderr)
+    assert f'Every page carries: {NOTICE}' in ' '.join(sent.stdout.split())

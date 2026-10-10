@@ -181,6 +181,16 @@ def test_the_wait_for_a_reply_counts_from_the_call_and_received_labels_it_withou
     reply = _received(engine, '+18884732963', called + timedelta(minutes=6))
     (label,) = client.get('/diagnostics/test-lines/replies', headers=_b()).json()['replies']
     assert label['inbound_id'] == reply and label['how'] == 'number'
+    # The command line lists the same labelled replies.
+    from typer.testing import CliRunner
+    from app.cli.main import app as cli_app
+    from api.tests.test_access_management_http import BOOTSTRAP
+    listed = CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', BOOTSTRAP, 'admin', 'diagnostics',
+                                          'test-lines', 'replies'],
+                                obj={'client_factory': lambda address, timeout: (client, False)},
+                                env={'COLUMNS': '220', 'TZ': 'UTC'})
+    assert listed.exit_code == 0, (listed.stdout, listed.stderr)
+    assert reply in listed.stdout and label['sentence'] in ' '.join(listed.stdout.split())
     assert test_lines.one_view(engine, sent['id'], now=called + timedelta(minutes=7))['reply']['state'] == 'replied'
     # Faxbeep's lookup counts from the call too.
     with engine.connect() as connection:

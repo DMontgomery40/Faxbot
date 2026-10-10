@@ -151,6 +151,19 @@ export default function TestLines({ client }: { client: AdminAPIClient }) {
     }
   };
 
+  // One test fax read again: whether it went through yet, and whether a reply came.
+  const checkAgain = async (item: TestSend) => {
+    setBusy(item.id);
+    try {
+      const fresh = await client.call<TestSend>({ method: 'GET', path: `/diagnostics/test-lines/sends/${encodeURIComponent(item.id)}` });
+      setView((current) => current && ({ ...current, sends: current.sends.map((send) => (send.id === fresh.id ? fresh : send)) }));
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const markReply = async (item: TestSend, inboundId: string) => {
     setBusy(item.id);
     try {
@@ -207,9 +220,15 @@ export default function TestLines({ client }: { client: AdminAPIClient }) {
           <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Recent test faxes</Typography>
           {view.sends.map((item) => (
             <Box key={item.id} sx={{ py: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-              <Typography variant="body2">
-                {`${item.operator}, sent ${item.sent_at_text}${item.actor_name ? ` by ${item.actor_name}` : ''}. ${item.fax_sentence}`}
-              </Typography>
+              <Box display="flex" gap={1} alignItems="baseline" justifyContent="space-between" flexWrap="wrap">
+                <Typography variant="body2">
+                  {`${item.operator}, sent ${item.sent_at_text}${item.actor_name ? ` by ${item.actor_name}` : ''}. ${item.fax_sentence}`}
+                </Typography>
+                <Button size="small" disabled={busy !== null} onClick={() => void checkAgain(item)}
+                  aria-label={`Check the test fax to ${item.operator} again`}>
+                  Check again
+                </Button>
+              </Box>
               {item.reply?.sentence && <Typography variant="body2" color="text.secondary">{item.reply.sentence}</Typography>}
               {(item.reply?.candidates ?? []).map((found) => (
                 <Box key={found.inbound_id} display="flex" gap={1} alignItems="center" flexWrap="wrap">
