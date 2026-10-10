@@ -13,6 +13,9 @@ result, Faxbot keeps it with each received fax and stamps it:
 - **verified but unregistered**: verified, and not on that list;
 - **unverified**: the network did not verify it, or said nothing.
 
+Only calls the built-in engine hands over are stamped; the SSL Fax engine's received calls are not yet. Header
+files a call leaves without a hand-over are removed by the recovery scan after a day (``sip_handover.prune_headers``).
+
 The network's word comes from either of two places. The carrier's own check, the
 ``verstat`` parameter on the caller's P-Asserted-Identity or From
 (``TN-Validation-Passed``, ``TN-Validation-Failed``, ``No-TN-Validation``; 3GPP TS
@@ -82,7 +85,11 @@ def check(headers, *, caller, did, at, trusted=(), numbers=(), fetch=None):
     attest, signature, why = None, None, None
     if passport is not None:
         attest = passport.claims.get('attest')
-        if trusted:
+        if attest != 'A' or status == PASSED:
+            # Nothing a signature check could change (the carrier already verified, or it vouched below A): no
+            # certificate is fetched during the hand-over.
+            signature, why = diversion.UNCHECKED, None
+        elif trusted:
             try:
                 signature, why = diversion.check_passport(passport, did=did, at=at, fetch=fetch, trusted=trusted)
             except ValueError as error:  # an unusable certificate or key (cryptography's documented error)

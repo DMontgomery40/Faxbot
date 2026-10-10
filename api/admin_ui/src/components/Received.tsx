@@ -524,7 +524,7 @@ export default function Received({
         {fax && canBlockSender && fax.fr && (
           <MarkJunk client={client} inboundId={fax.id} from={maskPhoneNumber(fax.fr)} onDone={setNotice} />
         )}
-        {fax && <ReceivedCallerCheck call={client.call.bind(client)} inboundId={fax.id} />}
+        {fax && fax.backend === 'sip' && <ReceivedCallerCheck call={client.call.bind(client)} inboundId={fax.id} />}
       </Stack>
     );
   };
