@@ -23,6 +23,7 @@ def _number_human(view):
         out.fields([('Fax number', view['number']), ('Encoded pages', 'on' if view['enabled'] else 'off'),
                     ('Page style', STYLES.get(view['style'], view['style'])),
                     ('Error correction', view['fec'].capitalize()),
+                    ("Recipient's decoder", view.get('decoder_text')),
                     ('Shared key', f"set (fingerprint {view['key_fingerprint']})" if view['has_key'] else 'none'),
                     ('Recipient agreement recorded by', agreement.get('by')),
                     ('Recorded', local_time(agreement.get('at')) if agreement else None)])
@@ -50,17 +51,22 @@ def encoded_set(number: str = typer.Argument(..., help='Fax number.'),
                 key: str = typer.Option(None, '--shared-key', metavar='KEY',
                     help='Encrypt documents with a key you and the recipient agreed outside fax (8 to 200 '
                          'characters). Only its fingerprint is shown afterwards.'),
+                decoder: str = typer.Option(None, '--decoder', metavar='any|capacity',
+                    help="The recipient's decoder: any Faxbot decoder (the default), or capacity for a Faxbot "
+                         'decoder from October 2026 or later, so Faxbot may also send capacity pages.'),
                 clear_key: bool = typer.Option(False, '--clear-key', help='Stop encrypting with the shared key.')):
     """Turn encoded pages on for a number, or change their style, error correction or shared key."""
     if style is not None and style not in STYLES:
         raise CliError('Choose --style dense or --style picture.')
     if fec is not None and fec not in ('low', 'medium', 'high'):
         raise CliError('Choose --error-correction low, medium or high.')
+    if decoder is not None and decoder not in ('any', 'capacity'):
+        raise CliError('Choose --decoder any or --decoder capacity.')
     api = state.api()
     current = api.get('/codec/numbers/' + segment(number))
     body = {'enabled': True, 'recipient_agreed': recipient_agreed, 'version': current.get('version', 0),
             'clear_key': clear_key}
-    for name, value in (('style', style), ('fec', fec), ('shared_key', key)):
+    for name, value in (('style', style), ('fec', fec), ('shared_key', key), ('decoder', decoder)):
         if value is not None:
             body[name] = value
     view = api.put('/codec/numbers/' + segment(number), json=body)

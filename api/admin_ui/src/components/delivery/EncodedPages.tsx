@@ -20,6 +20,10 @@ const LEVELS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ] as const;
+const DECODERS = [
+  { value: 'any', label: 'Any Faxbot decoder' },
+  { value: 'capacity', label: 'Faxbot from October 2026 or later' },
+] as const;
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -41,6 +45,7 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
   const [agreed, setAgreed] = useState(false);
   const [style, setStyle] = useState<'dense' | 'picture'>('dense');
   const [fec, setFec] = useState<'low' | 'medium' | 'high'>('medium');
+  const [decoder, setDecoder] = useState<'any' | 'capacity'>('any');
   const [key, setKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -53,6 +58,7 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
     setAgreed(false);
     setStyle(loaded.style);
     setFec(loaded.fec);
+    setDecoder(loaded.decoder ?? 'any');
     setKey('');
     setClearKey(false);
   };
@@ -72,7 +78,7 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
   const turningOn = enabled && !view.enabled;
   const keyValid = key === '' || (key.trim().length >= 8 && key.length <= 200);
   const changed = enabled !== view.enabled || (enabled && (style !== view.style || fec !== view.fec
-    || key !== '' || clearKey));
+    || decoder !== (view.decoder ?? 'any') || key !== '' || clearKey));
 
   const save = async () => {
     setBusy(true);
@@ -81,7 +87,7 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
     try {
       const result = enabled
         ? await client.saveCodecNumber(number, {
-          enabled: true, recipient_agreed: agreed, style, fec, version: view.version, clear_key: clearKey,
+          enabled: true, recipient_agreed: agreed, style, fec, decoder, version: view.version, clear_key: clearKey,
           ...(key ? { shared_key: key } : {}),
         })
         : await client.turnOffCodecNumber(number);
@@ -136,6 +142,12 @@ export function EncodedPagesPanel({ client, number, canWrite }: {
             helperText="Higher survives a noisier line but carries less on each page."
             InputLabelProps={{ shrink: true }} sx={{ width: 240 }}>
             {LEVELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </TextField>
+          <TextField select size="small" label="Recipient's decoder" value={decoder} SelectProps={{ native: true }}
+            onChange={(e) => setDecoder(e.target.value as 'any' | 'capacity')} disabled={!canWrite || busy}
+            helperText="Faxbot from October 2026 or later also reads capacity pages, which carry more in each minute or on each page."
+            InputLabelProps={{ shrink: true }} sx={{ width: 300 }}>
+            {DECODERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </TextField>
           <TextField size="small" type="password" label="Shared key (optional)" value={key}
             onChange={(e) => setKey(e.target.value)} disabled={!canWrite || busy || clearKey}

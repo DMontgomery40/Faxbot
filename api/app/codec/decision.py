@@ -17,7 +17,10 @@ the fax's normal pages with each candidate set of payload pages:
 Run-coded pages carry the most per page and per second but need the exact
 raster, so they are only a candidate on a route where Faxbot makes the fax
 image itself and a previous call to the number negotiated ECM and fine
-resolution. Other routes use grid pages, sturdy ones when a provider renders
+resolution. Capacity pages (format 2, ``capacity.py``) join them only for a
+recipient whose decoder you recorded as reading them: the 'time' profile (the
+shortest call) and the 'pages' profile (the fewest pages), and the route's
+bill decides between them. Other routes use grid pages, sturdy ones when a provider renders
 the PDF itself.
 
 On Faxbot's own engines each candidate, and the normal pages it competes
@@ -31,6 +34,8 @@ ratio to MMR, which a payload page does not follow.
 from dataclasses import dataclass
 
 RUN_LIMITS = (7, 15, 63)
+# The capacity profiles tried for a recipient whose decoder reads them: the shortest call and the fewest pages.
+CAPACITY_PROFILES = ('time', 'pages')
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,7 @@ class Choice:
     fec: str = 'medium'
     run_limit: int = 15
     sturdy: bool = False
+    profile: int | None = None  # the capacity layout's profile (capacity.PROFILES)
     pages_original: int = 0
     pages_encoded: int = 0
     original: object = None
@@ -126,7 +132,7 @@ def _unchosen_shape(Shape, frames, resolution, layout):
 
 def choose(document, *, route_key, destination, pages_original, page_bits_original, exact_raster,
            ecm_and_fine_seen, provider_renders, fec='medium', style='dense', secret=None, picture=None,
-           resolution='fine', encoder=None, tools=None, usable=None, frames_original=None):
+           resolution='fine', encoder=None, tools=None, usable=None, frames_original=None, capacity=False):
     """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake.
 
     ``usable`` and ``frames_original`` let Faxbot's own engines price every layout in the coding the call can
@@ -154,6 +160,10 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         candidates = [dict(layout='picture')]
     elif exact_raster and ecm_and_fine_seen:
         candidates = [dict(layout='runs', run_limit=limit) for limit in RUN_LIMITS] + [dict(layout='grid')]
+        if capacity:
+            from .capacity import PROFILE_NAMES
+            candidates = [dict(layout='capacity', profile=PROFILE_NAMES[name]) for name in CAPACITY_PROFILES] \
+                + candidates
     else:
         candidates = [dict(layout='grid', sturdy=provider_renders)]
     best = None
@@ -181,5 +191,6 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
                 '(experimental).')
     return Choice(True, sentence, layout=options['layout'], resolution=resolution, fec=fec,
                   run_limit=options.get('run_limit', 15), sturdy=options.get('sturdy', False),
+                  profile=options.get('profile'),
                   pages_original=pages_original, pages_encoded=count, original=original, encoded=prediction,
                   pages=pages)
