@@ -4,7 +4,7 @@ The helper scripts and core API tests below let you check Faxbot quickly. Some h
 
 ## In the console
 
-**System → Developer → Scripts & checks** has tools for checking Faxbot by hand. None of them sends a fax or changes a setting.
+**Administration → Developer → Scripts & checks** has tools for checking Faxbot by hand. None of them sends a fax or changes a setting.
 
 - **Add a test fax** puts a one-page fax in **Received**, marked as a test everywhere. It goes through owners, mailbox rules and email delivery just like a real fax, but no call is made. Receiving has to be on.
 - **How the receiving provider reaches Faxbot** shows the address to give a provider that calls Faxbot when a fax arrives (Phaxio, Sinch, SignalWire, eFax notifications), with a copy button and a link to that provider's guide. With a carrier trunk it shows whether received faxes reach Faxbot, and for a provider Faxbot collects faxes from, such as HumbleFax, it tells you there is nothing to set.

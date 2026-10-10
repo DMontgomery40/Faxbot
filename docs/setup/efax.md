@@ -27,7 +27,7 @@ EFAX_USER_ID=...
 
 Faxbot reads them at every start. The Setup Wizard and Settings show them as **Set in .env**; change them there. You can also type them into the Setup Wizard or Settings instead; Faxbot keeps them encrypted in its database.
 
-Then, in the **Setup Wizard** (or **Providers → eFax** when it is already in use):
+Then, in the **Setup Wizard** (or **Delivery setup → eFax** when it is already in use):
 
 1. Choose **eFax** for **Sending**, **Receiving** or both.
 2. In the eFax section, optionally enter:
@@ -101,7 +101,7 @@ Faxbot accepts a notification only when its `X-HMAC-Signature` header is the hex
 
 ## Prices
 
-eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. **Costs → Spending** and **Costs → Prices & plans** name eFax's cheapest published plan for your installation country on the eFax line, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot costs plans efax` lists the same plans.
+eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. **Savings & optimization → Spending** and **Savings & optimization → Prices & plans** name eFax's cheapest published plan for your installation country on the eFax line, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot costs plans efax` lists the same plans.
 
 | Plan | Country | Price a month | Includes | Extra page | Read on |
 | --- | --- | --- | --- | --- | --- |

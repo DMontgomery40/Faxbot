@@ -52,7 +52,7 @@ It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` 
 
 ## Configure API and Asterisk separately
 
-In **System → Setup**, choose your carrier under **Your own fax line through a carrier**, or your phone system under **Your phone system**. Choose whether it handles sending, receiving, or both, then select **Restart now** if the wizard asks.
+In **Administration → Setup**, choose your carrier under **Your own fax line through a carrier**, or your phone system under **Your phone system**. Choose whether it handles sending, receiving, or both, then select **Restart now** if the wizard asks.
 
 ### The fax engine login: nothing to type
 
@@ -63,7 +63,7 @@ Faxbot and Asterisk share one manager login (the Asterisk Manager Interface, por
 - `ASTERISK_AMI_USERNAME` and `ASTERISK_AMI_PASSWORD` in `.env` always win: both containers read them, and Asterisk then ignores the file.
 - An installation that already used its own Asterisk with the shipped default password keeps that password; set `ASTERISK_AMI_PASSWORD` in `.env` to replace it.
 
-The **Providers → Carrier trunk** page contains **Fax engine connection (advanced)** for an Asterisk engine you run yourself. Faxbot manages the connection settings for its own Asterisk engine.
+The **Delivery setup → Carrier trunk** page contains **Fax engine connection (advanced)** for an Asterisk engine you run yourself. Faxbot manages the connection settings for its own Asterisk engine.
 
 The trunk itself is set up on the **Carrier SIP trunk** screen: **Apply and connect** writes the trunk file Asterisk loads at start and, in the Docker Compose install, restarts Asterisk to load it once no call is up (see [Carrier SIP trunk](sip-trunk.md)). For first bootstrap, the API names below can also be supplied in `.env`:
 ```

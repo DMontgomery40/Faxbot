@@ -22,7 +22,7 @@ Carrier names are accepted too: `HUMBLEFAX_API_ACCESS_KEY` and `HUMBLEFAX_API_SE
 
 ## Provider directions and disabled sending
 
-**Providers → In use** shows what sends and what receives, by name (the trunk by its carrier, such as **Telnyx**). Providers are chosen in the [Setup wizard](setup-wizard.md) (**Add or change a provider**). **Receiving is on** turns receiving on or off with the receiving provider chosen there; it cannot be turned on with a provider that only sends. Providers installed from a manifest are configured under **System → Developer → Provider plugins**.
+**Delivery setup → Providers & accounts** shows what sends and what receives, by name (the trunk by its carrier, such as **Telnyx**). Providers are chosen in the [Setup wizard](setup-wizard.md) (**Add or change a provider**). **Receiving is on** turns receiving on or off with the receiving provider chosen there; it cannot be turned on with a provider that only sends. Providers installed from a manifest are configured under **Administration → Developer → Provider plugins**.
 
 Turning **Sending is on** off (it asks first) keeps accepting new faxes but holds them instead of sending. Turning sending back on does not release held faxes automatically, and pausing cannot recall a fax that is already being sent. Read [Test Mode](../setup/test-mode.md) before testing.
 

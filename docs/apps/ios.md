@@ -14,19 +14,19 @@ The iOS app lets you send faxes and check statuses from your phone. It connects 
 
 ## Setup overview
 
-1. In **Access → Keys & phones**, set **Address phones use on your network** to the server's address on your office network if phones will connect there. Leave it empty if phones connect only over the internet.
+1. In **Administration → Keys & phones**, set **Address phones use on your network** to the server's address on your office network if phones will connect there. Leave it empty if phones connect only over the internet.
 2. Configure network access to your server as described in the [public access guide](../setup/public-access.md).
 3. Pair the app as described below.
 
 ## Pair the app
 
-1. In the Admin Console, open **Access → Keys & phones**.
+1. In the Admin Console, open **Administration → Keys & phones**.
 2. Select **Pair a phone**. Faxbot shows a six-digit code, a QR code and a countdown.
 3. In the iOS app, enter the code or scan the QR code before the countdown ends.
 
 The code lasts five minutes and works once. If it expires or the app reports that it did not work, select **Pair a phone** again for a new code.
 
-After pairing, Faxbot creates a key for that phone and returns it with the server's addresses. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. The key appears under the device's name in **Access → Keys & phones**. Revoke it there if the phone is lost or replaced.
+After pairing, Faxbot creates a key for that phone and returns it with the server's addresses. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. The key appears under the device's name in **Administration → Keys & phones**. Revoke it there if the phone is lost or replaced.
 
 You need permission to pair phones and issue keys to create a pairing code. See [Access Control](../security/access-control.md#keys-for-the-iphone-app).
 

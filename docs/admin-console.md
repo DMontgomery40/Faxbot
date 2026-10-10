@@ -44,7 +44,7 @@ The left panel lists eight areas. Each holds a few pages.
 
 ## Finding your way
 
-- **An address for every page.** Each page has its own address, such as `#/providers/trunk` or `#/system/audit`. Back, Forward, reload and shared links open the same page. Older addresses keep working and open the page that now does that job.
+- **An address for every page.** Each page has its own address, such as `#/delivery/trunk` or `#/admin/audit`. Back, Forward, reload and shared links open the same page. Older addresses keep working and open the page that now does that job.
 - **Where you are.** The line above each page names its area and page; select the area to go back to it.
 - **Your menu.** The lower-left menu shows who is signed in and their role. It offers Change password, My sessions, My API keys, Appearance (Light, Dark or Match my system) and Sign out.
 - **Providers by name.** The trunk is named by its carrier or phone system ("Telnyx", "Avaya IP Office") everywhere: Overview, Sent, Received, Spending and the command line. When a saved change switches providers or carriers, every page shows the new names at once.

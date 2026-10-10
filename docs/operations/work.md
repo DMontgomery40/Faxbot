@@ -28,7 +28,7 @@ Each mailbox can have a backup person. If an item is not acknowledged by its tar
 
 The acknowledgement target is your team's operational target, not a legal deadline. Set it in hours:
 
-- **Installation target**: under **Numbers → Mailboxes**, or with `faxbot numbers mailboxes target --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
+- **Installation target**: under **Delivery setup → Mailboxes**, or with `faxbot numbers mailboxes target --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
 - **Mailbox target**: overrides the installation target for one mailbox. `0` means no target for that mailbox.
 
 The clock starts when the document became available: when Faxbot acquired the document, or when the fax arrived if it was stored before acquisition records existed. Faxbot works out the due time once, when the item is created. Changing a target applies to documents that arrive afterwards. Restarts, repeated provider notifications and duplicate documents never restart the clock.

@@ -1,7 +1,7 @@
 
 # Curated Plugin Registry
 
-The Plugins tab is a legacy feature. Faxbot plans to remove provider plugins in the next release. Set up built-in providers in **System → Setup**.
+The Plugins tab is a legacy feature. Faxbot plans to remove provider plugins in the next release. Set up built-in providers in **Administration → Setup**.
 
 [:material-puzzle-outline: Provider Setup](../setup/index.md){ .md-button }
 [:material-http: Manifest Installation](#manifest-installation){ .md-button }

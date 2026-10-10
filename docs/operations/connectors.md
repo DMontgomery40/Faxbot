@@ -1,6 +1,6 @@
 # Email and folders
 
-Use **Numbers → Email and folders** in the Admin Console to connect a mailbox or folder to Faxbot. A connector can bring documents into a mailbox or send faxes from email or files. This is separate from **Numbers → Email delivery**, which emails received faxes to your staff.
+Use **Delivery setup → Email and folders** in the Admin Console to connect a mailbox or folder to Faxbot. A connector can bring documents into a mailbox or send faxes from email or files. This is separate from **Delivery setup → Staff email delivery**, which emails received faxes to your staff.
 
 ## Add a connector
 
@@ -27,4 +27,4 @@ After saving, select **Test** on the connector to check that Faxbot can reach th
 
 Select **Pause** to stop checks, or **Resume** to start them again. **Change** edits the connector. **Remove** stops checks and revokes a sending connector's key; items it already handled remain listed.
 
-A sending connector gets a key that can only send faxes. Find it under **Access → Keys & phones**. Pausing the connector revokes that key.
+A sending connector gets a key that can only send faxes. Find it under **Administration → Keys & phones**. Pausing the connector revokes that key.
