@@ -844,7 +844,7 @@ export interface SavingsMechanism {
   evidence: { level: 'live' | 'lab' | 'built'; label: string };
   // One short line about this installation ("Used on 14 faxes in 30 days"), or null for advice.
   here: { used: number; sentence: string | null };
-  // Its part on Costs → Savings, or null when it has none.
+  // Its part on Savings & optimization → Savings results, or null when it has none.
   part: string | null;
   // The console page that holds its setting ('recipients/list'), and that page's name.
   page: string;
@@ -943,7 +943,7 @@ export interface PlanAdvice {
   windows: PlanWindow[];
 }
 
-// Costs → Recommendations: lightening shaded areas and removing specks on documents you send
+// Savings & optimization → Opportunities: lightening shaded areas and removing specks on documents you send
 // (/routing/recommendations/fax-friendly). Seconds are estimates at full fax speed.
 export interface FaxFriendlyRecommendation {
   choice: 'where_it_saves' | 'always' | 'never';
@@ -1204,7 +1204,7 @@ export interface TollFreeRecommendations {
   items: Array<TollFreeRow & { display_name: string | null; approved: boolean; spend: Money | null; sentence: string }>;
 }
 
-// GET /routing/plans: each plan this billing period (Costs → Prices & plans). Every figure is an estimate. The budgets
+// GET /routing/plans: each plan this billing period (Savings & optimization → Prices & plans). Every figure is an estimate. The budgets
 // themselves are the setting plan_budgets ("humblefax:pages=200,faxes=50,day=1; efax:included_pages=200").
 export interface PlanBudgetTerms {
   pages: number | null;            // normal-use pages a month; null: no limit

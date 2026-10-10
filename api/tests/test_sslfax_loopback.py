@@ -1389,7 +1389,7 @@ REPLY_NUMBER = '+15555550177'
 
 
 def test_o_the_ssl_fax_engine_sends_the_reply_number_as_its_station_id(tmp_path, loopback):
-    """Numbers -> Sender identity: a reply number (a second number on the trunk, routed to a mailbox) is the
+    """Delivery setup -> Sending identity: a reply number (a second number on the trunk, routed to a mailbox) is the
     station ID the SSL Fax engine sends (JPARM TSI with UseJobTSI), not the line's own number."""
     context = loopback('o', faxbot_t38=False, carrier_gateway=False,
                        peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}',

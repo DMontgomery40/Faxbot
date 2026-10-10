@@ -1,4 +1,4 @@
-"""Route problems, the 2-by-2 test and shared upstreams: ``faxbot system diagnostics routes`` (brief 92, RF).
+"""Route problems, the 2-by-2 test and shared upstreams: ``faxbot admin diagnostics routes`` (brief 92, RF).
 
 Hangs off the diagnostics group (``settings.diagnostics``); ``settings.py`` imports this module so the commands
 exist before ``nouns.py`` copies the group. Only the 2-by-2's ``send`` places a call, and only for the one test fax
@@ -28,7 +28,7 @@ def _find(items, prefix, what):
     prefix = (prefix or '').strip().lower()
     found = [item for item in items if item['id'].startswith(prefix)] if prefix else []
     if len(found) != 1:
-        raise CliError(f'No single {what} starts with "{prefix}". Run faxbot system diagnostics routes list to see '
+        raise CliError(f'No single {what} starts with "{prefix}". Run faxbot admin diagnostics routes list to see '
                        'them.')
     return found[0]
 
@@ -55,7 +55,7 @@ def routes_list():
             status = 'Open' if item['open'] else 'Ended'
             out.line(f"{status} ({_short(item['id'])}): {item['sentence']}")
             if item.get('advice'):
-                out.line(f"  {item['advice']} Start one with: faxbot system diagnostics routes test")
+                out.line(f"  {item['advice']} Start one with: faxbot admin diagnostics routes test")
         for test in result.get('tests') or []:
             out.line('')
             _test_lines(out, test)
@@ -93,7 +93,7 @@ def routes_test(route_a: str = typer.Option(..., '--route-a', metavar='ACCOUNT',
 
     def human(out):
         _test_lines(out, result)
-        out.line(f"Send each test fax when you are ready: faxbot system diagnostics routes send "
+        out.line(f"Send each test fax when you are ready: faxbot admin diagnostics routes send "
                  f"{_short(result['id'])} a1")
     state.out().result(result, human)
 

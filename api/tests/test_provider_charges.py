@@ -333,10 +333,10 @@ def test_every_trunk_preset_says_whether_its_carrier_publishes_call_records():
         assert found.sentence.endswith('.')
         if found.api:
             assert found.sources and all(url.startswith('https://') for _, url, _ in found.sources)
-    assert published('gamma').api is False and 'Costs → Invoices' in published('gamma').sentence
+    assert published('gamma').api is False and 'Savings & optimization → Invoices' in published('gamma').sentence
     sentence = trunk_records(values(SIP_TRUNK_PRESET='signalwire'))['sentence']
     assert sentence == ('SignalWire publishes each call\'s charge, but Faxbot cannot read it yet: add your SignalWire '
-                        'project ID and API token under Providers → SignalWire.')
+                        'project ID and API token under Delivery setup → SignalWire.')
     assert set(PUBLISHED) >= {'telnyx', 'signalwire'}
 
 
@@ -450,7 +450,7 @@ def test_flowroute_keys_are_needed_and_said_where_to_add():
     assert reader_for('flowroute', current).ready() is False
     assert trunk_records(current)['sentence'] == (
         "Flowroute publishes each call's charge, but Faxbot cannot read it yet: add your Flowroute API access key and "
-        'secret key under Providers → Flowroute.')
+        'secret key under Delivery setup → Flowroute.')
     keyed = values(SIP_TRUNK_PRESET='flowroute', FLOWROUTE_ACCESS_KEY='synthetic-access',
                    FLOWROUTE_SECRET_KEY='synthetic-secret')
     assert trunk_records(keyed)['readable'] is True
@@ -481,7 +481,7 @@ def test_the_trunk_page_says_whether_its_carrier_publishes_call_records():
         'published': False, 'readable': False, 'sentence': published('gamma').sentence}
     assert _call_records(values(SIP_TRUNK_PRESET='avaya-ipoffice'))['sentence'] == (
         'Avaya IP Office is your phone system; the carrier behind it bills these calls, so enter its invoice under '
-        'Costs → Invoices.')
+        'Savings & optimization → Invoices.')
     assert _call_records(values(SIP_TRUNK_PRESET='telnyx', TELNYX_API_KEY='KEYsynthetic'))['readable'] is True
 
 

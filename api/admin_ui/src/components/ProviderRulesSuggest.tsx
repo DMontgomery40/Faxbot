@@ -1,5 +1,5 @@
-// Costs → Recommendations → "Add as rule": a suggested routing rule goes to the top of the routing rules in
-// the organization's draft. It never publishes; the administrator checks and publishes it on Providers → Rules.
+// Savings & optimization → Opportunities → "Add as rule": a suggested routing rule goes to the top of the routing rules in
+// the organization's draft. It never publishes; the administrator checks and publishes it on Delivery setup → Routing rules.
 import { useState } from 'react';
 import { Button } from '@mui/material';
 import type { AdminDestination } from '../navigation';

@@ -199,7 +199,7 @@ def test_report_runs_through_the_api_and_keeps_the_last_run(isolated_installatio
         assert item['sentence'].endswith('.')
 
 
-# --- fax engine views (System → Developer → Scripts & checks) -------------------
+# --- fax engine views (Administration → Developer → Scripts & checks) -------------------
 
 def _engine(monkeypatch, response, events, connected=True):
     from app.ami import ami_client

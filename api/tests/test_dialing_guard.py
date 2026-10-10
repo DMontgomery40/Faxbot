@@ -65,7 +65,7 @@ def test_a_class_is_named_by_word_country_or_calling_code():
 
 def test_held_sentences_are_one_sentence_each_with_where_to_change_it():
     fenced = guard.held_sentence(guard.PREMIUM, 'fenced')
-    assert fenced.startswith('Faxbot never dials premium-rate numbers unless you allow them in Providers → In use')
+    assert fenced.startswith('Faxbot never dials premium-rate numbers unless you allow them in Delivery setup → Providers & accounts')
     assert guard.held_sentence('country:GB', 'not_allowed').startswith(
         'Faxbot has not sent to numbers in the United Kingdom before')
     over = guard.held_sentence('country:GB', 'over_ceiling', rate=120000, ceiling=50000, currency='USD',

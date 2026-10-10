@@ -1,4 +1,4 @@
-// Costs → Invoices: enter each provider account's monthly invoice total, optionally with the invoice itself, and see
+// Savings & optimization → Invoices: enter each provider account's monthly invoice total, optionally with the invoice itself, and see
 // the part your faxes don't explain. Entering the same month again adds a corrected version and keeps the earlier one.
 // A fax with no price is counted, never priced at zero, so a month with one reads as incomplete.
 import { useCallback, useEffect, useMemo, useState } from 'react';

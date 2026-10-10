@@ -251,7 +251,7 @@ def savings(routes, engine, *, since, days, layout=None):
 
 
 def encoding_sentence(result, days, money_text):
-    """Costs, Savings: "Pages saved by encoding (experimental)"."""
+    """Savings & optimization, Savings results: "Pages saved by encoding (experimental)"."""
     if not result['faxes']:
         return f'No faxes went as encoded pages in the last {days} days.'
     faxes = _pages(result['faxes'], 'fax').replace('faxs', 'faxes')

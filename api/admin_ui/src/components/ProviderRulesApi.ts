@@ -442,7 +442,7 @@ export interface ReceivingOptions {
   any_number: boolean;
   // Only faxes that arrive on this account.
   account_key: string | null;
-  // Only faxes that arrive on an account of this site (Providers → Rules → Sites).
+  // Only faxes that arrive on an account of this site (Delivery setup → Routing rules → Sites).
   site_key: string | null;
   // Only faxes whose sender stated this subaddress (T.33 SUB), such as a department's extension. It is what the
   // sender's machine says, never proof of who sent the fax, so it chooses the mailbox but never grants access.

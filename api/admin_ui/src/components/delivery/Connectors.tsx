@@ -1,4 +1,4 @@
-// Numbers → Email and folders: mailboxes and folders that bring documents into Faxbot or send faxes.
+// Delivery setup → Email and folders: mailboxes and folders that bring documents into Faxbot or send faxes.
 // Each document is filed or faxed once; a copy seen again is counted, never handled twice.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {

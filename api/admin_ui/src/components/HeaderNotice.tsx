@@ -1,5 +1,5 @@
 // The header notice (header_notice.py): a notice line printed at the top of every page you send, for the
-// organization and per mailbox (Numbers → Sender identity); the "first page is a cover sheet" choice on Send a
+// organization and per mailbox (Delivery setup → Sending identity); the "first page is a cover sheet" choice on Send a
 // fax; whether a recipient needs a cover sheet (Recipients); and what Sent details say about a fax's notice.
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -35,7 +35,7 @@ function read<T>(client: Client, target: string): Promise<T> {
   }
 }
 
-// Numbers → Sender identity, Header notice.
+// Delivery setup → Sending identity, Header notice.
 export function HeaderNoticeSettings({ client, canWrite, mailboxes }: {
   client: Client; canWrite: boolean; mailboxes: Array<{ id: string; label: string }>;
 }) {

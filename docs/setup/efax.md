@@ -49,7 +49,7 @@ The settings in `.env` that are not keys are read only on the first start; chang
 ### Check the keys
 
 ```
-EFAX_APP_ID=... EFAX_API_KEY=... EFAX_USER_ID=... faxbot system settings validate efax
+EFAX_APP_ID=... EFAX_API_KEY=... EFAX_USER_ID=... faxbot admin settings validate efax
 ```
 
 This says whether eFax's API answers and whether eFax accepts the keys. It sends no fax. Signing in to eFax ends the sign-in Faxbot was using; Faxbot signs in again by itself on its next request.
@@ -81,7 +81,7 @@ Faxbot asks eFax for the faxes it lists as not downloaded yet, every minute by d
 2. It then downloads the fax by its eFax ID as a PDF, checks it and stores it. A fax that cannot be fetched is tried again on Faxbot's usual schedule and can be fetched again from **Faxes → Received**. If Faxbot stops in between, it carries on with the same fax after a restart.
 3. Once the fax is stored, Faxbot tells eFax it was downloaded and, if you turned deletion on, deletes it from eFax.
 
-If eFax refuses a deletion, the fax stays at eFax and Faxbot tries again on each check, waiting longer each time (up to 30 minutes) for seven days. The eFax section in Settings and `faxbot received list` say "1 received fax is still stored at eFax; Faxbot will try again to delete it." After seven days they say to delete it in your eFax account.
+If eFax refuses a deletion, the fax stays at eFax and Faxbot tries again on each check, waiting longer each time (up to 30 minutes) for seven days. The eFax section in Settings and `faxbot faxes received list` say "1 received fax is still stored at eFax; Faxbot will try again to delete it." After seven days they say to delete it in your eFax account.
 
 If eFax asks Faxbot to slow down, Faxbot waits as long as eFax says. After a failed check it waits longer each time, up to 30 minutes. Settings shows when Faxbot last checked eFax.
 
@@ -101,7 +101,7 @@ Faxbot accepts a notification only when its `X-HMAC-Signature` header is the hex
 
 ## Prices
 
-eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. **Savings & optimization → Spending** and **Savings & optimization → Prices & plans** name eFax's cheapest published plan for your installation country on the eFax line, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot costs plans efax` lists the same plans.
+eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. **Savings & optimization → Spending** and **Savings & optimization → Prices & plans** name eFax's cheapest published plan for your installation country on the eFax line, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot savings plans efax` lists the same plans.
 
 | Plan | Country | Price a month | Includes | Extra page | Read on |
 | --- | --- | --- | --- | --- | --- |

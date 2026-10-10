@@ -346,7 +346,7 @@ def row_view(row, sites=None) -> dict:
 
 
 def card_rows(card_identity, engine=None, sites=None) -> list:
-    """The rows of one card for Costs → Prices & plans, shortest prefix first."""
+    """The rows of one card for Savings & optimization → Prices & plans, shortest prefix first."""
     found = rows_for([card_identity], engine)
     found.sort(key=lambda row: (row.origin != ANY, row.origin, len(row.destination_prefix), row.destination_prefix))
     return [row_view(row, sites) for row in found]

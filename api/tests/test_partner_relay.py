@@ -729,7 +729,7 @@ async def test_a_premium_rate_number_is_never_relayed(relay_trio):
 # The relay's own sending rules -------------------------------------------------------------------------------------
 
 def b_rules(trio, document):
-    """Publish B's organization rules (Providers → Rules)."""
+    """Publish B's organization rules (Delivery setup → Routing rules)."""
     from api.app.rules.store import RuleStore
     store = RuleStore(trio.b_engine)
     current = store.draft('organization', '')

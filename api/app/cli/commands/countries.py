@@ -1,7 +1,7 @@
 """Country commands: rate decks priced by the caller ID a call shows, and the caller IDs you confirmed.
 
-The deck import is part of ``faxbot costs rate-rows ROUTE --caller-id-deck FILE``; the caller-ID commands hang off
-``faxbot providers trunk``. Nothing here changes a caller ID or contacts a carrier.
+The deck import is part of ``faxbot savings rate-rows ROUTE --caller-id-deck FILE``; the caller-ID commands hang off
+``faxbot delivery providers trunk``. Nothing here changes a caller ID or contacts a carrier.
 """
 from pathlib import Path
 
@@ -27,7 +27,7 @@ def _deck_lines(out, deck):
 
 
 def import_caller_id_deck(route, path: Path, *, deck_format=None, source=None, published=None):
-    """``faxbot costs rate-rows ROUTE --caller-id-deck FILE``: import a carrier's deck priced by caller ID."""
+    """``faxbot savings rate-rows ROUTE --caller-id-deck FILE``: import a carrier's deck priced by caller ID."""
     if deck_format is not None and deck_format not in ('twilio', 'faxbot'):
         raise CliError('Choose the deck layout twilio or faxbot.')
     data = {key: value for key, value in (('deck_format', deck_format), ('source_url', source),
@@ -76,7 +76,7 @@ def caller_ids(quote: str = typer.Option(None, '--quote', metavar='NUMBER',
             out.line(f"{item['label']}: {item['sentence']}")
         out.line()
         if not result.get('decks'):
-            out.line("No rate deck priced by caller ID. Import one with 'faxbot costs rate-rows ROUTE --caller-id-deck "
+            out.line("No rate deck priced by caller ID. Import one with 'faxbot savings rate-rows ROUTE --caller-id-deck "
                      "FILE'.")
         for deck in result.get('decks') or []:
             _deck_lines(out, deck)
@@ -92,7 +92,7 @@ def _confirmed(record):
 
 @trunk.command('confirm-caller-id')
 def confirm_caller_id(account: str = typer.Argument(..., metavar='ACCOUNT',
-                                                    help="The sending account, by its key from 'faxbot providers "
+                                                    help="The sending account, by its key from 'faxbot delivery providers "
                                                          "accounts list'."),
                       number: str = typer.Argument(..., metavar='CALLER_ID',
                                                    help='The caller ID with its country code, such as +442079460000.'),
@@ -114,7 +114,7 @@ def confirm_caller_id(account: str = typer.Argument(..., metavar='ACCOUNT',
         + (', bought on this account.' if result['eligibility']['bought_here'] else '.')))
 
 
-@trunk.command('registered-senders')
+@trunk.command('registered-senders', hidden=True)
 def registered_senders():
     """Recipients that recognise your faxes by the number they come from, and the trunk registered with each."""
     result = state.api().get('/routing/sender-pins')
@@ -129,7 +129,7 @@ def registered_senders():
     state.out().result(result, human)
 
 
-@trunk.command('register-sender')
+@trunk.command('register-sender', hidden=True)
 def register_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT',
                                                     help="The recipient's fax number, such as +902122220000."),
                     caller_id: str = typer.Option(..., '--caller-id', metavar='NUMBER',
@@ -139,7 +139,7 @@ def register_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT',
                                                         'caller ID.'),
                     account: str = typer.Option('sip', '--account', metavar='KEY',
                                                 help="The trunk registered with it, by its key from 'faxbot "
-                                                     "providers accounts list'; the first trunk when left out."),
+                                                     "delivery providers accounts list'; the first trunk when left out."),
                     note: str = typer.Option('', '--note', metavar='TEXT', help='Where it is registered, for the '
                                                                                 'history.')):
     """Send faxes to RECIPIENT only from the trunk, caller ID and station ID registered with it. When that trunk
@@ -150,7 +150,7 @@ def register_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT',
         (item['sentence'] for item in result.get('pins') or [] if item['recipient'] == recipient.strip()), 'Saved.')))
 
 
-@trunk.command('unregister-sender')
+@trunk.command('unregister-sender', hidden=True)
 def unregister_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT', help="The recipient's fax number."),
                       note: str = typer.Option('', '--note', metavar='TEXT', help='Why, for the history.')):
     """Stop pinning RECIPIENT to one trunk; faxes to it go by your sending rules again. The history is kept."""
@@ -158,7 +158,7 @@ def unregister_sender(recipient: str = typer.Argument(..., metavar='RECIPIENT', 
     state.out().result(result, lambda out: out.line(f'Faxes to {recipient.strip()} go by your sending rules again.'))
 
 
-@trunk.command('sender-evidence')
+@trunk.command('sender-evidence', hidden=True)
 def sender_evidence(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The sent fax.'),
                     original: str = typer.Option(None, '--original', metavar='requested|sent|cancelled',
                                                  help="Record that the recipient asked for the original, that you "
@@ -224,8 +224,8 @@ def _closure_lines(out, result):
         out.line(f"{'Orange' if item['source'] == 'orange' else 'Government copy'}: {item['communes']:,} communes, "
                  f"file of {local_date(item.get('file_date')) or 'an unknown date'}.")
     if not result.get('files'):
-        out.line("No closure file yet. Import Orange's trajectory file or the government copy with 'faxbot numbers "
-                 "move import-closures FILE'.")
+        out.line("No closure file yet. Import Orange's trajectory file or the government copy with 'faxbot delivery numbers "
+                 "import-closures FILE'.")
     for site in result.get('sites') or []:
         out.line(f"{site['name']} ({site['commune']}): {site['sentence']}")
     out.table(['Number', 'Account', 'When'],
@@ -233,7 +233,7 @@ def _closure_lines(out, result):
                for line in result.get('lines') or []], empty='No lines with a closure date.')
 
 
-@_move_group().command('closures')
+@_move_group().command('closures', hidden=True)
 def closures():
     """When copper, and the phone lines on it, close: your French sites by commune, and lines with a carrier's
     notice."""
@@ -241,7 +241,7 @@ def closures():
     state.out().result(result, lambda out: _closure_lines(out, result))
 
 
-@_move_group().command('import-closures')
+@_move_group().command('import-closures', hidden=True)
 def import_closures(file: Path = typer.Argument(..., metavar='FILE', exists=True, dir_okay=False,
                                                 help="Orange's commune trajectory file, or the government copy, as "
                                                      'CSV.'),
@@ -270,7 +270,7 @@ def import_closures(file: Path = typer.Argument(..., metavar='FILE', exists=True
     state.out().result(result, human)
 
 
-@_move_group().command('notice')
+@_move_group().command('notice', hidden=True)
 def line_notice(number: str = typer.Argument(..., metavar='NUMBER', help="The line's number."),
                 closes: str = typer.Option(None, '--closes', metavar='DATE',
                                            help='The date the carrier says the line closes, such as 2026-11-04.'),

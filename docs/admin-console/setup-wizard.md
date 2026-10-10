@@ -37,7 +37,7 @@ Review **Require HTTPS for document links**, **Record events** and how long docu
 
 ## 4. Delivery options
 
-Optional delivery routes, direct delivery and email delivery. You can change them later under Providers → In use, Numbers → Email delivery and Recipients → Partners.
+Optional delivery routes, direct delivery and email delivery. You can change them later under Delivery setup → Providers & accounts, Delivery setup → Staff email delivery and Recipients → Partners.
 
 ## 5. Finish
 

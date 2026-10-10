@@ -1,4 +1,4 @@
-"""Numbers → Blocked senders, and "Mark sender as junk" on a received fax (inbound/screening.py).
+"""Delivery setup → Blocked senders, and "Mark sender as junk" on a received fax (inbound/screening.py).
 
 Reading needs ``settings:read``; blocking and unblocking need ``settings:write``
 and write one access audit row each (who, which number, why). The router's

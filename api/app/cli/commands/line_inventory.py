@@ -1,6 +1,6 @@
 """Line inventory commands (N19): your lines matched to carrier discontinuance lists and contract end dates.
 
-They hang off ``faxbot numbers move``; ``fact_advice.py`` imports this module so they register with that group.
+They hang off ``faxbot delivery numbers move``; ``fact_advice.py`` imports this module so they register with that group.
 Nothing here orders, ports or cancels a line.
 """
 from pathlib import Path
@@ -26,7 +26,7 @@ def _show(out, result):
         if item.get('source_url'):
             out.line(f"  Source: {item['source_url']}")
     if not result.get('lists'):
-        out.line("No carrier list yet. Import AT&T's workbook with 'faxbot numbers move import-carrier-list FILE' "
+        out.line("No carrier list yet. Import AT&T's workbook with 'faxbot delivery numbers move import-carrier-list FILE' "
                  f"(download it from {result['sources']['att_workbook']}).")
     out.line(result.get('keyed') or '')
     out.table(['Number', 'Use', 'Carrier', 'Wire center', 'In Faxbot', 'What is known'],

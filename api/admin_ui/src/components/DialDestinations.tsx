@@ -1,4 +1,4 @@
-// Providers → In use → Where Faxbot may dial: the classes of numbers and the countries Faxbot may call,
+// Delivery setup → Providers & accounts → Where Faxbot may dial: the classes of numbers and the countries Faxbot may call,
 // each with why, and the price a minute above which a fax waits for approval. A fax to anything not
 // allowed waits in Sent for approval; nothing is dialed (routing/guard.py).
 import { useCallback, useEffect, useState } from 'react';

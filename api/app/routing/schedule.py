@@ -890,7 +890,7 @@ def reason(decision, settings, *, route_label='this route', price_text=None, now
 
 
 def send_by_view(send_by, state, *, pages=1, finished_at=None, now):
-    """The send-by time and one sentence for Sent details and ``faxbot sent show``; None without one."""
+    """The send-by time and one sentence for Sent details and ``faxbot faxes sent show``; None without one."""
     if send_by is None:
         return None
     at = _when(send_by, now)

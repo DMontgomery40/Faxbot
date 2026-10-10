@@ -1,5 +1,5 @@
 // The station check (routing/stations.py): what Faxbot does when a number answers as another fax machine, per
-// recipient (Recipients → Details) and per mailbox (Numbers → Sender identity), and what Sent details say.
+// recipient (Recipients → Details) and per mailbox (Delivery setup → Sending identity), and what Sent details say.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Card, CardContent, MenuItem, Stack, TextField, Typography,
@@ -90,7 +90,7 @@ export function RecipientStationCheck({ client, number, canWrite }: { client: Cl
   );
 }
 
-// Numbers → Sender identity: the same choice for one mailbox's faxes, with what each mailbox does now.
+// Delivery setup → Sending identity: the same choice for one mailbox's faxes, with what each mailbox does now.
 interface MailboxMode { mailbox_id: string; label: string; mode: Mode; chosen: boolean; actor_name: string | null; sentence: string }
 
 export function MailboxStationCheck({ client, canWrite, mailboxes }: {

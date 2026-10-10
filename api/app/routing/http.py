@@ -470,8 +470,8 @@ def _carrier_status(values):
             'sentence': found['sentence']}
 
 
-NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
-                 'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
+NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Delivery setup → '
+                 'Telnyx, or run faxbot admin settings set --secret telnyx_api_key.')
 
 
 def _reconcile_summary(result, label='Telnyx'):
@@ -1197,7 +1197,7 @@ async def quote(request: Request, to: str = Query(max_length=64), pages: int = Q
             item = next((q for q in facts.quotes if q.account == key and q.number == quoted), None)
             account = by_key.get(key)
             if site and account is not None:
-                # Priced as a call from that site ("faxbot costs fax --from-site"), with its rows.
+                # Priced as a call from that site ("faxbot savings fax --from-site"), with its rows.
                 try:
                     priced = price(store, values, key, dialed, pages, provider=account.provider, site=site,
                                    number=quoted)

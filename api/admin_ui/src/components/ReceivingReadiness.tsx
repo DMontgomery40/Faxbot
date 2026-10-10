@@ -1,4 +1,4 @@
-// System → Diagnostics → Receiving readiness: whether each of your numbers can receive faxes now, judged from
+// Administration → System health → Receiving readiness: whether each of your numbers can receive faxes now, judged from
 // receiving evidence only, and which receiver owns each number (receive_readiness.py).
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, MenuItem, Stack, TextField, Typography } from '@mui/material';
@@ -102,7 +102,7 @@ export default function ReceivingReadiness({ client }: { client: AdminAPIClient 
         {notice && <Alert severity={notice.severity} sx={{ mb: 1.5 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
         {data && data.numbers.length === 0 && (
           <Typography variant="body2">
-            {data.receiving_on ? 'Faxbot receives on no number yet. Add your numbers to your accounts in Providers.'
+            {data.receiving_on ? 'Faxbot receives on no number yet. Add your numbers to your accounts in Delivery setup, Providers & accounts.'
               : 'Receiving faxes is off on this installation.'}
           </Typography>
         )}

@@ -359,10 +359,10 @@ LISTINGS = {'sinch': SinchListing, 'phaxio': PhaxioListing, 'signalwire': Signal
 # verified. Documo's API reference could not be read.
 UNSUPPORTED = {
     'humblefax': ('HumbleFax charges a monthly plan, not each fax, and Faxbot cannot list the faxes sent from '
-                  "HumbleFax's own website; enter its invoice under Costs → Invoices."),
+                  "HumbleFax's own website; enter its invoice under Savings & optimization → Invoices."),
     'efax': ('eFax Corporate prices by quote, and Faxbot cannot read its charges or list its faxes yet; enter its '
-             'invoice under Costs → Invoices.'),
-    'documo': ("Faxbot cannot read Documo's charges or list its faxes yet; enter its invoice under Costs → "
+             'invoice under Savings & optimization → Invoices.'),
+    'documo': ("Faxbot cannot read Documo's charges or list its faxes yet; enter its invoice under Savings & optimization → "
                'Invoices.'),
     'freeswitch': 'Your own FreeSWITCH places the calls; your carrier bills them.',
     'sip': 'The carrier trunk is checked call by call against your carrier\'s call records.',
@@ -576,7 +576,7 @@ class ProviderSweep:
         return False
 
     def run_now(self, *, account_key=None, days=7, now=None):
-        """Sweep now (``faxbot costs charges sweep``): one account or every account that has a listing."""
+        """Sweep now (``faxbot savings charges sweep``): one account or every account that has a listing."""
         from ..accounts import account_named
         now = (now or utcnow()).replace(microsecond=0)
         values = self.values()

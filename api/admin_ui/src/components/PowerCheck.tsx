@@ -1,4 +1,4 @@
-// System → Diagnostics → Power: the UPS Faxbot reads through NUT, so it holds a call the battery could not see
+// Administration → System health → Power: the UPS Faxbot reads through NUT, so it holds a call the battery could not see
 // through (power.py, nut.py). Off until you set the UPS's address; on by itself once set.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, Stack, TextField, Typography } from '@mui/material';

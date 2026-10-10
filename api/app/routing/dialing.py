@@ -194,14 +194,14 @@ CALLER_ID_TEXT = {
 }
 PROBLEM_TEXT = {
     'no_caller_id': ('Toll-free numbers often refuse calls without a caller ID, so faxes go to the number '
-                     'entered until you set one under Providers → Carrier trunk, or with faxbot system settings '
+                     'entered until you set one under Delivery setup → Carrier trunk, or with faxbot admin settings '
                      'set sip_trunk_caller_id=<number>.'),
     'caller_id_not_local': ("This carrier needs a local caller ID, and your trunk's caller ID is not one, so faxes "
-                            'go to the number entered. Change it under Providers → Carrier trunk, or with faxbot '
-                            'system settings set sip_trunk_caller_id=<number>.'),
+                            'go to the number entered. Change it under Delivery setup → Carrier trunk, or with faxbot '
+                            'admin settings set sip_trunk_caller_id=<number>.'),
     'caller_id_not_on_account': ("This carrier needs a caller ID on your account, and your trunk's caller ID is not "
                                  "one of the trunk's numbers, so faxes go to the number entered. Change it under "
-                                 'Providers → Carrier trunk, or with faxbot system settings set '
+                                 'Delivery setup → Carrier trunk, or with faxbot admin settings set '
                                  'sip_trunk_caller_id=<number>.'),
 }
 
@@ -222,7 +222,7 @@ def price_text(terms):
 def terms_view(values, terms=None):
     """What each route this installation sends with publishes about calling toll-free numbers.
 
-    For Costs → Prices & plans and ``faxbot costs rate-cards``; routes with no entry are left out.
+    For Savings & optimization → Prices & plans and ``faxbot savings rate-cards``; routes with no entry are left out.
     """
     from ..provider_labels import PROVIDER_LABELS, trunk_name
     preset = getattr(values, 'sip_trunk_preset', '') or ''

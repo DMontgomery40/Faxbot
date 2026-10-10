@@ -354,13 +354,13 @@ def site_advice(engine, values, *, now=None, days=WINDOW_DAYS, sites=None):
                                        'trunk (estimate).'),
                           'action': (f'To send them from there, add a sending rule for numbers in '
                                      f'{STATE_NAMES.get(there, there)} that sends from the {other[2]} site '
-                                     '(Providers → Rules).')})
+                                     '(Delivery setup → Routing rules).')})
     if items:
         sentence = items[0]['sentence']
     elif len({trunk[3] for trunk in located}) >= 2:
         sentence = 'None of your sites\' trunks would have sent your recent faxes for less from another site.'
     elif any(carrier['by_jurisdiction'] for carrier in carriers):
-        sentence = ('Give each site its state under Providers → Rules → Sites so Faxbot can price calls from where '
+        sentence = ('Give each site its state under Delivery setup → Routing rules → Sites so Faxbot can price calls from where '
                     'they start; with trunks at sites in two states it also says which site costs less.')
     else:
         sentence = carriers[0]['sentence'] if carriers else 'Faxbot has no trunk, so this does not apply.'

@@ -1,6 +1,6 @@
-"""faxbot numbers reply notice: the notice line printed at the top of every page you send.
+"""faxbot delivery identity notice: the notice line printed at the top of every page you send.
 
-The console's Numbers → Sender identity, Header notice. A sender may then mark a fax's first page as a
+The console's Delivery setup → Sending identity, Header notice. A sender may then mark a fax's first page as a
 cover sheet whose notice goes in that line instead (`faxbot send --cover-in-header`), so the page is not
 sent. Reads need settings:read; changes need settings:write.
 """

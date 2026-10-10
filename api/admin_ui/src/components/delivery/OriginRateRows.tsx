@@ -1,4 +1,4 @@
-// Costs → Prices & plans: enter your own prices by where calls start for one sending card, such as your Leeds
+// Savings & optimization → Prices & plans: enter your own prices by where calls start for one sending card, such as your Leeds
 // office's contract rate to UK numbers. Saving replaces the rows you entered; earlier ones are kept as history.
 // Shipped published rows (a carrier's own price list) are not changed here.
 import { useEffect, useState } from 'react';

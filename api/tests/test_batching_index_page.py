@@ -628,4 +628,4 @@ def test_pages_saved_count_only_calls_that_delivered_every_fax_and_unknown_price
     assert found['separator_pages'] == {'calls': 1, 'pages_saved': 1, 'priced_calls': 0, 'saved': {}}
     assert money.separator_pages_sentence(found['separator_pages']) == (
         'An index page or marks at the top of every page left out 1 separator page in 1 shared call. '
-        "Some of those pages have no price, because your carrier's prices are not entered in Costs.")
+        "Some of those pages have no price, because your carrier's prices are not entered in Savings & optimization → Prices & plans.")

@@ -1,4 +1,4 @@
-// Providers → In use: the HISP account (Direct messages) and FHIR clients Faxbot can deliver faxes with instead of
+// Delivery setup → Providers & accounts: the HISP account (Direct messages) and FHIR clients Faxbot can deliver faxes with instead of
 // calling, when a recipient can take them. Secrets are write-only: the page says whether each is set, never what
 // it is. A FHIR client's public key set is what the recipient's system registers; Faxbot serves it at an address.
 import { useEffect, useState } from 'react';

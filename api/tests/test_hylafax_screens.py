@@ -1,5 +1,5 @@
 """What the screens and the command line read from the SSL Fax engine's records: Sent details, Recipients,
-Costs → Savings, and the recipient limits route."""
+Savings & optimization → Savings results, and the recipient limits route."""
 import base64
 from datetime import datetime, timedelta
 

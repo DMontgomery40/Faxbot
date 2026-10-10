@@ -1,11 +1,11 @@
 """The station check and the answer cap (routing/stations.py) on the command line.
 
-faxbot numbers reply station-check: what a mailbox's faxes do when a number answers as another fax machine.
+faxbot delivery identity station-check: what a mailbox's faxes do when a number answers as another fax machine.
 Before any page, Faxbot's built-in engine compares the station a number answers as with the stations it
 expects there. warn lets the fax go on and Sent says so; refuse hangs up before any page. A recipient's own
 choice (faxbot recipients set --station-check) comes first.
 
-faxbot providers trunk answer-cap: whether Faxbot hangs up when no fax machine answers within 50 seconds, per
+faxbot delivery providers trunk answer-cap: whether Faxbot hangs up when no fax machine answers within 50 seconds, per
 trunk, and why it does or does not use it there.
 """
 import typer
@@ -54,7 +54,7 @@ def answer_cap(choice: str = typer.Argument(None, metavar='[on|off]',
                                                  'the carrier bills by the minute. off: wait the usual 60 seconds. '
                                                  'Leave it out to see the setting.'),
                account: str = typer.Option(None, '--account', metavar='KEY',
-                                           help="Which trunk, by its key from 'faxbot providers accounts list'; the "
+                                           help="Which trunk, by its key from 'faxbot delivery providers accounts list'; the "
                                                 'first trunk when left out.')):
     """See or change whether Faxbot hangs up when no fax machine answers within 50 seconds."""
     api = state.api()
@@ -77,10 +77,10 @@ def answer_cap(choice: str = typer.Argument(None, metavar='[on|off]',
             write_settings(api, {'sip_fax_answer_cap': on})
     trunks = api.get('/routing/stations/answer-cap').get('trunks') or []
     if not trunks:
-        raise CliError('No phone line (trunk) is set up yet. Set one up with faxbot providers trunk use.',
+        raise CliError('No phone line (trunk) is set up yet. Set one up with faxbot delivery providers trunk use.',
                        EXIT_NOT_FOUND)
     chosen = [item for item in trunks if item['account'] == (key or 'sip')] or (trunks[:1] if not key else [])
     if not chosen:
-        raise CliError(f"No trunk is called '{key}'. See 'faxbot providers accounts list'.", EXIT_NOT_FOUND)
+        raise CliError(f"No trunk is called '{key}'. See 'faxbot delivery providers accounts list'.", EXIT_NOT_FOUND)
     trunk = chosen[0]
     state.out().result(trunk, lambda out: out.line(f"{trunk['label']}: {trunk['sentence']}"))

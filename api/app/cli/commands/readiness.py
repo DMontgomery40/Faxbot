@@ -1,4 +1,4 @@
-"""Receiving readiness, receive owners and the UPS: ``faxbot system diagnostics receiving|power`` (brief 92, RF).
+"""Receiving readiness, receive owners and the UPS: ``faxbot admin diagnostics receiving|power`` (brief 92, RF).
 
 Hangs off the diagnostics group; ``route_families.py`` imports this module, so both register before ``nouns.py``
 copies the group. Nothing here sends a fax.

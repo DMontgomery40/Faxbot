@@ -1,7 +1,7 @@
 """Junk senders turned away before Asterisk answers (M14).
 
 An administrator marks a received fax's sender as junk ("Mark sender as
-junk", or Numbers → Blocked senders), with a reason; the entry expires after
+junk", or Delivery setup → Blocked senders), with a reason; the entry expires after
 90 days unless they choose otherwise, and removing it is one click. Nothing
 else ever adds an entry, and a caller with no number (anonymous or withheld)
 can never be blocked.

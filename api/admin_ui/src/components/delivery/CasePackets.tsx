@@ -1,4 +1,4 @@
-// Recipients → Case packets: for one case and one recipient, which documents they
+// Faxes → Case packets: for one case and one recipient, which documents they
 // acknowledged, and sending a packet that leaves those out (a one-page index lists
 // them instead, when the recipient accepts that). Delivered is not acknowledged.
 import { useCallback, useEffect, useState } from 'react';

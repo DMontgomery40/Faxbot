@@ -129,7 +129,7 @@ def test_an_index_page_or_page_marks_need_their_own_agreement_and_show_who_recor
     # This installation's header prints no sending number, so its calls use separators and the card says so.
     assert marks['boundaries'] == 'page_headers' and marks['boundaries_sentence'] == (
         'Faxes to this number use separator pages for now, because marks at the top of every page need your '
-        'header text and sending number set in Numbers > Sender identity.')
+        'header text and sending number set in Delivery setup > Sending identity.')
     off = client.delete(f'/batching/numbers/{NUMBER}', headers=ADMIN).json()
     assert off['boundaries'] == 'separators' and off['boundaries_sentence'] is None
     assert off['boundaries_agreement'] is None

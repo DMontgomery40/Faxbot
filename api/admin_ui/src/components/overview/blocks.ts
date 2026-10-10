@@ -203,7 +203,7 @@ export function nextImprovements({ capabilities, sending, facts }: {
   for (const item of (sending?.items ?? []).slice(0, 3)) {
     items.push({ key: `sending-${item.number}`, kind: 'now', kindLabel: IMPROVEMENT_LABELS.now,
       title: `A cheaper route to ${item.display_name ?? item.number}`, sentence: item.sentence,
-      destination: 'savings/opportunities?section=sending', command: 'faxbot costs recommendations sending' });
+      destination: 'savings/opportunities?section=sending', command: 'faxbot savings opportunities sending' });
   }
   const factRows = (facts?.recipients ?? []).flatMap((recipient) => recipient.facts
     .filter((row) => !row.realized)
@@ -212,7 +212,7 @@ export function nextImprovements({ capabilities, sending, facts }: {
     const kind: CapabilityImprovementKind = row.kind === 'authorization' ? 'agreement' : 'fact';
     items.push({ key: `fact-${recipient.number}-${row.fact}`, kind, kindLabel: IMPROVEMENT_LABELS[kind],
       title: `${row.title} (${recipient.name ?? recipient.display})`, sentence: row.step,
-      destination: 'savings/facts', command: 'faxbot costs advice' });
+      destination: 'savings/facts', command: 'faxbot savings facts' });
   }
   return KIND_ORDER.flatMap((kind) => items.filter((item) => item.kind === kind)).slice(0, IMPROVEMENTS_SHOWN);
 }

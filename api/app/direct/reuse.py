@@ -1,7 +1,7 @@
 """Send a partner only the bytes it lacks: a reference to a copy it holds, or the changes (research D9, D10).
 
 Over the direct path the fax call is already gone, so what these save is
-bytes, never money (Site 102). They are counted as bytes on Costs → Savings.
+bytes, never money (Site 102). They are counted as bytes on Savings & optimization → Savings results.
 
 The signed manifest never changes: it always describes the whole document
 (its SHA-256, size and pages) for its own recipient, and the receipt is the

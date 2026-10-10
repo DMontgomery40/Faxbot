@@ -1,4 +1,4 @@
-// System → Diagnostics → Sending routes: failures that belong to a whole route rather than to the numbers it called,
+// Administration → System health → Sending routes: failures that belong to a whole route rather than to the numbers it called,
 // the 2-by-2 test that tells them apart, and which providers share an upstream carrier (routing/route_families.py).
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -186,7 +186,7 @@ export default function RouteFamilies({ client }: { client: AdminAPIClient }) {
               </Stack>
               {data.numbers.length < 2 && (
                 <Typography variant="body2" color="text.secondary">
-                  A 2-by-2 test needs two fax numbers of your own. Add them to your accounts in Providers.
+                  A 2-by-2 test needs two fax numbers of your own. Add them to your accounts in Delivery setup, Providers & accounts.
                 </Typography>
               )}
               {data.tests.map((test) => (

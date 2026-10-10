@@ -1157,7 +1157,7 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
     from .trunk import local_date
 
     def human(out):
-        # Money as money and the provider's name, as Costs → Prices & plans shows them.
+        # Money as money and the provider's name, as Savings & optimization → Prices & plans shows them.
         out.table(
             ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
              'Advertised on'],

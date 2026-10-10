@@ -1,4 +1,4 @@
-"""The header notice over HTTP (``header_notice.py``): Numbers → Sender identity, Send a fax, Sent and Recipients.
+"""The header notice over HTTP (``header_notice.py``): Delivery setup → Sending identity, Send a fax, Sent and Recipients.
 
 - ``GET /header-notice`` and ``PUT /header-notice``: the organization's notice;
   ``PUT /header-notice/mailboxes/{mailbox}``: one mailbox's (empty removes it).

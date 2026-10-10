@@ -1,6 +1,6 @@
-// Costs → Advice: what one missing fact cost you. For the last 90 days, per recipient, what the faxes cost by the best
+// Savings & optimization → Facts to establish: what one missing fact cost you. For the last 90 days, per recipient, what the faxes cost by the best
 // route Faxbot may use, and what they would have cost had one fact been established (a partner, a recipient's
-// approval, a price, a plan's allowance), less what establishing it costs. Never savings: Costs → Savings counts what
+// approval, a price, a plan's allowance), less what establishing it costs. Never savings: Savings & optimization → Savings results counts what
 // an established fact really saved. Advice only (routing/fact_advice.py).
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Chip, Paper, Stack, Typography } from '@mui/material';

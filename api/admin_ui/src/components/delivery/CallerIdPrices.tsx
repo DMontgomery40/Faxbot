@@ -1,4 +1,4 @@
-// Costs → Prices & plans: prices by the caller ID a call shows. Some carriers charge much less for a call to a
+// Savings & optimization → Prices & plans: prices by the caller ID a call shows. Some carriers charge much less for a call to a
 // country when the caller ID comes from that country or the EEA. Faxbot uses a lower price only for a caller ID
 // you confirmed on that account, and never changes the caller ID an account shows.
 import { useCallback, useEffect, useState } from 'react';

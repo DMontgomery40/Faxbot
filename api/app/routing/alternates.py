@@ -244,7 +244,7 @@ def savings(routes, engine, *, since, days):
 
 
 def savings_sentence(result, days):
-    """One sentence for Costs → Savings; the toll-free numbers' owners pay for those calls, so it says so."""
+    """One sentence for Savings & optimization → Savings results; the toll-free numbers' owners pay for those calls, so it says so."""
     from .costs import money_list_text
     faxes = result['faxes']
     if not faxes:

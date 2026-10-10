@@ -1,4 +1,4 @@
-// Costs → Prices & plans → Your plans this month: for each flat, allowance or committed plan, its normal-use budget
+// Savings & optimization → Prices & plans → Your plans this month: for each flat, allowance or committed plan, its normal-use budget
 // or allowance, what is left until the counts start again, what is committed, the day-by-day burn-down, and whose
 // bill a fax between your own accounts falls on. Every figure is an estimate. The budgets are the setting
 // plan_budgets; Faxbot never changes a plan itself.

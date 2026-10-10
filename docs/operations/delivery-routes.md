@@ -99,7 +99,7 @@ Faxbot does not send a shared call again automatically. If the SIP trunk is unav
 
 Sent's fax details say "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's **Details** shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.
 
-From the command line: `faxbot recipients together show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot sent send-now FAX_ID`.
+From the command line: `faxbot recipients together show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot faxes sent send-now FAX_ID`.
 
 Tested on 4 October 2026 over a local T.38 test line between two Faxbot fax engines (`make native-proof`). One call carried two faxes, 5 pages including separators, in 39 seconds, and both were delivered with identical pages. A call ended after 27 seconds: the sender counted 2 confirmed pages, the first fax was delivered and the second failed. In an earlier cut, the receiver held 1 page while the sender counted 0, so the receiver can hold one page more than the sender saw confirmed. Not yet confirmed on a live trunk.
 
@@ -123,19 +123,19 @@ Spending adds up charges where they exist and estimates only for faxes without o
 
 The Overview's **Spending, last 30 days** card reads the same figures: one line per sending route, one for calls received on the SIP trunk, and the total. A provider with no published price and no rate card reads "No published price; add your rate".
 
-Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, was received within 45 seconds of the call's end and has the same numbers where it knows them, the charge is shown on that fax in Received, and `faxbot costs spending` says the call "reached Faxbot without a call record; its fax is in Received". For a fax brought in later, Faxbot uses the time the trunk received it; a fax whose numbers were never learned is matched by that time alone, and only when no other such fax or record is that close. The charged line counts these calls too, for example "Telnyx charged $0.0096 for 3 calls, 1 without a Faxbot call record."
+Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, was received within 45 seconds of the call's end and has the same numbers where it knows them, the charge is shown on that fax in Received, and `faxbot savings spending` says the call "reached Faxbot without a call record; its fax is in Received". For a fax brought in later, Faxbot uses the time the trunk received it; a fax whose numbers were never learned is matched by that time alone, and only when no other such fax or record is that close. The charged line counts these calls too, for example "Telnyx charged $0.0096 for 3 calls, 1 without a Faxbot call record."
 
 Sent's fax details show one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." Received shows the same line for each received fax under **Received through**.
 
 From the command line:
 
 ```bash
-faxbot costs spending             # spending per route and for received calls
-faxbot costs reconcile            # ask Telnyx now, instead of waiting for the next check
-faxbot costs fax FAX_ID           # one sent fax
-faxbot costs received --all       # every received fax you can see; or one: faxbot costs received ID
-faxbot costs plans --in-use       # published plans for the services you send with that have no price yet
-faxbot costs recommendations      # route, plan and receiving-cost advice
+faxbot savings spending             # spending per route and for received calls
+faxbot savings reconcile            # ask Telnyx now, instead of waiting for the next check
+faxbot savings fax FAX_ID           # one sent fax
+faxbot savings received --all       # every received fax you can see; or one: faxbot savings received ID
+faxbot savings plans --in-use       # published plans for the services you send with that have no price yet
+faxbot savings opportunities      # route, plan and receiving-cost advice
 ```
 
 If a call record with measured connected time is available for an attempt, Faxbot uses it instead of its own timing, which includes queueing and ringing.
@@ -156,7 +156,7 @@ Every time Faxbot starts, each provider you send or receive with that has never 
 | HumbleFax | $10 a month to send and receive unlimited faxes, no overage charges | [humblefax.com/faq](https://humblefax.com/faq) |
 | Your SIP trunk | the trunk carrier's per-minute prices in [What a call costs](../setup/sip-trunk.md#what-a-call-costs) | carrier pages |
 | Documo | no published fax API price; add your contracted rate | [documo.com/pricing](https://www.documo.com/pricing/) |
-| eFax | the API is priced by quote, so no card; **Rate cards** names eFax's cheapest published plan for your installation country and **Use a published plan as my estimate** adds it as your own card when you choose (`faxbot costs plans efax`) | [eFax](../setup/efax.md#prices) |
+| eFax | the API is priced by quote, so no card; **Rate cards** names eFax's cheapest published plan for your installation country and **Use a published plan as my estimate** adds it as your own card when you choose (`faxbot savings plans efax`) | [eFax](../setup/efax.md#prices) |
 
 ## Rate cards
 

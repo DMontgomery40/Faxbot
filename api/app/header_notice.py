@@ -51,7 +51,7 @@ MAX_NOTICE = 120
 MIN_POINTS = 6.5
 A4_POINTS = 595.0
 UPLOAD_SUFFIX = '.upload.pdf'
-WHERE = 'Numbers → Sender identity'
+WHERE = 'Delivery setup → Sending identity'
 
 
 class NoticeRefused(ValueError):
@@ -380,7 +380,7 @@ def _when(value):
 
 
 def settings_view(connection, labels=None):
-    """The organization's notice and each mailbox's, for Sender identity and ``faxbot numbers reply notice``."""
+    """The organization's notice and each mailbox's, for Sender identity and ``faxbot delivery identity notice``."""
     found = notices_on(connection)
     labels = labels or {}
 

@@ -3,7 +3,7 @@
 An enterprise whose fax "just works" moves when someone else sets a date: a carrier discontinues the copper
 service a line runs on, or the telecom contract that holds its price ends. Faxbot keeps your line inventory and
 the carrier lists you import, matches each line to them, and puts every line with a date at the top of the
-retirement plan (Numbers → Advice and moves), with the source and the date.
+retirement plan (Delivery setup → Number moves), with the source and the date.
 
 **The line inventory** is a CSV or Excel file with one line per row. Only the number is required. Columns
 (names are matched ignoring case, spaces and underscores; the first listed spelling is the documented one):

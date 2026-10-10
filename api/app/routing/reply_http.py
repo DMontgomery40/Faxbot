@@ -1,4 +1,4 @@
-"""Numbers → Sender identity: the reply number, per organization and per mailbox (routing/reply_number.py).
+"""Delivery setup → Sending identity: the reply number, per organization and per mailbox (routing/reply_number.py).
 
 Reads need ``settings:read``; changes need ``settings:write`` and are saved as
 ordinary settings (``fax_reply_number``, ``fax_reply_numbers``) through the
@@ -43,7 +43,7 @@ def _candidate_view(candidate):
 
 
 def reply_view(values, engine):
-    """Everything Numbers → Sender identity shows about reply numbers; no secrets, no internal ids beyond mailboxes."""
+    """Everything Delivery setup → Sending identity shows about reply numbers; no secrets, no internal ids beyond mailboxes."""
     try:
         store = RouteStore(engine)
     except DeliveryStoreError:

@@ -89,7 +89,7 @@ def porting_steps(losing, gaining, *, number=None, path=None):
     steps.append(f'At {new}: {how}' + (f' {new} asks for {documents}.' if documents else ''))
     steps.append(f'Keep {what} and your {old} account active until {new} confirms the date the move completes; '
                  'never cancel first, or the number can be lost.')
-    steps.append(f'When it completes, add {what} to your {new} account in Faxbot under Providers and remove it from '
+    steps.append(f'When it completes, add {what} to your {new} account in Faxbot under Delivery setup and remove it from '
                  f'{old}; the rule under Numbers that sends its faxes to a mailbox stays as it is.')
     fee = in_side.get('fee_text') or (f"{money_text(parse_amount(in_side['fee']), 'USD')} a number."
                                       if in_side.get('fee') not in (None, '') else None)
@@ -272,7 +272,7 @@ def _received(engine, values, now, days):
 def _notes(values, number, reply):
     notes = []
     if number == (getattr(values, 'sip_trunk_caller_id', '') or ''):
-        notes.append('It is also your trunk\'s caller ID: change the caller ID under Providers once it moves.')
+        notes.append('It is also your trunk\'s caller ID: change the caller ID under Delivery setup once it moves.')
     if reply and number == reply:
         notes.append('It is your reply number, printed on every fax you send; porting keeps it, so that stays right.')
     return notes
@@ -361,13 +361,13 @@ def placement(engine, values, *, routes=None, now=None, days=WINDOW_DAYS, path=N
     elif accounts:
         sentence, state = accounts[0]['sentence'], 'account'
     elif any(row['state'] == 'unknown' for row in rows):
-        sentence = 'Faxbot can\'t price every number yet; add the missing prices in Costs → Prices & plans.'
+        sentence = 'Faxbot can\'t price every number yet; add the missing prices in Savings & optimization → Prices & plans.'
         state = 'unknown'
     else:
         sentence, state = NO_MOVES, 'nothing_to_move'
     if len(receiving_hosts) < 2 and state not in ('unknown', 'account'):
         sentence = ('You receive through one account, so there is nowhere cheaper of your own to move a number; '
-                    'Costs → Recommendations → Other carriers compares carriers you don\'t use.')
+                    'Savings & optimization → Opportunities → Other carriers compares carriers you don\'t use.')
         state = 'one_account'
     return {'days': days, 'estimate': True, 'state': state, 'sentence': sentence, 'numbers': rows,
             'accounts': accounts, 'note': ADVICE_ONLY,

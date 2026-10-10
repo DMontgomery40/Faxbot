@@ -99,7 +99,7 @@ def sending_together(routes, engine, *, now, days, separator_pages=None):
         sentence += f", but {shared} cost about {_money_text(more)} more than {result['faxes']} separate calls"
     sentence += '.'
     if result['priced_calls'] < result['calls']:
-        sentence += " Some calls have no price, because your carrier's prices are not entered in Costs."
+        sentence += " Some calls have no price, because your carrier's prices are not entered in Savings & optimization → Prices & plans."
     result['sentence'] = sentence
     return result
 
@@ -250,7 +250,7 @@ def case_packets(routes, engine, *, since, days):
 
 
 def savings(routes, engine, *, now=None, days=WINDOW_DAYS, home=None):
-    """Every part of Costs → Savings over ``days``; ``home`` is the installation country, for relay sentences."""
+    """Every part of Savings & optimization → Savings results over ``days``; ``home`` is the installation country, for relay sentences."""
     now = now or utcnow()
     since = now - timedelta(days=days)
     # Separator pages shared calls left out (index page or page marks): counted apart from the calls saved.

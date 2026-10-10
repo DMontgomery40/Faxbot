@@ -26,7 +26,7 @@ STATUS_EVENT_FIELDS = {
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
     # PJSIPShowEndpoint: only the contact's status. Its EndpointDetail and AuthDetail events are dropped.
     "contactstatusdetail": ("URI", "Status", "RoundtripUsec"),
-    # Counted before Faxbot restarts Asterisk, and listed under System → Developer → Scripts & checks.
+    # Counted before Faxbot restarts Asterisk, and listed under Administration → Developer → Scripts & checks.
     "coreshowchannel": ("Uniqueid", "Channel", "ChannelStateDesc", "CallerIDNum", "Exten", "Duration"),
     "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
     # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.

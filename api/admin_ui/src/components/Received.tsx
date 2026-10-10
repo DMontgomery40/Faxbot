@@ -271,7 +271,7 @@ export default function Received({
   useEffect(() => { void fetchList(); }, [fetchList]);
   useEffect(() => { void fetchDeliveries(); }, [fetchDeliveries]);
   useEffect(() => { void fetchReceiving(); }, [fetchReceiving]);
-  // Replies to public test lines (System → Diagnostics → Public test lines), labelled as test replies.
+  // Replies to public test lines (Administration → System health → Public test lines), labelled as test replies.
   const [testReplies, setTestReplies] = useState<Set<string>>(new Set());
   useEffect(() => {
     client.call<{ replies: Array<{ inbound_id: string }> }>({ method: 'GET', path: '/diagnostics/test-lines/replies' })

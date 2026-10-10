@@ -1,6 +1,6 @@
 """faxbot delivery identity: the number your faxes show, so replies reach you on your cheapest number.
 
-The console's Numbers → Sender identity, Reply number. Reads need settings:read; changes need
+The console's Delivery setup → Sending identity, Reply number. Reads need settings:read; changes need
 settings:write and are checked like the console's: the number must be yours, receive into
 Faxbot and reach the mailbox (for a mailbox's own number, that mailbox).
 """

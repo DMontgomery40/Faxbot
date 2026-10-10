@@ -18,7 +18,7 @@ interface BlockedSendersProps {
   canWrite: boolean;
 }
 
-// Numbers → Blocked senders: junk senders turned away before the call is answered, and every call turned away.
+// Delivery setup → Blocked senders: junk senders turned away before the call is answered, and every call turned away.
 function BlockedSenders({ client, canWrite }: BlockedSendersProps) {
   const [view, setView] = useState<BlockedSendersView | null>(null);
   const [number, setNumber] = useState('');

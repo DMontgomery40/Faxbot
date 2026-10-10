@@ -1,4 +1,4 @@
-// System → Diagnostics → Sending routes: route problems, the 2-by-2 test and shared upstreams (routing/route_families_http.py).
+// Administration → System health → Sending routes: route problems, the 2-by-2 test and shared upstreams (routing/route_families_http.py).
 // The server writes every sentence; the console shows them and sends back what the administrator chose.
 import type AdminAPIClient from './client';
 

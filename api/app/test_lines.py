@@ -153,7 +153,7 @@ def reply_check(values, engine):
     number, what = missing[0]
     return {'caller_id': caller, 'header': header, 'reaches': False,
             'sentence': (f'{what} {number}, and Faxbot does not receive faxes on it, so a test line that faxes back '
-                         'cannot reach Faxbot. In Numbers → Sender identity, choose a reply number Faxbot receives '
+                         'cannot reach Faxbot. In Delivery setup → Sending identity, choose a reply number Faxbot receives '
                          'on.')}
 
 

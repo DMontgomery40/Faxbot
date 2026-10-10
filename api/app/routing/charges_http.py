@@ -1,4 +1,4 @@
-"""Costs → Charges and Costs → Invoices: what each provider charged, faxes it billed that Faxbot has no record of,
+"""Savings & optimization → Charges and Savings & optimization → Invoices: what each provider charged, faxes it billed that Faxbot has no record of,
 and monthly invoices compared with your faxes (B2, M27).
 
 - ``GET /routing/charges``: how each account's charges are read, received-fax charges, the faxes providers listed

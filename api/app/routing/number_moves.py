@@ -52,7 +52,7 @@ ANSWER_TEXT = {'yes': 'Yes', 'no': 'No', 'unknown': 'Not sure'}
 # Steps you record yourself, with what doing them means.
 RECORDED = {
     'delivery': 'Faxes to it reach staff (by email or another way) and you checked it.',
-    'new_account_ready': 'The new account is set up in Faxbot under Providers.',
+    'new_account_ready': 'The new account is set up in Faxbot under Delivery setup.',
     'new_route_tested': 'A test fax reached Faxbot through the new account.',
     'port_ordered': 'You placed the port order with the new provider.',
     'cutover': 'The new provider says the move is complete.',
@@ -419,7 +419,7 @@ def _answered(answers, question, stage, label, *, facts=()):
     row = answers.get(question)
     if row is None or row['answer'] == 'unknown':
         return _step(question, stage, label, 'waiting', [QUESTIONS[question][1], *facts], 'answer',
-                     'Answer under Numbers → Advice')
+                     'Answer under Delivery setup → Number moves')
     if row['answer'] == 'yes':
         return _step(question, stage, label, 'blocked',
                      [f"You answered yes{': ' + row['note'] if row['note'] else '.'}",

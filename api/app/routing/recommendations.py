@@ -6,7 +6,7 @@ preferred route through the destination endpoint. Each recommendation also
 carries a sending rule ("Add as rule"), and ``country_rules`` suggests one rule
 for a whole country when the same account was cheaper for several of its
 numbers. A suggested rule is only ever a draft: it takes effect when the
-administrator checks and publishes it on Providers → Rules.
+administrator checks and publishes it on Delivery setup → Routing rules.
 """
 from .costs import format_amount
 from .delivered import MIN_DELIVERED, WINDOW_DAYS, short_money_text

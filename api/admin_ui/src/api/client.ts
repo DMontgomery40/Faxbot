@@ -790,7 +790,7 @@ class AdminAPIClient {
     return this.json('/admin/diagnostics/report');
   }
 
-  // One read-only list from the fax engine (System → Developer → Scripts & checks).
+  // One read-only list from the fax engine (Administration → Developer → Scripts & checks).
   async getEngineView(view: EngineView): Promise<{ view: EngineView; title: string; columns: string[]; rows: string[][];
     available: boolean; message: string | null }> {
     return this.json(`/admin/diagnostics/engine/${view}`);
@@ -1162,7 +1162,7 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
-  // Numbers where another route cost less per delivered fax over the last 30 days (Costs → Recommendations).
+  // Numbers where another route cost less per delivered fax over the last 30 days (Savings & optimization → Opportunities).
   async getSendingRecommendations(): Promise<SendingRecommendations> {
     return this.json('/routing/recommendations/sending');
   }
@@ -1176,7 +1176,7 @@ class AdminAPIClient {
     return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
   }
 
-  // Costs → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
+  // Savings & optimization → Charges: how each account's charges are read, received-fax charges, faxes Faxbot has no record of.
   async getCharges(days = 30): Promise<ChargesView> {
     return this.json(`/routing/charges${query({ days })}`);
   }
@@ -1186,7 +1186,7 @@ class AdminAPIClient {
     return this.json('/routing/charges/sweep', { method: 'POST', body: JSON.stringify({ account: account || null, days }) });
   }
 
-  // Costs → Invoices: each invoice entered, with the part your faxes don't explain.
+  // Savings & optimization → Invoices: each invoice entered, with the part your faxes don't explain.
   async listInvoices(): Promise<InvoicesView> {
     return this.json('/routing/invoices');
   }
@@ -1406,7 +1406,7 @@ class AdminAPIClient {
     return this.json(`/intake/connectors/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
   }
 
-  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Numbers, Email and folders).
+  // Intake connectors: mailboxes and folders that bring documents in or send faxes (Delivery setup, Email and folders).
   async listConnectors(): Promise<{ connectors: Connector[] }> {
     return this.json('/intake/sources');
   }
@@ -1774,7 +1774,7 @@ class AdminAPIClient {
     return this.json(`/routing/recommendations/receiving${query({ days })}`);
   }
 
-  // Whether each monthly plan is worth its fee at your traffic (estimates; Costs → Recommendations → Plans).
+  // Whether each monthly plan is worth its fee at your traffic (estimates; Savings & optimization → Opportunities → Plans).
   async getPlanRecommendations(): Promise<PlanRecommendations> {
     return this.json('/routing/recommendations/plans');
   }
@@ -1786,32 +1786,32 @@ class AdminAPIClient {
   }
 
   // Who gets each limited plan's last pages or minutes: the waiting faxes they save the most on, and what is kept for
-  // faxes not sent yet (estimates; Costs → Prices & plans).
+  // faxes not sent yet (estimates; Savings & optimization → Prices & plans).
   async getPlanAllocation(): Promise<PlanAllocation> {
     return this.json('/routing/plans/allocation');
   }
 
-  // Your last 30 days at each carrier's published prices; advice only (Costs → Recommendations → Other carriers).
+  // Your last 30 days at each carrier's published prices; advice only (Savings & optimization → Opportunities → Other carriers).
   async getCarrierRecommendations(): Promise<CarrierComparison> {
     return this.json('/routing/recommendations/carriers');
   }
 
-  // Calls marked as fax against calls not marked, from history (Costs → Recommendations → Fax marker).
+  // Calls marked as fax against calls not marked, from history (Savings & optimization → Opportunities → Fax marker).
   async getFaxMarkerAdvice(): Promise<FaxMarkerAdvice> {
     return this.json('/routing/recommendations/fax-marker');
   }
 
-  // Numbers whose calls end just past a billed minute (Costs → Recommendations → Billing steps).
+  // Numbers whose calls end just past a billed minute (Savings & optimization → Opportunities → Billing steps).
   async getBillingSteps(): Promise<BillingSteps> {
     return this.json('/routing/recommendations/billing-steps');
   }
 
-  // Numbers whose faxes cost the most again and again (Costs → Recommendations → Partner candidates).
+  // Numbers whose faxes cost the most again and again (Savings & optimization → Opportunities → Partner candidates).
   async getPartnerCandidates(): Promise<PartnerCandidates> {
     return this.json('/routing/recommendations/partners');
   }
 
-  // Recipients with a toll-free fax number on file (Costs → Recommendations → Toll-free numbers).
+  // Recipients with a toll-free fax number on file (Savings & optimization → Opportunities → Toll-free numbers).
   async getTollFreeRecommendations(): Promise<TollFreeRecommendations> {
     return this.json('/routing/recommendations/toll-free');
   }
@@ -1831,7 +1831,7 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
   }
 
-  // Direct messages and FHIR (Providers → In use): the HISP account and FHIR clients; secrets are write-only.
+  // Direct messages and FHIR (Delivery setup → Providers & accounts): the HISP account and FHIR clients; secrets are write-only.
   async getDigitalAccounts(): Promise<DigitalAccountsState> {
     return this.json('/digital/accounts');
   }
@@ -1915,7 +1915,7 @@ class AdminAPIClient {
     return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
   }
 
-  // Numbers → Sender identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
+  // Delivery setup → Sending identity: the reply number for every fax, and per mailbox. An empty number lets Faxbot choose.
   async getReplyNumber(): Promise<ReplyNumberView> {
     return this.json('/numbers/reply');
   }
@@ -1932,7 +1932,7 @@ class AdminAPIClient {
     return this.json(`/numbers/reply/mailboxes/${id(mailboxId)}`, { method: 'DELETE' });
   }
 
-  // Numbers → Blocked senders: callers turned away before the call is answered.
+  // Delivery setup → Blocked senders: callers turned away before the call is answered.
   async getBlockedSenders(): Promise<BlockedSendersView> {
     return this.json('/screening');
   }

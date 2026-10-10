@@ -194,7 +194,7 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
          cover_in_header: bool = typer.Option(False, '--cover-in-header',
                                               help='The first page is a cover sheet: print its notice in the header '
                                                    'of every page instead and leave that page out. Needs a header '
-                                                   "notice ('faxbot numbers reply notice set'); a recipient that "
+                                                   "notice ('faxbot delivery identity notice set'); a recipient that "
                                                    'needs a cover sheet still gets it.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()

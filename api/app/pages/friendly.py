@@ -738,14 +738,14 @@ WHITEN_SENTENCE = (
     'Light shading then prints white where that makes the call cost less; in Faxbot\'s tests a shaded table went '
     'from 61 to 12 seconds. ' + WHITEN_WARNING)
 RECIPIENT_LABEL = 'Fax-friendly shading for this recipient'
-WHERE = 'under Providers, In use, Delivery routes'
+WHERE = 'under Delivery setup, Providers & accounts, Delivery routes'
 
 
 def describe_setting():
     """The setting as other screens describe it (guided setup reads its words here; keep this the one source).
 
     ``default`` is the choice a new installation has, ``off`` the one that changes no page, and ``choices`` maps
-    each choice to its label (as Providers → In use shows it) and one sentence saying what it does. ``whiten`` is
+    each choice to its label (as Delivery setup → Providers & accounts shows it) and one sentence saying what it does. ``whiten`` is
     the separate opt-in to make light areas white, off by default, with its warning.
     """
     return {'setting': 'fax_friendly_documents', 'label': SETTING_LABEL, 'default': 'where_it_saves', 'off': 'never',
@@ -839,7 +839,7 @@ def sent_sentence(run, rate=None):
     return f'{head}: an estimated {duration(seconds)} less on the line {speed}.'
 
 
-# The recommendation (Costs, Recommendations): only while the setting is Never -----------------------------------
+# The recommendation (Savings & optimization, Opportunities): only while the setting is Never -----------------------------------
 
 DAYS = 30
 FAXES = 10  # recent faxes measured at most
@@ -913,7 +913,7 @@ def where_it_saves(engine):
 
 
 def recommendation(engine, data_dir, *, choice, now=None, measure=None, saves=None):
-    """Costs, Recommendations: with the setting at Never, whether "Where it saves time" would have saved time on
+    """Savings & optimization, Opportunities: with the setting at Never, whether "Where it saves time" would have saved time on
     your recent faxes (at most FAXES faxes and PAGE_BUDGET pages, each drawn again once). Faxes that went by a
     provider charging per page save nothing and are not counted. With any other choice there is nothing to say."""
     now = now or utcnow()

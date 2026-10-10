@@ -1,4 +1,4 @@
-"""The station check over HTTP (``stations.py``): Recipients details, Numbers → Sender identity and Sent details.
+"""The station check over HTTP (``stations.py``): Recipients details, Delivery setup → Sending identity and Sent details.
 
 - ``GET``/``PUT /routing/stations/{number}``: what Faxbot does when the number answers as another fax machine
   (``warn`` or ``refuse``), the stations it expects there, and a station a person confirms.

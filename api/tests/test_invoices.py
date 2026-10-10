@@ -265,7 +265,7 @@ def test_a_recommendation_appears_only_when_residuals_recur():
     assert advice['text'] == ('Your HumbleFax invoices were more than your faxes explain in July 2026 and September '
                               '2026 ($3.10 and $3.20). Look on the invoice for a charge Faxbot does not know about, '
                               'such as a number fee, taxes or a plan change, and add it to HumbleFax\'s prices under '
-                              'Costs → Prices & plans.')
+                              'Savings & optimization → Prices & plans.')
     less = recurring('Sinch', [_item('sinch', 9, 20 * dollars, -2 * dollars), _item('sinch', 8, 20 * dollars, -3 * dollars)])
     assert less['direction'] == 'less' and 'may be higher than what Sinch charges you' in less['text']
     # Once, below $1, below 5%, incomplete, mixed signs or older than the last three: no recommendation.

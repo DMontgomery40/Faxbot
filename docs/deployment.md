@@ -45,23 +45,23 @@ Security
 
 ## Upgrade an installation
 
-A database upgrade needs the **whole installation** stopped: every API process and container that uses the database, including workers on other hosts that share a PostgreSQL database. `faxbot system migrate` (like `status`, `recover-owner`, `backup` and `restore`) refuses to run when a server answers on the configured address or holds the data folder's lock files, but it cannot see processes on other hosts.
+A database upgrade needs the **whole installation** stopped: every API process and container that uses the database, including workers on other hosts that share a PostgreSQL database. `faxbot admin migrate` (like `status`, `recover-owner`, `backup` and `restore`) refuses to run when a server answers on the configured address or holds the data folder's lock files, but it cannot see processes on other hosts.
 
 With Docker Compose:
 
 ```bash
 docker compose stop api                     # and anything else using this installation
 docker compose build api                    # or pull the new image
-docker compose run --rm --no-deps api faxbot system status
-docker compose run --rm --no-deps api faxbot system migrate
+docker compose run --rm --no-deps api faxbot admin status
+docker compose run --rm --no-deps api faxbot admin migrate
 docker compose up -d api
-docker compose exec api faxbot system health
+docker compose exec api faxbot admin health
 ```
 
 Back up before `migrate`:
 
-- An installation made by this release or later: use [`faxbot system backup`](#back-up-and-restore).
-- An installation from before October 2026 has no installation key file yet, so `faxbot system backup` refuses it. Copy the database and the data folder yourself. With SQLite in the default volume, both are in `/faxdata`:
+- An installation made by this release or later: use [`faxbot admin backup`](#back-up-and-restore).
+- An installation from before October 2026 has no installation key file yet, so `faxbot admin backup` refuses it. Copy the database and the data folder yourself. With SQLite in the default volume, both are in `/faxdata`:
 
     ```bash
     docker compose run --rm --no-deps -v "$PWD/backups:/backups" api tar -C /faxdata -cf /backups/faxdata-before-upgrade.tar .
@@ -69,26 +69,26 @@ Back up before `migrate`:
 
     With PostgreSQL, also take a `pg_dump` of the database.
 
-`faxbot system migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
+`faxbot admin migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
 
 After upgrading an installation from before October 2026:
 
 1. Sign in to the console with the installation key and [create the first owner](security/access-control.md#create-the-first-owner).
-2. Run `faxbot access keys list`. Keys that had every permission show **Needs review** and do not work until approved: give the key's integration a role (`faxbot access grants add "<integration>" "Fax operator"`), then approve the key with the permissions it needs (`faxbot access keys approve <key id> --for "<integration>" -p fax:read`).
+2. Run `faxbot admin access keys list`. Keys that had every permission show **Needs review** and do not work until approved: give the key's integration a role (`faxbot admin access grants add "<integration>" "Fax operator"`), then approve the key with the permissions it needs (`faxbot admin access keys approve <key id> --for "<integration>" -p fax:read`).
 3. Older keys with specific permissions keep working, but they no longer open received documents. Create a new key for each app that needs documents.
-4. Make a fresh backup with `faxbot system backup`.
+4. Make a fresh backup with `faxbot admin backup`.
 
 See the [release notes](release-notes.md) for everything that changed.
 
 ## Back up and restore
 
-`faxbot system backup` copies the database, the data folder, the installation key and the direct delivery key, with a checksum manifest. The installation key is what lets a restored installation read its saved settings and provider credentials. Details are in [Command line: backup and restore](operations/cli.md#backup-and-restore).
+`faxbot admin backup` copies the database, the data folder, the installation key and the direct delivery key, with a checksum manifest. The installation key is what lets a restored installation read its saved settings and provider credentials. Details are in [Command line: backup and restore](operations/cli.md#backup-and-restore).
 
 Back up with Docker Compose. Use a folder outside the data volume:
 
 ```bash
 docker compose stop api
-docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot system backup /backups/2026-10-03
+docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot admin backup /backups/2026-10-03
 docker compose start api
 ```
 
@@ -97,7 +97,7 @@ The backup files belong to the container's user and are readable only by it. Kee
 Restore on a new host or into a new, empty data volume:
 
 ```bash
-docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot system restore /backups/2026-10-03
+docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot admin restore /backups/2026-10-03
 docker compose up -d api
 ```
 
