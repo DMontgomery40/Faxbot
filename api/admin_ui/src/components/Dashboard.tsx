@@ -190,7 +190,8 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
     }
     void settle(client.getSavingsMechanisms(), clock).then(setMechanisms);
     const [capabilities, savings, sending, facts] = await Promise.all([
-      settle(client.getCapabilities(), clock),
+      // Without what advice and charge checks found: the Overview never shows it, and counting it is slow.
+      settle(client.call<Capabilities>({ method: 'GET', path: '/routing/capabilities?findings=false' }), clock),
       settle(client.getSavings(), clock),
       settle(client.getSendingRecommendations(), clock),
       settle(client.call<FactAdvice>({ method: 'GET', path: '/routing/recommendations/facts' }), clock),

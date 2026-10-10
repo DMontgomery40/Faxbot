@@ -205,12 +205,12 @@ def cost_pack(plan, price):
         if found.get('approved'):
             plan.item('cost', f"cost.toll-free.{found['number']}", 'in_effect',
                       f'Faxes to {name} dial their toll-free number', found['sentence'],
-                      [{'name': 'Recipients → Details', 'detail': 'The approval you recorded'}],
+                      [{'name': 'Recipients', 'detail': 'The approval you recorded'}],
                       link=RECIPIENTS_PAGE)
         else:
             plan.item('cost', f"cost.toll-free.{found['number']}", 'step',
                       f'Record whether {name} approves faxes to their toll-free number', found['sentence'],
-                      [{'name': 'Recipients → Details', 'detail': 'The toll-free number on file'}],
+                      [{'name': 'Recipients', 'detail': 'The toll-free number on file'}],
                       link=RECIPIENTS_PAGE, cli='faxbot recipients toll-free')
     _shading(plan)
     for found in facts.long_pages:
@@ -278,7 +278,7 @@ def _toll_free_class(plan, price):
     label = account.label or account.key
     plan.rule('cost', f'cost.toll-free-class.{account.key}', f'Toll-free numbers go by {label}',
               f'Calls to the toll-free numbers you fax cost less through {label}.' + _saving_sentence(saving),
-              [{'name': 'Sent faxes', 'detail': f'{_plural(len(faxes), "fax", "faxes")} to toll-free numbers in the '
+              [{'name': 'Faxes → Sent', 'detail': f'{_plural(len(faxes), "fax", "faxes")} to toll-free numbers in the '
                                                 'last 30 days'}, *_estimate_source(saving)],
               rule, **_with_saving(saving))
 
@@ -336,7 +336,7 @@ def receiving_pack(plan):
                   f"{_plural(found['faxes'], 'fax', 'faxes')} to {found['number']} arrived in the last 30 days with "
                   'no mailbox, because no number rule places them. Add a number rule that sends them to the right '
                   'mailbox.',
-                  [{'name': 'Received faxes', 'detail': 'Faxes with no mailbox in the last 30 days'}],
+                  [{'name': 'Faxes → Received', 'detail': 'Faxes with no mailbox in the last 30 days'}],
                   link=NUMBERS_PAGE, cli='faxbot delivery numbers add')
     for found in facts.junk:
         if found['active']:
@@ -380,7 +380,7 @@ def reliability_pack(plan):
                   f"in the last 30 days, and {found['better_label']} delivered {found['delivered']} of its "
                   f"{found['better_attempts']}. Faxbot still tries {found['current_label']} first{why}. With this "
                   f"rule it tries {found['better_label']} first and {found['current_label']} next.",
-                  [{'name': 'Sent faxes', 'detail': 'Delivered and failed faxes to this number on each route over '
+                  [{'name': 'Faxes → Sent', 'detail': 'Delivered and failed faxes to this number on each route over '
                                                     'the last 30 days'}], rule)
     for found in facts.busy:
         hours = '; '.join(f"{slot['label']} ({slot['summary']})" for slot in found['slots'])
@@ -388,13 +388,13 @@ def reliability_pack(plan):
             plan.item('reliability', f"reliability.busy.{found['number']}", 'in_effect',
                       f"Busy hours of {found['number']}",
                       f"Faxbot already waits these hours out on its own when a failed call would cost money: {hours}",
-                      [{'name': 'Recipients → Details', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE)
+                      [{'name': 'Recipients', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE)
         else:
             plan.item('reliability', f"reliability.busy.{found['number']}", 'step',
                       f"Let Faxbot learn the busy hours of {found['number']}",
                       f'This number is often busy at the same hours, but learning is turned off for it: {hours} '
                       'Turn learning back on so Faxbot waits those hours out.',
-                      [{'name': 'Recipients → Details', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE,
+                      [{'name': 'Recipients', 'detail': 'Calls in the last 30 days'}], link=RECIPIENTS_PAGE,
                       cli='faxbot recipients schedule')
 
 

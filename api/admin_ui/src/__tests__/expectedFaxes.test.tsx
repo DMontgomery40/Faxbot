@@ -108,7 +108,7 @@ describe('Faxes → Expected', () => {
     const run: ImportRun = { id: 'run', source: 'Open purchase orders', file_name: 'open.csv', full_export: true,
       rows_total: 2, created: 2, unchanged: 0, revised: 0, conflicts: 0, problems: [{ row: 3, problem: 'It has no business reference.' }],
       problem_count: 1, missing: [], note: null, created_at: '2026-10-03T12:00:00', completed_at: '2026-10-03T12:00:01',
-      imported_by: 'Dana', summary: '2 rows: 2 new, 0 unchanged, 0 new revisions, 0 changed without a new revision, 1 with problems.' };
+      imported_by: 'Dana', summary: '2 rows: 2 new, 0 unchanged, 0 new revisions, 0 changed without being marked as a new version, 1 with problems.' };
     let sources: Array<Record<string, unknown>> = [];
     server.use(
       http.get('/expected-faxes', () => HttpResponse.json({ expected: [] })),
