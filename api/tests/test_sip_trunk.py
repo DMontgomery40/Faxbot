@@ -59,6 +59,10 @@ CASES = {
                               'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD,
                               'FAX_DEFAULT_COUNTRY': 'CH'},
     # CompanyFlex set to TCP, on an access Faxbot has not seen as your Telekom line: encrypted all the same.
+    # Japan: NTT Hikari Denwa, signing in to the SIP server NTT's DHCP hands out; national 0AB-J dialing (RF).
+    'ntt-hikari-registration': {'SIP_TRUNK_PRESET': 'ntt-hikari', 'SIP_TRUNK_HOST': '192.0.2.60',
+                                'SIP_TRUNK_USERNAME': '0312345678', 'SIP_TRUNK_PASSWORD': PASSWORD,
+                                'FAX_DEFAULT_COUNTRY': 'JP'},
     'telekom-companyflex-encrypted': {'SIP_TRUNK_PRESET': 'telekom-companyflex', 'SIP_TRUNK_USERNAME': 'faxbot',
                                       'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp',
                                       'SIP_TRUNK_OUTBOUND_PROXY': 'k0001.primary.companyflex.de',
@@ -250,14 +254,15 @@ def test_rate_card_seed_covers_every_carrier_preset_with_dated_sources():
         # US cards are in dollars; a UK or Australian carrier's card is in its own currency and, with no
         # published price, carries none.
         assert date(2026, 10, 3) <= date.fromisoformat(card['advertised_on']) <= date(2026, 10, 31)
+        # NTT Hikari Denwa publishes its price in yen, tax included (RF): ¥8.8 per 3 minutes to fixed lines.
         assert card['currency'] == 'USD' or (card['currency'] in ('GBP', 'AUD', 'CHF', 'EUR')
-                                             and card['per_minute'] is None)
+                                             and card['per_minute'] is None) or card['currency'] == 'JPY'
         assert card['source_url'].startswith('https://') and card['source_url'] in card['sources'] or \
             card['source_url'] == card['sources'][0]
         for field in ('per_minute', 'per_page', 'per_call', 'number_rental_monthly', 'number_setup'):
             assert card[field] is None or money.fullmatch(card[field]), (card['label'], field)
-        assert card['billing_increment_seconds'] in (None, 1, 6, 60)
-        assert card['rounding'] in {'whole_minute', 'per_second', '6_second', 'not_published'}
+        assert card['billing_increment_seconds'] in (None, 1, 6, 60, 180)
+        assert card['rounding'] in {'whole_minute', 'per_second', '6_second', '180_second', 'not_published'}
         assert (card['billing_increment_seconds'] is None) == (card['rounding'] == 'not_published')
         assert card['notes'].endswith('.')
 

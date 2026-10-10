@@ -83,6 +83,7 @@ const CARRIER_REGIONS: Record<string, { country: string; region: string }> = {
   'telstra-sip-connect': { country: 'AU', region: 'Australia' },
   'swisscom-sbc': { country: 'CH', region: 'Switzerland' },
   'telekom-companyflex': { country: 'DE', region: 'Germany' },
+  'ntt-hikari': { country: 'JP', region: 'Japan' },
 };
 
 // Fax services by the names people know them; Sinch and SignalWire also sell carrier lines.

@@ -330,6 +330,35 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                  Source('https://support.yeastar.com/hc/en-us/articles/10874343612441', '2026-10-09')),
     ),
     TrunkPreset(
+        # Japan (RF, brief 92 item 4). Only what NTT publishes (routing/data_connect.py); T.38 per ITU-T T.38 Annex D.
+        id='ntt-hikari', label='NTT Hikari Denwa', host='', port=5060, transport='udp', transports=('udp', 'tcp'),
+        auth_modes=('registration',), codecs=('ulaw',), dial_format='local', dial_formats=('local', 'e164'),
+        t38=("NTT's interface lists TTC JT-T38 and allows fax over IP for Data Connect calls between Data "
+             'Connect-capable devices; Faxbot offers T.38 as ITU-T T.38 Annex D describes it (version 0, 14,400 '
+             "bit/s, transferredTCF, redundancy). NTT's detailed interface is not published, so confirm the T.38 "
+             'settings with NTT before use.'),
+        notes=("NTT's network gives the SIP server's address by DHCP (option 120); enter the address your line "
+               'hands out, and the user ID and password NTT or your equipment vendor gives you.',
+               'Faxbot signs in over IPv4, as NTT asks, by UDP or TCP, and sends G.711 mu-law, the voice codec NTT '
+               'names as basic.',
+               'Numbers are dialed in their national 0AB-J form, such as 0312345678.',
+               'Data Connect works only between Data Connect-capable devices at both ends, on Hikari Denwa over '
+               "FLET'S Hikari Next; an ordinary fax number is reached by an ordinary voice call.",
+               'NTT charges Data Connect for as long as the bandwidth is held, even with no data flowing, so Faxbot '
+               'prepares the pages before the call and hangs up as soon as the fax ends.',
+               'FAX notification email (FAXお知らせメール) does not work for faxes received over Data Connect: have '
+               'received faxes come into Faxbot instead. NTT ends that service on 31 March 2028.',
+               'Residential Hikari Denwa carries fax as voice, not as T.38.',
+               'Faxbot has not yet run against NTT.'),
+        sources=(Source('https://flets.com/pdf/hikari_tel_2_2_1_13.1.pdf', '2026-10-10'),
+                 Source('https://flets-w.com/opt/hikaridenwa/download/hikari_tel6.5.pdf', '2026-10-10'),
+                 Source('https://flets.com/denwa/option/hd-dataconnect/', '2026-10-10'),
+                 Source('https://business.ntt-east.co.jp/service/hikari_of/charge.html', '2026-10-10'),
+                 Source('https://business.ntt-west.co.jp/service/ipphone/office/pdf/share_06_detaconect.pdf',
+                        '2026-10-10'),
+                 Source('https://www.itu.int/rec/T-REC-T.38', '2026-10-10')),
+    ),
+    TrunkPreset(
         id='custom', label='Another carrier', host='', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='entered',
         notes=('Use the host, port and credentials your carrier gave you.',),

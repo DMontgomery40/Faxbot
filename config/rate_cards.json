@@ -461,6 +461,51 @@
       ],
       "advertised_on": "2026-10-09",
       "notes": "No receiving price for CompanyFlex was found (searched October 9, 2026). Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-ntt-hikari",
+      "provider": "sip",
+      "preset": "ntt-hikari",
+      "label": "NTT Hikari Denwa, Japan, outbound",
+      "direction": "outbound",
+      "currency": "JPY",
+      "per_minute": "2.933334",
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": 180,
+      "minimum_seconds": 180,
+      "rounding": "180_second",
+      "source_url": "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+      "sources": [
+        "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+        "https://business.ntt-west.co.jp/service/ipphone/office/pdf/share_06_detaconect.pdf"
+      ],
+      "advertised_on": "2026-10-10",
+      "notes": "NTT East lists calls from Hikari Denwa to fixed lines (加入電話, ひかり電話 and the others listed) at ¥8.8 per 3 minutes, tax included, as of October 2026; this card spreads that over the minute (¥2.933334, never under ¥8.8 per 3 minutes) and counts each started 3 minutes, which NTT's page does not spell out. A Data Connect call between two Data Connect-capable devices is priced instead by the bandwidth it holds: ¥1.1 per 30 seconds up to 64 kbit/s, ¥1.65 above 64 and up to 512 kbit/s, ¥2.2 above 512 kbit/s and up to 1 Mbit/s, and ¥16.5 or ¥110 per 3 minutes for several sessions at once above 1 or 2.6 Mbit/s, charged for as long as the bandwidth is held (NTT East's page; NTT West's Data Connect manual, pages 53 and 54)."
+    },
+    {
+      "provider_id": "sip-ntt-hikari",
+      "provider": "sip",
+      "preset": "ntt-hikari",
+      "label": "NTT Hikari Denwa, Japan, inbound",
+      "direction": "inbound",
+      "currency": "JPY",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": 180,
+      "minimum_seconds": 0,
+      "rounding": "180_second",
+      "source_url": "https://business.ntt-east.co.jp/service/hikari_of/charge.html",
+      "sources": [
+        "https://business.ntt-east.co.jp/service/hikari_of/charge.html"
+      ],
+      "advertised_on": "2026-10-10",
+      "notes": "NTT East's price page says the caller's carrier sets the call charge (通話料は、発信者側の事業者により異なります), so receiving a call costs nothing per call; the line's monthly charges are in your contract."
     }
   ],
   "plans": [
