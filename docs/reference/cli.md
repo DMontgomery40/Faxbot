@@ -8992,6 +8992,7 @@ $ faxbot system diagnostics [OPTIONS] COMMAND [ARGS]...
 * `routes`: Route problems: failures that belong to...
 * `receiving`: Whether each of your numbers can receive...
 * `power`: The UPS Faxbot reads, so it holds long...
+* `test-lines`: Send a test fax to a public test line...
 
 #### `faxbot system diagnostics database`
 
@@ -9317,6 +9318,117 @@ Stop reading the UPS; calls start without checking the battery.
 ```console
 $ faxbot system diagnostics power off [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics test-lines`
+
+Send a test fax to a public test line whose operator invites test faxes, and see what came back.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: The public test lines, whether Faxbot may...
+* `send`: Send one test fax to a public test line, now.
+* `show`: One test fax&#x27;s result and what came back.
+* `receipt`: Look up a Faxbeep test fax on Faxbeep&#x27;s...
+* `reply`: Mark a received fax as a test fax&#x27;s reply.
+
+##### `faxbot system diagnostics test-lines list`
+
+The public test lines, whether Faxbot may dial each, whether a reply reaches Faxbot, and recent tests.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics test-lines send`
+
+Send one test fax to a public test line, now. Faxbot never sends one by itself.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines send [OPTIONS] {LINE}
+```
+
+**Arguments**:
+
+* `LINE`: The line, such as faxbeep-us (see faxbot system diagnostics test-lines list).  [required]
+
+**Options**:
+
+* `--allow-country`: If Faxbot may not dial this country yet, allow it from now on without asking.
+* `--yes`: Do not ask before sending to a public page.
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics test-lines show`
+
+One test fax&#x27;s result and what came back.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines show [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent test fax ID (see test-lines list).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics test-lines receipt`
+
+Look up a Faxbeep test fax on Faxbeep&#x27;s public page now.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines receipt [OPTIONS] {TEST}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent Faxbeep test fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot system diagnostics test-lines reply`
+
+Mark a received fax as a test fax&#x27;s reply.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics test-lines reply [OPTIONS] {TEST} {RECEIVED}
+```
+
+**Arguments**:
+
+* `TEST`: The start of a recent test fax ID.  [required]
+* `RECEIVED`: The received fax that is the reply, as test-lines show offers it.  [required]
 
 **Options**:
 
