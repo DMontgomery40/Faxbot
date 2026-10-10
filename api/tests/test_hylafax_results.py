@@ -93,6 +93,40 @@ def test_an_engine_calls_verdict_is_the_same_whichever_part_arrives_first(
     assert calls.for_attempt(ATTEMPT)[-1]['error_cause'] == row['error_cause']
 
 
+QUICK_CASES = [
+    # Live pilot LC-P004 (2026-10-10): answered, cleared by the far end 1 s later (Telnyx NORMAL_CLEARING), sound
+    # back, E002. Too short to be a person; the far end turned the call away: a definite failure before any data.
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 1, sip_calls.CLEARED_AT_ONCE),
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 0, sip_calls.CLEARED_AT_ONCE),
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 2, sip_calls.CLEARED_AT_ONCE),
+    # Three whole seconds or more: long enough for a person to answer and hang up on the calling tone.
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 3, sip_calls.PERSON_ANSWERED),
+    # No sound back in one second says nothing about the network path either.
+    ('0', 'DISABLED', '0', 'No carrier detected {E002}', 1, sip_calls.CLEARED_AT_ONCE),
+    ('1', 'ENABLED', '', 'No carrier detected {E002}', 1, sip_calls.CLEARED_AT_ONCE),
+    # The engine kept the line open (T.30 T1): never a quick clear by the far end.
+    ('0', 'DISABLED', '412', 'No receiver protocol (T.30 T1 timeout) {E126}', 1, 'no_fax_answer'),
+]
+
+
+@pytest.mark.parametrize('session, state, rtp_rx, reason, seconds, verdict', QUICK_CASES)
+@pytest.mark.parametrize('order', ORDERS, ids='-'.join)
+def test_a_call_answered_and_cleared_at_once_is_not_a_person_whichever_part_arrives_first(
+        calls, session, state, rtp_rx, reason, seconds, verdict, order):
+    ended = {**engine_event(session), 'Ended': epoch(NOW + timedelta(seconds=seconds))}
+    parts = {'engine': lambda: calls.record_engine_call(ended, now=NOW),
+             'trunk': lambda: calls.record_engine_call(trunk_event(state, rtp_rx), now=NOW),
+             'result': lambda: engine_side(calls, reason)}
+    for part in order:
+        parts[part]()
+    row = calls.for_attempt(ATTEMPT)[-1]
+    assert row['connected_seconds'] == seconds
+    assert row['verdict'] == verdict and row['error_cause'].startswith(verdict + ': '), row
+    if verdict == sip_calls.CLEARED_AT_ONCE:
+        assert sip_calls.verdict_sentence(verdict) == sip_calls.CLEARED == sip_calls.call_summary(row)
+        assert sip_calls.category_for(verdict) is None
+
+
 def test_a_sent_fax_has_no_verdict_and_an_unfinished_call_waits_for_its_other_parts(calls):
     calls.record_engine_call(trunk_event('DISABLED', '900'), now=NOW)
     row = calls.for_attempt(ATTEMPT)[-1]

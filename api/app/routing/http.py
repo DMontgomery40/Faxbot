@@ -548,6 +548,12 @@ def _cost_view(cost):
         # It went another way than its plan: the amounts kept when it was sent (plan_allocation.explanation).
         view['route_explanation'] = cost['plan_allocation']
     view.pop('plan_allocation', None)
+    from .plan import ONE_LINE, decided_text
+    if cost.get('route_reason') == ONE_LINE:
+        # Its own trunk could not call its own number with one line: said first, whatever else is said.
+        first = decided_text(cost.get('route'), ONE_LINE)
+        rest = view.get('route_explanation')
+        view['route_explanation'] = first if not rest or rest == first else f'{first} {rest}'
     return view
 
 

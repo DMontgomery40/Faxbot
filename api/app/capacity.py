@@ -35,7 +35,7 @@ the claim looks at it again within ``schedule.RECHECK``. A fax in a busy hour
 whose failed tries are free is not held: it goes after the faxes that could
 use the same room.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 import sqlalchemy as sa
@@ -344,25 +344,30 @@ class Capacity:
             query = query.where(d.c.id.not_in(list(exclude)))
         return query
 
-    def room(self, connection, values, now, *, exclude=(), trunk=None, limited=None):
+    def room(self, connection, values, now, *, exclude=(), trunk=None, limited=None, lines=1):
         """One account's calls (or faxes) in progress and new calls in the last second, against its limits.
 
         ``trunk`` is the account's key: a trunk (``sip``, the default, is the first trunk), or another account
         with a "faxes at once" limit. An account with no limit has unlimited room. ``limited`` is
-        ``limited_accounts(values)`` when the caller already has it.
+        ``limited_accounts(values)`` when the caller already has it. ``lines``: the lines the next call needs at
+        once (two for a call to one of the trunk's own numbers, which comes back in on it): the room counts the
+        extra lines as taken, on the trunk and on a carrier account it shares.
         """
         key = trunk or TRUNK
         limited = limited if limited is not None else limited_accounts(values)
         found = limited.get(key)
         if found is None:
             return Room(0, None, 0, None, key=key, label=key, trunk=False)
+        extra = max(int(lines or 1), 1) - 1
         mine = self._room(connection, now, found, exclude)
+        mine = replace(mine, trunk_calls=mine.trunk_calls + extra) if extra else mine
         if mine.full or found.members:
             return mine
         # A trunk on a carrier account it shares with other trunks: that account's limits hold for all of them.
         for group in limited.values():
             if key in group.members:
                 shared = self._room(connection, now, group, exclude)
+                shared = replace(shared, trunk_calls=shared.trunk_calls + extra) if extra else shared
                 if shared.full:
                     return shared
         return mine

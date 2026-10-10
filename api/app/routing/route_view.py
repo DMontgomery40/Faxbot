@@ -58,11 +58,12 @@ def attempt_sentence(account_label, choice, decision, cost_row, attempt, next_la
     if choice is not None and decision is not None and choice.get('place', 0) == 0 and decision.route.kind == 'rule':
         parts.append(f'Sent by {account_label} because {text.rule_text(decision.route)} matched.')
     elif reason:
-        from .plan import decided_text
+        from .plan import ONE_LINE, decided_text
         found = decided_text(cost_row.get('route'), reason)
         if found:
-            parts.append(f'{account_label}: {found[:1].lower() + found[1:]}' if not found.startswith('Included')
-                         else found)
+            # A sentence that names the route itself stands alone.
+            parts.append(f'{account_label}: {found[:1].lower() + found[1:]}'
+                         if not found.startswith('Included') and reason != ONE_LINE else found)
     if not parts:
         parts.append(f'Sent by {account_label}.')
     skipped, unreliable = envelopes.skipped_of(choice)

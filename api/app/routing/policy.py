@@ -36,9 +36,11 @@ DIRECT = 'direct'
 # ``mixed_currency``: the routes charge in different currencies and no exchange rate is set, so your order decided
 # between currencies (money ranks only within one currency).
 # ``cheapest_converted``: the cheapest at the exchange rate you set.
+# ``own_trunk_one_line``: a real call to one of a trunk's own numbers that the trunk, with one line, could not
+# place; this route took it instead (``plan.ONE_LINE``).
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
            'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule', 'plan_reserved',
-           'mixed_currency', 'cheapest_converted')
+           'mixed_currency', 'cheapest_converted', 'own_trunk_one_line')
 # A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
 # Ranked by cost against each other: provider accounts, partner relays and digital routes (Direct, FHIR).
 CALLING = ('provider', 'relay', 'digital')

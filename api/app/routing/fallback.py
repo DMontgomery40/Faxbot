@@ -55,8 +55,11 @@ class FallbackScheduler:
     def next_route(self, job_id, attempt_id, failed_route):
         revision, bound = self.delivery.configuration.outbound_context(job_id)
         jobs = self.routes.jobs
+        # A fax that asked for a real call keeps asking: the trunk may then call one of its own numbers (plan).
+        by_call = jobs.c.send_by_call if 'send_by_call' in jobs.c else sa.literal(None)
         with read_connection(self.routes.engine) as connection:
-            job = connection.execute(sa.select(jobs.c.to_number, jobs.c.pages).where(jobs.c.id == job_id)).one()
+            job = connection.execute(sa.select(jobs.c.to_number, jobs.c.pages, by_call.label('by_call')).where(
+                jobs.c.id == job_id)).one()
         planner = RoutePlanner(self.routes)
         # Every submitted attempt, the failed one included, leaves out its route for the number it called. A
         # definite failure calling the approved alternate moves the fax to the number the sender entered.
@@ -81,7 +84,7 @@ class FallbackScheduler:
                                 dial=dial, job_id=job_id)
         plan = planner.plan(to_number=job.to_number, bound=key, values=revision.values,
                             pages=job.pages, alternates=True, dial=dial, tried=tried, pinned=pinned, prices=prices,
-                            job_id=job_id)
+                            job_id=job_id, by_call=bool(job.by_call))
         done = {(route, number or plan.destination) for route, number in tried}
         return next((choice for choice in plan.choices
                      if (ledger_key(choice.route.key), plan.number_for(choice.route.key)) not in done

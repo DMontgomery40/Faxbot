@@ -349,10 +349,12 @@ class RoutedTransport:
         approvals = (dial or {}).get('approvals') if number != plan.destination else None
         record(claim, number, approvals or None)
 
-    def _trunk_has_room(self, claim, revision, key='sip'):
+    def _trunk_has_room(self, claim, revision, key='sip', *, lines=1):
         """Whether the account ``key`` (a trunk, or an account with a "faxes at once" limit) can take this fax now.
 
         The claim gate covers faxes bound to it and faxes whose rules allow nothing else; this covers the rest.
+        ``lines``: the free lines the call needs (two for a call to one of the trunk's own numbers, which comes back
+        in on the same trunk; ``RoutePlan.hairpin``).
         """
         capacity = getattr(self.store, 'capacity', lambda: None)()
         if capacity is None:
@@ -360,7 +362,7 @@ class RoutedTransport:
         from datetime import datetime
         with self.store.configuration.engine.connect() as connection:
             room = capacity.room(connection, revision.values, datetime.utcnow(),
-                                 exclude=[member.job_id for member in claim.everyone], trunk=key)
+                                 exclude=[member.job_id for member in claim.everyone], trunk=key, lines=lines)
         return not (room.trunk_full or room.rate_full)
 
     @staticmethod
@@ -407,7 +409,7 @@ class RoutedTransport:
                 continue
             # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).
             if (route.provider_id == 'sip' or self._limited(revision, route.key)) and not self._trunk_has_room(
-                    claim, revision, route.key):
+                    claim, revision, route.key, **({'lines': 2} if route.key in getattr(plan, 'hairpin', ()) else {})):
                 if pinned is not None and pinned.envelope.when_busy == 'next':
                     skipped.append((route.key, 'busy'))
                     continue

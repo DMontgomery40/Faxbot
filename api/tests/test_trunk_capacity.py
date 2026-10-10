@@ -348,3 +348,157 @@ def test_a_fax_whose_allowed_trunks_are_all_busy_waits_instead_of_being_held(tru
     with pytest.raises(CapacityWait):
         transport._assign(found, RoutePlan(TO, (leeds,), None, pinned=pinned), revision)
     assert transport._skipped == (('sip-leeds', 'busy'),)
+
+
+# -- a real call to one of the trunk's own numbers (live pilot LC-P003, 2026-10-10) ----------------------------------
+#
+# The pilot pinned a recipient's route to the trunk and asked for a real call to the trunk's own Telnyx number: the
+# planner dropped the trunk silently and the fax went by HumbleFax ("included"). With a second line the carrier
+# hairpins the call (one line sends, the other receives), so the trunk is used; with one line it cannot be, and Sent
+# says so in one sentence. Through the real planner, transport and worker; SQLite and PostgreSQL.
+
+OWN = '+13035550100'
+HAIRPIN = {**BASE, 'FAX_OUTBOUND_ROUTES': 'sip', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip',
+           'SIP_TRUNK_HOST': 'sip.telnyx.com', 'SIP_TRUNK_DIDS': OWN, 'SIP_TRUNK_CALLER_ID': OWN,
+           'INBOUND_ENABLED': 'true'}
+ONE_LINE = "Your own trunk can't call its own number with one line, so this fax went through Phaxio."
+
+
+def _hairpin(database, tmp_path, monkeypatch, *, lines, engine_lines=2, sip_minute='0.005'):  # noqa: F811
+    from api.app.routing import transport
+    from api.tests.test_rules_delivery import card
+    env = installation(database, tmp_path, {**HAIRPIN, 'SIP_TRUNK_MAX_CALLS': str(lines),
+                                            'SIP_FAX_LINES': str(engine_lines)})
+    env.routes.replace_cards([card('phaxio', page='0.07'), card('sip', minute=sip_minute)])
+    monkeypatch.setattr(transport, 'route_ready', lambda configuration, ami=None: True)
+    monkeypatch.setattr(transport, 'ensure_route_artifact', lambda revision, configuration, job_id: None)
+    return env
+
+
+def _accept_by_call(env, to=OWN, by_call=True):
+    """A fax accepted the way POST /fax accepts one with "place a real call" (fax_jobs.send_by_call = 1)."""
+    job, now = uuid4().hex, datetime.utcnow()
+    env.configuration.accept_outbound(env.configuration.read().active, {
+        'id': job, 'to_number': to, 'file_name': 'synthetic.pdf', 'tiff_path': '', 'status': 'queued', 'pages': 3,
+        'created_at': now, 'updated_at': now, **({'send_by_call': 1} if by_call else {})})
+    return job
+
+
+async def _dispatch(env):
+    from api.app.outbound_worker import OutboundWorker
+    from api.app.routing.transport import RoutedTransport
+    from api.tests.test_rules_delivery import Inner
+    inner = Inner(env.delivery)
+    stepped = await OutboundWorker(env.delivery, RoutedTransport(inner, direct=None)).step()
+    return inner, stepped
+
+
+def _decision(env, job):
+    return env.routes.decision(env.delivery.get(job)['attempt_id'])
+
+
+def _sent_details(env, job):
+    """What Sent details show for the fax (``GET /routing/faxes/{id}/cost``) and its route view."""
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.http import _cost_view
+    from api.app.routing.route_view import fax_route
+    from api.app.routing.spending import Spending
+    cost = _cost_view(Spending(env.routes, CarrierChargeStore(env.engine)).job(job))
+    return cost, fax_route(env.engine, env.configuration, job)
+
+
+@pytest.mark.asyncio
+async def test_a_real_call_to_the_trunks_own_number_hairpins_over_a_trunk_with_two_lines(  # noqa: F811
+        database, tmp_path, monkeypatch):
+    env = _hairpin(database, tmp_path, monkeypatch, lines=2)
+    env.routes.update_destination(OWN, preferred_route='sip')
+    job = _accept_by_call(env)
+    inner, stepped = await _dispatch(env)
+    assert stepped is True and inner.used == ['sip']
+    decision = _decision(env, job)
+    assert (decision['route'], decision['route_reason']) == ('sip', 'preferred')
+    cost, _ = _sent_details(env, job)
+    assert cost['route_explanation'] == 'You chose this route for this number.'
+
+
+@pytest.mark.asyncio
+async def test_a_trunk_with_one_line_cannot_call_its_own_number_and_sent_says_so(  # noqa: F811
+        database, tmp_path, monkeypatch):
+    """LC-P003: the pin to the trunk cannot be honoured with one line; the fax goes by the other route, and Sent
+    details (``route_explanation``, which ``faxbot sent show`` prints) and the route view say why in one sentence."""
+    env = _hairpin(database, tmp_path, monkeypatch, lines=1)
+    env.routes.update_destination(OWN, preferred_route='sip')
+    job = _accept_by_call(env)
+    inner, stepped = await _dispatch(env)
+    assert stepped is True and inner.used == ['phaxio']
+    decision = _decision(env, job)
+    assert (decision['route'], decision['route_reason']) == ('phaxio', 'own_trunk_one_line')
+    cost, route = _sent_details(env, job)
+    assert cost['route_explanation'] == ONE_LINE
+    [attempt] = route['attempts']
+    assert attempt['sentence'].startswith(ONE_LINE)
+
+
+@pytest.mark.asyncio
+async def test_the_engines_own_lines_count_too(database, tmp_path, monkeypatch):  # noqa: F811
+    """A trunk allowed two calls at once on a fax engine with one line has one line for a call to itself."""
+    env = _hairpin(database, tmp_path, monkeypatch, lines=2, engine_lines=1)
+    env.routes.update_destination(OWN, preferred_route='sip')
+    job = _accept_by_call(env)
+    inner, _ = await _dispatch(env)
+    assert inner.used == ['phaxio'] and _decision(env, job)['route_reason'] == 'own_trunk_one_line'
+
+
+@pytest.mark.asyncio
+async def test_without_a_real_call_request_the_trunk_still_never_calls_its_own_number(  # noqa: F811
+        database, tmp_path, monkeypatch):
+    """The 2026-10-04 guard stands: a fax that did not ask for a real call never goes over the trunk to the trunk's
+    own number, even with two lines, and gets no one-line sentence."""
+    env = _hairpin(database, tmp_path, monkeypatch, lines=2)
+    env.routes.update_destination(OWN, preferred_route='sip')
+    job = _accept_by_call(env, by_call=False)
+    inner, _ = await _dispatch(env)
+    assert inner.used == ['phaxio'] and _decision(env, job)['route_reason'] != 'own_trunk_one_line'
+
+
+@pytest.mark.asyncio
+async def test_the_one_line_sentence_is_given_only_when_the_trunk_would_have_taken_the_fax(  # noqa: F811
+        database, tmp_path, monkeypatch):
+    """Unpinned, with the trunk dearer than Phaxio: the fax would have gone by Phaxio anyway, so its reason stays
+    what decided it (Phaxio is the only route left, the installation's outbound provider)."""
+    env = _hairpin(database, tmp_path, monkeypatch, lines=1, sip_minute='1.00')
+    job = _accept_by_call(env)
+    inner, _ = await _dispatch(env)
+    assert inner.used == ['phaxio']
+    assert _decision(env, job)['route_reason'] == 'configured'
+
+
+@pytest.mark.asyncio
+async def test_a_hairpin_waits_until_both_of_its_lines_are_free(database, tmp_path, monkeypatch):  # noqa: F811
+    """The call needs one line to send and one to receive: with a call already on one of two lines it waits (stays
+    ready, nothing sent) instead of calling a number that cannot answer."""
+    env = _hairpin(database, tmp_path, monkeypatch, lines=2)
+    env.routes.update_destination(OWN, preferred_route='sip')
+    call_in(env)
+    job = _accept_by_call(env)
+    inner, stepped = await _dispatch(env)
+    assert stepped is False and inner.used == []
+    assert env.delivery.get(job)['state'] == 'ready'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('by_call, expected', [(True, 'sip'), (False, None)])
+async def test_after_a_failed_try_a_real_call_may_hairpin_but_another_fax_never_does(  # noqa: F811
+        database, tmp_path, monkeypatch, by_call, expected):
+    """The fallback's next route reads the fax's real-call request: the trunk is offered for a real call with two
+    lines, never for a fax that did not ask for one (the 2026-10-04 fallback that called itself back)."""
+    from api.app.routing import fallback
+    from api.app.routing.fallback import FallbackScheduler
+    env = _hairpin(database, tmp_path, monkeypatch, lines=2, sip_minute='1.00')
+    monkeypatch.setattr(fallback, 'route_ready', lambda configuration, ami=None: True)
+    job = _accept_by_call(env, by_call=by_call)
+    inner, _ = await _dispatch(env)
+    assert inner.used == ['phaxio']
+    attempt = env.delivery.get(job)['attempt_id']
+    found = FallbackScheduler(env.delivery, env.routes).next_route(job, attempt, 'phaxio')
+    assert (found.route.key if found is not None else None) == expected
