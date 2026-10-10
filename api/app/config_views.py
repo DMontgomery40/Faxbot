@@ -82,6 +82,14 @@ def _humblefax_numbers(values) -> tuple:
     return account_numbers(values.humblefax_access_key, values.humblefax_secret_key) or ()
 
 
+def _encryption_view(values):
+    from .sip_access import view
+    try:
+        return view(values)
+    except (OSError, ValueError):
+        return {'media_encryption': None, 'access': None, 'encryption_sentence': None}
+
+
 def _freeswitch_caller_id_missing() -> str:
     from .freeswitch_service import CALLER_ID_MISSING
     return CALLER_ID_MISSING
@@ -252,6 +260,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'sslfax_listener_port': values.sip_sslfax_listener_port,
                 'dial_format': values.sip_trunk_dial_format,
                 'dial_prefix': values.sip_trunk_dial_prefix,
+                # Encrypted audio fax and the access the trunk is reached over (sip_access.py, N18).
+                'own_access': values.sip_trunk_own_access,
+                **_encryption_view(values),
                 'external_address': values.sip_external_address,
                 'public_address_check_minutes': values.sip_public_address_check_minutes,
                 'router_ports': values.sip_router_ports,

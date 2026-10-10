@@ -81,6 +81,8 @@ const CARRIER_REGIONS: Record<string, { country: string; region: string }> = {
   gamma: { country: 'GB', region: 'UK' },
   'bt-one-voice': { country: 'GB', region: 'UK' },
   'telstra-sip-connect': { country: 'AU', region: 'Australia' },
+  'swisscom-sbc': { country: 'CH', region: 'Switzerland' },
+  'telekom-companyflex': { country: 'DE', region: 'Germany' },
 };
 
 // Fax services by the names people know them; Sinch and SignalWire also sell carrier lines.

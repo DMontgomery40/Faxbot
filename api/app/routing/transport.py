@@ -358,8 +358,13 @@ class RoutedTransport:
         """
         pinned = _pinned(plan)
         skipped = list(_skipped(plan))
+        from .sender_pins import dispatch_refusal
         for place, choice in enumerate(plan.choices):
             route = choice.route
+            # A registered-sender recipient (sender_pins, N17): only its trunk, showing its registered identity.
+            if dispatch_refusal(self.store.configuration.engine, revision.values, plan.destination, route.key):
+                skipped.append((route.key, 'pin'))
+                continue
             if route.kind in ('direct', 'local', 'relay', 'digital'):
                 return self._chosen(plan, choice, skipped), claim
             # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).

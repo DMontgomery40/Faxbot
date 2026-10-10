@@ -5061,6 +5061,11 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `use`: Choose a carrier or phone system preset...
 * `caller-ids`: The caller ID each sending account&#x27;s calls...
 * `confirm-caller-id`: Confirm that you hold a caller ID and may...
+* `registered-senders`: Recipients that recognise your faxes by...
+* `register-sender`: Send faxes to RECIPIENT only from the...
+* `unregister-sender`: Stop pinning RECIPIENT to one trunk; faxes...
+* `sender-evidence`: The sender&#x27;s evidence for a fax to a...
+* `own-access`: For Telekom CompanyFlex: the internet...
 * `withdraw-caller-id`: Withdraw a caller-ID confirmation; calls...
 * `network`: Whether fax over IP (T.38) works on the...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
@@ -5256,6 +5261,102 @@ $ faxbot providers trunk confirm-caller-id [OPTIONS] {ACCOUNT} {CALLER_ID}
 * `--evidence TEXT`: How you know you may send from it on this account, such as the number order or invoice.  [required]
 * `--evidence-url URL`: A link to that evidence.
 * `--bought-here`: The number was bought on this account, so the carrier prices calls from it to its own country as local.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk registered-senders`
+
+Recipients that recognise your faxes by the number they come from, and the trunk registered with each.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk registered-senders [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk register-sender`
+
+Send faxes to RECIPIENT only from the trunk, caller ID and station ID registered with it. When that trunk
+cannot send them, they wait in Sent; they never go from another number.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk register-sender [OPTIONS] {RECIPIENT}
+```
+
+**Arguments**:
+
+* `RECIPIENT`: The recipient&#x27;s fax number, such as +902122220000.  [required]
+
+**Options**:
+
+* `--caller-id NUMBER`: The caller ID registered with the recipient.  [required]
+* `--station-id TEXT`: The station ID registered with it, if it differs from the caller ID.
+* `--account KEY`: The trunk registered with it, by its key from &#x27;faxbot providers accounts list&#x27;; the first trunk when left out.  [default: sip]
+* `--note TEXT`: Where it is registered, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk unregister-sender`
+
+Stop pinning RECIPIENT to one trunk; faxes to it go by your sending rules again. The history is kept.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk unregister-sender [OPTIONS] {RECIPIENT}
+```
+
+**Arguments**:
+
+* `RECIPIENT`: The recipient&#x27;s fax number.  [required]
+
+**Options**:
+
+* `--note TEXT`: Why, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk sender-evidence`
+
+The sender&#x27;s evidence for a fax to a registered-sender recipient: the identity registered then, the kept
+pages, each call with the station that answered, and any request for the original.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk sender-evidence [OPTIONS] {FAX_ID}
+```
+
+**Arguments**:
+
+* `FAX_ID`: The sent fax.  [required]
+
+**Options**:
+
+* `--original requested|sent|cancelled`: Record that the recipient asked for the original, that you sent it, or that the request was withdrawn.
+* `--note TEXT`: What happened, for the history.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk own-access`
+
+For Telekom CompanyFlex: the internet address of your Telekom line. On any other access Faxbot encrypts the
+calls and sends audio fax by itself, as CompanyFlex requires.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk own-access [OPTIONS] [ADDRESSES]
+```
+
+**Arguments**:
+
+* `ADDRESSES`: Your Telekom line&#x27;s internet addresses or ranges, comma-separated; &#x27;&#x27; clears them.
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk withdraw-caller-id`

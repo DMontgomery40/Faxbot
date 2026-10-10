@@ -2346,6 +2346,10 @@ def _cleanup_outbound_documents(cutoff):
             delivery.deliveries.c.updated_at < cutoff)).scalars().all()
     # The patient given with a fax (digital/patient.py) is document content: it goes with the document.
     from .digital.patient import SUFFIX as PATIENT_SUFFIX
+    # Faxes to a registered-sender recipient keep their files: they are the sender's evidence (sender_pins, N17).
+    from .routing.sender_pins import kept_jobs
+    kept = kept_jobs(delivery.configuration.engine, list(identities))
+    identities = [identity for identity in identities if identity not in kept]
     for identity in identities:
         # The sender's whole document, kept beside a fax whose cover went as its header notice (header_notice.py).
         from .header_notice import UPLOAD_SUFFIX

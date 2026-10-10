@@ -37,6 +37,7 @@ import { CostsUnread, FaxCostItem, costAmount, useFaxCosts } from './delivery/Fa
 import { FaxRouteItems, HeldFaxes } from './ProviderRulesHeld';
 import { rulesApiFor } from './ProviderRulesApi';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
+import { SenderEvidenceItem } from './delivery/RegisteredSenders';
 import { FaxCertaintyItem } from './work/SentCertainty';
 import { SentContinuation } from './work/SentContinuation';
 import { SentHeaderNotice } from './HeaderNotice';
@@ -807,6 +808,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               <FaxRouteItems api={rulesApiFor(client)} jobId={detailJob.id} />
               <FaxRequestedByItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
+              <SenderEvidenceItem client={client} jobId={detailJob.id} />
               <Divider />
               <ListItem>
                 <ListItemText

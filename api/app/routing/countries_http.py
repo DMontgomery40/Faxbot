@@ -196,3 +196,119 @@ async def withdraw_caller_id(payload: CallerIdWithdrawIn, request: Request, iden
             raise HTTPException(409, detail=str(error)) from None
         return {'eligibility': eligibility_view(record), 'callers': callers_view(store.engine, values)}
     return await _call(save)
+
+
+# -- registered senders (N17) ----------------------------------------------------------------------------------------
+
+class SenderPinIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account: str = Field(min_length=1, max_length=64)
+    caller_id: str = Field(min_length=3, max_length=32)
+    station_id: str | None = Field(default=None, max_length=20)
+    note: str = Field(default='', max_length=2000)
+
+
+class OriginalIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    state: str = Field(min_length=1, max_length=16)
+    note: str = Field(default='', max_length=2000)
+
+
+def pins_view(engine, values):
+    """Every registered sender, whether its trunk would show the registered identity now, and what each trunk
+    shows (for the form)."""
+    from .origin_classes import presented_identity
+    from .sender_pins import pin_view, pins, presentable
+    accounts = {account.key: account for account in _sending_accounts(values)}
+    found = []
+    for pin in pins(engine):
+        ok, why = presentable(values, pin.account, pin.caller_id, pin.station_id, engine=engine)
+        name = accounts[pin.account].label if pin.account in accounts else pin.account
+        found.append({**pin_view(pin), 'account_label': name, 'ready': ok,
+                      'sentence': (f'Faxes to {pin.recipient} go only by {name}, showing {pin.caller_id}.' if ok
+                                   else f'Faxes to {pin.recipient} wait in Sent: {why}')})
+    trunks = []
+    for account in accounts.values():
+        caller, station, how = presented_identity(values, account.key, engine=engine)
+        if how != 'provider':
+            trunks.append({'account': account.key, 'label': account.label, 'caller_id': caller,
+                           'station_id': station or caller})
+    return {'pins': found, 'trunks': trunks}
+
+
+@router.get('/sender-pins', dependencies=[Depends(require_permission('settings:read'))])
+async def sender_pins(request: Request):
+    """Recipients that recognise your faxes by the number they come from, and the trunk registered with each."""
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: pins_view(store.engine, values))
+
+
+@router.put('/sender-pins/{number}', dependencies=[Depends(require_permission('settings:write'))])
+async def pin_sender(number: str, payload: SenderPinIn, request: Request, identity=Depends(require_identity)):
+    """Pin a recipient to the trunk, caller ID and station ID registered with it; faxes to it never go another way.
+    Earlier pins stay as history."""
+    from .sender_pins import PinError, record
+    store = _store(request)
+    values = _values(request)
+
+    def save():
+        try:
+            record(store.engine, values, number, account=payload.account, caller_id=payload.caller_id,
+                   station_id=payload.station_id, note=payload.note or None, actor=_who(store.engine, identity))
+        except PinError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return pins_view(store.engine, values)
+    return await _call(save)
+
+
+@router.delete('/sender-pins/{number}', dependencies=[Depends(require_permission('settings:write'))])
+async def unpin_sender(number: str, request: Request, identity=Depends(require_identity),
+                       note: str = Query(default='', max_length=2000)):
+    """End a recipient's pin; faxes to it go by your sending rules again. Its history stays."""
+    from .sender_pins import PinError, remove
+    store = _store(request)
+    values = _values(request)
+
+    def save():
+        try:
+            remove(store.engine, number, note=note or None, actor=_who(store.engine, identity))
+        except PinError as error:
+            raise HTTPException(404, detail=str(error)) from None
+        return pins_view(store.engine, values)
+    return await _call(save)
+
+
+@router.get('/faxes/{job_id}/sender-evidence')
+async def sender_evidence(job_id: str, request: Request, identity=Depends(require_identity)):
+    """The sender's evidence for a fax to a registered-sender recipient: the identity registered then, the kept
+    pages, each call with the answering station, and any request for the original. For anyone who may read it."""
+    from ..access.http import private_operation
+    from ..config_runtime import run_lifecycle_step
+    from .sender_pins import evidence
+    runtime = request.app.state.access_runtime
+    await run_lifecycle_step(private_operation(lambda: runtime.queries.job(identity.actor, job_id)))
+    store = _store(request)
+    folder = _values(request).fax_data_dir
+    found = await _call(lambda: evidence(store.engine, job_id, fax_data_dir=folder))
+    if found is None:
+        raise HTTPException(404, detail='This fax was not sent to a registered-sender recipient.')
+    return found
+
+
+@router.post('/faxes/{job_id}/original', dependencies=[Depends(require_permission('settings:write'))])
+async def original_request(job_id: str, payload: OriginalIn, request: Request, identity=Depends(require_identity)):
+    """Record that the recipient asked for the original of this fax, that you sent it, or that the request was
+    withdrawn. Faxbot sends nothing itself."""
+    from .sender_pins import PinError, evidence, record_original
+    store = _store(request)
+    folder = _values(request).fax_data_dir
+
+    def save():
+        try:
+            record_original(store.engine, job_id, payload.state, note=payload.note or None,
+                            actor=_who(store.engine, identity))
+        except PinError as error:
+            raise HTTPException(409, detail=str(error)) from None
+        return evidence(store.engine, job_id, fax_data_dir=folder)
+    return await _call(save)
