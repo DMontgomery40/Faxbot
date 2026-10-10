@@ -152,8 +152,14 @@ def price(engine, folder, drawn, *, tariff='per_page', number=PEER, agreed=(PEER
     claim = SimpleNamespace(job_id=JOB, attempt_id=ATTEMPT, members=())
     job = {'to_number': number, **({'recipient_number': recipient} if recipient else {})}
     before = digests(pdf, tiff)
-    shared = terms if provider_tariff is None else tariff_terms(provider_tariff)
-    shared_facts = predict.RouteFacts('sip', shared.card.label, DestinationClass(LOCAL, 'US', '+1', number), shared)
+    if provider_tariff == 'unpriced':
+        # The provider's first trunk publishes no price (the Sinch trunk preset ships none): unknown, never zero.
+        shared_facts = predict.RouteFacts('sip', 'Carrier trunk', DestinationClass(LOCAL, 'US', '+1', number), None,
+                                          missing='Carrier trunk publishes no price for calls to this number')
+    else:
+        shared = terms if provider_tariff is None else tariff_terms(provider_tariff)
+        shared_facts = predict.RouteFacts('sip', shared.card.label, DestinationClass(LOCAL, 'US', '+1', number),
+                                          shared)
     with predict.facts_source(lambda route, destination, now=None: shared_facts):
         evaluated = sending.evaluate(engine, values, account, claim, job, pdf, tiff, now=NOW)
     prepared = sending.publish(engine, evaluated, claim, pdf, tiff, now=NOW) if evaluated is not None else None
@@ -233,6 +239,25 @@ def test_the_accounts_own_bill_decides_whether_a_short_fax_goes_encoded(installa
     assert_invariant(priced, encoded_expected=expected == 'codec')
     record(Case(GROUP, f'two-page text fax on a {tariff} account', ('codec', tariff),
                 tuple(sorted(priced.applied.mechanisms)) or ('ordinary',), INVARIANT))
+
+
+@needs_gs
+@pytest.mark.xfail(strict=True, reason='defect C2: encoded pages win a tied known bill on time alone, against the '
+                                       "README's 'only for a lower estimated bill'")
+def test_with_a_known_tied_bill_the_ordinary_pages_go_as_the_readme_says(installation, tmp_path, documents):
+    """README, Encoded pages: "With comparable prices, the route predictor selects encoded pages only for a lower
+    estimated bill." The bound account bills whole minutes (a known price); the one encoded page and the two ordinary
+    pages both bill one minute, USD 0.005. When the provider's first trunk publishes no price, the codec's own check
+    admits the encoded page by its page and time rule, and the layout chooser (``pages/decision.py`` ``choose``)
+    then breaks the tie on unrounded seconds, so the encoded page goes at the same bill. The README says the ordinary
+    pages should. (With the same known tariff for both, the codec's own check refuses the tie and the ordinary pages
+    go: ``test_the_accounts_own_bill_decides_whether_a_short_fax_goes_encoded[whole_minutes]``.)"""
+    priced = price(installation, tmp_path / 'fax', documents['text'], tariff='whole_minutes',
+                   provider_tariff='unpriced', key='sip-minutes')
+    normal, encoded = option(priced.evaluated, 'normal'), option(priced.evaluated, 'codec')
+    assert normal.micros == encoded.micros == 5000  # a known, tied bill on the account's own card
+    assert priced.evaluated.chosen.layout == 'normal'
+    assert_invariant(priced, encoded_expected=False)
 
 
 @needs_gs
