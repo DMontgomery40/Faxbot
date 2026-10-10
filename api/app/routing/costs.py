@@ -79,6 +79,31 @@ class RateCard:
 
 
 @dataclass(frozen=True)
+class TimeBand:
+    """A per-minute price that applies on some days between two times, on the carrier's own clock (a peak,
+    off-peak or weekend rate). Pure data, as the carrier publishes it."""
+    days: tuple                 # 0 Monday to 6 Sunday
+    start_minute: int           # minutes after local midnight, included
+    end_minute: int             # minutes after local midnight, excluded (1440: midnight)
+    per_minute_micros: int
+    label: str = ''             # the carrier's own name for it: 'peak', 'off-peak', 'weekend'
+
+    def __post_init__(self):
+        if (not isinstance(self.days, tuple) or not self.days
+                or any(type(day) is not int or not 0 <= day <= 6 for day in self.days)):
+            raise InvalidRateCard('A time band names days from Monday (0) to Sunday (6).')
+        if (type(self.start_minute) is not int or type(self.end_minute) is not int
+                or not 0 <= self.start_minute < self.end_minute <= 1440):
+            raise InvalidRateCard('A time band starts before it ends, within one day.')
+        if type(self.per_minute_micros) is not int or not 0 <= self.per_minute_micros <= MAX_RATE_MICROS:
+            raise InvalidRateCard('Rates must be zero or more and at most 100 per unit.')
+
+    def covers(self, local):
+        minute = local.hour * 60 + local.minute
+        return local.weekday() in self.days and self.start_minute <= minute < self.end_minute
+
+
+@dataclass(frozen=True)
 class RateTerms:
     """A rate card and the terms a stored card does not hold: the numbers it prices and how it counts pages.
 
@@ -107,9 +132,45 @@ class RateTerms:
     max_pages_per_fax: int | None = None
     published: bool = False
     included_minutes: int | None = None
+    # A carrier's prices by time of day (``TimeBand``), on its own clock (``time_zone``), with the version they came
+    # from ('aaisp read 2026-10-10'). Empty by default: the card's own per-minute price at every hour.
+    time_bands: tuple = ()
+    time_zone: str | None = None
+    bands_version: str | None = None
+
+    def at(self, moment):
+        """These terms for a call starting at ``moment`` (naive UTC): the card's per-minute price replaced by the
+        band covering that local time, when the terms have bands; unchanged otherwise or when no band covers it."""
+        if not self.time_bands or moment is None:
+            return self
+        from dataclasses import replace as replaced
+        from datetime import timezone
+        from zoneinfo import ZoneInfo
+        local = moment.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(self.time_zone or 'UTC'))
+        band = next((band for band in self.time_bands if band.covers(local)), None)
+        if band is None:
+            return self
+        return replaced(self, card=replaced(self.card, per_minute_micros=band.per_minute_micros))
+
+    def band_at(self, moment):
+        """The ``TimeBand`` covering ``moment`` (naive UTC), or None."""
+        if not self.time_bands or moment is None:
+            return None
+        from datetime import timezone
+        from zoneinfo import ZoneInfo
+        local = moment.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(self.time_zone or 'UTC'))
+        return next((band for band in self.time_bands if band.covers(local)), None)
 
     def __post_init__(self):
         from .destinations import CLASSES, UNKNOWN
+        if not isinstance(self.time_bands, tuple) or any(not isinstance(band, TimeBand) for band in self.time_bands):
+            raise InvalidRateCard('Time bands are a list of bands.')
+        if self.time_bands:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(self.time_zone or '')
+            except (ZoneInfoNotFoundError, ValueError):
+                raise InvalidRateCard('Time bands need the carrier time zone they are read in.') from None
         if not isinstance(self.card, RateCard):
             raise InvalidRateCard('Rate terms need a rate card.')
         if self.destination_class not in CLASSES or self.destination_class == UNKNOWN:

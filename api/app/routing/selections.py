@@ -102,10 +102,47 @@ def record(engine, *, claim, handoff, evaluated, prepared, pdf, now=None):
                tariff_sha256=account.fingerprint(), slot_at=info.get('slot_at'),
                candidates=json.dumps(info.get('candidates') or [], sort_keys=True, separators=(',', ':')),
                created_at=now)
+    deliveries = sa.table('outbound_deliveries', sa.column('id'), sa.column('state'), sa.column('attempt_id'),
+                          sa.column('claim_owner'), sa.column('claim_token'), sa.column('claim_expires_at'))
     with engine.begin() as connection:
         if connection.execute(sa.select(table.c.id).where(table.c.attempt_id == claim.attempt_id)).first():
             return False
+        # Only while this attempt still holds its claim: an attempt that outlived its lease never sends, so it never
+        # gets a record saying it is going.
+        held = connection.execute(sa.select(deliveries.c.id).where(
+            deliveries.c.id == claim.job_id, deliveries.c.state == 'preparing',
+            deliveries.c.attempt_id == claim.attempt_id, deliveries.c.claim_expires_at > now,
+            *((deliveries.c.claim_owner == claim.owner,) if getattr(claim, 'owner', None) else ()),
+            *((deliveries.c.claim_token == claim.token,) if getattr(claim, 'token', None) else ()))).first()
+        if held is None:
+            return False
         connection.execute(table.insert().values(**row))
+    return True
+
+
+def note_measured(engine, claim, joint):
+    """One 'route_measured' history event for an attempt whose accounts were measured: how many, and why the
+    comparison stopped short when it did ('deadline': measuring would have outlasted the claim; 'unmeasured': the
+    document could not be drawn or measured; 'document': no document file). Evidence only: a database that cannot
+    take it is logged and the fax goes on."""
+    from ..outbound_store import _event
+    if joint is None or joint.limit in ('ordered', 'shared_call', 'one_account'):
+        return False
+    events = sa.table('outbound_events', sa.column('id'), sa.column('job_id'), sa.column('attempt_id'),
+                      sa.column('kind'), sa.column('dedupe_key'), sa.column('details'), sa.column('created_at'))
+    try:
+        with engine.begin() as connection:
+            if connection.execute(sa.select(events.c.id).where(
+                    events.c.job_id == claim.job_id,
+                    events.c.dedupe_key == f'measured:{claim.attempt_id}')).first() is not None:
+                return False
+            _event(connection, events, claim.job_id, 'route_measured', datetime.utcnow().replace(microsecond=0),
+                   attempt_id=claim.attempt_id, details={'measured': len(joint.frontiers), 'limit': joint.limit},
+                   dedupe_key=f'measured:{claim.attempt_id}')
+    except sa.exc.SQLAlchemyError as error:
+        logging.getLogger(__name__).warning('Fax %s: what its route choice measured could not be noted: %s',
+                                            claim.job_id, error)
+        return False
     return True
 
 
@@ -122,7 +159,8 @@ def for_attempt(engine, attempt_id):
 
 
 def newest_for_job(engine, job_id):
-    """The selection of the fax's newest attempt that has one, with that attempt's state, or None."""
+    """The selection of the fax's newest submitted attempt, with that attempt's state, or None (that attempt went
+    without comparing accounts, or nothing was submitted yet)."""
     from .database import DeliveryStoreError
     try:
         table = _table(engine)
@@ -138,9 +176,10 @@ def newest_for_job(engine, job_id):
         except sa.exc.NoSuchTableError:
             return _view(rows[0])
         newest = connection.execute(sa.select(attempts.c.id, attempts.c.phase).where(
-            attempts.c.job_id == job_id).order_by(attempts.c.sequence.desc()).limit(1)).first()
+            attempts.c.job_id == job_id, attempts.c.submitted_at.is_not(None))
+            .order_by(attempts.c.sequence.desc()).limit(1)).first()
     if newest is None:
-        return _view(rows[0])
+        return None  # nothing was submitted: no sentence says it is going
     row = next((item for item in rows if item['attempt_id'] == newest[0]), None)
     if row is None:
         return None  # the newest attempt went without comparing accounts; an older comparison no longer applies

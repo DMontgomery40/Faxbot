@@ -31,6 +31,14 @@ from .store import RouteStore
 from . import envelope as envelopes, holds as hold_store
 
 
+class RecordDeferred(CapacityWait):
+    """The attempt's route choice could not be recorded just now (the database was busy): nothing was sent, and the
+    fax is given back to be chosen again in a moment, never failed for it."""
+
+    def __init__(self):
+        super().__init__(seconds=5)
+
+
 class RouteHeld(CapacityWait):
     """Nothing the fax's rules allow can take it now: the delivery store already gave the claim back and holds the
     fax in Sent. The worker's capacity handling then finds nothing left to give back."""
@@ -66,6 +74,13 @@ class _Planned(tuple):
         found = super().__new__(cls, (plan, job, revision))
         found.profile, found.prices = profile, prices
         return found
+
+
+def _job_mailbox(job_id):
+    """The fax's sending mailbox, as the call reads it (``ami.job_mailbox``: None for no mailbox, or when it cannot
+    be read; the call then shows the organization's number and is priced at it)."""
+    from ..ami import job_mailbox
+    return job_mailbox(job_id)
 
 
 def _extras(planned):
@@ -260,9 +275,12 @@ class RoutedTransport:
         dial = claim_dial_state(self.store, claim, job.get('dial'))
         from .pricing import prices_for
         # A queued fax under sending rules sees a scarce plan's room after the faxes it is held for (plan_allocation).
+        # The mailbox the fax was sent from: its call presents that mailbox's reply number, and a price by caller ID
+        # follows it (resolved exactly as the call resolves it, ami.job_mailbox).
+        mailbox = _job_mailbox(claim.job_id)
         prices = prices_for(routes, revision.values, job['to_number'], job.get('pages'), pinned=pinned,
                             bound=bound, dial=dial, job_id=claim.job_id if pinned is not None else None,
-                            measured=measured)
+                            measured=measured, mailbox_id=mailbox)
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
                             pages=job.get('pages'), alternates=True, dial=dial,
                             tried=planner.tried(claim.job_id, claim.attempt_id),
@@ -279,7 +297,8 @@ class RoutedTransport:
         if why is not None:
             return joint.Joint(limit=why)
         return joint.measure(self.store, revision, profile, claim, plan, job,
-                             bound=self._bound_for(revision, profile, _pinned(plan)),
+                             bound=self._bound_for(revision, profile, _pinned(plan)), mailbox_id=_job_mailbox(
+                                 claim.job_id),
                              configuration_for=lambda key: _account_route_configuration(revision, key),
                              ensure_artifact=ensure_route_artifact)
 
@@ -290,13 +309,15 @@ class RoutedTransport:
         from . import joint, selections
         selected = measured.selection(key) if measured is not None and key is not None else None
         summary = selections.summary(plan, measured, key, prices) if selected is not None else None
-        handoff = joint.Handoff(claim.attempt_id, key, selected, summary)
+        handoff = joint.Handoff(claim.attempt_id, key, selected, summary, _job_mailbox(claim.job_id))
         return _HandedOver(self.inner.prepare(claim), handoff,
                            record=(lambda found: self._record_selection(claim, found)) if record else None)
 
     def _record_selection(self, claim, handoff):
-        """Write the attempt's selection (``routing.selections.record``); a database that cannot take it stops the
-        send before anything leaves Faxbot (``PreparationFailure``), with the cause logged."""
+        """Write the attempt's selection (``routing.selections.record``) before the submission marker. A database
+        that cannot take it just now (locked, unreachable) gives the fax back to wait a moment, nothing sent and
+        nothing failed (``RecordDeferred``); the file it names unreadable fails preparation, as a document would.
+        Both are logged."""
         import sqlalchemy as sa
         from . import selections
         from .database import DeliveryStoreError
@@ -305,9 +326,13 @@ class RoutedTransport:
             selections.record(self.store.configuration.engine, claim=claim, handoff=handoff,
                               evaluated=published['evaluated'], prepared=published.get('prepared'),
                               pdf=published.get('pdf'))
-        except (DeliveryStoreError, sa.exc.SQLAlchemyError, OSError) as error:
-            logging.getLogger(__name__).warning('Fax %s: its route choice could not be recorded, so nothing is '
-                                                'sent: %s', claim.job_id, error)
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            logging.getLogger(__name__).warning('Fax %s: its route choice could not be recorded just now, so it '
+                                                'waits a moment; nothing was sent: %s', claim.job_id, error)
+            raise RecordDeferred() from None
+        except OSError as error:
+            logging.getLogger(__name__).warning('Fax %s: the pages chosen for its route could not be read back, so '
+                                                'nothing is sent: %s', claim.job_id, error)
             raise PreparationFailure('preparation_failed') from None
 
     def _record_dialed(self, claim, plan, route, dial, values):
@@ -509,6 +534,9 @@ class RoutedTransport:
                 # with every rule, cap and preference as before (routing.joint).
                 measured = await run_lifecycle_step(lambda: _unexpected_raises(
                     lambda: self._measure(claim, plan, job, revision, profile)))
+                from . import selections
+                await run_lifecycle_step(lambda: selections.note_measured(
+                    self.store.configuration.engine, claim, measured))
                 if measured.measured:
                     planned = await run_lifecycle_step(lambda: self._plan(claim, measured=measured.measured))
                     plan, job, revision = planned

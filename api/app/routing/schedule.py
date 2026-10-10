@@ -452,7 +452,8 @@ class Decision:
     charge: str | None = None            # whether a failed try there is charged: 'bills', 'free', 'unknown'
     later: bool = False                  # may start now but goes after faxes that could use the same room
     latest_start: datetime | None = None
-    better: object = None                # the ``BetterHour`` a fax waits for ('faster' or 'reliable'), when it does
+    # The ``BetterHour`` a fax waits for ('faster' or 'reliable'), or the ``CheaperHour`` ('cheaper'), when it does.
+    better: object = None
 
 
 def call_time(pages):
@@ -469,9 +470,11 @@ def latest_start(fax):
     return fax.send_by - 2 * call_time(fax.pages) - SAFETY
 
 
-def decide(fax, settings, busy, now, timing=None):
+def decide(fax, settings, busy, now, timing=None, price_at=None):
     """Whether ``fax`` should start now; never holds an urgent fax or holds one past its latest start.
-    ``timing`` is the number's learned call hours (``HourTiming``), when Faxbot learns them."""
+    ``timing`` is the number's learned call hours (``HourTiming``), when Faxbot learns them. ``price_at(moment)``
+    is the fax's expected bill if its call started then, ``(micros, currency)`` or None when unknown: a later hour
+    is waited for only when it costs less in money (``CheaperHour``), never for time alone."""
     latest = latest_start(fax)
     if fax.urgent:
         return Decision(latest_start=latest)
@@ -485,8 +488,17 @@ def decide(fax, settings, busy, now, timing=None):
     if slot is None:
         if start <= now:
             better = better_hour(fax, settings, timing, busy if settings.learn_busy else None, now, latest)
+            if better is not None and better.why == 'faster' and price_at is not None and _saves(
+                    price_at, now, better.at) is False:
+                # A faster hour that bills the same (or more) saves nothing: the fax goes now. With a price unknown
+                # at either hour, money cannot decide and the time a page decides, as before.
+                better = None
             if better is not None:
                 return Decision(better.at, better.why, latest_start=latest, better=better)
+            if price_at is not None and getattr(price_at, 'by_hour', True):
+                cheaper = cheaper_hour(fax, settings, busy if settings.learn_busy else None, now, latest, price_at)
+                if cheaper is not None:
+                    return Decision(cheaper.at, 'cheaper', latest_start=latest, better=cheaper)
         return Decision(start if start > now else None, why, latest_start=latest)
     charge = failed_tries(fax.route, fax.preset).charge(slot.kind if slot.kind in UNREACHABLE else 'busy')
     if charge == 'free':
@@ -728,6 +740,58 @@ def better_hour(fax, settings, timing, busy, now, latest):
     return None
 
 
+@dataclass(frozen=True)
+class CheaperHour:
+    """The later hour a fax waits for because its call costs less then (a carrier's off-peak rate, or a faster hour
+    that bills less): the expected bill now and then, in one currency."""
+    at: datetime                         # naive UTC
+    now_micros: int
+    then_micros: int
+    currency: str
+    slots: int = 0                       # permitted hours priced
+
+    def sentence(self):
+        """'its call costs about $0.0104 from 6:00 PM BST instead of $0.0125 now.'"""
+        from .costs import money_text
+        return (f'its call costs about {money_text(self.then_micros, self.currency)} from {_clock(self.at)} '
+                f'instead of {money_text(self.now_micros, self.currency)} now.')
+
+
+def _saves(price_at, now, later):
+    """Whether a call starting ``later`` is expected to cost less money than one starting ``now``; None when either
+    price is unknown or they are in different currencies (money cannot say)."""
+    before, after = price_at(now), price_at(later)
+    if before is None or after is None or before[0] is None or after[0] is None or before[1] != after[1]:
+        return None
+    return after[0] < before[0]
+
+
+def cheaper_hour(fax, settings, busy, now, latest, price_at):
+    """The permitted later hour (open for the recipient, not busy, within ``HOUR_WAIT`` and the fax's latest start)
+    whose expected bill is lowest, when it is lower than starting now; None otherwise. Every such hour is priced
+    (exact over at most ``HOUR_WAIT`` hourly slots), the earliest wins a tie, and an unknown price never wins.
+    Never for an urgent fax."""
+    if fax.urgent:
+        return None
+    base = price_at(now)
+    if base is None or base[0] is None:
+        return None
+    limit = now + HOUR_WAIT if latest is None else min(now + HOUR_WAIT, latest)
+    zone = _zone(settings.zone_name)
+    moment, best, priced = _next_hour(now, zone), None, 0
+    while moment <= limit:
+        if settings.hours.open_at(moment) and (busy is None or busy.busy_at(moment) is None):
+            found = price_at(moment)
+            priced += 1
+            if (found is not None and found[0] is not None and found[1] == base[1] and found[0] < base[0]
+                    and (best is None or found[0] < best[1])):
+                best = (moment, found[0])
+        moment = _next_hour(moment, zone)
+    if best is None:
+        return None
+    return CheaperHour(best[0], base[0], best[1], base[1], priced)
+
+
 def call_timing(row):
     """A ``CallTiming`` from one joined trunk call row (``Scheduler.call_timings``), or None when it says nothing:
     the time a page from the SSL Fax engine's transfer time, else the connected time less the predictor's setup."""
@@ -820,7 +884,7 @@ def reason(decision, settings, *, route_label='this route', price_text=None, now
     if decision.why == 'busy' and decision.slot is not None:
         return (f'Waiting until {until}: {decision.slot.sentence()}'
                 f'{charge_clause(decision.charge, route_label, price_text)}.')
-    if decision.why in ('faster', 'reliable') and decision.better is not None:
+    if decision.why in ('faster', 'reliable', 'cheaper') and decision.better is not None:
         return f'Waiting until {until}: {decision.better.sentence()}'
     return None
 
@@ -1099,7 +1163,40 @@ class Scheduler:
             if len(memo[fax.number]) < 3:
                 memo[fax.number].append(self.timing(connection, fax.number, settings, now, fallback=False))
             timing = memo[fax.number][2]
-        return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now, timing), settings
+        # Money decides any wait for a better hour: priced on the fax's own account at each permitted hour when its
+        # carrier prices by time of day, else only to check that a faster hour really bills less.
+        by_hour = priced_by_hour(str(fax.route or '').lower(), fax.preset)
+        price_at = PriceAt(self.engine, values, fax, by_hour=by_hour) if by_hour or timing is not None else None
+        return decide(fax, settings, memo[fax.number][1] if settings.learn_busy else None, now, timing,
+                      price_at), settings
+
+
+class PriceAt:
+    """A fax's expected bill if its call started at a given moment, ``(micros, currency)`` or None, from the shared
+    predictor on its own account's tariff at that hour (time-of-day prices, and the hour's learned speed). Each hour
+    is priced once. ``by_hour``: the account's carrier publishes prices by time of day, so every permitted hour is
+    worth pricing (``cheaper_hour``); otherwise only a faster hour's saving is checked."""
+
+    def __init__(self, engine, values, fax, *, by_hour):
+        self.engine, self.values, self.fax, self.by_hour = engine, values, fax, by_hour
+        self._found = {}
+
+    def __call__(self, moment):
+        key = moment.replace(minute=0, second=0, microsecond=0)
+        if key not in self._found:
+            from .predict import Shape, predict_from
+            from .predict_facts import facts_for
+            facts = facts_for(self.fax.route, self.fax.number, now=moment, engine=self.engine, values=self.values)
+            found = predict_from(facts, Shape(max(1, int(self.fax.pages or 1)), None, 'standard', 'normal'))
+            self._found[key] = (found.cost.micros, found.cost.currency) if found.cost is not None else None
+        return self._found[key]
+
+
+def priced_by_hour(route, preset):
+    """Whether this route's carrier publishes prices by time of day (``config/rate_cards.json`` ``time_bands``)."""
+    from .predict_facts import shipped
+    identity = (f'sip-{preset}' if preset else 'sip') if route == 'sip' else route
+    return any(entry[0] == identity for entry in shipped().get('bands') or ())
 
 
 _CACHE = {}

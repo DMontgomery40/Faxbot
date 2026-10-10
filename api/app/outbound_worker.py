@@ -62,14 +62,16 @@ class CapacityWait(RuntimeError):
 
 
 class OutboundWorker:
-    def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0, clock=None):
-        if interval <= 0 or submission_timeout <= 0:
+    def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0, clock=None, lease_seconds=30):
+        if interval <= 0 or submission_timeout <= 0 or not 1 <= lease_seconds <= 300:
             raise ValueError('Worker intervals must be positive.')
         self.store = store
         self.transport = transport
         self.owner = uuid4().hex
         self.interval = interval
         self.submission_timeout = submission_timeout
+        # How long a claim lasts before another worker may recover it; renewed while preparation runs.
+        self.lease_seconds = lease_seconds
         self.clock = clock or datetime.utcnow
         # Faxes given back for lack of room, and when the worker may claim them again. In memory:
         # after a restart a fax is at most given back once more.
@@ -80,15 +82,42 @@ class OutboundWorker:
         self.paused = {job: until for job, until in self.paused.items() if until > now}
         return tuple(self.paused)
 
+    async def _heartbeat(self, claim, stop):
+        """Renew the claim's lease every third of it while the transport prepares (measuring and encoding a long
+        document can take longer than one lease); stops at once when preparation ends or the lease is lost."""
+        renew = getattr(self.store, 'renew_lease', None)
+        if renew is None:
+            return
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self.lease_seconds / 3)
+                return
+            except asyncio.TimeoutError:
+                pass
+            renewed = await run_lifecycle_step(lambda: renew(claim, lease_seconds=self.lease_seconds))
+            if not renewed:
+                logging.getLogger(__name__).warning('Fax %s: its claim was lost while it was being prepared; '
+                                                    'nothing is sent by this attempt.', claim.job_id)
+                return
+
     async def step(self):
         await run_lifecycle_step(self.store.recover_expired)
         exclude = self._exclude()
-        claim = await run_lifecycle_step(lambda: self.store.claim(self.owner, exclude=exclude))
+        if self.lease_seconds == 30:
+            claim = await run_lifecycle_step(lambda: self.store.claim(self.owner, exclude=exclude))
+        else:
+            claim = await run_lifecycle_step(lambda: self.store.claim(self.owner, exclude=exclude,
+                                                                      lease_seconds=self.lease_seconds))
         if claim is None:
             return False
         preparing = True
+        stop = asyncio.Event()
+        beat = asyncio.ensure_future(self._heartbeat(claim, stop))
         try:
             async with self.transport.prepare(claim) as operation:
+                # Preparation is over: the durable marker below needs the lease, no longer its renewal.
+                stop.set()
+                await beat
                 # Set before awaiting: a lost commit acknowledgement must not
                 # be classified as a definite failure before transmission.
                 preparing = False
@@ -137,6 +166,10 @@ class OutboundWorker:
             # cause logged, so its pre-data rules apply. Raised, it would be claimed, leased and recovered for ever.
             logging.getLogger(__name__).exception('Fax %s could not be prepared; nothing was sent.', claim.job_id)
             await run_lifecycle_step(lambda: self.store.fail_preparation(claim, category='preparation_failed'))
+        finally:
+            stop.set()
+            if not beat.done():
+                await beat
         return True
 
     async def run(self):

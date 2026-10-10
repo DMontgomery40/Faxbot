@@ -274,8 +274,119 @@ def due_group_on(connection, t, now, values=None):
         due = (len(chosen) < len(group) or any(row['urgent'] for row in group)
                or min(row['hold_until'] for row in chosen) <= now)
         if due:
+            if not any(row['urgent'] for row in group):
+                # Which of the waiting faxes share this call: the partition of the group into calls that costs least
+                # in money, each call billed on its own (brief 84, M3), when it costs less than arrival order.
+                better = best_partition(group, cap, layout, _call_cost(connection, key[0], values))
+                if better is not None:
+                    chosen = better
             return [{**row, 'layout': layout} for row in chosen]
     return None
+
+
+# The most faxes one group is partitioned exactly (Bell(10) = 115,975 partitions, by dynamic programming over
+# subsets in 3^10 = 59,049 steps); a larger group keeps arrival order, with its bound logged.
+EXACT_PARTITION = 10
+
+
+def _need(rows, layout):
+    """Pages one call takes for ``rows`` in this layout: a fax alone is its own pages; together, each fax with its
+    separator page, one index page for them all, or only their own pages with marks at the top of each."""
+    pages = sum(int(row['pages'] or 1) for row in rows)
+    if len(rows) == 1:
+        return pages
+    if layout == policy.LAYOUT_SEPARATORS:
+        return pages + len(rows)
+    if layout == policy.LAYOUT_INDEX_PAGE:
+        return pages + 1
+    return pages
+
+
+def _call_cost(connection, number, values):
+    """``cost(pages)``: the expected bill of one call of that many pages to ``number`` over Faxbot's own trunk (the
+    shared predictor, each call rounded on its own), or None when the price is unknown."""
+    try:
+        from ..routing.predict import Shape, predict_from
+        from ..routing.predict_facts import facts_for
+        facts = facts_for('sip', number, engine=connection.engine, values=values)
+    except (sa.exc.SQLAlchemyError, ValueError):
+        return None
+    memo = {}
+
+    def cost(pages):
+        if pages not in memo:
+            found = predict_from(facts, Shape(max(1, min(int(pages), 10_000)), None, 'standard', 'normal')).cost
+            memo[pages] = found.micros if found is not None else None
+        return memo[pages]
+    return cost
+
+
+def _arrival_partition(rows, cap, layout):
+    """The calls arrival order makes: each takes the next faxes while they fit the cap."""
+    calls, current = [], []
+    for row in rows:
+        trial = current + [row]
+        fits = _need(trial, layout) <= cap and not (layout == policy.LAYOUT_INDEX_PAGE
+                                                     and len(trial) > policy.INDEX_PAGE_DOCUMENTS)
+        if current and not fits:
+            calls.append(current)
+            current = [row]
+        else:
+            current = trial
+    if current:
+        calls.append(current)
+    return calls
+
+
+def best_partition(rows, cap, layout, cost):
+    """The faxes of ``rows`` (in call order, the oldest first) that should share this call, or None to keep arrival
+    order: the partition of the whole group into calls under the page cap whose summed expected bills (each call
+    rounded on its own) is lowest, exactly by dynamic programming over subsets for up to ``EXACT_PARTITION`` faxes,
+    used only when strictly cheaper than arrival order. The call returned is the one holding the oldest fax. A
+    larger group, or an unknown price, keeps arrival order (its bound is logged)."""
+    if cost is None or len(rows) < 2:
+        return None
+    arrival = _arrival_partition(rows, cap, layout)
+    arrival_cost = [cost(_need(call, layout)) for call in arrival]
+    if any(item is None for item in arrival_cost):
+        return None
+    if len(rows) > EXACT_PARTITION:
+        import logging
+        floor = cost(1)
+        bound = -(-sum(int(row['pages'] or 1) for row in rows) // cap) * floor if floor is not None else None
+        logging.getLogger(__name__).info('A shared call of %d faxes keeps arrival order (%s micros); no partition '
+                                         'costs less than %s micros.', len(rows), sum(arrival_cost), bound)
+        return None
+    n = len(rows)
+    priced = {}
+    for mask in range(1, 1 << n):
+        members = [rows[index] for index in range(n) if mask >> index & 1]
+        if _need(members, layout) > cap and len(members) > 1:
+            continue
+        if layout == policy.LAYOUT_INDEX_PAGE and len(members) > policy.INDEX_PAGE_DOCUMENTS:
+            continue
+        found = cost(_need(members, layout))
+        if found is None:
+            return None
+        priced[mask] = found
+    best = {0: (0, ())}
+    for mask in range(1, 1 << n):
+        low = mask & -mask
+        choice = None
+        sub = mask
+        while sub:
+            if sub & low and sub in priced and mask ^ sub in best:
+                total = priced[sub] + best[mask ^ sub][0]
+                if choice is None or total < choice[0]:
+                    choice = (total, (sub,) + best[mask ^ sub][1])
+            sub = (sub - 1) & mask
+        if choice is not None:
+            best[mask] = choice
+    full = (1 << n) - 1
+    if full not in best or best[full][0] >= sum(arrival_cost):
+        return None
+    first = next(block for block in best[full][1] if block & 1)
+    return [rows[index] for index in range(n) if first >> index & 1]
 
 
 def _held_by_schedule(connection, now):

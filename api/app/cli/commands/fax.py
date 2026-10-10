@@ -37,6 +37,7 @@ EVENT_LABELS = {
     'terminal_conflict': 'Conflicting provider update ignored', 'late_observation': 'Late provider update',
     'provider_observed': 'Provider status update', 'operator_identity_bound': 'Receipt confirmed with the provider fax ID',
     'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route',
+    'route_measured': 'Accounts compared on the pages they would send',
     'repair_started': 'Sending only the missing pages directly to the partner',
     'repair_completed': 'Completed directly by the partner after the call broke',
     'repair_failed': 'The partner did not receive the missing pages'}

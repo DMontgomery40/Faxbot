@@ -34,7 +34,7 @@ import weakref
 
 import sqlalchemy as sa
 
-from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
+from .costs import InvalidRateCard, RateCard, RateTerms, TimeBand, parse_amount
 from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify, country_name
 from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, RouteFacts
 from .seed import _date, _increment, default_path, load_cards
@@ -101,7 +101,47 @@ def shipped(path=None):
             if found is not None:
                 classes[kind].append(found)
     plans = [plan for plan in document.get('reference_plans') or () if isinstance(plan, dict)]
-    return {'cards': tuple(load_cards(path)), 'classes': classes, 'plans': plans}
+    bands = [found for found in (_bands_entry(entry) for entry in document.get('time_bands') or ()
+                                 if isinstance(entry, dict)) if found is not None]
+    return {'cards': tuple(load_cards(path)), 'classes': classes, 'plans': plans, 'bands': bands}
+
+
+def _minute(text):
+    hours, _, minutes = str(text).partition(':')
+    return int(hours) * 60 + int(minutes or 0)
+
+
+def _bands_entry(entry):
+    """(route, number class, country or None, zone, (TimeBand, ...), version, currency) for one ``time_bands``
+    entry of the shipped file, or None when it cannot be read (it is then left out, never half used)."""
+    try:
+        bands = tuple(TimeBand(tuple(int(day) for day in band['days']), _minute(band['from']), _minute(band['to']),
+                               parse_amount(str(band['per_minute'])), str(band.get('label') or '')[:40])
+                      for band in entry.get('bands') or ())
+        route = str(entry['route']).strip().lower()
+        zone = str(entry['zone'])
+        RateTerms(RateCard(None, route, 'outbound', route, 'USD', 0, 0, 0, 60, 0, None, datetime(2026, 1, 1)),
+                  time_bands=bands, time_zone=zone)
+    except (KeyError, TypeError, ValueError, InvalidRateCard):
+        return None
+    if not bands:
+        return None
+    version = f"{route} read {entry.get('read_on') or entry.get('advertised_on') or 'undated'}"
+    currency = str(entry.get('currency') or 'USD').upper()
+    return route, str(entry.get('number_class') or LOCAL), entry.get('country'), zone, bands, version, currency
+
+
+def banded(terms, identity, destination, data):
+    """``terms`` with the carrier's prices by time of day when the shipped file publishes them for this route,
+    number class and country (``time_bands``); unchanged otherwise. The bands replace the per-minute price only
+    for terms in the bands' own currency."""
+    if terms is None:
+        return None
+    for route, kind, country, zone, bands, version, currency in data.get('bands') or ():
+        if (route == identity and kind == destination.kind and currency == terms.card.currency
+                and (country is None or country == destination.region)):
+            return replace(terms, time_bands=bands, time_zone=zone, bands_version=version)
+    return terms
 
 
 def _card_for(cards, identity):
@@ -389,8 +429,9 @@ def learned_terms(engine, account, identity, where, label, *, home='US'):
     charges, calls = tables['carrier_charges'], tables['sip_call_records']
     trunk = calls.c.trunk_key if 'trunk_key' in calls.c else None
     digits = where.prefix.lstrip('+')
-    # The called number as the engine reported it: E.164, or the digits with an international prefix.
-    dialed = [f'+{digits}%', f'{digits}%', f'011{digits}%', f'00{digits}%']
+    # The called number as the engine reported it: E.164, or with an international dialing prefix (011, 00). Bare
+    # digits are never read as international: a US number stored as 4435550100 is not the UK's +44.
+    dialed = [f'+{digits}%', f'011{digits}%', f'00{digits}%']
     query = (sa.select(charges.c.amount_micros, charges.c.billed_seconds, charges.c.currency, charges.c.effective_at,
                        calls.c.called)
              .select_from(charges.join(calls, calls.c.id == charges.c.call_record_id))
@@ -406,7 +447,7 @@ def learned_terms(engine, account, identity, where, label, *, home='US'):
         for lead in ('011', '00'):
             if text.startswith(lead + digits):
                 return '+' + text[len(lead):]
-        return text if text.startswith('+') else '+' + text
+        return text
     with engine.connect() as connection:
         rows = [row for row in connection.execute(query).mappings()
                 if classify(e164(row['called']), home).region == where.region]
@@ -476,12 +517,16 @@ def _extra_trunk(values, account):
     return found.values if found is not None else None
 
 
-def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None):
+def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None,
+              mailbox_id=None):
     """The ``RouteFacts`` for one route and number, from the installation when it has a database.
 
     ``account`` is the account the call would use (its key; ``route_key`` when not given): an extra trunk is
     priced by its own carrier's card, and an origin-rated row for where its calls start (``origin_rates``)
     prices the call when one matches. ``site`` prices it as if it started from that site instead.
+    ``mailbox_id``: the mailbox the fax is sent from, so a deck priced by caller ID reads the number the call
+    presents for that mailbox (its reply number, as ``ami.originate_fields_for`` sets it); None for a quote with no
+    fax, priced at the organization's number.
     """
     values = _values() if values is None else values
     engine = _engine() if engine is None else engine
@@ -527,7 +572,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         from .origin_rates import rated_terms
         try:
             rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
-                                     account_key=account, engine=engine, site=site)
+                                     account_key=account, engine=engine, site=site, mailbox_id=mailbox_id)
         except DeliveryStoreError as error:
             # Saved rows or prices by state could not be read: the card's own price, and the cause logged.
             # Anything else is a bug and raises.
@@ -543,6 +588,8 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         terms, learned = learned_terms(engine, account, identity, where, label,
                                        home=getattr(values, 'fax_default_country', 'US') or 'US')
     terms = plan_terms(account, terms, card, values)
+    # A carrier that publishes prices by time of day (peak, off-peak): read at the time the call starts.
+    terms = banded(terms, identity, where, data)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
@@ -568,4 +615,4 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
             plan = plan_use(engine, account, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
-                      origin=origin, learned=learned)
+                      origin=origin, learned=learned, at=moment)

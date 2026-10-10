@@ -262,6 +262,287 @@ async def test_without_packing_the_minute_account_keeps_the_fax(joint, monkeypat
         'normal', 5000)
 
 
+def history(env, job):
+    return [event['kind'] for event in env.delivery.history(job)]
+
+
+def measured_event(env, job):
+    import json
+    table = sa.Table('outbound_events', sa.MetaData(), autoload_with=env.engine)
+    with env.engine.connect() as connection:
+        rows = connection.execute(sa.select(table.c.details).where(
+            table.c.job_id == job, table.c.kind == 'route_measured')).scalars().all()
+    return [json.loads(row) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_measuring_that_would_outlast_the_claim_stops_and_the_fax_goes_exactly_once(joint, monkeypatch):
+    """A slow measurer (each account takes 25 s of the 30 s lease): measuring stops 10 s before the lease ends,
+    keeps the account it measured, ranks by page count, and the fax goes once, never claimed and measured again
+    until it misses its lease each time."""
+    from api.app.pages import sending
+    from api.app.routing import joint as joint_module
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    clock = [1000.0]
+    monkeypatch.setattr(joint_module, '_clock', lambda: clock[0])
+    evaluate = sending.evaluate
+
+    def slow(*args, **kwargs):
+        clock[0] += 25.0
+        return evaluate(*args, **kwargs)
+    monkeypatch.setattr(sending, 'evaluate', slow)
+    worker = OutboundWorker(joint.delivery, transport(joint))
+    assert await worker.step() is True
+    [call] = joint.ami.calls
+    assert call['trunk'] is None  # by page count the minute account is first; it was measured before the deadline
+    assert joint.delivery.get(job)['state'] == 'in_progress'
+    assert measured_event(joint, job) == [{'measured': 1, 'limit': 'deadline'}]
+    assert await worker.step() is False and len(joint.ami.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['tariff', 'document'])
+async def test_a_selection_whose_facts_changed_before_sending_is_never_sent(joint, monkeypatch, change):
+    """Between measuring and publishing, the page account's price (or the fax's document) changes: nothing is
+    sent, nothing is recorded, the fax waits as ready, and the next claim chooses again with today's facts."""
+    from api.app.routing import joint as joint_module, selections
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    measure = joint_module.measure_document
+    changed = []
+
+    def then_change(*args, **kwargs):
+        found = measure(*args, **kwargs)
+        if not changed:
+            changed.append(change)
+            if change == 'tariff':
+                joint.routes.replace_cards([MINUTE, RateCard(None, 'sip-pages', 'outbound', 'Synthetic page account',
+                                                             'USD', 0, 4500, 0, 60, 60, None, NOW)])
+            else:
+                pdf = joint.tmp / f'{job}.pdf'
+                pdf.write_bytes(pdf.read_bytes() + b'\n% changed\n')
+        return found
+    monkeypatch.setattr(joint_module, 'measure_document', then_change)
+    first = joint.delivery.claim  # the claim's attempt, for the checks below
+    assert await OutboundWorker(joint.delivery, transport(joint)).step() is False
+    assert joint.ami.calls == [] and joint.delivery.get(job)['state'] == 'ready'
+    assert 'submission_authorized' not in history(joint, job)
+    with joint.engine.connect() as connection:
+        attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+        (abandoned,) = connection.execute(sa.select(attempts.c.id, attempts.c.phase).where(
+            attempts.c.job_id == job)).all()
+    assert abandoned[1] == 'abandoned' and selections.for_attempt(joint.engine, abandoned[0]) is None
+    assert page_change(joint, abandoned[0]) is None and first is not None
+    # Chosen again at once with the facts as they are now.
+    assert await OutboundWorker(joint.delivery, transport(joint)).step() is True
+    [call] = joint.ami.calls
+    attempt = joint.delivery.get(job)['attempt_id']
+    record = selections.for_attempt(joint.engine, attempt)
+    assert record['account_key'] == 'sip-pages' and call['sha256'] == record['artifact_sha256']
+    assert record['expected_micros'] == (4500 if change == 'tariff' else 4000)
+
+
+@pytest.mark.asyncio
+async def test_a_definite_failure_lets_the_next_attempt_choose_another_account_with_its_own_pages(joint):
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    worker = OutboundWorker(joint.delivery, transport(joint))
+    assert await worker.step() is True
+    first = joint.delivery.get(job)['attempt_id']
+    with joint.engine.connect() as connection:
+        attempts = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=connection)
+        profile = connection.scalar(sa.select(attempts.c.profile_id).where(attempts.c.id == first))
+    # The page account's call ended before any fax data (busy): a definite failure another account may take.
+    joint.delivery.observe(job, attempt_id=first, profile_id=profile, provider_sid=job, status='failed',
+                           event_key='synthetic-busy', before_data=True)
+    # A fax its rules routed waits in Sent after such a failure (the rules' own fallback); Check again lets the
+    # next claim try the accounts not tried yet.
+    from api.app.routing.holds import HoldStore
+    from api.tests.test_rules_delivery import ANNE, holds
+    (hold,) = holds(joint, job)
+    assert hold['kind'] == 'no_route' and 'Page trunk' in hold['reason']
+    HoldStore(joint.delivery).check_again(hold['id'], version=hold['version'], actor=ANNE)
+    assert await worker.step() is True
+    first_call, second_call = joint.ami.calls
+    assert (first_call['trunk'], second_call['trunk']) == ('sip-pages', None)
+    second = joint.delivery.get(job)['attempt_id']
+    assert second != first and joint.routes.decision(second)['route'] == 'sip'
+    from api.app.routing import selections
+    # The first attempt keeps its own record; the second is the minute account's own pages.
+    assert selections.for_attempt(joint.engine, first)['account_key'] == 'sip-pages'
+    assert second_call['tiff'] != first_call['tiff']
+
+
+@pytest.mark.asyncio
+async def test_an_uncertain_send_is_reconciled_on_its_own_account_and_never_sent_again(joint):
+    from api.app.routing.fallback import FallbackScheduler
+    from api.app.routing import selections
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+
+    async def lost(*args, **kwargs):
+        raise TimeoutError('synthetic lost acknowledgement')
+    joint.ami.originate_sendfax = lost
+    worker = OutboundWorker(joint.delivery, transport(joint))
+    assert await worker.step() is True
+    attempt = joint.delivery.get(job)['attempt_id']
+    assert joint.delivery.get(job)['state'] == 'reconciliation_required'
+    assert selections.for_attempt(joint.engine, attempt)['account_key'] == 'sip-pages'
+    assert FallbackScheduler(joint.delivery, joint.routes).step() is False
+    assert joint.delivery.requeue_after_failure(job, attempt_id=attempt, category='provider_failed') is False
+    assert await worker.step() is False
+
+
+@pytest.mark.asyncio
+async def test_a_busy_database_defers_the_fax_instead_of_failing_it(joint, monkeypatch):
+    """The route choice cannot be recorded just now (the database is locked): nothing is sent and nothing fails;
+    the fax waits a moment and goes on the next claim."""
+    from api.app.routing import selections
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    record = selections.record
+    calls = []
+
+    def locked(*args, **kwargs):
+        if not calls:
+            calls.append('locked')
+            raise sa.exc.OperationalError('INSERT', {}, Exception('database is locked'))
+        return record(*args, **kwargs)
+    monkeypatch.setattr(selections, 'record', locked)
+    assert await OutboundWorker(joint.delivery, transport(joint)).step() is False
+    assert joint.ami.calls == [] and joint.delivery.get(job)['state'] == 'ready'
+    assert 'preparation_failed' not in history(joint, job) and 'capacity_wait' in history(joint, job)
+    assert await OutboundWorker(joint.delivery, transport(joint)).step() is True
+    [call] = joint.ami.calls
+    assert call['trunk'] == 'sip-pages'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('page_price, expected', [(4000, 'sip-pages'), (6000, 'sip')])
+async def test_a_cost_cap_applies_to_the_pages_each_account_would_really_send(joint, page_price, expected):
+    """Cap $0.0055 a fax. Accepted at $0.002 a page, the page account is inside the envelope; by dispatch its price
+    rose, so by page count (two pages) it is over the cap and skipped. Measured, at $0.004 a page its one long page
+    is under the cap and it is chosen; at $0.006 a page it is still over and never is. (An account the cap excluded
+    at acceptance, by its page-count quote, stays excluded: the worker never widens the envelope.)"""
+    joint.routes.replace_cards([MINUTE, RateCard(None, 'sip-pages', 'outbound', 'Synthetic page account', 'USD', 0,
+                                                 2000, 0, 60, 60, None, NOW)])
+    publish(joint, {'format': 1,
+                    'limits': [rule('l-cap', {'cap_cost': {'currency': 'USD', 'amount': '0.0055'}})],
+                    'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    joint.routes.replace_cards([MINUTE, RateCard(None, 'sip-pages', 'outbound', 'Synthetic page account', 'USD', 0,
+                                                 page_price, 0, 60, 60, None, NOW)])
+    assert await OutboundWorker(joint.delivery, transport(joint)).step() is True
+    [call] = joint.ami.calls
+    attempt = joint.delivery.get(job)['attempt_id']
+    assert joint.routes.decision(attempt)['route'] == expected
+    assert measured_event(joint, job) == [{'measured': 2, 'limit': None}]
+    if expected == 'sip-pages':
+        assert (call['trunk'], call['pages']) == ('sip-pages', 1)
+    else:
+        assert call['trunk'] is None
+        from api.app.routing import envelope as envelopes
+        with joint.engine.connect() as connection:
+            skipped, _ = envelopes.skipped_of(envelopes.choice_on(connection, attempt))
+        assert ('sip-pages', 'over_cap') in skipped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('renewed', [True, False])
+async def test_a_preparation_longer_than_its_lease_still_sends_once_on_its_first_attempt(
+        joint, monkeypatch, caplog, renewed):
+    """The live case (a 26-page fax to the UK, 30 s of encoding at high load): preparation outlives one lease. The
+    worker renews the lease while it prepares, so another worker's sweep recovers nothing and attempt 1 sends,
+    exactly once. Without renewal (the control) the attempt is given up, said once in the log, and nothing sent."""
+    import logging
+    from api.app.outbound_store import OutboundStore
+    publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
+    job = accept(joint, to=NUMBER, pages=2)
+    write_document(joint, job)
+    if not renewed:
+        monkeypatch.setattr(OutboundStore, 'renew_lease', lambda self, claim, **kwargs: False)
+    routed = transport(joint)
+    prepare = routed.prepare
+    swept = []
+
+    def slow_prepare(claim):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def slow():
+            await asyncio.sleep(2.6)  # longer than the 2-second lease below
+            swept.append(await asyncio.to_thread(joint.delivery.recover_expired))
+            async with prepare(claim) as operation:
+                yield operation
+        return slow()
+    routed.prepare = slow_prepare
+    caplog.set_level(logging.WARNING, logger='api.app.outbound_store')
+    worker = OutboundWorker(joint.delivery, routed, lease_seconds=2)
+    from api.app.outbound_store import DeliveryConflict
+    try:
+        await worker.step()
+    except DeliveryConflict:
+        # The lost lease reaches the worker's loop, which logs it and claims again (outbound_wake.idle_loop).
+        assert not renewed
+    attempts = [event for event in history(joint, job) if event == 'submission_authorized']
+    if renewed:
+        assert swept == [0] and len(joint.ami.calls) == 1 and attempts == ['submission_authorized']
+        assert joint.delivery.get(job)['state'] == 'in_progress'
+        assert not [record for record in caplog.records if 'outlived its lease' in record.getMessage()]
+    else:
+        assert swept == [1] and joint.ami.calls == [] and attempts == []
+        assert joint.delivery.get(job)['state'] == 'ready'
+        [warning] = [record.getMessage() for record in caplog.records if 'outlived its lease' in record.getMessage()]
+        assert job in warning and 'seconds' in warning
+
+
+def test_a_learned_rate_reads_only_international_prefixes(live):
+    """A record stored as bare digits (4435550100, a Maryland number) is never read as a UK (+44) call."""
+    from api.app.routing.predict_facts import facts_for
+    routes, values = live
+    carrier_record(routes.engine, '4435550100', amount=9000)
+    carrier_record(routes.engine, '011441132000000', amount=4300)
+    uk = facts_for('sip', UK, engine=routes.engine, values=values, now=NOW)
+    assert uk.terms.card.per_minute_micros == 4300 and 'the rate 1 of your' in uk.learned
+
+
+def test_a_selection_is_recorded_only_while_its_attempt_holds_the_claim(joint):
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from api.app.routing import selections
+    job = accept(joint, to=NUMBER, pages=2)
+    claim = joint.delivery.claim('worker-test')
+    assert claim.job_id == job
+    option, shape = __import__('api.app.pages.sending', fromlist=['_as_counted'])._as_counted(
+        SimpleNamespace(key='sip', facts=None), {'pages': 2})
+    from api.app.pages.sending import Account, Evaluated
+    evaluated = Evaluated(Account('sip', 'sip', 'image'), None, 2, (option,), option, shape, (None, None), False,
+                          {'changed': False})
+    later = datetime.utcnow() + timedelta(minutes=5)
+    # The lease ran out: nothing is written, so no "Going through" sentence for an attempt that never sends.
+    assert selections.record(joint.engine, claim=claim, handoff=None, evaluated=evaluated, prepared=None,
+                             pdf=None, now=later) is False
+    assert selections.for_attempt(joint.engine, claim.attempt_id) is None
+    assert selections.record(joint.engine, claim=claim, handoff=None, evaluated=evaluated, prepared=None,
+                             pdf=None) is True
+    # Written while preparing, but shown in Sent only once the attempt is submitted.
+    assert selections.newest_for_job(joint.engine, job) is None
+
+
+def test_a_shared_call_keeps_its_own_path_and_compares_no_accounts():
+    from types import SimpleNamespace
+    from api.app.routing import joint as joint_module
+    plan = SimpleNamespace(pinned=None, skipped=(), choices=())
+    assert joint_module.compares(SimpleNamespace(members=('a', 'b')), plan) == 'shared_call'
+
+
 def test_the_document_preview_names_the_same_account_and_pages_as_the_worker(joint, tmp_path):
     """POST /routing/predict's core, on the same document, rules, tariffs and recipient as the worker test: the
     page account with one long page at $0.004, the minute account as the runner-up, in one sentence."""
@@ -418,3 +699,61 @@ def test_a_trunk_with_no_published_price_abroad_is_priced_by_its_own_carrier_rec
     plan, prices = plan_for(live, UK)
     assert prices['sip'].micros is not None and [choice.route.key for choice in plan.choices] == ['sip']
     assert plan.choices[0].reason in ('cheapest', 'configured', 'known_cheapest')
+
+
+# M1: the presented caller ID is part of the contract (mailbox reply numbers, priced by caller ID) ---------------
+
+@pytest.mark.asyncio
+async def test_a_mailbox_fax_is_priced_by_the_caller_id_its_call_presents(database, tmp_path, monkeypatch):
+    """The organization's reply number is an EEA number confirmed on the trunk; the Billing mailbox's reply number
+    is a trunk DID nobody confirmed. A fax from Billing to Austria presents the Billing number, so the route choice
+    prices it at the deck's surcharged row, not the organization's cheaper EEA row; a fax from no mailbox keeps the
+    organization's price. The mailbox is read exactly as the call reads it (ami.job_mailbox)."""
+    from api.app import ami
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.routing import origin_classes, reply_number
+    from api.app.routing.pricing import prices_for
+    from api.app.routing.seed import load_cards
+    from api.tests.test_origin_classes import AT_LANDLINE, GERMAN_CALLER, rows as deck_rows
+    billing_did = '+13035550142'
+    env = installation(database, tmp_path, {
+        **BASE, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': '', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip',
+        'SIP_TRUNK_HOST': 'sip.telnyx.com', 'SIP_TRUNK_CALLER_ID': GERMAN_CALLER,
+        'SIP_TRUNK_DIDS': f'{GERMAN_CALLER},{billing_did}', 'FAX_REPLY_NUMBER': GERMAN_CALLER,
+        'FAX_REPLY_NUMBERS': f'billing={billing_did}', 'INBOUND_ENABLED': 'true', 'FAX_DEFAULT_COUNTRY': 'US'},
+        outbound=ProviderConfiguration('sip', traits={'requires_tiff': True}))
+    env.routes.seed_cards(load_cards())
+    monkeypatch.setattr(ami, '_database', lambda: database)
+    monkeypatch.setattr(reply_number, 'mailbox_routes', lambda engine, values: [
+        reply_number.Route(billing_did, 'billing', 'Billing'), reply_number.Route(GERMAN_CALLER, 'front', 'Front')])
+    origin_classes.import_deck(database, 'sip-telnyx', deck_rows())
+    origin_classes.record_eligibility(database, 'sip', GERMAN_CALLER, bought_here=False, evidence='Synthetic order')
+    values = env.configuration.read().active.values
+    organization = prices_for(env.routes, values, AT_LANDLINE, 1, keys=['sip'])['sip']
+    boxed = prices_for(env.routes, values, AT_LANDLINE, 1, keys=['sip'], mailbox_id='billing')['sip']
+    assert (organization.origin, boxed.origin) == ('caller:eea', 'caller:unconfirmed')
+    assert boxed.micros > 9 * organization.micros > 0
+    # The route choice of a real fax from Billing: the mailbox the call reads, the caller ID it presents, the price.
+    job = accept(env, to=AT_LANDLINE, pages=1, mailbox='billing')
+    plain = accept(env, to=AT_LANDLINE, pages=1)
+    # A first fax to a new country waits for approval (the dialing guard); approved by a second person, as usual.
+    from api.app.routing.holds import HoldStore
+    from api.tests.test_rules_delivery import BEN, holds
+    for fax in (job, plain):
+        for hold in holds(env, fax):
+            HoldStore(env.delivery).approve(hold['id'], version=hold['version'], actor=BEN, actor_name='Ben')
+    assert (ami.job_mailbox(job), ami.job_mailbox(plain)) == ('billing', None)
+    fields = ami.originate_fields_for(values, job, AT_LANDLINE, '/tmp/fax.tif', mailbox_id=ami.job_mailbox(job))
+    assert fields['CallerID'] == billing_did
+    routed = RoutedTransport(type('Inner', (), {'store': env.delivery})(), direct=None, route_store=env.routes)
+    for fax, other, expected in ((job, plain, boxed), (plain, job, organization)):
+        claim = env.delivery.claim('worker-test', exclude=(other,))
+        assert claim.job_id == fax
+        planned = routed._plan(claim)
+        assert (planned.prices['sip'].micros, planned.prices['sip'].origin) == (expected.micros, expected.origin)
+        env.delivery.defer(claim)
+    from api.app.config_profiles import ProviderConfiguration as Configuration
+    from api.app.pages.sending import account_for
+    account = account_for(database, values, Configuration('sip', traits={'requires_tiff': True}), AT_LANDLINE,
+                          key='sip', mailbox_id='billing')
+    assert account.caller_id == billing_did and account.facts.terms.card.per_minute_micros == 155_000

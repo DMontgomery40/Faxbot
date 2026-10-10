@@ -665,3 +665,15 @@ def test_the_command_line_prints_each_plan_its_waiting_faxes_and_the_reserve(mon
     assert title == 'eFax, waiting faxes' and columns[-2:] == ['Route', 'Cost (estimate)']
     assert [row[4:] for row in rows] == [['Goes another way', 'Telnyx', '$0.50'], ['Gets the plan', 'eFax', '-']]
     assert out.lines[1].startswith('Sharing the pages this way saves about $49.50')
+
+
+def test_the_fax_being_planned_weighs_on_a_scarce_plan_by_the_pages_it_would_really_send(allowance):  # noqa: F811
+    """M4 (brief 84): 100 plan pages left, a 60-page and a 100-page fax waiting. By page count they cannot both use
+    the plan, so the 60-page fax is held off it. Measured, the 100-page fax would send 40 long pages on the plan's
+    account: both fit, and nothing is held from either."""
+    env = allowance
+    small, large = accept(env, to=SMALL, pages=60), accept(env, to=LARGE, pages=100)
+    by_count = allocation.allocate(env.routes, values_of(env), include=large)
+    assert by_count.hold(small, 'phaxio') is not None
+    measured = allocation.allocate(env.routes, values_of(env), include=large, sent={'phaxio': 40})
+    assert measured.hold(small, 'phaxio') is None and measured.hold(large, 'phaxio') is None
