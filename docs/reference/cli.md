@@ -5830,6 +5830,7 @@ $ faxbot providers rules [OPTIONS] COMMAND [ARGS]...
 * `regions`: Regions: named sets of countries and...
 * `sites`: Sites: the places your organization sends...
 * `workflows`: Workflows: named kinds of work, such as...
+* `destinations`: Where Faxbot may dial: numbers in your...
 
 #### `faxbot providers rules list`
 
@@ -6530,6 +6531,97 @@ $ faxbot providers rules workflows remove [OPTIONS] {KEY}
 **Options**:
 
 * `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot providers rules destinations`
+
+Where Faxbot may dial: numbers in your country, other countries, and premium-rate, special-service and satellite numbers. Faxes to anything not allowed wait in Sent for your approval.
+
+**Usage**:
+
+```console
+$ faxbot providers rules destinations [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show what Faxbot may dial and why.
+* `allow`: Let Faxbot dial a class of numbers or a...
+* `block`: Hold every fax to a class of numbers or a...
+* `reset`: Put a class of numbers or a country back...
+
+##### `faxbot providers rules destinations list`
+
+Show what Faxbot may dial and why.
+
+**Usage**:
+
+```console
+$ faxbot providers rules destinations list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules destinations allow`
+
+Let Faxbot dial a class of numbers or a country without asking.
+
+**Usage**:
+
+```console
+$ faxbot providers rules destinations allow [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to allow: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--ceiling PRICE`: The highest price a minute a call may cost before the fax waits for your approval, such as 0.25; none removes it.
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules destinations block`
+
+Hold every fax to a class of numbers or a country in Sent for your approval.
+
+**Usage**:
+
+```console
+$ faxbot providers rules destinations block [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to block: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers rules destinations reset`
+
+Put a class of numbers or a country back to Faxbot&#x27;s own default.
+
+**Usage**:
+
+```console
+$ faxbot providers rules destinations reset [OPTIONS] {CLASS}
+```
+
+**Arguments**:
+
+* `CLASS`: What to put back: national, national-toll-free, national-mobile, premium, special-service, satellite, a two-letter country code such as GB, or a calling code such as +44.  [required]
+
+**Options**:
+
+* `--ceiling PRICE`: A price ceiling a minute to keep, such as 0.25; none removes it.
 * `--help`: Show this message and exit.
 
 ## `faxbot costs`
