@@ -593,6 +593,17 @@ async def engine_result(request: Request, payload: dict = Body(...),
         raise HTTPException(409, detail='The fax engine job does not match the fax.')
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     row = await run_lifecycle_step(lambda: _record(request, job_id, attempt_id, payload, status, sentence))
+    # The station check, after the call: the SSL Fax engine cannot stop a call on the far end's station, so a
+    # station that differs is recorded one call late (routing/stations.py), and a successful one is kept.
+    from .routing.stations import after_call
+    try:
+        stations_engine = _engine_for(request)
+    except AttributeError:
+        stations_engine = None  # an application without its installation state (tests that call the handler alone)
+    await run_lifecycle_step(lambda: after_call(
+        stations_engine, job_id=job_id, attempt_id=attempt_id,
+        station=hylafax_engine._text64(payload, 'remote_station_b64', 40), succeeded=status == 'success',
+        engine_name='sslfax'))
     if status == hylafax_engine.UNCERTAIN and category == 'pages_unconfirmed' and not hylafax_engine.exchanged(payload):
         # The engine's words leave it open, but the trunk may know no fax machine was ever heard (no fax
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.

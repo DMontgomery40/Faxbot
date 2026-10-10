@@ -17,7 +17,7 @@ PRIOR = '0068_dialing_guard'
 
 
 def test_header_notice_follows_the_dialing_guard_and_is_the_only_head():
-    assert schema_header_notice.REVISION == '0073_header_notice' == schema.HEAD
+    assert schema_header_notice.REVISION == '0073_header_notice' == schema.HEADER_NOTICE
     assert schema.DIALING == PRIOR
     assert schema_header_notice.TABLES <= schema.STRICT_TABLES and len(schema_header_notice.TABLES) == 3
     from pathlib import Path

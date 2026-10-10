@@ -88,6 +88,7 @@ from .routing.countries_http import router as routing_countries_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
+from .routing.stations_http import router as routing_stations_router
 from .routing.polling_http import router as routing_polling_router
 from .routing.charges_http import router as routing_charges_router
 from .rules.http import router as rules_router
@@ -229,6 +230,7 @@ app.include_router(routing_countries_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
+app.include_router(routing_stations_router)
 app.include_router(routing_polling_router)
 app.include_router(routing_charges_router)
 app.include_router(rules_router)
@@ -580,6 +582,15 @@ def _handle_fax_result(event):
                         **({'error_category': answered_by} if answered_by else {}))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
+    finally:
+        # After the outcome is kept: the station the far end answered as, kept when the fax went through, and
+        # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble is logged
+        # there and never changes the outcome.
+        from .routing.stations import after_call
+        after_call(_deliveries().configuration.engine, job_id=job_id, attempt_id=attempt,
+                   station=sip_calls._station(event.get('Station64')),
+                   succeeded=str(fields.get('status', '')).upper() == 'SUCCESS',
+                   check_result=str(fields.get('csicheck') or '') or None)
 
 
 def _handle_originate_response(event):

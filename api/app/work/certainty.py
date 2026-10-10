@@ -60,6 +60,8 @@ PARTLY_SENT = 'partly_sent'
 # A person or a voice line answered (sip_calls.PERSON_ANSWERED): nothing arrived, and nobody calls the number again
 # until a person checks it with the recipient (research N9).
 PERSON_ANSWERED = 'person_answered'
+# The number answered as another fax machine and the station check refused it before any page (routing/stations.py).
+WRONG_STATION = 'wrong_station'
 # Short codes people read out and type: no 0/O, 1/I, 2/Z, 5/S, 8/B.
 REFERENCE_LETTERS = 'ACDEFGHJKMNPQRTUVWXY34679'
 REFERENCE_LENGTH = 6
@@ -236,7 +238,8 @@ class CertaintyStore:
     def _uncertain(self):
         d, a = self.deliveries, self.attempts
         return sa.or_(sa.and_(d.c.state == 'reconciliation_required', a.c.phase == 'uncertain'),
-                      sa.and_(d.c.state == 'failed', a.c.error_category.in_((PARTLY_SENT, PERSON_ANSWERED))))
+                      sa.and_(d.c.state == 'failed',
+                              a.c.error_category.in_((PARTLY_SENT, PERSON_ANSWERED, WRONG_STATION))))
 
     def _not_a_probe(self, job_id):
         """Faxes this module or the direct path send only to find out or to announce: no item of their own."""

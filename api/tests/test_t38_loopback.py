@@ -266,7 +266,7 @@ def never_latch(text):
 
 def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=False, wait_for_receiver=60,
              fax_image=None, identity=None, hang_up_after=None, extra_variables=None, receiver_db=None,
-             wait_frames=False, two_trunks=False):
+             wait_frames=False, two_trunks=False, receiver_commands=()):
     """Send the two proof pages from one container to the other and collect what each side saw.
 
     ``fax_image`` sends that fax image instead, under ``identity`` (job, attempt);
@@ -275,6 +275,8 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
     FAXBOT_IAF); ``receiver_db`` ({family/key: value}) goes into the receiver's Asterisk database first;
     ``wait_frames`` also waits for the sender's FaxFrames event. ``two_trunks`` gives both sides two trunks, the
     other container being the second (``two_trunk_values``), and sends over that second trunk.
+    ``receiver_commands`` are Asterisk CLI commands the receiver runs once booted (patch 0007's proofs add a context
+    that answers and never faxes).
     """
     docker = Docker()
     image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
@@ -343,6 +345,8 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
         for name, value in (receiver_db or {}).items():
             family, key = name.split('/', 1)
             docker.asterisk(receiver, f'database put {family} {key} {value}')
+        for command in receiver_commands:
+            docker.asterisk(receiver, command)
         actions = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
                    f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
                    + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
