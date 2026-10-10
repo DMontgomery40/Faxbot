@@ -382,7 +382,10 @@ def next_lines(value):
         lines.append('  Nothing to suggest right now. Every capability, and what each needs, is on the Capabilities '
                      'page.')
     for item in items:
-        lines += [f"  {item['title']}: {item['kind_label']}", f"    {item['sentence']}", f"    {item['command']}"]
+        lines += [f"  {item['title']}: {item['kind_label']}", f"    {item['sentence']}"]
+        if item['command']:
+            # An automatic capability has no command; its page on the console says where it is set.
+            lines.append(f"    {item['command']}")
     if sending[0] in ('error', 'unavailable') or facts[0] in ('error', 'unavailable'):
         lines.append('  Some advice could not be checked. Run the command again.')
     return lines

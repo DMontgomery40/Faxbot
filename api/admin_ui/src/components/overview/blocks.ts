@@ -184,7 +184,8 @@ export interface Improvement {
   sentence: string;
   // Its capability's page, or the opportunity's section.
   destination: string;
-  command: string;
+  // The faxbot command that does the same, or null where none does (an automatic capability).
+  command: string | null;
 }
 
 export function nextImprovements({ capabilities, sending, facts }: {

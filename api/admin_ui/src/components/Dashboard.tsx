@@ -495,7 +495,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
           shows for a person who may not read settings. */}
       {canReadSettings && mechanisms.kind === 'ready' && (
         <Box data-block="map">
-          <SavingsMap data={mechanisms.data} onNavigate={onNavigate} />
+          <SavingsMap data={mechanisms.data} capabilities={capabilities} onNavigate={onNavigate} />
           <Typography variant="caption" color={now - mechanisms.at > STALE_AFTER_MS ? 'warning.main' : 'text.secondary'}
             sx={{ display: 'block', mt: 1 }} data-testid="overview-map-checked">
             {now - mechanisms.at > STALE_AFTER_MS ? staleText(mechanisms.at) : `Map checked ${clockText(mechanisms.at)}.`}
