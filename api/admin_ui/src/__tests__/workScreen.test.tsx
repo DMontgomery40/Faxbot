@@ -167,10 +167,10 @@ describe('Received with owners (the former Work screen)', () => {
   });
 });
 
-describe('Acknowledgement targets under Numbers, Mailboxes', () => {
+describe('Acknowledgement targets under Delivery setup, Mailboxes', () => {
   it('labels the target as operational, read only without settings:write', async () => {
     queue([]);
-    const mailboxes = NAVIGATION.find((area) => area.id === 'numbers')!.pages.find((page) => page.id === 'mailboxes')!;
+    const mailboxes = NAVIGATION.find((area) => area.id === 'delivery')!.pages.find((page) => page.id === 'mailboxes')!;
     expect(mailboxes.gate.anyOf).toContain('settings:read');
     render(<WorkSettingsPanel client={client()} canWrite={false} />);
     expect(await screen.findByText('Acknowledgement targets')).toBeTruthy();

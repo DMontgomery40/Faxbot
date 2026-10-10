@@ -73,15 +73,16 @@ describe('Providers in the panel', () => {
   it('lists In use, the providers in use by name, and Add or change a provider; other providers keep their addresses', async () => {
     useInstall();
     await signIn();
-    const providers = await screen.findByRole('button', { name: 'Providers' });
-    fireEvent.click(providers);
-    const list = document.getElementById('nav-providers') as HTMLElement;
+    const delivery = await screen.findByRole('button', { name: 'Delivery setup' });
+    fireEvent.click(delivery);
+    const list = document.getElementById('nav-delivery') as HTMLElement;
     const names = within(list).getAllByRole('link').map((link) => link.textContent);
-    expect(names).toEqual(['In use', 'Rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
-    expect(within(list).getByRole('link', { name: 'Add or change a provider' }).getAttribute('href')).toBe('#/system/setup');
+    // The Connections group, after Numbers & mailboxes and Documents in and out.
+    expect(names.slice(names.indexOf('In use'))).toEqual(['In use', 'Routing rules', 'HumbleFax', 'Telnyx', 'Add or change a provider']);
+    expect(within(list).getByRole('link', { name: 'Add or change a provider' }).getAttribute('href')).toBe('#/admin/setup');
     // A provider not in use still opens at its address.
-    window.location.hash = '#/providers/phaxio';
-    await waitFor(() => expect(window.location.hash).toBe('#/providers/phaxio'));
+    window.location.hash = '#/delivery/phaxio';
+    await waitFor(() => expect(window.location.hash).toBe('#/delivery/phaxio'));
     const crumbs = await screen.findByRole('navigation', { name: 'You are here' });
     await waitFor(() => expect(within(crumbs).getByText('Phaxio').getAttribute('aria-current')).toBe('page'));
     expect(within(list).queryByRole('link', { name: 'Phaxio' })).toBeNull();
@@ -225,13 +226,13 @@ describe('Names follow a saved provider change', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct horse' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText('Ada Admin');
-    window.location.hash = '#/providers/sending';
+    window.location.hash = '#/delivery/connections';
     // The page's own area opens by itself. Clicking it too would close it again whenever the address was
     // read first, which made this test fail now and then (2026-10-07).
-    const area = await screen.findByRole('button', { name: 'Providers' });
+    const area = await screen.findByRole('button', { name: 'Delivery setup' });
     await waitFor(() => expect(area.getAttribute('aria-expanded')).toBe('true'));
     // Read the panel afresh each time: it is drawn again when the console context changes.
-    const list = () => document.getElementById('nav-providers') as HTMLElement;
+    const list = () => document.getElementById('nav-delivery') as HTMLElement;
     await waitFor(() => expect(within(list()).getByRole('link', { name: 'Telstra SIP Connect' })).toBeTruthy());
     const receiving = await screen.findByLabelText(/^Receiving is (on|off)$/);
     fireEvent.click(receiving);

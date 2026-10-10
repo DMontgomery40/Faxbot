@@ -1,9 +1,11 @@
-// The console's one navigation table: eight areas, each with its pages. Every
-// page has a label, an icon, who may see it and the screen it shows, and an
-// address of its own (#/<area>/<page>) so Back, Forward, reload and links work.
-// Visibility here is a display hint only; the server checks every request again.
-import type { ReactElement, ReactNode } from 'react';
-import { Alert, Box, Typography } from '@mui/material';
+// The console's one navigation table: six areas, each with its pages, some under
+// a group heading. Every page has a label, an icon, who may see it and the screen
+// it shows, and an address of its own (#/<area>/<page>) so Back, Forward, reload
+// and links work. Every address the console had before the six areas still opens
+// the page that now does that job (MOVED_ADDRESSES). Visibility here is a display
+// hint only; the server checks every request again.
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { Alert, Box, CircularProgress, Typography } from '@mui/material';
 import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FaxIcon from '@mui/icons-material/Fax';
@@ -99,34 +101,99 @@ import BlockIcon from '@mui/icons-material/Block';
 import Forms from './components/forms/Forms';
 import ExpectedFaxes from './components/expected/ExpectedFaxes';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
+import TuneIcon from '@mui/icons-material/Tune';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import SavingsMap from './components/SavingsMap';
+import { ScreenHeader } from './components/access/AccessViews';
+import type { SavingsMechanisms } from './api/deliveryTypes';
 
-export type AreaId = 'overview' | 'faxes' | 'numbers' | 'recipients' | 'providers' | 'costs' | 'access' | 'system';
+export type AreaId = 'overview' | 'savings' | 'faxes' | 'delivery' | 'recipients' | 'admin';
+
+// The areas the console had before the six. Their addresses still work: each opens
+// the page that now does that job.
+export type FormerAreaId = 'numbers' | 'providers' | 'costs' | 'access' | 'system';
 
 // Destinations the screens already used before the console had addresses.
 // They keep working; each opens the page that now does that job.
 export type LegacyDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics' | 'routes' | 'email' | 'trunk' | 'setup';
 
 // A legacy name, or an address without the leading '#/', such as 'recipients/partners'.
-export type AdminDestination = LegacyDestination | `${AreaId}/${string}`;
+// An address in a former area ('costs/savings?part=sslfax') opens its new home.
+export type AdminDestination = LegacyDestination | `${AreaId | FormerAreaId}/${string}`;
 
 export const LEGACY_DESTINATIONS: Record<LegacyDestination, string> = {
   send: 'faxes/send',
   jobs: 'faxes/sent',
   inbox: 'faxes/received',
-  settings: 'providers/sending',
-  keys: 'access/keys',
-  diagnostics: 'system/diagnostics',
-  routes: 'costs/spending',
-  email: 'numbers/email',
-  trunk: 'providers/trunk',
-  setup: 'system/setup',
+  settings: 'delivery/connections',
+  keys: 'admin/keys',
+  diagnostics: 'admin/health',
+  routes: 'savings/spending',
+  email: 'delivery/email',
+  trunk: 'delivery/trunk',
+  setup: 'admin/setup',
 };
 
 type NavigationKey = 'send' | 'jobs' | 'inbox' | 'work';
 
-// Addresses that moved: the old Work page is Received, showing faxes waiting for an owner.
-export const MOVED_ADDRESSES: Record<string, string> = {
-  'faxes/work': 'faxes/received?show=waiting',
+// Every address that moved, the page that does its job now, and where it was in the
+// menu (for the one-line notice an old link shows). A fixed query on the new address
+// (show=waiting) comes first; the old address keeps its own query after it.
+const MOVES: ReadonlyArray<readonly [from: string, to: string, was: string]> = [
+  ['faxes/work', 'faxes/received?show=waiting', 'Faxes › Work'],
+  ['numbers/list', 'delivery/numbers', 'Numbers › Your numbers'],
+  ['numbers/mailboxes', 'delivery/mailboxes', 'Numbers › Mailboxes'],
+  ['numbers/email', 'delivery/email', 'Numbers › Email delivery'],
+  ['numbers/advice', 'delivery/moves', 'Numbers › Advice and moves'],
+  ['numbers/npi', 'admin/npi', 'Numbers › Your NPI record'],
+  ['numbers/blocked', 'delivery/blocked', 'Numbers › Blocked senders'],
+  ['numbers/connectors', 'delivery/connectors', 'Numbers › Email and folders'],
+  ['numbers/identity', 'delivery/identity', 'Numbers › Sender identity'],
+  ['recipients/cases', 'faxes/cases', 'Recipients › Case packets'],
+  ['providers/sending', 'delivery/connections', 'Providers › In use'],
+  ['providers/rules', 'delivery/rules', 'Providers › Rules'],
+  ['providers/humblefax', 'delivery/humblefax', 'Providers › HumbleFax'],
+  ['providers/efax', 'delivery/efax', 'Providers › eFax'],
+  ['providers/phaxio', 'delivery/phaxio', 'Providers › Phaxio'],
+  ['providers/sinch', 'delivery/sinch', 'Providers › Sinch'],
+  ['providers/signalwire', 'delivery/signalwire', 'Providers › SignalWire'],
+  ['providers/documo', 'delivery/documo', 'Providers › Documo'],
+  ['providers/trunk', 'delivery/trunk', 'Providers › Carrier trunk'],
+  ['providers/change', 'delivery/change', 'Providers › Add or change a provider'],
+  ['costs/spending', 'savings/spending', 'Costs › Spending'],
+  ['costs/charges', 'savings/charges', 'Costs › Charges'],
+  ['costs/invoices', 'savings/invoices', 'Costs › Invoices'],
+  ['costs/prices', 'savings/prices', 'Costs › Prices & plans'],
+  ['costs/savings', 'savings/results', 'Costs › Savings'],
+  ['costs/recommendations', 'savings/opportunities', 'Costs › Recommendations'],
+  ['costs/advice', 'savings/facts', 'Costs › Advice'],
+  ['access/users', 'admin/users', 'Access › Users'],
+  ['access/groups', 'admin/groups', 'Access › Groups'],
+  ['access/roles', 'admin/roles', 'Access › Roles'],
+  ['access/who', 'admin/who', 'Access › Who has access'],
+  ['access/keys', 'admin/keys', 'Access › Keys & phones'],
+  ['access/sessions', 'admin/sessions', 'Access › Sessions'],
+  ['system/setup', 'admin/setup', 'System › Setup'],
+  ['system/analysis', 'admin/analysis', 'System › AI analysis'],
+  ['system/security', 'admin/security', 'System › Security'],
+  ['system/storage', 'admin/retention', 'System › Storage & retention'],
+  ['system/audit', 'admin/audit', 'System › Audit log'],
+  ['system/diagnostics', 'admin/health', 'System › Diagnostics'],
+  ['system/logs', 'admin/logs', 'System › Logs'],
+  ['system/api', 'admin/api', 'System › API & SDKs'],
+  ['system/assistants', 'admin/assistants', 'System › AI assistants'],
+  ['system/terminal', 'admin/terminal', 'System › Terminal'],
+  ['system/scripts', 'admin/scripts', 'System › Scripts & checks'],
+  ['system/plugins', 'admin/plugins', 'System › Provider plugins'],
+];
+
+// Old address ('costs/savings') → its new home ('savings/results').
+export const MOVED_ADDRESSES: Record<string, string> = Object.fromEntries(MOVES.map(([from, to]) => [from, to]));
+const MOVED_FROM: Record<string, string> = Object.fromEntries(MOVES.map(([from, , was]) => [from, was]));
+
+// A former area on its own (#/costs) opens the first of its old pages this person may open.
+const FORMER_AREAS: Record<FormerAreaId, string> = {
+  numbers: 'Numbers', providers: 'Providers', costs: 'Costs', access: 'Access', system: 'System',
 };
 
 // Who may see a page. A page is visible when every stated condition holds;
@@ -242,8 +309,38 @@ function sendFax(ctx: PageContext): (() => void) | undefined {
 
 function providerPage(id: string, label: string, section: SettingsSection, provider: string,
   icon: ReactElement = <CloudIcon />): NavPage {
-  return { id, label, icon, provider, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
+  return { id, label, icon, provider, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
 }
+
+// Capabilities until its own page arrives (#50): the map of every way Faxbot saves money,
+// with each mechanism's status here. The same read and sentences as the Overview map.
+function CapabilitiesMap({ client, onNavigate }: { client: AdminAPIClient; onNavigate: PageContext['navigate'] }) {
+  const [state, setState] = useState<{ data?: SavingsMechanisms; failed?: boolean }>({});
+  useEffect(() => {
+    let current = true;
+    client.getSavingsMechanisms()
+      .then((data) => { if (current) setState({ data }); })
+      .catch(() => { if (current) setState({ failed: true }); });
+    return () => { current = false; };
+  }, [client]);
+  return (
+    <Box>
+      <ScreenHeader title="Capabilities" />
+      {!state.data && !state.failed && <CircularProgress size={24} aria-label="Loading" />}
+      {state.failed && <Alert severity="error">Could not load the capabilities. Try again.</Alert>}
+      {state.data && <SavingsMap data={state.data} onNavigate={onNavigate} />}
+    </Box>
+  );
+}
+
+// Group headings inside an area.
+const NUMBERS_AND_MAILBOXES = 'Numbers & mailboxes';
+const DOCUMENTS = 'Documents in and out';
+const CONNECTIONS = 'Connections';
+const PEOPLE = 'People & access';
+const INSTALLATION = 'Installation';
+const MONITORING = 'Monitoring';
+const DEVELOPER = 'Developer';
 
 export const NAVIGATION: NavArea[] = [
   {
@@ -252,6 +349,32 @@ export const NAVIGATION: NavArea[] = [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
         render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)}
           canReadSettings={ctx.permissions.has('settings:read')} canReadAnalysis={ctx.permissions.has('settings:read')} /> },
+    ],
+  },
+  {
+    id: 'savings', label: 'Savings & optimization', icon: <PaidIcon />,
+    pages: [
+      // Every way Faxbot can save money or improve delivery, on or off (the mechanism catalogue).
+      { id: 'capabilities', label: 'Capabilities', icon: <AutoAwesomeIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <CapabilitiesMap client={ctx.client} onNavigate={ctx.navigate} /> },
+      { id: 'opportunities', label: 'Opportunities', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          onNavigate={ctx.navigate} focus={ctx.params.get('section')} /> },
+      // What one missing fact (a partner, a recipient's approval, a price, a plan's allowance) cost you.
+      { id: 'facts', label: 'Facts to establish', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <FactAdvice client={ctx.client} /> },
+      { id: 'results', label: 'Savings results', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Savings client={ctx.client} focus={ctx.params.get('part')} /> },
+      { id: 'spending', label: 'Spending', icon: <ReceiptLongIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="spending" /> },
+      // What each provider charged, and faxes a provider billed that Faxbot has no record of.
+      { id: 'charges', label: 'Charges', icon: <ReceiptIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Charges client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      // Monthly invoice totals, and the part your faxes don't explain.
+      { id: 'invoices', label: 'Invoices', icon: <RequestQuoteIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Invoices client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
     ],
   },
   {
@@ -270,28 +393,34 @@ export const NAVIGATION: NavArea[] = [
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
         render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate} /> },
-      { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
+      // Listed at the top of the panel as a persistent action rather than among the Faxes pages.
+      { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true, inPanel: false,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
           configError={ctx.contextError} onOpenJob={ctx.openJob} sendChoices={ctx.context.send} /> },
-      // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
-      // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
-      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
-        render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
-          canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
       // Faxes recorded before they arrive, matched by a reference the sender stated; imports of open work and
       // outage recovery (faxbot expected).
       { id: 'expected', label: 'Expected', icon: <PendingActionsIcon />, gate: { anyOf: ['work:read', 'work:import'] },
         render: (ctx) => <ExpectedFaxes client={ctx.client} canImport={ctx.permissions.has('work:import')}
           canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')} /> },
+      // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
+      // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
+      { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
+        render: (ctx) => <Forms client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
+          canSend={Boolean(ctx.context.navigation.send)} canReadSettings={ctx.permissions.has('settings:read')} /> },
+      { id: 'cases', label: 'Case packets', icon: <FolderCopyIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <CasePackets client={ctx.client} canSend={ctx.context.navigation.send}
+          canWrite={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} /> },
     ],
   },
   {
-    id: 'numbers', label: 'Numbers', icon: <DialpadIcon />,
+    id: 'delivery', label: 'Delivery setup', icon: <TuneIcon />,
     pages: [
-      { id: 'list', label: 'Your numbers', icon: <DialpadIcon />, gate: { anyOf: ['mailboxes:read', 'mailboxes:manage'] },
+      { id: 'numbers', label: 'Numbers', icon: <DialpadIcon />, group: NUMBERS_AND_MAILBOXES,
+        gate: { anyOf: ['mailboxes:read', 'mailboxes:manage'] },
         render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="numbers" onNavigate={ctx.navigate} /> },
       // Acknowledgement targets are settings, so people who read settings see them here too.
-      { id: 'mailboxes', label: 'Mailboxes', icon: <MoveToInboxIcon />, gate: { anyOf: ['mailboxes:read', 'mailboxes:manage', 'settings:read'] },
+      { id: 'mailboxes', label: 'Mailboxes', icon: <MoveToInboxIcon />, group: NUMBERS_AND_MAILBOXES,
+        gate: { anyOf: ['mailboxes:read', 'mailboxes:manage', 'settings:read'] },
         render: (ctx) => (
           <>
             {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage'))
@@ -310,25 +439,51 @@ export const NAVIGATION: NavArea[] = [
             )}
           </>
         ) },
-      { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['intake', 'email'], 'Email delivery') },
-      // The organization's NPIs and what the NPI registry lists for them (routing/nppes.py).
-      { id: 'advice', label: 'Advice and moves', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ },
+      { id: 'moves', label: 'Number moves', icon: <SwapHorizIcon />, group: NUMBERS_AND_MAILBOXES, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <NumberMoves client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      { id: 'npi', label: 'Your NPI record', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <NpiRecordPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      { id: 'blocked', label: 'Blocked senders', icon: <BlockIcon />, gate: { anyOf: SETTINGS_READ },
+      { id: 'blocked', label: 'Blocked senders', icon: <BlockIcon />, group: NUMBERS_AND_MAILBOXES, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <BlockedSenders client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      // Mailboxes and folders that bring documents in or send faxes (intake connectors).
-      { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      { id: 'identity', label: 'Sender identity', icon: <BadgeIcon />, gate: { anyOf: SETTINGS_READ },
+      { id: 'identity', label: 'Sending identity', icon: <BadgeIcon />, group: NUMBERS_AND_MAILBOXES, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => (
           <>
-            {settingsPage(['identity'], 'Sender identity')(ctx)}
+            {settingsPage(['identity'], 'Sending identity')(ctx)}
             <ReplyNumber client={ctx.client} canWrite={ctx.permissions.has('settings:write')} />
           </>
         ) },
+      { id: 'email', label: 'Staff email delivery', icon: <EmailIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
+        render: settingsPage(['intake', 'email'], 'Staff email delivery') },
+      // Mailboxes and folders that bring documents in or send faxes (intake connectors).
+      { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      { id: 'connections', label: 'In use', icon: <SwapHorizIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
+        render: (ctx) => whenContextReady(ctx,
+          <>
+            <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
+            <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
+            <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+              currency={currency(ctx)} onNavigate={ctx.navigate} />
+            {ctx.permissions.has('providers:read') && <DigitalAccounts client={ctx.client}
+              canWrite={ctx.permissions.has('providers:write')} />}
+            {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
+            {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
+          </>) },
+      // Which account sends each fax: the organization's rules, sites, lists and workflows.
+      { id: 'rules', label: 'Routing rules', icon: <AltRouteIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+          currency={currency(ctx)} onNavigate={ctx.navigate}
+          loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} /> },
+      providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
+      providerPage('efax', 'eFax', 'efax', 'efax'),
+      providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),
+      providerPage('sinch', 'Sinch', 'sinch', 'sinch'),
+      providerPage('signalwire', 'SignalWire', 'signalwire', 'signalwire'),
+      providerPage('documo', 'Documo', 'documo', 'documo'),
+      // Titled by its carrier or phone system ("Telnyx", "Avaya IP Office").
+      { id: 'trunk', label: 'Carrier trunk', labelFor: () => providerLabel('sip'), icon: <SettingsPhoneIcon />, provider: 'sip',
+        group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, render: (ctx) => settingsPage(['trunk'], providerLabel('sip'))(ctx) },
+      // Choosing or changing providers happens in the Setup wizard.
+      { id: 'change', label: 'Add or change a provider', icon: <AddCircleOutlineIcon />, link: 'admin/setup', group: CONNECTIONS,
+        gate: { anyOf: ['settings:write'] }, render: () => null },
     ],
   },
   {
@@ -343,127 +498,66 @@ export const NAVIGATION: NavArea[] = [
             {settingsPage(['direct'])(ctx)}
           </>
         ) },
-      { id: 'cases', label: 'Case packets', icon: <FolderCopyIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <CasePackets client={ctx.client} canSend={ctx.context.navigation.send}
-          canWrite={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} /> },
     ],
   },
   {
-    id: 'providers', label: 'Providers', icon: <CloudIcon />,
+    id: 'admin', label: 'Administration', icon: <SettingsIcon />,
     pages: [
-      { id: 'sending', label: 'In use', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx,
-          <>
-            <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
-            <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
-            <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
-              currency={currency(ctx)} onNavigate={ctx.navigate} />
-            {ctx.permissions.has('providers:read') && <DigitalAccounts client={ctx.client}
-              canWrite={ctx.permissions.has('providers:write')} />}
-            {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
-            {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
-          </>) },
-      // Which account sends each fax: the organization's rules, sites, lists and workflows.
-      { id: 'rules', label: 'Rules', icon: <AltRouteIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
-          currency={currency(ctx)} onNavigate={ctx.navigate}
-          loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} /> },
-      providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
-      providerPage('efax', 'eFax', 'efax', 'efax'),
-      providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),
-      providerPage('sinch', 'Sinch', 'sinch', 'sinch'),
-      providerPage('signalwire', 'SignalWire', 'signalwire', 'signalwire'),
-      providerPage('documo', 'Documo', 'documo', 'documo'),
-      // Titled by its carrier or phone system ("Telnyx", "Avaya IP Office").
-      { id: 'trunk', label: 'Carrier trunk', labelFor: () => providerLabel('sip'), icon: <SettingsPhoneIcon />, provider: 'sip',
-        gate: { anyOf: SETTINGS_READ }, render: (ctx) => settingsPage(['trunk'], providerLabel('sip'))(ctx) },
-      // Choosing or changing providers happens in the Setup wizard.
-      { id: 'change', label: 'Add or change a provider', icon: <AddCircleOutlineIcon />, link: 'system/setup',
-        gate: { anyOf: ['settings:write'] }, render: () => null },
-    ],
-  },
-  {
-    id: 'costs', label: 'Costs', icon: <PaidIcon />,
-    pages: [
-      { id: 'spending', label: 'Spending', icon: <ReceiptLongIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="spending" /> },
-      // What each provider charged, and faxes a provider billed that Faxbot has no record of.
-      { id: 'charges', label: 'Charges', icon: <ReceiptIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Charges client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      // Monthly invoice totals, and the part your faxes don't explain.
-      { id: 'invoices', label: 'Invoices', icon: <RequestQuoteIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Invoices client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
-      { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Savings client={ctx.client} focus={ctx.params.get('part')} /> },
-      { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
-          onNavigate={ctx.navigate} focus={ctx.params.get('section')} /> },
-      // What one missing fact (a partner, a recipient's approval, a price, a plan's allowance) cost you.
-      { id: 'advice', label: 'Advice', icon: <FactCheckIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <FactAdvice client={ctx.client} /> },
-    ],
-  },
-  {
-    id: 'access', label: 'Access', icon: <LockOpenIcon />,
-    pages: [
-      { id: 'users', label: 'Users', icon: <PersonIcon />, gate: { anyOf: ['users:read', 'users:manage'] },
+      { id: 'users', label: 'Users', icon: <PersonIcon />, group: PEOPLE, gate: { anyOf: ['users:read', 'users:manage'] },
         render: (ctx) => <Users client={ctx.client} me={ctx.me} /> },
-      { id: 'groups', label: 'Groups', icon: <GroupsIcon />, gate: { anyOf: ['groups:read', 'groups:manage'] },
+      { id: 'groups', label: 'Groups', icon: <GroupsIcon />, group: PEOPLE, gate: { anyOf: ['groups:read', 'groups:manage'] },
         render: (ctx) => <Groups client={ctx.client} me={ctx.me} /> },
-      { id: 'roles', label: 'Roles', icon: <BadgeIcon />, gate: { anyOf: ['roles:read', 'roles:manage'] },
+      { id: 'roles', label: 'Roles', icon: <BadgeIcon />, group: PEOPLE, gate: { anyOf: ['roles:read', 'roles:manage'] },
         render: (ctx) => <Roles client={ctx.client} me={ctx.me} /> },
-      { id: 'who', label: 'Who has access', icon: <LockOpenIcon />, gate: { anyOf: ['grants:read', 'grants:manage'] },
+      { id: 'who', label: 'Who has access', icon: <LockOpenIcon />, group: PEOPLE, gate: { anyOf: ['grants:read', 'grants:manage'] },
         render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="assignments" /> },
-      { id: 'keys', label: 'Keys & phones', icon: <VpnKeyIcon />, gate: { anyOf: ['keys:manage'] },
+      { id: 'keys', label: 'Keys & phones', icon: <VpnKeyIcon />, group: PEOPLE, gate: { anyOf: ['keys:manage'] },
         render: (ctx) => (
           <>
             <ApiKeys client={ctx.client} me={ctx.me} onlyMine={ctx.params.get('mine') === '1'}
-              onShowAll={() => ctx.navigate('access/keys')} />
+              onShowAll={() => ctx.navigate('admin/keys')} />
             {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['installation-key', 'phones'])(ctx)}</Box>}
           </>
         ) },
       // Everyone can see and end their own sessions.
-      { id: 'sessions', label: 'Sessions', icon: <DevicesIcon />, gate: {},
+      { id: 'sessions', label: 'Sessions', icon: <DevicesIcon />, group: PEOPLE, gate: {},
         render: (ctx) => <Sessions client={ctx.client} me={ctx.me} /> },
-    ],
-  },
-  {
-    id: 'system', label: 'System', icon: <SettingsIcon />,
-    pages: [
-      { id: 'setup', label: 'Setup', icon: <HelpIcon />, gate: { anyOf: ['settings:write'] },
+      { id: 'setup', label: 'Setup', icon: <HelpIcon />, group: INSTALLATION, gate: { anyOf: ['settings:write'] },
         render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')}
           isOwner={isOwner(ctx)} onNavigate={ctx.navigate} /> },
-      { id: 'analysis', label: 'AI analysis', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <AIAnalysis client={ctx.client} isOwner={isOwner(ctx)} /> },
-      { id: 'security', label: 'Security', icon: <SecurityIcon />, gate: { anyOf: SETTINGS_READ },
+      { id: 'security', label: 'Security', icon: <SecurityIcon />, group: INSTALLATION, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['security'], 'Security') },
-      { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['storage', 'advanced', 'backup'], 'Storage & retention') },
-      { id: 'audit', label: 'Audit log', icon: <FactCheckIcon />, gate: { anyOf: ['audit:read'] },
+      { id: 'retention', label: 'Documents & retention', icon: <StorageIcon />, group: INSTALLATION, gate: { anyOf: SETTINGS_READ },
+        render: settingsPage(['storage', 'advanced', 'backup'], 'Documents & retention') },
+      { id: 'analysis', label: 'AI analysis', icon: <SmartToyIcon />, group: INSTALLATION, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <AIAnalysis client={ctx.client} isOwner={isOwner(ctx)} /> },
+      // The organization's NPIs and what the NPI registry lists for them (routing/nppes.py).
+      { id: 'npi', label: 'NPI record', icon: <FactCheckIcon />, group: INSTALLATION, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <NpiRecordPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
+      { id: 'health', label: 'System health', icon: <AssessmentIcon />, group: MONITORING, gate: { anyOf: ['diagnostics:read'] },
+        refreshContext: true,
+        render: (ctx) => whenContextReady(ctx,
+          <>
+            <Diagnostics client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['diagnostics'])(ctx)}</Box>}
+          </>) },
+      { id: 'audit', label: 'Audit log', icon: <FactCheckIcon />, group: MONITORING, gate: { anyOf: ['audit:read'] },
         render: (ctx) => (
           <>
             <AuditLog client={ctx.client} canListPeople={ctx.permissions.has('users:read')} />
             {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['audit'])(ctx)}</Box>}
           </>
         ) },
-      { id: 'diagnostics', label: 'Diagnostics', icon: <AssessmentIcon />, gate: { anyOf: ['diagnostics:read'] }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx,
-          <>
-            <Diagnostics client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />
-            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['diagnostics'])(ctx)}</Box>}
-          </>) },
-      { id: 'logs', label: 'Logs', icon: <DescriptionIcon />, gate: { anyOf: ['logs:read'] },
+      { id: 'logs', label: 'Logs', icon: <DescriptionIcon />, group: MONITORING, gate: { anyOf: ['logs:read'] },
         render: (ctx) => <Logs client={ctx.client} /> },
-      { id: 'api', label: 'API & SDKs', icon: <ApiIcon />, gate: OVERVIEW_GATE, group: 'Developer',
+      { id: 'api', label: 'API & SDKs', icon: <ApiIcon />, gate: OVERVIEW_GATE, group: DEVELOPER,
         render: (ctx) => (
           <>
             <DeveloperOverview client={ctx.client} />
             {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['developer'])(ctx)}</Box>}
           </>
         ) },
-      { id: 'assistants', label: 'AI assistants', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ }, group: 'Developer',
+      { id: 'assistants', label: 'AI assistants', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ }, group: DEVELOPER,
         render: (ctx) => (
           <>
             <AssistantsOverview client={ctx.client} />
@@ -471,19 +565,19 @@ export const NAVIGATION: NavArea[] = [
             {settingsPage(['mcp'])(ctx)}
           </>
         ) },
-      { id: 'terminal', label: 'Terminal', icon: <TerminalIcon />, gate: { anyOf: ['host:terminal'] }, group: 'Developer',
+      { id: 'terminal', label: 'Terminal', icon: <TerminalIcon />, gate: { anyOf: ['host:terminal'] }, group: DEVELOPER,
         render: (ctx) => (
           <>
             <Terminal client={ctx.client} />
             <DeploymentSection client={ctx.client} names={['ENABLE_ADMIN_EXEC']} title="Terminal setting" showNames />
           </>
         ) },
-      { id: 'scripts', label: 'Scripts & checks', icon: <ScienceIcon />, gate: { anyOf: ['providers:write'] }, group: 'Developer',
+      { id: 'scripts', label: 'Scripts & checks', icon: <ScienceIcon />, gate: { anyOf: ['providers:write'] }, group: DEVELOPER,
         refreshContext: true,
         render: (ctx) => whenContextReady(ctx, <ScriptsTests client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />) },
       // Always listed, so plugins can be turned on here; the installed plugins show once they are on.
       { id: 'plugins', label: 'Provider plugins', icon: <ExtensionIcon />, gate: { anyOf: ['providers:read', 'settings:read'] },
-        group: 'Developer', refreshContext: true,
+        group: DEVELOPER, refreshContext: true,
         render: (ctx) => whenContextReady(ctx,
           <>
             {ctx.permissions.has('settings:read') && settingsPage(['plugins'], 'Provider plugins')(ctx)}
@@ -524,7 +618,7 @@ export function visibleNavigation(permissions: ReadonlySet<string>, navigation: 
   const shown = (page: NavPage): NavPage => ({
     ...page,
     label: page.labelFor ? page.labelFor() : page.label,
-    inPanel: !page.provider || inUse === null || inUse.includes(page.provider),
+    inPanel: page.inPanel !== false && (!page.provider || inUse === null || inUse.includes(page.provider)),
   });
   return NAVIGATION
     .map((area) => ({ ...area, pages: area.pages.filter((page) => pageVisible(page.gate, permissions, navigation, options)).map(shown) }))
@@ -555,40 +649,105 @@ export function parseAddress(hash: string): ParsedAddress | null {
   return { area: match[1], page: match[2] ?? null, params: new URLSearchParams(match[3] ?? '') };
 }
 
+
 export interface ResolvedPage {
+  kind: 'page';
   area: NavArea;
   page: NavPage;
-  // The address this page is shown at; differs from the requested one after a fallback.
+  // The address this page is shown at; differs from the requested one when only the
+  // area was named or the address moved.
+  address: string;
+  // Where the requested old address used to be in the menu ('Costs › Savings').
+  movedFrom?: string;
+}
+
+// An address that names no page ('unknown'), or a page this person may not open
+// ('forbidden'). The address stays as it was asked for, and no page is shown.
+export interface AddressProblem {
+  kind: 'unknown' | 'forbidden';
   address: string;
 }
 
-// The page for an address among the visible ones: the area's first page when
-// only the area is named, and the first visible page when the address is
-// unknown or this person may not see it.
-export function resolveAddress(visible: NavArea[], requested: ParsedAddress | null): ResolvedPage | null {
-  if (visible.length === 0) return null;
-  const moved = requested?.page ? MOVED_ADDRESSES[`${requested.area}/${requested.page}`] : undefined;
-  const parsed = moved ? parseAddress(`#/${moved}`) : requested;
-  const area = parsed ? visible.find((candidate) => candidate.id === parsed.area) : undefined;
-  if (area) {
-    const requested = parsed?.page ? area.pages.find((page) => page.id === parsed.page) : undefined;
-    // An entry that opens another page, such as Add or change a provider.
-    if (requested?.link) return resolveAddress(visible, parseAddress(destinationAddress(requested.link)));
-    if (requested || !parsed?.page || singlePage(area.id)) {
-      const page = requested ?? area.pages[0];
-      const keepParams = requested || singlePage(area.id);
-      return { area, page, address: pageAddress(area.id, page.id, keepParams ? parsed?.params : undefined) };
-    }
-  }
-  const first = visible[0];
-  return { area: first, page: first.pages[0], address: pageAddress(first.id, first.pages[0].id) };
+export type Resolution = ResolvedPage | AddressProblem;
+
+function has<T extends object>(table: T, key: string): key is Extract<keyof T, string> {
+  return Object.prototype.hasOwnProperty.call(table, key);
 }
 
-// The address part of a destination: a legacy name through LEGACY_DESTINATIONS,
-// or 'area/page' (with an optional ?query) as given.
+// The new home of an old address. Its fixed query (show=waiting) comes first; the old
+// address keeps its own query after it.
+function follow(requested: ParsedAddress): { target: ParsedAddress; was: string } | null {
+  const key = `${requested.area}/${requested.page}`;
+  if (!requested.page || !has(MOVED_ADDRESSES, key)) return null;
+  const target = parseAddress(`#/${MOVED_ADDRESSES[key]}`);
+  if (!target) return null;
+  const fixed = new Set(target.params.keys());
+  requested.params.forEach((value, name) => { if (!fixed.has(name)) target.params.append(name, value); });
+  return { target, was: MOVED_FROM[key] };
+}
+
+// The page for an address among the visible ones. Only the area named: its first page
+// this person may open. An old address: the page that does that job now, with its query.
+// No address at all: the first page this person may open. An address that names no page,
+// or a page this person may not open, is reported as such and never shows a page.
+export function resolveAddress(visible: NavArea[], requested: ParsedAddress | null): Resolution | null {
+  if (visible.length === 0) return null;
+  const first = visible[0];
+  if (!requested) return { kind: 'page', area: first, page: first.pages[0], address: pageAddress(first.id, first.pages[0].id) };
+  const asked = pageAddress(requested.area, requested.page ?? undefined, requested.params);
+  const forbidden: AddressProblem = { kind: 'forbidden', address: asked };
+  const unknown: AddressProblem = { kind: 'unknown', address: asked };
+
+  // A former area on its own (#/costs) opens the first of its old pages this person may open.
+  if (!requested.page && has(FORMER_AREAS, requested.area)) {
+    for (const [from] of MOVES.filter(([old]) => old.startsWith(`${requested.area}/`))) {
+      const [area, page] = from.split('/');
+      const found = resolveAddress(visible, { area, page, params: new URLSearchParams() });
+      if (found?.kind === 'page') return { ...found, movedFrom: FORMER_AREAS[requested.area] };
+    }
+    return forbidden;
+  }
+
+  const moved = follow(requested);
+  const parsed = moved?.target ?? requested;
+  const known = NAVIGATION.find((area) => area.id === parsed.area);
+  if (!known) return unknown;
+  const single = singlePage(known.id);
+  const pageId = parsed.page ?? (single ? known.pages[0].id : null);
+  if (pageId && !known.pages.some((page) => page.id === pageId)) return unknown;
+  const area = visible.find((candidate) => candidate.id === known.id);
+  const page = area && (pageId ? area.pages.find((candidate) => candidate.id === pageId) : area.pages[0]);
+  if (!area || !page) return forbidden;
+  // An entry that opens another page, such as Add or change a provider.
+  if (page.link) {
+    const target = resolveAddress(visible, parseAddress(destinationAddress(page.link)));
+    return target?.kind === 'page' && moved ? { ...target, movedFrom: moved.was } : target;
+  }
+  // Only the area named: its first page, without the query (one-page areas keep it).
+  const keep = pageId || single ? parsed.params : undefined;
+  return { kind: 'page', area, page, address: pageAddress(area.id, page.id, keep), movedFrom: moved?.was };
+}
+
+// The address part of a destination: a legacy name through LEGACY_DESTINATIONS, an
+// old address through MOVED_ADDRESSES (keeping its query), or 'area/page' (with an
+// optional ?query) as given. The new address is written directly, so a link inside
+// the console never shows the moved notice.
 export function destinationAddress(destination: AdminDestination): string {
-  const path = (LEGACY_DESTINATIONS as Record<string, string>)[destination] ?? destination;
-  const [route, query] = path.split('?');
-  const [area, page] = route.split('/');
-  return pageAddress(area, page, query);
+  const path: string = has(LEGACY_DESTINATIONS, destination) ? LEGACY_DESTINATIONS[destination] : destination;
+  const parsed = parseAddress(`#/${path}`);
+  if (!parsed) {
+    const [route, query] = path.split('?');
+    const [area, page] = route.split('/');
+    return pageAddress(area, page, query);
+  }
+  const target = follow(parsed)?.target ?? parsed;
+  return pageAddress(target.area, target.page ?? undefined, target.params);
+}
+
+// Where a destination leads for someone who may see every page: the area and page an
+// address, an old address or a legacy name opens, or null when it names no page. For
+// checks such as "every capability's setting address opens a page".
+export function resolvesTo(destination: string): { area: NavArea; page: NavPage } | null {
+  const found = resolveAddress(NAVIGATION, parseAddress(destinationAddress(destination as AdminDestination)));
+  return found?.kind === 'page' ? { area: found.area, page: found.page } : null;
 }
