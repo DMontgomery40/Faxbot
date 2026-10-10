@@ -281,6 +281,9 @@ EOF
     printf 'LocalIdentifier:\t"%s"\n' "$station_id"
     # Each job may send its own station ID (Faxbot's reply number, JPARM TSI); faxsend ignores it otherwise.
     printf 'UseJobTSI:\t\tyes\n'
+    # The header line on every sent page (the job's JPARM TAGLINE: date, header text, reply number, page). HylaFAX+
+    # has no tag line font by default and then prints no header line at all.
+    printf 'TagLineFont:\t\tetc/LiberationSans-25.pcf\n'
     printf 'ServerTracing:\t\t0x00201\nSessionTracing:\t\t%s\n' "$session_tracing"
     printf 'RecvFileMode:\t\t0600\nLogFileMode:\t\t0600\nDeviceMode:\t\t0600\n'
     printf 'RingsBeforeAnswer:\t1\nSpeakerVolume:\t\toff\nGettyArgs:\t\t"-h %%l dx_%%s"\n'

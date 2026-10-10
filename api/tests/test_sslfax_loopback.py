@@ -2139,12 +2139,13 @@ def test_w_an_ecm_partial_page_boundary_measured_on_the_line(tmp_path, loopback)
 
 CARRIER_DIAL = ' same => n(dial),Dial(PJSIP/+${EXTEN}@trunk-endpoint,60)\n same => n,Hangup()'
 # The carrier asserts who called, as a STIR/SHAKEN carrier passes its verdict (3GPP TS 24.229 verstat), on the call
-# it hands Faxbot from the peer.
+# it hands Faxbot from the peer. Semicolons are escaped (a bare one starts a comment in extensions.conf). The carrier's
+# Asterisk also sends its own P-Asserted-Identity first, so Faxbot sees two, as RFC 3325 allows.
 CARRIER_ASSERTS = (' same => n(dial),Dial(PJSIP/+${EXTEN}@trunk-endpoint,60,b(proof-asserted^s^1))\n'
                    ' same => n,Hangup()\n\n'
                    '[proof-asserted]\n'
                    'exten => s,1,Set(PJSIP_HEADER(add,P-Asserted-Identity)="Clinic (fax) Inc" '
-                   '<sip:+15555550199@carrier.example;user=phone;verstat=TN-Validation-Passed>)\n'
+                   '<sip:+15555550199@carrier.example\\;user=phone\\;verstat=TN-Validation-Passed>)\n'
                    ' same => n,Return()')
 
 

@@ -799,4 +799,15 @@ static inline int faxbot_t38_sends(int count)
 	return count < 1 ? 1 : count > FAXBOT_T38_SEND_MAX ? FAXBOT_T38_SEND_MAX : count;
 }
 
+/* The gateway's T.38 receive counts go on the channel after each of the first FAXBOT_T38_RX_FIRST packets (the
+ * handshake, and every reply on a sent fax), then after every FAXBOT_T38_RX_EVERY-th (a received page's data). */
+#define FAXBOT_T38_RX_FIRST 400
+#define FAXBOT_T38_RX_EVERY 25
+
+/*! \brief Whether the gateway writes FAXBOT_T38_RX after its \p received -th T.38 packet. */
+static inline int faxbot_t38_rx_due(unsigned int received)
+{
+	return received <= FAXBOT_T38_RX_FIRST || received % FAXBOT_T38_RX_EVERY == 0;
+}
+
 #endif /* FAXBOT_T38_GATEWAY_H */

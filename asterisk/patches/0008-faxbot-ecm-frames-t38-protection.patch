@@ -16,7 +16,8 @@ compiles as well:
    the end of the session as FAXBOT_ECM, for the dialplan's FaxFrames event (engine_learning.py reads it), with
    one NOTICE line. UDPTL marks each received packet that its redundancy recovered (AST_UDPTL_FRFLAG_REPAIRED),
    so FAXBOT_T38_RX says how T.38 arrived: packets received, recovered, and still missing (spandsp's count).
-   The gateway (SSL Fax engine calls) sets FAXBOT_T38_RX too, for the FaxEngineCall event.
+   The gateway (SSL Fax engine calls) sets FAXBOT_T38_RX too, for the FaxEngineCall event, and keeps it current
+   while it runs: its session ends only after the hangup handler that sends that event.
 
 3. T.38 protection by packet category. spandsp asks for each T.38 packet to be sent as many times as its
    category's setting (indicator, control data, end of control data, image data, end of image data); Asterisk
@@ -30,11 +31,10 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
 
 --- a/include/asterisk/udptl.h
 +++ b/include/asterisk/udptl.h
-@@ -45,6 +45,15 @@
- #endif
+@@ -46,6 +46,15 @@
  
  struct ast_udptl;
-+
+ 
 +/*!
 + * \brief Faxbot (asterisk/patches/0008): this T.38 frame goes \c seqno times (2 to 4) with one UDPTL sequence
 + * number, as spandsp's per-category count asks when Faxbot's T.38 protection is on (res_fax_spandsp.c).
@@ -43,9 +43,10 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
 +#define AST_UDPTL_FRFLAG_REPEAT (1 << 14)
 +/*! \brief Faxbot (0008): UDPTL redundancy (or FEC) recovered this received frame; it did not arrive itself. */
 +#define AST_UDPTL_FRFLAG_REPAIRED (1 << 15)
- 
++
  typedef int (*ast_udptl_callback)(struct ast_udptl *udptl, struct ast_frame *f, void *data);
  
+ struct ast_udptl *ast_udptl_new_with_bindaddr(struct ast_sched_context *sched, struct io_context *io, int callbackmode, struct ast_sockaddr *in);
 --- a/main/udptl.c
 +++ b/main/udptl.c
 @@ -493,6 +493,8 @@
@@ -131,26 +132,25 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
  };
  
  static int spandsp_v21_new(struct spandsp_pvt *p);
-@@ -267,6 +279,12 @@
- 
+@@ -268,6 +280,12 @@
  	if (!(f = ast_frisolate(f))) {
  		return res;
-+	}
+ 	}
 +	/* Faxbot (0008): with T.38 protection on (FAXBOT_T38_PROTECT), the packet goes as many times as its category
 +	 * asks, with one UDPTL sequence number (ast_udptl_write); without it, once, as before. */
 +	if (p->faxbot_protect && count > 1) {
 +		f->seqno = faxbot_t38_sends(count);
 +		ast_set_flag(f, AST_UDPTL_FRFLAG_REPEAT);
- 	}
++	}
  
  	if (s->details->caps & AST_FAX_TECH_GATEWAY) {
+ 		ast_set_flag(f, AST_FAX_FRFLAG_GATEWAY);
 @@ -403,8 +421,75 @@
  static void faxbot_frame_handler(t30_state_t *t30, void *user_data, int direction, const uint8_t msg[], int len)
  {
  	struct spandsp_pvt *p = user_data;
--
 +	struct timeval now;
-+
+ 
 +	/* Faxbot (0008): 64-octet frames on this side's DCS when this fax asks for them, before the DCS is kept and
 +	 * sent (faxbot_ecm_small_frames). */
 +	if (p->faxbot_small_frames && faxbot_ecm_small_frames(t30, direction, msg, len)) {
@@ -258,31 +258,45 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
  		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
  	} else {
  		return fax_rx(&p->fax_state, f->data.ptr, f->samples);
-@@ -1241,6 +1342,11 @@
+@@ -1241,6 +1342,14 @@
  
  	t38_gateway_set_transmit_on_idle(&p->t38_gw_state, TRUE);
  	t38_set_sequence_number_handling(p->t38_core_state, TRUE);
-+	/* Faxbot (0008): T.38 protection by packet category on the gateway's T.38 side too (FAXBOT_T38_PROTECT). */
++	/* Faxbot (0008): T.38 protection by packet category on the gateway's T.38 side too (FAXBOT_T38_PROTECT). The
++	 * channel says at once what the gateway sends with (FAXBOT_T38_PROTECT_USED): the gateway's session ends only
++	 * after the channel's hangup handler, which reports it. */
 +	faxbot_ecm_start(s, p);
 +	if (p->faxbot_protect) {
 +		faxbot_t38_protect_apply(p->t38_core_state, p->faxbot_protect_counts);
 +	}
++	faxbot_t38_rx_export(s, p);
  
  
  	t38_gateway_set_supported_modems(&p->t38_gw_state, spandsp_modems(s->details));
-@@ -1279,6 +1385,11 @@
+@@ -1279,7 +1388,21 @@
  
  	/* Process a IFP packet */
  	if ((f->frametype == AST_FRAME_MODEM) && (f->subclass.integer == AST_MODEM_T38)) {
+-		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
++		int res;
++
 +		/* Faxbot (0008): T.38 packets received, and those UDPTL redundancy recovered. */
 +		p->faxbot_rx_ifp++;
 +		if (ast_test_flag(f, AST_UDPTL_FRFLAG_REPAIRED)) {
 +			p->faxbot_rx_repaired++;
 +		}
- 		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
++		res = t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
++		/* Faxbot (0008): FAXBOT_T38_RX kept current on the channel (the framehook holds its lock), since the
++		 * gateway's session ends after the hangup handler that reports it: every packet of the handshake, then every
++		 * 25th, so a long page costs few variable writes and the count misses at most the last 24 packets. */
++		if (faxbot_t38_rx_due(p->faxbot_rx_ifp)) {
++			faxbot_t38_rx_export(s, p);
++		}
++		return res;
  	} else if ((f->frametype == AST_FRAME_VOICE) &&
  		(ast_format_cmp(f->subclass.format, ast_format_slin) == AST_FORMAT_CMP_EQUAL)) {
-@@ -1300,6 +1411,8 @@
+ 		return t38_gateway_rx(&p->t38_gw_state, f->data.ptr, f->samples);
+@@ -1300,6 +1423,8 @@
  	s->details->option.ecm = t38_stats.error_correcting_mode ? AST_FAX_OPTFLAG_TRUE : AST_FAX_OPTFLAG_FALSE;
  	s->details->pages_transferred = t38_stats.pages_transferred;
  	ast_string_field_build(s->details, transfer_rate, "%d", t38_stats.bit_rate);
@@ -291,7 +305,7 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
  }
  
  /*! \brief */
-@@ -1346,6 +1459,9 @@
+@@ -1346,6 +1471,9 @@
  	/* perhaps set_transmit_on_idle() should be called */
  
  	t30_set_phase_e_handler(p->t30_state, t30_phase_e_handler, s);
@@ -301,14 +315,14 @@ Nothing here changes a call Faxbot did not mark, beyond keeping the record.
  	/* Faxbot (0004): keep the frames both sides send, for the channel variables at the end of the session. */
  	t30_set_real_time_frame_handler(p->t30_state, faxbot_frame_handler, p);
  	/* Faxbot (0007): the station check on the far end's DIS, and the cap on waiting for it (FAXBOT_CSI_EXPECT,
-@@ -1407,6 +1523,10 @@
- 
+@@ -1408,6 +1536,10 @@
  		if (s->details->their_t38_parameters.transcoding_jbig) {
  			t38_set_jbig_transcoding(p->t38_core_state, TRUE);
-+		}
+ 		}
 +		/* Faxbot (0008): T.38 protection by packet category (FAXBOT_T38_PROTECT), after the terminal's own setup. */
 +		if (p->faxbot_protect) {
 +			faxbot_t38_protect_apply(p->t38_core_state, p->faxbot_protect_counts);
- 		}
++		}
  	} else {
  		/* have the fax stack generate silence if it has no data to send */
+ 		fax_set_transmit_on_idle(&p->fax_state, 1);

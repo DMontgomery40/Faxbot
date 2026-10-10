@@ -105,6 +105,7 @@ RUN mkdir -p /run/lock && chmod 1777 /run/lock \
     && faxsetup -server -nointeractive -quiet </dev/null >/tmp/faxsetup.log 2>&1 \
     || { tail -20 /tmp/faxsetup.log; exit 1; }
 RUN test -f /var/spool/hylafax/etc/setup.cache \
+    && test -s /var/spool/hylafax/etc/LiberationSans-25.pcf \
     && ! ldd /usr/sbin/faxgetty /usr/sbin/faxq /usr/sbin/faxsend /usr/sbin/hfaxd /usr/bin/iaxmodem | grep -q 'not found' \
     && rm -f /tmp/faxsetup.log /var/spool/hylafax/etc/ssl.pem
 

@@ -50,6 +50,10 @@ def _authority():
      [CALLER], caller_check.UNVERIFIED),
     ({'P-Asserted-Identity': [f'<sip:{CALLER}@carrier.example;verstat=No-TN-Validation>']}, [], caller_check.UNVERIFIED),
     ({}, [CALLER], caller_check.UNVERIFIED),
+    # Two asserted identities (RFC 3325: a sip and a tel URI); the verdict is on the second.
+    ({'P-Asserted-Identity': [f'<sip:{CALLER}@198.51.100.11>',
+                              f'<tel:{CALLER};verstat=TN-Validation-Passed>']}, [CALLER],
+     caller_check.VERIFIED_REGISTERED),
 ])
 def test_the_carriers_verstat_and_your_list_decide_the_stamp(headers, numbers, stamp):
     found = caller_check.check(headers, caller=CALLER, did=DID, at=AT, numbers=numbers)
@@ -87,6 +91,9 @@ def test_asterisk_keeps_the_headers_for_a_verstat_or_any_identity_and_the_reader
     context = dialplan.split('[faxbot-sip-headers]', 1)[1].split('\n\n', 1)[0]
     assert 'GotoIf($[${LEN(${PJSIP_HEADER(read,Identity,1)})} > 0]?keep)' in context
     assert 'verstat=' in context and 'Gosub(faxbot-sip-header,s,1(P-Asserted-Identity,1))' in context
+    # Both asserted identities: a verstat on the second keeps the headers, and both are kept.
+    assert '${PJSIP_HEADER(read,P-Asserted-Identity,2)}' in context
+    assert 'Gosub(faxbot-sip-header,s,1(P-Asserted-Identity,2))' in context
     assert 'Gosub(faxbot-sip-header,s,1(From,1))' in context
     # The call's start beside its headers, for the SSL Fax engine's late hand-over.
     assert 'n(keep),Set(FILE(${FAXBOT_SIP_FILE},,,al,u)=Faxbot-Started ${BASE64_ENCODE(${FAXBOT_STARTED})})' in context
