@@ -38,7 +38,7 @@ from pathlib import Path
 import re
 import struct
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import runs as runcode
 from . import enumerative
@@ -87,6 +87,22 @@ _RUN_PATTERN = re.compile(r'0+|1+')
 
 class PageError(ValueError):
     """A page could not be read as a payload page (one sentence, safe to show)."""
+
+
+class _NoHeader(PageError):
+    """The ladder is there but no header copy reads: the page may be upside down."""
+
+
+NO_PATTERN = 'This page has no payload pattern.'
+NO_HEADER = 'The payload page header could not be read.'
+# Run-coded and enumerative pages carry their data in exact run lengths, so a page drawn again at another size
+# cannot be read; the grid and picture layouts survive it.
+RESIZED = ('This page was resized after it arrived, and these encoded pages can be read only from the fax image '
+           'exactly as received, such as the PDF a fax service offers for download.')
+PREVIEW = ('This is a small preview of the fax rather than the fax itself, so decode the full-size fax file, such '
+           'as the PDF a fax service offers for download.')
+# Narrower than any fax page Faxbot draws (1728 dots across) by a wide margin: a picture this small is a preview.
+PREVIEW_WIDTH = 1000
 
 
 @dataclass(frozen=True)
@@ -462,6 +478,43 @@ class PageRead:
     segments: list          # (stream bit offset, bit count, value as int)
     lines_read: int = 0
     lines_damaged: int = 0
+    # What was undone to read the page as it was sent: 'inverted', 'rotated' (180 degrees), 'moved' (dots).
+    corrections: dict = field(default_factory=dict)
+
+
+def paper_white(image):
+    """(the page in grayscale with white paper, True when it had to be inverted). Every payload page has white
+    margins at both sides, so a page whose left and right edges are mostly dark arrived inverted."""
+    gray = image if image.mode == 'L' else image.convert('L')
+    width, height = gray.size
+    edge = max(1, min(width // 50, 16))
+    dark = sum(gray.crop((0, 0, edge, height)).histogram()[:128]) + sum(
+        gray.crop((width - edge, 0, width, height)).histogram()[:128])
+    if dark * 2 > 2 * edge * height:
+        return ImageOps.invert(gray), True
+    return gray, False
+
+
+@lru_cache(maxsize=1)
+def _exact_widths():
+    """{ladder columns: (page width, expected first-cell dot)} for the run-coded layouts (2-dot cells): the column
+    count names the page width the rows were drawn for, and where the ladder starts on an unmoved page."""
+    found = {}
+    for res in RESOLUTIONS.values():
+        geo = geometry(res, 'runs')
+        found[geo.columns] = (res.width, geo.quiet + 4 * geo.unit)
+    return found
+
+
+def _aligned(line, shift, width):
+    """One scan line moved back by ``shift`` dots and cut or filled to ``width``: white where the receiver cut the
+    left edge, and the last dot's colour on the right, where a run-coded row ends in its padding run."""
+    if shift == 0 and len(line) == width:
+        return line
+    part = line[shift:shift + width] if shift >= 0 else b'\xff' * -shift + line[:width + shift]
+    if len(part) < width:
+        part += (part[-1:] or b'\xff') * (width - len(part))
+    return part
 
 
 def find_ladder(image, *, limit=None):
@@ -502,14 +555,28 @@ def read_page(image):
     """Read one page; raises PageError when it is not a payload page.
 
     The ladder and the page header are each written above and below the data,
-    so a page whose top lines were damaged or covered still reads.
+    so a page whose top lines were damaged or covered still reads. A page that
+    arrived inverted or upside down is turned back first, and the rows of a
+    run-coded page moved sideways or padded to another width are moved back.
     """
-    gray = image if image.mode == 'L' else image.convert('L')
+    gray, inverted = paper_white(image)
+    corrections = {'inverted': True} if inverted else {}
+    try:
+        return _read_oriented(gray, corrections)
+    except _NoHeader:
+        # Upside down: the ladder reads either way, the header only the right way up.
+        try:
+            return _read_oriented(gray.rotate(180), {**corrections, 'rotated': True})
+        except _NoHeader:
+            raise PageError(NO_HEADER) from None
+
+
+def _read_oriented(gray, corrections):
     width, height = gray.size
     data = gray.tobytes()
     ladder = find_ladder(gray)
     if ladder is None:
-        raise PageError('This page has no payload pattern.')
+        raise PageError(NO_PATTERN)
     y0, edges, unit = ladder
     columns = len(edges) - 1
     centres = operator.itemgetter(*[(edges[i] + edges[i + 1]) // 2 for i in range(columns)])
@@ -526,14 +593,28 @@ def read_page(image):
             if header is not None:
                 break
     if header is None:
-        raise PageError('The payload page header could not be read.')
+        raise _NoHeader(NO_HEADER)
     tag = header['tag']
+    layout = header['layout']
+    row_width, shift = width, 0
+    if len({edges[i + 1] - edges[i] for i in range(columns)}) != 1:
+        # Cells of unequal width: the page was drawn again at another size (said if the page then fails to decode).
+        corrections = {**corrections, 'resized': True}
+    if layout in ('runs', 'enumerative'):
+        # Exact rows: every cell must be exactly as drawn (two dots), and the rows are read at the width they were
+        # drawn for, moved back to where the ladder says they started.
+        exact = _exact_widths().get(columns)
+        if exact is None or any(edges[i + 1] - edges[i] != 2 for i in range(columns)):
+            raise PageError(RESIZED)
+        row_width, expected = exact
+        shift = edges[0] - expected
+        if shift:
+            corrections = {**corrections, 'moved': shift}
     segments = {}
     lines_read = lines_damaged = since_good = 0
-    layout = header['layout']
     if layout == 'enumerative':
         try:
-            row_bits_count = enumerative.payload_bits(width, header['profile'])
+            row_bits_count = enumerative.payload_bits(row_width, header['profile'])
         except ValueError as error:
             raise PageError(str(error)) from None
         if header['first_bit'] % row_bits_count:
@@ -541,7 +622,7 @@ def read_page(image):
     for y in range(y0, height):
         line = data[y * width:(y + 1) * width]
         if layout == 'enumerative':
-            result = enumerative.decode_line(t4.changes_from_pixels(line), width, tag,
+            result = enumerative.decode_line(t4.changes_from_pixels(_aligned(line, shift, row_width)), row_width, tag,
                                              profile=header['profile'])
             if (result is None or result[0] % row_bits_count
                     or not header['first_bit'] <= result[0] < header['end_bit']):
@@ -558,10 +639,10 @@ def read_page(image):
             since_good = 0
             continue
         if layout == 'runs':
-            changes = t4.changes_from_pixels(line)
+            changes = t4.changes_from_pixels(_aligned(line, shift, row_width))
             if len(changes) < 8:
                 continue
-            result = runcode.decode_line(changes, width, header['run_limit'])
+            result = runcode.decode_line(changes, row_width, header['run_limit'])
             if result is None or not runcode.check(tag, result[0], result[1], result[2]):
                 lines_damaged += 1 if lines_read else 0
                 since_good += 1 if lines_read else 0
@@ -587,7 +668,7 @@ def read_page(image):
             bit_offset = offset + 8 * start
             segments[(bit_offset, 8 * len(chunk))] = (bit_offset, 8 * len(chunk), int.from_bytes(chunk, 'big'))
     # Failures after the last data line are the header copies and the ladder below the data.
-    return PageRead(header, list(segments.values()), lines_read, lines_damaged - since_good)
+    return PageRead(header, list(segments.values()), lines_read, lines_damaged - since_good, corrections)
 
 
 @dataclass
@@ -597,6 +678,7 @@ class DecodedStream:
     pages_read: int
     pages_expected: int
     report: dict
+    corrections: dict = field(default_factory=dict)  # {'inverted' | 'rotated' | 'moved': pages it was done to}
 
 
 def assemble(reads):
@@ -653,14 +735,33 @@ def assemble(reads):
         raise PageError(f'The payload pages are too damaged to decode ({error}).') from None
     report['lines_read'] = sum(read.lines_read for read in chosen)
     report['lines_damaged'] = sum(read.lines_damaged for read in chosen)
-    return DecodedStream(container, header, len(pages), header['pages'], report)
+    corrections = {}
+    for read in chosen:
+        for name in read.corrections:
+            corrections[name] = corrections.get(name, 0) + 1
+    return DecodedStream(container, header, len(pages), header['pages'], report, corrections)
 
 
 def decode(images):
-    reads = []
+    """The container from received page images. With no page readable, the refusal says why when the reason is
+    one a person can act on: a resized page of an exact layout, or a small preview instead of the fax."""
+    reads, refusals = [], []
     for image in images:
         try:
             reads.append(read_page(image))
-        except PageError:
-            continue
-    return assemble(reads)
+        except PageError as error:
+            refusals.append(str(error))
+    small = bool(images) and all(image.size[0] < PREVIEW_WIDTH for image in images)
+    if not reads:
+        if small:
+            raise PageError(PREVIEW)
+        if RESIZED in refusals:
+            raise PageError(RESIZED)
+    try:
+        return assemble(reads)
+    except PageError:
+        if small:
+            raise PageError(PREVIEW) from None
+        if any(read.corrections.get('resized') for read in reads):
+            raise PageError(RESIZED) from None
+        raise
