@@ -26,8 +26,10 @@ GOUV = '﻿' + '\n'.join([
     'XXXXX;Nowhere;;;;;;;;;;;;',
     '',
 ])
-ORANGE = '\n'.join(['Code INSEE,Nom de la commune,Date de fermeture commerciale,Date de fermeture technique,Lot',
-                    '75056,Paris,31/01/2026,31/01/2028,4', ''])
+# A copy saved with commas, day-first dates and French column spellings. Not Orange's confirmed layout: Orange's own
+# file needs a browser to download, so its columns were never read.
+FRENCH_SPELLINGS = '\n'.join(['Code INSEE,Nom de la commune,Date de fermeture commerciale,Date de fermeture technique,'
+                              'Lot', '75056,Paris,31/01/2026,31/01/2028,4', ''])
 PARIS_LINE, TORONTO_LINE = '+33142000000', '+14165550100'
 TODAY = date(2026, 10, 10)
 
@@ -39,7 +41,7 @@ def test_the_government_copy_is_read_with_both_dates_and_corsican_codes():
     assert (by['75056'].technical, by['75056'].commercial, by['75056'].lot) == (date(2027, 1, 31), date(2026, 1, 31),
                                                                                 '3')
     assert by['2A004'].commune == 'Ajaccio' and by['37185'].technical is None
-    orange, _ = closures.parse_file(ORANGE, source='orange')
+    orange, _ = closures.parse_file(FRENCH_SPELLINGS, source='orange')
     assert orange[0].technical == date(2028, 1, 31) and orange[0].commercial == date(2026, 1, 31)
     with pytest.raises(closures.ClosureFileError, match='both closure dates'):
         closures.parse_file('code_insee;nom_commune\n75056;Paris\n')
@@ -70,7 +72,8 @@ def test_french_lines_show_their_communes_dates_and_carrier_notices_warn_before_
     values = env.snapshot.active.values
     publish(env, {'format': 1, 'sites': [{'key': 'paris', 'name': 'Paris office', 'country': 'FR', 'commune': '75056',
                                           'accounts': ['sip']},
-                                         {'key': 'lyon', 'name': 'Lyon office', 'country': 'FR', 'commune': '69123'}]})
+                                         {'key': 'lyon', 'name': 'Lyon office', 'country': 'FR', 'commune': '69123'},
+                                         {'key': 'tours', 'name': 'Tours depot', 'country': 'FR', 'commune': '37185'}]})
     found, _ = closures.parse_file(GOUV, source='gouv')
     closures.import_file(database, found, source='gouv', file_date=date(2025, 10, 20),
                          source_url='https://data.economie.gouv.fr/example', actor={'name': 'Anne'})
@@ -81,10 +84,15 @@ def test_french_lines_show_their_communes_dates_and_carrier_notices_warn_before_
     assert paris['sentence'].startswith('Copper in Paris closes on 31 January 2027. Before then, run a receipt test')
     lyon = next(site for site in shown['sites'] if site['site'] == 'lyon')
     assert lyon['state'] == 'unknown' and 'No imported closure file lists commune 69123' in lyon['sentence']
+    # A commune whose technical date is not set yet (lot 6 preselection in the real file): said, never "None".
+    tours = next(site for site in shown['sites'] if site['site'] == 'tours')
+    assert tours['state'] == 'unscheduled' and tours['sentence'] == (
+        'Copper in Pocé-sur-Cisse has no closing date in the latest file yet; ARCEP says every copper line in France '
+        'closes by the end of 2030.')
     [line] = shown['lines']
     assert (line['number'], line['site'], line['state']) == (PARIS_LINE, 'paris', 'soon')
     # Orange's own newer file wins over the government copy.
-    orange, _ = closures.parse_file(ORANGE, source='orange')
+    orange, _ = closures.parse_file(FRENCH_SPELLINGS, source='orange')
     closures.import_file(database, orange, source='orange', file_date=date(2025, 12, 19))
     assert closures.closure_for(database, '75056').technical == date(2028, 1, 31)
     assert closures.view(database, values, today=TODAY)['lines'][0]['state'] == 'later'

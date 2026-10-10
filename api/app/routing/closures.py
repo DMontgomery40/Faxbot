@@ -18,11 +18,13 @@ downloaded 2026-10-10: 35,305 communes, dataset modified 2025-10-20). Its
 columns, read from that file: ``code_insee``, ``nom_commune``,
 ``fermeture_technique``, ``fermeture_commerciale``, ``lot`` (and postal code,
 department, region, geometry and a sentence for residents, which Faxbot does
-not keep). Both copies import the same way: any CSV (comma or semicolon) with
-an INSEE code column and the two date columns, under those names or the
-French labels Orange uses ("Code INSEE", "Date de fermeture commerciale",
-"Date de fermeture technique"). The file's own date is entered with it, and
-Orange's own file wins over the government copy of the same date or older.
+not keep); ``GOUV_EXPORT`` asks for just those five (1.6 MB instead of
+188 MB). Faxbot reads any CSV (comma or semicolon) with those columns.
+Orange's own file needs a browser to download, so its layout is not
+confirmed here: save it with the same column names (a few French spellings of
+them are also accepted) and mark it as Orange's. The file's own date is
+entered with it, and Orange's own file wins over the government copy of the
+same date or older.
 
 Each site in your organization's rules may carry its commune code
 (``commune``); a French number placed at that site's account shows the
@@ -302,9 +304,11 @@ def _when(day):
 
 
 def _warning(closes, today, what):
-    """One sentence about a closing date: passed, within the warning time, or later; None without a date."""
+    """One sentence about a closing date: passed, within the warning time, or later; with no date yet, that it is
+    not scheduled and ARCEP's end-of-2030 deadline for every line."""
     if closes is None:
-        return None, None
+        return 'unscheduled', (f'{what} has no closing date in the latest file yet; ARCEP says every copper line in '
+                               'France closes by the end of 2030.')
     left = (closes - today).days
     if left < 0:
         return 'passed', f'{what} closed on {_when(closes)}.'
@@ -332,8 +336,8 @@ def view(engine, values, *, today=None):
             continue
         found = closure_for(engine, code)
         by_site[key] = found
-        state, sentence = _warning(found.technical if found else None, today,
-                                   f'Copper in {found.commune or code}' if found else '')
+        state, sentence = _warning(found.technical, today, f'Copper in {found.commune or code}') if found \
+            else (None, None)
         site_rows.append({'site': key, 'name': site.get('name') or key, 'commune': code,
                           'closure': _closure_view(found), 'state': state if found else 'unknown',
                           'sentence': sentence if found else (
@@ -372,9 +376,8 @@ def _line(number, account, site, found, notice, today):
     sentences, states = [], []
     if found is not None:
         state, sentence = _warning(found.technical, today, f'Copper in {found.commune or found.code_insee}')
-        if sentence:
-            sentences.append(sentence)
-            states.append(state)
+        sentences.append(sentence)
+        states.append(state)
         if found.commercial and found.commercial >= today:
             sentences.append(f'Orange stops selling copper lines there on {_when(found.commercial)}.')
     if notice is not None and notice.get('closes_on'):
@@ -382,6 +385,6 @@ def _line(number, account, site, found, notice, today):
                                    f'{notice.get("carrier") or "The carrier"} says this line')
         sentences.append(sentence)
         states.append(state)
-    order = ('passed', 'soon', 'later')
+    order = ('passed', 'soon', 'later', 'unscheduled')
     return {'number': number, 'account': account, 'site': site, 'closure': _closure_view(found), 'notice': notice,
             'state': next((item for item in order if item in states), None), 'sentences': sentences}

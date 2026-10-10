@@ -2589,7 +2589,9 @@ $ faxbot numbers move closures [OPTIONS]
 
 #### `faxbot numbers move import-closures`
 
-Import the commune-level copper-closure dates. The source&#x27;s earlier file is kept as history.
+Import the commune-level copper-closure dates. The source&#x27;s earlier file is kept as history. The government
+copy with only the columns Faxbot reads: https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/
+fermeture-reseau-cuivre/exports/csv?select=code_insee,nom_commune,fermeture_technique,fermeture_commerciale,lot
 
 **Usage**:
 

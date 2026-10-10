@@ -252,7 +252,9 @@ def import_closures(file: Path = typer.Argument(..., metavar='FILE', exists=True
                                                   help="The file's own date, such as 2025-12-19."),
                     source_url: str = typer.Option(None, '--source-url', metavar='URL',
                                                    help='Where you downloaded it.')):
-    """Import the commune-level copper-closure dates. The source's earlier file is kept as history."""
+    """Import the commune-level copper-closure dates. The source's earlier file is kept as history. The government
+    copy with only the columns Faxbot reads: https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/
+    fermeture-reseau-cuivre/exports/csv?select=code_insee,nom_commune,fermeture_technique,fermeture_commerciale,lot"""
     if source not in ('orange', 'gouv'):
         raise CliError('Choose the source orange or gouv.')
     data = {key: value for key, value in (('source', source), ('file_date', file_date), ('source_url', source_url))

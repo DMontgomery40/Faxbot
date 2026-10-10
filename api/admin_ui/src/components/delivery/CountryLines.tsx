@@ -11,11 +11,15 @@ import { Field, FormDialog } from '../access/AccessViews';
 import LoadFailed, { saysFailure } from '../common/LoadFailed';
 import { DeliveryError } from './shared';
 
+// The government copy with only the five columns Faxbot reads (1.6 MB rather than 188 MB with the outlines).
+const GOUV_SMALL = 'https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/fermeture-reseau-cuivre/exports/csv'
+  + '?select=code_insee,nom_commune,fermeture_technique,fermeture_commerciale,lot';
+
 export interface ClosureLine {
   number: string;
   account: string | null;
   site: string | null;
-  state: 'passed' | 'soon' | 'later' | null;
+  state: 'passed' | 'soon' | 'later' | 'unscheduled' | null;
   sentences: string[];
 }
 
@@ -69,8 +73,9 @@ function ImportFile({ client, onDone }: { client: AdminAPIClient; onDone: (next:
         onSubmit={() => void submit()} onClose={() => setOpen(false)}>
         <DeliveryError error={error} />
         <Typography variant="body2" sx={{ mt: 1 }}>
-          Orange's trajectory file lists each French commune's closure dates. Download it from Orange's media library in
-          a browser, or download the government copy from data.gouv.fr, and choose it here.
+          Orange's trajectory file lists each French commune's closure dates. Download the government copy (only the
+          columns Faxbot reads) from <Link href={GOUV_SMALL} target="_blank" rel="noreferrer">data.economie.gouv.fr</Link>,
+          or Orange's own file from its media library in a browser, saved with the same columns, and choose it here.
         </Typography>
         <TextField select fullWidth margin="normal" label="The file comes from" value={source}
           onChange={(event) => setSource(event.target.value as 'gouv' | 'orange')}>
