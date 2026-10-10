@@ -800,6 +800,9 @@ const consoleHandlers = [
   http.get('/routing/caller-id-prices', () => json({ decks: [], callers: [], layouts: { faxbot: '', telnyx: '' } })),
   http.get('/routing/sender-pins', () => json({ pins: [], trunks: [] })),
   http.get('/routing/closures', () => json({ sites: [], lines: [], files: [], sources: { orange: '', gouv: '', arcep: '' } })),
+  // The line inventory and carrier lists (N19): none until a test says otherwise.
+  http.get('/routing/line-inventory', () => json({ sentence: 'No line inventory yet.', lines: [], inventory: null,
+    lists: [], counts: {}, keyed: '', note: '', help: { inventory: '', list: '' }, sources: { att_workbook: '' } })),
   http.get('/routing/country-rules', () => json({ accounts: [], countries: [] })),
   // The answer cap per trunk, mailboxes' station check choices, and public test lines: none until a test says so.
   http.get('/routing/stations/answer-cap', () => json({ trunks: [] })),

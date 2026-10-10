@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from '@mui/material';
 import AdminAPIClient, { accessErrorMessage } from '../api/client';
 import { LineClosures } from './delivery/CountryLines';
+import LineInventory from './delivery/LineInventory';
 
 type Dependency = { question: string; label: string; answer: string; note: string | null };
 type NumberAdvice = { number: string; display: string; sentence: string; verdict_label: string; reasons: string[];
-  evidence: { last_arrival_text: string; removed_sentence: string }; dependencies: Dependency[] };
+  evidence: { last_arrival_text: string; removed_sentence: string }; dependencies: Dependency[];
+  dates?: Array<{ kind: string; date: string; state: string; sentence: string }> };
 type Advice = { sentence: string; note: string; numbers: NumberAdvice[] };
 type Choice = { key: string; label: string };
 type Step = { step: string; label: string; state: string; state_label: string; evidence: string[];
@@ -113,6 +115,8 @@ export default function NumberMoves({client, canWrite}: {client: AdminAPIClient;
       {advice.numbers.map((row) => <Paper key={row.number} variant="outlined" sx={{p: 2}}>
         <Typography variant="h6">{row.display} <Chip component="span" size="small" label={row.verdict_label}/></Typography>
         <Typography>{row.sentence}</Typography>
+        {(row.dates ?? []).map((item) => <Alert key={`${item.kind}-${item.date}`} sx={{my: 1}}
+          severity={item.state === 'later' ? 'info' : 'warning'}>{item.sentence}</Alert>)}
         <Typography>{row.evidence.last_arrival_text}</Typography><Typography>{row.evidence.removed_sentence}</Typography>
         {row.reasons.map((line, index) => <Typography key={index}>{line}</Typography>)}
         <Stack spacing={2} sx={{my: 2}}>{row.dependencies.map((item) => <DependencyAnswer key={item.question} value={item}
@@ -121,6 +125,7 @@ export default function NumberMoves({client, canWrite}: {client: AdminAPIClient;
         {selected === row.number && <Box><MovePlan key={row.number} client={client} number={row.number} canWrite={canWrite}/></Box>}
       </Paper>)}
     </>}
+    <LineInventory client={client} canWrite={canWrite} />
     <LineClosures client={client} canWrite={canWrite} />
   </Stack>;
 }

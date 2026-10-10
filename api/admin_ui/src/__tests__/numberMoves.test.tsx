@@ -69,3 +69,14 @@ it('records move steps and receipt tests with the correct write operations', asy
   fireEvent.click(screen.getByRole('button', {name: 'Abandon move plan'}));
   await waitFor(() => expect(writes).toContainEqual({method: 'POST', path: '/routing/numbers/%2B15550001001/move/steps/move', body: {state: 'abandoned', note: ''}}));
 });
+
+it("shows a line's dates set by a carrier or a contract on its advice card", async () => {
+  const dated = {...advice, numbers: [{...advice.numbers[0], verdict_label: 'Not in Faxbot yet',
+    dates: [{kind: 'contract_end', date: '2026-12-31', state: 'soon',
+      sentence: 'Its contract with AT&T ends on 31 December 2026.'}]}]};
+  const call = vi.fn(async (request: {method: string; path: string}) =>
+    request.path === '/routing/recommendations/lines' ? dated : plan);
+  render(<NumberMoves client={{call} as unknown as AdminAPIClient} canWrite={false} />);
+  expect(await screen.findByText('Its contract with AT&T ends on 31 December 2026.')).toBeTruthy();
+  expect(screen.getByText('Not in Faxbot yet')).toBeTruthy();
+});

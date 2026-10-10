@@ -157,7 +157,12 @@ CLOSURES = _light('copper_closures', ('id', 'import_id', 'source', 'source_url',
                                       'lot', 'commercial_closure', 'technical_closure', 'superseded_at', 'imported_by',
                                       'imported_by_name', 'created_at'))
 NOTICES = _light('line_notices', ('id', 'number', 'carrier', 'closes_on', 'notice_received_on', 'state', 'note',
-                                  'recorded_by', 'recorded_by_name', 'created_at'))
+                                  'recorded_by', 'recorded_by_name', 'created_at', 'kind', 'source_label',
+                                  'source_url'))
+# What a line notice is: a carrier's letter (entered by a person; NULL in rows from before 0077), or the end of the
+# line's telecom contract, from your imported line inventory (``routing/inventory.py``).
+LETTER, CONTRACT_END = 'letter', 'contract_end'
+NOTICE_KINDS = (LETTER, CONTRACT_END)
 
 
 def _datetime(value):
@@ -246,8 +251,22 @@ def _after_newest(connection, number, now):
     return max(now, newest + timedelta(microseconds=1)) if newest is not None else now
 
 
-def record_notice(engine, number, *, closes_on, carrier=None, received_on=None, note=None, actor=None, now=None):
-    """Record a carrier's notice that ``number``'s line closes on ``closes_on``. Earlier notices stay as history."""
+def insert_notice(connection, number, *, kind=LETTER, state='active', closes_on=None, carrier=None, received_on=None,
+                  note=None, source_label=None, source_url=None, actor=None, now):
+    """Write one notice row inside the caller's transaction (``number`` already canonical)."""
+    actor = actor or {}
+    connection.execute(NOTICES.insert().values(
+        id=uuid4().hex, number=number, carrier=(carrier or '').strip()[:100] or None, closes_on=_datetime(closes_on),
+        notice_received_on=_datetime(received_on), state=state, note=(note or '').strip() or None,
+        recorded_by=actor.get('id'), recorded_by_name=actor.get('name'), kind=kind,
+        source_label=(source_label or '')[:200] or None, source_url=source_url,
+        created_at=_after_newest(connection, number, now)))
+
+
+def record_notice(engine, number, *, closes_on, carrier=None, received_on=None, note=None, actor=None, now=None,
+                  kind=LETTER, source_label=None, source_url=None):
+    """Record a carrier's notice that ``number``'s line closes on ``closes_on`` (with ``kind`` contract_end: that its
+    contract ends then). Earlier notices stay as history."""
     from .database import utcnow, write_transaction
     canonical = _canonical(number)
     if canonical is None:
@@ -256,45 +275,54 @@ def record_notice(engine, number, *, closes_on, carrier=None, received_on=None, 
         raise NoticeError('Enter the date the carrier says the line closes, such as 2026-11-04.')
     if carrier is not None and len(carrier) > 100 or note is not None and len(note) > 2000:
         raise NoticeError('Keep the carrier to 100 characters and the note to 2,000.')
-    actor = actor or {}
+    if kind not in NOTICE_KINDS:
+        raise NoticeError('Choose a carrier\'s letter or a contract end.')
     with write_transaction(engine) as connection:
-        connection.execute(NOTICES.insert().values(
-            id=uuid4().hex, number=canonical, carrier=(carrier or '').strip() or None, closes_on=_datetime(closes_on),
-            notice_received_on=_datetime(received_on), state='active', note=(note or '').strip() or None,
-            recorded_by=actor.get('id'), recorded_by_name=actor.get('name'),
-            created_at=_after_newest(connection, canonical, now or utcnow())))
-    return notices(engine).get(canonical)
+        insert_notice(connection, canonical, kind=kind, closes_on=closes_on, carrier=carrier, received_on=received_on,
+                      note=note, source_label=source_label, source_url=source_url, actor=actor, now=now or utcnow())
+    return notices(engine, kind=kind).get(canonical)
 
 
-def remove_notice(engine, number, *, actor=None, now=None):
+def remove_notice(engine, number, *, actor=None, now=None, kind=LETTER):
     from .database import utcnow, write_transaction
     canonical = _canonical(number)
-    current = notices(engine).get(canonical) if canonical else None
+    current = notices(engine, kind=kind).get(canonical) if canonical else None
     if current is None:
-        raise NoticeError('This line has no carrier notice.')
-    actor = actor or {}
+        raise NoticeError('This line has no carrier notice.' if kind == LETTER else 'This line has no contract end.')
     with write_transaction(engine) as connection:
-        connection.execute(NOTICES.insert().values(
-            id=uuid4().hex, number=canonical, carrier=current['carrier'], closes_on=None, notice_received_on=None,
-            state='removed', note=None, recorded_by=actor.get('id'), recorded_by_name=actor.get('name'),
-            created_at=_after_newest(connection, canonical, now or utcnow())))
+        insert_notice(connection, canonical, kind=kind, state='removed', carrier=current['carrier'], actor=actor,
+                      now=now or utcnow())
     return current
 
 
-def notices(engine):
-    """{number: the active notice} (the newest row per number, when it is not removed)."""
+def _notice_view(number, row):
+    return {'number': number, 'kind': row['kind'] or LETTER, 'carrier': row['carrier'],
+            'closes_on': _day(row['closes_on']).isoformat() if row['closes_on'] else None,
+            'notice_received_on': _day(row['notice_received_on']).isoformat() if row['notice_received_on'] else None,
+            'note': row['note'], 'recorded_by': row['recorded_by_name'], 'source_label': row['source_label'],
+            'source_url': row['source_url']}
+
+
+def all_notices(engine, connection=None):
+    """{number: {kind: the active notice}}: the newest row per number and kind, when it is not removed."""
     from .database import read_connection
-    with read_connection(engine) as connection:
-        rows = connection.execute(sa.select(NOTICES).order_by(NOTICES.c.created_at, NOTICES.c.id)).mappings().all()
+    if connection is None:
+        with read_connection(engine) as connection:
+            return all_notices(engine, connection)
+    rows = connection.execute(sa.select(NOTICES).order_by(NOTICES.c.created_at, NOTICES.c.id)).mappings().all()
     newest = {}
     for row in rows:
-        newest[row['number']] = row
-    return {number: {'number': number, 'carrier': row['carrier'],
-                     'closes_on': _day(row['closes_on']).isoformat() if row['closes_on'] else None,
-                     'notice_received_on': _day(row['notice_received_on']).isoformat()
-                     if row['notice_received_on'] else None,
-                     'note': row['note'], 'recorded_by': row['recorded_by_name']}
-            for number, row in newest.items() if row['state'] == 'active'}
+        newest[(row['number'], row['kind'] or LETTER)] = row
+    found = {}
+    for (number, kind), row in newest.items():
+        if row['state'] == 'active':
+            found.setdefault(number, {})[kind] = _notice_view(number, row)
+    return found
+
+
+def notices(engine, *, kind=LETTER):
+    """{number: the active notice of one kind}: a carrier's letter unless ``kind`` says otherwise."""
+    return {number: kinds[kind] for number, kinds in all_notices(engine).items() if kind in kinds}
 
 
 # -- what each line and site shows ---------------------------------------------------------------------------------------
@@ -343,7 +371,9 @@ def view(engine, values, *, today=None):
                           'sentence': sentence if found else (
                               f'No imported closure file lists commune {code}. Import Orange\'s trajectory file, or '
                               'see ARCEP\'s page for your commune.')})
-    lines, notice_by_number = [], notices(engine)
+    lines, by_kind = [], all_notices(engine)
+    notice_by_number = {number: kinds[LETTER] for number, kinds in by_kind.items() if LETTER in kinds}
+    contract_by_number = {number: kinds[CONTRACT_END] for number, kinds in by_kind.items() if CONTRACT_END in kinds}
     seen = set()
     for account in all_accounts(values):
         site = _site_of(values, account.key, sites)
@@ -352,13 +382,14 @@ def view(engine, values, *, today=None):
                 continue
             seen.add(number)
             found = by_site.get(site) if site and number.startswith('+33') else None
-            notice = notice_by_number.get(number)
-            if found is None and notice is None:
+            notice, contract = notice_by_number.get(number), contract_by_number.get(number)
+            if found is None and notice is None and contract is None:
                 continue
-            lines.append(_line(number, account.label, site, found, notice, today))
-    for number, notice in notice_by_number.items():
+            lines.append(_line(number, account.label, site, found, notice, today, contract))
+    for number in dict.fromkeys([*notice_by_number, *contract_by_number]):
         if number not in seen:
-            lines.append(_line(number, None, None, None, notice, today))
+            lines.append(_line(number, None, None, None, notice_by_number.get(number), today,
+                               contract_by_number.get(number)))
     return {'sites': site_rows, 'lines': lines, 'files': files(engine),
             'sources': {'orange': ORANGE_PAGE, 'gouv': GOUV_EXPORT, 'arcep': ARCEP_PAGE}}
 
@@ -372,7 +403,19 @@ def _closure_view(found):
             'source_url': found.source_url, 'file_date': found.file_date.isoformat() if found.file_date else None}
 
 
-def _line(number, account, site, found, notice, today):
+def contract_warning(closes, today, carrier=None):
+    """(state, sentence) for the end of a line's contract, after which the carrier can change its price."""
+    who = f'with {carrier} ' if carrier else ''
+    left = (closes - today).days
+    if left < 0:
+        return 'passed', (f'Its contract {who}ended on {_when(closes)}, so the carrier can change its price or term '
+                          'at any time.')
+    return ('soon' if left <= WARN_DAYS else 'later'), (
+        f'Its contract {who}ends on {_when(closes)}. After that the carrier can change its price or term, so decide '
+        'before then whether to keep the line.')
+
+
+def _line(number, account, site, found, notice, today, contract=None):
     sentences, states = [], []
     if found is not None:
         state, sentence = _warning(found.technical, today, f'Copper in {found.commune or found.code_insee}')
@@ -385,6 +428,11 @@ def _line(number, account, site, found, notice, today):
                                    f'{notice.get("carrier") or "The carrier"} says this line')
         sentences.append(sentence)
         states.append(state)
+    if contract is not None and contract.get('closes_on'):
+        state, sentence = contract_warning(date.fromisoformat(contract['closes_on']), today, contract.get('carrier'))
+        sentences.append(sentence)
+        states.append(state)
     order = ('passed', 'soon', 'later', 'unscheduled')
     return {'number': number, 'account': account, 'site': site, 'closure': _closure_view(found), 'notice': notice,
-            'state': next((item for item in order if item in states), None), 'sentences': sentences}
+            'contract': contract, 'state': next((item for item in order if item in states), None),
+            'sentences': sentences}

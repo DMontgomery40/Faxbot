@@ -15,7 +15,7 @@ PRIOR = '0075_test_lines'  # re-chained at merge (was 0071_codec_decoder)
 
 
 def test_0076_follows_the_codec_decoder_and_is_the_only_head():
-    assert schema_after_answer.REVISION == '0076_after_answer' == schema.HEAD
+    assert schema_after_answer.REVISION == '0076_after_answer' == schema.AFTER_ANSWER
     assert schema.TEST_LINES == PRIOR
     assert schema_after_answer.TABLES <= schema.STRICT_TABLES and len(schema_after_answer.TABLES) == 2
     from pathlib import Path

@@ -109,3 +109,8 @@ def move_test(number: str, origin: str = typer.Option(...)):
 def move_forget(number: str):
     """Forget learned call properties from the old carrier and record this step in the plan."""
     _show_move(state.api().post('/routing/numbers/' + segment(number) + '/move/forget'))
+
+
+# The line inventory and carrier lists (line_inventory.py) hang off the move group; importing them here registers them
+# before nouns.py builds the command tree.
+from . import line_inventory as _line_inventory  # noqa: E402,F401
