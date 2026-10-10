@@ -13,7 +13,7 @@ PRIOR = '0072_route_families'  # re-chained at merge (was 0070_closures)
 
 
 def test_0071_follows_the_closures_and_adds_two_nullable_columns():
-    assert schema_codec_decoder.REVISION == '0071_codec_decoder' == schema.HEAD
+    assert schema_codec_decoder.REVISION == '0071_codec_decoder' == schema.CODEC_DECODER
     assert schema.ROUTE_FAMILIES == PRIOR
     assert schema_codec_decoder.TABLES == frozenset()
 

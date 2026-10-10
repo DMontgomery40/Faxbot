@@ -384,8 +384,12 @@ class RoutedTransport:
         pinned = _pinned(plan)
         skipped = list(_skipped(plan))
         from .sender_pins import dispatch_refusal
+        from .after_answer import dispatch_refusal as needs_keys
         for place, choice in enumerate(plan.choices):
             route = choice.route
+            if needs_keys(self.store.configuration.engine, revision.values, plan.destination, route.key):  # N7
+                skipped.append((route.key, 'digits'))
+                continue
             # A registered-sender recipient (sender_pins, N17): only its trunk, showing its registered identity.
             if dispatch_refusal(self.store.configuration.engine, revision.values, plan.destination, route.key):
                 skipped.append((route.key, 'pin'))
