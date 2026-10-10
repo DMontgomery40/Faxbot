@@ -633,9 +633,11 @@ def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publis
     services = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']
     base = services['hylafax']
     # The engine parses fax and TLS data from strangers: only its own folders, its settings read-only,
-    # and never Faxbot's data folder (so never Asterisk's files there either).
+    # and never Faxbot's data folder (so never Asterisk's files there either). The one host path is /dev/null,
+    # mounted as the spool's dev/null for unprivileged containers (#70; test_sip_compose.py).
     assert 'ports' not in base and sorted(base['volumes']) == [
-        'hylafax-out:/faxdata/hylafax-out', 'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
+        '/dev/null:/var/spool/hylafax/dev/null', 'hylafax-out:/faxdata/hylafax-out',
+        'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
     assert not any(item.startswith('faxdata') for item in base['volumes'])
     assert 'hylafax-settings:/faxdata/hylafax' in services['api']['volumes']
     assert 'hylafax-out:/faxdata/hylafax-out:ro' in services['api']['volumes']
