@@ -174,6 +174,36 @@
             "link_label": "Delivery setup → Sending identity",
             "command": "faxbot delivery identity notice show",
             "turn_on": true
+          },
+          {
+            "key": "court_profile",
+            "name": "California court profile",
+            "sentence": "Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 cover, the pages exactly as given and the transmission record), so a filing is not refused and sent again.",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "delivery/rules",
+            "page_label": "Delivery setup → Routing rules",
+            "link": "delivery/rules",
+            "link_label": "Delivery setup → Routing rules",
+            "command": "faxbot delivery rules court show",
+            "turn_on": false
           }
         ]
       },
@@ -662,6 +692,36 @@
             "link_label": "Administration → System health",
             "command": "faxbot admin diagnostics power show",
             "turn_on": false
+          },
+          {
+            "key": "partner_windows",
+            "name": "Line windows and preflight with partners",
+            "sentence": "Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner grants, so calls to its busy lines queue instead of being retried.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No partner is set to take part in line windows yet."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": null
+            },
+            "part": null,
+            "page": "recipients/partners",
+            "page_label": "Recipients → Partners",
+            "link": "recipients/partners",
+            "link_label": "Recipients → Partners",
+            "command": "faxbot recipients partners list",
+            "turn_on": false
           }
         ]
       },
@@ -1076,6 +1136,36 @@
             "link_label": "Savings & optimization → Savings results",
             "command": "faxbot savings results",
             "turn_on": false
+          },
+          {
+            "key": "copier_extensions",
+            "name": "Copiers as extensions of Faxbot",
+            "sentence": "Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No copier is an extension of Faxbot yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "What it sent on to a copier is in that fax's Received details, not on Savings"
+            },
+            "part": null,
+            "page": "providers/trunk",
+            "page_label": "Delivery setup → Telnyx",
+            "link": null,
+            "link_label": null,
+            "command": null,
+            "turn_on": true
           }
         ]
       },
@@ -1776,6 +1866,9 @@
     "    No header notice is set yet.",
     "    Turn it on in Delivery setup → Sending identity.",
     "    See: faxbot delivery identity notice show",
+    "  California court profile: On · Works here · Sample data",
+    "    Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 cover, the pages exactly as given and the transmission record), so a filing is not refused and sent again.",
+    "    See: faxbot delivery rules court show",
     "",
     "Choosing the route",
     "  Faxes to your own numbers: On · Works here · Sample data",
@@ -1847,6 +1940,11 @@
     "    Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
     "    Needs a UPS that Faxbot reads through NUT; none is set.",
     "    See: faxbot admin diagnostics power show",
+    "  Line windows and preflight with partners: Off · Not here · Sample data",
+    "    Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner grants, so calls to its busy lines queue instead of being retried.",
+    "    No partner is set to take part in line windows yet.",
+    "    Needs a verified partner; you have none yet.",
+    "    See: faxbot recipients partners list",
     "",
     "On the call",
     "  Fax over IP (T.38): On · Works here · Live call",
@@ -1902,6 +2000,11 @@
     "    Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
     "    On for 1 number on your blocked list.",
     "    Turned away 1 call in 30 days",
+    "  Copiers as extensions of Faxbot: Off · Works here · Test lab",
+    "    Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
+    "    No copier is an extension of Faxbot yet.",
+    "    What it sent on to a copier is in that fax's Received details, not on Savings",
+    "    Turn it on in Delivery setup → Telnyx.",
     "",
     "Advice you act on",
     "Advice only: nothing changes until you act on it.",

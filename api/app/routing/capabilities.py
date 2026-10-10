@@ -100,6 +100,7 @@ PAGES = {
     'admin/setup': 'Administration → Setup',
     'admin/health': 'Administration → System health',
     'delivery/moves': 'Delivery setup → Number moves',
+    'delivery/rules': 'Delivery setup → Routing rules',
 }
 
 # The catalogue's older console pages and their six-area homes (spec #48's navigation table). Whoever gives the
@@ -752,6 +753,25 @@ CAPABILITIES = {
         'those lines out removes from the quote, and what one shared trunk would cost for them instead.',
         Prerequisite('prices', "Your carrier's POTS-replacement quote.", 'savings/opportunities?section=pots',
                      _pots_quote)),
+    'court_profile': Capability(
+        'no_repeats',
+        'A filing to a court whose local rule takes fax filing goes with the MC-005 cover sheet first, "By fax" on '
+        "each document's first page and the pages exactly as given, and its transmission record is kept, so the "
+        'court does not refuse it and you do not file it again.',
+        'faxbot delivery rules court attach mailbox {mailbox}', (SENDS,)),
+    'partner_windows': Capability(
+        'relationships',
+        "Two offices fax a hospital whose fax lines are often busy. Each office's Faxbot asks the hospital's Faxbot "
+        'for a line window and starts its call then, instead of calling into a busy line and trying again.',
+        None, (PARTNER,)),
+    'copier_extensions': Capability(
+        'receiving',
+        'A clinic keeps an analog line for each of its three copiers just for fax. Registered to Faxbot as '
+        'extensions, the copiers fax through your trunk or fax service, and those lines can go.',
+        'faxbot delivery providers trunk copier-extensions add {copier} {extension}',
+        (SENDS, Prerequisite('engine', "Faxbot's fax engine published on your local network "
+                                       '(docker-compose.phone-system.yml), so a copier can register to it.',
+                             'delivery/trunk', lambda here: 'not_checked'))),
 }
 
 

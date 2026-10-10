@@ -62,6 +62,7 @@ NO_PART = {
     'answer_cap': 'Its capped calls are not counted on Savings yet',
     'station_check': "What it caught is in each fax's Sent details, not on Savings",
     'keys_after_answer': "The keys each call pressed are in its Sent details, not on Savings",
+    'copier_extensions': "What it sent on to a copier is in that fax's Received details, not on Savings",
 }
 
 
@@ -596,6 +597,27 @@ def _with_partner(here):
     return State(True, why is None, None, why)
 
 
+def court_profile(here):
+    # On for any sender who gives the case details on Send a fax; attached to a mailbox or rule, it is required there.
+    return State(True, bool(here.sending), None, _needs_sending(here))
+
+
+def partner_windows(here):
+    from ..direct.admission import anyone_takes_part_on
+    with read_connection(here.engine) as connection:
+        taking = anyone_takes_part_on(connection)
+    why = _partner_needed(here)
+    return State(taking, why is None, None if taking else 'No partner is set to take part in line windows yet.',
+                 why)
+
+
+def copier_extensions(here):
+    from ..copier_extensions import copiers
+    count = len(copiers(here.engine))
+    sentence = None if count else 'No copier is an extension of Faxbot yet.'
+    return State(bool(count), True, sentence, None)
+
+
 def _in_the_us(here):
     country = getattr(here.values, 'fax_default_country', 'US')
     why = _needs_sending(here) or (None if country == 'US' else 'Prices by state are for calls within the US.')
@@ -864,6 +886,23 @@ CATALOGUE = (
               'after', 'built', None, 'admin/health', 'Administration → System health', route_problems,
               link='admin/health', link_label='Administration → System health',
               command='faxbot admin diagnostics routes list'),
+    Mechanism('court_profile', 'California court profile',
+              'Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 '
+              'cover, the pages exactly as given and the transmission record), so a filing is not refused and sent '
+              'again.',
+              'document', 'built', None, 'delivery/rules', 'Delivery setup → Routing rules', court_profile,
+              link='delivery/rules', link_label='Delivery setup → Routing rules',
+              command='faxbot delivery rules court show'),
+    Mechanism('partner_windows', 'Line windows and preflight with partners',
+              "Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner "
+              'grants, so calls to its busy lines queue instead of being retried.',
+              'route', 'built', None, 'recipients/partners', 'Recipients → Partners', partner_windows,
+              link='recipients/partners', link_label='Recipients → Partners',
+              command='faxbot recipients partners list'),
+    Mechanism('copier_extensions', 'Copiers as extensions of Faxbot',
+              'Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog '
+              'line can go.',
+              'receiving', 'lab', None, 'providers/trunk', 'Delivery setup → Carrier trunk', copier_extensions),
     Mechanism('advice_line_inventory', 'Lines and carrier closing dates',
               'Matches your fax lines to carriers\' discontinuance lists and contract end dates, so you move a line '
               'before its price changes or it closes.',

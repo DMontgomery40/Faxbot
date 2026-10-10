@@ -66,6 +66,7 @@ FILL_IN = {
     '{evidence}': 'Synthetic letter', '{plan}': 'sip', '{count}': '100', '{fax_id}': 'a' * 32,
     '{reason}': 'Synthetic junk sender', '{keys}': '2w105', '{class}': 'premium',
     '{notice}': 'Confidential: for the addressee only.', '{mailbox}': 'Synthetic mailbox',
+    '{copier}': 'Synthetic-copier', '{extension}': '601',
     # An option that must name an existing file: any existing file shows it parses.
     '{file}': str(FIXTURE),
 }
@@ -575,6 +576,9 @@ ONE = {
     'answer_cap': 'Hung up 1 unanswered call in 30 days',
     'station_check': 'Caught 1 call answered by a different number in 30 days',
     'keys_after_answer': 'Pressed keys on 1 call in 30 days',
+    'court_profile': 'Used on 1 fax in 30 days',
+    'partner_windows': 'Used on 1 fax in 30 days',
+    'copier_extensions': 'Sent on 1 received fax in 30 days',
 }
 
 
@@ -629,6 +633,13 @@ def test_each_counter_counts_one_record_of_its_kind(installation, monkeypatch):
                 sent_pages=1, created_at=now)
         _insert(engine, 'route_family_incidents', transport=TRANSPORTS[0], phase=PHASES[0], change_cause=CAUSES[0],
                 destinations=1, failures=1, calls=1, corroborated=0, opened_at=now)
+        _insert(engine, 'court_sends', id=job, purpose='file', source='sender', details='{}', by_fax='found',
+                created_at=now)
+        # A fax that asked first and then waited for its window counts once.
+        _insert(engine, 'preflight_answers', direction='asked', job_id=job, created_at=now)
+        _insert(engine, 'admission_grants', direction='received', job_id=job, outcome='granted',
+                duration_class='short', created_at=now)
+        _insert(engine, 'copier_forwards', state='sent', created_at=now)
         with engine.begin() as connection:
             stations.record_cap_on(connection, attempt_id=attempt, job_id=job, card=None, now=now)
             stations.record_on(connection, attempt_id=attempt, job_id=job, number=AGREED, station='+12025550999',
