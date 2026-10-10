@@ -18,7 +18,7 @@ Runtime code reflects these tables; it never imports this metadata.
 """
 import sqlalchemy as sa
 
-from .schema_station_check import frozen_metadata as previous_metadata
+from .schema_route_families import frozen_metadata as previous_metadata
 
 
 REVISION = '0075_test_lines'

@@ -218,41 +218,67 @@ def fidelity_of(result):
 # The hook: conversion.pdf_to_tiff calls apply() after Ghostscript made today's fax image -------------------------
 
 def _render_gray(pdf_path, out_path, gs):
-    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS
-    subprocess.run(
-        [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', '-sDEVICE=tiffgray', '-sCompression=lzw',
-         '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
-        check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    from ..conversion import GHOSTSCRIPT_TIMEOUT_SECONDS, ghostscript_slot
+    with ghostscript_slot():  # at most conversion.GHOSTSCRIPT_SLOTS drawings at once
+        subprocess.run(
+            [gs, '-q', '-dSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFSTOPONERROR', '-sDEVICE=tiffgray', '-sCompression=lzw',
+             '-r204x196', f'-sOutputFile={out_path}', '-f', str(Path(pdf_path).resolve())],
+            check=True, timeout=GHOSTSCRIPT_TIMEOUT_SECONDS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+class GrayPages:
+    """The gray drawing's pages on today's canvases, read from the drawing one page at a time when used: a long
+    fax's gray pages (one byte a pixel) would otherwise all be in memory at once."""
+
+    def __init__(self, path, sizes):
+        self.path, self.sizes = path, list(sizes)
+
+    def __len__(self):
+        return len(self.sizes)
+
+    def __getitem__(self, index):
+        if not 0 <= index < len(self.sizes):
+            raise IndexError(index)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            with Image.open(self.path) as gray:
+                gray.seek(index)
+                return fit(gray.copy(), self.sizes[index])
+
+    def __iter__(self):
+        for index in range(len(self.sizes)):
+            yield self[index]
 
 
 def _gray_pages(gray_path, today):
-    """The gray drawing's pages on today's canvases, or None when they are not the same pages."""
-    pages = []
+    """The gray drawing's pages on today's canvases (``GrayPages``), or None when they are not the same pages.
+    Only each page's header is read here."""
+    sizes = today.sizes() if hasattr(today, 'sizes') else [frame.size for frame in today]
     with warnings.catch_warnings():
         warnings.simplefilter('error', Image.DecompressionBombWarning)
         with Image.open(gray_path) as gray:
-            for index, frame in enumerate(today):
+            for index, (_, height) in enumerate(sizes):
                 try:
                     gray.seek(index)
                 except EOFError:
                     return None
-                if gray.mode != 'L' or gray.height != frame.height:
+                if gray.mode != 'L' or gray.height != height:
                     return None
-                pages.append(fit(gray.copy(), frame.size))
             try:
-                gray.seek(len(today))
+                gray.seek(len(sizes))
                 return None
             except EOFError:
                 pass
-    return pages
+    return GrayPages(gray_path, sizes)
 
 
 def _screened(pdf_path, grays, today, gs, folder):
     """(pages, how many changed, Fidelity) with shaded areas screened, or None when a page does not line up.
     A page the fidelity measure would not keep goes as it is."""
     from . import fidelity, screens
+    from ..conversion import FaxFrames
     masks = screens.object_masks(pdf_path, grays, gs, folder)
-    pages, changed, kept = [], 0, []
+    pages, changed, kept = FaxFrames(), 0, []  # packed: one page made at a time
     for gray, frame, mask in zip(grays, today, masks):
         screened = screens.screen_page(gray, frame, objects=mask)
         if screened is None:
@@ -275,7 +301,8 @@ def _whitened(grays, today, despeckle_page):
     """(pages, how many changed, Fidelity) with light areas made white, or None when a page does not line up. The
     measure records what whitening lost; the administrator chose it with its warning."""
     from . import fidelity
-    pages, changed, found = [], 0, []
+    from ..conversion import FaxFrames
+    pages, changed, found = FaxFrames(), 0, []  # packed: one page made at a time
     for gray, frame in zip(grays, today):
         change = friendly_page(gray, frame, despeckle_page=despeckle_page)
         if change is None:

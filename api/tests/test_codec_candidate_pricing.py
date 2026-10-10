@@ -79,3 +79,72 @@ def test_a_supported_encoded_candidate_reaches_measured_pricing_before_being_rej
     assert saved['seconds_encoded'] < saved['seconds_original']
     assert pdf.read_bytes() == original and tiff.read_bytes() == original_image
     assert coding.attempt_coding(database, ATTEMPT)['requested'] == 'MH'
+    # And each engine is asked for MH: the SSL Fax engine's job data format, the built-in engine's channel variable.
+    from app import ami, hylafax_engine
+    from api.tests.test_hylafax_records import values as engine_values
+    call = hylafax_engine.CallSettings(t38=True, max_rate=14400, ecm=True, fine=True, compression='jbig')
+    asked = hylafax_engine.with_coding(call, changed.coding.request('hylafax'))
+    assert hylafax_engine._DATA_FORMATS[asked.compression] == 'G31D'
+    builtin = hylafax_engine.with_coding(call, changed.coding.request('builtin'))
+    configured = engine_values(FAX_DATA_DIR=str(tmp_path),
+                               ASTERISK_INBOUND_SECRET='synthetic-inbound-secret-0123456789')
+    fields = ami.originate_fields_for(configured, JOB, PEER, '/faxdata/x.tiff', attempt_id=ATTEMPT, call=builtin)
+    assert 'FAXBOT_COMPRESSION=mh' in fields['Variable']
+
+
+def _payload_page(size=40_000, layout='runs'):
+    document = codec.Document(random.Random(20261010).randbytes(size), 'application/pdf', 'synthetic.pdf')
+    return codec.encode_document(document, layout=layout, fec='medium', salt=b's' * 16, nonce=b'n' * 12).pages
+
+
+def test_a_payload_page_measures_smaller_in_mh_and_mr_than_in_mmr():
+    """N2's premise, on the shipped run-coded layout: the payload page is drawn so that its MH code is the payload,
+    so the one-dimensional coding is smallest and MMR (the engines' own default under error correction) largest."""
+    measured = coding.measure(_payload_page(), codings=('MH', 'MR', 'MMR'))
+    mh, mr, mmr = (sum(measured[name]) for name in ('MH', 'MR', 'MMR'))
+    assert mh < mr < mmr and mmr > 1.2 * mh, measured
+    chosen = coding.best_coding(_payload_page(), {'MH', 'MR', 'MMR'}, ecm=True, measured=measured)
+    assert chosen.coding == 'MH'
+
+
+def test_where_faxbot_does_not_choose_the_coding_each_layout_is_priced_from_its_measured_size():
+    """A provider draws the pages, so no coding is requested: the shapes carry every measured coding, and the
+    predictor reads the one it expects for the call, never MR estimated as 1.35 x MMR (which, on a payload page that
+    is already larger in MMR than in MR, prices it far above its cost)."""
+    from api.tests.test_codec_delivery import Prediction, Shape
+    seen = []
+
+    def predict(route_key, destination, shape, *, now=None):
+        seen.append(shape)
+        bits = dict(shape.measured)['MR']
+        return Prediction(shape.pages, sum(bits) / 14400 + 8 * shape.pages, shape.pages * 45_000, 'synthetic', False)
+    frames = _payload_page(layout='grid') * 3  # any one-bit pages stand in for a three-page original here
+    document = codec.Document(random.Random(7).randbytes(2_000), 'application/pdf', 'synthetic.pdf')
+    from app.codec import decision
+    choice = decision.choose(document, route_key='synthetic-provider', destination=PEER, pages_original=len(frames),
+                             page_bits_original=[1] * len(frames), exact_raster=False, ecm_and_fine_seen=False,
+                             provider_renders=True, tools=(predict, Shape), frames_original=frames)
+    assert [shape.layout for shape in seen] == ['normal', 'codec']
+    for shape in seen:
+        assert set(dict(shape.measured)) == set(decision.UNCHOSEN_CODINGS)
+        assert shape.page_bits == tuple(dict(shape.measured)['MMR'])
+    assert choice.pages_encoded >= 1
+
+
+def test_the_real_predictor_prices_an_unchosen_payload_page_from_its_measured_coding():
+    """Companion with routing.predict itself: the call's expected coding (MR, learned from earlier calls) is priced
+    from the payload page's measured MR size, not from 1.35 x its MMR size."""
+    pages = _payload_page()
+    measured = coding.measure(pages, codings=('MH', 'MR', 'MMR'))
+    rate = RateCard(None, 'synthetic-sip', 'outbound', 'Synthetic SIP', 'USD', parse_amount('0.005'),
+                    0, 0, 6, 6, None, datetime(2026, 10, 9), None)
+    facts = predict.RouteFacts('sip', 'Synthetic SIP', DestinationClass(LOCAL, 'US', '+1', PEER), RateTerms(rate),
+                               link=predict.Link(rate=14400, rate_calls=3, rate_scope='number', coding='MR'))
+    shape = predict.Shape(pages=len(pages), page_bits=tuple(measured['MMR']), resolution='fine', layout='codec',
+                          measured=measured)
+    priced = predict.predict_from(facts, shape)
+    estimated = predict.predict_from(facts, predict.Shape(pages=len(pages), page_bits=tuple(measured['MMR']),
+                                                          resolution='fine', layout='codec'))
+    data = sum(measured['MR']) / 14400
+    assert abs(priced.seconds - (predict.SETUP_SECONDS + data + predict.PAGE_SECONDS * len(pages))) < 0.01
+    assert estimated.seconds > priced.seconds * 1.3  # the fixed ratio overprices the payload page

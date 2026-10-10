@@ -64,3 +64,14 @@ test('a forged header that claims a huge stream is refused before anything is al
   view.setUint32(18, 2000); view.setUint32(14, 9); // the real size of a 2,000-byte container at parity 32
   assert.notEqual(decodeHeaderForTest(header), null);
 });
+
+test('a header of a newer format, layout or capacity profile is refused as made by a newer Faxbot', async () => {
+  const { decodeHeaderForTest, NEWER } = await import('../decoder.js');
+  const header = new Uint8Array(32);
+  header.set([0x46, 0x58, 0x50, 1, 6, 32]);
+  assert.equal(decodeHeaderForTest(header), NEWER);
+  header[3] = 2; header[4] = 1;
+  assert.equal(decodeHeaderForTest(header), NEWER);
+  header[3] = 1; header[4] = 5; header[30] = 7; header[31] = 9;
+  assert.equal(decodeHeaderForTest(header), NEWER);
+});

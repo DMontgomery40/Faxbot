@@ -3,7 +3,7 @@ from alembic import op
 
 revision = '0075_test_lines'
 # Chained after the integration head when merged (revision numbers follow merge order, not number order).
-down_revision = '0074_station_check'
+down_revision = '0072_route_families'
 branch_labels = None
 depends_on = None
 

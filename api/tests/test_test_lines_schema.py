@@ -1,4 +1,4 @@
-"""Actual 0074 to 0075 upgrade: public test lines and the answer cap's calls (SQLite and PostgreSQL)."""
+"""Actual 0072 to 0075 upgrade: public test lines and the answer cap's calls (SQLite and PostgreSQL)."""
 from datetime import datetime
 
 import pytest
@@ -11,12 +11,12 @@ from api.tests.test_access_schema import at_revision
 
 
 NOW = datetime(2026, 10, 10, 9, 0)
-PRIOR = '0074_station_check'
+PRIOR = '0072_route_families'  # re-chained after the integration head (was 0074_station_check)
 
 
 def test_test_lines_follow_the_station_check_and_are_the_only_head():
     assert schema_test_lines.REVISION == '0075_test_lines' == schema.HEAD
-    assert schema.STATION_CHECK == PRIOR
+    assert schema.ROUTE_FAMILIES == PRIOR
     assert schema_test_lines.TABLES <= schema.STRICT_TABLES and len(schema_test_lines.TABLES) == 3
     from pathlib import Path
     from alembic.config import Config

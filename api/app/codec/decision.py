@@ -23,11 +23,12 @@ the PDF itself.
 On Faxbot's own engines each candidate, and the normal pages it competes
 with, is priced in its smallest usable coding. This happens before filtering
 or ranking: a Group-4 estimate must not discard a page that costs less in MH.
+Where Faxbot does not choose the coding (a provider draws the pages), every
+lossless coding is still measured on the pages, so the predictor prices the
+coding it expects from that coding's measured size rather than from a fixed
+ratio to MMR, which a payload page does not follow.
 """
 from dataclasses import dataclass
-import io
-
-from PIL import Image
 
 RUN_LIMITS = (7, 15, 63)
 
@@ -55,16 +56,6 @@ def predictor():
     except ImportError:
         return None
     return predict, Shape
-
-
-def g4_page_bits(image):
-    """Coded bits of one page as the engines' Group 4 TIFF stores it (8 x its strip bytes)."""
-    buffer = io.BytesIO()
-    image.convert('1').save(buffer, 'TIFF', compression='group4',
-                            strip_size=((image.size[0] + 7) // 8) * image.size[1])
-    buffer.seek(0)
-    with Image.open(buffer) as written:
-        return 8 * sum(written.tag_v2.get(279, (len(buffer.getvalue()),)))
 
 
 def _amount(cost):
@@ -117,13 +108,30 @@ def _measured_shape(Shape, frames, resolution, layout, usable):
                  layout=layout, measured=measured, coding=choice.priced)
 
 
+# Measured when Faxbot does not choose the call's coding: the one-dimensional and two-dimensional codings every
+# engine and provider can use (JBIG, which needs its encoder and the machine's agreement, is left to the estimate).
+UNCHOSEN_CODINGS = ('MH', 'MR', 'MMR')
+
+
+def _unchosen_shape(Shape, frames, resolution, layout):
+    """A shape for pages whose coding Faxbot does not choose (a provider draws them, or the codings a number takes
+    could not be read): each lossless coding measured on the pages themselves, so the predictor prices whichever
+    coding it expects the call to use from that coding's real size. A fixed ratio to MMR would price a payload page
+    (drawn so that its MH code is the payload, and larger in MMR than in MH or MR) far above what it costs."""
+    from ..pages import coding
+    measured = coding.measure(frames, codings=UNCHOSEN_CODINGS)
+    return Shape(pages=len(frames), page_bits=tuple(measured['MMR']), resolution=resolution, layout=layout,
+                 measured=measured)
+
+
 def choose(document, *, route_key, destination, pages_original, page_bits_original, exact_raster,
            ecm_and_fine_seen, provider_renders, fec='medium', style='dense', secret=None, picture=None,
            resolution='fine', encoder=None, tools=None, usable=None, frames_original=None):
     """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake.
 
     ``usable`` and ``frames_original`` let Faxbot's own engines price every layout in the coding the call can
-    use. Provider-rendered routes retain their estimate because Faxbot does not select their coding.
+    use. Where Faxbot does not choose the coding (a provider draws the pages), each layout is priced from its
+    pages' measured sizes in the coding the predictor expects for the call.
     """
     from .. import codec
     tools = tools or predictor()
@@ -136,6 +144,8 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         if frames_original is None or len(frames_original) != pages_original:
             raise ValueError('The original pages are required to compare measured fax codings.')
         shape = _measured_shape(Shape, frames_original, resolution, 'normal', usable)
+    elif frames_original is not None and len(frames_original) == pages_original:
+        shape = _unchosen_shape(Shape, frames_original, resolution, 'normal')
     else:
         shape = Shape(pages=pages_original, page_bits=tuple(page_bits_original),
                       resolution=resolution, layout='normal')
@@ -156,8 +166,7 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
         if usable is not None:
             shape = _measured_shape(Shape, pages.pages, resolution, 'codec', usable)
         else:
-            bits = tuple(g4_page_bits(page) for page in pages.pages)
-            shape = Shape(pages=pages.page_count, page_bits=bits, resolution=resolution, layout='codec')
+            shape = _unchosen_shape(Shape, pages.pages, resolution, 'codec')
         prediction = predict(route_key, destination, shape)
         if not saves(original, prediction, pages_original, pages.page_count):
             continue
