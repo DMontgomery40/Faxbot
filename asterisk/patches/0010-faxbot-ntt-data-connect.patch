@@ -179,12 +179,10 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  	return 0;
  }
  
-@@ -992,6 +1013,45 @@
- 	}
- 
+@@ -994,6 +1015,45 @@
  	return AST_SIP_SESSION_SDP_DEFER_NOT_NEEDED;
-+}
-+
+ }
+ 
 +/*! \brief Faxbot (0010): whether this endpoint takes NTT Data Connect faxes (set_var=FAXBOT_DATA_CONNECT_ACCEPT=yes) */
 +static int faxbot_data_connect_accepted(struct ast_sip_session *session)
 +{
@@ -222,9 +220,11 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
 +	state->our_parms.rate_management = state->their_parms.rate_management;
 +	ast_udptl_set_local_max_ifp(session_media->udptl, state->our_parms.max_ifp);
 +	session->t38state = T38_PEER_REINVITE;
- }
- 
++}
++
  /*! \brief Function which negotiates an incoming media stream */
+ static int negotiate_incoming_sdp_stream(struct ast_sip_session *session,
+ 	struct ast_sip_session_media *session_media, const struct pjmedia_sdp_session *sdp,
 @@ -1013,6 +1073,7 @@
  		return 0;
  	}
@@ -233,12 +233,10 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  	if ((session->t38state == T38_REJECTED) || (session->t38state == T38_DISABLED)) {
  		ast_debug(3, "Declining; T.38 state is rejected or declined\n");
  		t38_change_state(session, NULL, state, T38_DISABLED);
-@@ -1037,8 +1098,174 @@
- 	}
- 
+@@ -1039,6 +1100,175 @@
  	return 1;
-+}
-+
+ }
+ 
 +/*! \brief Faxbot (0010): the bandwidth an NTT Data Connect call declares (b=AS, kbit/s; routing/data_connect.py) */
 +#define FAXBOT_DATA_CONNECT_KBPS 64
 +/*! \brief Faxbot (0010): the largest UDPTL datagram sent on one, so the session never exceeds what it declared */
@@ -308,8 +306,8 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
 +	bandwidth->modifier = STR_AS;
 +	bandwidth->value = FAXBOT_DATA_CONNECT_KBPS;
 +	media->bandw[media->bandw_count++] = bandwidth;
- }
- 
++}
++
 +/*! \brief Faxbot (0010): keep only the characters of a fax or attempt identity (hexadecimal) for the event */
 +static void faxbot_identity(char *out, size_t size, const char *value)
 +{
@@ -326,7 +324,7 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
 +/*!
 + * \brief Faxbot (0010): the answer to an NTT Data Connect call's first INVITE.
 + *
-+ * A 2xx whose image stream has a port and a UDPTL peer leaves the session as an incoming T.38 offer leaves it
++ * A 2xx whose image stream has a port and a UDPTL peer leaves the session where an incoming T.38 offer leaves it
 + * (T38_PEER_REINVITE), so SendFAX agrees the parameters exactly as ReceiveFAX does for one, and Faxbot's
 + * datagrams are capped at FAXBOT_DATA_CONNECT_DATAGRAM octets so the session stays inside the bandwidth it
 + * declared. A 488 is the recipient's machine, or the network, refusing the offer: FAXBOT_DATA_CONNECT_RESULT is
@@ -393,7 +391,10 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
 +	pbx_builtin_setvar_helper(session->channel, "FAXBOT_DATA_CONNECT_RESULT", "connected");
 +	ast_channel_unlock(session->channel);
 +	ast_log(LOG_NOTICE, "%s: NTT Data Connect call answered with T.38\n", ast_channel_name(session->channel));
-+	t38_change_state(session, session_media, state, T38_PEER_REINVITE);
++	/* As the receive side does: no automatic rejection timer, since nothing is deferred and the call has no audio
++	 * to fall back to; SendFAX asks for the far end's parameters (REQUEST_PARMS) whenever it starts. */
++	ast_udptl_set_tag(session_media->udptl, "%s", ast_channel_name(session->channel));
++	session->t38state = T38_PEER_REINVITE;
 +	return;
 +}
 +
@@ -408,7 +409,7 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  /*! \brief Function which creates an outgoing stream */
  static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct ast_sip_session_media *session_media,
  				      struct pjmedia_sdp_session *sdp, const struct pjmedia_sdp_session *remote, struct ast_stream *stream)
-@@ -1073,6 +1300,8 @@
+@@ -1073,6 +1303,8 @@
  		ast_debug(3, "Not creating outgoing SDP stream: Failed to initialize T.38 session\n");
  		return -1;
  	}
@@ -417,7 +418,7 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  
  	if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media))) ||
  		!(media->conn = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_conn)))) {
-@@ -1142,6 +1371,7 @@
+@@ -1142,6 +1374,7 @@
  		break;
  	}
  
@@ -425,7 +426,7 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  	sdp->media[sdp->media_count++] = media;
  
  	return 1;
-@@ -1326,6 +1556,7 @@
+@@ -1326,6 +1559,7 @@
  	ast_sip_session_unregister_sdp_handler(&image_sdp_handler, "image");
  	ast_sip_session_unregister_supplement(&t38_supplement);
  	ast_sip_session_unregister_supplement(&faxbot_t38_bye_supplement);
@@ -433,7 +434,7 @@ against a second Faxbot Asterisk that takes a T.38-only first INVITE and one tha
  
  	return 0;
  }
-@@ -1350,6 +1581,7 @@
+@@ -1350,6 +1584,7 @@
  
  	ast_sip_session_register_supplement(&t38_supplement);
  	ast_sip_session_register_supplement(&faxbot_t38_bye_supplement);

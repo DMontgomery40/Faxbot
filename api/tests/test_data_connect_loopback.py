@@ -207,6 +207,7 @@ def test_a_receiver_that_refuses_it_gets_the_same_attempt_again_as_an_ordinary_f
         names = [name for name, _ in seen]
         print(json.dumps({'events': seen, 'stderr_tail': run.stderr[-800:]}, indent=2))
         refused = next(event for name, event in seen if name == 'FaxDataConnect')
+        assert names.index('FaxDataConnect') < names.index('FaxResult')
         assert refused['Outcome'] == 'refused' and refused['Code'] == '488'
         assert refused['JobID'] == job and refused['AttemptID'] == attempt
         result = next(event for name, event in seen if name == 'FaxResult')

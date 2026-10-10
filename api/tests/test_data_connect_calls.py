@@ -10,7 +10,6 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
-import sqlalchemy as sa
 
 from app import ami
 from app.config_values import ConfigurationValues
@@ -128,7 +127,10 @@ def test_patch_0010_offers_the_priced_session_reads_the_answer_and_applies_after
     assert '--- a/channels/chan_pjsip.c' in patch and '--- a/res/res_pjsip_t38.c' in patch
     assert '+\tfaxbot_data_connect_media(session);\n \tres = ast_sip_session_create_invite(session, &tdata);' in patch
     assert '"FAXBOT_DATA_CONNECT"' in patch and 'UserEvent: FaxDataConnect' in patch and 'code == 488' in patch
-    assert '+\tt38_change_state(session, session_media, state, T38_PEER_REINVITE);' in patch
+    # An answered offer leaves the session as an incoming T.38 offer does, with no automatic rejection timer: an
+    # image-only call has no audio to fall back to if SendFAX starts late.
+    assert '+\tsession->t38state = T38_PEER_REINVITE;\n+\treturn;\n+}' in patch
+    assert 't38_change_state(session, session_media, state, T38_PEER_REINVITE)' not in patch
     # The first offer's parameters are T.38 Annex D's, as data_connect.T38_SDP lists them.
     sdp = dict(data_connect.T38_SDP)
     assert sdp['T38FaxVersion'] == '0' and '+\t\tstate->our_parms.version = 0;' in patch

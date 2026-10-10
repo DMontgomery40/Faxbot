@@ -324,12 +324,12 @@ class CapturedTransport:
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
         records = hylafax_records.records_for(engine) if engine is not None else None
         recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
-        # An NTT Data Connect call (routing/data_connect_store.places, the same test that priced it): only the
-        # built-in engine offers T.38 from the first INVITE (asterisk patch 0010), so it places the call.
+        # An NTT Data Connect call (routing/data_connect_store.places, the same test, on the same dialed number, that
+        # priced it): only the built-in engine offers T.38 from the first INVITE (asterisk patch 0010), so it places
+        # the call.
         from .routing import data_connect_store
         data_connect = not claim.members and await asyncio.to_thread(
-            data_connect_store.places, engine, full_values, trunk or 'sip',
-            job.get('recipient_number') or job['to_number'])
+            data_connect_store.places, engine, full_values, trunk or 'sip', job['to_number'])
         if data_connect:
             call = hylafax_engine.with_coding(
                 hylafax_engine.call_settings(values, job['to_number'], recipient=recipient),

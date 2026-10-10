@@ -163,12 +163,13 @@ async def lifespan(application: FastAPI):
             try:
                 owns_ami = await _initialize_runtime(tasks)
                 if owns_ami:
+                    # NTT Data Connect calls: how each went, recorded before the fax's outcome so its estimate is
+                    # priced by what the call really did (patch 0010).
+                    from .routing import data_connect_store
+                    data_connect_store.attach(ami_client, runtime.manager.store.engine)
                     ami_client.on_fax_result(_handle_fax_result)
                     ami_client.on_originate_response(_handle_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
-                    # NTT Data Connect calls: how each went, and what it taught about the number (patch 0010).
-                    from .routing import data_connect_store
-                    data_connect_store.attach(ami_client, runtime.manager.store.engine)
                     # A T.38 call whose fax data never came back switches new calls to audio fax.
                     sip_fax_mode.attach(ami_client, runtime)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
