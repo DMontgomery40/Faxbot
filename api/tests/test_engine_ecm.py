@@ -383,6 +383,27 @@ def test_0080_is_the_head_keeps_one_row_per_call_and_source_and_its_downgrade_ke
     assert 'fax_call_ecm' in _tables(db)
 
 
+# The trunk page and the command line -----------------------------------------------------------------------------
+
+def test_the_trunk_page_and_the_command_line_say_what_error_correction_did(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    from app.main import app
+    for client in _serve(monkeypatch, tmp_path):
+        cli = Cli(client)
+        body = cli.json('delivery', 'providers', 'trunk', 'negotiation')
+        assert body['error_correction']['sentences'] == [
+            'No sent call in the last 30 days has reported what error correction did yet.']
+        assert isinstance(body['error_correction']['trunks'], list)
+        engine = app.state.configuration_runtime.manager.store.engine
+        key = uuid.uuid4().hex
+        engine_ecm.EcmStore(engine).record(engine_ecm.frames_row(frames_event(key)))
+        shown = cli('delivery', 'providers', 'trunk', 'negotiation')
+        assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+        out = ' '.join(shown.stdout.split())
+        assert ('Error correction and fax-over-IP protection: On 1 sent call with error correction in the last 30 '
+                'days, the receiving machines asked for 10 damaged frames again, in 10 stretches.') in out
+
+
 # The background work keeps both engines' reports ---------------------------------------------------------------
 
 def test_the_far_end_frames_work_keeps_each_engines_report_once(monkeypatch, tmp_path):

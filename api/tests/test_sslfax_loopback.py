@@ -2188,7 +2188,7 @@ def test_brief98_both_engines_receives_get_the_caller_check_stamp(tmp_path, loop
     assert not leftover, proof
 
 
-def header_line(page, rows=40):
+def header_line(page, rows=60):
     """What Tesseract reads in the top ``rows`` rows of a received page (the sending engine's tag line)."""
     import shutil
     import subprocess
