@@ -591,6 +591,11 @@ export const requests = {
     method: 'PUT', path: `/routing/dialing/${segment(key)}`,
     body: ceiling === undefined ? { state } : { state, ceiling },
   }),
+  // Country service rules (the UAE, Saudi Arabia) for the accounts there (routing/country_rules.py).
+  countryRules: (): ApiRequest => ({ method: 'GET', path: '/routing/country-rules' }),
+  confirmCountry: (account: string, country: string, evidence: string): ApiRequest => ({
+    method: 'POST', path: '/routing/country-rules/confirm', body: { account, country, evidence, evidence_url: null },
+  }),
 };
 
 export interface RulesApi {
@@ -617,6 +622,16 @@ export interface RulesApi {
   explainReceived(body: ReceivedExplainRequest): Promise<ReceivedExplainResult>;
   dialing(): Promise<DialingState>;
   changeDialing(key: string, state: DialingChoice, ceiling?: string): Promise<DialingState>;
+  countryRules(): Promise<CountryRulesView>;
+  confirmCountry(account: string, country: string, evidence: string): Promise<CountryRulesView>;
+}
+
+// Country service rules: each account in a country with rules, and the rules with their sources.
+export interface CountryRulesView {
+  accounts: Array<{ account: string; label: string; country: string; confirmed: boolean; sentence: string }>;
+  countries: Array<{ country: string; name: string; regulator: string; sentence: string;
+    sources: Array<{ label: string; url: string }> }>;
+  read_on?: string;
 }
 
 // The rules API of a console API client, one per client, so screens see the same object on every render.
@@ -656,5 +671,7 @@ export function rulesApi(send: Send): RulesApi {
     explainReceived: (body) => send(requests.explainReceived(body)),
     dialing: () => send(requests.dialing()),
     changeDialing: (key, state, ceiling) => send(requests.changeDialing(key, state, ceiling)),
+    countryRules: () => send(requests.countryRules()),
+    confirmCountry: (account, country, evidence) => send(requests.confirmCountry(account, country, evidence)),
   };
 }
