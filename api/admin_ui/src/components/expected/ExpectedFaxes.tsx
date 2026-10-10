@@ -273,7 +273,8 @@ function ExpectedDetail({ api, client, code, onClose, onChanged }: {
                   <Button size="small" onClick={() => run(() => api.conflict(item.code, 'apply', item.version),
                     "Used the import's version.")}>Use the import&apos;s version</Button>
                 </Stack>) : undefined}>
-                The import changed this row without a new revision.
+                The latest import changed this expected fax without marking it as a new version, so Faxbot is keeping
+                the first version until you choose.
               </Alert>
             )}
             <Proposals item={item}

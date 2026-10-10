@@ -172,7 +172,7 @@
           "kind_label": "Connection",
           "met": false,
           "label": "Missing",
-          "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+          "sentence": "A second sending route, such as another fax service account or your own trunk.",
           "address": "delivery/connections",
           "address_label": "Delivery setup → Connections"
          },
@@ -188,7 +188,7 @@
         ],
         "setting": {
          "address": "recipients/list",
-         "label": "Recipients → Details",
+         "label": "Recipients",
          "command": "faxbot recipients set {number} --preferred-route automatic"
         },
         "results": {
@@ -249,7 +249,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "sentence": "A fax service account or your own trunk that sends faxes.",
           "address": "delivery/connections",
           "address_label": "Delivery setup → Connections"
          },
@@ -260,12 +260,12 @@
           "label": "Missing",
           "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
           "address": "recipients/list",
-          "address_label": "Recipients → Details"
+          "address_label": "Recipients"
          }
         ],
         "setting": {
          "address": "recipients/list",
-         "label": "Recipients → Details",
+         "label": "Recipients",
          "command": "faxbot recipients encoded set {number}"
         },
         "results": {
@@ -317,7 +317,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "sentence": "A fax service account or your own trunk that sends faxes.",
           "address": "delivery/connections",
           "address_label": "Delivery setup → Connections"
          },
@@ -326,7 +326,7 @@
           "kind_label": "Prices",
           "met": true,
           "label": "In place",
-          "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+          "sentence": "A sending route billed by the minute or second, such as your own trunk.",
           "address": "savings/prices",
           "address_label": "Savings & optimization → Prices & plans"
          }
@@ -347,7 +347,7 @@
         "key": "fax_over_ip",
         "name": "Fax over IP (T.38)",
         "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
-        "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+        "example": "A ten-page fax over your own trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
         "outcome": "shorter_calls",
         "address": "savings/capabilities?key=fax_over_ip",
         "enabled": {
@@ -381,7 +381,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+          "sentence": "Your own trunk, from a phone carrier or your phone system.",
           "address": "delivery/trunk",
           "address_label": "Delivery setup → Telnyx"
          },
@@ -446,7 +446,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
           "address": "delivery/trunk",
           "address_label": "Delivery setup → Telnyx"
          },
@@ -522,7 +522,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "sentence": "A fax service account or your own trunk that sends faxes.",
           "address": "delivery/connections",
           "address_label": "Delivery setup → Connections"
          },
@@ -533,12 +533,12 @@
           "label": "Missing",
           "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
           "address": "recipients/list",
-          "address_label": "Recipients → Details"
+          "address_label": "Recipients"
          }
         ],
         "setting": {
          "address": "recipients/list",
-         "label": "Recipients → Details",
+         "label": "Recipients",
          "command": "faxbot recipients set {number} --accepts-references"
         },
         "results": {
@@ -642,7 +642,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
           "address": "delivery/trunk",
           "address_label": "Delivery setup → Telnyx"
          },
@@ -662,12 +662,12 @@
           "label": "In place",
           "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
           "address": "recipients/list",
-          "address_label": "Recipients → Details"
+          "address_label": "Recipients"
          }
         ],
         "setting": {
          "address": "recipients/list",
-         "label": "Recipients → Details",
+         "label": "Recipients",
          "command": "faxbot recipients together set {number}"
         },
         "results": {
@@ -720,7 +720,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
           "address": "delivery/trunk",
           "address_label": "Delivery setup → Telnyx"
          },
@@ -740,7 +740,7 @@
           "label": "Missing",
           "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
           "address": "recipients/list",
-          "address_label": "Recipients → Details"
+          "address_label": "Recipients"
          },
          {
           "kind": "setting",
@@ -754,7 +754,7 @@
         ],
         "setting": {
          "address": "recipients/list",
-         "label": "Recipients → Details",
+         "label": "Recipients",
          "command": "faxbot recipients set {number} --index-page"
         },
         "results": {
@@ -809,7 +809,7 @@
           "kind_label": "Connection",
           "met": true,
           "label": "In place",
-          "sentence": "Faxes received over your own SIP trunk.",
+          "sentence": "Faxes received over your own trunk.",
           "address": "delivery/trunk",
           "address_label": "Delivery setup → Telnyx"
          },
@@ -1199,7 +1199,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "sentence": "A second sending route, such as another fax service account or your own trunk.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -1215,7 +1215,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --preferred-route automatic"
           },
           "results": {
@@ -1272,7 +1272,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -1283,12 +1283,12 @@
             "label": "Missing",
             "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients encoded set {number}"
           },
           "results": {
@@ -1337,7 +1337,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -1346,7 +1346,7 @@
             "kind_label": "Prices",
             "met": true,
             "label": "In place",
-            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "sentence": "A sending route billed by the minute or second, such as your own trunk.",
             "address": "savings/prices",
             "address_label": "Savings & optimization → Prices & plans"
            }
@@ -1367,7 +1367,7 @@
           "key": "fax_over_ip",
           "name": "Fax over IP (T.38)",
           "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
-          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "example": "A ten-page fax over your own trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
           "outcome": "shorter_calls",
           "address": "savings/capabilities?key=fax_over_ip",
           "enabled": {
@@ -1402,7 +1402,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -1467,7 +1467,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -1539,7 +1539,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -1550,12 +1550,12 @@
             "label": "Missing",
             "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --accepts-references"
           },
           "results": {
@@ -1660,7 +1660,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -1680,12 +1680,12 @@
             "label": "In place",
             "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients together set {number}"
           },
           "results": {
@@ -1734,7 +1734,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -1754,7 +1754,7 @@
             "label": "Missing",
             "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            },
            {
             "kind": "setting",
@@ -1768,7 +1768,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --index-page"
           },
           "results": {
@@ -1824,7 +1824,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "Faxes received over your own SIP trunk.",
+            "sentence": "Faxes received over your own trunk.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -2022,7 +2022,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "sentence": "A second sending route, such as another fax service account or your own trunk.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -2038,7 +2038,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --preferred-route automatic"
           },
           "results": {
@@ -2099,7 +2099,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -2110,12 +2110,12 @@
             "label": "Missing",
             "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients encoded set {number}"
           },
           "results": {
@@ -2167,7 +2167,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -2176,7 +2176,7 @@
             "kind_label": "Prices",
             "met": true,
             "label": "In place",
-            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "sentence": "A sending route billed by the minute or second, such as your own trunk.",
             "address": "savings/prices",
             "address_label": "Savings & optimization → Prices & plans"
            }
@@ -2197,7 +2197,7 @@
           "key": "fax_over_ip",
           "name": "Fax over IP (T.38)",
           "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
-          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "example": "A ten-page fax over your own trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
           "outcome": "shorter_calls",
           "address": "savings/capabilities?key=fax_over_ip",
           "enabled": {
@@ -2231,7 +2231,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -2296,7 +2296,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -2372,7 +2372,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -2383,12 +2383,12 @@
             "label": "Missing",
             "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --accepts-references"
           },
           "results": {
@@ -2492,7 +2492,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -2512,12 +2512,12 @@
             "label": "In place",
             "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients together set {number}"
           },
           "results": {
@@ -2570,7 +2570,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -2590,7 +2590,7 @@
             "label": "Missing",
             "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            },
            {
             "kind": "setting",
@@ -2604,7 +2604,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --index-page"
           },
           "results": {
@@ -2659,7 +2659,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Faxes received over your own SIP trunk.",
+            "sentence": "Faxes received over your own trunk.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -3021,7 +3021,7 @@
             "kind_label": "Connection",
             "met": false,
             "label": "Missing",
-            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "sentence": "A second sending route, such as another fax service account or your own trunk.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -3037,7 +3037,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --preferred-route automatic"
           },
           "results": {
@@ -3098,7 +3098,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -3109,12 +3109,12 @@
             "label": "Missing",
             "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients encoded set {number}"
           },
           "results": {
@@ -3166,7 +3166,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -3175,7 +3175,7 @@
             "kind_label": "Prices",
             "met": true,
             "label": "In place",
-            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "sentence": "A sending route billed by the minute or second, such as your own trunk.",
             "address": "savings/prices",
             "address_label": "Savings & optimization → Prices & plans"
            }
@@ -3196,7 +3196,7 @@
           "key": "fax_over_ip",
           "name": "Fax over IP (T.38)",
           "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
-          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "example": "A ten-page fax over your own trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
           "outcome": "shorter_calls",
           "address": "savings/capabilities?key=fax_over_ip",
           "enabled": {
@@ -3230,7 +3230,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -3295,7 +3295,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -3371,7 +3371,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "sentence": "A fax service account or your own trunk that sends faxes.",
             "address": "delivery/connections",
             "address_label": "Delivery setup → Connections"
            },
@@ -3382,12 +3382,12 @@
             "label": "Missing",
             "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --accepts-references"
           },
           "results": {
@@ -3491,7 +3491,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -3511,12 +3511,12 @@
             "label": "In place",
             "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            }
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients together set {number}"
           },
           "results": {
@@ -3569,7 +3569,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "sentence": "Your own trunk for sending, from a phone carrier or your phone system.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },
@@ -3589,7 +3589,7 @@
             "label": "Missing",
             "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
             "address": "recipients/list",
-            "address_label": "Recipients → Details"
+            "address_label": "Recipients"
            },
            {
             "kind": "setting",
@@ -3603,7 +3603,7 @@
           ],
           "setting": {
            "address": "recipients/list",
-           "label": "Recipients → Details",
+           "label": "Recipients",
            "command": "faxbot recipients set {number} --index-page"
           },
           "results": {
@@ -3658,7 +3658,7 @@
             "kind_label": "Connection",
             "met": true,
             "label": "In place",
-            "sentence": "Faxes received over your own SIP trunk.",
+            "sentence": "Faxes received over your own trunk.",
             "address": "delivery/trunk",
             "address_label": "Delivery setup → Telnyx"
            },

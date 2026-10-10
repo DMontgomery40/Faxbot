@@ -75,7 +75,8 @@ def _show(out, item, events=()):
     if item.get('missing_from_export'):
         out.line("The latest full export no longer lists it; it stays open until you decide.")
     if item.get('conflict'):
-        out.line("The import changed this row without a new revision; decide with 'faxbot faxes expected conflict'.")
+        out.line('The latest import changed this expected fax without marking it as a new version, so Faxbot is '
+                 "keeping the first version until you choose with 'faxbot faxes expected conflict'.")
     proposals = item.get('proposals') or []
     if proposals:
         out.table(['#', 'Received', 'From', 'Why it may be the one'],
@@ -235,7 +236,7 @@ def expected_conflict(code: str = typer.Argument(..., help=CODE_HELP),
                       keep: bool = typer.Option(False, '--keep', help='Keep the first version and set the change '
                                                                       'aside.'),
                       apply: bool = typer.Option(False, '--apply', help="Use the import's changed version.")):
-    """Decide about a row the import changed without a new revision."""
+    """Decide about an expected fax the import changed without marking it as a new version."""
     if keep == apply:
         raise CliError('Choose --keep or --apply.')
     api = state.api()

@@ -180,7 +180,8 @@ def attention_lines(view):
 
 # Read only with settings:read; a key without it is told so for each block.
 VALUE_SOURCES = (
-    ('capabilities', '/routing/capabilities', None),
+    # Without what advice and charge checks found: the Overview never shows it, and counting it is slow.
+    ('capabilities', '/routing/capabilities', {'findings': 'false'}),
     ('savings', '/routing/savings', None),
     ('sending', '/routing/recommendations/sending', None),
     ('facts', '/routing/recommendations/facts', None),

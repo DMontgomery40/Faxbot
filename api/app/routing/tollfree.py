@@ -254,8 +254,8 @@ def toll_free_recommendations(store):
     if not items:
         state = 'none'
         sentence = ('No recipient has a toll-free fax number on file. If one publishes a toll-free number for the '
-                    'same intake, add it under Recipients → Details; Faxbot uses it only once you record their '
-                    'approval, because the recipient pays for those calls.')
+                    "same intake, add it in that number's Details in Recipients; Faxbot uses it only once you record "
+                    'their approval, because the recipient pays for those calls.')
     else:
         state = 'on_file'
         sentence = (f"{len(items)} {'recipient has' if len(items) == 1 else 'recipients have'} a toll-free fax number "
