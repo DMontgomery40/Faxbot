@@ -15,6 +15,7 @@ import type {
   AccountHealth, AccountInput, AccountPatch, AccountsState, HealthState, ProviderAccount, RulesApi,
 } from './ProviderRulesApi';
 import ProviderAccountsDialog from './ProviderAccountsDialog';
+import DialDestinations from './DialDestinations';
 
 export const HEALTH: Record<HealthState, { label: string; color: 'success' | 'default' | 'warning' | 'error' | 'info' }> = {
   ready: { label: 'Ready', color: 'success' },
@@ -182,6 +183,8 @@ export default function ProviderAccounts({ api, canWrite, currency = 'USD', onNa
           onChange={(key, change) => void write((generation) => api.updateAccount(key, change, generation),
             `Account ${change.label ?? key} saved.`).then((done) => { if (done) setEditing(null); })} />
       )}
+      {/* Where Faxbot may dial, for every account above (routing/guard.py). */}
+      <Box sx={{ mt: 3 }}><DialDestinations api={api} canWrite={canWrite} /></Box>
     </Box>
   );
 }

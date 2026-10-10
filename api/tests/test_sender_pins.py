@@ -24,8 +24,9 @@ from api.tests.test_schema import database  # noqa: F401 (fixture)
 
 BANK = '+902122220000'
 REGISTERED, OTHER = '+13035550100', '+13035550142'
+# An installation in Turkey, so the bank is a national number the dialing guard (routing/guard.py) lets it dial.
 TRUNK = {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': 'sip.telnyx.com',
-         'SIP_TRUNK_DIDS': f'{REGISTERED},{OTHER}', 'FAX_DEFAULT_COUNTRY': 'US'}
+         'SIP_TRUNK_DIDS': f'{REGISTERED},{OTHER}', 'FAX_DEFAULT_COUNTRY': 'TR'}
 WITH_TRUNK = {**BASE, **TRUNK, 'SIP_TRUNK_CALLER_ID': REGISTERED, 'FAX_OUTBOUND_ROUTES': 'signalwire, sip'}
 
 

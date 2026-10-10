@@ -315,6 +315,10 @@ class HoldStore:
             if row['kind'] == 'approval':
                 if account:
                     raise HoldInputError('Choose an account only for a fax with no route your rules allow.')
+                # Where Faxbot may dial (guard.py): a premium-rate, special-service or satellite number is never
+                # dialed by approving one fax while its class is not allowed.
+                from .guard import refuse_release_on
+                refuse_release_on(connection, row)
                 jobs = self.configuration.jobs
                 destination = connection.scalar(sa.select(jobs.c.to_number).where(jobs.c.id == row['job_id']))
                 if row['bound_digest'] and (pinned is None or document is None or digest_for(

@@ -54,6 +54,8 @@ class Prepared:
     document_sha256: str | None
     zone_name: str
     bound_key: str | None
+    # Where Faxbot may dial (``guard.preview``): the dialed number's class, read before the lock.
+    dialing: object = None
 
 
 def sender_of(actor):
@@ -178,8 +180,10 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
     # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
     from .sender_pins import narrow_for
     decision = narrow_for(engine, decision, facts)
+    from . import guard
+    dialing = guard.preview(engine, values, destination=facts.destination, decision=decision, accounts=accounts)
     return Prepared(facts, accounts, decision, store, document_sha256, getattr(values, 'time_zone', '') or '',
-                    default_sending_key(values))
+                    default_sending_key(values), dialing)
 
 
 def recorder_for(engine, revision, actor, *, job_id, destination, pages, document_path=None, case_packet=False,
@@ -237,9 +241,9 @@ def recorder(prepared, job_id, actor, *, control=None):
         pinned = envelopes.Pinned(decision_id, 1, decision, facts)
         t = envelopes.tables(connection)
         _reconcile_dial(connection, job_id, decision)
+        digest = hold_store.digest_for(pinned, job_id, facts.destination, prepared.document_sha256) \
+            if prepared.document_sha256 else None
         if decision.outcome != 'route':
-            digest = hold_store.digest_for(pinned, job_id, facts.destination, prepared.document_sha256) \
-                if prepared.document_sha256 else None
             hold_store.holds_for_decision_on(connection, t, job_id=job_id, pinned=pinned, now=now,
                                              requested_by=principal, digest=digest, accounts=prepared.accounts,
                                              zone_name=prepared.zone_name or None)
@@ -248,7 +252,23 @@ def recorder(prepared, job_id, actor, *, control=None):
                                         sa.column('attempt_id'), sa.column('kind'), sa.column('dedupe_key'),
                                         sa.column('details'), sa.column('created_at')),
                    job_id, 'route_held', now)
+        # Where Faxbot may dial (``guard.py``): a number in a class it may not dial waits in Sent for approval.
+        if prepared.dialing is not None:
+            from . import guard
+            dialed = _dialed(prepared.dialing, decision, facts.destination)
+            guard.record_on(connection, dialed, job_id=job_id, decision_id=decision_id, now=now,
+                            requested_by=principal, digest=digest, also_held=decision.outcome != 'route')
     return record
+
+
+def _dialed(dialing, decision, destination):
+    """The preview again when the decision in the transaction dials the same number, else that number's class."""
+    from dataclasses import replace
+    from . import guard
+    number = decision.envelope.dial.number if decision.envelope.dial is not None else destination
+    if number == dialing.number:
+        return dialing
+    return replace(dialing, number=number, found=guard.dial_class(number, dialing.home_country), rates=None)
 
 
 def _reconcile_dial(connection, job_id, decision):
