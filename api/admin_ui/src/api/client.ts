@@ -6,6 +6,7 @@ import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from '.
 import type { CodecNumber, CodecReceived, CodecSave } from './codecTypes';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
+import type { Capabilities } from './capabilityTypes';
 import type {
   DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
 } from './digitalTypes';
@@ -1725,6 +1726,12 @@ class AdminAPIClient {
   // Every way Faxbot saves money: whether each is on, works here and has been tested (Overview's savings map).
   async getSavingsMechanisms(): Promise<SavingsMechanisms> {
     return this.json('/routing/savings/mechanisms');
+  }
+
+  // Savings & optimization → Capabilities: every mechanism grouped by outcome, with what each needs and where its
+  // setting and figures are; never money.
+  async getCapabilities(): Promise<Capabilities> {
+    return this.json('/routing/capabilities');
   }
 
   // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →
