@@ -1,4 +1,4 @@
-"""`faxbot recipients cases`: acknowledgements, reuse periods, repairs, kept originals and checklist packets."""
+"""`faxbot faxes cases`: acknowledgements, reuse periods, repairs, kept originals and checklist packets."""
 import json
 
 import sqlalchemy as sa

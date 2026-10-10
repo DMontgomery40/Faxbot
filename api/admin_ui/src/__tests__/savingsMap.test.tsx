@@ -12,7 +12,7 @@ import { emptySavings, server } from '../test/server';
 import fixture from './savingsMap.json';
 import capabilityFixture from './capabilities.json';
 
-// One answer of GET /routing/savings/mechanisms, evaluated on a real synthetic installation; `faxbot costs
+// One answer of GET /routing/savings/mechanisms, evaluated on a real synthetic installation; `faxbot savings
 // mechanisms` prints exactly fixture.cli from it (api/tests/test_savings_mechanisms.py).
 const answer = fixture.response as unknown as SavingsMechanisms;
 const items = answer.stages.flatMap((stage) => stage.mechanisms);

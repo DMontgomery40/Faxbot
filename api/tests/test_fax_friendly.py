@@ -322,7 +322,7 @@ def test_the_command_line_section_says_one_thing_at_a_time():
                      'Nothing to suggest: shaded areas are kept with a fax-friendly pattern on every document.',
                      'Your last 2 faxes would have taken 50 seconds less.',
                      'Choose "Where it saves time". '
-                     'Or run: faxbot system settings set fax_friendly_documents=where_it_saves']
+                     'Or run: faxbot admin settings set fax_friendly_documents=where_it_saves']
 
 
 # When: three choices, the recipient's own choice, and each attempt's route ---------------------------------------

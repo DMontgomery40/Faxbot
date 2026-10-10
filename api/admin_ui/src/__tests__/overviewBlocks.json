@@ -194,7 +194,7 @@
         "results": {
          "address": "savings/results?part=cheapest_route",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        }
@@ -271,7 +271,7 @@
         "results": {
          "address": "savings/results?part=encoding",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -334,12 +334,12 @@
         "setting": {
          "address": "delivery/connections",
          "label": "Delivery setup → Connections",
-         "command": "faxbot system settings set fax_friendly_documents=where_it_saves"
+         "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
         },
         "results": {
          "address": "savings/results?part=fax_friendly",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -398,12 +398,12 @@
         "setting": {
          "address": "delivery/trunk",
          "label": "Delivery setup → Telnyx",
-         "command": "faxbot providers trunk mode"
+         "command": "faxbot delivery providers trunk mode"
         },
         "results": {
          "address": "savings/results?part=t38",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -463,12 +463,12 @@
         "setting": {
          "address": "delivery/trunk",
          "label": "Delivery setup → Telnyx",
-         "command": "faxbot system settings set sip_sslfax_enabled=true"
+         "command": "faxbot admin settings set sip_sslfax_enabled=true"
         },
         "results": {
          "address": "savings/results?part=sslfax",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        }
@@ -544,7 +544,7 @@
         "results": {
          "address": "savings/results?part=case_packets",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -595,12 +595,12 @@
         "setting": {
          "address": "recipients/partners",
          "label": "Recipients → Partners",
-         "command": "faxbot system settings set direct_delivery_enabled=true"
+         "command": "faxbot admin settings set direct_delivery_enabled=true"
         },
         "results": {
          "address": "savings/results?part=direct_delivery",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -673,7 +673,7 @@
         "results": {
          "address": "savings/results?part=sending_together",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        },
@@ -760,7 +760,7 @@
         "results": {
          "address": "savings/results?part=separator_pages",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        }
@@ -826,12 +826,12 @@
         "setting": {
          "address": "delivery/blocked",
          "label": "Delivery setup → Blocked senders",
-         "command": "faxbot numbers blocked add {number}"
+         "command": "faxbot delivery blocked add {number}"
         },
         "results": {
          "address": "savings/results?part=blocked_calls",
          "label": "Savings & optimization → Savings",
-         "command": "faxbot costs savings"
+         "command": "faxbot savings results"
         },
         "affected": null
        }
@@ -1024,17 +1024,17 @@
     "    Call time saved: Faster pages 2 minutes",
     "    Calls avoided: Sending together 2 calls",
     "    Data not sent again: Send once and reuse 2.4 MB",
-    "    How each was counted: faxbot costs savings",
+    "    How each was counted: faxbot savings results",
     "Next improvements",
     "  Lighter shading: You can do this now",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    faxbot system settings set fax_friendly_documents=where_it_saves",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
     "  A cheaper route to Synthetic Lab: You can do this now",
     "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
-    "    faxbot costs recommendations sending",
+    "    faxbot savings opportunities sending",
     "  No price for the route these faxes took (County Records): Needs a fact",
     "    Enter the price under Savings & optimization → Prices & plans.",
-    "    faxbot costs advice",
+    "    faxbot savings facts",
     "  Case packets: Needs a recipient's agreement",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    faxbot recipients set {number} --accepts-references",
@@ -1050,7 +1050,7 @@
     "  Expected: 2 expected faxes waiting.",
     "Needs attention",
     "  Nothing needs attention.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -1221,7 +1221,7 @@
           "results": {
            "address": "savings/results?part=cheapest_route",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -1294,7 +1294,7 @@
           "results": {
            "address": "savings/results?part=encoding",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1354,12 +1354,12 @@
           "setting": {
            "address": "delivery/connections",
            "label": "Delivery setup → Connections",
-           "command": "faxbot system settings set fax_friendly_documents=where_it_saves"
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
           },
           "results": {
            "address": "savings/results?part=fax_friendly",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1419,12 +1419,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot providers trunk mode"
+           "command": "faxbot delivery providers trunk mode"
           },
           "results": {
            "address": "savings/results?part=t38",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1484,12 +1484,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot system settings set sip_sslfax_enabled=true"
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
           },
           "results": {
            "address": "savings/results?part=sslfax",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -1561,7 +1561,7 @@
           "results": {
            "address": "savings/results?part=case_packets",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1612,12 +1612,12 @@
           "setting": {
            "address": "recipients/partners",
            "label": "Recipients → Partners",
-           "command": "faxbot system settings set direct_delivery_enabled=true"
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
           },
           "results": {
            "address": "savings/results?part=direct_delivery",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1691,7 +1691,7 @@
           "results": {
            "address": "savings/results?part=sending_together",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -1774,7 +1774,7 @@
           "results": {
            "address": "savings/results?part=separator_pages",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -1841,12 +1841,12 @@
           "setting": {
            "address": "delivery/blocked",
            "label": "Delivery setup → Blocked senders",
-           "command": "faxbot numbers blocked add {number}"
+           "command": "faxbot delivery blocked add {number}"
           },
           "results": {
            "address": "savings/results?part=blocked_calls",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -1916,8 +1916,8 @@
     "Needs attention",
     "  To check",
     "    No fax provider is set up yet",
-    "      faxbot providers list",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "      faxbot delivery providers list",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -2044,7 +2044,7 @@
           "results": {
            "address": "savings/results?part=cheapest_route",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -2121,7 +2121,7 @@
           "results": {
            "address": "savings/results?part=encoding",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2184,12 +2184,12 @@
           "setting": {
            "address": "delivery/connections",
            "label": "Delivery setup → Connections",
-           "command": "faxbot system settings set fax_friendly_documents=where_it_saves"
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
           },
           "results": {
            "address": "savings/results?part=fax_friendly",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2248,12 +2248,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot providers trunk mode"
+           "command": "faxbot delivery providers trunk mode"
           },
           "results": {
            "address": "savings/results?part=t38",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2313,12 +2313,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot system settings set sip_sslfax_enabled=true"
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
           },
           "results": {
            "address": "savings/results?part=sslfax",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -2394,7 +2394,7 @@
           "results": {
            "address": "savings/results?part=case_packets",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2445,12 +2445,12 @@
           "setting": {
            "address": "recipients/partners",
            "label": "Recipients → Partners",
-           "command": "faxbot system settings set direct_delivery_enabled=true"
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
           },
           "results": {
            "address": "savings/results?part=direct_delivery",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2523,7 +2523,7 @@
           "results": {
            "address": "savings/results?part=sending_together",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -2610,7 +2610,7 @@
           "results": {
            "address": "savings/results?part=separator_pages",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -2676,12 +2676,12 @@
           "setting": {
            "address": "delivery/blocked",
            "label": "Delivery setup → Blocked senders",
-           "command": "faxbot numbers blocked add {number}"
+           "command": "faxbot delivery blocked add {number}"
           },
           "results": {
            "address": "savings/results?part=blocked_calls",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -2741,7 +2741,7 @@
     "Next improvements",
     "  Lighter shading: You can do this now",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    faxbot system settings set fax_friendly_documents=where_it_saves",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
     "  Case packets: Needs a recipient's agreement",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    faxbot recipients set {number} --accepts-references",
@@ -2757,7 +2757,7 @@
     "  Expected: 2 expected faxes waiting.",
     "Needs attention",
     "  Nothing needs attention.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -2805,17 +2805,17 @@
     "    Call time saved: Faster pages 2 minutes",
     "    Calls avoided: Sending together 2 calls",
     "    Data not sent again: Send once and reuse 2.4 MB",
-    "    How each was counted: faxbot costs savings",
+    "    How each was counted: faxbot savings results",
     "Next improvements",
     "  Lighter shading: You can do this now",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    faxbot system settings set fax_friendly_documents=where_it_saves",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
     "  A cheaper route to Synthetic Lab: You can do this now",
     "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
-    "    faxbot costs recommendations sending",
+    "    faxbot savings opportunities sending",
     "  No price for the route these faxes took (County Records): Needs a fact",
     "    Enter the price under Savings & optimization → Prices & plans.",
-    "    faxbot costs advice",
+    "    faxbot savings facts",
     "  Case packets: Needs a recipient's agreement",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    faxbot recipients set {number} --accepts-references",
@@ -2831,7 +2831,7 @@
     "  Expected: 2 expected faxes waiting.",
     "Needs attention",
     "  Nothing needs attention.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -2871,10 +2871,10 @@
     "Needs attention",
     "  Serious problems",
     "    Faxbot is not ready to send faxes",
-    "      faxbot system health",
+    "      faxbot admin health",
     "    Sent faxes with an uncertain result: 1",
     "      Check your provider account before you send any of them again.",
-    "      faxbot sent list --status reconciliation_required",
+    "      faxbot faxes sent list --status reconciliation_required",
     "What Faxbot is doing",
     "  Used here in the last 30 days",
     "    Fax over IP (T.38): Used on 3 calls in 30 days",
@@ -2886,17 +2886,17 @@
     "    Call time saved: Faster pages 2 minutes",
     "    Calls avoided: Sending together 2 calls",
     "    Data not sent again: Send once and reuse 2.4 MB",
-    "    How each was counted: faxbot costs savings",
+    "    How each was counted: faxbot savings results",
     "Next improvements",
     "  Lighter shading: You can do this now",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    faxbot system settings set fax_friendly_documents=where_it_saves",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
     "  A cheaper route to Synthetic Lab: You can do this now",
     "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
-    "    faxbot costs recommendations sending",
+    "    faxbot savings opportunities sending",
     "  No price for the route these faxes took (County Records): Needs a fact",
     "    Enter the price under Savings & optimization → Prices & plans.",
-    "    faxbot costs advice",
+    "    faxbot savings facts",
     "  Case packets: Needs a recipient's agreement",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    faxbot recipients set {number} --accepts-references",
@@ -2910,7 +2910,7 @@
     "  Received: 3 open faxes.",
     "  Sent: 1 fax waiting to send, 0 sending now.",
     "  Expected: 2 expected faxes waiting.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -3043,7 +3043,7 @@
           "results": {
            "address": "savings/results?part=cheapest_route",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -3120,7 +3120,7 @@
           "results": {
            "address": "savings/results?part=encoding",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3183,12 +3183,12 @@
           "setting": {
            "address": "delivery/connections",
            "label": "Delivery setup → Connections",
-           "command": "faxbot system settings set fax_friendly_documents=where_it_saves"
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
           },
           "results": {
            "address": "savings/results?part=fax_friendly",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3247,12 +3247,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot providers trunk mode"
+           "command": "faxbot delivery providers trunk mode"
           },
           "results": {
            "address": "savings/results?part=t38",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3312,12 +3312,12 @@
           "setting": {
            "address": "delivery/trunk",
            "label": "Delivery setup → Telnyx",
-           "command": "faxbot system settings set sip_sslfax_enabled=true"
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
           },
           "results": {
            "address": "savings/results?part=sslfax",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -3393,7 +3393,7 @@
           "results": {
            "address": "savings/results?part=case_packets",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3444,12 +3444,12 @@
           "setting": {
            "address": "recipients/partners",
            "label": "Recipients → Partners",
-           "command": "faxbot system settings set direct_delivery_enabled=true"
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
           },
           "results": {
            "address": "savings/results?part=direct_delivery",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3522,7 +3522,7 @@
           "results": {
            "address": "savings/results?part=sending_together",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          },
@@ -3609,7 +3609,7 @@
           "results": {
            "address": "savings/results?part=separator_pages",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -3675,12 +3675,12 @@
           "setting": {
            "address": "delivery/blocked",
            "label": "Delivery setup → Blocked senders",
-           "command": "faxbot numbers blocked add {number}"
+           "command": "faxbot delivery blocked add {number}"
           },
           "results": {
            "address": "savings/results?part=blocked_calls",
            "label": "Savings & optimization → Savings",
-           "command": "faxbot costs savings"
+           "command": "faxbot savings results"
           },
           "affected": null
          }
@@ -3706,10 +3706,10 @@
     "Next improvements",
     "  Lighter shading: You can do this now",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
-    "    faxbot system settings set fax_friendly_documents=where_it_saves",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
     "  No price for the route these faxes took (County Records): Needs a fact",
     "    Enter the price under Savings & optimization → Prices & plans.",
-    "    faxbot costs advice",
+    "    faxbot savings facts",
     "  Case packets: Needs a recipient's agreement",
     "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
     "    faxbot recipients set {number} --accepts-references",
@@ -3726,7 +3726,7 @@
     "  Expected: 2 expected faxes waiting.",
     "Needs attention",
     "  Nothing needs attention.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   },
   {
@@ -3788,7 +3788,7 @@
     "Needs attention",
     "  Nothing needs attention in what Faxbot could check.",
     "  Not available to this account: carrier charges and the network check.",
-    "Every way Faxbot saves money, step by step: faxbot costs mechanisms"
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
    ]
   }
  ]

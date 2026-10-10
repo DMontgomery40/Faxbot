@@ -99,51 +99,51 @@ def attention(sources):
     health = ready('health')
     if health is not None:
         if not health.get('backend') and not health.get('receiving_backend'):
-            add('no-provider', 'check', 'No fax provider is set up yet', None, 'faxbot providers list')
+            add('no-provider', 'check', 'No fax provider is set up yet', None, 'faxbot delivery providers list')
         direction = not_ready_for(health)
         if direction:
-            add('not-ready', 'serious', NOT_READY_TEXT[direction], None, 'faxbot system health', serious=True)
+            add('not-ready', 'serious', NOT_READY_TEXT[direction], None, 'faxbot admin health', serious=True)
         jobs = health.get('jobs') or {}
         if jobs.get('reconciliation_required'):
             add('uncertain', 'serious', 'Sent faxes with an uncertain result', jobs['reconciliation_required'],
-                'faxbot sent list --status reconciliation_required', serious=True,
+                'faxbot faxes sent list --status reconciliation_required', serious=True,
                 detail='Check your provider account before you send any of them again.')
         if jobs.get('recent_failures'):
             add('failed', 'failed', 'Sent faxes that failed in the last 24 hours', jobs['recent_failures'],
-                'faxbot sent list --status failed --hours 24')
+                'faxbot faxes sent list --status failed --hours 24')
     holds = (ready('holds') or {}).get('holds') or []
     if holds:
-        add('held', 'decide', 'Faxes your rules are holding', len(holds), 'faxbot sent list --held',
+        add('held', 'decide', 'Faxes your rules are holding', len(holds), 'faxbot faxes sent list --held',
             detail=held_detail(holds))
     expected = ready('expected') or {}
     if expected.get('proposed'):
         add('proposed', 'decide', 'Expected faxes with a possible match to confirm', expected['proposed'],
-            'faxbot expected list --show proposed')
+            'faxbot faxes expected list --show proposed')
     work = ready('work') or {}
     if work.get('unassigned'):
         add('unassigned', 'owner', 'Received faxes waiting for an owner', work['unassigned'],
-            'faxbot received owners --unassigned')
+            'faxbot faxes received owners --unassigned')
     if work.get('overdue'):
-        add('overdue', 'owner', 'Received faxes that are overdue', work['overdue'], 'faxbot received owners --overdue')
+        add('overdue', 'owner', 'Received faxes that are overdue', work['overdue'], 'faxbot faxes received owners --overdue')
     if expected.get('overdue'):
         add('expected-overdue', 'owner', 'Expected faxes that are overdue', expected['overdue'],
-            'faxbot expected list --show overdue')
+            'faxbot faxes expected list --show overdue')
     intake = (ready('intake') or {}).get('counts') or {}
     if intake.get('failed'):
         add('not-delivered', 'failed', 'Received faxes not delivered by email', intake['failed'],
-            'faxbot received deliveries list --state failed')
+            'faxbot faxes received deliveries list --state failed')
     costs = ready('costs')
     if costs is not None:
         unrecorded = sum(row.get('unrecorded_calls') or 0
                          for row in [*(costs.get('providers') or []), *(costs.get('received') or [])])
         if unrecorded:
             add('unrecorded', 'check', 'Carrier charges with no matching fax, last 30 days', unrecorded,
-                'faxbot costs spending')
+                'faxbot savings spending')
     network = ready('network') or {}
     if network.get('applies') and network.get('action') == 'turned_off' and not network.get('t38_enabled'):
         add('t38-network', 'check',
             'One network change would let faxes go over the internet; faxes still go through meanwhile', None,
-            'faxbot providers trunk network status')
+            'faxbot delivery providers trunk network status')
 
     order = [key for key, _ in GROUPS]
     items.sort(key=lambda item: order.index(item['group']))  # stable: each group keeps the order above
@@ -296,7 +296,7 @@ def next_improvements(capabilities, sending, facts):
     for item in ((sending or {}).get('items') or [])[:3]:
         items.append({'key': f"sending-{item['number']}", 'kind': 'now', 'kind_label': IMPROVEMENT_LABELS['now'],
                       'title': f"A cheaper route to {item.get('display_name') or item['number']}",
-                      'sentence': item['sentence'], 'command': 'faxbot costs recommendations sending'})
+                      'sentence': item['sentence'], 'command': 'faxbot savings opportunities sending'})
     rows = [(recipient, row) for recipient in (facts or {}).get('recipients') or [] for row in recipient['facts']
             if not row.get('realized')]
     for recipient, row in rows[:3]:
@@ -304,7 +304,7 @@ def next_improvements(capabilities, sending, facts):
         items.append({'key': f"fact-{recipient['number']}-{row['fact']}", 'kind': kind,
                       'kind_label': IMPROVEMENT_LABELS[kind],
                       'title': f"{row['title']} ({recipient.get('name') or recipient['display']})",
-                      'sentence': row['step'], 'command': 'faxbot costs advice'})
+                      'sentence': row['step'], 'command': 'faxbot savings facts'})
     return [item for kind in KIND_ORDER for item in items if item['kind'] == kind][:IMPROVEMENTS_SHOWN]
 
 
@@ -366,7 +366,7 @@ def doing_lines(sources, value):
         for line in results:
             text = line['sentence'] or ' · '.join(f"{part['label']} {part['value']}" for part in line['parts'])
             lines.append(f"    {line['label']}: {text}")
-        lines.append('    How each was counted: faxbot costs savings')
+        lines.append('    How each was counted: faxbot savings results')
     return lines
 
 
@@ -413,7 +413,7 @@ def overview():
         for key in order:
             for line in blocks[key]:
                 out.line(line)
-        out.line('Every way Faxbot saves money, step by step: faxbot costs mechanisms')
+        out.line('Every way Faxbot saves money, step by step: faxbot savings mechanisms')
     state.out().result({'attention': view, 'order': order, 'blocks': blocks}, human)
 
 

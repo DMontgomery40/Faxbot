@@ -172,7 +172,7 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                    help='Faxes sent together to this number have a line at the top of every page '
                                         'naming its document and page, with no separator or index page. Records '
                                         'that the recipient agreed to it. Needs your header text and sending number '
-                                        '(faxbot system settings set fax_header=... fax_station_id=...).'),
+                                        '(faxbot admin settings set fax_header=... fax_station_id=...).'),
                                separator_pages: bool = typer.Option(False, '--separator-pages',
                                    help='Go back to a separator page before each document sent together to this '
                                         'number.'),
@@ -370,7 +370,7 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
             # Another carrier's sentence names what it needs; Telnyx's text names the command that saves its key.
             out.line(carrier['sentence'] if carrier.get('sentence') and carrier['carrier'] != 'Telnyx' else (
                 f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
-                f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
+                f"in the console under Delivery setup → {carrier['carrier']}, or run faxbot admin settings set "
                 "--secret telnyx_api_key."))
     state.out().result(result, human)
 
@@ -383,8 +383,8 @@ def routing_reconcile():
 
 
 @routing.command('fax-cost')
-def routing_fax_cost(fax_id: str = typer.Argument(None, help="Fax ID from 'faxbot sent list --ids' or, with --received, "
-                                                            "from 'faxbot received list --ids'."),
+def routing_fax_cost(fax_id: str = typer.Argument(None, help="Fax ID from 'faxbot faxes sent list --ids' or, with --received, "
+                                                            "from 'faxbot faxes received list --ids'."),
                      received: bool = typer.Option(False, '--received', help='The fax is a received fax.'),
                      to: str = typer.Option(None, '--to', metavar='NUMBER',
                                             help='Instead of a sent fax: what a fax to this number would cost by each '
@@ -425,7 +425,7 @@ def _received_cost_rows(costs, items):
 
 
 @routing.command('received')
-def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax ID, from 'faxbot received list --ids'."),
+def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax ID, from 'faxbot faxes received list --ids'."),
                            every: bool = typer.Option(False, '--all',
                                                       help='Every received fax you can see, newest 100 first.')):
     """Show what the call that brought in a received fax cost, or the cost of every received fax."""
@@ -538,7 +538,7 @@ def _show_sending(out, result):
     for country in result.get('country_rules') or []:
         out.line(country['sentence'])
         rule = country['rule_suggestion']
-        out.line(f"To add it to your draft rules: faxbot providers rules add '{rule['name']}' "
+        out.line(f"To add it to your draft rules: faxbot delivery rules add '{rule['name']}' "
                  f"--when to-country={country['country']} --use {country['route']}")
 
 
@@ -549,7 +549,7 @@ def _line_advice(row):
 
 
 def print_receiving(out, result):
-    """The receiving recommendations in words and tables; ``faxbot costs recommendations`` reuses this."""
+    """The receiving recommendations in words and tables; ``faxbot savings opportunities`` reuses this."""
     days = result.get('days', 30)
     pool = result.get('pool') or {}
     out.line(pool.get('sentence') or result.get('sentence') or '')
@@ -796,7 +796,7 @@ def show_friendly(out, result):
     else:
         out.line('Faxbot has no recent faxes to check yet.')
     if result.get('action'):
-        out.line(result['action'] + ' Or run: faxbot system settings set fax_friendly_documents=where_it_saves')
+        out.line(result['action'] + ' Or run: faxbot admin settings set fax_friendly_documents=where_it_saves')
 
 
 def _read_discovery_advice(api):
@@ -825,7 +825,7 @@ def _show_relay_advice(out, result):
         out.line(f"{item['sentence']} {item['action']}")
 
 
-# Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
+# Each section of `faxbot savings opportunities`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
@@ -869,7 +869,7 @@ def show_trunks(out, result):
         out.line(result['sentence'])
     if result.get('items'):
         out.line('This is advice only: Faxbot never cancels a trunk. To keep faxes off a trunk, add a sending limit '
-                 "with 'faxbot providers rules add'.")
+                 "with 'faxbot delivery rules add'.")
 
 recommendations = typer.Typer(help='Ways to pay less, from what your faxes and calls actually cost. Run it alone for '
                                    'every section.', invoke_without_command=True)
@@ -1126,7 +1126,7 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 
 @routing.command('rate-rows')
 def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
-                                                  help="The sending card's route, as 'faxbot costs rate-cards' lists "
+                                                  help="The sending card's route, as 'faxbot savings rate-cards' lists "
                                                        'it, such as sip-gamma or sinch-uk.'),
                       replace: str = typer.Option(..., '--replace', metavar='FILE',
                                                   help='Your prices by where calls start for that card, from this JSON '
@@ -1258,8 +1258,8 @@ def routing_plans(provider: str = typer.Argument(None, help='The fax service, fo
             out.table(['Plan', 'Country', 'Price', 'Includes', 'Extra page', 'Source', 'Read on'],
                       [_plan_row(plan) for plan in item.get('plans') or []], empty='No published plans.')
         if any(item.get('card') for item in found):
-            out.line('To use the first plan as your estimate, add it as a rate card in Costs, Prices and plans, '
-                     'or with faxbot costs rate-cards --replace.')
+            out.line('To use the first plan as your estimate, add it as a rate card in Savings & optimization, Prices & plans, '
+                     'or with faxbot savings rate-cards --replace.')
     state.out().result(result, human)
 
 
@@ -1269,7 +1269,7 @@ from typer.core import TyperGroup  # noqa: E402
 
 
 class _PlansGroup(TyperGroup):
-    """`faxbot costs plans efax` and `faxbot costs plans --in-use` still list published plans.
+    """`faxbot savings plans efax` and `faxbot savings plans --in-use` still list published plans.
 
     A first word that is not one of the group's commands goes to `published`, so
     the older command keeps working beside `show` and `budget`.
@@ -1283,7 +1283,7 @@ class _PlansGroup(TyperGroup):
 plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or allowance this month and what is "
                                           'committed (show), which waiting faxes get its last pages (allocation), '
                                           'setting a budget (budget), and the plans a fax service publishes '
-                                          '(published, or name the service: faxbot costs plans efax).')
+                                          '(published, or name the service: faxbot savings plans efax).')
 plans.command('published')(routing_plans)
 
 
@@ -1359,7 +1359,7 @@ def show_contract(out, result, *, burn_down=False):
                       [[_day(row['date']), _count(row['pages']), _count(row['faxes'])] for row in plan['burn_down']],
                       title=f"{plan['name']}, day by day since {_day(period.get('first_day'))}")
     out.line('')
-    out.line('To change a budget, run faxbot costs plans budget <plan>, for example faxbot costs plans budget '
+    out.line('To change a budget, run faxbot savings plans budget <plan>, for example faxbot savings plans budget '
              'humblefax --pages 500.')
 
 
@@ -1478,7 +1478,7 @@ def _emailed_to(item):
 @intake.command('items')
 def intake_items(state_filter: str = typer.Option(None, '--state', help='received, sending, delivered or failed.'),
                  limit: int = typer.Option(100, '--limit', min=1, max=500, help='How many to show.'),
-                 ids: bool = typer.Option(False, '--ids', help="Also show each delivery's ID, to use with faxbot received deliveries retry.")):
+                 ids: bool = typer.Option(False, '--ids', help="Also show each delivery's ID, to use with faxbot faxes received deliveries retry.")):
     """List received documents and their delivery, newest first."""
     result = state.api().get('/intake/items', params={'state': state_filter, 'limit': limit})
 
@@ -1495,7 +1495,7 @@ def intake_items(state_filter: str = typer.Option(None, '--state', help='receive
 
 
 @intake.command('retry')
-def intake_retry(item_id: str = typer.Argument(..., help="Item ID from 'faxbot received deliveries list --ids'.")):
+def intake_retry(item_id: str = typer.Argument(..., help="Item ID from 'faxbot faxes received deliveries list --ids'.")):
     """Try delivering a received document again."""
     item = state.api().post(f'/intake/items/{segment(item_id)}/retry')
     state.out().result(item, lambda out: out.line(f"Delivery will be tried again. {item['status']}"))
@@ -1505,7 +1505,7 @@ def _connector(api, name):
     items = api.get('/intake/connectors')['connectors']
     matches = [item for item in items if item['id'] == name or item['name'].casefold() == name.casefold()]
     if len(matches) != 1:
-        raise CliError(f"No single connector matches '{name}'. See 'faxbot numbers email connectors list'.")
+        raise CliError(f"No single connector matches '{name}'. See 'faxbot delivery email connectors list'.")
     return matches[0]
 
 
@@ -1543,7 +1543,7 @@ def connectors_add(name: str = typer.Argument(..., help='A name for this deliver
             'recipients': recipients, 'subject_template': subject}
     connector = state.api().post('/intake/connectors', json=body)
     state.out().result(connector, lambda out: out.line(f"Connector {connector['name']} added. Check it with: "
-                                                       f"faxbot numbers email connectors test \"{connector['name']}\""))
+                                                       f"faxbot delivery email connectors test \"{connector['name']}\""))
 
 
 @connectors.command('update')

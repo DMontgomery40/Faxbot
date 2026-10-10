@@ -581,6 +581,7 @@ def test_prices_and_plans_list_each_sending_routes_toll_free_terms():
     trunk = items['sip']
     assert (trunk['route'], trunk['price_text'], trunk['reaches']) == ('sip-telnyx', 'Free.', 'no')
     assert trunk['reach_text'].startswith('Toll-free numbers often refuse calls without a caller ID')
+    # routing/dialing.py's sentence (another lane) still names the older command, which still works.
     assert 'faxbot system settings set sip_trunk_caller_id=' in trunk['reach_text']
     assert trunk['caller_id_text'] == 'A number on your account, or one the carrier verified.'
     assert items['phaxio']['price_text'] == 'The same as its sending price.'

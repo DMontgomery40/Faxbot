@@ -184,6 +184,6 @@ def test_received_commands_take_either_id_and_count_by_state(cli, tmp_path):
         extra = {'assign': ['dana'], 'done': ['--note', 'x']}.get(name, [])
         missing = cli('received', name, 'not-a-real-id', *extra)
         assert missing.exit_code == 5, (name, missing.stdout, missing.stderr)
-        assert missing.stderr.strip() == 'No received fax you can see has that ID. See faxbot received list --ids.', name
+        assert missing.stderr.strip() == 'No received fax you can see has that ID. See faxbot faxes received list --ids.', name
     missing = cli('costs', 'received', 'not-a-real-id')
     assert missing.exit_code == 5 and missing.stderr.strip().startswith('No received fax you can see has that ID.')

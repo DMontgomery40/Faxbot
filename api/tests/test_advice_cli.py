@@ -1,4 +1,4 @@
-"""`faxbot costs recommendations …`, `faxbot recipients toll-free …` and caller-name lookup in the command line.
+"""`faxbot savings opportunities …`, `faxbot recipients toll-free …` and caller-name lookup in the command line.
 
 The command line talks to a real Faxbot over HTTP (test_cli's server), with a
 Phaxio install and no history: every section says it has nothing to advise yet.

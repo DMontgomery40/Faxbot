@@ -746,7 +746,7 @@ class RelayService:
         else:
             reply_number = self.default_reply_number()
         if reply_number is None:
-            raise RelayConflict('Set the number replies should reach under Numbers, Sender identity, or enter one '
+            raise RelayConflict('Set the number replies should reach under Delivery setup, Sending identity, or enter one '
                                 'here.')
         marketing = clean_marketing(marketing)
         offer = self.store.latest(peer_id=peer['id'], kind='offer', direction='received', agreement_id=agreement_id)

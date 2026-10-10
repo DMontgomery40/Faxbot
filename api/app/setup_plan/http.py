@@ -1,4 +1,4 @@
-"""Guided setup over HTTP: preview a plan, read it, and apply it (System → Setup, ``faxbot system setup``).
+"""Guided setup over HTTP: preview a plan, read it, and apply it (System → Setup, ``faxbot admin setup``).
 
 Reading plans needs ``settings:read``. Previewing needs ``settings:write``:
 it keeps the plan, and nothing else. Applying needs ``settings:write``, and

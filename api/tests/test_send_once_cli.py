@@ -1,4 +1,4 @@
-"""faxbot recipients partners send-once list | offer | accept | end, and the bytes line of faxbot costs savings."""
+"""faxbot recipients partners send-once list | offer | accept | end, and the bytes line of faxbot savings results."""
 import json
 
 from api.tests.test_cli import cli, server  # noqa: F401 - fixtures

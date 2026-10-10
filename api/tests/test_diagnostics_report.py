@@ -50,7 +50,7 @@ def test_refused_sign_in_is_a_problem_with_the_fix(monkeypatch, provider, error_
     module, name = error_class.rsplit('.', 1)
     error = getattr(__import__(module, fromlist=[name]), name)()
     status, sentence = _signed_in(monkeypatch, provider, error)
-    assert status == PROBLEM and 'did not accept' in sentence and 'Providers' in sentence
+    assert status == PROBLEM and 'did not accept' in sentence and 'Delivery setup' in sentence
 
 
 def test_unreachable_provider_is_attention_not_a_problem(monkeypatch):
@@ -60,7 +60,7 @@ def test_unreachable_provider_is_attention_not_a_problem(monkeypatch):
 
 def test_missing_sign_in_details(monkeypatch):
     status, sentence = _signed_in(monkeypatch, 'humblefax', (), configured=False)
-    assert status == PROBLEM and sentence == "Some of HumbleFax's sign-in details are missing. Add them in Providers."
+    assert status == PROBLEM and sentence == "Some of HumbleFax's sign-in details are missing. Add them in Delivery setup."
 
 
 @pytest.mark.parametrize('provider, status', [('freeswitch', ATTENTION), ('sip', OK)])
@@ -184,7 +184,7 @@ def test_report_runs_through_the_api_and_keeps_the_last_run(isolated_installatio
     assert {section['id'] for section in body['sections']} >= {'sending', 'server', 'security'}
     # The installation's Phaxio profile has no keys: a problem with the place to fix it.
     assert by_id['sending.provider']['status'] == PROBLEM
-    assert by_id['sending.provider']['fix'] == {'label': 'Open Providers', 'page': 'providers/sending'}
+    assert by_id['sending.provider']['fix'] == {'label': 'Open Providers & accounts', 'page': 'providers/sending'}
     assert by_id['sending.recent']['sentence'] == 'No fax has been sent yet.'
     assert by_id['security.audit']['status'] == ATTENTION and by_id['security.audit']['fix']['page'] == 'system/audit'
     assert by_id['server.time_zone']['sentence'] == (

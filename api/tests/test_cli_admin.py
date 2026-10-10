@@ -1,4 +1,4 @@
-"""faxbot system on stopped installations: recovery, backup and restore, upgrade and status.
+"""faxbot admin on stopped installations: recovery, backup and restore, upgrade and status.
 
 Each test creates a real installation by starting the application once, stops
 it, then runs the local commands against its database and files. A server
@@ -139,7 +139,7 @@ def test_status_and_migrate_on_an_existing_and_a_new_database(installation, monk
     monkeypatch.setenv('FAX_DATA_DIR', str(fresh / 'faxdata'))
     waiting = installation.admin('status')
     assert waiting.exit_code == 0 and HEAD not in waiting.stdout
-    assert waiting.stdout.strip().endswith('The database needs an upgrade; run faxbot system migrate before starting '
+    assert waiting.stdout.strip().endswith('The database needs an upgrade; run faxbot admin migrate before starting '
                                            'Faxbot.')
     upgraded = installation.admin('migrate')
     assert upgraded.exit_code == 0 and upgraded.stdout.strip() == 'Database upgraded.'

@@ -1,7 +1,7 @@
 """Advice on missing facts, quiet lines and moving a number, on the command line.
 
-``faxbot costs advice`` (what one missing fact cost you), ``faxbot numbers advice`` (keep, move the termination,
-investigate or can likely go, with the evidence and the questions only you can answer) and ``faxbot numbers move``
+``faxbot savings facts`` (what one missing fact cost you), ``faxbot delivery numbers advice`` (keep, move the termination,
+investigate or can likely go, with the evidence and the questions only you can answer) and ``faxbot delivery numbers move``
 (a number's move as a checked plan). Everything here advises or records what you did; Faxbot never ports, cancels,
 enrolls or changes a provider account.
 """
@@ -77,7 +77,7 @@ def numbers_dependencies(number: str, question: str, answer: str, note: str = ty
     """Record a dependency: broadband, other_lines, emergency or printed; answer yes, no or unknown."""
     result = state.api().post('/routing/numbers/' + segment(number) + '/dependencies',
                               json={'question': question, 'answer': answer, 'note': note})
-    state.out().result(result, lambda out: out.line('Dependency answer saved. Run faxbot numbers advice to see the updated advice.'))
+    state.out().result(result, lambda out: out.line('Dependency answer saved. Run faxbot delivery numbers advice to see the updated advice.'))
 
 
 @move.command('show')

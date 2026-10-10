@@ -110,7 +110,7 @@ class _Plan:
         blocked = None
         if state.get('draft'):
             blocked = (f'You have unpublished changes to the rules of {self.scope_names.get(scope, scope)}. Publish '
-                       'or discard them on Providers → Rules, then preview again.')
+                       'or discard them on Delivery setup → Routing rules, then preview again.')
         return self.item(pack, key, 'rule', title, sentence, sources, rule=full, section=section, scope=scope,
                          blocked=blocked, link=RULES_PAGE, **extra)
 
@@ -183,7 +183,7 @@ def cost_pack(plan, price):
         saving = monthly_saving(faxes, route, price=price, now=facts.now)
         sentence = found['sentence'].removesuffix(' Add as a rule?') + _saving_sentence(saving)
         plan.rule('cost', f'cost.country.{country}.{route}', rule['name'], sentence,
-                  [{'name': 'Costs → Recommendations',
+                  [{'name': 'Savings & optimization → Opportunities',
                     'detail': f"{found['delivered']} delivered faxes to {found['numbers']} numbers in "
                               f"{country_name(country)} over the last 30 days"}, *_estimate_source(saving)],
                   rule, **_with_saving(saving))
@@ -196,7 +196,7 @@ def cost_pack(plan, price):
         saving = monthly_saving(faxes, route, price=price, now=facts.now)
         plan.rule('cost', f"cost.number.{found['number']}", rule['name'],
                   found['sentence'] + _saving_sentence(saving),
-                  [{'name': 'Costs → Recommendations',
+                  [{'name': 'Savings & optimization → Opportunities',
                     'detail': 'Cost per delivered fax to this number on each route over the last 30 days'},
                    *_estimate_source(saving)], rule, **_with_saving(saving))
     _toll_free_class(plan, price)
@@ -219,17 +219,17 @@ def cost_pack(plan, price):
                       f"Long pages on {found['label']}",
                       f"Faxbot already packs several pages onto one long page on {found['label']} where the "
                       'receiving machine accepts long pages and it saves time.',
-                      [{'name': 'Providers → In use → Delivery routes', 'detail': f"Long pages on {found['label']}"}])
+                      [{'name': 'Delivery setup → Providers & accounts → Delivery routes', 'detail': f"Long pages on {found['label']}"}])
         elif not found['set']:
             plan.item('cost', f"cost.long-pages.{found['route']}", 'step', f"Check long pages on {found['label']}",
                       f"Long pages save call time, but they are off for {found['label']} until you check that it "
                       'sends them unchanged. Send yourself a test fax with a long page, then turn them on.',
-                      [{'name': 'Providers → In use → Delivery routes', 'detail': f"Off until checked for {found['label']}"}],
-                      link=IN_USE_PAGE, cli='faxbot providers long-pages')
+                      [{'name': 'Delivery setup → Providers & accounts → Delivery routes', 'detail': f"Off until checked for {found['label']}"}],
+                      link=IN_USE_PAGE, cli='faxbot delivery providers long-pages')
     for found in facts.plan_budgets:
         plan.item('cost', f"cost.plan-budget.{found['route']}", 'in_effect', f"Plan budget for {found['label']}",
                   found['sentence'] + ' Faxbot uses your plan first and moves faxes to metered routes past it.',
-                  [{'name': 'Costs → Prices & plans', 'detail': {'set': 'Your budget', 'published': 'The published plan',
+                  [{'name': 'Savings & optimization → Prices & plans', 'detail': {'set': 'Your budget', 'published': 'The published plan',
                                                         'default': 'Faxbot’s cautious start'}.get(found['source'],
                                                                                                   'Plan budget')}])
 
@@ -240,7 +240,7 @@ def _shading(plan):
     setting = describe_setting()
     current = documents_choice(plan.facts.values)
     label, sentence = setting['choices'][current]
-    source = [{'name': 'Providers → In use → Delivery routes', 'detail': f"{setting['label']}: {label}"}]
+    source = [{'name': 'Delivery setup → Providers & accounts → Delivery routes', 'detail': f"{setting['label']}: {label}"}]
     if current == setting['off'] and setting['default'] != current:
         chosen, does = setting['choices'][setting['default']]
         plan.setting('cost', 'cost.fax-friendly', f"{setting['label']}: {chosen}", f'It is set to {label} now. {does}',
@@ -291,7 +291,7 @@ def partners_pack(plan):
         name = found.get('display_name') or found['number']
         plan.item('partners', f"partners.invite.{found['number']}", 'step', f'Invite {name} to be a direct partner',
                   found['sentence'],
-                  [{'name': 'Costs → Recommendations → Partners',
+                  [{'name': 'Savings & optimization → Opportunities → Partners',
                     'detail': f"{_plural(found['faxes'], 'fax', 'faxes')} in the last 30 days"}],
                   saving=({**found['monthly_cost'], 'faxes': found['faxes'], 'estimate': True}
                           if found.get('monthly_cost') else None),
@@ -337,31 +337,31 @@ def receiving_pack(plan):
                   'no mailbox, because no number rule places them. Add a number rule that sends them to the right '
                   'mailbox.',
                   [{'name': 'Received faxes', 'detail': 'Faxes with no mailbox in the last 30 days'}],
-                  link=NUMBERS_PAGE, cli='faxbot numbers add')
+                  link=NUMBERS_PAGE, cli='faxbot delivery numbers add')
     for found in facts.junk:
         if found['active']:
             plan.item('receiving', f"receiving.junk.{found['number']}", 'step', f"Keep blocking {found['number']}",
                       f"{found['number']} called {_plural(found['rejected'], 'time')} while blocked, and its block "
                       'ends within two weeks. Block it again for longer if you still want its calls turned away.',
-                      [{'name': 'Numbers → Blocked senders', 'detail': 'Calls turned away before answering'}],
-                      link=BLOCKED_PAGE, cli='faxbot numbers blocked add')
+                      [{'name': 'Delivery setup → Blocked senders', 'detail': 'Calls turned away before answering'}],
+                      link=BLOCKED_PAGE, cli='faxbot delivery blocked add')
         else:
             plan.item('receiving', f"receiving.junk.{found['number']}", 'step', f"Block {found['number']} again",
                       f"You marked {found['number']} as junk {_plural(found['marks'], 'time')}, and its last block "
                       'has ended. Block it again so its calls are turned away before answering, which costs nothing.',
-                      [{'name': 'Numbers → Blocked senders', 'detail': 'Your earlier junk marks'}],
-                      link=BLOCKED_PAGE, cli='faxbot numbers blocked add')
+                      [{'name': 'Delivery setup → Blocked senders', 'detail': 'Your earlier junk marks'}],
+                      link=BLOCKED_PAGE, cli='faxbot delivery blocked add')
     reply = facts.reply or {}
     suggestion = reply.get('suggestion')
     if reply.get('number'):
         plan.item('receiving', 'receiving.reply-number', 'in_effect', f"Replies reach {reply['number']}",
                   reply.get('sentence') or f"Faxbot prints {reply['number']} on each page for replies.",
-                  [{'name': 'Numbers → Sender identity', 'detail': 'The reply number you saved'}])
+                  [{'name': 'Delivery setup → Sending identity', 'detail': 'The reply number you saved'}])
     elif suggestion:
         plan.setting('receiving', 'receiving.reply-number', f"Use {suggestion['number']} as your reply number",
                      f"{suggestion['sentence']} Faxbot prints the reply number on each page, so replies reach a "
                      'mailbox. Saving it keeps it the same even when your numbers change.',
-                     [{'name': 'Numbers → Sender identity', 'detail': 'Your numbers that receive into a mailbox'}],
+                     [{'name': 'Delivery setup → Sending identity', 'detail': 'Your numbers that receive into a mailbox'}],
                      {'fax_reply_number': suggestion['number']}, link=IDENTITY_PAGE)
 
 
@@ -430,8 +430,8 @@ def compliance_pack(plan, countries):
                       owner='you', operation='Compliance basics: the header line')
         if not (facts.reply or {}).get('shows'):
             plan.lack('header-number', 'Faxbot has no number to print at the top of each page for replies. Give one '
-                                       'of your numbers a mailbox, or set a reply number under Numbers → Sender '
-                                       'identity.', owner='you', operation='Compliance basics: the header line',
+                                       'of your numbers a mailbox, or set a reply number under Delivery setup → '
+                                       'Sending identity.', owner='you', operation='Compliance basics: the header line',
                       link=IDENTITY_PAGE)
     for country in sorted(stated - set(COUNTRY_RULES_REVIEWED)):
         where = [box['name'] for box in facts.mailboxes if countries.get(box['id'], ('',))[0] == country]
@@ -466,7 +466,7 @@ def _general_missing(plan, countries):
     for scope, state in sorted(facts.rules.items()):
         if state.get('draft') and any(item['kind'] == 'rule' and item['scope'] == scope for item in plan.items):
             plan.lack(f'draft.{scope}', f"Your rules for {plan.scope_names.get(scope, scope)} have unpublished "
-                                        'changes. Publish or discard them on Providers → Rules, then preview again.',
+                                        'changes. Publish or discard them on Delivery setup → Routing rules, then preview again.',
                       owner='you', operation='Rules in this plan', blocking=True,
                       scope=state['scope_id'] or 'organization', link=RULES_PAGE)
     if facts.pending_restart:
@@ -509,7 +509,7 @@ def _mailbox_views(plan, countries):
             {'label': 'Sending rules',
              'value': (f"{_plural(own_rules, 'rule')} of its own, then the organization’s "
                        f"{_plural(org_rules, 'rule')}"),
-             'source': 'Providers → Rules'},
+             'source': 'Delivery setup → Routing rules'},
             {'label': 'Reply number', 'value': number or reply.get('shows') or 'None',
              'source': 'Its own' if number else 'The organization’s'},
             {'label': 'Header line', 'value': header or 'Empty', 'source': 'This installation'},
@@ -530,7 +530,7 @@ def _mailbox_views(plan, countries):
                           'choices': [{'label': 'Sending rules',
                                        'value': (f"{_plural(count, 'rule')} of its own" if state
                                                  else 'The organization’s rules'),
-                                       'source': 'Providers → Rules'}]})
+                                       'source': 'Delivery setup → Routing rules'}]})
     return views, workflows
 
 

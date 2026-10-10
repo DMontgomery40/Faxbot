@@ -85,7 +85,7 @@ def owner_enroll(login: str = typer.Option(..., '--login', help='Sign-in name fo
                  name: str = typer.Option(..., '--name', help="The owner's display name.")):
     """Create a named owner, with full control, and a temporary password shown once.
 
-    Use the installation key or an existing owner's API key. This works for the first owner, and to regain access after faxbot system recover-owner.
+    Use the installation key or an existing owner's API key. This works for the first owner, and to regain access after faxbot admin recover-owner.
     """
     api = state.api()
     result = api.post('/auth/owner/enroll', json=api.with_policy({'login': login, 'display_name': name}))
@@ -311,9 +311,9 @@ def roles_add(name: str = typer.Argument(..., help='Role name.'),
               permission: list[str] = PERMISSION,
               description: str = typer.Option('', '--description', help='What the role is for.'),
               disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
-    """Add a role of your own, choosing what it allows. See faxbot access roles permissions for the choices."""
+    """Add a role of your own, choosing what it allows. See faxbot admin access roles permissions for the choices."""
     if not permission:
-        raise CliError('Add at least one --permission. See faxbot access roles permissions.')
+        raise CliError('Add at least one --permission. See faxbot admin access roles permissions.')
     api = state.api()
     result = api.post('/access/roles', json=api.with_policy({'name': name, 'description': description,
         'permissions': sorted(set(permission)), 'enabled': not disabled}))
@@ -369,7 +369,7 @@ def access_list(who: str = typer.Option(None, '--who', help='Only grants for thi
 
 
 WHERE = typer.Option('installation', '--on', help='Where the role applies: installation (the default), mailbox:NAME, '
-                                                   'personal:USER, unassigned, or a resource from faxbot access resources list.')
+                                                   'personal:USER, unassigned, or a resource from faxbot admin access resources list.')
 
 
 @access.command('grant')
@@ -553,7 +553,7 @@ def sessions_list(who: str = typer.Option(None, '--for', help="Another user's se
 
 
 @sessions.command('revoke')
-def sessions_revoke(session_id: str = typer.Argument(..., help="Session id from 'faxbot access sessions list --ids'.")):
+def sessions_revoke(session_id: str = typer.Argument(..., help="Session id from 'faxbot admin access sessions list --ids'.")):
     """End a session."""
     api = state.api()
     result = api.post(f'/access/sessions/{segment(session_id)}/revoke', json=api.with_policy({}))

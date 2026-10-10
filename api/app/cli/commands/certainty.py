@@ -15,7 +15,7 @@ RESULT_WORDS = {'delivered': 'Delivered (signed)', 'not_delivered': 'Not deliver
                 'asking': 'Asking', 'unavailable': 'Not available', 'unknown': 'Cannot tell yet',
                 'not_done': 'Not done yet', 'sent': 'Sent'}
 OUTCOME_WORDS = {'delivered': 'delivered', 'not_delivered': 'not delivered', 'unknown': "can't tell"}
-FAX_ID_HELP = "Fax ID of the sent fax, from 'faxbot sent uncertain --ids' or 'faxbot sent list --ids'."
+FAX_ID_HELP = "Fax ID of the sent fax, from 'faxbot faxes sent uncertain --ids' or 'faxbot faxes sent list --ids'."
 
 
 def state_sentence(item):
@@ -120,7 +120,7 @@ def uncertain_probe(fax_id: str = typer.Argument(..., help=FAX_ID_HELP),
             out.line(item['moved_on']['text'])
         if item.get('suggestion'):
             out.line(f"The checks point to {OUTCOME_WORDS[item['suggestion']]}; you decide with: "
-                     f"faxbot sent settle {item['fax_id']}")
+                     f"faxbot faxes sent settle {item['fax_id']}")
         if events:
             out.table(['When', 'What happened'], [[local_time(event['at']), event['text']] for event in events])
     state.out().result({**item, 'history': events} if history else item, human)
