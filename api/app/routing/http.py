@@ -607,7 +607,6 @@ async def inbound_costs(request: Request, ids: str = Query(default='', max_lengt
 async def fax_costs(request: Request, ids: str = Query(default='', max_length=4200),
                     identity=Depends(require_identity)):
     """Costs for up to 100 sent faxes at once, for the Sent list; faxes this person cannot read are left out."""
-    from ..access.fax_resources import FaxAccessError
     from .nppes import fax_warning
     from .provenance import dialed_view
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
@@ -615,15 +614,12 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
     spending = _spending(request)
 
     def read():
-        costs = {}
-        for job_id in wanted:
-            try:
-                private_operation(lambda: runtime.queries.job(identity.actor, job_id))()
-            except FaxAccessError:
-                continue  # not visible to this person: left out, never explained
-            costs[job_id] = _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id),
-                                        'recipient_warning': fax_warning(spending.routes.engine, job_id)})
-        return costs
+        # Access is checked once for the whole list (one lock, not one per fax); faxes this person cannot read are
+        # left out, never explained. The costs are read after the access transaction has ended.
+        visible = private_operation(lambda: runtime.queries.visible_jobs(identity.actor, wanted))()
+        return {job_id: _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id),
+                                    'recipient_warning': fax_warning(spending.routes.engine, job_id)})
+                for job_id in visible}
     return {'costs': await _call(read)}
 
 

@@ -102,6 +102,28 @@ class AuthorizedFaxQueries:
             row = connection.execute(self._selection().where(self.jobs.c.id == job_id)).mappings().one_or_none()
             return self._record(row)
 
+    def visible_jobs(self, actor, job_ids):
+        """``{job_id: record}`` for the faxes among ``job_ids`` this actor may read, checked in one transaction.
+
+        Each id gets exactly ``job``'s check; an id it refuses is left out, never explained, and does not hide
+        the others. Anything other than a refusal (a revoked credential, unavailable storage) fails the whole call,
+        as it fails ``job``. Lists ask with this, so a page of up to 100 faxes takes the lock once, not per fax.
+        """
+        wanted = list(dict.fromkeys(job_ids))
+        with self._transaction() as (connection, now):
+            visible = []
+            for job_id in wanted:
+                try:
+                    self.resources.require_outbound_on(connection, actor, job_id, 'fax:read', now=now)
+                except FaxAccessError:
+                    continue
+                visible.append(job_id)
+            rows = {}
+            if visible:
+                rows = {row['id']: row for row in connection.execute(
+                    self._selection().where(self.jobs.c.id.in_(visible))).mappings()}
+            return {job_id: self._record(rows.get(job_id)) for job_id in visible}
+
     def document(self, actor, job_id):
         with self._transaction() as (connection, now):
             self.resources.require_outbound_on(connection, actor, job_id, 'fax:document', now=now)

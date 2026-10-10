@@ -153,3 +153,59 @@ def test_unconfirmed_delivery_reason_is_one_plain_operator_sentence(mode, expect
     row = {'delivery_state': 'reconciliation_required', 'dispatch_mode': mode, 'delivery_version': 3}
     assert Q.delivery_fields(row)['reconciliation_reason'] == expected
     assert Q.delivery_fields(dict(row, delivery_state='delivered'))['reconciliation_reason'] is None
+
+
+def _locks(queries, monkeypatch):
+    """Count the configuration/access transactions ``queries`` opens."""
+    opened = []
+    original = queries.configuration._locked
+
+    def counted():
+        opened.append(1)
+        return original()
+    monkeypatch.setattr(queries.configuration, '_locked', counted)
+    return opened
+
+
+def _one_by_one(queries, actor, ids):
+    """What asking ``job`` for each id in turn shows: the readable ids, in order, with their records."""
+    shown = {}
+    for job_id in ids:
+        try:
+            shown[job_id] = queries.job(actor, job_id)
+        except FaxAccessError:
+            continue
+    return shown
+
+
+def test_a_list_of_faxes_is_checked_in_one_transaction_with_the_same_visibility(aw, queries, monkeypatch):
+    # A third fax alice may download but not read: a document-only grant adds no visibility.
+    aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': 'document-only'})
+    aw.update('access_resources', _resource_id(aw, 'document-only'), parent_id='personal-bob')
+    aw.role('document-only', ['fax:document'])
+    aw.assignment('alice', 'document-only', _resource_id(aw, 'document-only'))
+    # A refused id first, a hidden one, a missing one, a malformed one and a repeat around the one she may read.
+    ids = ['second', 'new', 'missing', 'x' * 41, 'document-only', 'new', '']
+    expected = _one_by_one(queries, aw.actor, ids)
+    assert list(expected) == ['new']
+    opened = _locks(queries, monkeypatch)
+    assert queries.visible_jobs(aw.actor, ids) == expected
+    assert len(opened) == 1
+    assert queries.visible_jobs(aw.actor, []) == {} and len(opened) == 2
+
+
+def test_one_refused_fax_does_not_hide_the_others(aw, queries):
+    aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': 'third'})
+    found = queries.visible_jobs(aw.actor, ['second', 'third', 'missing', 'new'])
+    assert list(found) == ['third', 'new']
+    assert found == _one_by_one(queries, aw.actor, ['third', 'new'])
+
+
+def test_a_list_fails_whole_for_a_revoked_credential_and_is_empty_while_a_password_must_change(aw, queries):
+    aw.update('access_users', 'alice', password_change_required=1)
+    # Each fax is refused as job refuses it, so nothing is shown and nothing is explained.
+    assert queries.visible_jobs(aw.actor, ['new', 'second']) == {}
+    aw.update('access_users', 'alice', password_change_required=0)
+    aw.update('access_principals', 'alice', enabled=0, security_version=2)
+    with pytest.raises(StaleCredentialError):
+        queries.visible_jobs(aw.actor, ['second', 'new'])
