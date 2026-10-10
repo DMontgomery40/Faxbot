@@ -279,3 +279,62 @@ def test_the_console_routes_and_the_command_line_import_quote_confirm_and_withdr
     assert bad.status_code == 400 and 'destination_prefix' in bad.json()['detail']
     reader = client.get('/routing/caller-id-prices', headers={'X-API-Key': 'wrong'})
     assert reader.status_code in (401, 403)
+
+
+def test_a_same_country_caller_id_never_gets_an_eea_row_in_telnyxs_model_but_twilios_list_decides_its_own():
+    """Telnyx: EEA is a caller ID from *another* EEA country, and a number not bought on Telnyx is not local
+    (support article 6974437). Twilio's file lists the destination's own country in its "from EEA" set."""
+    deck = '\n'.join(['destination_prefix,origination_type,origination_prefixes,per_minute',
+                      '33,surcharged,,0.050', '33,eea,"33, 49",0.020', '33,local,,0.010', ''])
+    french = '+33612345678'
+    quote = price_origin(rows(deck), '+33123456789', french, confirmed(french))
+    assert (quote.eligibility, quote.row.per_minute_micros, quote.given.origination_type) == ('unconfirmed', 50000,
+                                                                                              LOCAL)
+    assert price_origin(rows(deck), '+33123456789', GERMAN_CALLER, confirmed(GERMAN_CALLER)).row.per_minute_micros \
+        == 20000
+    austrian = '+43123450000'
+    twilio = price_origin(rows(), AT_LANDLINE, austrian, confirmed(austrian))
+    assert (twilio.eligibility, twilio.row.origination_type, twilio.row.per_minute_micros) == ('confirmed', EEA, 16000)
+
+
+def test_an_unconfirmed_caller_id_whose_own_row_is_the_dearer_one_is_priced_at_it():
+    deck = '\n'.join(['destination_prefix,origination_type,origination_prefixes,per_minute',
+                      '43,surcharged,,0.010', '43,non_surcharged,1,0.020', ''])
+    quote = price_origin(rows(deck), AT_LANDLINE, US_CALLER)
+    assert (quote.eligibility, quote.row.per_minute_micros, quote.cheaper) == ('unconfirmed', 20000, None)
+    assert quote.sentence == f'{US_CALLER} is priced at $0.02 a minute, the rate for a caller ID from the countries ' \
+                             'the carrier lists for this destination.'
+
+
+def test_the_price_follows_the_caller_id_the_real_call_carries_with_two_trunk_numbers(database, monkeypatch):  # noqa: F811
+    """Two numbers on one trunk, only one confirmed. The organization's reply number is the other one, so the call
+    shows it and the price is unconfirmed; with the mailbox whose reply number is the confirmed one, the call and
+    the price both follow it. The real originate fields, reply-number choice and pricing are used; only the
+    Numbers rules (which number goes to which mailbox) are given directly."""
+    from api.app import ami
+    from api.app.routing import reply_number
+    from api.app.routing.destinations import classify
+    from api.app.routing.pricing import price
+    from api.app.routing.seed import load_cards
+    from api.app.routing.store import RouteStore
+    other = '+13035550142'
+    upgrade_schema(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    routes.seed_cards(load_cards())
+    monkeypatch.setattr(ami, '_database', lambda: database)
+    monkeypatch.setattr(reply_number, 'mailbox_routes', lambda engine, values: [
+        reply_number.Route(US_CALLER, 'billing', 'Billing'), reply_number.Route(other, 'front', 'Front desk')])
+    values = _values(SIP_TRUNK_DIDS=f'{US_CALLER},{other}', FAX_REPLY_NUMBER=other,
+                     FAX_REPLY_NUMBERS=f'billing={US_CALLER}', INBOUND_ENABLED='true')
+    origin_classes.import_deck(database, 'sip-telnyx', rows())
+    origin_classes.record_eligibility(database, 'sip', US_CALLER, bought_here=False, evidence='Synthetic order')
+    fields = ami.originate_fields_for(values, 'a' * 32, AT_LANDLINE, '/tmp/fax.tif')
+    assert fields['CallerID'] == other == origin_classes.presented_caller_id(values, 'sip', engine=database)[0]
+    priced = price(routes, values, 'sip', AT_LANDLINE, 1, provider='sip')
+    assert priced.origin == 'caller:unconfirmed'
+    boxed = ami.originate_fields_for(values, 'a' * 32, AT_LANDLINE, '/tmp/fax.tif', mailbox_id='billing')
+    shown, _ = origin_classes.presented_caller_id(values, 'sip', engine=database, mailbox_id='billing')
+    assert boxed['CallerID'] == shown == US_CALLER
+    _, quote = origin_classes.class_terms(['sip', 'sip-telnyx'], AT_LANDLINE, classify(AT_LANDLINE, 'US'),
+                                          values=values, account_key='sip', engine=database, mailbox_id='billing')
+    assert (quote.eligibility, quote.row.per_minute_micros) == ('confirmed', 16000)

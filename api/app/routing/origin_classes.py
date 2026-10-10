@@ -505,12 +505,13 @@ def eligibility_records(engine):
 
 # -- the caller ID a call presents -------------------------------------------------------------------------------------
 
-def presented_caller_id(values, account_key, *, engine=None):
+def presented_caller_id(values, account_key, *, engine=None, mailbox_id=None):
     """(caller ID or None, how) for a fax sent by ``account_key``: the number the call would carry.
 
     ``how`` is 'trunk' (a SIP trunk's call: the reply number when the carrier gives it to you on that trunk, else
     the trunk's caller ID, as ``ami.originate_fields_for`` sets it), 'freeswitch' or 'provider' (a cloud fax service
-    sets its own sending number, so None).
+    sets its own sending number, so None). ``mailbox_id`` is the sending mailbox, passed to the reply-number
+    choice exactly as ``ami.reply_choice`` passes it; the call itself passes none today, so neither does pricing.
     """
     from ..accounts import AccountsError, account_named, account_values
     account = account_named(values, account_key)
@@ -534,7 +535,7 @@ def presented_caller_id(values, account_key, *, engine=None):
         if engine is not None:
             from .store import RouteStore
             store = RouteStore(engine)
-        choice = choose(own, engine=engine, store=store)
+        choice = choose(own, engine=engine, store=store, mailbox_id=mailbox_id)
     except Exception:  # noqa: BLE001 - mirrors ami.reply_choice: an unreadable reply number means the line's own
         choice = Choice(None, 'line', '')
     return (caller_id_for(own, choice.number) or getattr(own, 'sip_trunk_caller_id', '') or None), 'trunk'
@@ -607,8 +608,14 @@ def price_origin(rows, destination, caller_id, record=None) -> OriginQuote | Non
         given = min((row for row in group if row.origination_type == LOCAL),
                     key=lambda row: row.per_minute_micros, default=None)
     if given is None:
+        # Telnyx's EEA class is a caller ID from *another* EEA country (support article 6974437), so in a deck in
+        # Faxbot's layout a caller ID from the destination's own country never gets an EEA row; it gets a local row
+        # only when bought on this account. Twilio's file lists the destination's own country in its "from EEA"
+        # set, so its list decides there.
+        same_country = _region(caller) == _region('+' + digits)
         listed = [(row.origin_match(caller_digits), row) for row in group
-                  if row.origination_type in (EEA, NON_SURCHARGED)]
+                  if row.origination_type == NON_SURCHARGED
+                  or (row.origination_type == EEA and not (same_country and row.deck_format == FAXBOT))]
         listed = [(length, row) for length, row in listed if length]
         if listed:
             best = max(length for length, _ in listed)
@@ -630,7 +637,7 @@ def price_origin(rows, destination, caller_id, record=None) -> OriginQuote | Non
     need = ('that it was bought on this account' if given.origination_type == LOCAL
             else 'that you may send from it on this account')
     if used is given:
-        sentence = f'{caller} gets {_money(given)}, the rate for {TYPE_TEXT[given.origination_type]}.'
+        sentence = f'{caller} is priced at {_money(given)}, the rate for {TYPE_TEXT[given.origination_type]}.'
     elif default is None:
         used = None
         sentence = (f'The rate for {TYPE_TEXT[given.origination_type]} ({_money(given)}) needs your confirmation {need}, '
@@ -641,7 +648,7 @@ def price_origin(rows, destination, caller_id, record=None) -> OriginQuote | Non
     return OriginQuote(used, caller, 'unconfirmed', given, sentence)
 
 
-def class_terms(identities, destination, where, *, values, account_key, engine):
+def class_terms(identities, destination, where, *, values, account_key, engine, mailbox_id=None):
     """(RateTerms, OriginQuote) when a deck priced by caller ID covers this call; (None, None) otherwise.
 
     ``identities`` are the card identities to read decks for, the account's own first. Premium-rate, toll-free and
@@ -654,7 +661,7 @@ def class_terms(identities, destination, where, *, values, account_key, engine):
     rows = rows_for(engine, identities, number)
     if not rows:
         return None, None
-    caller, _ = presented_caller_id(values, account_key, engine=engine)
+    caller, _ = presented_caller_id(values, account_key, engine=engine, mailbox_id=mailbox_id)
     record = eligibility(engine, account_key, caller) if caller else None
     quote = price_origin(rows, number, caller, record)
     if quote is None or quote.row is None:
