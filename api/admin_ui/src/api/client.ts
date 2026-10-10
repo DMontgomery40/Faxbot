@@ -838,7 +838,7 @@ class AdminAPIClient {
   }
 
   // Jobs
-  async listJobs(params: { status?: string; backend?: string; limit?: number; offset?: number } = {}): Promise<{ total: number; jobs: FaxJob[] }> {
+  async listJobs(params: { status?: string; backend?: string; limit?: number; offset?: number; since_hours?: number } = {}): Promise<{ total: number; jobs: FaxJob[] }> {
     return this.json(`/admin/fax-jobs${query(params)}`);
   }
 

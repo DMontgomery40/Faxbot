@@ -158,7 +158,7 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
     }
     if (status.jobs.recent_failures) {
       add({ key: 'failed', group: 'failed', label: 'Sent faxes that failed in the last 24 hours',
-        count: status.jobs.recent_failures, destination: 'faxes/sent?status=failed' });
+        count: status.jobs.recent_failures, destination: 'faxes/sent?status=failed&since=24h' });
     }
   }
   if (holds.kind === 'ready' && holds.data.length > 0) {

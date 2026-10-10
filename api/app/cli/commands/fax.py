@@ -294,14 +294,16 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
               offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
               ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh."),
               held: bool = typer.Option(False, '--held', help='Only faxes your rules are holding: waiting for approval, '
-                                                              'for a time window or for a route the rules allow.')):
+                                                              'for a time window or for a route the rules allow.'),
+              hours: int = typer.Option(None, '--hours', min=1, max=8784,
+                                        help='Only faxes whose state changed in the last this many hours, such as 24.')):
     """List sent faxes, newest first, with what each cost. Fax numbers are partly hidden."""
     if held:
         from .rules import held_list
         return held_list()
     api = state.api()
     page = api.get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
-                                              'limit': limit, 'offset': offset})
+                                              'limit': limit, 'offset': offset, 'since_hours': hours})
     costs = {}
     if page['jobs']:
         try:
@@ -311,6 +313,8 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
     page = {**page, 'costs': costs}
 
     def human(out):
+        if hours:
+            out.line(f"Only faxes whose state changed in the last {hours} {'hour' if hours == 1 else 'hours'}.")
         out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Route', 'Cost', 'Accepted'],
                   [([job['id']] if ids else []) + [job['to_number'], status_label(job), job['pages'],
                                                    _route_text(job, costs.get(job['id'])),

@@ -545,6 +545,7 @@ $ faxbot sent list [OPTIONS]
 * `--offset <int range>`: Skip this many of the newest faxes.  [default: 0; x&gt;=0]
 * `--ids`: Also show each fax&#x27;s ID, to use with faxbot sent show, pdf and refresh.
 * `--held`: Only faxes your rules are holding: waiting for approval, for a time window or for a route the rules allow.
+* `--hours <int range>`: Only faxes whose state changed in the last this many hours, such as 24.  [1&lt;=x&lt;=8784]
 * `--help`: Show this message and exit.
 
 ### `faxbot sent show`

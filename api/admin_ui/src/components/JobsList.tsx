@@ -64,6 +64,16 @@ interface JobsListProps {
   // Only the faxes your rules are holding (?show=held), and a way back to every sent fax.
   heldOnly?: boolean;
   onShowAll?: () => void;
+  // Only faxes whose state changed in the last this many hours (?since=24h), and a way to show any time.
+  sinceHours?: number | null;
+  onShowAnyTime?: () => void;
+}
+
+// Hours from the page address ('24h'), or null for any time.
+export function readSentSince(value: string | null | undefined): number | null {
+  const match = /^(\d{1,4})h$/.exec(value ?? '');
+  const hours = match ? Number(match[1]) : NaN;
+  return hours >= 1 && hours <= 8784 ? hours : null;
 }
 
 const statusOptions = [
@@ -221,7 +231,7 @@ export function routeText(backend: string, cost?: FaxCost | null): string {
 }
 
 function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate, status = '', onStatusChange,
-  heldOnly = false, onShowAll }: JobsListProps) {
+  heldOnly = false, onShowAll, sinceHours = null, onShowAnyTime }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -262,7 +272,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
     try {
       setError(null);
       setLoading(true);
-      const params = statusFilter ? { status: statusFilter } : {};
+      const params = { ...(statusFilter ? { status: statusFilter } : {}), ...(sinceHours ? { since_hours: sinceHours } : {}) };
       const data = await client.listJobs(params);
       setJobs(data.jobs);
       setTotal(data.total);
@@ -276,14 +286,14 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
   // The held-faxes view lists only what the rules hold, so the sent list is not read for it.
   useEffect(() => {
     if (!heldOnly) fetchJobs();
-  }, [statusFilter, client, heldOnly]);
+  }, [statusFilter, client, heldOnly, sinceHours]);
 
   useEffect(() => {
     if (heldOnly) return undefined;
     // Auto-refresh jobs every 10 seconds
     const interval = setInterval(fetchJobs, 10000);
     return () => clearInterval(interval);
-  }, [statusFilter, client, heldOnly]);
+  }, [statusFilter, client, heldOnly, sinceHours]);
 
   const getStatusColor = (status: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
     switch (status.toLowerCase()) {
@@ -550,6 +560,15 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           </Typography>
         </Grid>
       </Grid>
+
+      {sinceHours !== null && (
+        <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" sx={{ mb: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {`Only faxes whose state changed in the last ${sinceHours} ${sinceHours === 1 ? 'hour' : 'hours'} are shown.`}
+          </Typography>
+          {onShowAnyTime && <Button size="small" onClick={onShowAnyTime}>Show from any time</Button>}
+        </Box>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>

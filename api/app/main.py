@@ -1694,10 +1694,12 @@ async def list_admin_jobs(
     backend: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    # Only faxes whose delivery changed in the last this many hours (Overview: failed in the last 24 hours).
+    since_hours: Optional[int] = Query(default=None, ge=1, le=8784),
     identity=Depends(require_identity),
 ):
     page = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.page(
-        identity.actor, status=status, backend=backend, limit=limit, offset=offset)))
+        identity.actor, status=status, backend=backend, limit=limit, offset=offset, since_hours=since_hours)))
     together = await run_lifecycle_step(lambda: batching_summaries(
         _configuration_manager().store.engine, [row['id'] for row in page['jobs']]))
     return {'total': page['total'], 'jobs': [{**_admin_fax_view(row), 'together': together.get(row['id'])}
