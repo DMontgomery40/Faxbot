@@ -804,6 +804,9 @@ const consoleHandlers = [
   http.get('/routing/caller-id-prices', () => json({ decks: [], callers: [], layouts: { faxbot: '', telnyx: '' } })),
   http.get('/routing/sender-pins', () => json({ pins: [], trunks: [] })),
   http.get('/routing/closures', () => json({ sites: [], lines: [], files: [], sources: { orange: '', gouv: '', arcep: '' } })),
+  // Fax server renewals and channels at peak (N20, N24): none until a test says otherwise.
+  http.get('/routing/renewals', () => json({ pages: [], sentence: 'No fax server renewal yet.', help: { routes: '' }, reference: [], note: '', review_days: 90 })),
+  http.get('/routing/channels', () => json({ systems: [], sentence: 'No call records yet.', formats: [], read_on: '', note: '' })),
   // The line inventory and carrier lists (N19): none until a test says otherwise.
   http.get('/routing/line-inventory', () => json({ sentence: 'No line inventory yet.', lines: [], inventory: null,
     lists: [], counts: {}, keyed: '', note: '', help: { inventory: '', list: '' }, sources: { att_workbook: '' } })),

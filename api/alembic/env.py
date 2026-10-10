@@ -89,6 +89,7 @@ config.attributes["schema_codec_decoder"] = importlib.import_module(package + ".
 config.attributes["schema_test_lines"] = importlib.import_module(package + ".schema_test_lines")
 config.attributes["schema_after_answer"] = importlib.import_module(package + ".schema_after_answer")
 config.attributes["schema_line_inventory"] = importlib.import_module(package + ".schema_line_inventory")
+config.attributes["schema_fax_server_renewal"] = importlib.import_module(package + ".schema_fax_server_renewal")
 
 
 def migrate(connection):

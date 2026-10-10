@@ -21,13 +21,14 @@ import FaxFriendlyRecommendation from './FaxFriendlyRecommendation';
 import TrunkAdvice from './TrunkAdvice';
 import NumberPlacement from './NumberPlacement';
 import SiteAdvice from './SiteAdvice';
+import FaxServerRenewal from './FaxServerRenewal';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites';
+  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites'];
+  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal'];
 
 // Each section's name, for the line that stands in for a section the address names that has nothing yet; the
 // same names as the savings map's advice cards.
@@ -36,7 +37,7 @@ const SECTION_TITLES: Record<Section, string> = {
   carriers: "Other carriers' prices", marker: 'Fax marker on calls', steps: 'Calls just past a billed minute',
   partners: 'Partner candidates', discovery: 'Recipients that run Faxbot', tollFree: 'Toll-free numbers on file',
   pages: 'Time lighter shading would save', relays: 'Partners that could relay', trunks: 'Your trunks compared',
-  numbers: 'Where each number should live', sites: 'Calls by state',
+  numbers: 'Where each number should live', sites: 'Calls by state', renewal: 'Fax server renewal',
 };
 
 // The element id of one section's anchor.
@@ -138,6 +139,9 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
         </Anchor>
         <Anchor section="sites" focus={focus} count={counts.sites}>
           <SiteAdvice client={client} canWrite={canWrite} onCount={callbacks.sites} />
+        </Anchor>
+        <Anchor section="renewal" focus={focus} count={counts.renewal}>
+          <FaxServerRenewal client={client} canWrite={canWrite} onCount={callbacks.renewal} />
         </Anchor>
       </Stack>
     </Box>

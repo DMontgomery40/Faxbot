@@ -14,9 +14,9 @@ NOW = datetime(2026, 10, 10, 9, 0)
 PRIOR = '0076_after_answer'  # re-chained at merge (was 0071_codec_decoder)
 
 
-def test_0077_is_the_head_and_validates(database):  # noqa: F811
+def test_0077_follows_0071_and_validates(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_line_inventory.REVISION == '0077_line_inventory' == schema.HEAD
+    assert schema_line_inventory.REVISION == '0077_line_inventory' == schema.LINE_INVENTORY
     assert schema.AFTER_ANSWER == PRIOR
     assert schema_line_inventory.TABLES <= schema.STRICT_TABLES and schema_line_inventory.TABLES <= _tables(database)
     with database.connect() as connection:
